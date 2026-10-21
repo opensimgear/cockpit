@@ -1,6 +1,6 @@
 import {
-  publishDocument, validateLibrary, deleteDraft,
-  type DesignerLibrary, type Publication,
+  publishDocument, validateLibrary, deleteDraft, validateWidgetBundle,
+  type DesignerLibrary, type Publication, type WidgetLibraryBundle,
 } from '../../packages/companion-designer/src/index.ts';
 
 /** Local designer data only. Pairings and native controller assignments never enter this store. */
@@ -8,6 +8,7 @@ export interface CompanionLibrarySnapshot {
   schemaVersion: 1;
   library: DesignerLibrary;
   publications: Record<string, Publication[]>;
+  widgets?: WidgetLibraryBundle;
 }
 
 /** A failed write must leave the previously committed value intact. */
@@ -32,15 +33,15 @@ function capture(input: unknown): unknown {
   return JSON.parse(json) as unknown;
 }
 
-function exact(input: unknown, fields: string[], description: string): Record<string, unknown> {
+function exact(input: unknown, fields: string[], description: string, optional: string[] = []): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(`Invalid ${description}.`);
   const value = input as Record<string, unknown>;
-  if (Object.keys(value).length !== fields.length || fields.some(field => !Object.hasOwn(value, field))) throw new Error(`Unexpected or missing ${description} field.`);
+  if (Object.keys(value).some(field => !fields.includes(field) && !optional.includes(field)) || fields.some(field => !Object.hasOwn(value, field))) throw new Error(`Unexpected or missing ${description} field.`);
   return value;
 }
 
 async function validateSnapshot(input: unknown): Promise<CompanionLibrarySnapshot> {
-  const value = exact(input, ['schemaVersion', 'library', 'publications'], 'companion library snapshot');
+  const value = exact(input, ['schemaVersion', 'library', 'publications'], 'companion library snapshot', ['widgets']);
   if (value.schemaVersion !== 1) throw new Error('Unsupported companion library storage version.');
   const library = await validateLibrary(value.library);
   if (!library.ok) throw new Error(`Invalid saved companion drafts: ${library.error}`);
@@ -63,7 +64,7 @@ async function validateSnapshot(input: unknown): Promise<CompanionLibrarySnapsho
     }
     publications[draftId] = validated;
   }
-  return { schemaVersion: 1, library: library.value, publications };
+  return { schemaVersion: 1, library: library.value, publications, ...(value.widgets !== undefined ? { widgets: await validateWidgetBundle(value.widgets) } : {}) };
 }
 
 /**
@@ -115,6 +116,15 @@ export class CompanionLibraryStore {
 
   load(): Promise<CompanionLibrarySnapshot> { return this.ordered(() => this.read()); }
 
+  saveWidgets(input: WidgetLibraryBundle): Promise<CompanionLibrarySnapshot> {
+    const captured = capture(input);
+    return this.ordered(async () => {
+      const widgets = await validateWidgetBundle(captured), previous = await this.read();
+      const next = await validateSnapshot(capture({ ...previous, widgets }));
+      await this.storage.write(structuredClone(next)); return next;
+    });
+  }
+
   async save(input: CompanionLibrarySnapshot): Promise<CompanionLibrarySnapshot> {
     // Capture before queuing or awaiting: caller edits cannot change an in-flight save.
     const captured = capture(input);
@@ -129,7 +139,8 @@ export class CompanionLibraryStore {
         // when its immutable payload is already retained for a device.
         publications[draftId] = [...existing.filter(revision => !hashes.has(revision.publicationHash)), ...revisions];
       }
-      const merged = { schemaVersion: 1 as const, library: incoming.library, publications };
+      const widgets = incoming.widgets ?? previous.widgets;
+      const merged = { schemaVersion: 1 as const, library: incoming.library, publications, ...(widgets ? { widgets } : {}) };
       // Enforce the aggregate archive and byte limits after preserving old publications.
       const checked = await validateSnapshot(capture(merged));
       await this.storage.write(structuredClone(checked));

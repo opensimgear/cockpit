@@ -73,3 +73,18 @@ file is a tracker, not evidence that unchecked work exists.
   bounded two-slot `render/content_store` and authenticated render-delivery path.
   Its custom scene compositor must be adapted behind LVGL rather than retained
   as a second new source/widget model. Integration is still pending.
+- Shared browser/Android SVG composition renderer now uses the same typed state,
+  layer/property projection, momentary/toggle/selector ownership and cancellation.
+  Navigation remains local; confirmed indicators require fresh simulator samples.
+  Missing telemetry does not suppress local pressed appearance. Designer and UI
+  coverage suites pass: 104 and 24 tests respectively, with all coverage gates.
+- Native dev Cockpit is running from this isolated worktree at port 1422. The
+  native navigation allowlist now checks the configured exact loopback origin;
+  the targeted native origin test passes. Packaged origin rules are preserved.
+- Actual native UI acceptance (`OSG_WIDGETS_NATIVE_UI=1 node --test
+  tests/ui/widgets-native.mjs`) passes. It imports all ten catalog widgets,
+  exercises real pointer capture and release, edits and saves a library revision,
+  verifies independent pinned versions 1 and 5, saves the panel through native
+  publication admission and reloads both panel and library. Local screenshots
+  and evidence: `.research/widgets-native-ui/1792622346932/`. This proves native
+  authoring/preview and persistence, not ESP32 or Android-device qualification.

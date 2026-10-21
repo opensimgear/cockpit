@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { newDocument, publishDocument, importAsset } from '../../packages/companion-designer/src/index.ts';
+import { newDocument, publishDocument, importAsset, createWidgetCatalog } from '../../packages/companion-designer/src/index.ts';
 import { CompanionLibraryStore, COMPANION_LIBRARY_LIMITS, indexedDbStorage, latestSavedPanels } from './companion-library.ts';
 
 const copy = value => value === undefined ? undefined : structuredClone(value);
@@ -26,6 +26,22 @@ test('an empty store loads an empty local library without writing or activating 
   const storage = memory();
   assert.deepEqual(await new CompanionLibraryStore(storage).load(), snapshot());
   assert.equal(storage.writes, 0);
+});
+
+test('widget revisions share atomic storage and survive independent panel saves and compaction', async () => {
+  const storage = memory(), store = new CompanionLibraryStore(storage);
+  const widgets = { bundleVersion: 1, library: { formatVersion: 1, definitions: createWidgetCatalog() }, manifest: [], assets: [] };
+  const saved = await store.saveWidgets(widgets); assert.deepEqual(saved.widgets, widgets);
+  widgets.library.definitions[0].title = 'Caller mutation';
+  await store.save(snapshot('Panel')); assert.equal((await store.load()).widgets.library.definitions[0].title, 'Illuminated button');
+  await store.compact([]); assert.equal((await store.load()).widgets.library.definitions.length, 10);
+  await store.deletePanel('draft-0', []); assert.equal((await store.load()).widgets.library.definitions.length, 10);
+  const before = copy(storage.value); storage.fail = true;
+  await assert.rejects(store.saveWidgets({ ...widgets, library: { formatVersion: 1, definitions: [] } }), /Atomic write/);
+  assert.deepEqual(storage.value, before);
+  storage.fail = false;
+  await assert.rejects(store.saveWidgets({ ...widgets, bundleVersion: 2 }), /version/);
+  assert.deepEqual(storage.value, before);
 });
 
 test('deleting a panel removes its draft and published asset payloads from persisted storage', async () => {

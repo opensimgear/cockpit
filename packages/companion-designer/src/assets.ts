@@ -1,9 +1,9 @@
-import { COMPANION_LIMITS } from "../../companion-contracts/src/index.ts";
+import { COMPANION_LIMITS, validatePortableUi } from "../../companion-contracts/src/index.ts";
 import { DESIGNER_LIMITS } from "./types.ts";
-import type { AssetPayload, DesignerDocument, PortableBundle, Publication } from "./types.ts";
+import type { AssetPayload, DesignerDocument, PortableBundle, Publication, WidgetLibraryBundle } from "./types.ts";
 import { assert, canonical, checked, clone, digest, exact, newId, validateDesignerDocument } from "./model.ts";
 import { migratePortableUi } from "./editor.ts";
-import { widgetSemantics } from "./widget-model.ts";
+import { widgetSemantics, validateWidgetLibrary, validateWidgetDefinition, type WidgetDefinition, type WidgetPropertyValue } from "./widget-model.ts";
 export function encodeBase64(bytes: Uint8Array): string {
   let binary = ""; for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768)); return btoa(binary);
 }
@@ -57,7 +57,7 @@ async function verifyDecodedBitmap(bytes: Uint8Array, mime: string): Promise<voi
     assert(bitmap.width === expected.width && bitmap.height === expected.height && bitmap.width * bitmap.height <= DESIGNER_LIMITS.assetPixels, "Decoded bitmap dimensions mismatch");
   } finally { bitmap.close(); }
 }
-export async function validateAssets(document: DesignerDocument, payloads: AssetPayload[]): Promise<AssetPayload[]> {
+export async function validateAssets(document: Pick<DesignerDocument, "ui">, payloads: AssetPayload[]): Promise<AssetPayload[]> {
   assert(Array.isArray(payloads) && payloads.length === document.ui.assets.length, "Asset payloads do not match manifest");
   const ids = new Set<string>(); let total = 0, pixels = 0;
   const images: { bytes: Uint8Array; mime: string }[] = [];
@@ -72,6 +72,39 @@ export async function validateAssets(document: DesignerDocument, payloads: Asset
   }
   for (const image of images) await verifyDecodedBitmap(image.bytes, image.mime);
   return clone(payloads);
+}
+/** Asset-bearing widget libraries use the same digest, codec and decoded-pixel checks as panels. */
+export async function validateWidgetBundle(input: unknown): Promise<WidgetLibraryBundle> {
+  const serialized = JSON.stringify(input); assert(serialized && new TextEncoder().encode(serialized).length <= DESIGNER_LIMITS.bundleBytes, "Widget bundle exceeds budget");
+  const bundle = exact(JSON.parse(serialized), ["bundleVersion", "library", "manifest", "assets"]); assert(bundle.bundleVersion === 1, "Unsupported widget bundle version");
+  const library = validateWidgetLibrary(bundle.library); assert(library.ok, library.ok ? "" : library.error);
+  const ui = validatePortableUi({ schemaVersion: 1, id: "widget-assets", title: "Widget assets", controls: [], feedbackWidgets: [], pages: [{ id: "assets-page", title: "Assets", items: [] }], assets: bundle.manifest }, { allowEmptyControls: true }); assert(ui.ok, ui.ok ? "" : ui.error);
+  for (const definition of library.value.definitions) { const checked = validateWidgetDefinition(definition, ui.value.assets.map(a => a.id)); assert(checked.ok, checked.ok ? "" : checked.error); }
+  return { bundleVersion: 1, library: library.value, manifest: ui.value.assets, assets: await validateAssets({ ui: ui.value }, bundle.assets as AssetPayload[]) };
+}
+export async function exportWidgetBundle(bundle: WidgetLibraryBundle): Promise<string> { return JSON.stringify(await validateWidgetBundle(bundle), null, 2); }
+export async function importWidgetBundle(serialized: string): Promise<WidgetLibraryBundle> {
+  assert(typeof serialized === "string" && serialized.length <= DESIGNER_LIMITS.bundleBytes && new TextEncoder().encode(serialized).length <= DESIGNER_LIMITS.bundleBytes, "Widget bundle exceeds budget");
+  return validateWidgetBundle(JSON.parse(serialized));
+}
+export async function mergeWidgetBundles(previous: WidgetLibraryBundle, incoming: WidgetLibraryBundle): Promise<WidgetLibraryBundle> {
+  const before = await validateWidgetBundle(previous), next = await validateWidgetBundle(incoming);
+  for (const definition of next.library.definitions) {
+    const old = before.library.definitions.find(d => d.id === definition.id && d.version === definition.version);
+    assert(!old || canonical(old) === canonical(definition), "Widget revisions are immutable; imported revision conflicts with the library");
+    if (!old) before.library.definitions.push(definition);
+  }
+  for (const manifest of next.manifest) {
+    const old = before.manifest.find(a => a.id === manifest.id); assert(!old || canonical(old) === canonical(manifest), "Widget asset identity conflict");
+    if (!old) { before.manifest.push(manifest); before.assets.push(next.assets.find(a => a.assetId === manifest.id)!); }
+  }
+  return validateWidgetBundle(before);
+}
+export function widgetAssetIds(definition: WidgetDefinition, overrides: Record<string, WidgetPropertyValue> = {}): string[] {
+  const ids = new Set<string>();
+  for (const p of definition.properties) if (p.type === "asset") { if (p.default) ids.add(p.default); if (typeof overrides[p.name] === "string" && overrides[p.name]) ids.add(overrides[p.name] as string); }
+  for (const layer of definition.layers) if (layer.kind === "image" && typeof layer.assetId === "string" && layer.assetId) ids.add(layer.assetId);
+  return [...ids].sort();
 }
 export async function importAsset(document: DesignerDocument, bytes: Uint8Array, mime: "image/png" | "image/jpeg" | "image/webp"): Promise<{ document: DesignerDocument; asset: AssetPayload; width: number; height: number }> {
   const dimensions = imageDimensions(bytes, mime), doc = checked(document); await verifyDecodedBitmap(bytes, mime);

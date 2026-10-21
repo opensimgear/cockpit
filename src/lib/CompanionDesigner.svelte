@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { firmwareWidgetPresets, simplifyFirmwareWidgets } from './firmware-widgets';
   import { restoreCompanionPanels } from './companion-startup';
   import Notification from './Notification.svelte';
+  import WidgetDesigner from './WidgetDesigner.svelte';
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import CompanionConnections from './CompanionConnections.svelte';
@@ -15,16 +15,26 @@
     newDocument, createDesignerHistory, applyDesignerCommand, applyPixelDesignerCommand, undoDesigner, redoDesigner, DESIGNER_LIMITS,
     createLibrary, saveDraft, duplicateDraft, openDraft,
     importAsset, validateAssets, exportBundle, importBundle, publishDocument,
-    viewportRegions, widgetViewport, boundsContain,
+    viewportRegions, widgetViewport, boundsContain, widgetPresets, createWidgetCatalog, newId, canonical,
+    mergeWidgetBundles, importWidgetBundle, exportWidgetBundle, widgetAssetIds,
     type DesignerHistory, type DesignerWidget, type AssetPayload,
-    type Publication, type Bounds,
+    type Publication, type Bounds, type WidgetDefinition, type WidgetLibraryBundle, type WidgetPropertyValue,
   } from '@opensimgear/companion-designer';
-  import { PanelCanvas, type PreviewController, type PreviewSnapshot } from '@opensimgear/companion-ui';
+  import { PanelCanvas, componentDefinition, type PreviewController, type PreviewSnapshot } from '@opensimgear/companion-ui';
 
   let { openSettings, initialCompanionId = '', onNavigate, active = true }: { openSettings: () => void; initialCompanionId?: string; onNavigate?: (page: CompanionNavigation) => void; active?: boolean } = $props();
 
   let importInput = $state<HTMLInputElement>();
   let assetInput = $state<HTMLInputElement>();
+  let widgetImportInput = $state<HTMLInputElement>();
+  let widgetBundle = $state.raw<WidgetLibraryBundle>({ bundleVersion: 1, library: { formatVersion: 1, definitions: createWidgetCatalog() }, manifest: [], assets: [] });
+  let widgetEditorDefinition = $state.raw<WidgetDefinition | null>(null);
+  let widgetEditInstanceId = $state('');
+  const availableWidgets = $derived.by(() => {
+    const latest = new Map<string, WidgetDefinition>();
+    for (const d of widgetBundle.library.definitions) if (!latest.has(d.id) || latest.get(d.id)!.version < d.version) latest.set(d.id, d);
+    return [...latest.values()];
+  });
   let connectionsPanel = $state.raw<{showMain:(recordNavigation?:boolean)=>boolean;getCompanionId:()=>string;showCompanion:(id:string)=>void;requestNavigation:(continueNavigation:()=>void,cancelNavigation?:()=>void)=>void}>();
   let editorOpen = $state(false);
   let newPanelOpen=$state(false),newPanelName=$state(''),newPanelSource=$state('custom'),newPanelWidth=$state(1280),newPanelHeight=$state(800),newPanelError=$state('');
@@ -82,6 +92,7 @@
   const assignedEspError=$derived((hostState.host?.clients??[]).filter(c=>c.kind==='esp32'&&panelAssignments(draftId).some(i=>i.companionId===c.companionId)).map(c=>panelScreenReason({document} as Publication,companionScreenSize(hostState,String(c.companionId)),hostState.firmware?.[String(c.companionId)]?.version??'unknown')).find(Boolean)??'');
   const panelInvalidReason = $derived(emptyPageNumbers.length ? `Add at least one widget to ${emptyPageNumbers.length===1?'page':'pages'} ${emptyPageNumbers.join(', ')} before previewing, saving or exporting.` : espAssigned?assignedEspError:'');
   const widget = $derived(document.presentation.widgets.find(w => w.id === selected[0]));
+  const reusableDefinition = $derived(widget ? componentDefinition(document, widget) : undefined);
   const viewport = $derived(document.presentation.viewports.find(v => v.pageId === page.id)!);
   const regions = $derived(viewportRegions(document, page.id));
   const activeViewport = $derived(regions.find(region => region.id === selectedViewportId) ?? regions[0]);
@@ -92,6 +103,8 @@
   const maxMargin = $derived(Math.ceil(Math.min(viewport.width, viewport.height) / 4) - 1);
   const activeAssets = $derived(assets.filter(payload => document.ui.assets.some(a => a.id === payload.assetId)));
   const imageAssets = $derived(Object.fromEntries(activeAssets.map(payload => [payload.assetId, `data:${document.ui.assets.find(a => a.id === payload.assetId)?.mime};base64,${payload.base64}`])));
+  const widgetEditorAssets = $derived({ ...Object.fromEntries(widgetBundle.assets.map(payload => [payload.assetId, `data:${widgetBundle.manifest.find(a => a.id === payload.assetId)?.mime};base64,${payload.base64}`])), ...imageAssets });
+  const widgetAssetOptions = $derived([...new Map([...widgetBundle.manifest, ...document.ui.assets].map(a => [a.id, a])).values()].map((a, i) => ({ id: a.id, label: `Image ${i + 1}` })));
   const currentPublications = $derived(latestSavedPanels(library,publications));
   function panelHashes(id: string) { return (publications[id] ?? []).map(p => p.publicationHash); }
   function panelAssignments(id: string) {
@@ -218,7 +231,7 @@
     select([]);
   }
   function widgetDeleteKey(event:KeyboardEvent) {
-    if(event.key!=='Delete'||event.defaultPrevented||event.repeat||event.ctrlKey||event.metaKey||event.altKey||!active||!editorOpen||preview||busy||pendingDelete||pendingLeave||!widget)return;
+    if(event.key!=='Delete'||event.defaultPrevented||event.repeat||event.ctrlKey||event.metaKey||event.altKey||!active||!editorOpen||preview||busy||pendingDelete||pendingLeave||widgetEditorDefinition||!widget)return;
     const target=event.target;
     if(target instanceof HTMLElement && (target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"])')||target.closest('dialog')))return;
     event.preventDefault();
@@ -239,10 +252,59 @@
     return {x:px,y:py,width:w,height:h};
   }
   function addPaletteWidget(kind:string,viewportId=activeViewport.id,point?:{x:number;y:number}) {
-    const preset=firmwareWidgetPresets.find(preset=>preset.kind===kind),region=regions.find(region=>region.id===viewportId);
+    const preset=widgetPresets.find(preset=>preset.kind===kind),region=regions.find(region=>region.id===viewportId);
     if(!preset||!region||preview)return;
     const bounds=point?paletteBounds(viewportId,point):undefined;
     if(command({type:'add-widget',kind:preset.kind,pageId:page.id,viewportId,...(bounds?{bounds}:{})}))select(point?[]:[document.presentation.widgets.at(-1)!.id]);
+  }
+  function widgetResources(definition: WidgetDefinition, properties: Record<string, WidgetPropertyValue> = {}) {
+    const manifest = [], payloads: AssetPayload[] = [];
+    for (const id of widgetAssetIds(definition, properties)) {
+      const local = document.ui.assets.find(a => a.id === id), shared = widgetBundle.manifest.find(a => a.id === id);
+      if (local && shared && canonical(local) !== canonical(shared)) throw new Error('Widget artwork has a conflicting asset identity.');
+      const asset = local ?? shared, payload = assets.find(a => a.assetId === id) ?? widgetBundle.assets.find(a => a.assetId === id);
+      if (!asset || !payload) throw new Error('Widget artwork is missing. Import its asset bundle before using this widget.');
+      manifest.push(structuredClone(asset)); payloads.push(structuredClone(payload));
+    }
+    return { manifest, payloads };
+  }
+  function applyLibraryWidget(definition: WidgetDefinition, instanceId?: string) {
+    const instance = instanceId ? document.presentation.widgets.find(w => w.id === instanceId) : undefined;
+    if (instanceId && instance?.kind !== 'component') throw new Error('The reusable widget instance is no longer available.');
+    const properties = instance?.kind === 'component' ? instance.config.properties : definition.interaction.kind === 'navigate' ? { [definition.interaction.pageProperty]: page.id } : {};
+    const resources = widgetResources(definition, properties), doc = structuredClone(document);
+    for (const a of resources.manifest) if (!doc.ui.assets.some(existing => existing.id === a.id)) doc.ui.assets.push(a);
+    const candidate = applyDesignerCommand(createDesignerHistory(doc), instanceId ? { type: 'update-component', id: instanceId, definition } : { type: 'add-component', definition, properties, pageId: page.id, viewportId: activeViewport.id });
+    const nextAssets = [...assets, ...resources.payloads.filter(a => !assets.some(existing => existing.assetId === a.assetId))];
+    if (command({ type: 'replace', document: candidate.present })) { assets = nextAssets; select([instanceId ?? document.presentation.widgets.at(-1)!.id]); }
+  }
+  function addLibraryWidget(definition: WidgetDefinition) { try { applyLibraryWidget(definition); } catch (e) { error = e instanceof Error ? e.message : String(e); } }
+  function editWidgetDefinition(definition?: WidgetDefinition, instanceId = '') {
+    stop(); widgetEditInstanceId = instanceId;
+    const next = structuredClone(definition ?? createWidgetCatalog()[0]);
+    if (!definition) { next.id = newId('widgetdef'); next.version = 1; next.title = 'New widget'; }
+    widgetEditorDefinition = next;
+  }
+  async function saveWidgetDesign(definition: WidgetDefinition) {
+    if (!store || !storageReady) throw new Error('Widget storage is not ready.');
+    const versions = [...widgetBundle.library.definitions, ...(document.presentation.definitions ?? [])].filter(d => d.id === definition.id).map(d => d.version);
+    const next = { ...definition, version: versions.length ? Math.max(...versions) + 1 : 1 };
+    const resources = widgetResources(next);
+    const bundle = await mergeWidgetBundles(widgetBundle, { bundleVersion: 1, library: { formatVersion: 1, definitions: [next] }, manifest: resources.manifest, assets: resources.payloads });
+    const saved = await store.saveWidgets(bundle); widgetBundle = saved.widgets!;
+    const instanceId = widgetEditInstanceId; widgetEditorDefinition = null; widgetEditInstanceId = '';
+    message = `Saved ${next.title} · version ${next.version}. Existing panels retain their pinned revisions.`;
+    if (instanceId) { try { applyLibraryWidget(next, instanceId); message = `Saved ${next.title} · version ${next.version} and updated the selected draft instance. Save the panel to publish it.`; } catch (e) { error = `Widget revision saved. The existing instance was preserved: ${e instanceof Error ? e.message : String(e)}`; } }
+  }
+  function componentProperty(name: string, value: WidgetPropertyValue) {
+    if (widget?.kind === 'component') command({ type: 'update-component', id: widget.id, properties: { ...widget.config.properties, [name]: value } });
+  }
+  async function importWidgetFile(file?: File) {
+    if (!file) return;
+    await operation(async () => { if (!store || file.size > DESIGNER_LIMITS.bundleBytes) throw new Error('Widget bundle exceeds its import budget or storage is not ready.'); const incoming = await importWidgetBundle(await file.text()); const merged = await mergeWidgetBundles(widgetBundle, incoming); const saved = await store.saveWidgets(merged); widgetBundle = saved.widgets!; message = 'Widget library imported. Existing panels keep their pinned versions.'; });
+  }
+  async function exportWidgets() {
+    await operation(async () => { const data = await exportWidgetBundle(widgetBundle), url = URL.createObjectURL(new Blob([data], { type: 'application/json' })); const link = globalThis.document.createElement('a'); link.href = url; link.download = 'opensimgear-widgets.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
   }
   function editViewportName(id: string, label: string) {
     selectedViewportId=id;select([]);propertiesOpen=true;
@@ -303,10 +365,7 @@
     try {
       if(checkLeave && !leaveEditor())return;
       const entry = openDraft(library, id); stop();editorOpen=true;dirty=false; draftId = entry.id; name = entry.name;
-      const simplified=simplifyFirmwareWidgets(entry.document);
-      history = createDesignerHistory(simplified.document); if(entry.document.presentation.viewports.some(v=>v.backgroundAssetId))dirty=true; assets = entry.assets; pageId = document.ui.pages[0].id; select([]); error = '';
-      dirty=simplified.removed>0;
-      message=simplified.removed?'Removed '+simplified.removed+' unsupported widget(s). Save to update the panel and its companions.':'';
+      history = createDesignerHistory(entry.document); dirty=entry.document.presentation.viewports.some(v=>v.backgroundAssetId); assets = entry.assets; pageId = document.ui.pages[0].id; select([]); error = ''; message='';
       if (recordNavigation) onNavigate?.({kind:'panel',id:draftId});
     } catch (e) { error = String(e); }
   }
@@ -333,8 +392,6 @@
     await operation(async () => {
       message='';
       const previousHashes=panelHashes(draftId);
-      const simplified=simplifyFirmwareWidgets(document);
-      if(simplified.removed)history=createDesignerHistory(simplified.document);
       ensurePixelGeometry();
       const panel=await publishDocument(document,activeAssets);
       const next=await saveDraft(library,{id:draftId,name:document.ui.title,document,assets:activeAssets});
@@ -369,7 +426,7 @@
       if(!leaveEditor())return;
       if (file.size > 13 * 1024 * 1024) throw new Error('Bundle exceeds 13 MiB');
       const result = await importBundle(await file.text()); stop();
-      const seed={schemaVersion:1 as const,drafts:[{id:'import',name:result.document.ui.title,document:simplifyFirmwareWidgets(result.document).document,assets:result.assets}]};
+      const seed={schemaVersion:1 as const,drafts:[{id:'import',name:result.document.ui.title,document:result.document,assets:result.assets}]};
       const entry=duplicateDraft(seed,'import',result.document.ui.title).drafts[1];
       editorOpen=true;dirty=true;history = createDesignerHistory(entry.document); assets = entry.assets; draftId = entry.id; name = entry.name;
       pageId = document.ui.pages[0].id; select([]); message = 'Panel imported. Save to add it to Panels.';
@@ -442,7 +499,7 @@
     let alive = true;
     void import('./companion-library').then(async ({ CompanionLibraryStore, indexedDbStorage }) => {
       store = new CompanionLibraryStore(indexedDbStorage()); const snapshot = await store.load();
-      if (!alive) return; library = snapshot.library; publications = snapshot.publications; storageReady = true; resolveStorageLoad();
+      if (!alive) return; library = snapshot.library; publications = snapshot.publications; widgetBundle = snapshot.widgets ?? widgetBundle; storageReady = true; resolveStorageLoad();
       await refreshCompanions();
       await restoreCompanionPanels();
       await refreshCompanions();
@@ -453,6 +510,7 @@
     return () => { alive = false; disposed=true; resolveStorageLoad(); clearInterval(poll); stop(); unsubscribe?.(); window.removeEventListener('blur', cancel); window.removeEventListener('pagehide', cancel); };
   });
 </script>
+{#if widgetEditorDefinition}<WidgetDesigner definition={widgetEditorDefinition} assets={widgetEditorAssets} assetOptions={widgetAssetOptions} onsave={saveWidgetDesign} oncancel={() => { widgetEditorDefinition = null; widgetEditInstanceId = ''; }} />{/if}
 <svelte:window onkeydown={widgetDeleteKey}/>
 
 <script module lang="ts">
@@ -533,7 +591,8 @@
       </div></details>
       <details class="editor-accordion" open><summary>Widgets</summary><div class="accordion-content">
       <p class="hint">Add to {activeViewport.label}</p>{#if espAssigned}<p class="hint">{espRestriction}</p>{/if}
-      <div class="palette">{#each firmwareWidgetPresets as preset}<button disabled={preview} draggable={!preview} title="Click to add to the selected viewport, or drag into a viewport" ondragstart={event=>{if(!event.dataTransfer)return;event.dataTransfer.setData('application/x-osg-widget',preset.kind);event.dataTransfer.effectAllowed='copy';paletteDragging=true;draggedWidget=preset.title;select([]);}} ondragend={()=>{paletteDragging=false;draggedWidget='';}} onclick={() => addPaletteWidget(preset.kind)}>{preset.title}</button>{/each}</div>
+      <details class="shared-widget-library" open><summary>Reusable widget library</summary><div class="shared-widget-list">{#each availableWidgets as definition}<div><button disabled={preview || busy} title={`Add ${definition.title}, version ${definition.version}`} onclick={() => addLibraryWidget(definition)}>{definition.title}</button><button class="edit-library-widget" aria-label={`Edit design ${definition.title}`} title="Edit widget design" disabled={preview || busy} onclick={() => editWidgetDefinition(definition)}>✎</button></div>{/each}</div><div class="widget-library-actions"><button disabled={preview || busy} onclick={() => editWidgetDefinition()}>Create widget</button><button disabled={busy} onclick={() => widgetImportInput?.click()}>Import widgets</button><button disabled={busy} onclick={() => void exportWidgets()}>Export widgets</button></div><input hidden type="file" accept="application/json,.json" bind:this={widgetImportInput} aria-label="Import widget library" onchange={e => { void importWidgetFile(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} /></details>
+      <details><summary>Basic controls</summary><div class="palette">{#each widgetPresets as preset}<button disabled={preview} draggable={!preview} title="Click to add to the selected viewport, or drag into a viewport" ondragstart={event=>{if(!event.dataTransfer)return;event.dataTransfer.setData('application/x-osg-widget',preset.kind);event.dataTransfer.effectAllowed='copy';paletteDragging=true;draggedWidget=preset.title;select([]);}} ondragend={()=>{paletteDragging=false;draggedWidget='';}} onclick={() => addPaletteWidget(preset.kind)}>{preset.title}</button>{/each}</div></details>
       </div></details>
       <details class="editor-accordion"><summary>Assets</summary><div class="accordion-content">
 
@@ -587,6 +646,22 @@
         <p class="hint">{widget.kind} · <code>{widget.id}</code></p>
         <label>Label<input value={widget.label} onchange={e => patch({ label: e.currentTarget.value })} /></label>
         <div class="bounds">{#each ['x','y','width','height'] as field}<label>{field === 'x' ? 'X' : field === 'y' ? 'Y' : field === 'width' ? 'Width' : 'Height'} (px)<input type="number" min={field === 'width' || field === 'height' ? 1 : 0} max={field === 'x' || field === 'width' ? usableWidth : usableHeight} step="1" value={Math.round(widget.bounds[field as keyof Bounds] * (field === 'x' || field === 'width' ? usableWidth : usableHeight))} onchange={e => changeBounds(field as keyof Bounds, e.currentTarget)} /></label>{/each}</div>
+        {#if widget.kind === 'component' && reusableDefinition}
+          <p class="hint">{reusableDefinition.title} · pinned version {widget.config.definitionVersion}</p>
+          <button class="action" onclick={() => editWidgetDefinition(reusableDefinition, widget!.id)}>Edit widget design</button>
+          <label>Library version<select aria-label="Widget library version" value={widget.config.definitionVersion} onchange={e => { const definition = widgetBundle.library.definitions.find(d => d.id === reusableDefinition!.id && d.version === Number(e.currentTarget.value)); if (definition) { try { applyLibraryWidget(definition, widget!.id); } catch (e) { error = String(e); } } }}>
+            {#each [...new Map([...(document.presentation.definitions ?? []), ...widgetBundle.library.definitions].filter(d => d.id === reusableDefinition.id).map(d => [d.version, d])).values()].sort((a, b) => a.version - b.version) as revision}<option value={revision.version}>Version {revision.version}</option>{/each}
+          </select></label>
+          {#each reusableDefinition.properties as property}
+            {@const value = widget.config.properties[property.name] ?? property.default}
+            {#if property.type === 'boolean'}<label><input type="checkbox" checked={Boolean(value)} onchange={e => componentProperty(property.name, e.currentTarget.checked)} />{property.label}</label>
+            {:else if property.type === 'number'}<label>{property.label}<input type="number" min={property.min} max={property.max} value={Number(value)} onchange={e => componentProperty(property.name, e.currentTarget.valueAsNumber)} /></label>
+            {:else if property.type === 'color'}<label>{property.label}<input type="color" value={String(value)} onchange={e => componentProperty(property.name, e.currentTarget.value)} /></label>
+            {:else if property.type === 'asset'}<label>{property.label}<select value={String(value)} onchange={e => componentProperty(property.name, e.currentTarget.value)}><option value="">None</option>{#each document.ui.assets as asset, index}<option value={asset.id}>Image {index + 1}</option>{/each}</select></label>
+            {:else if reusableDefinition.interaction.kind === 'navigate' && reusableDefinition.interaction.pageProperty === property.name}<label>{property.label}<select value={String(value)} onchange={e => componentProperty(property.name, e.currentTarget.value)}>{#each document.ui.pages as destination}<option value={destination.id}>{destination.title}</option>{/each}</select></label>
+            {:else}<label>{property.label}<input value={String(value)} onchange={e => componentProperty(property.name, e.currentTarget.value)} /></label>{/if}
+          {/each}
+        {:else}
         {#each ['foreground','background','accent'] as color}<label>{color}<input type="color" value={widget.style?.[color as keyof NonNullable<DesignerWidget['style']>] ?? (color === 'background' ? '#12232e' : '#55ddc7')} onchange={e => patch({ style: { ...widget.style, [color]: e.currentTarget.value } })} /></label>{/each}
         {#each Object.entries(widget.config).filter(([key])=>!['buttonMode','pulseMs','repeatMs'].includes(key)) as [key,value]}
           {#if typeof value === 'boolean'}<label><input type="checkbox" checked={value} onchange={e => configPatch(key,e.currentTarget.checked)} />{key}</label>
@@ -598,6 +673,7 @@
         {#if widget.kind === 'image'}<label>Image asset<select aria-label="Image asset" value={widget.config.assetId ?? ''} onchange={e=>configPatch('assetId',e.currentTarget.value || undefined)}><option value="">None</option>{#each document.ui.assets as asset,index}<option value={asset.id}>Image {index+1}</option>{/each}</select></label><button class="action" onclick={()=>patch({bounds:{...activeViewport.bounds}})}>Fill viewport</button>{/if}
         {#if widget.kind === 'button' || widget.kind === 'icon'}<label>Icon image<select value={widget.config.iconAssetId ?? ''} onchange={e => { const config = { ...widget!.config } as Record<string,unknown>; if(e.currentTarget.value) config.iconAssetId = e.currentTarget.value; else delete config.iconAssetId; patch({ config } as Partial<DesignerWidget>); }}><option value="">None</option>{#each document.ui.assets as asset}<option value={asset.id} disabled={espAssigned}>{asset.id}</option>{/each}</select></label>{/if}
         <details><summary>Advanced behavior</summary><label>Validated configuration<textarea rows="8" bind:value={configText}></textarea></label><button onclick={() => { try { patch({ config: JSON.parse(configText) }); } catch (e) { error = String(e); } }}>Apply behavior</button></details>
+        {/if}
         <button onclick={() => { command({ type: 'duplicate-widget', id: widget!.id }); select([document.presentation.widgets.at(-1)!.id]); }}>Duplicate widget</button>
         <button onclick={removeSelectedWidget}>Delete widget</button>
         {#each widget.controlIds as controlId}
@@ -684,4 +760,5 @@
   h2{font-size:22px;margin:0}h3{font-size:13px;margin:18px 0 10px}p{font-size:13px;color:var(--muted);line-height:1.6}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:12px 0}.workspace{display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px}.workspace>aside,.panel-canvas-workspace{min-width:0}.workspace>aside{padding:16px;background:var(--surface);border:1px solid var(--line);border-radius:7px;align-self:start}.palette{display:grid;grid-template-columns:1fr 1fr;gap:5px}
   button,select,input,textarea{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);padding:8px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}label{display:flex;flex-direction:column;gap:5px;font-size:12px;margin:7px 0}input,select,textarea{max-width:100%;min-width:0;box-sizing:border-box}input[type=checkbox]{width:auto;accent-color:var(--accent)}.bounds{display:grid;grid-template-columns:1fr 1fr;gap:6px}.hint{font-size:11px;line-height:1.5;overflow-wrap:anywhere}code{font-size:10px;overflow-wrap:anywhere}details{margin-top:20px}textarea{width:100%;font-family:monospace}
   @media(max-width:1050px){.workspace{grid-template-columns:220px minmax(0,1fr)}}@media(max-width:650px){.workspace{grid-template-columns:1fr}.panel-list-actions{flex-wrap:wrap}.editor-heading{align-items:flex-start}}
+  .shared-widget-library{margin:12px 0}.shared-widget-library>summary{font-size:12px;color:#bed7cf}.shared-widget-list{display:flex;flex-direction:column;gap:4px;margin:10px 0}.shared-widget-list>div{display:flex;gap:3px}.shared-widget-list button{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;padding:7px 9px;background:#19332f;border:1px solid #36574b;border-radius:4px;color:#c1ded2;cursor:pointer}.shared-widget-list button.edit-library-widget{flex:0 0 27px;padding:4px;text-align:center;background:#1c2c35;border-color:#344a58}.widget-library-actions{display:flex;gap:5px;flex-wrap:wrap}.widget-library-actions button{padding:6px 8px;font:10px inherit;border:1px solid #3f5d58;border-radius:4px;background:#203b32;color:#d5e6de;cursor:pointer}
 </style>

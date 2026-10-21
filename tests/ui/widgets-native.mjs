@@ -1,0 +1,103 @@
+import assert from 'node:assert/strict';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import test from 'node:test';
+
+// Uses the actual dev Cockpit WebView and normal UI handlers. No state injection.
+test('reusable widgets import, edit, preview and persist in the native Cockpit', {
+  skip: process.env.OSG_WIDGETS_NATIVE_UI !== '1', timeout: 120000,
+}, async () => {
+  const origin = process.env.OSG_WIDGETS_ORIGIN ?? 'http://127.0.0.1:1422';
+  const targets = await (await fetch(`${process.env.OSG_WIDGETS_CDP ?? 'http://127.0.0.1:9232'}/json/list`, { signal: AbortSignal.timeout(5000) })).json();
+  const target = targets.find(t => t.type === 'page' && new URL(t.url).origin === origin);
+  assert.ok(target, 'Start the isolated native widget Cockpit first');
+  const socket = new WebSocket(target.webSocketDebuggerUrl), pending = new Map(); let sequence = 0;
+  await new Promise((yes, no) => { socket.addEventListener('open', yes, { once: true }); socket.addEventListener('error', no, { once: true }); });
+  socket.addEventListener('message', event => { const msg = JSON.parse(event.data), item = pending.get(msg.id); if (!item) return; clearTimeout(item.timer); pending.delete(msg.id); msg.error ? item.reject(Error(msg.error.message)) : item.resolve(msg.result); });
+  const send = (method, params = {}) => new Promise((resolve, reject) => { const id = ++sequence, timer = setTimeout(() => { pending.delete(id); reject(Error(method + ' timed out')); }, 15000); pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params })); });
+  const evaluate = async expression => { const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }); if (r.exceptionDetails) throw Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text); return r.result.value; };
+  const pause = ms => new Promise(r => setTimeout(r, ms));
+  const until = async (expression, label) => { for (let i = 0; i < 100; i++) { const value = await evaluate(expression); if (value) return value; await pause(100); } throw Error(label); };
+  const click = label => until(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>(b.getAttribute('aria-label')??b.textContent.trim())===${JSON.stringify(label)});if(!b||b.disabled)return false;b.click();return true;})()`, 'Missing enabled button ' + label);
+  const change = (selector, value) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing field '+${JSON.stringify(selector)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  const run = Date.now(), directory = '.research/widgets-native-ui/' + run, checks = [], panelName = 'Shared systems ' + run;
+  const source = JSON.parse(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
+  const layerCount = source.document.presentation.widgets.reduce((sum, widget) => sum + source.document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion).layers.length, 0);
+  await mkdir(directory, { recursive: true });
+  const screenshot = async name => { const r = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(`${directory}/${name}.png`, Buffer.from(r.data, 'base64')); };
+  try {
+    await send('Page.enable');
+    await send('Page.setInterceptFileChooserDialog', { enabled: true });
+    await send('Page.reload', { ignoreCache: true });
+    await until(`!!window.__TAURI_INTERNALS__&&!!document.querySelector('nav[aria-label="Main navigation"]')`, 'Native Cockpit did not load');
+    await click('Companions');
+    await until(`!!document.querySelector('.panel-import:not(:disabled),.back-panels:not(:disabled)')`, 'Companions did not finish loading');
+    if (await evaluate(`!!document.querySelector('.back-panels')`)) await click('Back to Panels');
+    await until(`!!document.querySelector('input.panel-import:not(:disabled)')`, 'Panel library not ready');
+    const { root } = await send('DOM.getDocument');
+    const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input.panel-import' });
+    await send('DOM.setFileInputFiles', { nodeId, files: [resolve('examples/companion/shared-systems.bundle.json')] });
+    await until(`document.querySelectorAll('.component-widget').length===10`, 'Shared catalog panel did not import');
+    await click('Edit panel name');
+    await change('[aria-label="Panel name"]', panelName);
+    await evaluate(`document.querySelector('[aria-label="Panel name"]').blur()`);
+    assert.equal(await evaluate(`document.querySelectorAll('.widget-artwork').length`), 10);
+    assert.equal(await evaluate(`document.documentElement.scrollWidth>innerWidth`), false);
+    assert.equal(await evaluate(`document.querySelectorAll('.component-widget [data-layer-id]').length`), layerCount);
+    await screenshot('shared-catalog');
+    checks.push('The native designer imports all ten portable catalog widgets and renders their ordered layers.');
+    await click('Save');
+    await until(`!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Save'&&!b.disabled)&&!document.querySelector('.designer-error')`, 'Panel save did not settle');
+    await click('Preview');
+    await until(`document.body.innerText.includes('Preview armed')`, 'Preview did not arm');
+    const selector = '[data-definition-id="osg-illuminated-button"] .component-hit';
+    const point = await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, ...point });
+    await until(`document.querySelector('[data-definition-id="osg-illuminated-button"] [data-widget-state]')?.getAttribute('data-widget-state')==='pressed'`, 'Local press was not shown');
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, ...point });
+    await until(`document.body.innerText.includes('2 recorded transitions')`, 'Momentary press/release was not recorded');
+    assert.equal(await evaluate(`document.querySelector('[data-definition-id="osg-illuminated-button"] [data-widget-state]').getAttribute('data-widget-state')`), 'unknown');
+    checks.push('Actual pointer capture emits two momentary transitions and returns to unknown feedback without inventing confirmation.');
+    await click('Stop preview');
+    await evaluate(`document.querySelector('[aria-label^="Edit design Illuminated button"]').click()`);
+    await until(`!!document.querySelector('dialog.widget-designer[open]')`, 'Widget editor did not open');
+    const beforeLayers = await evaluate(`document.querySelectorAll('.layers-panel li').length`);
+    await change('[aria-label="Widget name"]', 'Illuminated button native acceptance');
+    await change('[aria-label="New layer type"]', 'text');
+    // The type selector uses a Svelte value binding, which listens to change.
+    await click('Add layer');
+    await until(`document.querySelectorAll('.layers-panel li').length===${beforeLayers + 1}`, 'New layer did not appear');
+    await change('[aria-label="Widget preview state"]', 'active');
+    await screenshot('widget-editor');
+    await click('Save to widget library');
+    await until(`!document.querySelector('dialog.widget-designer')&&!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Illuminated button native acceptance')`, 'Widget revision was not saved');
+    assert.equal(await evaluate(`document.querySelector('[data-definition-id="osg-illuminated-button"]').getAttribute('data-definition-version')`), '1');
+    checks.push('Library editing saves an immutable new revision while the existing panel remains pinned to version 1.');
+    await click('Illuminated button native acceptance');
+    await until(`document.querySelectorAll('[data-definition-id="osg-illuminated-button"]').length===2`, 'Second independent instance did not appear');
+    const revisions = await evaluate(`[...document.querySelectorAll('[data-definition-id="osg-illuminated-button"]')].map(e=>Number(e.getAttribute('data-definition-version')))`);
+    assert.equal(revisions[0], 1); assert.ok(revisions[1] > 1);
+    await click('Save');
+    await until(`!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Save'&&!b.disabled)`, 'Updated panel did not save');
+    await screenshot('reused-instance');
+    await send('Page.reload', { ignoreCache: true });
+    await until(`!!document.querySelector('nav[aria-label="Main navigation"]')`, 'Reload failed');
+    await click('Companions');
+    await until(`!!document.querySelector('.panel-import:not(:disabled),.back-panels:not(:disabled)')`, 'Reloaded Companions did not finish loading');
+    if (await evaluate(`!!document.querySelector('.back-panels')`)) await click('Back to Panels');
+    await until(`!!document.querySelector('.panel-tile')`, 'Saved panel not restored');
+    const saved = await evaluate(`document.querySelector('[aria-label='+CSS.escape(${JSON.stringify('Edit ')}+${JSON.stringify(panelName)})+']').innerText`);
+    assert.match(saved, /Shared systems/i);
+    await click('Edit ' + panelName);
+    await until(`document.querySelectorAll('[data-definition-id="osg-illuminated-button"]').length===2`, 'Saved instance revisions not restored');
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('[data-definition-id="osg-illuminated-button"]')].map(e=>Number(e.getAttribute('data-definition-version')))`), revisions);
+    assert.equal(await evaluate(`!!document.querySelector('[aria-label="Edit design Illuminated button native acceptance"]')`), true);
+    checks.push('The saved panel and widget library persist after native WebView reload.');
+    await writeFile(`${directory}/evidence.json`, JSON.stringify({ origin, actualNativeCockpit: true, checks, saved }, null, 2));
+    console.log(JSON.stringify({ directory, checks }));
+  } catch (error) {
+    await writeFile(`${directory}/failure.txt`, String(error));
+    try { await screenshot('failure'); await writeFile(`${directory}/page.txt`, await evaluate('document.body.innerText')); } catch {}
+    throw error;
+  } finally { socket.close(); }
+});

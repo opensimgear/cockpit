@@ -1,5 +1,5 @@
 import type { Bounds, PortableUi, Style } from "../../companion-contracts/src/index.ts";
-import type { WidgetDefinition, WidgetInstance } from "./widget-model.ts";
+import type { WidgetDefinition, WidgetInstance, WidgetLibrary } from "./widget-model.ts";
 export type { Bounds, PortableUi, Style };
 export const DESIGNER_LIMITS = Object.freeze({ history: 50, drafts: 20, widgets: 192, groups: 64, viewportRegions: 32, targets: 8, assetPixels: 16777216, totalAssetPixels: 33554432, assetDimension: 8192, bundleBytes: 13 * 1024 * 1024 });
 export type WidgetKind = "button" | "selector" | "hat" | "encoder" | "slider" | "xy" | "indicator" | "text" | "numeric" | "icon" | "gauge" | "image" | "component";
@@ -32,6 +32,7 @@ export interface DesignerDocument {
 }
 export interface AssetPayload { assetId: string; base64: string }
 export interface PortableBundle { bundleVersion: 1; document: DesignerDocument; assets: AssetPayload[] }
+export interface WidgetLibraryBundle { bundleVersion: 1; library: WidgetLibrary; manifest: PortableUi["assets"]; assets: AssetPayload[] }
 export interface DesignerHistory { past: DesignerDocument[]; present: DesignerDocument; future: DesignerDocument[] }
 export interface DraftEntry { id: string; name: string; document: DesignerDocument; assets: AssetPayload[] }
 export interface DesignerLibrary { schemaVersion: 1; drafts: DraftEntry[] }
