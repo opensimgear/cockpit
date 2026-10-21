@@ -580,6 +580,22 @@ impl GatewayManager {
         if command.starts_with("mapping_") || command.starts_with("dcs_") || command.starts_with("integration_") || command.starts_with("game_profile_") || matches!(command, "companion_feedback_routes" | "companion_game_capture" | "game_activate" | "game_launch" | "game_deactivate" | "controller_visibility_apply" | "controller_visibility_launch") {
             return self.error("Independent configuration and starts are retired. Use the unified applied profile graph; provider settings belong in game details. Retained ownership has explicit cleanup controls.", None);
         }
+        // Background gateway reconnects can request an independent write while
+        // an applied profile owns the device. Reject that forbidden operation
+        // before it invalidates an unrelated Save or vehicle preparation. The
+        // dispatch guard below still rechecks ownership under admission; native
+        // profile controls and explicit recovery transports keep their fences.
+        if learning_interrupt(&request) {
+            if let Some(operation) = profile_guard_operation(command).filter(|operation| !operation.starts_with("profile_")) {
+                let coordinator = self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
+                if let Err(error) = coordinator.guard_request(operation) {
+                    if recovery_transport::operation(command).is_none()
+                        || !recovery_transport::recovery_only(coordinator.status()) {
+                        return self.error(&error, None);
+                    }
+                }
+            }
+        }
         // An admitted independent write and a profile takeover cannot overlap.
         // The native host addresses its existing owners directly after this
         // boundary; it never re-enters Manager while holding the writer lock.

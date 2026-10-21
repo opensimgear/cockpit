@@ -213,11 +213,12 @@ impl NativeProfileHost {
                 output.keep_alive().map_err(|error| format!("Virtual output could not stay neutral while acquiring game telemetry. {error}"))?;
             }
             if let Some(desktop) = state.desktop.as_mut() { desktop.keep_alive()?; }
-            let now = controllers.stream_page("", 0).captured_us;
-            let sample = if first { state.game.baseline(&games, now) } else { state.game.poll_baseline(&games, now) };
+            let clock = || controllers.stream_page("", 0).captured_us;
+            let sample = if first { state.game.baseline(&games, clock) } else { state.game.poll_baseline(&games, clock) };
             first = false;
             let batch = state.game.delivery_batch();
             self.check_transition(owner)?;
+            let published = batch.is_some();
             if let Some(batch) = batch { resources.publish_profile_game_delivery(batch)?; }
             if sample.context_lost {
                 return Err(format!("The verified game context changed during baseline acquisition. {}", sample.diagnostics.join(" ")));
@@ -225,7 +226,11 @@ impl NativeProfileHost {
             if Instant::now() >= deadline {
                 return Err("The game provider did not produce an advancing fresh baseline before activation.".into());
             }
-            if sample.fresh { return Ok(sample.frames); }
+            if sample.fresh && !published { return Ok(sample.frames); }
+            // Publishing a catalogue can itself take longer than a lease.
+            // Reacquire a complete live baseline after that work; never extend
+            // the accepted counter's freshness or redate already decoded bytes.
+            if published { first = true; }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
@@ -386,8 +391,9 @@ impl NativeProfileHost {
         resources: &Arc<crate::profile_resources::Runtime>,
         games: &Arc<crate::games::GamesRuntime>,
         state: &mut NativeRun,
-        now_us: u64,
+        clock: impl Fn() -> u64,
     ) -> Result<crate::profile_session_games::GamePoll, String> {
+        let now_us = clock();
         let mut resume_diagnostics=vec![];
         if let Some(receiver)=state.game_resume.take() {
             match receiver.try_recv() {
@@ -437,18 +443,18 @@ impl NativeProfileHost {
                 state.game_resume=Some(receiver);
             }
         }
-        let mut sample = state.game.poll(games, now_us);
+        let mut sample = state.game.poll(games, &clock);
         sample.diagnostics.extend(resume_diagnostics);
         if let Some(batch) = state.game.delivery_batch() {
             if let Err(error) = resources.publish_profile_game_delivery(batch) {
-                sample = state.game.fail(now_us, error);
+                sample = state.game.fail(clock(), error);
             }
         }
         if !sample.context_lost && state.game.requires_baseline() && state.game.has_delivery_publication() {
             let validation = state.game.provider_identity()
                 .ok_or_else(|| "The acquired game reader has no native inventory owner.".to_owned())
                 .and_then(|(game, reader)| resources.validate_profile_game_delivery(game, reader));
-            if let Err(error) = validation { sample = state.game.fail(now_us, error); }
+            if let Err(error) = validation { sample = state.game.fail(clock(), error); }
         }
         if sample.context_lost {
             Self::withdraw_game(resources, state)?;
@@ -1085,8 +1091,6 @@ impl Host for NativeProfileHost {
                 self.acquire_actions(&run.owner)
             }
             ApplyPhase::Baseline => {
-                let resources = self.resources.clone();
-                let controllers = self.controllers.clone();
                 if !prepared.plan.sources.is_empty() {
                     self.report_progress(&run.owner, "capturing-neutral-inputs", "Checking neutral input states");
                 }
@@ -1320,8 +1324,7 @@ impl Host for NativeProfileHost {
             })?;
         // Native context loss reaches the reducer before timers/scripts can
         // emit effects, withdrawing only branches that depend on that game.
-        let now_us = controllers.stream_page("", 0).captured_us;
-        let game = Self::game_poll(&resources, &games, state, now_us)?;
+        let game = Self::game_poll(&resources, &games, state, || controllers.stream_page("", 0).captured_us)?;
         degraded.extend(Self::refresh_desktop_context(&games,state)?);
         degraded.extend(dcs_hid::refresh(state, &resources, &panels_io));
         degraded.extend(game.diagnostics);

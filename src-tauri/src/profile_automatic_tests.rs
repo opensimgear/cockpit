@@ -64,9 +64,37 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self { Self::with_legacy_stop(false) }
     fn with_legacy_stop(legacy_stop: bool) -> Self {
+        Self::with_options(legacy_stop, false)
+    }
+    fn with_vehicle_catalogues() -> Self {
+        Self::with_options(false, true)
+    }
+    fn with_options(legacy_stop: bool, vehicle_catalogues: bool) -> Self {
         let mut manager = GatewayManager::with_provider(Arc::new(NoPorts));
         let directory = crate::test_directory();
         let games = Arc::new(Games::default());
+        let fixture_metadata_path = directory.path().join("games.json");
+        let paths = crate::games::Paths {
+            installations: fixture_metadata_path.with_extension("installations-v1.json"),
+            provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
+            recovery: fixture_metadata_path.with_extension("recovery.json"),
+        };
+        if vehicle_catalogues {
+            // Vehicle tabs register their own authoring catalogues even when
+            // this constant-only fixture never acquires simulator telemetry.
+            // Keep all setup files private to this test's temporary directory.
+            let target = directory.path().join("DCS");
+            std::fs::create_dir(&target).unwrap();
+            crate::dcs_setup::fixture_module(&target);
+            std::fs::write(target.join("Scripts/Export.lua"), b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n").unwrap();
+            let catalogue = target.join("Scripts/DCS-BIOS/doc/json");
+            let aliases_path = catalogue.join("AircraftAliases.json");
+            let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+            aliases["FA-18C_hornet"] = json!(["A-10C"]);
+            aliases["F-16C_50"] = json!(["A-10C"]);
+            std::fs::write(aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+            std::fs::write(&paths.provider_setup, serde_json::to_vec(&json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":crate::game_integration_setup::dcs_connection(&catalogue),"aircraftModule":"A-10C"}}})).unwrap()).unwrap();
+        }
         manager.games = Arc::new(crate::games::GamesRuntime::new(
             Arc::new(|request| {
                 assert_eq!(
@@ -75,14 +103,7 @@ impl Fixture {
                 );
                 json!({"ok":true,"state":{"integration":{"running":false}}})
             }),
-            {
-                let fixture_metadata_path = directory.path().join("games.json");
-                crate::games::Paths {
-                    installations: fixture_metadata_path.with_extension("installations-v1.json"),
-                    provider_setup: fixture_metadata_path.with_extension("integration-setup.json"),
-                    recovery: fixture_metadata_path.with_extension("recovery.json"),
-                }
-            },
+            paths,
             games.clone()));
         let resources = manager.profile_resources.clone();
         let runtime_games = manager.games.clone();
@@ -195,7 +216,7 @@ fn owner(manager: &GatewayManager) -> Option<crate::profile_session::RunOwner> {
 
 #[test]
 fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
-    let fixture=Fixture::new();let manager=&fixture.manager;
+    let fixture=Fixture::with_vehicle_catalogues();let manager=&fixture.manager;
     let id=create(manager,"Vehicle variants");
     let mut document=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
     document["eligibility"]["gameIds"]=json!(["dcs"]);
@@ -247,7 +268,7 @@ fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
 
 #[test]
 fn vehicle_switch_failure_is_visible_and_retries_after_backoff_without_replaying_on_poll() {
-    let mut fixture=Fixture::new();fixture.process("dcs",1);fixture.wait_game("dcs");
+    let mut fixture=Fixture::with_vehicle_catalogues();fixture.process("dcs",1);fixture.wait_game("dcs");
     let manager=&mut fixture.manager;let id=create(manager,"Retry vehicle settings");
     let mut document=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
     let revision=document["revision"].clone();document["eligibility"]["gameIds"]=json!(["dcs"]);

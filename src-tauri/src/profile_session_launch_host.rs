@@ -303,7 +303,7 @@ impl NativeProfileHost {
         game.acquire(games)?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while game.requires_baseline() {
-            let sample = game.poll(games, controllers.stream_page("", 0).captured_us);
+            let sample = game.poll(games, || controllers.stream_page("", 0).captured_us);
             if sample.context_lost {
                 return Err(sample.diagnostics.join("; "));
             }

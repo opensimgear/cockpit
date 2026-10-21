@@ -619,7 +619,7 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
         "A fixture process must not pass the native source's real image/process gate."
     );
     assert!(reader.admit(&games).is_err());
-    assert!(!reader.baseline(&games, 0).fresh);
+    assert!(!reader.baseline(&games, ||0).fresh);
     assert!(reader.delivery_batch().is_none());
     games
         .set_profile_context_owner(Some(ProfileOwner {
@@ -631,26 +631,149 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
         }))
         .unwrap();
     reader.admit(&games).unwrap();
-    assert!(!reader.poll(&games, 1).fresh);
+    assert!(!reader.poll(&games, ||1).fresh);
     assert!(reader.delivery_batch().is_none());
     assert!(reader
         .invoke(&games, &effect(&Dcs::new().command, 1))
         .is_err());
     *platform.process.lock().unwrap() = None;
-    let lost = reader.poll(&games, 2);
+    let lost = reader.poll(&games, ||2);
     assert!(lost.context_lost);
     assert_eq!(lost.frames[0].reason, Reason::Disconnect);
     assert!(!lost.diagnostics.is_empty());
-    assert!(reader.poll(&games, 3).context_lost);
+    assert!(reader.poll(&games, ||3).context_lost);
     assert!(reader.acquire(&games).is_err());
     let mut dormant = GameSources::prepare(&plan, None).unwrap();
     dormant.acquire(&games).unwrap();
     dormant.admit(&games).unwrap();
-    assert!(dormant.poll(&games, 4).frames.is_empty());
+    assert!(dormant.poll(&games, ||4).frames.is_empty());
     assert!(!dormant.requires_baseline());
     games.shutdown();
     assert!(!folder.path().join("integration.json").exists());
 }
+
+#[test]
+fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_sources() {
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    struct GuardClock {
+        thread: std::thread::ThreadId,
+        armed: AtomicBool,
+        clock: AtomicU64,
+        validation_cost: AtomicU64,
+        process_checks: AtomicUsize,
+    }
+    impl GuardClock {
+        fn identity() -> crate::game_discovery::ProcessIdentity {
+            crate::game_discovery::ProcessIdentity { pid: 42, path: "/fixture/DCS.exe".into(), epoch: 10 }
+        }
+        fn checked(&self, find: bool) {
+            // Ignore independent observers; only this poll's synchronous native
+            // proof validation may advance its deterministic acquisition clock.
+            if self.armed.load(Ordering::SeqCst) && std::thread::current().id() == self.thread {
+                self.process_checks.fetch_add(1, Ordering::SeqCst);
+                if find { self.clock.fetch_add(self.validation_cost.load(Ordering::SeqCst), Ordering::SeqCst); }
+            }
+        }
+    }
+    impl crate::game_discovery::Platform for GuardClock {
+        fn integration_setup_supported(&self) -> bool { true }
+        fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+            vec![json!({"id":"dcs","provider":"dcs-bios","installed":true,"executable":"/fixture/DCS.exe","launchSupported":true,"processMonitoringSupported":true})]
+        }
+        fn validate(&self, _: &str, path: &str) -> Result<(), String> {
+            if path == Self::identity().path { Ok(()) } else { Err("Wrong executable".into()) }
+        }
+        fn launch(&self, _: &Value) -> Result<crate::game_discovery::ProcessIdentity, String> { Err("No launch expected".into()) }
+        fn find(&self, _: &Value) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
+            self.checked(true); Ok(Some(Self::identity()))
+        }
+        fn alive(&self, identity: &crate::game_discovery::ProcessIdentity) -> Result<bool, String> {
+            self.checked(false); Ok(identity == &Self::identity())
+        }
+    }
+    let folder = crate::test_directory();
+    let target = folder.path().join("DCS");
+    fs::create_dir(&target).unwrap();
+    crate::dcs_setup::fixture_module(&target);
+    fs::write(target.join("Scripts/Export.lua"), b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n").unwrap();
+    let catalogue = target.join("Scripts/DCS-BIOS/doc/json");
+    fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios/CommonData-altitude.json"), catalogue.join("CommonData.json")).unwrap();
+    let aliases_path = catalogue.join("AircraftAliases.json");
+    let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+    aliases["A-10C"].as_array_mut().unwrap().push(json!("CommonData"));
+    fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+    let paths = crate::games::Paths::in_directory(folder.path());
+    let mut connection = crate::game_integration_setup::dcs_connection(&catalogue);
+    connection["freshnessMs"] = json!(100);
+    fs::write(&paths.provider_setup, serde_json::to_vec(&json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":connection,"aircraftModule":"A-10C"}}})).unwrap()).unwrap();
+    let platform = Arc::new(GuardClock { thread: std::thread::current().id(), armed: AtomicBool::new(false), clock: AtomicU64::new(0), validation_cost: AtomicU64::new(2_000_000), process_checks: AtomicUsize::new(0) });
+    let games = GamesRuntime::new(Arc::new(|request| panic!("Acquisition guards must not submit output: {request}")), paths, platform.clone());
+    let game = games.prepare_profile_game_context("dcs").unwrap().unwrap();
+    let descriptors = crate::profile_resource_ports::integration(&game.catalogue).unwrap();
+    let mut plan = empty_plan();
+    source(&mut plan, "dcs", descriptors.iter().find(|p| p.id == "channel:common:CommonData:ALT_MSL_FT:0").unwrap());
+    let mut reader = GameSources::prepare(&plan, Some(game)).unwrap();
+    // Keep the real reader/decoder while isolating test datagrams from the
+    // passive observer's socket. Process proof validation remains authoritative;
+    // this test transport cannot acquire admitted simulator command authority.
+    let Some(Reader::Dcs { network, transport, .. }) = &mut reader.reader else { panic!() };
+    network.listen_address = std::net::Ipv4Addr::LOCALHOST;
+    network.listen_port = 0;
+    network.multicast_group = None;
+    network.multicast_interface = std::net::Ipv4Addr::LOCALHOST;
+    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
+    let address = transport.as_ref().unwrap().local_addr().unwrap();
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    platform.armed.store(true, Ordering::SeqCst);
+    let clock = || {
+        assert_eq!(platform.process_checks.swap(0, Ordering::SeqCst), 2, "Sample the clock after this poll validates both process identity and liveness");
+        platform.clock.load(Ordering::SeqCst)
+    };
+    sender.send_to(&bytes(1, true), address).unwrap();
+    let first = reader.baseline(&games, clock);
+    assert!(!first.fresh);
+    platform.validation_cost.store(0, Ordering::SeqCst);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while reader.witness.is_none() {
+        assert!(Instant::now() < deadline, "The first isolated UDP counter was not received");
+        assert!(!reader.poll_baseline(&games, clock).fresh);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    platform.validation_cost.store(10_000, Ordering::SeqCst);
+    sender.send_to(&bytes(2, true), address).unwrap();
+    let mut baseline = reader.poll_baseline(&games, clock);
+    platform.validation_cost.store(0, Ordering::SeqCst);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !baseline.fresh {
+        assert!(Instant::now() < deadline, "The advancing isolated UDP counter was not received: {:?}", baseline.diagnostics);
+        baseline = reader.poll_baseline(&games, clock);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(baseline.frames[0].captured_us.0, 2_010_000, "New bytes must not inherit the clock from before slow native validation");
+    platform.validation_cost.store(101_000, Ordering::SeqCst);
+    assert!(!reader.poll(&games, clock).fresh, "Advancing the clock cannot extend a silent decoder's lease");
+    platform.validation_cost.store(10_000, Ordering::SeqCst);
+    sender.send_to(&bytes(2, true), address).unwrap();
+    assert!(!reader.poll_baseline(&games, clock).fresh, "A frozen old counter cannot become a new baseline");
+
+    let selected = catalogue.join("CommonData.json");
+    let original = fs::read(&selected).unwrap();
+    let original_modified = fs::metadata(&selected).unwrap().modified().unwrap();
+    let mut changed = original.clone(); changed.push(b'\n');
+    fs::write(&selected, changed).unwrap();
+    let lost = reader.baseline(&games, || {
+        // Restoring in the callback would hide the changed file if the clock
+        // were sampled before the forced catalogue guard.
+        fs::write(&selected, &original).unwrap();
+        fs::File::options().write(true).open(&selected).unwrap().set_modified(original_modified).unwrap();
+        platform.clock.load(Ordering::SeqCst)
+    });
+    assert!(lost.context_lost && !lost.fresh);
+    assert!(lost.diagnostics.iter().any(|error| error.contains("catalogue changed")));
+    assert!(reader.reader.is_none());
+    games.shutdown();
+}
+
 #[test]
 fn rally_fixture_uses_exact_native_channels_and_preserves_unknown_optional_values() {
     let game = prepared(
@@ -995,7 +1118,7 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
                 process: Mutex::new(None),
             }),
         );
-        let lost = reader.poll(&games, 3000);
+        let lost = reader.poll(&games, ||3000);
         assert!(lost.context_lost && !lost.fresh, "{changed}");
         assert!(
             lost.diagnostics

@@ -404,13 +404,13 @@ impl GameSources {
             games.validate_game_preparation(&game.proof)
         }
     }
-    pub(crate) fn poll(&mut self, games: &GamesRuntime, now_us: u64) -> GamePoll {
-        self.poll_with_policy(games, now_us, false)
+    pub(crate) fn poll(&mut self, games: &GamesRuntime, clock: impl FnOnce() -> u64) -> GamePoll {
+        self.poll_with_policy(games, clock, false)
     }
     fn poll_with_policy(
         &mut self,
         games: &GamesRuntime,
-        now_us: u64,
+        clock: impl FnOnce() -> u64,
         baseline: bool,
     ) -> GamePoll {
         if self.lost {
@@ -420,8 +420,12 @@ impl GameSources {
             };
         }
         if let Err(error) = self.validate(games) {
-            return self.lose(now_us, error);
+            return self.lose(clock(), error);
         }
+        // Process and catalogue validation may outlast the telemetry lease.
+        // Timestamp actual acquisition after those checks, using the host's
+        // source clock, rather than backdating newly received simulator bytes.
+        let now_us = clock();
         let snapshot = self.read(now_us, baseline);
         match snapshot {
             Ok(Some(snapshot)) => self.frames(snapshot, now_us),
@@ -431,19 +435,19 @@ impl GameSources {
     }
     /// Drain native acquisition into one current baseline immediately before
     /// arming. Pre-Start transitions never acquire event/one-shot authority.
-    pub(crate) fn baseline(&mut self, games: &GamesRuntime, now_us: u64) -> GamePoll {
+    pub(crate) fn baseline(&mut self, games: &GamesRuntime, clock: impl FnOnce() -> u64) -> GamePoll {
         if let Err(error) = self.validate_catalogue(true) {
-            return self.lose(now_us, error);
+            return self.lose(clock(), error);
         }
         for source in self.sources.values_mut() {
             source.available = false;
         }
-        self.poll_baseline(games, now_us)
+        self.poll_baseline(games, clock)
     }
     /// One bounded pre-arm read. The host owns waiting, cancellation and output
     /// heartbeats, including after discarding a queued pre-activation backlog.
-    pub(crate) fn poll_baseline(&mut self, games: &GamesRuntime, now_us: u64) -> GamePoll {
-        self.poll_with_policy(games, now_us, true)
+    pub(crate) fn poll_baseline(&mut self, games: &GamesRuntime, clock: impl FnOnce() -> u64) -> GamePoll {
+        self.poll_with_policy(games, clock, true)
     }
     pub(crate) fn requires_baseline(&self) -> bool {
         self.reader.is_some()

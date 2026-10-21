@@ -400,7 +400,7 @@ fn newly_opened_game_reader_can_wait_for_a_baseline_before_inventory_publication
     let (reader,_address,_catalogue)=crate::profile_session_games::test_baseline_reader();
     let resources=f.host.resources.clone();let games=f.host.games.clone();
     let state=f.host.run(&f.run.owner).unwrap();state.game=reader;
-    let pending=NativeProfileHost::game_poll(&resources,&games,state,1_000_000).unwrap();
+    let pending=NativeProfileHost::game_poll(&resources,&games,state,||1_000_000).unwrap();
     assert!(!pending.context_lost,"Waiting for advancing telemetry must not retire the fresh reader: {:?}",pending.diagnostics);
     assert!(!pending.fresh);
     assert!(!state.game.can_command());
@@ -418,7 +418,7 @@ fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_ru
     *f.process.0.lock().unwrap()=None;
     let resources=f.host.resources.clone();let games=f.host.games.clone();
     let state=f.host.run(&f.run.owner).unwrap();
-    let closed=NativeProfileHost::game_poll(&resources,&games,state,1_000_000).unwrap();
+    let closed=NativeProfileHost::game_poll(&resources,&games,state,||1_000_000).unwrap();
     assert!(closed.context_lost);
     assert!(state.reducer.is_some(),"Game loss must preserve the active hardware reducer");
     assert_eq!(state.owner,f.run.owner);
@@ -427,7 +427,7 @@ fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_ru
     let state=f.host.run(&f.run.owner).unwrap();
     let deadline=Instant::now()+Duration::from_secs(3);
     let returned=loop {
-        let sample=NativeProfileHost::game_poll(&resources,&games,state,2_000_000).unwrap();
+        let sample=NativeProfileHost::game_poll(&resources,&games,state,||2_000_000).unwrap();
         if !sample.context_lost{break sample;}
         assert!(Instant::now()<deadline,"{:?}",sample.diagnostics);
         std::thread::sleep(Duration::from_millis(5));

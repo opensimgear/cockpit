@@ -63,6 +63,43 @@ fn editor_save_reports_preparation_failure_after_persisting_and_keeps_previous_r
 }
 
 #[test]
+fn rejected_background_connections_do_not_cancel_active_editor_save_preparation() {
+    let (mut manager, provider) = setup();
+    let id = osg_profiles::DEFAULT_PROFILE_ID;
+    assert_eq!(request(&manager,"profile_apply",None,json!({"id":id,"expectedRevision":1}))["ok"],true);
+    let document = request(&manager,"profile_get",None,json!({"id":id}))["state"]["profiles"]["document"].clone();
+    let prepare = manager.profile_prepare.clone();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release = Mutex::new(release_rx);
+    Arc::get_mut(&mut manager).unwrap().profile_prepare = Arc::new(move |candidate| {
+        entered_tx.send(()).unwrap();
+        release.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+        prepare(candidate)
+    });
+    let saving = manager.clone();
+    let worker = std::thread::spawn(move || request(&saving,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":[]})));
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+    // GatewayWorkspace periodically retries present disconnected gateways. A
+    // denied connection must not masquerade as a newer native profile control.
+    let blocked = (0..3).map(|_| request(&manager,"connect",Some(FIRST),json!({"backend":"pico","port":"COM7"}))).collect::<Vec<_>>();
+    let observed_epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+    release_tx.send(()).unwrap();
+    let saved = worker.join().unwrap();
+    for blocked in blocked {
+        assert_eq!(blocked["ok"],false,"{blocked}");
+        assert!(blocked["error"].as_str().unwrap().contains("active profile owns"),"{blocked}");
+    }
+    assert_eq!(observed_epoch,epoch,"Rejected independent connections cannot cancel profile preparation");
+    assert!(provider.adapters.lock().unwrap().is_empty(),"Rejected retries cannot open a transport");
+    assert_eq!(saved["ok"],true,"{saved}");
+    assert_eq!(saved["state"]["profiles"]["saveApplication"],json!({"state":"applied","error":null}));
+    assert_eq!(saved["state"]["profiles"]["profileSession"]["owner"]["profileRevision"],2);
+    assert_eq!(saved["state"]["profiles"]["automatic"]["mode"],"manual");
+}
+
+#[test]
 fn editor_save_reports_takeover_failure_as_saved_and_exposes_recovery_status() {
     let (manager, _) = setup();
     let id = osg_profiles::DEFAULT_PROFILE_ID;
@@ -207,7 +244,7 @@ fn a_newer_editor_save_replaces_the_run_and_cancels_older_saved_preparation() {
     let worker = std::thread::spawn(move || request(&saving,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":[]})));
     entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let mut latest = request(&manager,"profile_get",None,json!({"id":id}))["state"]["profiles"]["document"].clone();
-    latest["eligibility"]["gameIds"] = json!(["dcs"]);
+    latest["editor"]["viewport"]["x"] = json!(120);
     let latest = request(&manager,"profile_editor_save",None,json!({"document":latest,"expectedRevision":2,"assignments":[]}));
     release_tx.send(()).unwrap();
     let older = worker.join().unwrap();
