@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { loadModules } from './test-module-loader.mjs';
 const modules=await loadModules(['./profiles','./profile-editor','./profile-desktop']);
 const {DEFAULT_PROFILE_ID,exportProfileDocument}=modules.get('./profiles');
-const {ProfileEditorStore,ProfileNavigationGuard,seedProfile,blankProfile,copyProfile,addProfileResources,profileAutoLayout,profileEditorDirty,profileCategory}=modules.get('./profile-editor');
+const {ProfileEditorStore,ProfileNavigationGuard,seedProfile,blankProfile,copyProfile,addProfileResources,profileAutoLayout,profileEditorDirty,profileCategory,PROFILE_BLOCK_HEIGHT}=modules.get('./profile-editor');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const uid=n=>`11111111-1111-4111-8111-${String(n).padStart(12,'0')}`;
 const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8').catch(()=>readFile(new URL('../../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8')));
@@ -79,7 +79,7 @@ test('new discovery adds only explicitly requested resources without erasing sav
   const second=addProfileResources(first.document,first.assignments,[inventory()[0],resource('osg-module',99)]);
   assert.equal(second.document.resources.length,3);assert.deepEqual(plain(second.document.editor.positions[0]),plain(first.document.editor.positions[0]));
   assert.equal(second.document.resources[0].name,first.document.resources[0].name);assert.equal(first.document.resources.length,2);
-  assert.ok(second.document.editor.positions[2].y>725+232);assert.equal(second.document.bindings.length,0);
+  assert.ok(second.document.editor.positions[2].y>725+PROFILE_BLOCK_HEIGHT);assert.equal(second.document.bindings.length,0);
 });
 test('copies preserve the entire portable graph and layout with independent identity but no inferred local assignments',()=>{
   const source=plain(fixture);source.name='A'.repeat(80);const copy=copyProfile(source,uid(1));

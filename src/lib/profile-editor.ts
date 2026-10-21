@@ -4,7 +4,7 @@ import type { ProfileInventoryClient, ResourceSummary } from './profile-inventor
 import { profileTabNodeIds, profileStampVehicleNodes } from './profile-vehicle-tabs';
 export const PROFILE_RESOURCE_CAPACITY = 64;
 export const PROFILE_BLOCK_WIDTH = 288;
-export const PROFILE_BLOCK_HEIGHT = 232;
+export const PROFILE_BLOCK_HEIGHT = 188;
 export type EditorSaveResult = ProfileResult & {
     document: ProfileDocument;
     assignments: ProfileLocalAssignment[];
