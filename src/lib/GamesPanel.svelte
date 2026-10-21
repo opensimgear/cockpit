@@ -102,7 +102,9 @@
     <div class="game-details-heading">
       <div class={['game-detail-mark', { racing: selectedArt!.category !== 'Flight' }]}><Icon name={selectedArt!.category === 'Flight' ? 'command' : selectedArt!.category === 'Custom' ? 'gamepad' : 'wheel'} size={32} /></div>
       <div><p class="game-kicker">{selectedArt!.category==='Custom'?'CUSTOM GAME':`${selectedArt!.category} simulation`}</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selectedArt!.telemetryLabel}</p></div>
-      <div class="detail-launch">{#if isCustomGameId(selected.id)}<div class="custom-game-actions"><button class="secondary-button" disabled={locked} onclick={()=>customDialog='edit'}>Edit game</button><button class="text-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button></div>{/if}{#key selected.id}<GameProfileLaunch game={selected} busy={locked}/>{/key}</div>
+      <div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}>
+        {#snippet actions()}{#if isCustomGameId(selected.id)}<button class="secondary-button" disabled={locked} onclick={()=>customDialog='edit'}>Edit game</button><button class="secondary-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/if}{/snippet}
+      </GameProfileLaunch>{/key}</div>
     </div>
 
     <div class="game-content">
@@ -210,7 +212,7 @@
 </dialog>
 
 <style>
-  .custom-game-actions{display:flex;justify-content:flex-end;gap:12px;margin-bottom:12px}.custom-game-context{padding:20px}.custom-game-context p{color:var(--muted);font-size:12px;line-height:1.7}.editor-label>input{padding:10px;background:var(--input-bg);border:1px solid var(--line);color:var(--text);border-radius:5px;min-width:0;width:100%;box-sizing:border-box}
+  .custom-game-context{padding:20px}.custom-game-context p{color:var(--muted);font-size:12px;line-height:1.7}.editor-label>input{padding:10px;background:var(--input-bg);border:1px solid var(--line);color:var(--text);border-radius:5px;min-width:0;width:100%;box-sizing:border-box}
   .game-content {min-width:0;font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   .game-content .field-help {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);overflow-wrap:anywhere;}
   .game-content button, .game-content select {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
