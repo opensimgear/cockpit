@@ -24,7 +24,7 @@ async function connectNative() {
   let endpoint = process.env.OSG_NATIVE_PAGE_WS;
   if (!endpoint) {
     const response = await fetch(`${process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9222'}/json/list`, { signal: AbortSignal.timeout(5000) });
-    endpoint = (await response.json()).find(target => target.type === 'page' && /127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(target.url))?.webSocketDebuggerUrl;
+    endpoint = (await response.json()).find(target => target.type === 'page' && !target.url.includes('profile-activation-window') && /127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(target.url))?.webSocketDebuggerUrl;
   }
   assert.ok(endpoint, 'Start the actual native dev Cockpit with its page debugging target enabled.');
   const socket = new WebSocket(endpoint), pending = new Map(), listeners = new Map(); let sequence = 0;
@@ -57,7 +57,7 @@ async function connectNative() {
   };
 }
 
-test('native canvas constructs compact transforms with named border ports and smooth shared resource anchors', { timeout: 240000 }, async () => {
+test('native canvas constructs graphs, rejects full inputs and persists draggable orthogonal or smooth arrows', { timeout: 300000 }, async () => {
   await mkdir(artifacts, { recursive: true });
   const native = await connectNative(), name = `Wiring ${randomUUID()}`, checks = [];
   let profileId, beforeProfiles, beforeAutomatic, intercepted, dragging = false, draftOpen = false, companionEvidence;
@@ -82,8 +82,9 @@ test('native canvas constructs compact transforms with named border ports and sm
   const background = () => until(() => native.evaluate(`(()=>{const stage=document.querySelector('.canvas-stage'),r=stage.getBoundingClientRect();for(const fy of [.15,.3,.8,.6])for(const fx of [.1,.5,.85]){const x=Math.round(r.left+r.width*fx),y=Math.round(r.top+r.height*fy),hit=document.elementFromPoint(x,y);if(x>0&&y>0&&x<innerWidth&&y<innerHeight&&hit&&stage.contains(hit)&&!hit.closest('[data-node-id],.signal-edge-hit,.canvas-inspector,.canvas-port-picker,button,input,select'))return{x,y};}return null;})()`), 'Visible blank canvas is unavailable');
   const dragWire = async (source, target, allowDirectCommit = false) => {
     const beforeEdges = (await snapshot()).edges;
-    await clickIfPresent('Close component settings','.canvas-inspector');await stageVisible(); const from = await center(source), to = await center(target);
+    await clickIfPresent('Close component settings','.canvas-inspector');await stageVisible(); const from = await center(source);
     await mouse('mouseMoved', from); await mouse('mousePressed', from, { button: 'left', buttons: 1, clickCount: 1 });
+    const to = await center(target);
     for (const fraction of [.2, .5, .8, 1]) await mouse('mouseMoved', point(from.x + (to.x - from.x) * fraction, from.y + (to.y - from.y) * fraction), { button: 'left', buttons: 1 });
     await mouse('mouseReleased', to, { button: 'left', buttons: 0, clickCount: 1 });
     return until(async () => { const state = await snapshot(); return state.panel?.visible || allowDirectCommit && state.edges > beforeEdges ? state : null; }, 'A real connection drag did not open the contextual port picker or commit its exact ports');
@@ -124,9 +125,24 @@ test('native canvas constructs compact transforms with named border ports and sm
   };
   const edgePoint = bindingId => until(() => native.evaluate(`(()=>{const path=[...document.querySelectorAll('.signal-edge-hit')].find(path=>path.dataset.connectionId===${JSON.stringify(bindingId)}),stage=document.querySelector('.canvas-stage');if(!path||!stage)return null;const bounds=stage.getBoundingClientRect(),length=path.getTotalLength(),matrix=path.getScreenCTM();for(const fraction of [.5,.35,.65,.2,.8,.1,.9]){const point=path.getPointAtLength(length*fraction),screen=new DOMPoint(point.x,point.y).matrixTransform(matrix);if(screen.x>bounds.left&&screen.x<bounds.right&&screen.y>bounds.top&&screen.y<bounds.bottom&&screen.x<innerWidth&&screen.y<innerHeight&&document.elementFromPoint(screen.x,screen.y)?.closest('.signal-edge-hit')===path)return{x:Math.round(screen.x),y:Math.round(screen.y)};}return null;})()`),`Visible selectable wire unavailable: ${bindingId}`);
   const selectEdge = async bindingId => {
-    await clickIfPresent('Close component settings','.canvas-inspector');await stageVisible();const at=await edgePoint(bindingId);
+    await clickIfPresent('Close component settings','.canvas-inspector');await stageVisible();
+    if(await native.evaluate(`[...document.querySelectorAll('.signal-edge-hit')].some(path=>path.dataset.connectionId===${JSON.stringify(bindingId)}&&path.getAttribute('aria-pressed')==='true')`))return;
+    const at=await edgePoint(bindingId);
     await mouse('mouseMoved',at);await mouse('mousePressed',at,{button:'left',buttons:1,clickCount:1});await mouse('mouseReleased',at,{button:'left',buttons:0,clickCount:1});
     await until(()=>native.evaluate(`document.querySelectorAll('.connection-endpoint[data-reconnect-binding="${bindingId}"]').length===2`),'Selecting a wire did not reveal its endpoint handles');
+  };
+  const setArrowStyle = async value => {
+    await native.evaluate(`(()=>{const select=document.querySelector('select[aria-label="Arrow style"]');if(!select)throw new Error('Arrow style selector is missing');select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await until(()=>native.evaluate(`document.querySelector('select[aria-label="Arrow style"]')?.value===${JSON.stringify(value)}`),'Arrow style selection did not update');
+  };
+  const edgeGeometry = bindingId => native.evaluate(`(()=>{const path=[...document.querySelectorAll('.signal-edge')].find(path=>path.dataset.bindingId===${JSON.stringify(bindingId)});if(!path)return null;const length=path.getTotalLength(),start=path.getPointAtLength(0),end=path.getPointAtLength(length);return{path:path.getAttribute('d'),start:{x:start.x,y:start.y},end:{x:end.x,y:end.y}};})()`);
+  const dragSegment = async (bindingId, orientation, delta) => {
+    await selectEdge(bindingId);
+    const at=await until(()=>native.evaluate(`(()=>{const segments=[...document.querySelectorAll('[data-segment-binding]')].filter(segment=>segment.dataset.segmentBinding===${JSON.stringify(bindingId)}&&segment.getAttribute('aria-label')?.includes(${JSON.stringify(orientation)}));for(const segment of segments){const p=segment.getPointAtLength(segment.getTotalLength()/2),matrix=segment.getScreenCTM(),at=new DOMPoint(p.x,p.y).matrixTransform(matrix),hit=document.elementFromPoint(at.x,at.y);if(at.x>0&&at.y>0&&at.x<innerWidth&&at.y<innerHeight&&hit===segment)return{x:Math.round(at.x),y:Math.round(at.y)};}return null;})()`),`Visible ${orientation} segment unavailable`);
+    const to=point(at.x+delta.x,at.y+delta.y);
+    await mouse('mouseMoved',at);await mouse('mousePressed',at,{button:'left',buttons:1,clickCount:1});
+    for(const fraction of [.25,.5,.75,1])await mouse('mouseMoved',point(at.x+delta.x*fraction,at.y+delta.y*fraction),{button:'left',buttons:1});
+    await mouse('mouseReleased',to,{button:'left',buttons:0,clickCount:1});
   };
   const dropPaletteComponent = async (selector,bindingId) => {
     await clickIfPresent('Close component settings','.canvas-inspector');
@@ -161,8 +177,7 @@ test('native canvas constructs compact transforms with named border ports and sm
     assert.ok(boolean, 'A real boolean controller output is required for the virtual button route.');
 
     await click('Profiles', 'nav[aria-label="Main navigation"]');
-    await until(async()=>{if(await clickIfPresent('← Back to Profiles'))return false;if(await clickIfPresent('Discard and continue'))return false;return native.evaluate(`[...document.querySelectorAll('.profiles-workspace button')].some(button=>button.textContent.trim()==='Add profile')`);},'The profile list did not finish opening');
-    await click('Add profile'); draftOpen = true;
+    await until(async()=>{if(await clickIfPresent('Add profile'))return true;if(await clickIfPresent('Discard and continue'))return false;await clickIfPresent('← Back to Profiles');return false;},'The profile list did not finish opening',60000);draftOpen = true;
     await click('Edit profile name');
     await native.evaluate(`(()=>{const input=document.querySelector('.profile-name-input');input.value=${JSON.stringify(name)};input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);
     await save(); draftOpen = false;
@@ -348,8 +363,41 @@ test('native canvas constructs compact transforms with named border ports and sm
     await dragWire(`[data-connection-source="${resourceId}"]`,`[data-connection-target="${gate.id}"][data-connection-port="gate"]`);assert.equal((await snapshot()).panel.input,'gate');await choosePort('Find an output',pin[0].profilePortId);await until(async()=>!(await snapshot()).panel,'The exact Gate control input did not connect');
     const gated=await save(),typedGate=gated.document.processingNodes.find(node=>node.id===gate.id),gateGeometry=await transformGeometry({...typedGate,bindings:gated.document.bindings});assert.ok(!typedGate.draft);assert.equal(gated.document.bindings.filter(binding=>binding.to.nodeId===gate.id).length,2);assert.equal(new Set(gateGeometry.edges.filter(edge=>edge.binding.to.nodeId===gate.id).map(edge=>edge.end.y)).size,2,'Different named inputs need separate border anchor centers.');await capture('gate-multiple-named-inputs.png');
     checks.push('A two-input Gate exposes separate named rows; actual drags choose value and gate exactly and each saved arrow meets its own border-centered port');
+    // Occupied ports expose their state before and during a genuine drag. The
+    // wire currently owning an input may still reconnect to its own endpoint.
+    assert.equal(await native.evaluate(`document.querySelector('[data-connection-target="${gate.id}"][data-connection-port="value"]').disabled&&document.querySelector('[data-connection-target="${gate.id}"][data-connection-port="gate"]').disabled`),true,'Every connected named input must reject a new drop');
+    let fullInputs=await saved();
+    for(const input of virtual.ports.filter(port=>!fullInputs.document.bindings.some(binding=>binding.to.nodeId===virtual.id&&binding.to.portId===port.id))){
+      const result=await dragWire(`[data-connection-source="${resourceId}"]`,`[data-connection-target="${virtual.id}"]`,true);
+      if(result.panel){await choosePort('Find an output',pin[0].profilePortId);if((await snapshot()).panel)await choosePort('Find an input',input.id);}
+      await until(async()=>!(await snapshot()).panel,'Filling the final available input did not complete');fullInputs=await save();
+    }
+    assert.equal(await native.evaluate(`document.querySelector('[data-connection-target="${virtual.id}"]').disabled`),true,'An aggregate input box must disable once all its exact inputs have writers');
+    await stageVisible();const fullTarget=await native.evaluate(`(()=>{const r=document.querySelector('[data-connection-target="${virtual.id}"]').getBoundingClientRect();return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()`),disabledStart=await center(`[data-connection-source="${resourceId}"]`);
+    await mouse('mouseMoved',disabledStart);await mouse('mousePressed',disabledStart,{button:'left',buttons:1,clickCount:1});await mouse('mouseMoved',fullTarget,{button:'left',buttons:1});await capture('full-input-disabled-drop.png');await mouse('mouseReleased',fullTarget,{button:'left',buttons:0,clickCount:1});
+    assert.equal((await snapshot()).panel,null,'Dropping on a fully connected block must not open a replacement picker');assert.equal(await saveDisabled(),true,'An invalid drop must not create an undoable edit');assert.deepEqual((await saved()).document,fullInputs.document);
+    const ownGateEdge=fullInputs.document.bindings.find(binding=>binding.to.nodeId===gate.id&&binding.to.portId==='value');
+    await selectEdge(ownGateEdge.id);const ownFrom=await center(`.connection-endpoint[data-reconnect-binding="${ownGateEdge.id}"][data-reconnect-side="to"]`);await mouse('mouseMoved',ownFrom);await mouse('mousePressed',ownFrom,{button:'left',buttons:1,clickCount:1});
+    const ownTo=await center(`[data-connection-target="${gate.id}"][data-connection-port="value"]`);await mouse('mouseMoved',point(ownTo.x-35,ownTo.y-25),{button:'left',buttons:1});await mouse('mouseMoved',ownTo,{button:'left',buttons:1});await mouse('mouseReleased',ownTo,{button:'left',buttons:0,clickCount:1});
+    await until(async()=>!(await snapshot()).panel,'Reconnecting to the original occupied named input did not complete');assert.deepEqual((await saved()).document.bindings,fullInputs.document.bindings);
+    checks.push('Fully connected named and aggregate inputs show disabled drops; a real invalid drop leaves no picker/history, while the owning wire can reconnect to its input');
+
+    // The style and hand-adjusted channels are editor state: signal bindings and
+    // both physical port anchors remain unchanged throughout route edits.
+    await setArrowStyle('orthogonal');const orthogonal=await save();assert.equal(orthogonal.document.editor.arrowStyle,'orthogonal');
+    const routeId=ownGateEdge.id;await selectEdge(routeId);
+    const focusedOutline=await native.evaluate(`(()=>{const path=[...document.querySelectorAll('.signal-edge-hit')].find(path=>path.dataset.connectionId===${JSON.stringify(routeId)});path.focus();return{style:getComputedStyle(path).outlineStyle,width:getComputedStyle(path).outlineWidth};})()`);assert.equal(focusedOutline.style,'none','Selecting/focusing an SVG arrow must not paint a white rectangular browser outline');
+    const beforeRoute=await edgeGeometry(routeId);assert.ok(!/[CQ]/.test(beforeRoute.path),'The 90-degree style must preserve actual sharp horizontal/vertical bends');
+    await dragSegment(routeId,'vertical',{x:32,y:0});const movedVertical=await edgeGeometry(routeId);assert.notEqual(movedVertical.path,beforeRoute.path,'Dragging a vertical channel must move its x position');assert.deepEqual(movedVertical.start,beforeRoute.start);assert.deepEqual(movedVertical.end,beforeRoute.end);
+    const verticalSaved=await save();assert.deepEqual(verticalSaved.document.bindings,orthogonal.document.bindings,'Route shape edits must not change signal bindings');assert.ok(verticalSaved.document.editor.wireRoutes?.some(route=>route.bindingId===routeId),'The moved channel must persist in editor state');
+    await click('Undo');await until(async()=>(await edgeGeometry(routeId)).path===beforeRoute.path,'One Undo did not restore the vertical segment');await click('Redo');await until(async()=>(await edgeGeometry(routeId)).path===movedVertical.path,'One Redo did not restore the vertical segment');assert.equal(await saveDisabled(),true,'Redoing the saved route must restore its clean state');
+    await dragSegment(routeId,'horizontal',{x:0,y:28});const movedHorizontal=await edgeGeometry(routeId);assert.notEqual(movedHorizontal.path,movedVertical.path,'Dragging a horizontal channel must move its y position');assert.deepEqual(movedHorizontal.start,beforeRoute.start);assert.deepEqual(movedHorizontal.end,beforeRoute.end);const routed=await save();
+    await click('Undo');await until(async()=>(await edgeGeometry(routeId)).path===movedVertical.path,'One Undo did not restore the horizontal segment');await click('Redo');await until(async()=>(await edgeGeometry(routeId)).path===movedHorizontal.path,'One Redo did not restore the horizontal segment');assert.equal(await saveDisabled(),true,'Redoing the saved route must restore its clean state');await capture('orthogonal-segment-editing.png');
+    await click('← Back to Profiles');await click(`Edit ${name}`);await until(()=>native.evaluate(`document.querySelector('select[aria-label="Arrow style"]')?.value==='orthogonal'`),'The chosen arrow style did not survive reopening');assert.equal((await edgeGeometry(routeId)).path,movedHorizontal.path,'The adjusted route must survive reopening');assert.deepEqual((await saved()).document.editor.wireRoutes,routed.document.editor.wireRoutes);
+    await setArrowStyle('smooth');await selectEdge(routeId);const smooth=await edgeGeometry(routeId);assert.ok(/[CQ]/.test(smooth.path),'Switching back to smooth arrows must round channel bends');assert.equal(await native.evaluate(`document.querySelectorAll('[data-segment-binding]').length`),0,'Smooth arrows must not expose orthogonal drag controls');const final=await save();assert.equal(final.document.editor.arrowStyle,'smooth');assert.deepEqual(final.document.editor.wireRoutes,routed.document.editor.wireRoutes,'Style changes retain manually adjusted routes for later use');
+    await capture('smooth-arrow-without-outline.png');checks.push('Style selection, true horizontal/vertical segment drags, one-step Undo/Redo, Save/reopen, stable exact port anchors and removal of the SVG focus rectangle pass in the native cockpit');
     console.log('Canvas wiring evidence: '+resolve(artifacts,'evidence.json'));
-    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, realPaletteDrag: true, realConnectionMouseDrags: true, profileId, resource: { id: resource.id, name: resource.name, total: observed.length, outputs: outputs.length, inputs: inputs.length }, chosenPort: boolean.descriptor.id, companion: companionEvidence,geometry,insertedGeometry,multiplyGeometry,gateGeometry,draftCompilation,multiply:typedMultiply,checks }, null, 2) + '\n');
+    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, realPaletteDrag: true, realConnectionMouseDrags: true, profileId, resource: { id: resource.id, name: resource.name, total: observed.length, outputs: outputs.length, inputs: inputs.length }, chosenPort: boolean.descriptor.id, companion: companionEvidence,geometry,insertedGeometry,multiplyGeometry,gateGeometry,draftCompilation,multiply:typedMultiply,arrowGeometry:{beforeRoute,movedVertical,movedHorizontal,smooth,focusedOutline},wireRoutes:routed.document.editor.wireRoutes,checks }, null, 2) + '\n');
   } catch (error) {
     await capture('failure.png').catch(() => {});
     await writeFile(resolve(artifacts, 'failure.json'), JSON.stringify({ profileId, checks, error: redact(error.message), state: await snapshot().catch(() => null) }, null, 2) + '\n'); throw error;

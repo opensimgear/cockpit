@@ -29,6 +29,7 @@ function profileDocumentNodes(document:Document,ids:Set<string>,keepEmptyGroups:
   next.virtualOutputs = next.virtualOutputs.filter(node => ids.has(node.id));
   if (next.desktopOutputs) next.desktopOutputs = next.desktopOutputs.filter(node => ids.has(node.id));
   next.bindings = next.bindings.filter(binding => ids.has(binding.from.nodeId) && ids.has(binding.to.nodeId));
+  if(next.editor.wireRoutes)next.editor.wireRoutes=next.editor.wireRoutes.filter(route=>next.bindings.some(binding=>binding.id===route.bindingId));
   next.visibility = next.visibility.filter(row => ids.has(row.resourceId));
   next.overrides = next.overrides.filter(row => ids.has(row.resourceId));
   next.companionAssignments = next.companionAssignments.filter(row => ids.has(row.resourceId));
@@ -77,6 +78,7 @@ export function profileRemoveVehicleTab(document: Document, assignments: readonl
   next.virtualOutputs = next.virtualOutputs.filter(node => keep.has(node.id));
   if (next.desktopOutputs) next.desktopOutputs = next.desktopOutputs.filter(node => keep.has(node.id));
   next.bindings = next.bindings.filter(binding => keep.has(binding.from.nodeId) && keep.has(binding.to.nodeId));
+  if(next.editor.wireRoutes){next.editor.wireRoutes=next.editor.wireRoutes.filter(route=>next.bindings.some(binding=>binding.id===route.bindingId));if(!next.editor.wireRoutes.length)delete next.editor.wireRoutes;}
   next.visibility = next.visibility.filter(row => keep.has(row.resourceId));
   next.overrides = next.overrides.filter(row => keep.has(row.resourceId));
   next.companionAssignments = next.companionAssignments.filter(row => keep.has(row.resourceId));

@@ -44,6 +44,8 @@ impl ProfileDocument {
                 positions: vec![],
                 groups: vec![],
                 collapsed_port_groups: vec![],
+                arrow_style: None,
+                wire_routes: vec![],
                 viewport: Viewport {
                     x: 0.0,
                     y: 0.0,
@@ -123,6 +125,8 @@ impl ProfileDocument {
             || document.editor.groups.len() > 32
             || document.editor.groups.iter().any(|group| group.members.len() > 336)
             || document.editor.collapsed_port_groups.len() > 1008
+            || document.editor.wire_routes.len() > 512
+            || document.editor.wire_routes.iter().any(|route|route.points.len()>128)
             || ports
                 .iter()
                 .any(|count| *count > crate::validation::MAX_PORTS_PER_NODE)
@@ -170,6 +174,7 @@ impl ProfileDocument {
         next.virtual_outputs.retain(|node|active(&node.id));
         next.desktop_outputs.retain(|node|active(&node.id));
         next.bindings.retain(|binding|active(&binding.from.node_id)&&active(&binding.to.node_id));
+        next.editor.wire_routes.retain(|route|next.bindings.iter().any(|binding|binding.id==route.binding_id));
         next.visibility.retain(|intent|active(&intent.resource_id));
         next.overrides.retain(|intent|active(&intent.resource_id));
         next.companion_assignments.retain(|intent|active(&intent.resource_id));
@@ -342,7 +347,23 @@ pub struct EditorLayout {
     pub groups: Vec<EditorGroup>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_port_groups: Vec<CollapsedPortGroup>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "editor_arrow_style")]
+    pub arrow_style: Option<EditorArrowStyle>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wire_routes: Vec<EditorWireRoute>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EditorArrowStyle { Smooth, Orthogonal }
+fn editor_arrow_style<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<EditorArrowStyle>, D::Error> {
+    EditorArrowStyle::deserialize(deserializer).map(Some)
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorWireRoute { pub binding_id: String, pub points: Vec<EditorWirePoint> }
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditorWirePoint { pub x:f64, pub y:f64 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EditorGroup {

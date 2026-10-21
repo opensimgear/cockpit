@@ -125,3 +125,46 @@ fn empty_group_frames_roundtrip_and_reject_invalid_or_overlapping_geometry() {
     let mut legacy=document();legacy.editor.groups.push(EditorGroup{id:"empty".into(),name:"Empty legacy group".into(),members:vec![],bounds:None});
     osg_profiles::validate_document(&legacy).unwrap();
 }
+
+#[test]
+fn arrow_style_and_authored_paths_roundtrip_without_changing_execution_identity() {
+    let original=document();
+    let mut changed=original.clone();
+    changed.editor.arrow_style=Some(EditorArrowStyle::Orthogonal);
+    changed.editor.wire_routes=vec![EditorWireRoute{binding_id:changed.bindings[0].id.clone(),points:vec![
+        EditorWirePoint{x:100.0,y:80.0},EditorWirePoint{x:250.0,y:80.0},EditorWirePoint{x:250.0,y:380.0},EditorWirePoint{x:500.0,y:380.0},
+    ]}];
+    assert_eq!(changed.semantic_hash().unwrap(),original.semantic_hash().unwrap());
+    assert_eq!(ProfileDocument::parse(&changed.export().unwrap()).unwrap(),changed);
+    let mut value=serde_json::to_value(&changed).unwrap();
+    let valid=value.clone();
+    for style in [Value::Null,json!("right-angle"),json!(true)] {
+        value=valid.clone();value["editor"]["arrowStyle"]=style;rejected(&value);
+    }
+    for route in [
+        json!({"bindingId":"missing","points":[{"x":0,"y":0},{"x":100,"y":0}]}),
+        json!({"bindingId":changed.bindings[0].id,"points":[]}),
+        json!({"bindingId":changed.bindings[0].id,"points":[{"x":0,"y":0},{"x":1,"y":1}]}),
+        json!({"bindingId":changed.bindings[0].id,"points":[{"x":0,"y":0},{"x":0,"y":0}]}),
+        json!({"bindingId":changed.bindings[0].id,"points":[{"x":0,"y":0},{"x":1_000_001,"y":0}]}),
+        json!({"bindingId":changed.bindings[0].id,"points":[{"x":0,"y":0,"z":0},{"x":100,"y":0}]}),
+    ] {value=valid.clone();value["editor"]["wireRoutes"]=json!([route]);rejected(&value);}
+    value=valid.clone();value["editor"]["wireRoutes"]=json!([valid["editor"]["wireRoutes"][0],valid["editor"]["wireRoutes"][0]]);rejected(&value);
+    value=valid.clone();value["editor"]["wireRoutes"][0]["points"]=json!((0..129).map(|x|json!({"x":x,"y":0})).collect::<Vec<_>>());
+    rejected(&value);assert!(ProfileDocument::parse_draft(&serde_json::to_vec(&value).unwrap()).is_err());
+    value=valid;value["editor"]["wireRoutes"]=json!(vec![value["editor"]["wireRoutes"][0].clone();513]);
+    rejected(&value);assert!(ProfileDocument::parse_draft(&serde_json::to_vec(&value).unwrap()).is_err());
+}
+
+#[test]
+fn saved_wire_layout_preserves_exact_metadata_across_service_restart() {
+    let directory=tempfile::tempdir().unwrap();
+    let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));
+    let mut graph=decorated();graph.editor.arrow_style=Some(EditorArrowStyle::Smooth);
+    graph.editor.wire_routes=vec![EditorWireRoute{binding_id:graph.bindings[0].id.clone(),points:vec![EditorWirePoint{x:0.0,y:0.0},EditorWirePoint{x:100.0,y:0.0}]}];
+    let saved=service.request(&json!({"command":"profile_editor_save","document":graph,"assignments":[],"expectedRevision":null})).unwrap();
+    drop(service);
+    let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));
+    let exported=service.request(&json!({"command":"profile_export","id":graph.id})).unwrap();
+    assert_eq!(exported["document"]["editor"],saved["document"]["editor"]);
+}

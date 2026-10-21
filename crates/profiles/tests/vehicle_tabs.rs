@@ -40,3 +40,24 @@ fn semantic_identity_tracks_vehicle_matching_and_membership_but_ignores_tab_labe
     let mut renamed=original.clone();renamed.vehicle_tabs[0].vehicle_name="Hornet".into();renamed.vehicle_tabs.reverse();assert_eq!(renamed.semantic_hash().unwrap(),hash);
     renamed.vehicle_tabs[0].vehicle_id="different".into();assert_ne!(renamed.semantic_hash().unwrap(),hash);
 }
+
+#[test]
+fn executable_vehicle_projection_removes_paths_belonging_to_inactive_connections() {
+    let mut graph=document();
+    for resource in &mut graph.resources {
+        resource.ports=serde_json::from_value(json!([{"id":"value","name":"Value","direction":if resource.id=="base"{"output"}else{"input"},"contract":{"delivery":"state","schema":{"type":"boolean"},"freshnessMs":1000,"fallback":false}}])).unwrap();
+    }
+    graph.bindings=serde_json::from_value(json!([
+        {"id":"hornet-path","from":{"nodeId":"base","portId":"value"},"to":{"nodeId":"hornet","portId":"value"}},
+        {"id":"viper-path","from":{"nodeId":"base","portId":"value"},"to":{"nodeId":"viper","portId":"value"}},
+    ])).unwrap();
+    graph.editor.wire_routes=serde_json::from_value(json!([
+        {"bindingId":"hornet-path","points":[{"x":0,"y":0},{"x":100,"y":0}]},
+        {"bindingId":"viper-path","points":[{"x":0,"y":0},{"x":100,"y":0}]},
+    ])).unwrap();
+    validate_document(&graph).unwrap();
+    let hornet=graph.for_vehicle(Some("dcs"),Some("FA-18C_hornet"));
+    assert_eq!(hornet.editor.wire_routes.len(),1);assert_eq!(hornet.editor.wire_routes[0].binding_id,"hornet-path");
+    validate_document(&hornet).unwrap();
+    assert!(graph.for_vehicle(None,None).editor.wire_routes.is_empty());
+}

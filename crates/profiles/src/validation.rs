@@ -487,6 +487,14 @@ fn validate_graph_document(document: &ProfileDocument) -> Result<(), String> {
         check(nodes.contains_key(category.node_id.as_str()) && collapsed.insert(category),
             "Collapsed editor port group is unknown or duplicated.")?;
     }
+    check(document.editor.wire_routes.len()<=MAX_BINDINGS,"Too many custom connection paths.")?;
+    let binding_ids=document.bindings.iter().map(|binding|binding.id.as_str()).collect::<BTreeSet<_>>();
+    let mut routed=BTreeSet::new();
+    for route in &document.editor.wire_routes {
+        check(binding_ids.contains(route.binding_id.as_str())&&routed.insert(route.binding_id.as_str()),"Custom connection path is unknown or duplicated.")?;
+        check((2..=128).contains(&route.points.len()),"Custom connection path requires 2 to 128 points.")?;
+        check(route.points.iter().all(|point|coordinate(point.x)&&coordinate(point.y))&&route.points.windows(2).all(|pair|(pair[0].x==pair[1].x)!=(pair[0].y==pair[1].y)),"Custom connection path requires bounded distinct orthogonal points.")?;
+    }
     let v = &document.editor.viewport;
     check(
         coordinate(v.x) && coordinate(v.y) && v.zoom.is_finite() && (0.1..=4.0).contains(&v.zoom),

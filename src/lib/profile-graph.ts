@@ -81,6 +81,11 @@ export function graphDraft(value: DeepReadonly<ProfileGraphDraft>): ProfileGraph
   return clone<ProfileGraphDraft>(value);
 }
 function checked(value: ProfileGraphDraft): ProfileGraphDraft {
+  if(value.document.editor.wireRoutes){
+    const bindings=new Set(value.document.bindings.map(binding=>binding.id));
+    value.document.editor.wireRoutes=value.document.editor.wireRoutes.filter(route=>bindings.has(route.bindingId));
+    if(!value.document.editor.wireRoutes.length)delete value.document.editor.wireRoutes;
+  }
   const next=graphDraft(value);
   for(const binding of next.document.bindings){const error=graphConnectionError(next.document,binding.from,binding.to,binding.id);if(error)throw new Error(`${binding.id}: ${error}`);}
   return next;
@@ -90,6 +95,11 @@ export function graphConnect(value: DeepReadonly<ProfileGraphDraft>, from: Profi
   if(replacingId&&!next.document.bindings.some(binding=>binding.id===replacingId))throw new Error('Choose an existing route to edit.');
   const error=graphConnectionError(next.document,from,to,replacingId);if(error)throw new Error(error);
   const binding:ProfileBinding={id:replacingId??graphFreshId(next.document,'route'),from:clone(from),to:clone(to)};
+  const previous=next.document.bindings.find(row=>row.id===binding.id);
+  if(previous&&(!sameEndpoint(previous.from,from)||!sameEndpoint(previous.to,to))&&next.document.editor.wireRoutes){
+    next.document.editor.wireRoutes=next.document.editor.wireRoutes.filter(route=>route.bindingId!==binding.id);
+    if(!next.document.editor.wireRoutes.length)delete next.document.editor.wireRoutes;
+  }
   next.document.bindings=next.document.bindings.filter(row=>row.id!==binding.id);next.document.bindings.push(binding);return checked(next);
 }
 export function graphDisconnect(value: DeepReadonly<ProfileGraphDraft>, bindingId: string): ProfileGraphDraft {

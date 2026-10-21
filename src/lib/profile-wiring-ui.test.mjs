@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser']);
+const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability']);
 const plain = value => JSON.parse(JSON.stringify(value));
 const port = (id, direction, name = id) => ({ id, direction, name, contract: { delivery: 'state', schema: { type: 'boolean' }, freshnessMs: 1000, fallback: null } });
 const resource = (id, ports = []) => ({ id, name: id, kind: 'device', required: false, ports });
@@ -24,13 +24,13 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,drag,view,selectedId,suppressWireClick,paletteConnectionId};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,setWireStyle,inputState,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
 // Actual browser dispatch and hit testing are covered by the running cockpit UI checks.
 function harness(props = {}) {
-  const calls = [], edits = [], captured = new Set();
+  const calls = [], edits = [], captured = new Set(), focuses=[];
   let handlers, hit = element();
   const context = {
     TextEncoder, captureCanvas: value => handlers = value,
@@ -56,10 +56,11 @@ function harness(props = {}) {
     closeConnectionPanel: () => calls.push(['close']), ...props
   } }).body;
   handlers.setStage({
+    focus:options=>focuses.push(options),
     setPointerCapture: id => captured.add(id), hasPointerCapture: id => captured.has(id), releasePointerCapture: id => captured.delete(id),
     getBoundingClientRect: () => ({ left: 100, top: 50, right: 1100, bottom: 850 }), contains: target => target.inside !== false
   });
-  return { handlers, body, calls, edits, captured, document, before, setHit(value) { hit = value; } };
+  return { handlers, body, calls, edits, captured, focuses, document, before, setHit(value) { hit = value; } };
 }
 function element({ nodeId, input, output, portId, disabled = false, inside = true, panel = false } = {}) {
   const value = { disabled, inside, dataset: { connectionTarget: input, connectionSource: output, connectionPort: portId } };
@@ -182,15 +183,15 @@ test('blocks show discovered input and output counts while loading/error handles
   assert.match(button(h.body, 'data-connection-target', 'source'), /Inputs \/ actions for source \(1\)/);
   for (const name of ['Fire trigger', 'Brake axis', 'Third output', 'Backlight', '+1 more']) assert.ok(!h.body.includes(name));
   assert.ok(!h.body.includes('saved-fire'));assert.ok(!h.body.includes('saved-led'), 'A completed empty discovery replaces the saved preview.');
-  assert.match(button(h.body, 'data-connection-target', 'target'), /disabled/);assert.match(button(h.body, 'data-connection-source', 'empty'), /disabled/);
+  assert.match(button(h.body, 'data-connection-target', 'target'), /\sdisabled(?:\s|>|=)/);assert.match(button(h.body, 'data-connection-source', 'empty'), /\sdisabled(?:\s|>|=)/);
   assert.match(button(h.body, 'data-connection-target', 'target'), /Inputs \/ actions for target \(0\)/);
   assert.match(button(h.body, 'data-connection-source', 'empty'), /Outputs for empty \(0\)/);assert.deepEqual(h.document, h.before);
   const waiting = harness({ discoveryBusy: ['empty'] });
-  assert.ok(waiting.body.includes('Discovering inputs and outputs'));assert.doesNotMatch(button(waiting.body, 'data-connection-target', 'empty'), /disabled/);
+  assert.ok(waiting.body.includes('Discovering inputs and outputs'));assert.doesNotMatch(button(waiting.body, 'data-connection-target', 'empty'), /\sdisabled(?:\s|>|=)/);
   const failed = harness({ discoveryErrors: { empty: 'Provider unavailable' } });
-  assert.ok(failed.body.includes('Port discovery failed'));assert.doesNotMatch(button(failed.body, 'data-connection-source', 'empty'), /disabled/, 'Failed discovery must allow opening its retry UI.');
+  assert.ok(failed.body.includes('Port discovery failed'));assert.doesNotMatch(button(failed.body, 'data-connection-source', 'empty'), /\sdisabled(?:\s|>|=)/, 'Failed discovery must allow opening its retry UI.');
   const locked = harness({ readOnly: true, discoveredPorts });
-  for (const id of ['source', 'target', 'empty']) for (const attribute of ['data-connection-source', 'data-connection-target']) assert.match(button(locked.body, attribute, id), /disabled/);
+  for (const id of ['source', 'target', 'empty']) for (const attribute of ['data-connection-source', 'data-connection-target']) assert.match(button(locked.body, attribute, id), /\sdisabled(?:\s|>|=)/);
   locked.handlers.beginWire(pointer(), 'source', 'output');locked.handlers.wireClick(click(0), 'source', 'output');
   assert.equal(locked.handlers.state.wire, null);assert.deepEqual(locked.calls, []);assert.equal(locked.captured.size, 0);
 });
@@ -217,7 +218,7 @@ test('compact Transform cards show named border ports instead of aggregate input
   for(const [nodeId,portId,name,direction]of [['gate','gate','Enable','input'],['gate','value','Signal','input'],['gate','out','Result','output'],['script','alternate','Alternate','output']]){
     assert.match(namedButton(h.body,nodeId,portId),new RegExp(`aria-label="${name} ${direction} for `));assert.ok(new RegExp(`class="transform-port-name[^"]*">${name}</span>`).test(h.body));
   }
-  const locked=harness({document,readOnly:true});for(const [nodeId,portId]of [['gate','gate'],['gate','value'],['gate','out'],['script','alternate']])assert.match(namedButton(locked.body,nodeId,portId),/disabled/);
+  const locked=harness({document,readOnly:true});for(const [nodeId,portId]of [['gate','gate'],['gate','value'],['gate','out'],['script','alternate']])assert.match(namedButton(locked.body,nodeId,portId),/\sdisabled(?:\s|>|=)/);
   assert.deepEqual(plain(document),h.before);assert.deepEqual(h.edits,[]);
 });
 
@@ -264,6 +265,83 @@ test('selected wires expose endpoint labels, highlighted boxes, reconnect handle
   const locked=harness({document,selectedEdgeId:'route',readOnly:true,reconnectConnection(){}});assert.ok(!locked.body.includes('data-reconnect-side='));
 });
 
+test('fully connected named and aggregate inputs expose disabled drop targets while outputs remain available',()=>{
+  const document=namedTransforms();document.bindings=[
+    {id:'target-route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}},
+    {id:'gate-value',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}},
+    {id:'gate-enable',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'gate',portId:'gate'}}
+  ];
+  const h=harness({document});
+  assert.match(button(h.body,'data-connection-target','target'),/\sdisabled(?:\s|>|=)/,'A full input group must not offer a new connection drop.');
+  assert.match(namedButton(h.body,'gate','value'),/\sdisabled(?:\s|>|=)/);assert.match(namedButton(h.body,'gate','gate'),/\sdisabled(?:\s|>|=)/);
+  assert.doesNotMatch(namedButton(h.body,'gate','out'),/\sdisabled(?:\s|>|=)/,'A fully connected transform can continue to fan out its output.');
+  assert.match(h.body,/All inputs are connected\./);assert.match(h.body,/This input is already connected\./);
+  const partial=plain(document);partial.bindings=partial.bindings.filter(binding=>binding.id!=='gate-enable');
+  const p=harness({document:partial});assert.match(namedButton(p.body,'gate','value'),/\sdisabled(?:\s|>|=)/);assert.doesNotMatch(namedButton(p.body,'gate','gate'),/\sdisabled(?:\s|>|=)/,'One free input does not free another occupied exact input.');
+  assert.deepEqual(plain(h.document),h.before);assert.deepEqual(h.edits,[]);
+});
+
+test('occupied named inputs reject a new gesture but remain available to the reconnecting owner',()=>{
+  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
+  const h=harness({document,reconnectConnection(){}});
+  assert.equal(h.handlers.inputState('gate','value').full,true);assert.equal(h.handlers.inputState('gate','gate').full,false);
+  h.handlers.beginWire(pointer(),'gate','input','value');h.handlers.wireClick(click(0),'gate','input','value');assert.equal(h.handlers.state.wire,null);assert.deepEqual(h.calls,[]);
+  h.handlers.beginWire(pointer(),'script','output','alternate');h.setHit(element({nodeId:'gate',input:'gate',portId:'value',disabled:true}));h.handlers.move(pointer(500,350));assert.equal(h.handlers.state.wireTargetId,'');assert.equal(h.handlers.state.wireRejectedId,'gate');assert.equal(h.handlers.state.wireRejectedReason,'This input is already connected.');h.handlers.finish(pointer(500,350));assert.deepEqual(h.calls,[['close']]);assert.deepEqual(h.edits,[]);
+  h.handlers.beginReconnect(pointer(),'route','to');assert.equal(h.handlers.inputState('gate','value').full,false,'Only the binding being reconnected is excluded from occupied input checks.');
+  h.handlers.finish(pointer(),true);assert.equal(h.handlers.inputState('gate','value').full,true);assert.equal(h.captured.size,0);
+});
+
+test('toolbar reconnection frees only its own input and a new drag cannot borrow that exemption',()=>{
+  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}},{id:'other',from:{nodeId:'script',portId:'first'},to:{nodeId:'gate',portId:'gate'}}];
+  const h=harness({document,reconnectingBindingId:'route'});
+  assert.equal(h.handlers.inputState('gate','value').full,false);assert.equal(h.handlers.inputState('gate','gate').full,true);
+  h.handlers.beginWire(pointer(),'script','output','alternate');assert.equal(h.handlers.inputState('gate','value').full,true,'An unrelated fresh connection must still see the occupied input.');h.handlers.finish(pointer(),true);
+  assert.equal(h.handlers.inputState('gate','value').full,false);assert.deepEqual(h.edits,[]);
+});
+
+test('losing capture over an occupied input clears the rejected drop feedback',()=>{
+  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
+  const h=harness({document});h.handlers.beginWire(pointer(),'script','output','alternate');
+  h.setHit(element({nodeId:'gate',input:'gate',portId:'value',disabled:true}));h.handlers.move(pointer(500,350));
+  assert.equal(h.handlers.state.wireRejectedReason,'This input is already connected.');
+  assert.equal(h.handlers.state.wireRejectedPort,'value');h.captured.delete(7);h.handlers.lostPointer(pointer());
+  for(const field of ['wireTargetId','wireTargetPort','wireRejectedId','wireRejectedPort','wireRejectedReason'])assert.equal(h.handlers.state[field],'',field);
+  assert.equal(h.handlers.state.wire,null);assert.deepEqual(h.edits,[]);assert.deepEqual(h.calls,[]);
+});
+
+function orthogonalDocument(){const document=profile();document.bindings=[{id:'route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}}];document.editor.arrowStyle='orthogonal';return document;}
+
+test('arrow style changes persist only editor state and selected orthogonal wires expose segment controls',()=>{
+  const document=orthogonalDocument(),h=harness({document,selectedEdgeId:'route'});
+  assert.match(h.body,/aria-label="Arrow style"/);assert.match(h.body,/data-segment-binding="route"/);assert.match(h.body,/Move horizontal segment/);
+  h.handlers.setWireStyle('smooth');assert.equal(h.edits.length,1);assert.equal(h.edits[0][1],'Change arrow style');assert.equal(h.edits[0][0].editor.arrowStyle,'smooth');assert.deepEqual(plain(h.edits[0][0].bindings),document.bindings);
+  const smooth=harness({document:{...document,editor:{...document.editor,arrowStyle:'smooth'}},selectedEdgeId:'route'});assert.ok(!smooth.body.includes('data-segment-binding='));
+  const locked=harness({document,selectedEdgeId:'route',readOnly:true});assert.ok(!locked.body.includes('data-segment-binding='));locked.handlers.beginSegment(pointer(),'route',0);assert.equal(locked.handlers.state.segmentDrag,null);assert.deepEqual(locked.edits,[]);
+});
+
+test('horizontal and vertical segment gestures preview without edits, keep endpoints fixed and commit once',()=>{
+  const document=orthogonalDocument(),h=harness({document,selectedEdgeId:'route'}),before=plain(h.handlers.state.routes[0].points);
+  assert.equal(before.length,2,'The fixture starts with a straight arrow so dragging adds useful bends.');
+  h.handlers.setView({x:0,y:0,zoom:.5});h.handlers.beginSegment(pointer(500,300),'route',0);assert.equal(h.captured.has(7),true);assert.deepEqual(plain(h.focuses),[{preventScroll:true}],'Segment gestures focus the canvas so Escape and Undo work after using toolbar controls.');h.handlers.move(pointer(500,335));assert.equal(h.edits.length,0);assert.equal(h.handlers.state.segmentBlocked,false);assert.ok(h.handlers.state.segmentPreview);
+  const preview=plain(h.handlers.state.segmentPreview),points=preview.editor.wireRoutes[0].points;assert.equal(points[2].y,before[0].y+70,'Segment movement compensates for the canvas zoom.');assert.deepEqual(points[0],before[0]);assert.deepEqual(points.at(-1),before.at(-1));
+  h.handlers.finish(pointer(500,335));assert.equal(h.edits.length,1);assert.equal(h.edits[0][1],'Move wire segment');assert.deepEqual(plain(h.edits[0][0]),preview);assert.equal(h.handlers.state.segmentDrag,null);assert.equal(h.captured.size,0);assert.deepEqual(document,h.before);
+  const vertical=harness({document:preview,selectedEdgeId:'route'}),index=points.findIndex((point,index)=>index<points.length-1&&point.x===points[index+1].x);
+  assert.ok(index>=0);assert.match(vertical.body,/Move vertical segment/);vertical.handlers.beginSegment(pointer(500,300),'route',index);vertical.handlers.move(pointer(512,300));assert.equal(vertical.edits.length,0);assert.equal(vertical.handlers.state.segmentBlocked,false);vertical.handlers.finish(pointer(512,300));assert.equal(vertical.edits.length,1);const moved=plain(vertical.edits[0][0].editor.wireRoutes[0].points);assert.equal(moved[index].x,points[index].x+12);assert.deepEqual(moved[0],points[0]);assert.deepEqual(moved.at(-1),points.at(-1));assert.deepEqual(plain(vertical.edits[0][0].bindings),document.bindings);
+});
+
+test('segment cancellation, lost capture, insignificant movement and blocked moves never create history',()=>{
+  for(const cancel of ['pointer','escape','capture','tiny','blocked']){
+    const document=orthogonalDocument();if(cancel==='blocked'){const obstacle=document.editor.positions.find(position=>position.nodeId==='empty');obstacle.x=310;obstacle.y=260;}
+    const h=harness({document,selectedEdgeId:'route'});h.handlers.beginSegment(pointer(500,300),'route',0);
+    h.handlers.move(pointer(500,cancel==='tiny'?302:cancel==='blocked'?370:335));
+    if(cancel==='pointer')h.handlers.finish(pointer(500,335),true);
+    else if(cancel==='escape')h.handlers.keyboard({key:'Escape',preventDefault(){}});
+    else if(cancel==='capture'){h.captured.delete(7);h.handlers.lostPointer(pointer());}
+    else{if(cancel==='blocked')assert.equal(h.handlers.state.segmentBlocked,true);h.handlers.finish(pointer(500,cancel==='tiny'?302:370));}
+    assert.deepEqual(h.edits,[],cancel);assert.equal(h.handlers.state.segmentDrag,null,cancel);assert.equal(h.handlers.state.segmentPreview,null,cancel);assert.equal(h.captured.size,0,cancel);assert.deepEqual(h.document,h.before,cancel);
+  }
+});
+
 test('dragging either selected endpoint opens only the matching reconnection operation',()=>{
   for(const side of ['from','to']){
     const document=profile();document.bindings=[{id:'route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}}];
@@ -285,4 +363,19 @@ test('dropping a transformation on a wire inserts there and ordinary canvas drop
   assert.deepEqual(plain(insertions),[[component,'route',{x:288,y:193}]],'A single-row transform is centered using its compact 224 × 114 bounds.');
   assert.deepEqual(drops,[]);assert.equal(ended.length,1);
   h.handlers.dropPalette({...event,target:{closest:()=>null}});assert.equal(drops.length,1);assert.equal(insertions.length,1);assert.equal(ended.length,2);
+});
+
+test('selected right-angle segment handles retain transformation insertion targets',()=>{
+  const component={kind:'transformation',preset:'scale'},insertions=[],drops=[];
+  const h=harness({document:orthogonalDocument(),selectedEdgeId:'route',paletteDrag:{component,name:'Multiply',category:'Transformation'},dropComponent:(...args)=>drops.push(args),dropOnConnection:(...args)=>insertions.push(args)});
+  const segments=[...h.body.matchAll(/<path\b[^>]*data-segment-binding="route"[^>]*>/g)].map(([tag])=>tag);
+  assert.ok(segments.length,'The selected right-angle wire exposes draggable segments.');
+  for(const tag of segments){
+    const connectionId=tag.match(/data-connection-id="([^"]+)"/)?.[1];assert.equal(connectionId,'route');
+    const target={closest:selector=>selector==='[data-connection-id]'?{dataset:{connectionId}}:null};
+    const event={clientX:500,clientY:300,target,dataTransfer:{},preventDefault(){},stopPropagation(){}};
+    h.handlers.overPalette(event);assert.equal(h.handlers.state.paletteConnectionId,'route');h.handlers.dropPalette(event);
+  }
+  assert.equal(insertions.length,segments.length);assert.deepEqual(drops,[]);
+  for(const insertion of insertions)assert.deepEqual(plain(insertion),[component,'route',{x:288,y:193}]);
 });

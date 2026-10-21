@@ -1,4 +1,5 @@
-import type { DeepReadonly, ProfileBinding } from './profiles';
+import type { DeepReadonly, ProfileBinding, ProfileWireRoute, ProfileWireStyle } from './profiles';
+import { profileAnchorWireRoute } from './profile-wire-layout';
 
 type Edge = DeepReadonly<Pick<ProfileBinding, 'from' | 'to'>>;
 export type DiagramPoint = { x:number; y:number };
@@ -11,9 +12,16 @@ export function diagramPortAnchor(position:DiagramPoint,direction:'input'|'outpu
 }
 
 /** A tangent-continuous preview uses the same attachment as a saved connection. */
-export function diagramPendingPath(start:DiagramPoint,end:DiagramPoint,direction:'input'|'output') {
+export function diagramPendingPath(start:DiagramPoint,end:DiagramPoint,direction:'input'|'output',style:ProfileWireStyle='smooth') {
   const reach=Math.max(48,Math.min(240,Math.abs(end.x-start.x)*.5)),sign=direction==='output'?1:-1;
+  if(style==='orthogonal'){
+    const lane=start.x+reach*sign;
+    return diagramOrthogonalPath([start,{x:lane,y:start.y},{x:lane,y:end.y},end]);
+  }
   return `M${start.x},${start.y} C${start.x+reach*sign},${start.y} ${end.x-reach*sign},${end.y} ${end.x},${end.y}`;
+}
+export function diagramOrthogonalPath(points:readonly DiagramPoint[]) {
+  return points.map((point,index)=>`${index?'L':'M'}${point.x},${point.y}`).join(' ');
 }
 
 /** Round every channel bend, retaining horizontal tangents at both block handles. */
@@ -94,8 +102,10 @@ function crosses(a:DiagramPoint,b:DiagramPoint,box:Box){
 }
 
 /** Shared compressed visibility grid; search only visits the channels an edge needs. */
-export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number){
+export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:{style?:ProfileWireStyle;wireRoutes?:readonly DeepReadonly<ProfileWireRoute>[]}={}){
   const clearance=20,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
+  const saved=new Map(options.wireRoutes?.map(route=>[route.bindingId,route.points])??[]);
+  const pathFor=options.style==='orthogonal'?diagramOrthogonalPath:diagramSmoothPath;
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+(node.width??width)+clearance,top:node.position.y-clearance,bottom:node.position.y+(node.height??height)+clearance}));
   const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
@@ -154,8 +164,14 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
   }
   // Short connections claim their compact paths first; longer ones use free lanes.
   const span=(binding:DeepReadonly<ProfileBinding>)=>{const {start,end}=anchors.get(binding.id)!;return Math.abs(start.x-end.x)+Math.abs(start.y-end.y);};
-  const routed=[...valid].sort((a,b)=>span(a)-span(b)||a.id.localeCompare(b.id)).flatMap(binding=>{
+  const routed=[...valid].sort((a,b)=>Number(saved.has(b.id))-Number(saved.has(a.id))||span(a)-span(b)||a.id.localeCompare(b.id)).flatMap(binding=>{
     const {start,end}=anchors.get(binding.id)!;
+    const custom=saved.get(binding.id),authored=custom?profileAnchorWireRoute(custom,start,end):[];
+    // Manual bends are retained while their channels are clear. A newly moved
+    // block may cover a lane; use the safe automatic route until it clears.
+    const horizontalLeads=authored.length>=2&&authored[1].y===start.y&&authored[1].x>start.x&&authored.at(-2)!.y===end.y&&authored.at(-2)!.x<end.x;
+    const customBlocked=!!custom&&(!horizontalLeads||authored.some((point,index)=>index>0&&boxes.some((box,nodeIndex)=>!(index===1&&nodes[nodeIndex].id===binding.from.nodeId)&&!(index===authored.length-1&&nodes[nodeIndex].id===binding.to.nodeId)&&crosses(authored[index-1],point,box))));
+    if(authored.length&&!customBlocked){reserve(authored);return[{binding,points:authored,path:pathFor(authored),manual:true,customBlocked:false}];}
     const exit={x:start.x+clearance,y:start.y},entry={x:end.x-clearance,y:end.y};
     let channel=route(exit,entry);
     // Older saved layouts can leave less than one normal lane between blocks.
@@ -173,7 +189,7 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
     if(points.length===2)return[];
     const corners=points.filter((p,index)=>!index||index===points.length-1||!((points[index-1].x===p.x&&p.x===points[index+1].x)||(points[index-1].y===p.y&&p.y===points[index+1].y)));
     reserve(corners);
-    return[{binding,points:corners,path:diagramSmoothPath(corners)}];
+    return[{binding,points:corners,path:pathFor(corners),manual:false,customBlocked}];
   });
   const byBinding=new Map(routed.map(route=>[route.binding.id,route]));
   return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
