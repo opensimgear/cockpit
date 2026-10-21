@@ -106,7 +106,7 @@ impl GatewayManager {
             .filter(|id| {
                 matches!(
                     *id,
-                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
                 )
             })
             .ok_or("Choose a supported game context.")?;

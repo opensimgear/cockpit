@@ -5,7 +5,8 @@ use crate::{session::SelectionMode, ProfileDocument, DEFAULT_PROFILE_ID};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const MAX_RULES: usize = 4;
+pub const SUPPORTED_GAME_IDS: [&str; 7] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12", "assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"];
+pub const MAX_RULES: usize = SUPPORTED_GAME_IDS.len();
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -18,7 +19,7 @@ impl GameIdentity {
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(
             self.game_id.as_str(),
-            "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+            "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
         ) || self.executable.is_empty()
             || self.executable.len() > 32768
             || self.executable.chars().any(char::is_control)

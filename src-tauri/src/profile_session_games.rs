@@ -314,14 +314,14 @@ impl GameSources {
                     source: None,
                 }
             }
-            "assetto-corsa-rally" => {
+            "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo" | "assetto-corsa-rally" => {
                 let freshness = game.connection["freshnessMs"]
                     .as_u64()
                     .ok_or("Missing telemetry freshness policy.")?;
                 Reader::Acr {
                     outputs: rows,
                     source: None,
-                    decoder: crate::game_telemetry::Session::new(freshness)?,
+                    decoder: crate::game_telemetry::Session::new_for_game(freshness, crate::game_telemetry::Game::from_id(&game.proof.game_id)?)?,
                 }
             }
             _ => return Err("Unsupported native game provider.".into()),
@@ -329,7 +329,9 @@ impl GameSources {
         Ok(result)
     }
     pub(crate) fn acquire(&mut self, games: &GamesRuntime) -> Result<(), String> {
-        self.acquire_with_acr(games, |pid,image|crate::acr_windows::WindowsSource::new_for_image(pid,image)
+        let game = self.game.as_ref().and_then(|game| crate::game_telemetry::Game::from_id(&game.proof.game_id).ok())
+            .unwrap_or(crate::game_telemetry::Game::Rally);
+        self.acquire_with_acr(games, |pid,image|crate::acr_windows::WindowsSource::new_for_game(pid,image,game)
             .map(|source|Box::new(source) as Box<dyn crate::game_telemetry::Source>))
     }
     fn acquire_with_acr(&mut self, games:&GamesRuntime,

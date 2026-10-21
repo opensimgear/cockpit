@@ -1,6 +1,6 @@
 import { profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileEditorGroup, type ProfileEditorGroupBounds, type ProfileLocalAssignment, type ProfilePortContract, type ProfilePortGroup, type ProfileScalarSchema } from './profiles';
 import type { ResourceSummary } from './profile-inventory';
-import type { GameId } from './games';
+import { isGameId, type GameId } from './games';
 import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout, profileCategory } from './profile-editor';
 import type { ProfileDesktopOutput } from './profile-desktop';
 export type CanvasPoint = {x:number;y:number};
@@ -139,4 +139,4 @@ export function portContractLabel(contract:DeepReadonly<ProfilePortContract>):st
   if(contract.delivery==='event')return`event · ${scalarLabel(contract.schema)}`;
   return`${contract.delivery} · ${contract.semantics} · ${contract.parameters.length?contract.parameters.map(parameter=>`${parameter.name}: ${scalarLabel(parameter.schema)}`).join(', '):'no arguments'}`;
 }
-export function canvasGameId(node:CanvasNode):GameId|null{const id=node.observation?.attributes.gameId;return id==='dcs'||id==='assetto-corsa-rally'||id==='x-plane-11'||id==='x-plane-12'?id:null;}
+export function canvasGameId(node:CanvasNode):GameId|null{const id=node.observation?.attributes.gameId;return isGameId(id)?id:null;}

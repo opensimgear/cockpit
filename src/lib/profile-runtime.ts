@@ -1,8 +1,9 @@
 /** Explicit native runtime controls. Editor navigation and Save never call this client. */
 import type { AppliedProfileSnapshot, DeepReadonly } from './profiles';
 import type { CompanionOperation } from './companions';
+import { isGameId, type GameId } from './games.ts';
 
-export type ProfileGameId = 'dcs' | 'x-plane-11' | 'x-plane-12' | 'assetto-corsa-rally';
+export type ProfileGameId = GameId;
 export type NativeProfileOwner = {
   session: string; generation: number; profileId: string; profileRevision: number; gameId: ProfileGameId | null;
 };
@@ -28,7 +29,7 @@ const object = (value: unknown): value is Record<string, unknown> => value !== n
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const revision = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && new TextEncoder().encode(value).length <= 16384 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value);
-const game = (value: unknown): value is ProfileGameId => typeof value === 'string' && ['dcs', 'x-plane-11', 'x-plane-12', 'assetto-corsa-rally'].includes(value);
+const game = isGameId;
 const snapshot = (value: unknown): value is AppliedProfileSnapshot => object(value) && uuid(value.profileId) && revision(value.revision)
   && typeof value.semanticHash === 'string' && /^sha256:[a-f0-9]{64}$/.test(value.semanticHash);
 const owner = (value: unknown): value is NativeProfileOwner => object(value) && uuid(value.session) && revision(value.generation)

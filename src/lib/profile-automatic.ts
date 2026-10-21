@@ -1,13 +1,14 @@
 /** Native game rules and explicit selection mode. Reading this client never selects or applies a profile. */
 import {captureProfileSummaries,type DeepReadonly,type ProfileSelectionMode,type ProfileSummary} from './profiles';
-export type AutomaticGameId='dcs'|'assetto-corsa-rally'|'x-plane-11'|'x-plane-12';
+import {supportedGames,type GameId} from './games';
+export type AutomaticGameId=GameId;
 export type ProfileGameRule={identity:{gameId:AutomaticGameId;executable:string};profileId:string;priority:number;enabled:boolean};
 export type ProfileAutomaticTarget={profileId:string;gameId:AutomaticGameId|null;processSession:string|null};
 export type ProfileAutomaticStatus={schemaVersion:1;mode:ProfileSelectionMode;manualProfileId:string;rules:ProfileGameRule[];status:'manual'|'waiting'|'blocked'|'conflict'|'preparing'|'active'|'failed';message:string;conflicts:AutomaticGameId[];lastAttempt:ProfileAutomaticTarget|null;target:ProfileAutomaticTarget|null;readOnly:boolean};
 export type ProfileAutomaticCommand='profile_automatic_status'|'profile_game_rule_save'|'profile_game_rule_remove';
 export type ProfileAutomaticRequest={command:'profile_automatic_status'|'profile_list'}|{command:'profile_selection_mode';mode:ProfileSelectionMode}|{command:'profile_game_rule_save';gameId:AutomaticGameId;profileId:string;priority:number;enabled:boolean}|{command:'profile_game_rule_remove';gameId:AutomaticGameId};
 export type ProfileAutomaticSend=(request:ProfileAutomaticRequest)=>Promise<unknown>;
-const games=['dcs','assetto-corsa-rally','x-plane-11','x-plane-12'];
+const games:readonly string[]=supportedGames.map(game=>game.id);
 const object=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
@@ -20,7 +21,7 @@ function identity(value:unknown):boolean{return exact(value,['gameId','executabl
 function rule(value:unknown):value is ProfileGameRule{return exact(value,['identity','profileId','priority','enabled'])&&identity(value.identity)&&uuid(value.profileId)&&priority(value.priority)&&typeof value.enabled==='boolean';}
 function target(value:unknown):boolean{return value===null||exact(value,['profileId','gameId','processSession'])&&uuid(value.profileId)&&(value.gameId===null?value.processSession===null:game(value.gameId)&&text(value.processSession,256));}
 export function captureAutomaticStatus(value:unknown):DeepReadonly<ProfileAutomaticStatus>{
-  if(!exact(value,['schemaVersion','mode','manualProfileId','rules','status','message','conflicts','lastAttempt','target','readOnly'])||value.schemaVersion!==1||!mode(value.mode)||!uuid(value.manualProfileId)||!Array.isArray(value.rules)||value.rules.length>4||!value.rules.every(rule)||new Set(value.rules.map(rule=>rule.identity.gameId)).size!==value.rules.length||typeof value.status!=='string'||!['manual','waiting','blocked','conflict','preparing','active','failed'].includes(value.status)||!text(value.message,16384,true)||!Array.isArray(value.conflicts)||value.conflicts.length>4||!value.conflicts.every(game)||new Set(value.conflicts).size!==value.conflicts.length||!target(value.lastAttempt)||!target(value.target)||typeof value.readOnly!=='boolean')throw new Error('Native automatic profile status is malformed. Refresh the native service before changing rules.');
+  if(!exact(value,['schemaVersion','mode','manualProfileId','rules','status','message','conflicts','lastAttempt','target','readOnly'])||value.schemaVersion!==1||!mode(value.mode)||!uuid(value.manualProfileId)||!Array.isArray(value.rules)||value.rules.length>games.length||!value.rules.every(rule)||new Set(value.rules.map(rule=>rule.identity.gameId)).size!==value.rules.length||typeof value.status!=='string'||!['manual','waiting','blocked','conflict','preparing','active','failed'].includes(value.status)||!text(value.message,16384,true)||!Array.isArray(value.conflicts)||value.conflicts.length>games.length||!value.conflicts.every(game)||new Set(value.conflicts).size!==value.conflicts.length||!target(value.lastAttempt)||!target(value.target)||typeof value.readOnly!=='boolean')throw new Error('Native automatic profile status is malformed. Refresh the native service before changing rules.');
   return frozen(value as unknown as ProfileAutomaticStatus);
 }
 export function captureAutomaticProfiles(value:unknown):DeepReadonly<ProfileSummary[]>{

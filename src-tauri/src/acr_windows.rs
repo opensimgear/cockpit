@@ -1,8 +1,9 @@
-//! Read existing ACR named pages without creating or writing game mappings.
+//! Read existing Assetto named pages without creating or writing game mappings.
 //! Shared names are not a game identity; the caller explicitly selects a PID.
 use crate::game_telemetry::{
-    parse, RawSample, Source, SourceIdentity, GRAPHICS_SIZE, PHYSICS_CURRENT_MAX_RPM_OFFSET,
-    PHYSICS_EXTENDED_SIZE, PHYSICS_SIZE, STATIC_SIZE,
+    parse, parse_for_game, Game, RawSample, Source, SourceIdentity, GRAPHICS_SIZE,
+    PHYSICS_CURRENT_MAX_RPM_OFFSET, PHYSICS_EXTENDED_SIZE, PHYSICS_SIZE, STATIC_SIZE,
+    EVO_CAR_MODEL_OFFSET, EVO_GRAPHICS_SIZE,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -22,14 +23,26 @@ fn selected_image_matches(image: &str, expected: &str) -> Result<(), String> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
     {
-        return Err("Configure an explicit executable basename such as acr.exe.".into());
+        return Err("Configure an explicit game executable basename such as acs.exe.".into());
     }
     let basename = image.rsplit(['\\', '/']).next().unwrap_or(image);
     if !basename.eq_ignore_ascii_case(expected) {
         return Err(format!(
-            "Selected process image {basename} does not match configured ACR image {expected}."
+            "Selected process image {basename} does not match configured game image {expected}."
         ));
     }
+    Ok(())
+}
+fn selected_game_image_matches(image: &str, expected: &str, game: Game) -> Result<(), String> {
+    selected_image_matches(image, expected)?;
+    let expected = expected.to_ascii_lowercase();
+    let known = match game {
+        Game::Corsa => matches!(expected.as_str(), "acs.exe" | "acs_x86.exe"),
+        Game::Competizione => expected == "ac2-win64-shipping.exe",
+        Game::Evo => expected == "assettocorsaevo.exe",
+        Game::Rally => matches!(expected.as_str(), "acr.exe" | "acr-win64-shipping.exe"),
+    };
+    if !known { return Err(format!("The selected executable is not a {} telemetry producer.", game.id())); }
     Ok(())
 }
 
@@ -37,6 +50,13 @@ fn selected_image_matches(image: &str, expected: &str) -> Result<(), String> {
 /// are a best-effort stability check, not a claim of multi-page atomicity.
 fn consistent_copy(
     source: SourceIdentity,
+    read: &mut dyn FnMut(Page) -> Result<Vec<u8>, String>,
+) -> Result<RawSample, String> {
+    consistent_copy_for_game(source, Game::Rally, read)
+}
+fn consistent_copy_for_game(
+    source: SourceIdentity,
+    game: Game,
     read: &mut dyn FnMut(Page) -> Result<Vec<u8>, String>,
 ) -> Result<RawSample, String> {
     let mut copy = || -> Result<RawSample, String> {
@@ -50,18 +70,21 @@ fn consistent_copy(
     for _ in 0..3 {
         let first = copy()?;
         let second = copy()?;
-        parse(&first)?;
-        parse(&second)?;
+        parse_for_game(&first, game)?;
+        parse_for_game(&second, game)?;
         if first.physics[..PHYSICS_SIZE] == second.physics[..PHYSICS_SIZE]
-            && first.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE)
-                == second.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE)
+            && (!matches!(game, Game::Rally | Game::Evo)
+                || first.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE)
+                    == second.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE))
             && first.graphics[..GRAPHICS_SIZE] == second.graphics[..GRAPHICS_SIZE]
-            && first.statics[..STATIC_SIZE] == second.statics[..STATIC_SIZE]
+            && (game != Game::Evo || first.graphics[EVO_CAR_MODEL_OFFSET..EVO_GRAPHICS_SIZE]
+                == second.graphics[EVO_CAR_MODEL_OFFSET..EVO_GRAPHICS_SIZE])
+            && first.statics[..game.page_lengths().2] == second.statics[..game.page_lengths().2]
         {
             return Ok(second);
         }
     }
-    Err("ACR telemetry changed during all bounded snapshot attempts.".into())
+    Err("Assetto telemetry changed during all bounded snapshot attempts.".into())
 }
 
 #[cfg(windows)]
@@ -223,15 +246,18 @@ mod platform {
         statics: Mapping,
     }
     impl Pages {
-        fn open() -> Result<Self, String> {
+        fn open(game: Game) -> Result<Self, String> {
+            let (physics_size, graphics_size, static_size) = game.page_lengths();
+            let prefix = game.mapping_prefix();
+            let physics_name = format!("{prefix}_physics");
             Ok(Self {
                 // Older producers can expose only the original prefix. ACR's
                 // current RPM limit lives later in physics; acquire it when the
                 // existing mapping supports the extended read.
-                physics: Mapping::open("Local\\acpmf_physics", PHYSICS_EXTENDED_SIZE)
-                    .or_else(|_| Mapping::open("Local\\acpmf_physics", PHYSICS_SIZE))?,
-                graphics: Mapping::open("Local\\acpmf_graphics", GRAPHICS_SIZE)?,
-                statics: Mapping::open("Local\\acpmf_static", STATIC_SIZE)?,
+                physics: Mapping::open(&physics_name, physics_size)
+                    .or_else(|error| if game == Game::Rally { Mapping::open(&physics_name, PHYSICS_SIZE) } else { Err(error) })?,
+                graphics: Mapping::open(&format!("{prefix}_graphics"), graphics_size)?,
+                statics: Mapping::open(&format!("{prefix}_static"), static_size)?,
             })
         }
         fn copy(&self, page: Page) -> Vec<u8> {
@@ -243,6 +269,7 @@ mod platform {
         }
     }
     pub(crate) struct WindowsSource {
+        game: Game,
         pid: u32,
         expected_image: String,
         process: Option<Process>,
@@ -255,13 +282,17 @@ mod platform {
             Self::new_for_image(process_id, "acr.exe")
         }
         pub fn new_for_image(process_id: u32, expected_image: &str) -> Result<Self, String> {
+            Self::new_for_game(process_id, expected_image, Game::Rally)
+        }
+        pub fn new_for_game(process_id: u32, expected_image: &str, game: Game) -> Result<Self, String> {
             if process_id == 0 {
                 return Err("Select a nonzero ACR process ID.".into());
             }
-            crate::acr_setup::ensure_single_producer(process_id)?;
+            crate::acr_setup::ensure_single_producer_for_game(process_id, game)?;
             let process = Process::open(process_id)?;
-            selected_image_matches(&process.image, expected_image)?;
+            selected_game_image_matches(&process.image, expected_image, game)?;
             Ok(Self {
+                game,
                 pid: process_id,
                 expected_image: expected_image.into(),
                 process: Some(process),
@@ -276,7 +307,7 @@ mod platform {
         fn read(&mut self) -> Result<RawSample, String> {
             if self.process.is_none() {
                 let process = Process::open(self.pid)?;
-                selected_image_matches(&process.image, &self.expected_image)?;
+                selected_game_image_matches(&process.image, &self.expected_image, self.game)?;
                 self.process = Some(process);
             }
             let process = self.process.as_ref().unwrap();
@@ -284,14 +315,14 @@ mod platform {
                 return Err("Selected ACR process exited; telemetry was detached.".into());
             }
             if self.pages.is_none() {
-                self.pages = Some(Pages::open()?);
+                self.pages = Some(Pages::open(self.game)?);
             }
             let identity = SourceIdentity {
-                id: format!("acr-pid-{}", self.pid),
+                id: self.game.source_id(self.pid),
                 epoch: process.epoch,
             };
             let pages = self.pages.as_ref().unwrap();
-            let sample = consistent_copy(identity, &mut |page| Ok(pages.copy(page)))?;
+            let sample = consistent_copy_for_game(identity, self.game, &mut |page| Ok(pages.copy(page)))?;
             if !process.running() {
                 return Err("Selected ACR process exited during telemetry capture.".into());
             }
@@ -307,7 +338,7 @@ mod platform {
                 .producer_checked_at
                 .is_none_or(|last| last.elapsed() >= std::time::Duration::from_millis(250))
             {
-                if let Err(error) = crate::acr_setup::ensure_single_producer(self.pid) {
+                if let Err(error) = crate::acr_setup::ensure_single_producer_for_game(self.pid, self.game) {
                     self.close();
                     return Err(error);
                 }
@@ -315,7 +346,7 @@ mod platform {
             }
             match self.read() {
                 Ok(sample) => {
-                    let packet = parse(&sample)?.packet_id;
+                    let packet = parse_for_game(&sample, self.game)?.packet_id;
                     if counter_reset(self.last_packet, packet) {
                         // A stage/game reset can replace named mapping objects.
                         // Release our views before acquiring the next baseline.
@@ -354,10 +385,13 @@ impl WindowsSource {
         Self::new_for_image(process_id, "acr.exe")
     }
     pub fn new_for_image(process_id: u32, expected_image: &str) -> Result<Self, String> {
+        Self::new_for_game(process_id, expected_image, Game::Rally)
+    }
+    pub fn new_for_game(process_id: u32, expected_image: &str, game: Game) -> Result<Self, String> {
         if process_id == 0 {
             return Err("Select a nonzero ACR process ID.".into());
         }
-        selected_image_matches(expected_image, expected_image)?;
+        selected_game_image_matches(expected_image, expected_image, game)?;
         Err("Live ACR shared memory is available on Windows; use a fixture source on this platform.".into())
     }
     pub fn process_image(&self) -> Option<&str> {
@@ -493,6 +527,40 @@ mod tests {
         for expected in ["", "../acr.exe", "acr", "a.exe\0", &"a".repeat(129)] {
             assert!(selected_image_matches("acr.exe", expected).is_err());
         }
+    }
+    #[test]
+    fn native_producer_identity_cannot_be_relabelled_as_a_different_assetto_game() {
+        let producers = [
+            (Game::Corsa, "acs.exe"), (Game::Corsa, "acs_x86.exe"),
+            (Game::Competizione, "AC2-Win64-Shipping.exe"),
+            (Game::Evo, "AssettoCorsaEVO.exe"), (Game::Rally, "acr.exe"),
+        ];
+        for (owner, image) in producers {
+            assert!(selected_game_image_matches(&format!("C:\\Games\\{image}"), image, owner).is_ok());
+            for game in [Game::Corsa, Game::Competizione, Game::Evo, Game::Rally] {
+                assert_eq!(selected_game_image_matches(image, image, game).is_ok(), owner == game);
+            }
+        }
+        assert!(selected_game_image_matches("AssettoCorsa.exe", "AssettoCorsa.exe", Game::Corsa).is_err());
+        assert!(selected_game_image_matches("AC2.exe", "AC2.exe", Game::Competizione).is_err());
+    }
+    #[test]
+    fn evo_stability_check_uses_its_graphics_car_identity_and_narrow_static_metadata() {
+        let mut car_reads = 0;
+        let result = consistent_copy_for_game(identity(), Game::Evo, &mut |page| {
+            let mut data = match page {
+                Page::Physics => vec![0; PHYSICS_EXTENDED_SIZE],
+                Page::Graphics => vec![0; EVO_GRAPHICS_SIZE],
+                Page::Statics => vec![0; Game::Evo.page_lengths().2],
+            };
+            if matches!(page, Page::Graphics) {
+                car_reads += 1;
+                data[EVO_CAR_MODEL_OFFSET] = if car_reads == 1 { b'A' } else { b'B' };
+            }
+            Ok(data)
+        }).unwrap();
+        assert_eq!(car_reads, 4);
+        assert_eq!(parse_for_game(&result, Game::Evo).unwrap().context.car_model, "B");
     }
     #[cfg(not(windows))]
     #[test]

@@ -71,7 +71,7 @@ impl OwnedRun {
             || self.owner.game_id.as_ref().is_some_and(|id| {
                 !matches!(
                     id.as_str(),
-                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
                 )
             })
             || self.attempted.len() > super::APPLY_PHASES.len()

@@ -21,6 +21,7 @@ struct Inner {
     saved: Mutex<Value>,
     states: Mutex<BTreeMap<String, Value>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
+    fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
     cancel: AtomicBool,
     busy: AtomicBool,
     closed: AtomicBool,
@@ -60,7 +61,7 @@ fn read_settings(path: &Path) -> Result<Value, String> {
         || value["games"].as_object().unwrap().keys().any(|k| {
             !matches!(
                 k.as_str(),
-                "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+                "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
             )
         })
     {
@@ -174,7 +175,7 @@ fn validate_connection(game: &str, value: &Value) -> Result<(), String> {
         return if value["source"] == "shared-memory" {
             Ok(())
         } else {
-            Err("ACR setup requires the native shared-memory source.".into())
+            Err("Assetto integration requires the native shared-memory source.".into())
         };
     }
     if !value["cataloguePath"].as_str().is_some_and(|s| {
@@ -222,6 +223,7 @@ impl GameIntegrationSetup {
                 saved: Mutex::new(loaded.unwrap_or(json!({"schemaVersion":1,"games":{}}))),
                 states: Mutex::new(states),
                 catalogues: Mutex::new(BTreeMap::new()),
+                fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
@@ -230,6 +232,21 @@ impl GameIntegrationSetup {
             admission: Mutex::new(()),
         }
     }
+    /// New preparation forces a content hash; subsequent native admission checks
+    /// metadata immediately, independently of the passive observer's interval.
+    pub(crate) fn validate_native_build(&self, game: &Value, force_hash: bool) -> Result<(), String> {
+        let id = game["id"].as_str().unwrap_or("");
+        if !id.starts_with("assetto-corsa") { return Ok(()); }
+        let dialect = crate::game_telemetry::Game::from_id(id)?;
+        let executable = game["executable"].as_str().ok_or("Choose the Assetto executable.")?;
+        let identity = self.inner.fingerprints.lock().unwrap_or_else(|p|p.into_inner()).inspect(Path::new(executable), dialect, force_hash)?;
+        let saved = self.inner.saved.lock().unwrap_or_else(|p|p.into_inner());
+        let record = &saved["games"][id];
+        if record["configuredFingerprint"] != identity || record["verifiedFingerprint"] != identity || record["verificationIssue"].is_string() {
+            return Err("The Assetto executable or native verification changed. Verify this game build before preparing its integration.".into());
+        }
+        Ok(())
+    }
     pub(crate) fn busy(&self) -> bool {
         self.inner.busy.load(Ordering::Acquire)
     }
@@ -237,6 +254,7 @@ impl GameIntegrationSetup {
         crate::dcs_setup::recovery_pending(&self.inner.work)
     }
     pub(crate) fn decorate(&self, catalogue: &mut [Value]) {
+        let _admission = self.admission.lock().unwrap_or_else(|p|p.into_inner());
         for game in catalogue {
             let id = game["id"].as_str().unwrap_or("");
             let cached = self
@@ -270,6 +288,12 @@ impl GameIntegrationSetup {
         }
     }
     pub(crate) fn refresh(&self, catalogue: &[Value]) {
+        let _admission = self.admission.lock().unwrap_or_else(|p|p.into_inner());
+        self.refresh_admitted(catalogue);
+    }
+    // Request admission already owns this mutex. Keep passive inspection and
+    // its state publication together so it cannot overwrite a new setup worker.
+    fn refresh_admitted(&self, catalogue: &[Value]) {
         if self.busy() {
             return;
         }
@@ -305,7 +329,7 @@ impl GameIntegrationSetup {
             return self.save_provider_settings(request, game);
         }
         if command == "game_integration_check"
-            && id == "assetto-corsa-rally"
+            && id.starts_with("assetto-corsa")
             && self.inner.native
             && self.inner.settings_error.is_none()
         {
@@ -384,10 +408,10 @@ impl GameIntegrationSetup {
             write_settings(&self.inner.path, &draft)?;
             *saved = draft;
             drop(saved);
-            self.refresh(std::slice::from_ref(game));
+            self.refresh_admitted(std::slice::from_ref(game));
             return Ok(());
         }
-        if command == "game_integration_setup" && id == "assetto-corsa-rally" {
+        if command == "game_integration_setup" && id.starts_with("assetto-corsa") {
             return self.begin_acr(request, game, platform, true);
         }
         if command != "game_integration_setup" || id != "dcs" {
@@ -499,7 +523,7 @@ impl GameIntegrationSetup {
             );
         }
         if id != "dcs" {
-            if !matches!(id, "assetto-corsa-rally" | "x-plane-11" | "x-plane-12") {
+            if !(id.starts_with("assetto-corsa") || matches!(id, "x-plane-11" | "x-plane-12")) {
                 return Err("Choose a supported integration to remove.".into());
             }
             // These providers use the game's native APIs and install no game files.
@@ -509,7 +533,7 @@ impl GameIntegrationSetup {
             write_settings(&self.inner.path, &draft)?;
             *saved = draft;
             drop(saved);
-            self.refresh(std::slice::from_ref(game));
+            self.refresh_admitted(std::slice::from_ref(game));
             return Ok(());
         }
         if platform.find(game)?.is_some() {
@@ -586,11 +610,13 @@ impl GameIntegrationSetup {
         platform: Arc<dyn Platform>,
         configure: bool,
     ) -> Result<(), String> {
+        let id = game["id"].as_str().ok_or("Choose an Assetto game.")?.to_owned();
+        let telemetry_game = crate::game_telemetry::Game::from_id(&id)?;
         if game["installed"] != true {
-            return Err("Find the ACR installation before setting up telemetry.".into());
+            return Err("Find the Assetto installation before setting up telemetry.".into());
         }
         let previous = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner())["games"]
-            ["assetto-corsa-rally"]
+            [&id]
             .clone();
         let mut connection = if previous["connection"].is_object() {
             previous["connection"].clone()
@@ -601,20 +627,20 @@ impl GameIntegrationSetup {
             if let Some(overrides) = request.get("connection") {
                 for (k, v) in overrides
                     .as_object()
-                    .ok_or("Invalid ACR connection overrides.")?
+                    .ok_or("Invalid Assetto connection overrides.")?
                 {
                     connection[k] = v.clone();
                 }
             }
         }
-        validate_connection("assetto-corsa-rally", &connection)?;
+        validate_connection(&id, &connection)?;
         let executable = game["executable"]
             .as_str()
             .filter(|s| !s.is_empty())
-            .ok_or("Choose the ACR executable.")?;
+            .ok_or("Choose the Assetto executable.")?;
         let executable = PathBuf::from(executable);
         if !executable.is_absolute() || !executable.is_file() {
-            return Err("Choose an existing absolute ACR executable.".into());
+            return Err("Choose an existing absolute Assetto executable.".into());
         }
         if self
             .inner
@@ -625,7 +651,7 @@ impl GameIntegrationSetup {
             return Err("An integration setup check is already running.".into());
         }
         self.inner.cancel.store(false, Ordering::Release);
-        self.inner.states.lock().unwrap_or_else(|p| p.into_inner()).insert("assetto-corsa-rally".into(), json!({"state":"setting-up","message":"Checking ACR native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
+        self.inner.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), json!({"state":"setting-up","message":"Checking Assetto native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
         let inner = self.inner.clone();
         let game = game.clone();
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -634,9 +660,9 @@ impl GameIntegrationSetup {
         }
         *worker = Some(thread::spawn(move || {
             let result: Result<Value, String> = (|| {
-                let identity = crate::acr_setup::fingerprint(&executable)?;
+                let identity = inner.fingerprints.lock().unwrap_or_else(|p|p.into_inner()).inspect(&executable, telemetry_game, true)?;
                 if inner.cancel.load(Ordering::Acquire) {
-                    return Err("ACR telemetry check was cancelled.".into());
+                    return Err("Assetto telemetry check was cancelled.".into());
                 }
                 if configure {
                     let mut draft = inner
@@ -654,7 +680,7 @@ impl GameIntegrationSetup {
                     } else {
                         Value::Null
                     };
-                    draft["games"]["assetto-corsa-rally"] = json!({"connection":connection,"configuredFingerprint":identity,"verifiedFingerprint":verified,"verificationIssue":issue});
+                    draft["games"][&id] = json!({"connection":connection,"configuredFingerprint":identity,"verifiedFingerprint":verified,"verificationIssue":issue});
                     write_settings(&inner.path, &draft)?;
                     *inner.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
                 }
@@ -664,13 +690,13 @@ impl GameIntegrationSetup {
                     || inner.cancel.load(Ordering::Acquire),
                     |message, percent| {
                         let mut states = inner.states.lock().unwrap_or_else(|p| p.into_inner());
-                        if let Some(status) = states.get_mut("assetto-corsa-rally") {
+                        if let Some(status) = states.get_mut(&id) {
                             status["progress"] = json!(message);
                             status["percent"] = json!(percent);
                         }
                     },
                 )?;
-                inner.accept_acr_proof(&proof)?;
+                inner.accept_assetto_proof(&id, &proof)?;
                 Ok(proof)
             })();
             let mut status = inner.inspect(&game, None);
@@ -680,7 +706,7 @@ impl GameIntegrationSetup {
                     status["probeChannels"] = json!(channels);
                     status["optionalMaxRpm"] = json!(proof["maxRpmAvailable"] == true);
                     if proof["nativeVerified"] != true && status["verified"] != true {
-                        status["message"] = proof["diagnostics"][0].as_str().map(|s| json!(s)).unwrap_or_else(|| json!("Telemetry is configured. Start a live ACR stage to verify this game build."));
+                        status["message"] = proof["diagnostics"][0].as_str().map(|s| json!(s)).unwrap_or_else(|| json!("Telemetry is configured. Start a live Assetto stage to verify this game build."));
                     }
                     if blocking_acr_status(&proof) {
                         status["state"] = json!("needs-attention");
@@ -697,7 +723,7 @@ impl GameIntegrationSetup {
                 .states
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .insert("assetto-corsa-rally".into(), status);
+                .insert(id.clone(), status);
             inner.busy.store(false, Ordering::Release);
         }));
         Ok(())
@@ -742,9 +768,13 @@ impl Inner {
             }
         }
     }
+    #[cfg(test)]
     fn accept_acr_proof(&self, proof: &Value) -> Result<(), String> {
+        self.accept_assetto_proof("assetto-corsa-rally", proof)
+    }
+    fn accept_assetto_proof(&self, id: &str, proof: &Value) -> Result<(), String> {
         let mut draft = self.saved.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let record = &mut draft["games"]["assetto-corsa-rally"];
+        let record = &mut draft["games"][id];
         if !record.is_object() || record["configuredFingerprint"] != proof["fingerprint"] {
             return Ok(());
         }
@@ -768,20 +798,22 @@ impl Inner {
     }
 
     fn inspect_acr(&self, game: &Value) -> Value {
+        let id = game["id"].as_str().unwrap_or("assetto-corsa-rally");
+        let telemetry_game = match crate::game_telemetry::Game::from_id(id) { Ok(game) => game, Err(error) => return json!({"state":"needs-attention","message":error}) };
         let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner())["games"]
-            ["assetto-corsa-rally"]
+            [id]
             .clone();
-        let mut status = json!({"state":"setup-required","message":"Set up ACR native telemetry. No extra module or game-file changes are required.","verified":false});
+        let mut status = json!({"state":"setup-required","message":"Set up Assetto native telemetry. No extra module or game-file changes are required.","verified":false});
         if !saved["connection"].is_object() {
             return status;
         }
         status["connection"] = saved["connection"].clone();
         let inspected = (|| {
-            validate_connection("assetto-corsa-rally", &saved["connection"])?;
+            validate_connection(id, &saved["connection"])?;
             let executable = game["executable"]
                 .as_str()
-                .ok_or("Choose the ACR executable.")?;
-            crate::acr_setup::fingerprint(Path::new(executable))
+                .ok_or("Choose the Assetto executable.")?;
+            self.fingerprints.lock().unwrap_or_else(|p|p.into_inner()).inspect(Path::new(executable), telemetry_game, false)
         })();
         match inspected {
             Err(error) => {
@@ -792,17 +824,17 @@ impl Inner {
                 status["version"] = identity["fileVersion"].clone();
                 if saved["configuredFingerprint"] != identity {
                     status["state"] = json!("needs-attention");
-                    status["message"]=json!("The ACR executable/build changed. Set up telemetry again and verify a live stage.");
+                    status["message"]=json!("The Assetto executable/build changed. Set up telemetry again and verify a live driving session.");
                 } else if let Some(issue) = saved["verificationIssue"].as_str() {
                     status["state"] = json!("needs-attention");
                     status["message"] = json!(issue);
                 } else if saved["verifiedFingerprint"] == identity {
                     status["state"] = json!("ready");
                     status["verified"] = json!(true);
-                    status["message"]=json!("Native ACR telemetry was verified for this exact executable. Waiting for a live session when the game is closed.");
+                    status["message"]=json!("Native Assetto telemetry was verified for this exact executable. Waiting for a live session when the game is closed.");
                 } else {
                     status["state"] = json!("needs-attention");
-                    status["message"]=json!("Telemetry is configured. This game build needs its first native verification in a live stage.");
+                    status["message"]=json!("Telemetry is configured. This game build needs its first native verification in a live driving session.");
                 }
             }
         }
@@ -831,7 +863,7 @@ impl Inner {
             }
             return json!({"state":"ready","connection":saved["connection"],"verified":false,"message":"RREF UDP configured. Start a flight in the selected installation. Check its UDP receive port (default 49000), firewall, pause/replay and the live status separately. Simulator/hardware qualification is pending."});
         }
-        if game["id"] == "assetto-corsa-rally" {
+        if game["id"].as_str().is_some_and(|id| id.starts_with("assetto-corsa")) {
             return self.inspect_acr(game);
         }
         let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner())["games"]["dcs"].clone();

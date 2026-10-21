@@ -49,7 +49,7 @@ impl Settings {
             || self.preferred_profiles.iter().any(|(game, profile)| {
                 !matches!(
                     game.as_str(),
-                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
                 ) || !uuid::Uuid::parse_str(profile).is_ok_and(|id| id.to_string() == *profile)
             })
         {

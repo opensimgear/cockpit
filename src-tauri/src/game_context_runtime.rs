@@ -37,6 +37,12 @@ impl GamesRuntime {
         else {
             return Ok(None);
         };
+        let game = self.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).catalogue.iter()
+            .find(|game|game["id"] == id).cloned().ok_or("The selected game installation changed.")?;
+        if let Err(error) = self.inner.setup.validate_native_build(&game, true) {
+            self.inner.contexts.lock().unwrap_or_else(|p|p.into_inner()).invalidate_preparation(&proof, error.clone());
+            return Err(error);
+        }
         let (connection, revision, saved_aircraft_module) =
             self.inner.setup.provider_connection_snapshot(id)?;
         let catalogue = self.inner.setup.resource_integration_catalogue_for_vehicle(id, proof.vehicle_id.as_deref())?;
@@ -79,7 +85,8 @@ impl GamesRuntime {
                 .find(|game| game["id"] == proof.game_id)
                 .cloned()
                 .ok_or("The selected game installation changed.")?;
-            if self.inner.platform.find(&game)?.as_ref() != Some(&proof.process)
+            self.inner.setup.validate_native_build(&game, false)?;
+            if self.inner.platform.integration_process(&game)?.as_ref() != Some(&proof.process)
                 || !self.inner.platform.alive(&proof.process)?
             {
                 return Err(
@@ -314,7 +321,7 @@ impl Inner {
                         .as_str()
                         .ok_or("Choose a game executable before process verification.")?,
                 )?;
-                let process = self.platform.find(&game)?;
+                let process = self.platform.integration_process(&game)?;
                 match process {
                     Some(process) if self.platform.alive(&process)? => Ok(Some(process)),
                     _ => Ok(None),
@@ -339,7 +346,7 @@ impl Inner {
                 supported,
                 setup_ready: setup_matches
                     && game["integrationSetup"]["state"] == "ready"
-                    && (id != "assetto-corsa-rally"
+                    && (!id.starts_with("assetto-corsa")
                         || game["integrationSetup"]["verified"] == true),
                 provider_setup_revision: revision.clone(),
                 catalogue_revision: catalogue

@@ -167,19 +167,22 @@ impl Reader {
                     guard,
                 })
             }
-            "assetto-corsa-rally" => {
+            "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo" => {
                 let image = process
                     .path
                     .rsplit(['/', '\\'])
                     .next()
                     .unwrap_or(&process.path);
+                let game = game_telemetry::Game::from_id(id)?;
                 Ok(Self::Rally {
-                    source: Box::new(crate::acr_windows::WindowsSource::new_for_image(
+                    source: Box::new(crate::acr_windows::WindowsSource::new_for_game(
                         process.pid,
                         image,
+                        game,
                     )?),
-                    decoder: game_telemetry::Session::new(
+                    decoder: game_telemetry::Session::new_for_game(
                         connection["freshnessMs"].as_u64().unwrap_or(1500),
+                        game,
                     )?,
                 })
             }
@@ -225,7 +228,7 @@ impl Reader {
                 if snapshot.status == "error" {
                     return Err(snapshot
                         .error
-                        .unwrap_or_else(|| "Rally vehicle telemetry failed.".into()));
+                        .unwrap_or_else(|| "Assetto vehicle telemetry failed.".into()));
                 }
                 Ok(snapshot
                     .context
@@ -279,14 +282,14 @@ impl Tracker {
             }
             let saved: Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
             let games = saved["games"].as_object()?;
-            if saved["schemaVersion"] != 1 || games.len() > 4 {
+            if saved["schemaVersion"] != 1 || games.len() > 7 {
                 return None;
             }
             let mut result = BTreeMap::new();
             for (game, vehicles) in games {
                 if !matches!(
                     game.as_str(),
-                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
                 ) {
                     return None;
                 }
@@ -465,7 +468,7 @@ impl Tracker {
         let id = game["id"].as_str().unwrap_or("").to_owned();
         let supported = matches!(
             id.as_str(),
-            "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+            "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
         );
         let mut values = self.seen.get(&id).cloned().unwrap_or_default();
         if let Some(entry) = self.entries.get(&id) {
@@ -473,14 +476,14 @@ impl Tracker {
                 values.insert(value["id"].as_str().unwrap().into(), value.clone());
             }
         }
-        let message = if id == "assetto-corsa-rally" {
+        let message = if id.starts_with("assetto-corsa") {
             "Cars are discovered from native telemetry. Load a car once to add it to the vehicle list."
         } else if id == "dcs" {
             "Aircraft come from the installed DCS-BIOS catalogue. Current aircraft requires fresh DCS-BIOS exports."
         } else {
             "Aircraft come from this installation's Aircraft folder. Current aircraft requires fresh RREF telemetry."
         };
-        game["vehicleSupport"] = json!({"supported":supported,"kind":if id=="assetto-corsa-rally"{"car"}else{"aircraft"},"vehicles":values.values().collect::<Vec<_>>(),"message":message});
+        game["vehicleSupport"] = json!({"supported":supported,"kind":if id.starts_with("assetto-corsa"){"car"}else{"aircraft"},"vehicles":values.values().collect::<Vec<_>>(),"message":message});
         game["currentVehicle"] = self.current(&id).unwrap_or(Value::Null);
         game["vehicleStatus"] = json!({"status":if game["currentVehicle"].is_object(){"ready"}else if self.entries.get(&id).is_some_and(|entry|entry.error.is_some()){"unavailable"}else{"waiting"},"message":self.entries.get(&id).and_then(|entry|entry.error.as_deref()).unwrap_or("Waiting for a running game and fresh vehicle telemetry.")});
     }

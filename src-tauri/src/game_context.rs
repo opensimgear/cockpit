@@ -72,7 +72,7 @@ pub(crate) struct Broker {
 fn supported(id: &str) -> bool {
     matches!(
         id,
-        "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12"
+        "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
     )
 }
 fn canonical_uuid(id: &str) -> bool {

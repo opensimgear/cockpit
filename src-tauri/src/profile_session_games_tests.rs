@@ -775,6 +775,60 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
 }
 
 #[test]
+fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_channels() {
+    use crate::game_telemetry::{Game, FixtureSource, RawSample, SourceIdentity};
+    for game in [Game::Corsa, Game::Competizione, Game::Evo] {
+        let id = game.id();
+        let prepared = prepared(id, json!({"source":"shared-memory","freshnessMs":100}), crate::game_telemetry::catalogue_for_game(id));
+        let descriptors = crate::profile_resource_ports::integration(&prepared.catalogue).unwrap();
+        let mut plan = empty_plan();
+        for port in descriptors { source(&mut plan, id, &port); }
+        let mut acquired = GameSources::prepare(&plan, Some(prepared)).unwrap();
+        acquired.acquired = true;
+        let mut queue = FixtureSource::new_for_game(game);
+        let mut sample = RawSample {
+            source: SourceIdentity { id: game.source_id(42), epoch: 1 },
+            physics: include_bytes!("../../tests/fixtures/acr/live.physics.bin").to_vec(),
+            graphics: include_bytes!("../../tests/fixtures/acr/live.graphics.bin").to_vec(),
+            statics: include_bytes!("../../tests/fixtures/acr/live.static.bin").to_vec(),
+        };
+        if game == Game::Evo {
+            sample.physics.resize(592, 0);
+            sample.physics[588..592].copy_from_slice(&7500i32.to_le_bytes());
+            sample.graphics.resize(3119, 0);
+            sample.graphics[3086..3094].copy_from_slice(b"evo-car\0");
+            sample.statics.fill(0);
+            sample.statics[0..4].copy_from_slice(b"1.0\0");
+            sample.statics[15..21].copy_from_slice(b"0.9.1\0");
+            sample.statics[136..142].copy_from_slice(b"imola\0");
+        }
+        for packet in 10u32..13 {
+            sample.physics[..4].copy_from_slice(&packet.to_le_bytes());
+            queue.push(sample.clone()).unwrap();
+        }
+        let Some(Reader::Acr { source, .. }) = &mut acquired.reader else { panic!() };
+        *source = Some(Box::new(queue));
+        for now in [0, 10_000] {
+            let snapshot = acquired.read(now, false).unwrap().unwrap();
+            assert!(!acquired.frames(snapshot, now).fresh);
+        }
+        let snapshot = acquired.read(20_000, false).unwrap().unwrap();
+        let poll = acquired.frames(snapshot, 20_000);
+        assert!(poll.fresh, "{id}");
+        assert_eq!(poll.frames[0].changes.iter().find(|change| change.port_id == "channel:rpm").unwrap().sample,
+            SignalSample::scalar(PortValue::Number(6300.0)));
+        let delivery = acquired.delivery_batch().unwrap();
+        assert_eq!(delivery.scope, format!("profile-game:{id}"));
+        assert_eq!(delivery.observations[0].key, id);
+        assert!(delivery.observations[0].route.as_ref().unwrap().baseline_ready);
+        assert!(!delivery.observations[0].route.as_ref().unwrap().writable);
+        let snapshot = acquired.read(121_000, false).unwrap().unwrap();
+        assert!(!acquired.frames(snapshot, 121_000).fresh);
+        acquired.stop();
+    }
+}
+
+#[test]
 fn rally_fixture_uses_exact_native_channels_and_preserves_unknown_optional_values() {
     let game = prepared(
         "assetto-corsa-rally",

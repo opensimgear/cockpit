@@ -268,6 +268,9 @@ impl Sources {
             let provider = game["provider"].as_str().unwrap_or(match id {
                 "dcs" => "dcs-bios",
                 "assetto-corsa-rally" => "assetto-corsa-rally",
+                "assetto-corsa" => "assetto-corsa",
+                "assetto-corsa-competizione" => "assetto-corsa-competizione",
+                "assetto-corsa-evo" => "assetto-corsa-evo",
                 _ => "x-plane",
             });
             let mut resource = observation(

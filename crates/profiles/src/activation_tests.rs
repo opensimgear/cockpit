@@ -212,3 +212,15 @@ fn repeated_observation_or_failed_apply_does_not_replay_effects() {
         .next(&Decision::Select(Target::default()), 1)
         .is_none());
 }
+
+#[test]
+fn automatic_selection_accepts_rules_and_observations_for_all_supported_games() {
+    let profile = new_document("All supported games").unwrap();
+    let profiles = vec![default_document(), profile.clone()];
+    let rules = SUPPORTED_GAME_IDS.iter().enumerate().map(|(index, game)|rule(game, &profile, index as i16)).collect::<Vec<_>>();
+    let games = SUPPORTED_GAME_IDS.iter().map(|game|observed(game, game)).collect::<Vec<_>>();
+    validate_rules(&rules).unwrap();
+    assert_eq!(rules.len(), 7);
+    let Decision::Select(selected) = choose(&rules, &games, &profiles) else { panic!("All seven supported game rules must be selectable"); };
+    assert_eq!(selected.game_id.as_deref(), Some("assetto-corsa-evo"));
+}

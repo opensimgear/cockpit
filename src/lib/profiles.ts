@@ -1,5 +1,6 @@
 /** Portable unified profile contracts. Native validation remains authoritative. */
 import { desktopActionValid, desktopActionContract, desktopOutputScopeValid, type ProfileDesktopOutput } from './profile-desktop.ts';
+import type { GameId } from './games';
 export const PROFILE_SCHEMA_VERSION = 2;
 export const MAX_PROFILE_BYTES = 524_288;
 export const MAX_PROFILES = 32;
@@ -90,7 +91,7 @@ export type ProfileRequest =
   | { command: 'profile_editor_save'; document: ProfileDocument; expectedRevision: number | null; assignments: ProfileLocalAssignment[] }
   | { command: 'profile_import'; document: ProfileDocument; name?: string }
   | { command: 'profile_select'; id: string; selectionSource: ProfileSelectionMode }
-  | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: 'dcs' | 'x-plane-11' | 'x-plane-12' | 'assetto-corsa-rally' }
+  | { command: 'profile_apply'; id: string; expectedRevision: number; gameId?: GameId }
   | { command: 'profile_stop' | 'profile_recover' }
   | { command: 'profile_selection_mode'; mode: ProfileSelectionMode }
   | { command: 'profile_reset'; confirm: true };

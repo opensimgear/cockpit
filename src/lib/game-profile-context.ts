@@ -1,10 +1,10 @@
 import {DEFAULT_PROFILE_ID,type DeepReadonly,type ProfileSummary} from './profiles';
-import type {GameId} from './games';
+import {supportedGames,type GameId} from './games';
 
 export type GameProfileCandidates={gameId:GameId;profiles:ProfileSummary[];preferredProfileId:string|null};
 export type GameProfileContextRequest={command:'profile_game_candidates'|'profile_game_preference_remove';gameId:GameId}|{command:'profile_game_preference_save';gameId:GameId;profileId:string};
 export type GameProfileContextSend=(request:GameProfileContextRequest)=>Promise<unknown>;
-const games=['dcs','assetto-corsa-rally','x-plane-11','x-plane-12'];
+const games:readonly string[]=supportedGames.map(game=>game.id);
 const object=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
 const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);

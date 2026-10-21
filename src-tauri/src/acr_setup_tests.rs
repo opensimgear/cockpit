@@ -87,13 +87,13 @@ fn known_assetto_producers_are_filtered_before_process_queries() {
         "ACS.exe",
         "acs_x86.exe",
         "AC2-Win64-Shipping.exe",
-        "acc.exe",
-        "AssettoCorsa.exe",
-        "C:/Game/AC2.exe",
+        "AssettoCorsaEVO.exe",
     ] {
         assert!(is_competing_image(name), "{name}");
     }
     for name in [
+        "AssettoCorsa.exe",
+        "C:/Game/AC2.exe",
         "Cockpit.exe",
         "explorer.exe",
         "DCS.exe",
@@ -771,4 +771,76 @@ fn running_game_passes_native_setup_probe() {
     println!("LIVE ACR SETUP {proof}");
     assert_eq!(proof["nativeVerified"], true);
     assert_eq!(proof["compatible"], true);
+}
+
+#[test]
+fn producer_conflicts_are_limited_to_the_selected_mapping_namespace() {
+    for game in [Game::Corsa, Game::Competizione, Game::Rally] {
+        for image in ["acs.exe", "acs_x86.exe", "AC2-Win64-Shipping.exe", "acr.exe"] {
+            assert!(shares_mapping(game, image));
+            assert!(!shares_mapping(Game::Evo, image));
+        }
+        assert!(!shares_mapping(game, "AssettoCorsaEVO.exe"));
+    }
+    assert!(shares_mapping(Game::Evo, "C:/Games/AssettoCorsaEVO.exe"));
+    for image in ["AssettoCorsa.exe", "AC2.exe", "Cockpit.exe"] {
+        for game in [Game::Corsa, Game::Competizione, Game::Evo, Game::Rally] { assert!(!shares_mapping(game, image)); }
+    }
+}
+#[test]
+fn passive_fingerprint_cache_reuses_hashes_and_invalidates_every_metadata_identity_change() {
+    let scratch = Scratch::new();
+    let path = scratch.executable();
+    let reads = std::cell::Cell::new(0);
+    let mut hash = |path: &Path, game| { reads.set(reads.get() + 1); fingerprint_for_game(path, game) };
+    let mut cache = FingerprintCache::default();
+    let first = cache.inspect_with(&path, Game::Rally, false, &mut hash).unwrap();
+    for _ in 0..10 { assert_eq!(cache.inspect_with(&path, Game::Rally, false, &mut hash).unwrap(), first); }
+    assert_eq!(reads.get(), 1);
+    let copy = scratch.0.join("copy/acr.exe");
+    fs::create_dir(copy.parent().unwrap()).unwrap();
+    fs::copy(&path, &copy).unwrap();
+    cache.inspect_with(&copy, Game::Rally, false, &mut hash).unwrap();
+    assert_eq!(reads.get(), 2);
+    fs::write(&copy, b"Updated game build").unwrap();
+    let changed = cache.inspect_with(&copy, Game::Rally, false, &mut hash).unwrap();
+    assert_eq!(reads.get(), 3);
+    assert_ne!(changed["fingerprint"], first["fingerprint"]);
+    let modified = fs::metadata(&copy).unwrap().modified().unwrap() + Duration::from_secs(2);
+    fs::File::options().write(true).open(&copy).unwrap().set_modified(modified).unwrap();
+    cache.inspect_with(&copy, Game::Rally, false, &mut hash).unwrap();
+    assert_eq!(reads.get(), 4);
+    cache.inspect_with(&copy, Game::Rally, true, &mut hash).unwrap();
+    assert_eq!(reads.get(), 5);
+    fs::remove_file(&copy).unwrap();
+    assert!(cache.inspect_with(&copy, Game::Rally, false, &mut hash).is_err());
+    assert!(cache.entries.is_empty());
+}
+#[test]
+fn explicit_verification_bypasses_unchanged_metadata_and_cache_stays_bounded_by_game() {
+    let scratch = Scratch::new();
+    let mut cache = FingerprintCache::default();
+    for (game, name) in [(Game::Corsa,"acs.exe"),(Game::Competizione,"AC2-Win64-Shipping.exe"),(Game::Evo,"AssettoCorsaEVO.exe"),(Game::Rally,"acr.exe")] {
+        let path = scratch.0.join(name);
+        fs::write(&path, b"original").unwrap();
+        let first = cache.inspect(&path, game, false).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, b"modified").unwrap();
+        fs::File::options().write(true).open(&path).unwrap().set_modified(modified).unwrap();
+        // New setup/check and fresh preparation always hash, even if an external
+        // tool preserved the previous executable's size and modification time.
+        assert_ne!(cache.inspect(&path, game, true).unwrap()["fingerprint"], first["fingerprint"]);
+    }
+    assert_eq!(cache.entries.len(), 4);
+}
+#[test]
+fn runtime_resolution_never_substitutes_an_unrelated_rally_executable_for_corsa_or_evo() {
+    let scratch = Scratch::new();
+    let nested = scratch.0.join("acr/Binaries/Win64/acr.exe");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, b"unrelated").unwrap();
+    for (game, name) in [(Game::Corsa,"acs.exe"),(Game::Evo,"AssettoCorsaEVO.exe")] {
+        let selected = scratch.0.join(name); fs::write(&selected,b"selected").unwrap();
+        assert_eq!(fingerprint_for_game(&selected,game).unwrap()["executable"],json!(fs::canonicalize(selected).unwrap()));
+    }
 }

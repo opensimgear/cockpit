@@ -108,6 +108,23 @@ fn runtime() -> Runtime {
     runtime
 }
 
+#[test]
+fn assetto_delivery_scopes_require_their_own_exact_verified_game_metadata() {
+    for game in ["assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo", "assetto-corsa-rally"] {
+        let metadata = metadata(game);
+        let current = BTreeMap::from([(game.to_owned(), metadata.clone())]);
+        let delivery = delivery(game, "assetto-reader", 1);
+        assert!(game_metadata_valid(&metadata, game));
+        assert!(validate_game_catalogues(&delivery, &current).is_ok());
+        for foreign in ["assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo", "assetto-corsa-rally"] {
+            if foreign == game { continue; }
+            let mut changed = delivery.clone();
+            changed.scope = format!("profile-game:{foreign}");
+            assert!(validate_game_catalogues(&changed, &current).is_err());
+        }
+    }
+}
+
 fn aircraft_metadata(module:&str)->Observation {
     let mut item=metadata("dcs");let key=format!("dcs:{module}");
     item.key=key.clone();item.name=module.into();item.evidence[0].value=key.clone();

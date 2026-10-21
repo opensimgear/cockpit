@@ -64,15 +64,15 @@ fn process(
 }
 impl Observer {
     pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
-        // Native catalogue bounds are four games; reject duplicates rather than
+        // Native catalogue bounds follow the supported games; reject duplicates rather than
         // allowing a second observation in one scan to satisfy debounce.
         let mut seen = BTreeSet::new();
         let scans = games
             .iter()
-            .take(5)
+            .take(osg_profiles::activation::MAX_RULES + 1)
             .map(|game| {
                 let id = game["id"].as_str().unwrap_or("").to_owned();
-                let result = if !seen.insert(id.clone()) || games.len() > 4 {
+                let result = if !seen.insert(id.clone()) || games.len() > osg_profiles::activation::MAX_RULES {
                     Err("The native game catalogue is ambiguous or exceeds its bound.".into())
                 } else if game["installed"] == false && game["processMonitoringSupported"] == true {
                     // Supported catalogue entries need not all be installed.

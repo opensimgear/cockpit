@@ -13,7 +13,7 @@ use std::{
 
 pub(crate) const MAX_BYTES: usize = 40 * 1024;
 pub(crate) const MAX_EXECUTABLE_BYTES: usize = 4096;
-const GAMES: [&str; 4] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12"];
+const GAMES: [&str; 7] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12", "assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -37,7 +37,7 @@ fn distinct_installations<'de, D: Deserializer<'de>>(
     impl<'de> Visitor<'de> for Installations {
         type Value = BTreeMap<String, String>;
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("at most four distinct native game installations")
+            formatter.write_str("at most seven distinct native game installations")
         }
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
             let mut entries = BTreeMap::new();

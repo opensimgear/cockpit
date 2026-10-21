@@ -688,3 +688,92 @@ fn dcs_started_after_async_admission_blocks_worker_before_game_files_change() {
         .contains("Close DCS"));
     runtime.shutdown();
 }
+
+#[test]
+fn assetto_setup_preserves_separate_build_evidence_and_requires_native_verification() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("setup.json");
+    let runtime = GameIntegrationSetup::new(path.clone(), true);
+    for (id, filename) in [("assetto-corsa", "acs.exe"), ("assetto-corsa-competizione", "AC2-Win64-Shipping.exe"), ("assetto-corsa-evo", "AssettoCorsaEVO.exe")] {
+        let executable = scratch.0.join(filename);
+        fs::write(&executable, b"Unlaunched authored executable identity fixture").unwrap();
+        let game = json!({"id":id,"provider":id,"installed":true,"executable":executable});
+        runtime.request(&json!({"command":"game_integration_setup","connection":{"freshnessMs":1800}}), &game, Arc::new(FakePlatform(false))).unwrap();
+        wait_setup(&runtime);
+        let saved = read_settings(&path).unwrap();
+        let record = &saved["games"][id];
+        assert_eq!(record["connection"]["freshnessMs"], 1800);
+        assert!(record["configuredFingerprint"]["fingerprint"].as_str().unwrap().starts_with("sha256:"));
+        assert_eq!(record["verifiedFingerprint"], Value::Null);
+        assert!(!record.to_string().contains("processId"));
+        assert_eq!(runtime.inner.inspect(&game, None)["verified"], false);
+        assert_eq!(fs::read(&executable).unwrap(), b"Unlaunched authored executable identity fixture");
+        let identity = record["configuredFingerprint"].clone();
+        runtime.inner.accept_assetto_proof(id, &json!({"nativeVerified":true,"fingerprint":identity})).unwrap();
+        assert_eq!(runtime.inner.inspect(&game, None)["verified"], true);
+        fs::write(&executable, b"Updated authored build").unwrap();
+        assert_eq!(runtime.inner.inspect(&game, None)["state"], "needs-attention");
+    }
+    assert_eq!(read_settings(&path).unwrap()["games"].as_object().unwrap().len(), 3);
+}
+
+#[test]
+fn native_build_admission_rechecks_metadata_without_waiting_for_passive_refresh() {
+    let scratch = Scratch::new();
+    let game = acr_game(&scratch);
+    let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"),true);
+    acr_record(&runtime,&game,true);
+    runtime.validate_native_build(&game,false).unwrap();
+    let executable = Path::new(game["executable"].as_str().unwrap());
+    fs::write(executable,b"Changed game build").unwrap();
+    assert!(runtime.validate_native_build(&game,false).is_err());
+}
+
+#[test]
+fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
+    use std::sync::mpsc;
+    struct WaitingPlatform { entered: mpsc::Sender<()>, release: Mutex<mpsc::Receiver<()>> }
+    impl Platform for WaitingPlatform {
+        fn catalogue(&self, _: &BTreeMap<String,String>) -> Vec<Value> { vec![] }
+        fn validate(&self, _: &str, _: &str) -> Result<(),String> { Ok(()) }
+        fn launch(&self, _: &Value) -> Result<ProcessIdentity,String> { Err("Unexpected launch".into()) }
+        fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>,String> {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            Ok(None)
+        }
+        fn alive(&self, _: &ProcessIdentity) -> Result<bool,String> { Ok(false) }
+    }
+    let scratch = Scratch::new();
+    let game = acr_game(&scratch);
+    let runtime = Arc::new(GameIntegrationSetup::new(scratch.0.join("setup.json"),true));
+    acr_record(&runtime,&game,false);
+    // Pause a real passive inspection after it has captured saved settings.
+    let fingerprints = runtime.inner.fingerprints.lock().unwrap();
+    let refreshed = runtime.clone(); let refreshing_game = game.clone();
+    let refresh = std::thread::spawn(move||refreshed.refresh(&[refreshing_game]));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while runtime.admission.try_lock().is_ok() {
+        assert!(std::time::Instant::now() < deadline,"Passive refresh did not retain admission through inspection");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let (entered, observed) = mpsc::channel(); let (release, blocked) = mpsc::channel();
+    let platform = Arc::new(WaitingPlatform { entered, release:Mutex::new(blocked) });
+    let (submitted, received) = mpsc::channel();
+    let setup = runtime.clone(); let setup_game = game.clone();
+    let request = std::thread::spawn(move||submitted.send(setup.request(&json!({"command":"game_integration_setup"}),&setup_game,platform)).unwrap());
+    assert!(matches!(received.recv_timeout(std::time::Duration::from_millis(30)),Err(mpsc::RecvTimeoutError::Timeout)));
+    assert!(!runtime.busy());
+    drop(fingerprints);
+    refresh.join().unwrap();
+    received.recv_timeout(std::time::Duration::from_secs(2)).unwrap().unwrap();
+    request.join().unwrap();
+    observed.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert!(runtime.busy());
+    runtime.refresh(&[game.clone()]);
+    let mut catalogue = vec![game]; runtime.decorate(&mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["state"],"setting-up");
+    release.send(()).unwrap();
+    wait_setup(&runtime);
+    runtime.shutdown();
+}

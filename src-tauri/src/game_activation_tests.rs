@@ -78,7 +78,7 @@ fn uninstalled_supported_games_are_not_process_detection_failures() {
 fn native_games_status_separates_missing_installations_from_real_scan_errors() {
     let platform = std::sync::Arc::new(fake());
     let mut catalogue = vec![game()];
-    for id in ["assetto-corsa-rally", "x-plane-11", "x-plane-12"] {
+    for id in ["assetto-corsa-rally", "x-plane-11", "x-plane-12", "assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"] {
         catalogue.push(json!({"id":id,"installed":false,"processMonitoringSupported":true}));
     }
     *platform.catalogue.lock().unwrap() = catalogue;

@@ -1,0 +1,107 @@
+[
+  {
+    "id": "dcs",
+    "title": "DCS World Steam Edition",
+    "file": "dcs.jpg",
+    "sourcePage": "https://store.steampowered.com/app/223750/",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/223750/ss_ca737b2d32aa9dd7eeffc5cffb32a2701cbf9778.600x338.jpg?t=1784736456",
+    "retrieved": "2026-10-21",
+    "developer": [
+      "Eagle Dynamics SA"
+    ],
+    "publisher": [
+      "Eagle Dynamics SA"
+    ],
+    "copyright": "© Eagle Dynamics SA"
+  },
+  {
+    "id": "assetto-corsa-rally",
+    "title": "Assetto Corsa Rally",
+    "file": "assetto-corsa-rally.jpg",
+    "sourcePage": "https://store.steampowered.com/app/3917090/",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3917090/1166557f1d5a64f0eccea3c62c1c334dc220184c/ss_1166557f1d5a64f0eccea3c62c1c334dc220184c.600x338.jpg?t=1789133423",
+    "retrieved": "2026-10-21",
+    "developer": [
+      "Supernova Games Studios"
+    ],
+    "publisher": [
+      "505 Games"
+    ],
+    "copyright": "© 2025 505 Games SpA. Developed by Supernova Games Studios Srl in partnership with KUNOS Simulazioni Srl. Published by 505 Games SpA. ASSETTO CORSA RALLY is a trademark of 505 Games SpA, Supernova Games Studios Srl & KUNOS Simulazioni Srl. 505 Games SpA logo are trademarks of 505 Games SpA. All other logos, trademarks, brands, symbols and registered marks in the game are property of their respective owners."
+  },
+  {
+    "id": "assetto-corsa",
+    "title": "Assetto Corsa",
+    "file": "assetto-corsa.jpg",
+    "sourcePage": "https://store.steampowered.com/app/244210/",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/244210/ss_cc532907a14b12117825c609b9c941768ce87e51.600x338.jpg?t=1782208838",
+    "retrieved": "2026-10-21",
+    "developer": [
+      "Kunos Simulazioni"
+    ],
+    "publisher": [
+      "505 Games"
+    ],
+    "copyright": null
+  },
+  {
+    "id": "assetto-corsa-competizione",
+    "title": "Assetto Corsa Competizione",
+    "file": "assetto-corsa-competizione.jpg",
+    "sourcePage": "https://store.steampowered.com/app/805550/",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/805550/ae39ccca56617ec8e3cf9495e84bee15c9a2dce1/ss_ae39ccca56617ec8e3cf9495e84bee15c9a2dce1.600x338.jpg?t=1766404577",
+    "retrieved": "2026-10-21",
+    "developer": [
+      "Kunos Simulazioni"
+    ],
+    "publisher": [
+      "505 Games"
+    ],
+    "copyright": "ASSETTO CORSA COMPETIZIONE ® KUNOS Simulazioni Srl – 2018   All rights reserved. All other trademarks are property of their respective Owners. Developed by KUNOS Simulazioni Srl. The Assetto Corsa's logo is a registered trademark of KUNOS Simulazioni Srl. FMOD Studio, copyright Firelight Technologies Pty, Ltd., 2012-2016. Manufacturers, cars, names, brands and associated imagery featured in this game in some cases include trademarks and/or copyrighted materials of their respective owners. Produced under license of SRO. All rights reserved. Produced under license of Ferrari Spa. The name FERRARI, the PRANCING HORSE device, all associated logos and distinctive designs are property of Ferrari Spa. The body designs of the Ferrari cars are protected as Ferrari S.p.A. property under design, trademark and trade dress regulations. Trademarks, design patents and copyrights are used with the approval of the owner AUDI AG. Manufactured under license from McLaren Automotive Limited. McLaren and  McLaren 650 GT3 are the trademarks of McLaren Racing Limited, McLaren Automotive Limited and the McLaren Group of companies. The BMW trademarks are used under license from BMW AG. The Trademarks, copyrights and design rights in and associated with Lamborghini, Lamborghini with Bull and Shield Device are used under license from Automobili Lamborghini S.p.A., Italy. \"Mercedes-Benz\" and \"Three pointed star in a ring\" are trademarks of Daimler AG and used under license by KUNOS SIMULAZIONI Srl. Nissan Motor Co., Ltd. trademarks, designs, coyrights and/or other intellectual property rights are used under license.<br />\r\nTHE USE OF THIS SOFTWARE IS NOT ALLOWED IN ANY WAY IN PUBLIC, AND/OR FOR PROMOTIONAL, ENTERTAINMENT, TRAINING, EDUCATIONAL OR COMMERCIAL PURPOSES, FOR FREE OR NOT, WITHOUT AN EXPLICIT, WRITTEN PERMISSION PROVIDED BY KUNOS SIMULAZIONI SRL."
+  },
+  {
+    "id": "assetto-corsa-evo",
+    "title": "Assetto Corsa EVO",
+    "file": "assetto-corsa-evo.jpg",
+    "sourcePage": "https://store.steampowered.com/app/3058630/",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3058630/e3f48523f105a4cc79f5e2d7b5f2bf168fdddf2b/ss_e3f48523f105a4cc79f5e2d7b5f2bf168fdddf2b.600x338.jpg?t=1792403216",
+    "retrieved": "2026-10-21",
+    "developer": [
+      "KUNOS Simulazioni"
+    ],
+    "publisher": [
+      "505 Games"
+    ],
+    "copyright": "ASSETTO CORSA EVO®  KUNOS Simulazioni Srl – 2024 All rights reserved. All other trademarks are property of their respective Owners. Developed by KUNOS Simulazioni Srl. The Assetto Corsa EVO logo is a registered trademark of KUNOS Simulazioni Srl"
+  },
+  {
+    "id": "x-plane-11",
+    "title": "X-Plane 11",
+    "file": "x-plane-11.jpg",
+    "sourcePage": "https://store.steampowered.com/app/269950/",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/269950/ss_38fa93e70789b0b4d68dccac1eb3a874da926613.600x338.jpg?t=1791020865",
+    "retrieved": "2026-10-21",
+    "developer": [
+      "Laminar Research"
+    ],
+    "publisher": [
+      "Laminar Research"
+    ],
+    "copyright": null
+  },
+  {
+    "id": "x-plane-12",
+    "title": "X-Plane 12",
+    "file": "x-plane-12.jpg",
+    "sourcePage": "https://store.steampowered.com/app/2014780/",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2014780/ss_3181b36161fcb4ef6d63b8f2e39c502fa2ef07c5.600x338.jpg?t=1788854786",
+    "retrieved": "2026-10-21",
+    "developer": [
+      "Laminar Research"
+    ],
+    "publisher": [
+      "Laminar Research"
+    ],
+    "copyright": null
+  }
+]

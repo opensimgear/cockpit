@@ -4,7 +4,7 @@ use super::*;
 use crate::profile_session::{Candidate, RunOwner, State};
 
 fn saved_game_context(document:&osg_profiles::ProfileDocument)->Option<String> {
-    document.eligibility.game_ids.first().filter(|id|matches!(id.as_str(),"dcs"|"assetto-corsa-rally"|"x-plane-11"|"x-plane-12")).cloned()
+    document.eligibility.game_ids.first().filter(|id|matches!(id.as_str(),"dcs"|"assetto-corsa-rally"|"x-plane-11"|"x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo")).cloned()
 }
 
 impl GatewayManager {

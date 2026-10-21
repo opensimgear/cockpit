@@ -8,6 +8,7 @@
   import GameProfileLaunch from './GameProfileLaunch.svelte';
   import type {DeepReadonly,ProfileSummary} from './profiles';
   import {gameContextLabel} from './game-provider-settings';
+  import {gameArtwork} from './game-artwork';
   import {gameDisplayPath,gameExecutableName,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameCleanupLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
   let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),onNavigate}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
@@ -88,8 +89,8 @@
   {#if selected}
     <button class="text-button back-link" onclick={allGames}><Icon name="back" size={14} /> All games</button>
     <div class="game-details-heading">
-      <div class={['game-detail-mark', { rally: selected.id === 'assetto-corsa-rally' }]}><Icon name={selected.provider !== 'assetto-corsa-rally' ? 'command' : 'wheel'} size={32} /></div>
-      <div><p class="game-kicker">{selected.provider !== 'assetto-corsa-rally' ? 'Flight simulation' : 'Rally simulation'}</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selected.provider === 'dcs-bios' ? 'DCS-BIOS' : selected.provider === 'x-plane' ? 'X-Plane RREF telemetry' : 'Rally telemetry'}</p></div>
+      <div class={['game-detail-mark', { racing: gameArtwork[selected.id].category !== 'Flight' }]}><Icon name={gameArtwork[selected.id].category === 'Flight' ? 'command' : 'wheel'} size={32} /></div>
+      <div><p class="game-kicker">{gameArtwork[selected.id].category} simulation</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {gameArtwork[selected.id].telemetryLabel}</p></div>
       <div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}/>{/key}</div>
     </div>
 
@@ -125,7 +126,7 @@
             <div class="integration-name"><Icon name={selected.provider==='x-plane'?'network':'chip'} size={18}/><strong>{selected.id==='dcs'?'DCS-BIOS':selected.provider==='x-plane'?'X-Plane RREF':'Native shared memory'}</strong>{#if selected.id==='dcs'||selected.integrationSetup?.version||selected.provider==='x-plane'}<span class="integration-version">{selected.id==='dcs'?selected.integrationSetup?.version??'0.11.7':selected.provider==='x-plane'?selected.id.endsWith('12')?'12':'11':selected.integrationSetup?.version}</span>{/if}</div>
             <div class={['setup-readiness', { ready: gameIntegrationReady(selected), attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={gameIntegrationReady(selected) ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={14} /><strong>{gameIntegrationLabel(selected)}</strong></div>
           </div>
-          <p class="field-help">{selected.id === 'assetto-corsa-rally' && selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry does not verify the native game connection.' : selected.integrationSetup?.message ?? 'Check whether this game is ready to send data to your hardware.'}</p>
+          <p class="field-help">{selected.id.startsWith('assetto-corsa') && selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry does not verify the native game connection.' : selected.integrationSetup?.message ?? 'Check whether this game is ready to send data to your hardware.'}</p>
           <dl class="provider-readiness" aria-label="Integration readiness">
             <div><dt><Icon name="gamepad" size={14} />Game context</dt><dd>{gameContextLabel(selected)}<small>{selected.integrationContext?.processVerified ? 'Actual game process verified' : 'No verified matching process'}</small></dd></div>
             {#if selected.vehicleSupport?.supported}
@@ -138,8 +139,8 @@
           {#if integrationInstalled&&selected.integrationSetup?.removalMessage}<p class="field-help">{selected.integrationSetup.removalMessage}</p>{/if}
           {#if selected.provider === 'x-plane'}
             <p class="field-help">RREF telemetry uses the saved UDP connection. Integration does not change game files.</p>
-          {:else if selected.id==='assetto-corsa-rally'}
-            {#if !gameIntegrationNativeVerified(selected)}<div class="native-verification"><Icon name="info" size={14}/><span>{gameIntegrationVerificationLabel(selected)}</span></div><p class="field-help">Start ACR and enter a driving session, then recheck to verify compatible native telemetry.</p>{/if}
+          {:else if selected.id.startsWith('assetto-corsa')}
+            {#if !gameIntegrationNativeVerified(selected)}<div class="native-verification"><Icon name="info" size={14}/><span>{gameIntegrationVerificationLabel(selected)}</span></div><p class="field-help">Start {selected.name} and enter a driving session, then recheck to verify compatible native telemetry.</p>{/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.probeChannels && Object.keys(selected.integrationSetup.probeChannels).length}
               <details class="telemetry-channel-details"><summary><span class="icon-text"><Icon name="search" size={14} />Last native check</span></summary><p>Channel availability from the last compatibility check. Live values appear separately when telemetry is receiving.</p><dl>{#each Object.entries(selected.integrationSetup.probeChannels) as [channel, value] (channel)}<div><dt>{channel.replaceAll('_', ' ')}</dt><dd>{value.status}</dd></div>{/each}</dl></details>
             {/if}
@@ -159,16 +160,15 @@
       {#each games as game (game.id)}
         {@const liveLabel=gameIntegrationLiveLabel(game)}
         {@const matchingCount=profiles.filter(profile=>profile.gameIds?.includes(game.id)).length}
-        <article class={['game-tile', { unavailable: !game.installed, rally: game.id === 'assetto-corsa-rally' }]}>
+        {@const art=gameArtwork[game.id]}
+        <article class={['game-tile', { unavailable: !game.installed }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
-            <div class="game-art"><div class="art-grid"></div><span class="art-category">{game.provider === 'assetto-corsa-rally' ? 'Rally' : 'Flight'}</span>
-              {#if game.provider !== 'assetto-corsa-rally'}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="M0 135 340 100M0 155l340-35M30 0v160M100 0v160M170 0v160M240 0v160M310 0v160" stroke="currentColor" opacity=".1"/><circle cx="170" cy="83" r="58" stroke="currentColor" opacity=".16"/><circle cx="170" cy="83" r="38" stroke="currentColor" opacity=".16"/><path d="m170 24 12 41 82 45-2 10-77-22 7 40-22-10-22 10 7-40-77 22-2-10 82-45z" fill="currentColor" fill-opacity=".14" stroke="currentColor" stroke-width="1.4"/><path d="M170 24v104M160 78h20" stroke="currentColor" stroke-width="1.4"/></svg>
-              {:else}<svg class="game-vector" viewBox="0 0 340 160" fill="none" aria-hidden="true"><path d="m0 107 65-67 48 45 64-65 90 72 39-33 34 35" stroke="currentColor" opacity=".2"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="36" opacity=".08"/><path d="M100 160c0-32 131-30 131-50 0-18-104-9-104-25 0-13 50-27 69-39" stroke="currentColor" stroke-width="1.2" stroke-dasharray="8 7" opacity=".3"/><path d="m139 92 13-19h38l14 19 4 28h-74z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/><path d="m151 91 7-12h26l8 12zM139 105h12M192 105h11M150 118h43" stroke="currentColor" stroke-width="1.5"/><path d="M140 122v8h10v-8M192 122v8h10v-8" stroke="currentColor" stroke-width="3"/></svg>{/if}
-              <div class="game-wordmark">{game.provider === 'x-plane' ? 'X-PLANE' : game.id === 'dcs' ? 'DCS' : 'ACR'}<span>{game.provider === 'x-plane' ? game.id.slice(-2) : game.id === 'dcs' ? 'WORLD' : 'RALLY'}</span></div>
+            <div class="game-art" aria-hidden="true"><img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" /><div class="art-shade"></div><span class="art-category">{art.category}</span>
+              <div class={['game-wordmark', { 'long-wordmark': art.wordmark === 'ASSETTO CORSA' }]}>{art.wordmark}<span>{art.edition}</span></div>
             </div>
             <div class="tile-copy">
               <div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div>
-              <p>{game.provider === 'x-plane' ? 'Flight telemetry · Indicators & displays' : game.id === 'dcs' ? 'Aircraft controls · DCS-BIOS feedback' : 'Rally telemetry · Rev lights & displays'}</p>
+              <p>{art.description}</p>
               <div class="tile-footer">
                 <span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span>
                 <span class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></span>
@@ -231,18 +231,17 @@
   .game-tile:hover, .game-tile:focus-within { border-color: var(--accent); }
   .tile-details { display: block; width: 100%; padding: 0; text-align: left; color: var(--text); background: transparent; }
   .tile-details:focus-visible { outline-offset: -4px; }
-  .game-art { height: 216px; background: linear-gradient(145deg, var(--surface-raised), var(--bg)); position: relative; overflow: hidden; color: #a1c5d7; }
-  .rally .game-art { color: #c8b292; }
-  .art-grid { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 110%, #6ca4c220, transparent 70%); }
-  .rally .art-grid { background: radial-gradient(ellipse at 50% 110%, #cfa86420, transparent 70%); }
-  .art-category { position: absolute; top: 17px; left: 19px; font-size: 8px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); }
-  .game-vector { position: absolute; width: 100%; height: 160px; bottom: 36px; }
-  .game-wordmark { position: absolute; bottom: 14px; left: 22px; font-size: 34px; line-height: 1; font-weight: 750; letter-spacing: 4px; color: var(--text); }
-  .game-wordmark span { display: block; font-size: 8px; letter-spacing: 6px; font-weight: 500; margin-top: 5px; }
+  .game-art { aspect-ratio: 16 / 9; background: var(--surface-raised); position: relative; overflow: hidden; }
+  .game-art-image { width:100%;height:100%;object-fit:cover;display:block; }
+  .art-shade { position:absolute;inset:0;background:linear-gradient(180deg,#07101980 0%,transparent 40%,#07101945 62%,#071019e8 100%); }
+  .art-category { position:absolute;top:14px;left:16px;padding:5px 8px;border:1px solid #ffffff30;border-radius:4px;background:#071019a6;font-size:8px;text-transform:uppercase;letter-spacing:1.5px;color:#f1f5f9; }
+  .game-wordmark { position:absolute;bottom:17px;left:20px;right:16px;font-size:32px;line-height:1;font-weight:750;letter-spacing:3px;color:#fff;text-shadow:0 2px 8px #0008; }
+  .game-wordmark.long-wordmark {font-size:23px;letter-spacing:1.2px;}
+  .game-wordmark span { display:block;font-size:10px;letter-spacing:5px;font-weight:600;margin-top:7px; }
   .tile-copy { padding: 20px; }
-  .tile-title { display: flex; justify-content: space-between; align-items: center; }
-  .tile-title h2 { font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
-  .tile-title :global(svg) { color: var(--muted); }
+  .tile-title { display:flex;justify-content:space-between;align-items:center;gap:12px; }
+  .tile-title h2 { font-size:15px;font-weight:600;letter-spacing:-.2px;line-height:1.45; }
+  .tile-title :global(svg) { color:var(--muted);flex-shrink:0; }
   .tile-copy p { color: var(--muted); font-size: 10px; margin-top: 9px; line-height: 1.5; }
   .tile-footer { border-top: 1px solid var(--faint-line); margin-top: 19px; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 9px; gap: 12px; }
   .tile-status { display: flex; align-items: center; gap: 6px; color: var(--accent); flex-shrink: 0; white-space: nowrap; }
@@ -259,8 +258,7 @@
   .tile-launch {display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:12px;margin-top:auto;padding:0 20px 18px;}
   .tile-profile-count {padding-top:11px;color:var(--muted);font-size:9px;line-height:1.5;white-space:nowrap;}
 
-  .unavailable .game-art { opacity: .42; filter: grayscale(1); }
-  .unavailable .tile-copy { opacity: .5; }
+  .unavailable .game-art-image { opacity:.78;filter:saturate(.55); }
   .unavailable .tile-status { color: var(--muted); }
   .unavailable:hover, .unavailable:focus-within { border-color: var(--soft); }
   .games-empty { padding: 65px 25px; border: 1px dashed var(--line); border-radius: 9px; text-align: center; }
@@ -271,7 +269,7 @@
   .back-link {margin-bottom:23px;padding-left:0;font-size:var(--game-detail-text-size);}
   .game-details-heading { display: flex; gap: 17px; align-items: center; margin-bottom: 27px; }
   .game-detail-mark {color:#a1c5d7;width:65px;height:65px;flex-shrink:0;border-radius:12px;border:1px solid var(--line);background:var(--surface-raised);display:grid;place-items:center;}
-  .game-detail-mark.rally { color: #c8b292; }
+  .game-detail-mark.racing { color: #c8b292; }
   .game-details-heading>div:not(.game-detail-mark):not(.detail-launch) {min-width:0;}
   .game-details-heading h2 {font-size:24px;letter-spacing:-.5px;margin-top:7px;overflow-wrap:anywhere;}
   .detail-subtitle {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);color:var(--muted);margin-top:8px;}

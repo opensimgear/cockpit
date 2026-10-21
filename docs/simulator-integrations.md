@@ -2,7 +2,7 @@
 
 Configure installation, provider connection, catalogue/aircraft and freshness in the owning game's [details](games.md#integration-setup-and-readiness). DCS-BIOS settings belong in DCS details. **Profiles** owns selected resource ports, exact directed bindings, visible processing and output policies. The independent integration/DCS configuration editors, global feedback saves and standalone Start paths are retired; old configurations are not read or migrated.
 
-DCS-BIOS advertises actual catalogue-backed command inputs and telemetry outputs. Assetto Corsa Rally and X-Plane advertise supported read-only telemetry. Read-only providers cannot acquire invented command ports. The [X-Plane guide](x-plane.md) records its setup, channels and qualification limits.
+DCS-BIOS advertises actual catalogue-backed command inputs and telemetry outputs. Assetto Corsa, Assetto Corsa Competizione, Assetto Corsa EVO, Assetto Corsa Rally and X-Plane advertise supported read-only telemetry. Read-only providers cannot acquire invented command ports. The [X-Plane guide](x-plane.md) records its setup, channels and qualification limits.
 
 ## Author and apply
 
@@ -30,6 +30,46 @@ A device may advertise a valid revision with zero buttons, axes and hats. It joi
 
 Declared destination contracts can include Boolean/enumerated LEDs and bounded text/numeric/RGB actions. Select only the actual supported endpoint and encode every conversion or condition in visible graph nodes. A rev-light condition can use `rev_ratio` or an explicit absolute RPM threshold; no native game rev-light command or hidden formatting preset is inferred. Missing maximum RPM leaves `rev_ratio` unknown and requires the authored unavailable/fallback behavior. Several lights require several explicitly selected endpoints/routes.
 
+## Assetto Corsa, Competizione and EVO
+
+Each title has a separate provider identity, Steam installation, executable
+fingerprint, setup preferences, vehicle history and profile port catalogue.
+Windows shared memory supplies `rpm`, `gear`, `speed_kmh`, optional `max_rpm`,
+and derived `rev_ratio`. These providers expose no simulator command ports.
+Install integration in game details, start a driving session and refresh state
+to verify the selected executable build. Settings can be edited while closed;
+they never persist a PID or claim a live stream from a closed game.
+
+Original AC uses `acs.exe` or `acs_x86.exe`; its same-install
+`AssettoCorsa.exe` menu can satisfy game launch while telemetry waits for the
+driving runtime. Competizione uses `AC2/Binaries/Win64/AC2-Win64-Shipping.exe`;
+EVO uses `AssettoCorsaEVO.exe`. Steam IDs are 244210, 805550 and 3058630.
+AC and ACC use `Local\acpmf_*`, UTF-16 static car/track metadata and static maximum
+RPM at offset 412. The Rally-specific sparse status exception and current engine
+limit extension do not apply to AC/ACC.
+
+EVO uses its own `Local\acevo_pmf_*` pages and the fixed substructure layout
+documented in the [publisher's shared-memory guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508).
+Its bounded char metadata differs from AC/ACC: the adapter reads track at static
+offset 136, car model at graphics offset 3086, and integer current maximum RPM at
+physics offset 588. The layout was checked against the
+[EVO C++ binding header](https://github.com/dSyncro/acevo-shared-memory/blob/master/src/bindings/source/wrapper.hpp)
+and an [independent native reader](https://github.com/ab5525/acevo-telemetry/blob/main/structs.py).
+AC/ACC prefix fields were checked against the
+[shared-memory reader implementation](https://github.com/GomezSimIndustries/accsharedmemory).
+
+The native reader checks the exact producer process and creation epoch, retries
+bounded stable copies, requires advancing original physics packets and disarms
+paused, replay, inactive or stale samples. AC/ACC/Rally cannot identify a mapping's
+creator from its shared name, so competing runtime producers are rejected. Menu
+launchers are not mapping producers. EVO's distinct mapping namespace is decoded
+only by its own provider. An unavailable engine limit leaves `max_rpm` and
+`rev_ratio` unknown while valid RPM, gear and speed continue working.
+
+The opt-in [native cockpit acceptance](../scripts/fixtures/assetto-telemetry/README.md)
+checks all three dialects through the running development app using authored
+Windows mapping publishers. It does not qualify real driving builds or hardware.
+
 ## Assetto Corsa Rally starter
 
 Game details prepare the native connection; the profile coordinator verifies its
@@ -43,7 +83,7 @@ The adapter decodes explicit little-endian prefixes: physics packet ID at 0, raw
 
 This layout is developer-derived, not an officially guaranteed ACR binary interface. Sources: [ACR-specific MIT reader](https://github.com/LuizZak/AssettoCorsaRallyTelemetryReader/tree/8bb26990def38ffd0e4afe71e04e85e5ddeb3670), [independent graphics/status parser](https://github.com/decnet100/acr_telemetry/tree/eaef0f29c6712a2e0dbc3bfd8246b84dcdbb9586), and [Microsoft mapping lifetime documentation](https://learn.microsoft.com/en-us/windows/win32/memory/sharing-files-and-memory). No code was copied from the noncommercial recorder. The current maximum extension was confirmed against the [captured live build](verification/2026-10-21-acr-current-max-rpm.md); other unqualified fields remain excluded. If neither published maximum is valid, `max_rpm` and `rev_ratio` remain unknown; an observed peak is not treated as a redline.
 
-Portable tests feed bounded authored physics/graphics/static byte pages through the same parser, including RPM, gear, speed, maximum RPM, progression and live/pause/replay/off states. These synthetic fixtures are OpenSimGear test input, not Rally native UDP or a second desktop integration editor. Original Assetto Corsa has a separate [Kunos UDP interface](https://docs.google.com/document/d/1KfkZiIluXZ6mMhLWfDX1qAGbvhGRC3ZUzjVIt5FQpp4/pub) and remains a future independent provider.
+Portable tests feed bounded authored physics/graphics/static byte pages through the same parser, including RPM, gear, speed, maximum RPM, progression and live/pause/replay/off states. These synthetic fixtures are OpenSimGear test input, not Rally native UDP or a second desktop integration editor. Original Assetto Corsa uses its own native shared-memory provider, independently of its separate Kunos UDP interface.
 
 Software checks and authored samples do not qualify live Rally versions, real DCS, Windows USB/HID enumeration or assembled LEDs/displays/CAN. Hardware validation is deferred for this milestone; board design versions remain 0.1.0.
 

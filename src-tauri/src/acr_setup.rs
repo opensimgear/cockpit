@@ -1,16 +1,17 @@
-//! Local ACR setup evidence. Shared memory is native; no game/plugin files change.
+//! Local Assetto setup evidence. Shared memory is native; no game/plugin files change.
 //! Only this module's Windows acquisition boundary can produce native verification.
 use crate::{
     game_discovery::{Platform, ProcessIdentity},
-    game_telemetry::{self, ChannelStatus, RawSample, Session, Snapshot, Source, SourceIdentity},
+    game_telemetry::{self, Game, ChannelStatus, RawSample, Session, Snapshot, Source, SourceIdentity},
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     io::Read,
-    path::Path,
-    time::{Duration, Instant, UNIX_EPOCH},
+    path::{Path, PathBuf},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 const MAX_EXECUTABLE: u64 = 512 * 1024 * 1024;
 const PROBE_MS: u64 = 2500;
@@ -34,51 +35,115 @@ fn is_competing_image(image: &str) -> bool {
         "acr.exe"
             | "acs.exe"
             | "acs_x86.exe"
-            | "ac2.exe"
             | "ac2-win64-shipping.exe"
-            | "acc.exe"
-            | "assettocorsa.exe"
+            | "assettocorsaevo.exe"
     )
+}
+fn shares_mapping(game: Game, image: &str) -> bool {
+    is_competing_image(image)
+        && (game == Game::Evo) == basename(image).eq_ignore_ascii_case("AssettoCorsaEVO.exe")
 }
 /// Stable durable evidence for a selected executable, never a persisted process PID.
 pub(crate) fn fingerprint(executable: &Path) -> Result<Value, String> {
+    fingerprint_for_game(executable, Game::Rally)
+}
+fn executable_path(executable: &Path, game: Game) -> Result<PathBuf, String> {
+    let names: &[&str] = match game {
+        Game::Rally => &["acr.exe"],
+        Game::Corsa => &["acs.exe", "acs_x86.exe"],
+        Game::Competizione => &["AC2.exe", "AC2-Win64-Shipping.exe"],
+        Game::Evo => &["AssettoCorsaEVO.exe"],
+    };
     if !executable.is_absolute()
         || !executable
             .file_name()
             .and_then(|s| s.to_str())
-            .is_some_and(|s| s.eq_ignore_ascii_case("acr.exe"))
+            .is_some_and(|s| names.iter().any(|name| s.eq_ignore_ascii_case(name)))
     {
-        return Err("Select an existing absolute acr.exe executable for ACR integration.".into());
+        return Err(format!("Select an existing absolute {} executable for {} integration.", names[0], game.id()));
     }
     let runtime = executable
         .parent()
-        .map(|root| root.join("acr/Binaries/Win64/acr.exe"))
+        .and_then(|root| match game {
+            Game::Rally => Some(root.join("acr/Binaries/Win64/acr.exe")),
+            Game::Competizione => Some(root.join("AC2/Binaries/Win64/AC2-Win64-Shipping.exe")),
+            _ => None,
+        })
         .filter(|runtime| runtime.is_file())
         .unwrap_or_else(|| executable.to_path_buf());
     let path = fs::canonicalize(&runtime)
-        .map_err(|e| format!("Cannot access the selected ACR executable: {e}"))?;
-    let before = fs::metadata(&path).map_err(|e| e.to_string())?;
-    if !before.is_file() || before.len() == 0 || before.len() > MAX_EXECUTABLE {
-        return Err(
-            "The selected ACR executable is empty or exceeds the 512 MiB verification limit."
-                .into(),
-        );
+        .map_err(|e| format!("Cannot access the selected Assetto executable: {e}"))?;
+    Ok(path)
+}
+fn executable_metadata(path: &Path) -> Result<fs::Metadata, String> {
+    let metadata = fs::metadata(path).map_err(|error|error.to_string())?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXECUTABLE {
+        return Err("The selected Assetto executable is empty or exceeds the 512 MiB verification limit.".into());
     }
+    Ok(metadata)
+}
+#[derive(Clone, PartialEq, Eq)]
+struct ExecutableStamp {
+    path: PathBuf,
+    bytes: u64,
+    modified: SystemTime,
+    created: Option<SystemTime>,
+}
+impl ExecutableStamp {
+    fn read(executable: &Path, game: Game) -> Result<Self, String> {
+        let path = executable_path(executable, game)?;
+        let metadata = executable_metadata(&path)?;
+        Ok(Self { path, bytes:metadata.len(), modified:metadata.modified().map_err(|error|format!("Cannot inspect game executable modification time: {error}"))?, created:metadata.created().ok() })
+    }
+}
+/// Passive status may reuse a content hash only while the current executable's
+/// identity and metadata match. One retained entry per dialect bounds this to
+/// four records. Explicit setup/check and new profile preparation bypass reuse.
+#[derive(Default)]
+pub(crate) struct FingerprintCache {
+    entries: BTreeMap<&'static str, (ExecutableStamp, Value)>,
+}
+impl FingerprintCache {
+    pub(crate) fn inspect(&mut self, executable: &Path, game: Game, force_hash: bool) -> Result<Value, String> {
+        self.inspect_with(executable, game, force_hash, fingerprint_for_game)
+    }
+    fn inspect_with(&mut self, executable: &Path, game: Game, force_hash: bool, mut hash: impl FnMut(&Path, Game) -> Result<Value, String>) -> Result<Value, String> {
+        let stamp = match ExecutableStamp::read(executable, game) {
+            Ok(stamp) => stamp,
+            Err(error) => { self.entries.remove(game.id()); return Err(error); }
+        };
+        if !force_hash {
+            if let Some((known, value)) = self.entries.get(game.id()) {
+                if *known == stamp { return Ok(value.clone()); }
+            }
+        }
+        self.entries.remove(game.id());
+        let value = hash(&stamp.path, game)?;
+        if ExecutableStamp::read(executable, game)? != stamp {
+            return Err("The Assetto executable changed during inspection. Recheck its updated build.".into());
+        }
+        self.entries.insert(game.id(), (stamp, value.clone()));
+        Ok(value)
+    }
+}
+pub(crate) fn fingerprint_for_game(executable: &Path, game: Game) -> Result<Value, String> {
+    let path = executable_path(executable, game)?;
+    let before = executable_metadata(&path)?;
     let mut file = fs::File::open(&path)
-        .map_err(|e| format!("Cannot read the selected ACR executable: {e}"))?;
+        .map_err(|e| format!("Cannot read the selected Assetto executable: {e}"))?;
     let mut digest = Sha256::new();
     let mut bytes = 0u64;
     let mut buffer = [0u8; 65536];
     loop {
         let n = file
             .read(&mut buffer)
-            .map_err(|e| format!("Cannot verify the ACR executable: {e}"))?;
+            .map_err(|e| format!("Cannot verify the Assetto executable: {e}"))?;
         if n == 0 {
             break;
         }
         bytes += n as u64;
         if bytes > MAX_EXECUTABLE {
-            return Err("The ACR executable changed or exceeds the verification limit.".into());
+            return Err("The Assetto executable changed or exceeds the verification limit.".into());
         }
         digest.update(&buffer[..n]);
     }
@@ -88,7 +153,7 @@ pub(crate) fn fingerprint(executable: &Path) -> Result<Value, String> {
         || before.modified().ok() != after.modified().ok()
     {
         return Err(
-            "The ACR executable changed during verification. Recheck after its update completes."
+            "The Assetto executable changed during verification. Recheck after its update completes."
                 .into(),
         );
     }
@@ -143,13 +208,13 @@ fn file_version(path: &Path) -> Result<Option<String>, String> {
         return Ok(None);
     }
     if size > 65536 {
-        return Err("The ACR executable has oversized version metadata.".into());
+        return Err("The Assetto executable has oversized version metadata.".into());
     }
     // Aligned storage for the Windows version resource and its fixed information.
     let mut data = vec![0u32; (size as usize + 3) / 4];
     if unsafe { GetFileVersionInfoW(wide.as_ptr(), 0, size, data.as_mut_ptr().cast()) } == 0 {
         return Err(format!(
-            "Cannot read the ACR executable version: {}",
+            "Cannot read the Assetto executable version: {}",
             std::io::Error::last_os_error()
         ));
     }
@@ -160,11 +225,11 @@ fn file_version(path: &Path) -> Result<Option<String>, String> {
         || value.is_null()
         || length < std::mem::size_of::<Fixed>() as u32
     {
-        return Err("The ACR executable version metadata is malformed.".into());
+        return Err("The Assetto executable version metadata is malformed.".into());
     }
     let fixed = unsafe { &*value.cast::<Fixed>() };
     if fixed.signature != 0xfeef04bd {
-        return Err("The ACR executable version signature is invalid.".into());
+        return Err("The Assetto executable version signature is invalid.".into());
     }
     Ok(Some(format!(
         "{}.{}.{}.{}",
@@ -174,12 +239,15 @@ fn file_version(path: &Path) -> Result<Option<String>, String> {
         fixed.file_ls & 65535
     )))
 }
+pub(crate) fn competing_processes(selected_pid: u32) -> Result<Vec<Value>, String> {
+    competing_processes_for_game(selected_pid, Game::Rally)
+}
 #[cfg(not(windows))]
-pub(crate) fn competing_processes(_selected_pid: u32) -> Result<Vec<Value>, String> {
-    Err("Checking native ACR mapping producers requires Windows.".into())
+pub(crate) fn competing_processes_for_game(_selected_pid: u32, _game: Game) -> Result<Vec<Value>, String> {
+    Err("Checking native Assetto mapping producers requires Windows.".into())
 }
 #[cfg(windows)]
-pub(crate) fn competing_processes(selected_pid: u32) -> Result<Vec<Value>, String> {
+pub(crate) fn competing_processes_for_game(selected_pid: u32, game: Game) -> Result<Vec<Value>, String> {
     use std::{ffi::c_void, mem};
     type Handle = *mut c_void;
     #[repr(C)]
@@ -232,7 +300,7 @@ pub(crate) fn competing_processes(selected_pid: u32) -> Result<Vec<Value>, Strin
             .position(|c| *c == 0)
             .unwrap_or(entry.executable.len());
         let image = String::from_utf16_lossy(&entry.executable[..length]);
-        if entry.pid != selected_pid && is_competing_image(&image) {
+        if entry.pid != selected_pid && shares_mapping(game, &image) {
             results.push(json!({"pid":entry.pid,"image":image}));
         }
         if unsafe { Process32NextW(snapshot.0, &mut entry) } == 0 {
@@ -248,10 +316,13 @@ pub(crate) fn competing_processes(selected_pid: u32) -> Result<Vec<Value>, Strin
     Err("Assetto process enumeration exceeded its bounded limit.".into())
 }
 fn conflict_message(competitors: &[Value]) -> String {
-    format!("Another Assetto process is running ({}). Close competing Assetto games before verifying ACR; shared mapping names do not identify their producer.",competitors.iter().map(|p|format!("{} · PID {}",p["image"].as_str().unwrap_or("unknown"),p["pid"])).collect::<Vec<_>>().join(", "))
+    format!("Another Assetto process is running ({}). Close competing Assetto games before verifying Assetto; shared mapping names do not identify their producer.",competitors.iter().map(|p|format!("{} · PID {}",p["image"].as_str().unwrap_or("unknown"),p["pid"])).collect::<Vec<_>>().join(", "))
 }
 pub(crate) fn ensure_single_producer(pid: u32) -> Result<(), String> {
-    let competitors = competing_processes(pid)?;
+    ensure_single_producer_for_game(pid, Game::Rally)
+}
+pub(crate) fn ensure_single_producer_for_game(pid: u32, game: Game) -> Result<(), String> {
+    let competitors = competing_processes_for_game(pid, game)?;
     if competitors.is_empty() {
         Ok(())
     } else {
@@ -267,17 +338,17 @@ fn required_channels_valid(snapshot: &Snapshot) -> bool {
                 .is_some_and(|c| c.status == ChannelStatus::Ready && c.value.is_some())
         })
 }
-fn check_context(sample: &RawSample) -> Result<i32, String> {
-    let reading = game_telemetry::parse(sample)?;
+fn check_context(sample: &RawSample, game: Game) -> Result<i32, String> {
+    let reading = game_telemetry::parse_for_game(sample, game)?;
     if reading.status == 2 {
         if reading.context.shared_memory_version.is_empty()
             || reading.context.game_version.is_empty()
         {
-            return Err("ACR telemetry does not identify its shared-memory/game version. This layout remains unverified.".into());
+            return Err("Assetto telemetry does not identify its shared-memory/game version. This layout remains unverified.".into());
         }
         if reading.context.car_model.is_empty() || reading.context.track.is_empty() {
             return Err(
-                "ACR has no car/track context yet. Enter a live driving session and recheck."
+                "Assetto has no car/track context yet. Enter a live driving session and recheck."
                     .into(),
             );
         }
@@ -291,6 +362,7 @@ fn check_context(sample: &RawSample) -> Result<i32, String> {
 /// Pure assessment used with native acquisition; it has no nativeVerified success flag.
 struct Verifier {
     session: Session,
+    game: Game,
     expected: SourceIdentity,
     samples: usize,
     last_status: Option<i32>,
@@ -298,10 +370,14 @@ struct Verifier {
 }
 impl Verifier {
     fn new(identity: &ProcessIdentity) -> Result<Self, String> {
+        Self::new_for_game(identity, Game::Rally)
+    }
+    fn new_for_game(identity: &ProcessIdentity, game: Game) -> Result<Self, String> {
         Ok(Self {
-            session: Session::new(FRESHNESS_MS)?,
+            session: Session::new_for_game(FRESHNESS_MS, game)?,
+            game,
             expected: SourceIdentity {
-                id: format!("acr-pid-{}", identity.pid),
+                id: game.source_id(identity.pid),
                 epoch: identity.epoch,
             },
             samples: 0,
@@ -311,10 +387,10 @@ impl Verifier {
     }
     fn observe(&mut self, sample: &RawSample, now: u64) -> Result<Snapshot, String> {
         if sample.source != self.expected {
-            return Err("The selected ACR process identity changed. Reattach to the new process and establish a fresh baseline.".into());
+            return Err("The selected Assetto process identity changed. Reattach to the new process and establish a fresh baseline.".into());
         }
-        self.sparse_status = game_telemetry::parse(sample)?.sparse_status();
-        self.last_status = Some(check_context(sample)?);
+        self.sparse_status = game_telemetry::parse_for_game(sample, self.game)?.sparse_status();
+        self.last_status = Some(check_context(sample, self.game)?);
         self.samples += 1;
         Ok(self.session.feed(sample, now))
     }
@@ -329,7 +405,7 @@ impl Verifier {
         } else if snapshot.fresh {
             (
                 "unsupported-layout",
-                "ACR reports invalid RPM, gear or speed values. This layout remains unverified.",
+                "Assetto reports invalid RPM, gear or speed values. This layout remains unverified.",
             )
         } else if self.last_status == Some(0) {
             (
@@ -357,7 +433,7 @@ impl Verifier {
             .is_some_and(|c| c.status == ChannelStatus::Ready && c.value.is_some());
         let mut diagnostics = vec![message.to_string()];
         if self.sparse_status {
-            diagnostics.push("This ACR build omits session status and version strings. Telemetry freshness uses advancing physics packets; pause/menu/replay detection is unavailable unless the game reports a status or stops packets.".into());
+            diagnostics.push("This Assetto build omits session status and version strings. Telemetry freshness uses advancing physics packets; pause/menu/replay detection is unavailable unless the game reports a status or stops packets.".into());
         }
         if compatible && !max_rpm {
             diagnostics.push("Maximum RPM is unavailable. RPM, gear and speed still work; rev-ratio bindings need a valid maximum RPM. No redline is inferred from observed RPM.".into());
@@ -406,14 +482,14 @@ fn probe_acquired(
     mut clock: impl FnMut() -> u64,
     wait: impl Fn(),
 ) -> Result<Value, String> {
-    let Some(process) = platform.find(game)? else {
-        return Ok(result(fingerprint,"waiting",vec!["ACR is configured for native shared memory. Start the game, enter a live driving session and recheck; no game plugin or file changes are needed.".into()]));
+    let Some(process) = platform.integration_process(game)? else {
+        return Ok(result(fingerprint,"waiting",vec!["Assetto is configured for native shared memory. Start the game, enter a live driving session and recheck; no game plugin or file changes are needed.".into()]));
     };
     if !paths_match(
         &process.path,
         fingerprint["executable"].as_str().unwrap_or(""),
     ) {
-        return Ok(result(fingerprint,"process-exited",vec!["The selected ACR process does not match this installation. Recheck discovery after its launch handoff.".into()]));
+        return Ok(result(fingerprint,"process-exited",vec!["The selected Assetto process does not match this installation. Recheck discovery after its launch handoff.".into()]));
     }
     let competing = competitors(process.pid)?;
     if !competing.is_empty() {
@@ -437,17 +513,18 @@ fn probe_acquired(
             return Ok(result(
                 fingerprint,
                 "process-exited",
-                vec!["The ACR process identity changed before telemetry attachment.".into()],
+                vec!["The Assetto process identity changed before telemetry attachment.".into()],
             ));
         }
-        let mut verifier = Verifier::new(&process)?;
+        let telemetry_game = Game::from_id(game["id"].as_str().unwrap_or("assetto-corsa-rally"))?;
+        let mut verifier = Verifier::new_for_game(&process, telemetry_game)?;
         let mut last_error = None;
         loop {
             if check() {
-                return Err("ACR integration verification was cancelled.".into());
+                return Err("Assetto integration verification was cancelled.".into());
             }
             if !platform.alive(&process)? {
-                return Ok(result(fingerprint,"process-exited",vec!["The selected ACR process exited. Recheck after relaunch to attach its new identity.".into()]));
+                return Ok(result(fingerprint,"process-exited",vec!["The selected Assetto process exited. Recheck after relaunch to attach its new identity.".into()]));
             }
             let competing = competitors(process.pid)?;
             if !competing.is_empty() {
@@ -459,7 +536,7 @@ fn probe_acquired(
             }
             let now = clock();
             progress(
-                "Checking native ACR telemetry",
+                "Checking native Assetto telemetry",
                 (15 + now.min(PROBE_MS) * 75 / PROBE_MS) as u8,
             );
             match attached.source.poll() {
@@ -479,18 +556,18 @@ fn probe_acquired(
                                 return Ok(result(
                                     fingerprint,
                                     "process-exited",
-                                    vec!["The ACR process exited before verification completed."
+                                    vec!["The Assetto process exited before verification completed."
                                         .into()],
                                 ));
                             }
                             let executable = Path::new(
                                 game["executable"]
                                     .as_str()
-                                    .ok_or("Select the ACR installation first.")?,
+                                    .ok_or("Select the Assetto installation first.")?,
                             );
-                            let after = crate::acr_setup::fingerprint(executable)?;
+                            let after = fingerprint_for_game(executable, telemetry_game)?;
                             if after["fingerprint"] != fingerprint["fingerprint"] {
-                                return Ok(result(&after,"executable-changed",vec!["ACR was updated during verification. Recheck its new version.".into()]));
+                                return Ok(result(&after,"executable-changed",vec!["Assetto was updated during verification. Recheck its new version.".into()]));
                             }
                             let mut assessed = verifier.assessment(now);
                             assessed["nativeVerified"] = json!(false);
@@ -543,14 +620,15 @@ pub(crate) fn probe(
     let executable = Path::new(
         game["executable"]
             .as_str()
-            .ok_or("Select the ACR installation first.")?,
+            .ok_or("Select the Assetto installation first.")?,
     );
-    let fingerprint = fingerprint(executable)?;
+    let telemetry_game = Game::from_id(game["id"].as_str().unwrap_or("assetto-corsa-rally"))?;
+    let fingerprint = fingerprint_for_game(executable, telemetry_game)?;
     if check() {
-        return Err("ACR integration verification was cancelled.".into());
+        return Err("Assetto integration verification was cancelled.".into());
     }
     if !cfg!(windows) {
-        return Ok(result(&fingerprint,"unsupported-platform",vec!["Native ACR shared-memory verification requires Windows. Synthetic sources retain their separate capability.".into()]));
+        return Ok(result(&fingerprint,"unsupported-platform",vec!["Native Assetto shared-memory verification requires Windows. Synthetic sources retain their separate capability.".into()]));
     }
     let mut start = None;
     let mut proof = probe_acquired(
@@ -561,20 +639,20 @@ pub(crate) fn probe(
         &progress,
         |process| {
             // This is the sole acquisition boundary allowed to establish native evidence.
-            let source = crate::acr_windows::WindowsSource::new(process.pid)?;
+            let source = crate::acr_windows::WindowsSource::new_for_game(process.pid, basename(&process.path), telemetry_game)?;
             let image = source.process_image().map(str::to_owned);
             Ok(AttachedSource {
                 source: Box::new(source),
                 image,
             })
         },
-        competing_processes,
+        |pid| competing_processes_for_game(pid, telemetry_game),
         || start.get_or_insert_with(Instant::now).elapsed().as_millis() as u64,
         || std::thread::sleep(Duration::from_millis(100)),
     )?;
     if proof["compatible"] == true {
         proof["nativeVerified"] = json!(true);
-        progress("Native ACR telemetry verified", 100);
+        progress("Native Assetto telemetry verified", 100);
     }
     Ok(proof)
 }

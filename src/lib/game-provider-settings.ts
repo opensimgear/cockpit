@@ -1,8 +1,9 @@
-import { gameIntegrationFolderError, type Game, type GameId, type GameRequest } from './games';
+import { gameIntegrationFolderError, isSharedMemoryGame, type Game, type GameId, type GameRequest } from './games';
 
 export type DcsConnection = { cataloguePath: string; freshnessMs: number; commandHost: string; commandPort: number; listenAddress: string; listenPort: number; multicastGroup: string; multicastInterface: string };
 export type XPlaneConnection = { source: 'rref'; version: 11 | 12; host: string; port: number; listenPort: number; updateHz: number; freshnessMs: number };
-export type RallyConnection = { source: 'shared-memory'; freshnessMs: number };
+export type SharedMemoryConnection = { source: 'shared-memory'; freshnessMs: number };
+export type RallyConnection = SharedMemoryConnection;
 export type ProviderConnection = DcsConnection | XPlaneConnection | RallyConnection;
 export type ProviderSettingsDraft = { gameId: GameId; baseRevision: string | null; connection: ProviderConnection; userFolder: string; aircraftModule: string };
 export type ProviderSettingsSave = { gameId: GameId; baseRevision: string; submitted: ProviderSettingsDraft; request: GameRequest };
@@ -17,7 +18,7 @@ const keys = (value: object, expected: string[]) => Object.keys(value).sort().jo
 
 export function defaultProviderConnection(gameId: GameId): ProviderConnection {
   if (gameId === 'dcs') return { cataloguePath: '', freshnessMs: 1500, commandHost: '127.0.0.1', commandPort: 7778, listenAddress: '0.0.0.0', listenPort: 5010, multicastGroup: '239.255.50.10', multicastInterface: '0.0.0.0' };
-  if (gameId === 'assetto-corsa-rally') return { source: 'shared-memory', freshnessMs: 1500 };
+  if (isSharedMemoryGame(gameId)) return { source: 'shared-memory', freshnessMs: 1500 };
   return { source: 'rref', version: gameId === 'x-plane-12' ? 12 : 11, host: '127.0.0.1', port: 49000, listenPort: 0, updateHz: 10, freshnessMs: 1500 };
 }
 
@@ -41,8 +42,8 @@ export function providerSettingsError(draft: ProviderSettingsDraft): string {
     if (!string(draft.userFolder, 4096)) return 'Use an absolute Saved Games folder of up to 4096 bytes.';
     if (!unicast(d.commandHost,false) || !unicast(d.listenAddress,true) || !unicast(d.multicastInterface,true) || d.multicastGroup !== '' && (!ipv4(d.multicastGroup) || !multicast(d.multicastGroup))) return 'Use unicast IPv4 command/listen/interface addresses and a multicast group in 224.0.0.0–239.255.255.255, or leave the group empty. Command host cannot be 0.0.0.0.';
     if (!integer(d.commandPort,1,65535) || !integer(d.listenPort,1,65535)) return 'DCS UDP ports must be whole numbers from 1 to 65535.';
-  } else if (draft.gameId === 'assetto-corsa-rally') {
-    if (!keys(c, ['source','freshnessMs']) || (c as RallyConnection).source !== 'shared-memory') return 'Rally uses native shared-memory telemetry; process identity is verified by Cockpit.';
+  } else if (isSharedMemoryGame(draft.gameId)) {
+    if (!keys(c, ['source','freshnessMs']) || (c as SharedMemoryConnection).source !== 'shared-memory') return 'Assetto Corsa games use native shared-memory telemetry; process identity is verified by Cockpit.';
   } else {
     if (!keys(c, ['source','version','host','port','listenPort','updateHz','freshnessMs']) || (c as XPlaneConnection).source !== 'rref') return 'Use only the X-Plane RREF provider connection settings.';
     const x = c as XPlaneConnection;

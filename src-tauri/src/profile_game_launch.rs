@@ -193,7 +193,7 @@ impl GamesRuntime {
         if selected_game.is_some_and(|id| {
             !matches!(
                 id,
-                "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+                "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
             )
         }) {
             return Err("Choose a supported native selected context.".into());

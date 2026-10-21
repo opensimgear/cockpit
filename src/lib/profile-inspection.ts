@@ -1,6 +1,7 @@
 /** Read-only samples from one exact native applied owner. No browser values enter the reducer. */
 import {profileContractError,profileScalarAccepts,type AppliedProfileSnapshot,type DeepReadonly,type ProfileEndpoint,type ProfilePortContract} from './profiles';
 import type {NativeProfileOwner} from './profile-runtime';
+import {isGameId} from './games';
 export const PROFILE_INSPECTION_SCHEMA_VERSION=1;
 export type ProfileSignalValue={kind:'scalar';value:boolean|number|string}|{kind:'action-pack';value:{arguments:{id:string;value:boolean|number|string}[]}};
 export type ProfileSignalSample={status:'known';value:ProfileSignalValue}|{status:'unknown'|'stale'|'unavailable'};
@@ -17,7 +18,7 @@ const node=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z][
 const port=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&new TextEncoder().encode(value).length<=80&&!/[\u0000-\u001f\u007f-\u009f]/.test(value);
 const counter=(value:unknown):value is string=>typeof value==='string'&&/^(0|[1-9][0-9]{0,19})$/.test(value)&&BigInt(value)<=18_446_744_073_709_551_615n;
 const ownerFields=['session','generation','profileId','profileRevision','gameId'];
-function owner(value:unknown):value is NativeProfileOwner{return exact(value,ownerFields)&&uuid(value.session)&&integer(value.generation)&&value.generation>0&&uuid(value.profileId)&&integer(value.profileRevision)&&value.profileRevision>0&&(value.gameId===null||['dcs','x-plane-11','x-plane-12','assetto-corsa-rally'].includes(String(value.gameId)));}
+function owner(value:unknown):value is NativeProfileOwner{return exact(value,ownerFields)&&uuid(value.session)&&integer(value.generation)&&value.generation>0&&uuid(value.profileId)&&integer(value.profileRevision)&&value.profileRevision>0&&(value.gameId===null||isGameId(value.gameId));}
 export function profileOwnersEqual(left:DeepReadonly<NativeProfileOwner>,right:DeepReadonly<NativeProfileOwner>):boolean{return owner(left)&&owner(right)&&ownerFields.every(key=>left[key as keyof NativeProfileOwner]===right[key as keyof NativeProfileOwner]);}
 function frozen<T>(value:T):DeepReadonly<T>{const copy:T=JSON.parse(JSON.stringify(value));const freeze=(entry:unknown)=>{if(entry&&typeof entry==='object'){Object.values(entry).forEach(freeze);Object.freeze(entry);}};freeze(copy);return copy as DeepReadonly<T>;}
 export function captureProfileOwner(value:DeepReadonly<NativeProfileOwner>):DeepReadonly<NativeProfileOwner>{if(!owner(value))throw new Error('Inspect an exact current native applied owner.');return frozen(value);}

@@ -26,6 +26,11 @@ upstream library data or other separately licensed portions.
   https://github.com/esp-rs/espflash/tree/v4.1.0.
 - Bundled firmware and other resources must retain the notices supplied with
   their source projects.
+- Game tile screenshots are publisher artwork from the official Steam store
+  listings. Exact image URLs, publisher/developer credits and supplied legal
+  notices are recorded in `public/game-art/sources.json`. Artwork and game
+  trademarks remain the property of their respective owners and are excluded
+  from the Cockpit source license; see `public/game-art/README.md`.
 
 This file is a scope and provenance index, not a replacement for the full license
 texts and copyright notices accompanying third-party material. Preserve the

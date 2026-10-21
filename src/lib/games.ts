@@ -1,5 +1,5 @@
-export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'x-plane';
-export type GameId = 'dcs' | 'assetto-corsa-rally' | 'x-plane-11' | 'x-plane-12';
+export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane';
+export type GameId = 'dcs' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane-11' | 'x-plane-12';
 export type GameIntegrationSetup = {
   state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
   installed?: boolean; removable?: boolean; removalMessage?: string;
@@ -32,10 +32,23 @@ export const supportedGames: Game[] = [
   { id: 'assetto-corsa-rally', name: 'Assetto Corsa Rally', provider: 'assetto-corsa-rally', installed: false, launchSupported: false },
   { id: 'x-plane-11', name: 'X-Plane 11', provider: 'x-plane', installed: false, launchSupported: false },
   { id: 'x-plane-12', name: 'X-Plane 12', provider: 'x-plane', installed: false, launchSupported: false },
+  { id: 'assetto-corsa', name: 'Assetto Corsa', provider: 'assetto-corsa', installed: false, launchSupported: false },
+  { id: 'assetto-corsa-competizione', name: 'Assetto Corsa Competizione', provider: 'assetto-corsa-competizione', installed: false, launchSupported: false },
+  { id: 'assetto-corsa-evo', name: 'Assetto Corsa EVO', provider: 'assetto-corsa-evo', installed: false, launchSupported: false },
 ];
 
+export function isGameId(value: unknown): value is GameId {
+  return typeof value === 'string' && supportedGames.some(game => game.id === value);
+}
+
+export function isSharedMemoryGame(gameId: unknown): boolean {
+  return isGameId(gameId) && gameId.startsWith('assetto-corsa');
+}
+
 export function gameExecutableName(gameId: GameId): string {
-  return gameId.startsWith('x-plane-') ? 'X-Plane.exe' : gameId === 'dcs' ? 'DCS.exe' : 'acr.exe';
+  return gameId.startsWith('x-plane-') ? 'X-Plane.exe' : gameId === 'dcs' ? 'DCS.exe'
+    : gameId === 'assetto-corsa' ? 'acs.exe' : gameId === 'assetto-corsa-competizione' ? 'AC2-Win64-Shipping.exe'
+    : gameId === 'assetto-corsa-evo' ? 'AssettoCorsaEVO.exe' : 'acr.exe';
 }
 
 export function gameDisplayPath(path?: string | null): string {
@@ -56,8 +69,8 @@ export function gameIntegrationLabel(game: Game): string {
   if (!game.installed) return 'Game not installed';
   if (!game.integrationSetup) return 'Integration not checked';
   if (game.id === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && game.integrationSetup.connection?.source === 'synthetic') return 'Synthetic test telemetry configured';
-  if (game.id === 'assetto-corsa-rally' && ['ready', 'needs-attention'].includes(game.integrationSetup.state) && game.integrationSetup.connection?.source === 'shared-memory' && !gameIntegrationNativeVerified(game)) return 'Telemetry configured · verification needed';
-  if (game.id === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && !gameIntegrationNativeVerified(game)) return 'Native telemetry not verified';
+  if (isSharedMemoryGame(game.id) && ['ready', 'needs-attention'].includes(game.integrationSetup.state) && game.integrationSetup.connection?.source === 'shared-memory' && !gameIntegrationNativeVerified(game)) return 'Telemetry configured · verification needed';
+  if (isSharedMemoryGame(game.id) && game.integrationSetup.state === 'ready' && !gameIntegrationNativeVerified(game)) return 'Native telemetry not verified';
   const labels: Record<GameIntegrationSetup['state'], string> = {
     'not-installed': 'Game not installed', 'setup-required': 'Integration setup required',
     'setting-up': 'Setting up integration', ready: 'Integration ready',
@@ -67,7 +80,7 @@ export function gameIntegrationLabel(game: Game): string {
 }
 
 export function gameIntegrationNativeVerified(game: Game): boolean {
-  return game.id === 'assetto-corsa-rally' && game.integrationSetup?.verified === true && game.integrationSetup.connection?.source === 'shared-memory';
+  return isSharedMemoryGame(game.id) && game.integrationSetup?.verified === true && game.integrationSetup.connection?.source === 'shared-memory';
 }
 
 export function gameIntegrationReady(game: Game): boolean {

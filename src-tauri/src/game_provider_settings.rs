@@ -189,7 +189,7 @@ impl GameIntegrationSetup {
             .filter(|id| {
                 matches!(
                     *id,
-                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
                 )
             })
             .ok_or("Choose a supported game.")?;
@@ -279,7 +279,7 @@ impl GameIntegrationSetup {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .retain(|key, _| key != id && !key.starts_with(&format!("{id}:")));
-        self.refresh(std::slice::from_ref(game));
+        self.refresh_admitted(std::slice::from_ref(game));
         Ok(())
     }
     /// Full provider metadata remains available for a closed game. Reading never
@@ -292,7 +292,7 @@ impl GameIntegrationSetup {
     pub(crate) fn resource_integration_catalogue_for_vehicle(&self, id: &str, vehicle: Option<&str>) -> Result<Value, String> {
         if !matches!(
             id,
-            "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+            "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
         ) {
             return Err("Choose a supported game.".into());
         }
@@ -328,7 +328,7 @@ impl GameIntegrationSetup {
                     value
                 }
                 "x-plane-11" | "x-plane-12" => crate::xplane::catalogue(),
-                _ => crate::game_telemetry::catalogue(),
+                _ => crate::game_telemetry::catalogue_for_game(id),
             };
             value["catalogueRevision"] =
                 json!(digest(&json!(["game-provider-catalogue-v1", id, value])));
@@ -525,4 +525,27 @@ mod tests {
         write_settings(&path, &invalid).unwrap();
         assert!(read_settings(&path).is_err());
     }
+    #[test]
+    fn assetto_provider_settings_and_read_only_catalogues_remain_distinct() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("setup.json");
+        let setup = GameIntegrationSetup::new(path.clone(), false);
+        for id in ["assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"] {
+            let connection = json!({"source":"shared-memory","freshnessMs":2100});
+            save(&setup, id, connection.clone()).unwrap();
+            let catalogue = setup.resource_integration_catalogue(id).unwrap();
+            assert_eq!(catalogue["provider"], id);
+            assert_eq!(catalogue["commands"], json!([]));
+            assert_eq!(catalogue["channels"].as_array().unwrap().len(), 5);
+            assert_eq!(setup.provider_connection_snapshot(id).unwrap().0, connection);
+            let mut unsupported = connection;
+            unsupported["commandPort"] = json!(7778);
+            assert!(save(&setup, id, unsupported).is_err());
+        }
+        let reopened = GameIntegrationSetup::new(path, false);
+        for id in ["assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"] {
+            assert_eq!(setup.provider_setup_revision(id), reopened.provider_setup_revision(id));
+        }
+    }
+
 }

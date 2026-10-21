@@ -448,7 +448,7 @@ impl GatewayManager {
                     .filter(|game| {
                         matches!(
                             *game,
-                            "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+                            "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
                         )
                     })
                     .ok_or("Choose a supported game rule.")?;

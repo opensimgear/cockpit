@@ -1,4 +1,4 @@
-//! Developer-derived Assetto Corsa Rally shared-memory prefixes. Acquisition,
+//! Assetto shared-memory dialects. Acquisition,
 //! decoding and freshness are separate; fixture input uses the production parser.
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
@@ -13,10 +13,50 @@ pub(crate) const PHYSICS_CURRENT_MAX_RPM_OFFSET: usize = 588;
 pub(crate) const PHYSICS_EXTENDED_SIZE: usize = PHYSICS_CURRENT_MAX_RPM_OFFSET + 4;
 pub(crate) const GRAPHICS_SIZE: usize = 8;
 pub(crate) const STATIC_SIZE: usize = 416;
+// EVO's 2026-03-31 interface uses char metadata and fixed-size graphics
+// substructures, rather than the original UTF-16 static car specification.
+pub(crate) const EVO_CAR_MODEL_OFFSET: usize = 3086;
+pub(crate) const EVO_GRAPHICS_SIZE: usize = EVO_CAR_MODEL_OFFSET + 33;
+pub(crate) const EVO_TRACK_OFFSET: usize = 136;
+pub(crate) const EVO_STATIC_SIZE: usize = EVO_TRACK_OFFSET + 33;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Game { Corsa, Competizione, Evo, Rally }
+impl Game {
+    pub fn from_id(id: &str) -> Result<Self, String> {
+        match id {
+            "assetto-corsa" => Ok(Self::Corsa),
+            "assetto-corsa-competizione" => Ok(Self::Competizione),
+            "assetto-corsa-evo" => Ok(Self::Evo),
+            PROVIDER => Ok(Self::Rally),
+            _ => Err("Unknown Assetto telemetry provider.".into()),
+        }
+    }
+    pub fn id(self) -> &'static str {
+        match self { Self::Corsa => "assetto-corsa", Self::Competizione => "assetto-corsa-competizione", Self::Evo => "assetto-corsa-evo", Self::Rally => PROVIDER }
+    }
+    pub fn source_id(self, pid: u32) -> String {
+        format!("{}-pid-{pid}", if self == Self::Rally { "acr" } else { self.id() })
+    }
+    pub fn mapping_prefix(self) -> &'static str {
+        if self == Self::Evo { "Local\\acevo_pmf" } else { "Local\\acpmf" }
+    }
+    pub fn page_lengths(self) -> (usize, usize, usize) {
+        match self {
+            Self::Evo => (PHYSICS_EXTENDED_SIZE, EVO_GRAPHICS_SIZE, EVO_STATIC_SIZE),
+            Self::Rally => (PHYSICS_EXTENDED_SIZE, GRAPHICS_SIZE, STATIC_SIZE),
+            _ => (PHYSICS_SIZE, GRAPHICS_SIZE, STATIC_SIZE),
+        }
+    }
+}
 
 pub(crate) fn catalogue() -> Value {
+    catalogue_for_game(PROVIDER)
+}
+pub(crate) fn catalogue_for_game(game_id: &str) -> Value {
+    let game = match Game::from_id(game_id) { Ok(game) => game, Err(_) => return Value::Null };
     let channel = |id, label, kind, unit, minimum, maximum, derived| json!({"id":id,"label":label,"type":kind,"unit":unit,"minimum":minimum,"maximum":maximum,"derived":derived});
-    json!({"provider":PROVIDER,"revision":1,"commands":[],"channels":[
+    json!({"provider":game.id(),"revision":1,"commands":[],"channels":[
         channel("rpm","Engine RPM","integer","rpm",0,100000,false),
         channel("speed_kmh","Speed","number","km/h",0,2000,false),
         channel("gear","Gear (-1 reverse, 0 neutral)","integer","",-1,31,true),
@@ -50,6 +90,9 @@ pub(crate) struct RawSample {
 }
 impl RawSample {
     pub fn parse_json(value: &Value) -> Result<Self, String> {
+        Self::parse_json_for_game(value, Game::Rally)
+    }
+    pub fn parse_json_for_game(value: &Value, game: Game) -> Result<Self, String> {
         fn page(value: &Value) -> Result<Vec<u8>, String> {
             if let Some(bytes) = value.as_array() {
                 if bytes.len() > MAX_PAGE {
@@ -126,7 +169,7 @@ impl RawSample {
             graphics: page(&value["graphics"])?,
             statics: page(&value["staticPage"])?,
         };
-        parse(&sample)?;
+        parse_for_game(&sample, game)?;
         Ok(sample)
     }
 }
@@ -135,16 +178,18 @@ pub(crate) trait Source: Send {
     fn poll(&mut self) -> Result<Option<RawSample>, String>;
     fn close(&mut self);
 }
-#[derive(Default)]
 pub(crate) struct FixtureSource {
     queue: VecDeque<RawSample>,
+    game: Game,
 }
+impl Default for FixtureSource { fn default() -> Self { Self::new_for_game(Game::Rally) } }
 impl FixtureSource {
     pub fn new() -> Self {
         Self::default()
     }
+    pub fn new_for_game(game: Game) -> Self { Self { queue: VecDeque::new(), game } }
     pub fn push(&mut self, sample: RawSample) -> Result<(), String> {
-        parse(&sample)?;
+        parse_for_game(&sample, self.game)?;
         if self.queue.len() >= 256 {
             return Err("The telemetry fixture queue is full.".into());
         }
@@ -207,6 +252,7 @@ impl Channel {
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Snapshot {
+    pub game: Game,
     pub epoch: u64,
     pub fresh: bool,
     pub age_ms: Option<u64>,
@@ -249,12 +295,13 @@ impl Snapshot {
             .source
             .as_ref()
             .map(|s| json!({"id":s.id,"epoch":s.epoch.to_string()}));
-        json!({"provider":PROVIDER,"epoch":self.epoch,"fresh":self.fresh,"ageMs":self.age_ms,"status":self.status,
+        json!({"provider":self.game.id(),"epoch":self.epoch,"fresh":self.fresh,"ageMs":self.age_ms,"status":self.status,
             "source":source,"context":context,"packetId":self.packet_id,"channels":channels,"error":self.error})
     }
 }
 
 pub(crate) struct Reading {
+    game: Game,
     pub packet_id: u32,
     pub status: i32,
     pub context: Context,
@@ -265,7 +312,7 @@ impl Reading {
     /// remain zero while driving. This dialect has no trustworthy state flag;
     /// require car/stage identity and let Session qualify packet progression.
     pub(crate) fn sparse_status(&self) -> bool {
-        self.status == 0
+        self.game == Game::Rally && self.status == 0
             && self.context.shared_memory_version.is_empty()
             && self.context.game_version.is_empty()
             && !self.context.car_model.is_empty()
@@ -281,10 +328,14 @@ impl Reading {
     }
 }
 pub(crate) fn parse(sample: &RawSample) -> Result<Reading, String> {
+    parse_for_game(sample, Game::Rally)
+}
+pub(crate) fn parse_for_game(sample: &RawSample, game: Game) -> Result<Reading, String> {
+    let (_, graphics_size, static_size) = game.page_lengths();
     for (name, page, minimum) in [
         ("physics", &sample.physics, PHYSICS_SIZE),
-        ("graphics", &sample.graphics, GRAPHICS_SIZE),
-        ("static", &sample.statics, STATIC_SIZE),
+        ("graphics", &sample.graphics, graphics_size),
+        ("static", &sample.statics, static_size),
     ] {
         if page.len() < minimum || page.len() > MAX_PAGE {
             return Err(format!("Invalid {name} telemetry page length."));
@@ -308,25 +359,39 @@ pub(crate) fn parse(sample: &RawSample) -> Result<Reading, String> {
         }
         Ok(text.trim_end().into())
     }
+    fn narrow_text(page: &[u8], offset: usize, count: usize) -> Result<String, String> {
+        let bytes = &page[offset..offset + count];
+        let bytes = &bytes[..bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len())];
+        let text = std::str::from_utf8(bytes).map_err(|_| "Invalid UTF-8 telemetry context.")?;
+        if text.chars().any(char::is_control) { return Err("Telemetry context contains control characters.".into()); }
+        Ok(text.trim_end().into())
+    }
     let status = integer(&sample.graphics, 4);
     if !(0..=3).contains(&status) {
         return Err("Unknown telemetry game status.".into());
     }
-    let context = Context {
+    let context = if game == Game::Evo { Context {
+        shared_memory_version: narrow_text(&sample.statics, 0, 15)?,
+        game_version: narrow_text(&sample.statics, 15, 15)?,
+        car_model: narrow_text(&sample.graphics, EVO_CAR_MODEL_OFFSET, 33)?,
+        track: narrow_text(&sample.statics, EVO_TRACK_OFFSET, 33)?,
+    }} else { Context {
         shared_memory_version: text(&sample.statics, 0, 15)?,
         game_version: text(&sample.statics, 30, 15)?,
         car_model: text(&sample.statics, 68, 33)?,
         track: text(&sample.statics, 134, 33)?,
-    };
+    }};
     let rpm = integer(&sample.physics, 20);
     let gear = integer(&sample.physics, 16);
     // Prefer the current limit, which can change with the car's engine state.
     // Sparse ACR builds leave the static maximum at zero. Never infer a limit
     // from observed RPM or reinterpret invalid integer bytes as a float.
-    let current_maximum = (sample.physics.len() >= PHYSICS_EXTENDED_SIZE)
+    // The EVO and observed Rally layouts explicitly define int32 currentMaxRpm.
+    // AC/ACC use their static maxRpm; bytes at 588 are not interpreted for them.
+    let current_maximum = (matches!(game, Game::Evo | Game::Rally) && sample.physics.len() >= PHYSICS_EXTENDED_SIZE)
         .then(|| integer(&sample.physics, PHYSICS_CURRENT_MAX_RPM_OFFSET))
         .filter(|maximum| (1..=100000).contains(maximum));
-    let maximum = current_maximum.unwrap_or_else(|| integer(&sample.statics, 412));
+    let maximum = current_maximum.unwrap_or_else(|| if game == Game::Evo { 0 } else { integer(&sample.statics, 412) });
     let speed = f32::from_le_bytes(sample.physics[28..32].try_into().unwrap()) as f64;
     let valid_rpm = (0..=100000).contains(&rpm);
     let valid_maximum = (1..=100000).contains(&maximum);
@@ -372,6 +437,7 @@ pub(crate) fn parse(sample: &RawSample) -> Result<Reading, String> {
         },
     );
     Ok(Reading {
+        game,
         packet_id: integer(&sample.physics, 0) as u32,
         status,
         context,
@@ -380,6 +446,7 @@ pub(crate) fn parse(sample: &RawSample) -> Result<Reading, String> {
 }
 
 pub(crate) struct Session {
+    game: Game,
     freshness_ms: u64,
     epoch: u64,
     source: Option<SourceIdentity>,
@@ -395,10 +462,14 @@ pub(crate) struct Session {
 }
 impl Session {
     pub fn new(freshness_ms: u64) -> Result<Self, String> {
+        Self::new_for_game(freshness_ms, Game::Rally)
+    }
+    pub fn new_for_game(freshness_ms: u64, game: Game) -> Result<Self, String> {
         if !(100..=10000).contains(&freshness_ms) {
             return Err("Telemetry freshness must be 100..10000 milliseconds.".into());
         }
         Ok(Self {
+            game,
             freshness_ms,
             epoch: 1,
             source: None,
@@ -441,7 +512,7 @@ impl Session {
     }
     pub fn feed(&mut self, sample: &RawSample, now_ms: u64) -> Snapshot {
         self.tick(now_ms);
-        let reading = match parse(sample) {
+        let reading = match parse_for_game(sample, self.game) {
             Ok(reading) => reading,
             Err(error) => return self.failed(error, now_ms),
         };
@@ -545,6 +616,7 @@ impl Session {
             })
             .collect();
         Snapshot {
+            game: self.game,
             epoch: self.epoch,
             fresh,
             age_ms: self.last_seen.map(|last| now_ms.saturating_sub(last)),
@@ -565,6 +637,102 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn evo_sample(packet: u32) -> RawSample {
+        let mut sample = RawSample {
+            source: SourceIdentity { id: Game::Evo.source_id(42), epoch: 1 },
+            physics: vec![0; PHYSICS_EXTENDED_SIZE],
+            graphics: vec![0; EVO_GRAPHICS_SIZE],
+            statics: vec![0; EVO_STATIC_SIZE],
+        };
+        advance(&mut sample, packet);
+        sample.physics[16..20].copy_from_slice(&3i32.to_le_bytes());
+        sample.physics[20..24].copy_from_slice(&4200i32.to_le_bytes());
+        sample.physics[28..32].copy_from_slice(&88.5f32.to_le_bytes());
+        sample.physics[588..592].copy_from_slice(&8400i32.to_le_bytes());
+        sample.graphics[4..8].copy_from_slice(&2i32.to_le_bytes());
+        sample.graphics[3086..3094].copy_from_slice(b"evo-car\0");
+        sample.statics[0..4].copy_from_slice(b"1.0\0");
+        sample.statics[15..21].copy_from_slice(b"0.9.1\0");
+        sample.statics[136..142].copy_from_slice(b"imola\0");
+        sample
+    }
+    #[test]
+    fn original_corsa_and_competizione_use_static_limits_and_require_live_status() {
+        for game in [Game::Corsa, Game::Competizione] {
+            let mut s = sample();
+            s.physics.resize(PHYSICS_EXTENDED_SIZE, 0);
+            s.physics[588..592].copy_from_slice(&9000i32.to_le_bytes());
+            assert_eq!(parse_for_game(&s, game).unwrap().channels["max_rpm"].value, Some(json!(7500)));
+            let mut session = Session::new_for_game(100, game).unwrap();
+            assert!(!session.feed(&s, 0).fresh);
+            advance(&mut s, 11);
+            assert!(session.feed(&s, 1).fresh);
+            assert_eq!(session.snapshot(1).value()["provider"], game.id());
+            s.statics[..60].fill(0);
+            s.graphics[4..8].fill(0);
+            advance(&mut s, 12);
+            assert!(!parse_for_game(&s, game).unwrap().sparse_status());
+            assert!(!session.feed(&s, 2).fresh);
+            s.graphics[4..8].copy_from_slice(&2i32.to_le_bytes());
+            assert!(!session.feed(&s, 3).fresh);
+            advance(&mut s, 13);
+            assert!(session.feed(&s, 4).fresh);
+            assert!(!session.tick(105).fresh);
+        }
+    }
+    #[test]
+    fn evo_decodes_char_metadata_graphics_car_and_current_physics_integer_limit() {
+        let s = evo_sample(20);
+        let reading = parse_for_game(&s, Game::Evo).unwrap();
+        assert_eq!(reading.context, Context {
+            shared_memory_version: "1.0".into(), game_version: "0.9.1".into(),
+            car_model: "evo-car".into(), track: "imola".into(),
+        });
+        assert_eq!(reading.channels["rpm"].value, Some(json!(4200)));
+        assert_eq!(reading.channels["gear"].value, Some(json!(2)));
+        assert_eq!(reading.channels["speed_kmh"].value, Some(json!(88.5)));
+        assert_eq!(reading.channels["max_rpm"].value, Some(json!(8400)));
+        assert_eq!(reading.channels["rev_ratio"].value, Some(json!(0.5)));
+        assert!(parse(&s).is_err());
+        let mut queue = FixtureSource::new_for_game(Game::Evo);
+        queue.push(s.clone()).unwrap();
+        let mut session = Session::new_for_game(100, Game::Evo).unwrap();
+        assert!(!session.poll(&mut queue, 0).fresh);
+        queue.push(evo_sample(21)).unwrap();
+        assert!(session.poll(&mut queue, 1).fresh);
+        assert_eq!(session.snapshot(1).value()["provider"], "assetto-corsa-evo");
+        for field in ["graphics", "static"] {
+            let mut short = s.clone();
+            if field == "graphics" { short.graphics.pop(); } else { short.statics.pop(); }
+            assert!(parse_for_game(&short, Game::Evo).is_err());
+        }
+        let mut invalid = s.clone();
+        invalid.graphics[EVO_CAR_MODEL_OFFSET] = 0xff;
+        assert!(parse_for_game(&invalid, Game::Evo).is_err());
+    }
+    #[test]
+    fn evo_never_reinterprets_legacy_static_bytes_or_float_bits_as_rpm() {
+        let mut s = evo_sample(1);
+        s.statics.resize(STATIC_SIZE, 0);
+        s.statics[412..416].copy_from_slice(&7500i32.to_le_bytes());
+        for value in [0i32, -1, 100001, 8400f32.to_bits() as i32] {
+            s.physics[588..592].copy_from_slice(&value.to_le_bytes());
+            let reading = parse_for_game(&s, Game::Evo).unwrap();
+            assert!(reading.channels["max_rpm"].value.is_none());
+            assert!(reading.channels["rev_ratio"].value.is_none());
+        }
+        s.graphics[4..8].fill(0);
+        s.statics[..30].fill(0);
+        assert!(!parse_for_game(&s, Game::Evo).unwrap().telemetry_active());
+        assert_eq!(Game::Evo.mapping_prefix(), "Local\\acevo_pmf");
+        for game in [Game::Corsa, Game::Competizione, Game::Rally] {
+            assert_eq!(game.mapping_prefix(), "Local\\acpmf");
+            assert_ne!(game.source_id(42), Game::Evo.source_id(42));
+            assert_eq!(catalogue_for_game(game.id())["provider"], game.id());
+        }
+        assert!(Game::from_id("unrelated").is_err());
+        assert!(catalogue_for_game("unrelated").is_null());
+    }
     fn sample() -> RawSample {
         RawSample {
             source: SourceIdentity {

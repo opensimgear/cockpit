@@ -45,7 +45,7 @@ impl Request {
             || request.owner.game_id.as_deref().is_some_and(|id| {
                 !matches!(
                     id,
-                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
+                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
                 )
             })
             || request.node_id.as_deref().is_some_and(|id| {

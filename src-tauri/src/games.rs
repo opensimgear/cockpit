@@ -15,7 +15,7 @@ use std::{
 };
 type CleanupIo = Arc<dyn Fn(Value) -> Value + Send + Sync>;
 const CLIENT: &str = "cockpit-game-session-coordinator";
-const GAMES: [&str; 4] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12"];
+const GAMES: [&str; 7] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12", "assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"];
 fn known(value: &Value, keys: &[&str]) -> bool {
     value
         .as_object()

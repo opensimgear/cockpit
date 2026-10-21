@@ -7,7 +7,7 @@ use osg_profiles::{
 };
 
 fn catalogue_game(key: &str) -> Option<&str> {
-    if matches!(key, "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12") { return Some(key); }
+    if matches!(key, "dcs" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12") { return Some(key); }
     key.strip_prefix("dcs:").filter(|module| !module.is_empty() && module.trim()==*module && module.len() <= 63
         && module.bytes().all(|byte|byte.is_ascii_alphanumeric() || b"_- ".contains(&byte))).map(|_|"dcs")
 }
@@ -119,7 +119,7 @@ fn validate_game_item(batch:&ProviderBatch,item:&Observation,metadata:&Observati
 }
 pub(super) fn validate_game_catalogues(batch:&ProviderBatch,metadata:&BTreeMap<String,Observation>)->Result<(),String>{
     batch.validate()?;
-    let game=batch.scope.strip_prefix("profile-game:").filter(|game|matches!(*game,"dcs"|"assetto-corsa-rally"|"x-plane-11"|"x-plane-12")).ok_or("Unknown native game delivery scope.")?;
+    let game=batch.scope.strip_prefix("profile-game:").filter(|game|matches!(*game,"dcs"|"assetto-corsa"|"assetto-corsa-competizione"|"assetto-corsa-evo"|"assetto-corsa-rally"|"x-plane-11"|"x-plane-12")).ok_or("Unknown native game delivery scope.")?;
     if !batch.complete || batch.observations.is_empty() || batch.observations.len()>if game=="dcs"{2}else{1} {
         return Err("Game delivery must contain one native catalogue, or DCS CommonData plus its single active aircraft catalogue.".into());
     }

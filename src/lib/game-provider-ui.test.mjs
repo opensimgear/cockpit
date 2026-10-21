@@ -8,7 +8,7 @@ import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-provider-settings','./game-settings-navigation']);
+const modules = await loadModules(['./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-provider-settings','./game-settings-navigation']);
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
 async function component(name) {
@@ -45,7 +45,7 @@ test('DCS game details group native locations and autosaved network settings wit
   assert.ok(html.includes('DCS-BIOS follows the loaded aircraft automatically'));assert.ok(html.includes('F-86F Sabre'));assert.ok(html.includes('Base uses shared flight telemetry'));
 });
 test('telemetry-only game forms expose no simulator command or synthetic/process-identity editor',()=>{
-  for(const id of ['assetto-corsa-rally','x-plane-11','x-plane-12']){
+  for(const {id} of supportedGames.filter(game=>game.id!=='dcs')){
     const g=game(id);const html=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,request:noRequest}}).body;
     assert.ok(html.includes('Network and timing'));assert.ok(!html.includes('Save game settings'));
     assert.ok(!html.includes('Command UDP port'));assert.ok(!html.includes('Aircraft module'));assert.ok(!html.includes('Synthetic test telemetry'));

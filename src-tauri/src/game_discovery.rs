@@ -23,6 +23,10 @@ pub(crate) trait Platform: Send + Sync {
     }
     fn launch(&self, game: &Value) -> Result<ProcessIdentity, String>;
     fn find(&self, game: &Value) -> Result<Option<ProcessIdentity>, String>;
+    /// Driving telemetry requires its producer, independently of the game menu.
+    fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
+        self.find(game)
+    }
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String>;
 }
 
@@ -107,6 +111,28 @@ const GAMES: &[SupportedGame] = &[
         steam_id: 2014780,
         executables: &["X-Plane.exe"],
     },
+    SupportedGame {
+        id: "assetto-corsa",
+        name: "Assetto Corsa",
+        provider: "assetto-corsa",
+        steam_id: 244210,
+        // The launcher does not publish driving telemetry; watch the simulator.
+        executables: &["acs.exe", "acs_x86.exe"],
+    },
+    SupportedGame {
+        id: "assetto-corsa-competizione",
+        name: "Assetto Corsa Competizione",
+        provider: "assetto-corsa-competizione",
+        steam_id: 805550,
+        executables: &["AC2/Binaries/Win64/AC2-Win64-Shipping.exe", "AC2.exe"],
+    },
+    SupportedGame {
+        id: "assetto-corsa-evo",
+        name: "Assetto Corsa EVO",
+        provider: "assetto-corsa-evo",
+        steam_id: 3058630,
+        executables: &["AssettoCorsaEVO.exe"],
+    },
 ];
 fn supported(id: &str) -> Result<&'static SupportedGame, String> {
     GAMES
@@ -147,18 +173,12 @@ fn paths_match(left: &str, right: &str) -> bool {
     normalized_path(left) == normalized_path(right)
 }
 fn validated_executable(game: &SupportedGame, path: &Path) -> Result<PathBuf, String> {
-    let expected = if game.id == "dcs" {
-        "dcs.exe"
-    } else if game.provider == "x-plane" {
-        "X-Plane.exe"
-    } else {
-        "acr.exe"
-    };
+    let expected = game.executables[0].rsplit('/').next().unwrap();
     if !path.is_absolute()
         || !path
             .file_name()
             .and_then(|p| p.to_str())
-            .is_some_and(|p| p.eq_ignore_ascii_case(expected))
+            .is_some_and(|p| game.executables.iter().any(|exe| p.eq_ignore_ascii_case(exe.rsplit('/').next().unwrap())))
         || !path.is_file()
     {
         return Err(format!(
@@ -422,7 +442,7 @@ fn discover(roots: &Roots, manual: &BTreeMap<String, String>) -> Vec<Value> {
                 *id == game.id && paths_match(&root.to_string_lossy(), &steam_root.to_string_lossy())
             })
         });
-        let steam = game.provider != "x-plane" && (source == "steam" || matches_steam || game.id == "assetto-corsa-rally" && found.is_some());
+        let steam = game.provider != "x-plane" && (source == "steam" || matches_steam || game.id.starts_with("assetto-corsa") && found.is_some());
         // X-Plane supports direct launch, including a selected secondary copy.
         // Steam -applaunch may launch another installation, so monitor/launch the exact executable.
         let mut installations: Vec<Value> = steam_installs.iter().filter(|(id,_)|*id==game.id).map(|(_, (exe,_,root))|json!({"executable":exe,"installPath":root,"source":"steam"})).collect();
@@ -493,8 +513,8 @@ fn launch_request(game: &Value) -> Result<LaunchRequest, String> {
             arguments: vec!["-applaunch".into(), spec.steam_id.to_string()],
         });
     }
-    if spec.id == "assetto-corsa-rally" {
-        return Err("Assetto Corsa Rally must be launched through Steam.".into());
+    if spec.id.starts_with("assetto-corsa") {
+        return Err(format!("{} must be launched through Steam.", spec.name));
     }
     let (_, _, directory) =
         installation(spec, &executable).ok_or("Game installation directory was not found.")?;
@@ -513,16 +533,32 @@ fn process_paths(game: &Value) -> Result<Vec<String>, String> {
         installation(spec, Path::new(selected)).ok_or("Game executable is no longer available.")?;
     // Unreal's root bootstrap can exit after spawning the real runtime. Watch
     // the runtime when present so a successful handoff does not restore hardware.
-    if spec.id == "assetto-corsa-rally" {
-        if let Some(path) = paths
-            .iter()
-            .filter_map(|p| path_string(p))
-            .find(|p| normalized_path(p).ends_with("\\acr\\binaries\\win64\\acr.exe"))
-        {
+    if matches!(spec.id, "assetto-corsa-rally" | "assetto-corsa-competizione") {
+        if let Some(path) = paths.iter().filter_map(|p| path_string(p))
+            .find(|p| normalized_path(p).contains("\\binaries\\win64\\")) {
             return Ok(vec![path]);
         }
     }
     Ok(paths.into_iter().filter_map(|p| path_string(&p)).collect())
+}
+fn find_game_process(
+    game: &Value,
+    integration: bool,
+    mut inspect: impl FnMut(&[String]) -> Result<Option<ProcessIdentity>, String>,
+) -> Result<Option<ProcessIdentity>, String> {
+    let runtime = inspect(&process_paths(game)?)?;
+    if runtime.is_some() || integration || game["id"] != "assetto-corsa" {
+        return Ok(runtime);
+    }
+    // Steam starts AC's persistent menu before a user chooses a car and track.
+    // It counts as a launched game, but never as the shared-memory producer.
+    let spec = supported("assetto-corsa")?;
+    let selected = game["executable"].as_str().ok_or("Choose an Assetto Corsa installation.")?;
+    let (_, _, root) = installation(spec, Path::new(selected)).ok_or("The Assetto Corsa installation changed.")?;
+    let launcher = root.join("AssettoCorsa.exe");
+    if !launcher.is_file() { return Ok(None); }
+    let launcher = fs::canonicalize(launcher).map_err(|error|format!("Cannot inspect the Assetto Corsa launcher: {error}"))?;
+    inspect(&[path_string(&launcher).ok_or("The Assetto Corsa launcher path is not valid text.")?])
 }
 fn wait_for_process(
     timeout: Duration,
@@ -571,7 +607,10 @@ impl Platform for NativePlatform {
         )
     }
     fn find(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
-        native::find(&process_paths(game)?)
+        find_game_process(game, false, native::find)
+    }
+    fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
+        find_game_process(game, true, native::find)
     }
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {
         native::alive(identity)
@@ -877,6 +916,9 @@ mod tests {
         for (game, name, exe) in [
             ("dcs", "DCS World", "DCS.exe"),
             ("assetto-corsa-rally", "Assetto Corsa Rally", "acr.exe"),
+            ("assetto-corsa", "Assetto Corsa", "acs.exe"),
+            ("assetto-corsa-competizione", "Assetto Corsa Competizione", "AC2-Win64-Shipping.exe"),
+            ("assetto-corsa-evo", "Assetto Corsa EVO", "AssettoCorsaEVO.exe"),
             ("x-plane-11", "X-Plane 11", "X-Plane.exe"),
             ("x-plane-12", "X-Plane 12", "X-Plane.exe"),
         ] {
@@ -914,7 +956,7 @@ mod tests {
             ..Roots::default()
         };
         let games = discover(&roots, &BTreeMap::new());
-        for (game, v) in games[2..].iter().zip([11, 12]) {
+        for (game, v) in games[2..4].iter().zip([11, 12]) {
             assert_eq!(game["id"], format!("x-plane-{v}"));
             assert_eq!(game["installed"], true);
             assert_eq!(game["source"], "steam");
@@ -1067,7 +1109,7 @@ mod tests {
             ..Roots::default()
         };
         let games = discover(&roots, &BTreeMap::new());
-        assert_eq!(games.len(), 4);
+        assert_eq!(games.len(), 7);
         assert_eq!(games[0]["source"], "steam");
         assert_eq!(games[1]["source"], "steam");
         assert_eq!(games[1]["provider"], "assetto-corsa-rally");
@@ -1267,4 +1309,63 @@ mod tests {
         assert!(platform.alive(&process()).unwrap_err().contains("Windows"));
         assert!(native::spawn(&launch_request(&catalogue[0]).unwrap()).is_err());
     }
+    #[test]
+    fn assetto_titles_discover_launch_and_monitor_their_own_native_runtime() {
+        let scratch = Scratch::new();
+        let steam = scratch.write("Steam/steam.exe", "").parent().unwrap().to_path_buf();
+        let titles = [
+            ("assetto-corsa", 244210, "assettocorsa", "acs.exe"),
+            ("assetto-corsa-competizione", 805550, "Assetto Corsa Competizione", "AC2/Binaries/Win64/AC2-Win64-Shipping.exe"),
+            ("assetto-corsa-evo", 3058630, "Assetto Corsa EVO", "AssettoCorsaEVO.exe"),
+        ];
+        for (_, app, folder, runtime) in titles {
+            scratch.write(&format!("Steam/steamapps/appmanifest_{app}.acf"),
+                &format!("AppState {{ appid {app} installdir \"{folder}\" }}"));
+            scratch.write(&format!("Steam/steamapps/common/{folder}/{runtime}"), "");
+        }
+        // ACC's bootstrap can remain alongside the long-lived simulator process.
+        scratch.write("Steam/steamapps/common/Assetto Corsa Competizione/AC2.exe", "");
+        scratch.write("Steam/steamapps/common/assettocorsa/AssettoCorsa.exe", "");
+        let roots = Roots { steam: vec![steam.clone()], launch_supported: true, ..Roots::default() };
+        let games = discover(&roots, &BTreeMap::new());
+        for (id, app, folder, runtime) in titles {
+            let game = games.iter().find(|game| game["id"] == id).unwrap();
+            assert_eq!(game["provider"], id);
+            assert_eq!(game["installed"], true);
+            let launch = launch_request(game).unwrap();
+            assert_eq!(launch.executable, steam.join("steam.exe"));
+            assert_eq!(launch.arguments, vec!["-applaunch".to_owned(), app.to_string()]);
+            let process = process_paths(game).unwrap();
+            assert_eq!(process.len(), 1);
+            assert!(Path::new(&process[0]).ends_with(runtime));
+            let manual_path = scratch.0.join(format!("Steam/steamapps/common/{folder}/{runtime}"));
+            let manual = discover(&roots, &BTreeMap::from([(id.into(), manual_path.display().to_string())]));
+            let selected = manual.iter().find(|game|game["id"] == id).unwrap();
+            assert_eq!(selected["source"], "manual");
+            assert_eq!(selected["installPath"], steam.join("steamapps/common").join(folder).display().to_string());
+            assert!(NativePlatform.validate(id, manual_path.to_str().unwrap()).is_ok());
+            for (other, _, _, _) in titles { if other != id { assert!(NativePlatform.validate(other, manual_path.to_str().unwrap()).is_err()); } }
+        }
+    }
+
+    #[test]
+    fn assetto_corsa_menu_completes_launch_without_becoming_a_telemetry_producer() {
+        let scratch = Scratch::new();
+        let runtime = scratch.write("AC/acs.exe", "");
+        let launcher = scratch.write("AC/AssettoCorsa.exe", "");
+        let game = json!({"id":"assetto-corsa","executable":runtime});
+        let menu = ProcessIdentity {pid:42, epoch:1, path:launcher.display().to_string()};
+        let mut scans = 0;
+        let found = find_game_process(&game, false, |paths| { scans += 1; Ok((paths == [launcher.display().to_string()]).then(||menu.clone())) }).unwrap();
+        assert_eq!(found, Some(menu));
+        assert_eq!(scans, 2);
+        let mut scans = 0;
+        assert!(find_game_process(&game, true, |_| { scans += 1; Ok(None) }).unwrap().is_none());
+        assert_eq!(scans, 1);
+        let driving = ProcessIdentity {pid:43, epoch:2, path:runtime.display().to_string()};
+        let mut scans = 0;
+        assert_eq!(find_game_process(&game, false, |_| { scans += 1; Ok(Some(driving.clone())) }).unwrap(), Some(driving));
+        assert_eq!(scans, 1);
+    }
+
 }

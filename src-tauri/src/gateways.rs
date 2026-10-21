@@ -406,7 +406,7 @@ impl GatewayManager {
             "profile_game_launch" => {
                 let profile = request.get("profileId").map(|value| value.as_str().ok_or("Choose a saved matching profile identity.")).transpose()?;
                 let remember = request.get("rememberChoice").map(|value| value.as_bool().ok_or("Remember choice must be a boolean.")).transpose()?.unwrap_or(false);
-                return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).ok_or("Choose a supported native game installation to launch.")?, profile, remember, staged_epoch()?, expected_owner.as_ref());
+                return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo")).ok_or("Choose a supported native game installation to launch.")?, profile, remember, staged_epoch()?, expected_owner.as_ref());
             },
             "profile_apply" => {
                 let admission_epoch = staged_epoch()?;
@@ -416,7 +416,7 @@ impl GatewayManager {
                 let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
                 if document.revision != expected { return Err("The saved profile changed. Reload it before activating.".into()); }
                 self.capture_profile_activation(request, &document, &assignments);
-                let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
+                let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
                 self.pin_staged_manual(id,admission_epoch,expected_owner.as_ref())?;
                 crate::profile_session::apply_staged_admitted_checked(

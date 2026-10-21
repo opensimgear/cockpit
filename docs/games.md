@@ -19,26 +19,26 @@ then verifies the game's executable. DCS standalone installations are also
 supported. **Rescan** refreshes discovery. In a game's details, set an absolute
 executable path for a custom installation, or clear the override to return to
 automatic discovery. Finding an executable does not establish telemetry readiness.
-DCS World, Assetto Corsa Rally, X-Plane 11 and X-Plane 12 have separate catalogue identities.
+DCS World, Assetto Corsa, Assetto Corsa Competizione, Assetto Corsa EVO,
+Assetto Corsa Rally, X-Plane 11 and X-Plane 12 have separate catalogue identities.
+Each tile uses bundled publisher imagery; image sources are recorded in
+[`public/game-art/sources.json`](../public/game-art/sources.json).
 
 ## Vehicle discovery
 
 Game details show the current aircraft or car from fresh native telemetry. Vehicle
 observation runs while the configured game is running, including before a profile
-is applied. DCS reads the DCS-BIOS aircraft name, ACR reads the shared-memory car
+is applied. DCS reads the DCS-BIOS aircraft name, the Assetto games read the shared-memory car
 model, and X-Plane reads the aircraft's relative `.acf` path through RREF. Process
 exit, stale telemetry, connection failure and a changed game session clear the
 current vehicle. Selecting an aircraft tab in the profile editor browses its
 catalogue without claiming that aircraft is loaded or changing the active module.
 
 The DCS vehicle list comes from the installed DCS-BIOS aliases. X-Plane scans the
-selected installation's Aircraft folder, including add-on aircraft. ACR's packed
-game assets do not provide a supported car catalogue, so Cockpit remembers exact
-car models observed in live stages. Load a car once to make it selectable later,
+selected installation's Aircraft folder, including add-on aircraft. For the Assetto
+games, Cockpit remembers exact car models observed in live sessions. Load a car once to make it selectable later,
 or enter its exact native ID in the profile tab. Discovered vehicle names persist
-locally; a saved discovery never restores a vehicle as currently loaded. Assetto
-Corsa Rally already supplies native telemetry, so an original Assetto Corsa
-fallback integration is unnecessary.
+locally; a saved discovery never restores a vehicle as currently loaded.
 
 Vehicle lists refresh in the background at most every 30 seconds, or when the
 installation or provider settings change. DCS telemetry subscribers share one
@@ -82,11 +82,11 @@ telemetry, and browsing an aircraft tab does not save provider preferences.
 User UDP overrides that do not match the installed runtime remain Needs attention.
 Native setup is unavailable on Linux/macOS, where profile editing remains available.
 
-For ACR, **Set up telemetry** prepares native shared-memory connection settings;
+For Assetto Corsa, Competizione, EVO and Rally, **Set up telemetry** prepares native shared-memory connection settings;
 no game plugin or telemetry enablement file is installed. Setup fingerprints the
 actual runtime executable (including the Unreal child of a bootstrap executable).
-The first closed-game setup is configured but unverified. Enter a live stage and
-Recheck after entering a live stage. Only a valid advancing native stream verifies that exact build.
+The first closed-game setup is configured but unverified. Enter a live driving
+session and refresh integration state. Only a valid advancing native stream verifies that exact build.
 A previously verified unchanged build remains Ready while closed. Executable
 updates and incompatible layouts need rechecking; access errors and conflicting
 Assetto producers report their specific blocker.

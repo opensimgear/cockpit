@@ -9,9 +9,10 @@ const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
 test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{
- assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12']);
- const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,1);assert.equal(visibleGames(catalogue,true).length,4);assert.equal(supportedGames[0].installed,false);
- for(const game of supportedGames)assert.equal(gameExecutableName(game.id),game.id.startsWith('x-plane-')?'X-Plane.exe':game.id==='dcs'?'DCS.exe':'acr.exe');
+ assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12','assetto-corsa','assetto-corsa-competizione','assetto-corsa-evo']);
+ const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,1);assert.equal(visibleGames(catalogue,true).length,7);assert.equal(supportedGames[0].installed,false);
+ const executables={'dcs':'DCS.exe','assetto-corsa-rally':'acr.exe','x-plane-11':'X-Plane.exe','x-plane-12':'X-Plane.exe','assetto-corsa':'acs.exe','assetto-corsa-competizione':'AC2-Win64-Shipping.exe','assetto-corsa-evo':'AssettoCorsaEVO.exe'};
+ for(const game of supportedGames)assert.equal(gameExecutableName(game.id),executables[game.id]);
  for(const name of ['newGameProfile','cloneGameProfile','captureGameCompanions','gameProfileError','defaultGameProfile'])assert.equal(games[name],undefined);
  const source=await readFile(new URL('./games.ts',import.meta.url),'utf8');for(const retired of ['game_profile_save','game_activate','game_launch','game_deactivate','CapturedMapping','IntegrationConfig','GameSession'])assert.ok(!source.includes(retired),retired);
 });
