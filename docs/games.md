@@ -154,6 +154,13 @@ must confirm the exact executable, PID and process creation identity before a
 fresh native context can activate the graph. Browser process fields cannot grant it.
 An already running external process prevents a duplicate spawn.
 
+Original Assetto Corsa can retain a menu bootstrap after starting a child of the
+same `AssettoCorsa.exe`. Native observation selects the leaf only when all matching
+launchers share one executable path and form a single verified parent chain.
+Independent launcher instances remain ambiguous. When `acs.exe` or `acs_x86.exe`
+is running, its driving process takes precedence. The menu never provides native
+telemetry authority.
+
 Optional provider setup is needed only for the selected graph's matching branches.
 A hardware-only profile can launch while optional integrations remain dormant. A
 higher-priority verified running game can retain the selected profile context
@@ -189,6 +196,54 @@ dev app with its CDP endpoint available, and set up its actual DCS-BIOS integrat
 first. The test uses installed catalogues, a verified fixture process and authored
 UDP exports to check tab catalogues, automatic module changes and stale-data
 fencing. Its evidence does not qualify a flight in the simulator.
+
+### Actual Assetto driving capture
+
+Start the native dev Cockpit with its CDP endpoint available at port 9222, then
+enter a live driving session in the actual installed game. The capture runner
+uses the running Cockpit's native gateway and never launches a publisher, selects
+an alternate installation, or sends game inputs:
+
+```powershell
+node scripts/assetto-live.mjs ac --seconds 15 --min-speed 5 --require-change --require-all --keep-profile --out .research/assetto-live/ac-driving
+```
+
+Use `acc` or `evo` for Competizione or EVO. Capture first selects Manual mode and
+stops the previous applied profile, then runs native setup/check and creates an
+applied profile containing the five read-only telemetry channels. It records the
+actual executable SHA-256 and version, Windows process identity, car identity,
+provider revisions, repeated delivered values, and a Cockpit screenshot in the
+chosen directory. `--require-all` requires RPM, gear, speed, maximum RPM and rev
+ratio together in at least 80% of samples; it also checks all five withdraw in
+pause/stale/exit observations. Without it the last two remain optional. `--min-speed 5` requires
+motion, while `--require-change` requires at least 100 RPM or 1 km/h of variation
+and excludes small idle physics jitter. Add `--wait-speed --min-speed 5` to start
+recording only after the requested channels are known and the car reaches
+5 km/h. `--timeout-ms 180000` allows time to drive before that trigger. Once
+recording begins, every subsequent sample is retained, including later pauses
+or stops. The capture profile is removed afterward
+unless `--keep-profile` is supplied.
+
+With that profile retained, the following commands observe transitions established
+in the actual game without pausing, suspending, exiting, or sending inputs to it:
+
+```powershell
+node scripts/assetto-live.mjs ac --mode observe --from .research/assetto-live/ac-driving/evidence.json --require-all
+node scripts/assetto-live.mjs ac --mode pause --from .research/assetto-live/ac-driving/evidence.json
+node scripts/assetto-live.mjs ac --mode exit --from .research/assetto-live/ac-driving/evidence.json
+```
+
+`--mode stale` checks withdrawal after telemetry stops advancing. Exit checks the
+driving process and its telemetry; Assetto Corsa's menu may remain open. Add
+`--require-game-closed` to require the menu to close as well. After restarting the
+driving runtime, use `--mode reapply --from <capture>/evidence.json --require-all`
+to stop the previous context, recheck the current build, and reapply the same
+saved profile with fresh process evidence. A previous process epoch cannot grant
+a restarted simulator integration authority. Use `--mode cleanup --from <capture>/evidence.json` to stop and remove the runner's saved profile, or
+`--mode snapshot` for a read-only installation/process snapshot.
+
+`node --test scripts/assetto-live.test.mjs` covers observation assertions and the
+stop-before-setup ordering without contacting the running Cockpit.
 
 ## Local storage and retired configuration
 

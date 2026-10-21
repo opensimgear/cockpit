@@ -560,6 +560,38 @@ fn find_game_process(
     let launcher = fs::canonicalize(launcher).map_err(|error|format!("Cannot inspect the Assetto Corsa launcher: {error}"))?;
     inspect(&[path_string(&launcher).ok_or("The Assetto Corsa launcher path is not valid text.")?])
 }
+fn selected_process(candidates: &[(ProcessIdentity, u32)], exclusive_xplane: bool) -> Result<Option<ProcessIdentity>, String> {
+    if candidates.len() <= 1 { return Ok(candidates.first().map(|(identity,_)|identity.clone())); }
+    // The original AC menu can retain its bootstrap after starting a child of
+    // the same executable. Only a single verified parent chain is a handoff;
+    // independently launched copies, branches, and other runtimes stay ambiguous.
+    let launcher_chain = !exclusive_xplane && candidates.iter().all(|(identity,_)| {
+        identity.path.rsplit(['/', '\\']).next().is_some_and(|name|name.eq_ignore_ascii_case("AssettoCorsa.exe"))
+            && paths_match(&identity.path, &candidates[0].0.path)
+    });
+    if launcher_chain {
+        let leaves = candidates.iter().filter(|(identity,_)|!candidates.iter().any(|(_,parent)|*parent == identity.pid)).collect::<Vec<_>>();
+        if leaves.len() == 1 {
+            let leaf = leaves[0];
+            let mut current = leaf;
+            let mut visited = BTreeSet::new();
+            loop {
+                if !visited.insert(current.0.pid) { break; }
+                match candidates.iter().find(|(identity,_)|identity.pid == current.1) {
+                    Some(parent) if parent.0.epoch <= current.0.epoch => current = parent,
+                    Some(_) => break,
+                    None if visited.len() == candidates.len() => return Ok(Some(leaf.0.clone())),
+                    None => break,
+                }
+            }
+        }
+    }
+    Err(if exclusive_xplane {
+        "Multiple X-Plane processes are running. Close the other installations before using telemetry."
+    } else {
+        "Multiple game processes match the selected installation. Close the other instances before activating its profile."
+    }.into())
+}
 fn wait_for_process(
     timeout: Duration,
     mut find: impl FnMut() -> Result<Option<ProcessIdentity>, String>,
@@ -846,7 +878,7 @@ mod native {
     }
     pub(super) fn find(paths: &[String]) -> Result<Option<ProcessIdentity>, String> {
         let exclusive = paths == ["X-Plane.exe"];
-        let mut selected = None;
+        let mut candidates = Vec::new();
         let raw = unsafe { CreateToolhelp32Snapshot(2, 0) };
         if raw as isize == -1 {
             return Err(format!(
@@ -876,14 +908,7 @@ mod native {
                 if let Some(handle) = open(entry.pid)? {
                     if let Some(identity) = identity(&handle, entry.pid)? {
                         if exclusive || paths.iter().any(|p| paths_match(p, &identity.path)) {
-                            if selected.is_some() {
-                                return Err(if exclusive {
-                                    "Multiple X-Plane processes are running. Close the other installations before using telemetry."
-                                } else {
-                                    "Multiple game processes match the selected installation. Close the other instances before activating its profile."
-                                }.into());
-                            }
-                            selected = Some(identity);
+                            candidates.push((identity, entry.parent));
                         }
                     }
                 }
@@ -896,7 +921,7 @@ mod native {
                 ));
             }
         }
-        Ok(selected)
+        selected_process(&candidates, exclusive)
     }
     pub(super) fn alive(expected: &ProcessIdentity) -> Result<bool, String> {
         let Some(handle) = open(expected.pid)? else {
@@ -1366,6 +1391,34 @@ mod tests {
         let mut scans = 0;
         assert_eq!(find_game_process(&game, false, |_| { scans += 1; Ok(Some(driving.clone())) }).unwrap(), Some(driving));
         assert_eq!(scans, 1);
+    }
+
+    fn launcher_process(pid: u32, parent: u32, epoch: u64) -> (ProcessIdentity,u32) {
+        (ProcessIdentity {pid,path:"C:/Steam/assettocorsa/AssettoCorsa.exe".into(),epoch},parent)
+    }
+    #[test]
+    fn assetto_launcher_handoff_selects_the_verified_leaf_of_one_parent_chain() {
+        let (root,child,leaf)=(launcher_process(10,1,100),launcher_process(11,10,110),launcher_process(12,11,120));
+        for candidates in [vec![root.clone(),child.clone()],vec![child.clone(),root.clone()],vec![leaf.clone(),root.clone(),child.clone()]] {
+            let expected = if candidates.len()==2 {child.0.clone()} else {leaf.0.clone()};
+            assert_eq!(selected_process(&candidates,false).unwrap(),Some(expected));
+        }
+    }
+    #[test]
+    fn independent_or_unverified_launcher_processes_and_runtime_duplicates_remain_ambiguous() {
+        let (root,child)=(launcher_process(10,1,100),launcher_process(11,10,110));
+        let mut foreign=child.clone();foreign.0.path="D:/Steam/assettocorsa/AssettoCorsa.exe".into();
+        let mut runtime_root=root.clone();runtime_root.0.path="C:/Steam/assettocorsa/acs.exe".into();
+        let mut runtime_child=child.clone();runtime_child.0.path=runtime_root.0.path.clone();
+        for candidates in [
+            vec![root.clone(),launcher_process(20,1,120)],
+            vec![root.clone(),child.clone(),launcher_process(12,10,120)],
+            vec![launcher_process(10,11,100),launcher_process(11,10,110)],
+            vec![root.clone(),launcher_process(11,10,90)],
+            vec![root.clone(),foreign],
+            vec![runtime_root,runtime_child],
+        ] {assert!(selected_process(&candidates,false).is_err());}
+        assert!(selected_process(&[root,child],true).is_err());
     }
 
 }
