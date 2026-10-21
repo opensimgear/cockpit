@@ -67,7 +67,7 @@ test('a navigation storage failure is shown beside the still-usable local settin
 test('Styling owns the enabled collapse preference with its signal-count explanation', () => {
   const body = html(), content = styling(body);
   assert.match(content, /Collapse parallel connections/);
-  assert.match(content, /Show connections sharing the same physical endpoints as one wire with a signal count\./);
+  assert.match(content, /Share trunks at common input or output points, with a signal count and branches to each block\./);
   const checkbox = content.match(/<input\b[^>]*type="checkbox"[^>]*>/)?.[0];
   assert.ok(checkbox);
   assert.match(checkbox, /aria-labelledby="arrow-collapse-label"/);

@@ -191,6 +191,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     await until(() => native.evaluate('document.readyState === "complete" && typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit must finish its initial page before reload');
     await native.send('Page.reload', { ignoreCache: true });
     await until(() => native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit IPC did not finish starting');
+    await native.send('Page.bringToFront');
     beforeCanvasStyling=await native.evaluate(`localStorage.getItem('osg-canvas-styling')`);
     await native.evaluate(`(async()=>{const{canvasStyling}=await import('/src/lib/canvas-styling.ts');canvasStyling.setCollapseParallelWires(false);})()`);
     assert.equal(await native.evaluate('document.visibilityState'), 'visible');
@@ -215,6 +216,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     const visibleSetting=selector=>native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});return!!element&&element.getBoundingClientRect().width>0&&!element.closest('[hidden]');})()`);
     assert.equal(await visibleSetting('[aria-label="Desktop behavior"]'),true);assert.equal(await visibleSetting('[aria-label="Progress notifications"]'),true);assert.equal(await visibleSetting('[aria-label="Arrow style"]'),false);
     await native.evaluate(`document.getElementById('settings-tab-general').focus()`);
+    await until(()=>native.evaluate(`document.hasFocus()&&document.activeElement?.id==='settings-tab-general'`),'The native Settings tab must own keyboard focus before arrow navigation');
     await native.send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});await native.send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
     await until(()=>native.evaluate(`document.getElementById('settings-tab-styling')?.getAttribute('aria-selected')==='true'&&document.activeElement?.id==='settings-tab-styling'`),'Arrow keys must select and focus the next Settings tab');
     await native.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Home',code:'Home',windowsVirtualKeyCode:36});await native.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Home',code:'Home',windowsVirtualKeyCode:36});

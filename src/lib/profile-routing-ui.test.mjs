@@ -96,6 +96,17 @@ test('canvas exposes empty, named groups without the former membership form and 
  h=await canvasHarness(document);h.handlers.renameGroup('group-1','');assert.equal(h.edits.length,0);assert.match(h.handlers.state.layoutError,/name/);
 });
 
+test('canvas renders a selectable common output trunk toward different blocks without changing logical routes',async()=>{
+ const document=draft().document;document.resources=document.resources.filter(node=>['can-one','can-two','physical-usb'].includes(node.id));
+ document.resources.find(node=>node.id==='can-two').ports.push(port('receive','input'));
+ document.bindings=[{id:'branch-a',from:{nodeId:'can-one',portId:'button'},to:{nodeId:'can-two',portId:'receive'}},{id:'branch-b',from:{nodeId:'can-one',portId:'button'},to:{nodeId:'physical-usb',portId:'led'}}];
+ document.editor.positions=[{nodeId:'can-one',x:0,y:200},{nodeId:'can-two',x:700,y:0},{nodeId:'physical-usb',x:700,y:450}];
+ const before=plain(document),h=await canvasHarness(document,{selectedId:'',selectConnection(){}});
+ assert.match(h.body,/class="signal-trunk[\s"]/);assert.match(h.body,/data-trunk-direction="output"/);assert.match(h.body,/class="signal-trunk-hit/);assert.match(h.body,/class="connection-trunk-badge/);assert.match(h.body,/Choose from 2 connections sharing this output/);
+ assert.equal((h.body.match(/<path[^>]*class="signal-edge(?:\s|")/g)??[]).length,2);assert.deepEqual(h.edits,[]);assert.deepEqual(document,before);
+ const selected=await canvasHarness(document,{selectedId:'',selectedEdgeId:'branch-a',selectConnection(){},reconnectConnection(){}});assert.match(selected.body,/data-reconnect-binding="branch-a"/);assert.doesNotMatch(selected.body,/class="signal-trunk[\s"]/);assert.deepEqual(selected.edits,[]);
+});
+
 test('canvas pointer drops join and leave fixed groups in one history edit using world coordinates',async()=>{
  const document=draft().document;document.editor.positions=[{nodeId:'can-one',x:600,y:80}];document.editor.groups=[{id:'controls',name:'Controls',members:[],bounds:{x:0,y:0,width:440,height:360}}];
  let h=await canvasHarness(document),captured=stageFor(h);h.handlers.setView({x:0,y:0,zoom:.5});h.handlers.begin(pointer(500,400),'can-one');h.handlers.move(pointer(250,400));assert.equal(h.edits.length,0);h.handlers.finish(pointer(250,400));assert.equal(h.edits.length,1);assert.equal(h.edits[0].label,'Move component');assert.deepEqual(h.edits[0].next.editor.groups[0].members,['can-one']);assert.deepEqual(h.edits[0].next.editor.groups[0].bounds,document.editor.groups[0].bounds);assert.deepEqual(h.edits[0].next.editor.positions.find(p=>p.nodeId==='can-one'),{nodeId:'can-one',x:100,y:80});assert.equal(h.handlers.state.selectedId,'can-one');assert.equal(captured.size,0);

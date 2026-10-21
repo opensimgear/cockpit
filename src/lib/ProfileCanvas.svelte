@@ -7,7 +7,7 @@
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH } from './profile-editor';
   import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
   import { createDiagramRouter, diagramPendingPath, diagramRoutes, diagramSegmentLine } from './profile-diagram';
-  import {canvasRouteNodes,canvasPreviewRoutes,bundleDiagramRoutes,type DiagramWireBundle}from'./profile-canvas-render';
+  import {canvasRouteNodes,canvasPreviewRoutes,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
   import {profileReshapeWireSegment,profileSetWireRoute,profileInsertWireHandle,profileMoveWireHandle,profileRemoveWireHandle,profileWireHandleOnRoute}from'./profile-wire-layout';
   import {canvasStyling}from'./canvas-styling';
   import {canvasNavigation}from'./canvas-navigation';
@@ -78,7 +78,16 @@
     if(segmentPreview&&segmentDrag){const preview=diagramRoutes(routeNodes,visibleDocument.bindings.filter(binding=>binding.id===segmentDrag!.bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:visibleDocument.editor.wireRoutes})[0];return preview?committedRoutes.map(route=>route.binding.id===preview.binding.id?preview:route):committedRoutes;}
     return dragged||groupPreview?canvasPreviewRoutes(committedRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius):committedRoutes;
   });
-  const renderedRoutes=$derived(bundleDiagramRoutes([...routes.filter(route=>route.binding.id!==selectedEdgeId),...routes.filter(route=>route.binding.id===selectedEdgeId)],$canvasStyling.collapseParallelWires,selectedEdgeId));
+  const bundledRoutes=$derived(bundleDiagramRoutes([...routes.filter(route=>route.binding.id!==selectedEdgeId),...routes.filter(route=>route.binding.id===selectedEdgeId)],$canvasStyling.collapseParallelWires,selectedEdgeId));
+  const wireNetwork=$derived($canvasStyling.collapseParallelWires?buildDiagramWireTrunks(bundledRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius,!!dragged||!!groupPreview,selectedEdgeId):{bundles:bundledRoutes,trunks:[]});
+  const renderedRoutes=$derived(wireNetwork.bundles);
+  const sharedTrunks=$derived(wireNetwork.trunks);
+  const clickableBundles=$derived([...renderedRoutes,...sharedTrunks]);
+  const trunkBadges=$derived.by(()=>{
+    const groups=new Map<string,typeof sharedTrunks[number]>();
+    for(const trunk of sharedTrunks){const binding=trunk.route.binding,key=JSON.stringify([trunk.direction,trunk.direction==='output'?binding.from.nodeId:binding.to.nodeId,trunk.endpoint.x,trunk.endpoint.y]),previous=groups.get(key),length=(route:typeof trunk.route)=>route.points.slice(1).reduce((sum,point,index)=>sum+Math.hypot(point.x-route.points[index].x,point.y-route.points[index].y),0);if(!previous||trunk.members.length>previous.members.length||trunk.members.length===previous.members.length&&length(trunk.route)>length(previous.route))groups.set(key,trunk);}
+    return [...groups.values()];
+  });
   const bundleMembers=$derived(bundlePicker?routes.filter(route=>bundlePicker!.ids.includes(route.binding.id)):[]);
   const frames=$derived(canvasGroups(visibleDocument,nodes));
   const paletteSize=$derived.by(()=>{const size=canvasNodeSize({kind:paletteDrag?.component.kind==='transformation'?'processing':'resource'});return paletteDrag?.component.kind==='transformation'&&['gate','any','all','priority'].includes(paletteDrag.component.preset)?{...size,height:size.height+PROFILE_TRANSFORM_PORT_ROW}:size;});
@@ -140,7 +149,7 @@
   function chooseConnection(id:string) {bundlePicker=null;stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView())void tick().then(()=>{if(!selectedId)selectConnection?.(id);});else selectConnection(id);}else editConnection?.(id);}
   function openBundle(event:MouseEvent|KeyboardEvent,bundle:DiagramWireBundle,insertion?:{component:ProfilePaletteComponent;position:CanvasPoint}){
     event.preventDefault();event.stopPropagation();clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId='';
-    const members=bundleDiagramRoutes(routes,true).find(group=>group.members.some(route=>route.binding.id===bundle.route.binding.id))?.members??bundle.members;
+    const members=bundle.id.startsWith('trunk:')?bundle.members:bundleDiagramRoutes(routes,true).find(group=>group.members.some(route=>route.binding.id===bundle.route.binding.id))?.members??bundle.members;
     const rect=stage.getBoundingClientRect(),target=(event.currentTarget as Element).getBoundingClientRect();
     const clientX='clientX'in event&&(event.clientX||event.clientY)?event.clientX:target.left+target.width/2,clientY='clientY'in event&&(event.clientX||event.clientY)?event.clientY:target.top+target.height/2;
     const width=Math.min(360,rect.width-16),top=Math.max(8,8-rect.top),bottom=Math.min(rect.height,window.innerHeight-rect.top)-8,maxHeight=Math.max(120,Math.min(360,bottom-top));
@@ -150,8 +159,8 @@
   }
   function chooseBundleMember(id:string){const insertion=bundlePicker?.insertion;bundlePicker=null;if(insertion)dropOnConnection?.(insertion.component,id,insertion.position);else chooseConnection(id);}
   function bundleKey(event:KeyboardEvent,bundle:DiagramWireBundle){if(['Enter',' ','Delete','Backspace'].includes(event.key))openBundle(event,bundle);}
-  function positionBundleBadge(element:SVGGElement,settings:{path:string;zoom:number;bindingId:string}){
-    function update({zoom,bindingId}:typeof settings){const path=Array.from(element.parentElement?.querySelectorAll<SVGPathElement>('.signal-edge')??[]).find(path=>path.dataset.bindingId===bindingId);if(!path)return;const point=path.getPointAtLength(path.getTotalLength()/2);element.setAttribute('transform',`translate(${point.x},${point.y}) scale(${1/zoom})`);}
+  function positionBundleBadge(element:SVGGElement,settings:{path:string;zoom:number;bindingId:string;trunkId?:string}){
+    function update({zoom,bindingId,trunkId}:typeof settings){const path=Array.from(element.parentElement?.querySelectorAll<SVGPathElement>(trunkId?'.signal-trunk':'.signal-edge')??[]).find(path=>trunkId?path.dataset.trunkId===trunkId:path.dataset.bindingId===bindingId);if(!path)return;const point=path.getPointAtLength(path.getTotalLength()/2);element.setAttribute('transform',`translate(${point.x},${point.y}) scale(${1/zoom})`);}
     update(settings);return{update};
   }
   function clearConnectionClick(){if(connectionClickTimer!==undefined){clearTimeout(connectionClickTimer);connectionClickTimer=undefined;}}
@@ -197,7 +206,7 @@
   function dropPalette(event:DragEvent){
     if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
     event.preventDefault();event.stopPropagation();
-    const component=paletteDrag!.component,position=palettePosition(event),hit=(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]'),bindingId=component.kind==='transformation'?hit?.dataset.connectionId:undefined,bundle=hit?.dataset.bundleId?renderedRoutes.find(bundle=>bundle.id===hit.dataset.bundleId&&bundle.members.length>1):undefined;clearPalettePreview();
+    const component=paletteDrag!.component,position=palettePosition(event),hit=(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]'),bindingId=component.kind==='transformation'?hit?.dataset.connectionId:undefined,bundle=hit?.dataset.bundleId?clickableBundles.find(bundle=>bundle.id===hit.dataset.bundleId&&bundle.members.length>1):undefined;clearPalettePreview();
     try{if(bundle&&component.kind==='transformation'&&dropOnConnection)openBundle(event,bundle,{component,position});else if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
   }
   function restoreSelectionView(){const previous=selectionView;selectionView=null;focusedSelectionId='';if(previous)view={...previous};return !!previous;}
@@ -231,7 +240,7 @@
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
-    if(target.closest('.signal-edge-hit,.connection-bundle-badge,.connection-endpoint,.connection-segment,.connection-reroute')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
+    if(target.closest('.signal-edge-hit,.signal-trunk-hit,.connection-bundle-badge,.connection-trunk-badge,.connection-endpoint,.connection-segment,.connection-reroute')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
     bundlePicker=null;clearConnectionClick();
     id ??= target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
     event.preventDefault();stage.setPointerCapture(event.pointerId);
@@ -394,7 +403,7 @@
         {/each}
         <svg class="signal-edges" width="1" height="1" aria-label="Saved signal routes">
           <defs><marker id="profile-signal-arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" viewBox="0 0 8 8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Q1,4 0,0 Z" /></marker></defs>
-          {#each renderedRoutes as bundle (bundle.route.binding.id)}
+          {#snippet renderWireBundle(bundle:DiagramWireBundle)}
             {@const route=bundle.route}
             {@const binding=route.binding}
             {@const grouped=bundle.members.length>1}
@@ -427,12 +436,23 @@
                 <circle class="connection-endpoint" data-reconnect-side="to" data-reconnect-binding={binding.id} cx={end.x} cy={end.y} r="7" role="button" tabindex="0" aria-label={`Reconnect destination of ${binding.id}`} onpointerdown={event=>beginReconnect(event,binding.id,'to')} onkeydown={event=>reconnectKey(event,binding.id,'to')}><title>Drag to another input</title></circle>
               {/if}
             {/if}
+          {/snippet}
+          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id!==selectedEdgeId) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each sharedTrunks as trunk (trunk.id)}
+            <path class="signal-trunk" data-trunk-id={trunk.id} data-trunk-direction={trunk.direction} data-trunk-endpoint={JSON.stringify(trunk.endpoint)} data-binding-ids={JSON.stringify(trunk.members.map(route=>route.binding.id))} data-arrow-style={wireStyle} class:highlighted={trunk.members.some(route=>highlightedEdges.includes(route.binding.id))} class:drop-target={paletteConnectionId===trunk.route.binding.id} d={trunk.route.path}><title>{trunk.members.length} connections share this {trunk.direction==='output'?'output':'input'} trunk</title></path>
+            <path class="signal-trunk-hit" data-trunk-id={trunk.id} data-bundle-id={trunk.id} data-connection-id={trunk.route.binding.id} d={trunk.route.path} role="button" tabindex="0" aria-label={`Choose from ${trunk.members.length} connections sharing this ${trunk.direction==='output'?'output':'input'}`} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={event=>openBundle(event,trunk)} ondblclick={event=>openBundle(event,trunk)} onkeydown={event=>bundleKey(event,trunk)}><title>Choose a signal on this shared trunk</title></path>
           {/each}
           {#each renderedRoutes.filter(bundle=>bundle.members.length>1) as bundle (bundle.route.binding.id)}
             <g class="connection-bundle-badge" data-bundle-id={bundle.id} data-connection-id={bundle.route.binding.id} role="button" tabindex="0" aria-label={`Choose from ${bundle.members.length} connections`} use:positionBundleBadge={{path:bundle.route.path,zoom:view.zoom,bindingId:bundle.route.binding.id}} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={event=>openBundle(event,bundle)} onkeydown={event=>bundleKey(event,bundle)}>
               <title>{bundle.members.length} connections · Click to choose a signal</title><rect x="-17" y="-10" width="34" height="20" rx="10"/><text text-anchor="middle" dominant-baseline="central">×{bundle.members.length}</text>
             </g>
           {/each}
+          {#each trunkBadges as trunk (trunk.id)}
+            <g class="connection-trunk-badge" data-trunk-id={trunk.id} data-bundle-id={trunk.id} data-connection-id={trunk.route.binding.id} role="button" tabindex="0" aria-label={`Choose from ${trunk.members.length} connections on shared ${trunk.direction==='output'?'output':'input'}`} use:positionBundleBadge={{path:trunk.route.path,zoom:view.zoom,bindingId:trunk.route.binding.id,trunkId:trunk.id}} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={event=>openBundle(event,trunk)} onkeydown={event=>bundleKey(event,trunk)}>
+              <title>{trunk.members.length} connections · Click to choose a signal</title><rect x="-17" y="-10" width="34" height="20" rx="10"/><text text-anchor="middle" dominant-baseline="central">×{trunk.members.length}</text>
+            </g>
+          {/each}
+          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id===selectedEdgeId) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
           {#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={diagramPendingPath(canvasNodeAnchor(from,pending.direction,pending.portId),pending.end,pending.direction,wireStyle,cornerRadius)}><title>Choose the other block, then select compatible ports</title></path>{#if wireRejectedReason}<text class="wire-drop-error" x={pending.end.x+12} y={pending.end.y-12}>{wireRejectedReason}</text>{/if}{/if}{/if}
         </svg>
         {#each renderedNodes as node (node.id)}
@@ -474,7 +494,7 @@
         <div class="bundle-picker-heading"><strong>{bundleMembers.length} connections</strong><button type="button" aria-label="Close bundle connections" title="Close" onclick={()=>{bundlePicker=null;stage?.focus({preventScroll:true});}}><Icon name="close" size={16}/></button></div>
         <p>{bundlePicker.insertion?'Choose the signal to transform':'Choose a signal to inspect or edit'}</p>
         <div class="bundle-picker-members">{#each bundleMembers as member (member.binding.id)}
-          <button type="button" data-bundle-binding={member.binding.id} aria-label={`Select connection ${member.binding.id}`} onclick={()=>chooseBundleMember(member.binding.id)}><span><strong>{portName(member.binding.from.nodeId,member.binding.from.portId,'output')}</strong><span aria-hidden="true">→</span><strong>{portName(member.binding.to.nodeId,member.binding.to.portId,'input')}</strong></span><small>{member.binding.id} · {member.binding.from.portId} → {member.binding.to.portId}</small></button>
+          <button type="button" data-bundle-binding={member.binding.id} aria-label={`Select connection ${member.binding.id}`} onclick={()=>chooseBundleMember(member.binding.id)}><span><strong>{portName(member.binding.from.nodeId,member.binding.from.portId,'output')}</strong><span aria-hidden="true">→</span><strong>{portName(member.binding.to.nodeId,member.binding.to.portId,'input')}</strong></span><small>{nodesById.get(member.binding.from.nodeId)?.name??member.binding.from.nodeId} → {nodesById.get(member.binding.to.nodeId)?.name??member.binding.to.nodeId}</small><small>{member.binding.id} · {member.binding.from.portId} → {member.binding.to.portId}</small></button>
         {/each}</div>
       </div>
     {/if}
@@ -503,6 +523,8 @@
 </section>
 
 <style>
+  .signal-trunk{pointer-events:none;fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.signal-trunk.highlighted{stroke:#e0bd7e;stroke-width:4}.signal-trunk.drop-target{stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent))}.signal-trunk-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer;outline:none!important}.signal-trunk-hit:hover,.signal-trunk-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none!important}
+  .connection-trunk-badge{pointer-events:all;cursor:pointer;outline:none}.connection-trunk-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-trunk-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-trunk-badge:hover rect,.connection-trunk-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}
   .signal-edge.bundled{stroke-width:2.5}.connection-bundle-badge{pointer-events:all;cursor:pointer;outline:none}.connection-bundle-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-bundle-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-bundle-badge:hover rect,.connection-bundle-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}
   .canvas-wire-bundle-picker{position:absolute;z-index:8;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;padding:12px;border:1px solid var(--accent);border-radius:8px;background:var(--surface);box-shadow:0 8px 28px #0005;overflow:hidden}.bundle-picker-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.bundle-picker-heading>strong{font-size:12px}.bundle-picker-heading button{display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--soft);cursor:pointer}.bundle-picker-heading button:hover{background:var(--surface-raised)}.canvas-wire-bundle-picker>p{margin:0;font-size:11px;color:var(--muted);line-height:1.4}.bundle-picker-members{display:grid;gap:5px;overflow:auto;min-height:0}.bundle-picker-members>button{display:grid;gap:6px;width:100%;text-align:left;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);cursor:pointer}.bundle-picker-members>button:hover,.bundle-picker-members>button:focus-visible{border-color:var(--accent);outline:1px solid var(--accent);outline-offset:-1px}.bundle-picker-members>button>span{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:8px;font-size:11px}.bundle-picker-members strong{font-size:11px;font-weight:500;overflow-wrap:anywhere}.bundle-picker-members small{font-size:9px;color:var(--muted);overflow-wrap:anywhere}
   .connection-reroute{fill:var(--surface);stroke:var(--accent);stroke-width:2;pointer-events:all;cursor:move;outline:none!important}.connection-reroute:hover,.connection-reroute:focus-visible{fill:var(--accent);stroke:var(--text);outline:none!important}

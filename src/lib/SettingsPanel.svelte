@@ -67,7 +67,7 @@
       <label class="style-field"><span class="field-label">Arrow style</span><select aria-label="Arrow style" aria-describedby="arrow-style-help" value={$canvasStyling.arrowStyle} onchange={event => setArrowStyle(event.currentTarget.value as CanvasArrowStyle)}><option value="smooth">Fully smooth (Bézier)</option><option value="orthogonal">Horizontal / vertical</option></select></label>
     </div>
     <div class="preference-row">
-      <div><strong id="arrow-collapse-label">Collapse parallel connections</strong><p id="arrow-collapse-help">Show connections sharing the same physical endpoints as one wire with a signal count.</p></div>
+      <div><strong id="arrow-collapse-label">Collapse parallel connections</strong><p id="arrow-collapse-help">Share trunks at common input or output points, with a signal count and branches to each block.</p></div>
       <input type="checkbox" aria-labelledby="arrow-collapse-label" aria-describedby="arrow-collapse-help" checked={$canvasStyling.collapseParallelWires} onchange={event => setCollapseParallelWires(event.currentTarget.checked)} />
     </div>
     {#if $canvasStyling.arrowStyle === 'orthogonal'}

@@ -72,3 +72,4 @@ export function canvasPreviewRoutes(routes:CanvasRoutes,nodes:readonly DiagramNo
   return changed?preview:routes;
 }
 export {bundleDiagramRoutes,type DiagramWireBundle} from './profile-wire-bundles';
+export {buildDiagramWireTrunks,type DiagramWireTrunk} from './profile-wire-trunks';

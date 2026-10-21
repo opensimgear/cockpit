@@ -1,5 +1,7 @@
 # Collapsed parallel connections experiment
 
+Extended by [shared input and output trunks](2026-10-21-shared-wire-trunks.md).
+
 Settings → Styling → Arrows now has **Collapse parallel connections**, enabled
 by default. It is an app-local view preference; toggling it does not edit a
 profile, add history entries, or change the signal graph.
