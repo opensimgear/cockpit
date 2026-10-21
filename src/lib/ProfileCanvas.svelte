@@ -16,7 +16,7 @@
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
@@ -61,7 +61,7 @@
   const nodesById=$derived(new Map(nodes.map(node=>[node.id,node])));
   const portGroups=$derived(new Map(nodes.map(node=>{const ports=node.resource?discoveredPorts[node.id]??node.resource.ports:null;const inputs=ports?ports.filter(port=>port.direction==='input'):node.processing?.inputs??node.virtual?.ports??node.desktop?.ports??[],outputs=ports?ports.filter(port=>port.direction==='output'):node.processing?.outputs??[];return[node.id,{inputs,outputs,names:new Map([...inputs,...outputs].map(port=>[`${port.direction}/${port.id}`,port.name]))}];})));
   let knownNodeIds=new Set(untrack(()=>nodes.map(node=>node.id)));
-  let savedViewportSignature='';
+  let savedViewportSignature=untrack(()=>JSON.stringify(document.editor.viewport));
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
   const controllerEffects=$derived(canvasControllerEffects(visibleDocument));
   const renderedNodes = $derived(nodes.map(node => node.id === dragged?.id ? { ...node, position: dragged.position } : node));
@@ -88,7 +88,7 @@
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
   $effect(() => { const signature=JSON.stringify(document.editor.viewport);if(signature!==savedViewportSignature){savedViewportSignature=signature;view = { ...document.editor.viewport };} });
-  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;clearPendingMove();if(viewportFrame){cancelAnimationFrame(viewportFrame);viewportFrame=0;}drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';view=canvasFit(nodes,stage?.clientWidth||900,stage?.clientHeight||600);}});
+  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;clearPendingMove();if(viewportFrame){cancelAnimationFrame(viewportFrame);viewportFrame=0;}drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
   $effect(()=>{const added=nodes.find(node=>node.id===selectedId&&!knownNodeIds.has(node.id));knownNodeIds=new Set(nodes.map(node=>node.id));if(added)focusNewNode(added);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(() => {
@@ -96,10 +96,11 @@
     portEpoch++; browser.clear(); page = null; portError = ''; portsBusy = false;
     if (resourceId) void loadPorts('open',resourceId);
   });
-  onMount(() => { if (fitOnMount) fit(); });
+  onMount(() => { if (fitOnMount) fitView(); });
   onDestroy(() => { portEpoch++; browser.clear();clearPendingMove();if(viewportFrame)cancelAnimationFrame(viewportFrame); });
   function persist(nextView = view) { if(viewportFrame){cancelAnimationFrame(viewportFrame);viewportFrame=0;}if (!readOnly) { const next = JSON.parse(JSON.stringify(document)) as ProfileDocument; next.editor.viewport = { ...nextView }; change(next); } }
-  function fit() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); persist(); }
+  function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
+  function fit() { fitView();persist(); }
   function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2});persist(); }
   function layout() {
     editLayout(()=>scopedCanvasEdit(document,source=>{
