@@ -138,6 +138,48 @@ fn acyclic(edges: &BTreeMap<String, BTreeSet<String>>) -> Result<(), String> {
 }
 
 pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
+    if document.vehicle_tabs.is_empty() { return validate_graph_document(document); }
+    check(document.vehicle_tabs.len() <= 32, "A profile supports at most 32 vehicle tabs.")?;
+    check(document.resources.len()<=MAX_RESOURCES && document.processing_nodes.len()<=MAX_PROCESSING_NODES
+        && document.virtual_outputs.len()<=MAX_VIRTUAL_OUTPUTS && document.desktop_outputs.len()<=33
+        && document.bindings.len()<=MAX_BINDINGS, "Profile exceeds resource, processing, output or binding limits.")?;
+    check(serde_json::to_vec(document).map_err(|error|error.to_string())?.len() <= MAX_PROFILE_BYTES, "Profile exceeds 512 KiB.")?;
+    let mut node_ids = BTreeSet::new();
+    for node in document.resources.iter().map(|node|&node.id)
+        .chain(document.processing_nodes.iter().map(|node|&node.id))
+        .chain(document.virtual_outputs.iter().map(|node|&node.id))
+        .chain(document.desktop_outputs.iter().map(|node|&node.id)) {
+        check(node_ids.insert(node.as_str()), "Duplicate graph node identifier.")?;
+    }
+    let mut tabs=BTreeSet::new();let mut vehicles=BTreeSet::new();let mut owners=BTreeMap::new();
+    for tab in &document.vehicle_tabs {
+        id(&tab.id)?;id(&tab.game_id)?;label(&tab.vehicle_name)?;
+        check(crate::resources_ports::text(&tab.vehicle_id,256).is_ok() && tab.vehicle_id.trim()==tab.vehicle_id, "Vehicle identity requires 1-256 bytes without control characters.")?;
+        check(document.eligibility.game_ids.len()==1 && document.eligibility.game_ids.contains(&tab.game_id), "Vehicle tabs require their single selected game context.")?;
+        check(tabs.insert(&tab.id) && vehicles.insert((&tab.game_id,&tab.vehicle_id)), "Vehicle tabs and vehicle selections must be unique.")?;
+        check(tab.node_ids.len()<=337, "A vehicle tab exceeds its node limit.")?;
+        for node in &tab.node_ids {
+            check(node_ids.contains(node.as_str()) && owners.insert(node.as_str(),tab.id.as_str()).is_none(), "Vehicle tab node is unknown, duplicated or belongs to another tab.")?;
+        }
+    }
+    let mut bindings=BTreeSet::new();
+    for binding in &document.bindings {
+        check(bindings.insert(&binding.id), "Duplicate binding identifier.")?;
+        check(node_ids.contains(binding.from.node_id.as_str()) && node_ids.contains(binding.to.node_id.as_str()), "Binding references a missing node or port.")?;
+        let from=owners.get(binding.from.node_id.as_str());let to=owners.get(binding.to.node_id.as_str());
+        check(from.is_none() || to.is_none() || from==to, "Bindings cannot connect different vehicle tabs.")?;
+    }
+    // Each possible execution contains Base and at most one vehicle. Check that
+    // exact combination so mutually exclusive writers and layouts never conflict.
+    validate_graph_document(&document.for_vehicle(None,None))?;
+    for tab in &document.vehicle_tabs {
+        validate_graph_document(&document.for_vehicle(Some(&tab.game_id),Some(&tab.vehicle_id)))
+            .map_err(|message|format!("{}: {message}",tab.vehicle_name))?;
+    }
+    Ok(())
+}
+
+fn validate_graph_document(document: &ProfileDocument) -> Result<(), String> {
     check(
         document.schema_version == crate::PROFILE_SCHEMA_VERSION,
         "Unsupported unified profile version.",
@@ -461,6 +503,7 @@ pub fn semantic_hash(document: &ProfileDocument) -> Result<String, String> {
             serde_json::Value::Object(object) => {
                 if declaration {
                     object.remove("name");
+                    object.remove("vehicleName");
                 }
                 let mut sorted: BTreeMap<String, serde_json::Value> =
                     std::mem::take(object).into_iter().collect();
@@ -484,6 +527,7 @@ pub fn semantic_hash(document: &ProfileDocument) -> Result<String, String> {
                                 | "inputs"
                                 | "outputs"
                                 | "parameters"
+                                | "vehicleTabs"
                         ),
                     );
                 }
@@ -497,13 +541,14 @@ pub fn semantic_hash(document: &ProfileDocument) -> Result<String, String> {
                         | "ports"
                         | "inputs"
                         | "outputs"
+                        | "vehicleTabs"
                 ) {
                     array.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
                 } else if matches!(field, "visibility" | "overrides" | "companionAssignments") {
                     array.sort_by(|a, b| a["resourceId"].as_str().cmp(&b["resourceId"].as_str()));
                 } else if field == "actions" {
                     array.sort_by(|a, b| a["portId"].as_str().cmp(&b["portId"].as_str()));
-                } else if matches!(field, "gameIds") {
+                } else if matches!(field, "gameIds" | "nodeIds") {
                     array.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
                 }
             }

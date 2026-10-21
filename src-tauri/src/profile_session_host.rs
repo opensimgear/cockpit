@@ -31,6 +31,9 @@ use std::{collections::BTreeMap, sync::{Arc, atomic::{AtomicU64, Ordering}}, tim
 type ProgressCallback = Arc<dyn Fn(u64, &str, &str) + Send + Sync>;
 
 struct NativePreparation {
+    document: osg_profiles::ProfileDocument,
+    assignments: Vec<osg_profiles::store::LocalAssignment>,
+    vehicle_selection: Option<String>,
     prepared: Prepared,
     report: CompilationReport,
     backend: osg_profiles::compiler_models::BackendCapabilities,
@@ -52,6 +55,11 @@ struct NativeRun {
     report: CompilationReport,
     assignments: Vec<osg_profiles::store::LocalAssignment>,
     document: osg_profiles::ProfileDocument,
+    source_document: osg_profiles::ProfileDocument,
+    source_assignments: Vec<osg_profiles::store::LocalAssignment>,
+    vehicle_selection: Option<String>,
+    vehicle_paused: bool,
+    vehicle_error: Option<String>,
     backend: osg_profiles::compiler_models::BackendCapabilities,
     delivery: Option<ExecutionPlan>,
     inputs: Option<crate::profile_session_inputs::HidInputs>,
@@ -110,6 +118,14 @@ fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
 }
 impl NativeProfileHost {
+    fn waiting_for_vehicle(document:&osg_profiles::ProfileDocument,vehicle_id:Option<&str>)->bool {
+        !document.vehicle_tabs.is_empty() && vehicle_id.is_none()
+    }
+    fn selected_vehicle_tab(games:&crate::games::GamesRuntime, document:&osg_profiles::ProfileDocument, game_id:Option<&str>) -> Option<String> {
+        let game_id=game_id?;
+        let vehicle_id=games.current_vehicle_id(game_id)?;
+        document.vehicle_tabs.iter().find(|tab|tab.game_id==game_id&&tab.vehicle_id==vehicle_id).map(|tab|tab.id.clone())
+    }
     pub(crate) fn new(
         resources: Arc<crate::profile_resources::Runtime>,
         controllers: Arc<osg_controller_input::ControllerService>,
@@ -561,7 +577,21 @@ impl NativeProfileHost {
         sample:&dyn Fn(&[u8])->Result<(Vec<osg_virtual_controller::vjoy::Slot>,Instant),String>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
         if candidate.launch_preparation&&candidate.game_id.is_some(){return Err("Hardware-first launch preparation cannot capture a running game scope.".into())}
-        let game_preparation = match candidate.game_id.as_deref() {
+        let source_candidate=candidate;
+        let vehicle_selection=Self::selected_vehicle_tab(games,&candidate.document,candidate.game_id.as_deref());
+        let vehicle_id=vehicle_selection.as_ref().and_then(|id|candidate.document.vehicle_tabs.iter().find(|tab|&tab.id==id)).map(|tab|tab.vehicle_id.as_str());
+        let mut selected=candidate.clone();
+        selected.document=candidate.document.for_vehicle(candidate.game_id.as_deref(),vehicle_id);
+        selected.assignments.retain(|assignment|selected.document.resources.iter().any(|resource|resource.id==assignment.resource_id));
+        let candidate=&selected;
+        // Vehicle telemetry can disappear while the process remains verified.
+        // Start Base immediately with dormant game branches rather than waiting
+        // for the missing telemetry that caused this fallback. The normal game
+        // reader retry resumes those branches on fresh native data, including
+        // vehicles without a configured tab.
+        let current_vehicle=candidate.game_id.as_deref().and_then(|id|games.current_vehicle_id(id));
+        let waiting=Self::waiting_for_vehicle(&source_candidate.document,current_vehicle.as_deref());
+        let game_preparation = match candidate.game_id.as_deref().filter(|_|!waiting) {
             Some(id) => games.prepare_profile_game_context(id)?,
             None => None,
         };
@@ -725,7 +755,8 @@ impl NativeProfileHost {
                 .map_err(|error|format!("{error} [phase=stage sampleAgeUs={}]",captured.observed.elapsed().as_micros()))?;
             Some(captured)
         } else { None };
-        crate::profile_session::Stage::new(candidate, NativePreparation {
+        crate::profile_session::Stage::new(source_candidate, NativePreparation {
+            document:candidate.document.clone(),assignments:candidate.assignments.clone(),vehicle_selection,
             prepared, report, backend: snapshot.backend, bindings, output_handoff, scripts, game, game_preparation,
             companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope,
         })
@@ -765,7 +796,7 @@ impl Host for NativeProfileHost {
             .ok_or("The applied native profile is no longer available.")?;
         let reducer=state.reducer.as_ref().filter(|reducer|reducer.active())
             .ok_or("The applied native reducer is stopped.")?;
-        crate::profile_session::topology::capture(&state.document,reducer,run,request)
+        crate::profile_session::topology::capture_variant(&state.document,&state.source_document,reducer,run,request)
     }
     fn inspect(&self, run: &OwnedRun, request: &crate::profile_session::inspection::Request) -> Result<crate::profile_session::inspection::Page, String> {
         self.fence(&run.owner)?;
@@ -773,13 +804,13 @@ impl Host for NativeProfileHost {
             .ok_or("The applied native profile is no longer available.")?;
         let reducer = state.reducer.as_ref().filter(|reducer| reducer.active())
             .ok_or("The applied native reducer is stopped.")?;
-        crate::profile_session::inspection::capture(&state.document, reducer, run, request)
+        crate::profile_session::inspection::capture_variant(&state.document,&state.source_document, reducer, run, request)
     }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String> {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
         Self::emit_progress(self.progress.as_ref(), admission_epoch, "preparing-resources", "Preparing profile resources");
-        let NativePreparation {mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope} = candidate.stage.as_ref()
+        let NativePreparation {document, assignments, vehicle_selection, mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
@@ -788,8 +819,9 @@ impl Host for NativeProfileHost {
         let publication=crate::profile_session_overrides::Overrides::prepare(&publication,owner,self.panels.clone(),self.admission_epoch.clone(),admission_epoch)?;
         prepared.admission.optional_unavailable.extend(actions.optional_unavailable().iter().cloned());
         self.prepared.insert(key(owner), NativeRun {
-            owner: owner.clone(), admission_epoch, report, assignments: candidate.assignments.clone(),
-            document: candidate.document.clone(), backend, delivery: None, inputs: None, panels,
+            owner: owner.clone(), admission_epoch, report, assignments,
+            document, source_document:candidate.document.clone(),source_assignments:candidate.assignments.clone(),vehicle_selection,vehicle_paused:false,vehicle_error:None,
+            backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
             child_game_owner: None, game_retry: None, game_resume: None, launch_epoch_bound: false, launch_context_installed: false,
@@ -802,6 +834,10 @@ impl Host for NativeProfileHost {
     }
     fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String> {
         self.check_transition(owner)?;
+        let state=self.prepared.get(&key(owner)).ok_or("Missing native vehicle preparation.")?;
+        if Self::selected_vehicle_tab(&self.games,&state.source_document,owner.game_id.as_deref())!=state.vehicle_selection {
+            return Err("The loaded vehicle changed during profile preparation; capture the current vehicle again.".into());
+        }
         let assignments = self.run(owner)?.assignments.clone();
         let proof = self
             .run(owner)?
@@ -1245,6 +1281,19 @@ impl Host for NativeProfileHost {
     }
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String> {
         self.fence(&run.owner)?;
+        if self.vehicle_change(&run.owner).is_some() || self.run(&run.owner)?.vehicle_paused {
+            if !self.run(&run.owner)?.vehicle_paused {
+                // Retire held keys, virtual state and physical ownership before
+                // slow variant preparation. An old aircraft/car never emits into
+                // the newly loaded vehicle while its replacement is being built.
+                self.neutralize(run)?;
+                let state=self.run(&run.owner)?;
+                state.vehicle_paused=true;
+                state.bindings.clear();
+            }
+            let message=self.run(&run.owner)?.vehicle_error.as_ref().map(|error|format!("Vehicle settings could not be applied: {error}")).unwrap_or_else(||"The loaded vehicle changed; preparing its profile settings.".into());
+            return Ok(Health {degraded:vec![message],stop:None});
+        }
         let controllers = self.controllers.clone();
         let resources = self.resources.clone();
         let games = self.games.clone();
@@ -1319,6 +1368,16 @@ impl Host for NativeProfileHost {
         })
     }
     fn supports_launch_hold(&self) -> bool { true }
+    fn vehicle_change(&self, owner:&RunOwner) -> Option<String> {
+        let state=self.prepared.get(&key(owner))?;
+        if state.source_document.vehicle_tabs.is_empty(){return None;}
+        let game_id=owner.game_id.as_deref().or_else(||state.child_game_owner.as_ref().and_then(|owner|owner.game_id.as_deref()));
+        let selection=Self::selected_vehicle_tab(&self.games,&state.source_document,game_id);
+        (selection!=state.vehicle_selection || state.vehicle_paused).then(||selection.unwrap_or_else(||"base".into()))
+    }
+    fn vehicle_switch_failed(&mut self,owner:&RunOwner,message:&str) {
+        if let Some(state)=self.prepared.get_mut(&key(owner)){state.vehicle_error=Some(message.into());}
+    }
     fn hold_health(&mut self, run:&OwnedRun)->Result<Health,String> {self.held_health(run)}
     fn bind_launch_epoch(&mut self, run:&OwnedRun, epoch:u64)->Result<(),String> {self.bind_held_epoch(run,epoch)}
     fn install_launch_context(&mut self, run:&OwnedRun, candidate:&Candidate)->Result<Prepared,String> {self.install_held_context(run,candidate)}
@@ -1344,3 +1403,18 @@ mod output_handoff_tests;
 #[cfg(test)]
 #[path = "profile_session_progress_tests.rs"]
 mod progress_tests;
+
+#[cfg(test)]
+mod vehicle_provider_tests {
+    use super::*;
+    #[test]
+    fn stale_vehicle_telemetry_does_not_block_base_but_fresh_vehicle_retains_baseline_guards() {
+        let mut document=osg_profiles::default_document();
+        assert!(!NativeProfileHost::waiting_for_vehicle(&document,None));
+        document.eligibility.game_ids=vec!["dcs".into()];
+        document.vehicle_tabs.push(osg_profiles::VehicleTab {id:"hornet".into(),game_id:"dcs".into(),vehicle_id:"FA-18C_hornet".into(),vehicle_name:"Hornet".into(),node_ids:vec![]});
+        assert!(NativeProfileHost::waiting_for_vehicle(&document,None));
+        assert!(!NativeProfileHost::waiting_for_vehicle(&document,Some("FA-18C_hornet")));
+        assert!(!NativeProfileHost::waiting_for_vehicle(&document,Some("unconfigured-aircraft")));
+    }
+}

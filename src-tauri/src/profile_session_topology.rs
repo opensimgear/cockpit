@@ -264,6 +264,15 @@ pub(crate) fn capture(
     run: &OwnedRun,
     request: &Request,
 ) -> Result<Page, String> {
+    capture_variant(document,document,phase,run,request)
+}
+pub(crate) fn capture_variant(
+    document: &ProfileDocument,
+    source: &ProfileDocument,
+    phase: &Phase,
+    run: &OwnedRun,
+    request: &Request,
+) -> Result<Page, String> {
     let token = phase.run_token();
     if request.owner != run.owner
         || token.session != run.owner.session
@@ -272,7 +281,8 @@ pub(crate) fn capture(
         || document.revision != run.owner.profile_revision
         || run.snapshot.profile_id != document.id
         || run.snapshot.revision != document.revision
-        || osg_profiles::semantic_hash(document)? != run.snapshot.semantic_hash
+        || source.id != document.id || source.revision != document.revision
+        || osg_profiles::semantic_hash(source)? != run.snapshot.semantic_hash
         || !phase.active()
     {
         return Err("The topology does not belong to this exact immutable applied reducer.".into());

@@ -1,6 +1,7 @@
 import { diagramLayout } from './profile-diagram';
 import { DEFAULT_PROFILE_ID, MAX_PROFILES, captureProfileSession, parseProfileDocument, profileAssignmentsError, profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileLocalAssignment, type ProfileResult, type ProfileSession, type ProfileSummary } from './profiles';
 import type { ProfileInventoryClient, ResourceSummary } from './profile-inventory';
+import { profileTabNodeIds, profileStampVehicleNodes } from './profile-vehicle-tabs';
 export const PROFILE_RESOURCE_CAPACITY = 64;
 export const PROFILE_BLOCK_WIDTH = 288;
 export const PROFILE_BLOCK_HEIGHT = 232;
@@ -71,11 +72,12 @@ function freshResourceId(document: ProfileDocument): string {
     throw new Error('No resource identity is available.');
 }
 /** Native identities stay solely in machine assignments, never in the portable document. */
-export function addProfileResources(document: ProfileDocument, assignments: ProfileLocalAssignment[], resources: readonly DeepReadonly<ResourceSummary>[]): {
+export function addProfileResources(document: ProfileDocument, assignments: ProfileLocalAssignment[], resources: readonly DeepReadonly<ResourceSummary>[], activeVehicleTabId = ''): {
     document: ProfileDocument;
     assignments: ProfileLocalAssignment[];
 } {
-    const known = new Set(assignments.map(assignment => assignment.sourceId));
+    const scope = profileTabNodeIds(document, activeVehicleTabId);
+    const known = new Set(assignments.filter(assignment => scope.has(assignment.resourceId)).map(assignment => assignment.sourceId));
     const incoming = resources.filter(resource => !known.has(resource.id)).sort((a, b) => a.resourceType === b.resourceType ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : a.resourceType < b.resourceType ? -1 : 1);
     if (new Set(incoming.map(resource => resource.id)).size !== incoming.length)
         throw new Error('Inventory contains duplicate resource identities. Refresh before adding resources.');
@@ -91,6 +93,7 @@ export function addProfileResources(document: ProfileDocument, assignments: Prof
     const missing = [...next.resources, ...next.processingNodes, ...next.virtualOutputs,...(next.desktopOutputs??[])].map(node => node.id).filter(id => !placed.has(id));
     const bottom = next.editor.positions.reduce((value, position) => Math.max(value, position.y + PROFILE_BLOCK_HEIGHT + 48), 0);
     next.editor.positions.push(...profileAutoLayout(missing).map(position => ({ ...position, y: position.y + bottom })));
+    profileStampVehicleNodes(document, next, activeVehicleTabId);
     const error = profileDocumentError(next) || profileAssignmentsError(local);
     if (error)
         throw new Error(error);

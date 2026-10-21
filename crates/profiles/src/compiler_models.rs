@@ -99,7 +99,7 @@ pub enum DiagnosticSeverity {
     Info,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphLocation {
     pub resource_id: Option<String>,

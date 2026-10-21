@@ -11,7 +11,13 @@ pub(super) fn check(
     let bindings = document.bindings.iter().collect::<Vec<_>>();
     let mut physical = BTreeMap::<&str, Vec<&SourcePlan>>::new();
     for source in sources {
-        if let Some(id) = source.inventory_resource_id.as_deref() {
+        // One native simulator reader fans telemetry out to Base and its
+        // selected vehicle. These logical declarations do not acquire a second
+        // physical input capture; endpoint writers are still checked below.
+        if let Some(id) = source.inventory_resource_id.as_deref().filter(|_| {
+            capture::captured(&source.endpoint.node_id, snapshot)
+                .is_none_or(|resource|resource.summary.resource_type != ResourceType::GameIntegration)
+        }) {
             physical.entry(id).or_default().push(source);
         }
         if let Some(resource) = capture::captured(&source.endpoint.node_id, snapshot) {

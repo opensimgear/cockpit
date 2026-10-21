@@ -182,6 +182,9 @@ pub(crate) trait Host: Send {
     ) -> Result<(), String>;
     fn restore(&mut self, run: &OwnedRun, recovery: bool) -> Result<(), String>;
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String>;
+    /// A native observation requests one fresh, safely staged graph variant.
+    fn vehicle_change(&self, _: &RunOwner) -> Option<String> { None }
+    fn vehicle_switch_failed(&mut self, _: &RunOwner, _: &str) {}
     fn supports_launch_hold(&self) -> bool { false }
     fn hold_health(&mut self, _: &OwnedRun) -> Result<Health, String> {
         Err("This native adapter cannot renew a pending game launch.".into())
@@ -293,6 +296,23 @@ impl<H: Host> Coordinator<H> {
     pub(crate) fn validates(&self, owner: &RunOwner) -> bool {
         matches!(self.status.state, State::Running | State::Degraded)
             && self.status.owner.as_ref() == Some(owner)
+    }
+    pub(crate) fn vehicle_change(&self) -> Option<(RunOwner,String)> {
+        let owner=self.status.owner.as_ref().filter(|_|matches!(self.status.state,State::Running|State::Degraded))?;
+        self.host.vehicle_change(owner).map(|selection|(owner.clone(),selection))
+    }
+    pub(crate) fn vehicle_candidate(&self,owner:&RunOwner,epoch:u64)->Result<Candidate,String> {
+        if !self.validates(owner){return Err("The active profile changed before vehicle switching.".into());}
+        let mut candidate=self.active_candidate.clone().ok_or("The applied vehicle profile source is unavailable.")?;
+        candidate.stage=None;candidate.launch_preparation=false;candidate.admission_epoch=Some(epoch);
+        Ok(candidate)
+    }
+    pub(crate) fn vehicle_switch_failed(&mut self,owner:&RunOwner,message:&str) {
+        if self.validates(owner){
+            self.host.vehicle_switch_failed(owner,message);
+            self.status.state=State::Degraded;
+            self.status.degradation=vec![format!("Vehicle settings could not be applied: {message}")];
+        }
     }
     /// Native-only provenance for off-lock visibility preparation. The adapter
     /// must still prove its exact receipt and driver state before takeover.

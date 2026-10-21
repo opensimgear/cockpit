@@ -21,6 +21,38 @@ mod conflicts;
 pub mod hid_policy;
 
 pub fn compile(document: &ProfileDocument, snapshot: &CompileSnapshot) -> CompilationReport {
+    if !document.vehicle_tabs.is_empty() {
+        let mut variants=vec![document.for_vehicle(None,None)];
+        variants.extend(document.vehicle_tabs.iter().map(|tab|document.for_vehicle(Some(&tab.game_id),Some(&tab.vehicle_id))));
+        let capture=|variant:&ProfileDocument| {
+            let mut captured=snapshot.clone();
+            captured.assignments.retain(|assignment|variant.resources.iter().any(|resource|resource.id==assignment.resource_id));
+            captured
+        };
+        let mut report=compile_mode(&variants[0],&capture(&variants[0]),None);
+        let mut readiness=report.readiness;
+        report.document_semantic_hash=crate::semantic_hash(document).ok();
+        if let Err(message)=crate::validate_document(document) {
+            error(&mut report.diagnostics,"invalidVehicleTabs",&message,GraphLocation::default());
+            readiness=PlanReadiness::Invalid;
+        }
+        for (tab,variant) in document.vehicle_tabs.iter().zip(variants.iter().skip(1)) {
+            let variant_report=compile_mode(variant,&capture(variant),None);
+            if variant_report.readiness==PlanReadiness::Invalid || readiness!=PlanReadiness::Invalid&&variant_report.readiness==PlanReadiness::Blocked {
+                readiness=variant_report.readiness;
+            }
+            for mut diagnostic in variant_report.diagnostics {
+                diagnostic.message=format!("{}: {}",tab.vehicle_name,diagnostic.message);
+                // Base diagnostics appear once; retain distinct variant locations.
+                if !report.diagnostics.iter().any(|old|old.code==diagnostic.code && old.location==diagnostic.location && diagnostic.message.ends_with(&old.message)) {
+                    report.diagnostics.push(diagnostic);
+                }
+            }
+        }
+        report.readiness=readiness;
+        if readiness==PlanReadiness::Invalid { report.plan=None;report.program_hash=None; }
+        return finish(report);
+    }
     compile_mode(document, snapshot, None)
 }
 /// Native acquisition preflight only. Fresh delivery tokens must be captured

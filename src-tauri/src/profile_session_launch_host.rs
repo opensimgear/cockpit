@@ -256,8 +256,11 @@ impl NativeProfileHost {
             Some(id) => games.prepare_profile_game_context(id)?,
             None => None,
         };
-        let (mut snapshot, pins) =
-            resources.snapshot_for_preparation(candidate.assignments.clone())?;
+        // Hardware-first launch starts with Base. Once native vehicle telemetry
+        // arrives, the ordinary vehicle switch stages the matching full variant.
+        let document=candidate.document.for_vehicle(None,None);
+        let assignments=candidate.assignments.iter().filter(|assignment|document.resources.iter().any(|resource|resource.id==assignment.resource_id)).cloned().collect();
+        let (mut snapshot, pins) = resources.snapshot_for_preparation(assignments)?;
         Self::game_capture(&mut snapshot, proof.as_ref());
         snapshot.backend.name = osg_mapping_host::service::BACKEND.into();
         snapshot.backend.available = if native && !candidate.document.virtual_outputs.is_empty() {
@@ -284,7 +287,7 @@ impl NativeProfileHost {
                 native && status["visibility"]["qualified"] == true;
         }
         let report =
-            osg_profiles::compiler::compile_for_preparation(&candidate.document, &snapshot, &pins);
+            osg_profiles::compiler::compile_for_preparation(&document, &snapshot, &pins);
         let prepared = prepared_report(&report)?;
         if !prepared.admission.blockers.is_empty() {
             return Err(prepared
@@ -439,7 +442,7 @@ impl NativeProfileHost {
             || state.launch_context_installed
             || candidate.admission_epoch != Some(state.admission_epoch)
             || candidate.read_only
-            || serde_json::to_vec(&(&state.document, &state.assignments))
+            || serde_json::to_vec(&(&state.source_document, &state.source_assignments))
                 .map_err(|e| e.to_string())?
                 != serde_json::to_vec(&(&candidate.document, &candidate.assignments))
                     .map_err(|e| e.to_string())?

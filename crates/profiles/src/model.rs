@@ -19,6 +19,8 @@ pub struct ProfileDocument {
     pub visibility: Vec<VisibilityIntent>,
     pub overrides: Vec<RuntimeOverride>,
     pub companion_assignments: Vec<CompanionAssignment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vehicle_tabs: Vec<VehicleTab>,
     pub editor: EditorLayout,
 }
 impl ProfileDocument {
@@ -37,6 +39,7 @@ impl ProfileDocument {
             visibility: vec![],
             overrides: vec![],
             companion_assignments: vec![],
+            vehicle_tabs: vec![],
             editor: EditorLayout {
                 positions: vec![],
                 groups: vec![],
@@ -106,7 +109,9 @@ impl ProfileDocument {
         if document.resources.len() > crate::validation::MAX_RESOURCES
             || document.processing_nodes.len() > crate::validation::MAX_PROCESSING_NODES
             || document.virtual_outputs.len() > crate::validation::MAX_VIRTUAL_OUTPUTS
-            || document.desktop_outputs.len() > 1
+            || document.desktop_outputs.len() > 33
+            || document.vehicle_tabs.len() > 32
+            || document.vehicle_tabs.iter().any(|tab|tab.node_ids.len()>337)
             || document.desktop_outputs.iter().any(|output| output.actions.len() > 128)
             || document.processing_nodes.len() + document.desktop_outputs.iter().map(|output| output.actions.len()).sum::<usize>() > 256
             || document.bindings.len() > crate::validation::MAX_BINDINGS
@@ -137,6 +142,45 @@ impl ProfileDocument {
     }
     pub fn semantic_hash(&self) -> Result<String, String> {
         crate::semantic_hash(self)
+    }
+}
+
+/// Nodes absent from these lists belong to Base and are always applied.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VehicleTab {
+    pub id: String,
+    pub game_id: String,
+    pub vehicle_id: String,
+    pub vehicle_name: String,
+    pub node_ids: Vec<String>,
+}
+impl ProfileDocument {
+    /// Derive an executable variant without changing the portable source document.
+    /// Unknown vehicles apply Base alone; a previous vehicle is never retained.
+    pub fn for_vehicle(&self, game_id: Option<&str>, vehicle_id: Option<&str>) -> Self {
+        let inactive = self.vehicle_tabs.iter().filter(|tab| {
+            Some(tab.game_id.as_str()) != game_id || Some(tab.vehicle_id.as_str()) != vehicle_id
+        }).flat_map(|tab|tab.node_ids.iter().map(String::as_str)).collect::<std::collections::BTreeSet<_>>();
+        let active = |id: &str|!inactive.contains(id);
+        let mut next=self.clone();
+        next.vehicle_tabs.clear();
+        next.resources.retain(|node|active(&node.id));
+        next.processing_nodes.retain(|node|active(&node.id));
+        next.virtual_outputs.retain(|node|active(&node.id));
+        next.desktop_outputs.retain(|node|active(&node.id));
+        next.bindings.retain(|binding|active(&binding.from.node_id)&&active(&binding.to.node_id));
+        next.visibility.retain(|intent|active(&intent.resource_id));
+        next.overrides.retain(|intent|active(&intent.resource_id));
+        next.companion_assignments.retain(|intent|active(&intent.resource_id));
+        next.editor.positions.retain(|position|active(&position.node_id));
+        next.editor.collapsed_port_groups.retain(|group|active(&group.node_id));
+        next.editor.groups.retain_mut(|group| {
+            let was_empty=group.members.is_empty();
+            group.members.retain(|id|active(id));
+            was_empty || !group.members.is_empty()
+        });
+        next
     }
 }
 

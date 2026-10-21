@@ -2,12 +2,24 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./profile-game-context','./profile-editor','./profile-graph-history','./profiles']);
-const {profileSetGameContext,profileGameContext,profileGameContextNeedsSync}=modules.get('./profile-game-context');
+const {profileSetGameContext,profileGameContext,profileGameContextNeedsSync,profileAddVehicleIntegration}=modules.get('./profile-game-context');
 const {blankProfile,ProfileEditorStore}=modules.get('./profile-editor'),{ProfileGraphHistory}=modules.get('./profile-graph-history');
 const id='11111111-1111-4111-8111-111111111111',plain=value=>JSON.parse(JSON.stringify(value));
 const source=gameId=>({id:`native:${gameId}`,name:gameId,resourceType:'game-integration',availability:'offline',attributes:{gameId}});
 const inventory=[source('dcs'),source('x-plane-12')];
 const draft=()=>({document:blankProfile(id,'Context rig'),assignments:[]});
+
+test('vehicle canvases own independent simulator integration blocks and same-game sync preserves all scopes',()=>{
+ let value=profileSetGameContext(draft(),'dcs',inventory);
+ value.document.vehicleTabs=[{id:'hornet',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'Hornet',nodeIds:[]},{id:'viper',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'Viper',nodeIds:[]}];
+ value=profileAddVehicleIntegration(value,'hornet',[]);value=profileAddVehicleIntegration(value,'viper',[]);
+ assert.equal(value.document.resources.length,3);assert.equal(value.assignments.length,1);assert.equal(profileGameContextNeedsSync(value,inventory),true);
+ const scoped=plain(value.document.vehicleTabs),synced=profileSetGameContext(value,'dcs',inventory);
+ assert.deepEqual(plain(synced.document.vehicleTabs),scoped);assert.equal(synced.document.resources.length,3);assert.equal(synced.assignments.length,3);assert.equal(profileGameContextNeedsSync(synced,inventory),false);
+ assert.equal(new Set(synced.assignments.map(row=>row.sourceId)).size,1);
+ assert.deepEqual(plain(profileAddVehicleIntegration(synced,'hornet',inventory)),plain(synced));
+ assert.equal(profileSetGameContext(synced,'',inventory).document.resources.length,0);
+});
 
 test('selecting a saved context adds exactly its integration with a native assignment in one Undo edit',()=>{
  const before=draft(),history=new ProfileGraphHistory(before),next=profileSetGameContext(before,'dcs',inventory);

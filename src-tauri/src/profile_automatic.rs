@@ -20,6 +20,7 @@ struct State {
     conflicts: Vec<String>,
     target: Option<Target>,
     last_attempt: Option<Target>,
+    last_vehicle_attempt: Option<(crate::profile_session::RunOwner,String,std::time::Instant)>,
 }
 
 pub(super) struct Runtime {
@@ -58,6 +59,7 @@ impl Runtime {
                 conflicts: vec![],
                 target: None,
                 last_attempt: None,
+                last_vehicle_attempt: None,
             }),
             emergency: AtomicBool::new(false),
             pending_controls: AtomicUsize::new(0),
@@ -201,6 +203,45 @@ impl Runtime {
 }
 
 impl GatewayManager {
+    /// Vehicle selection follows the running profile in both Manual and
+    /// Automatic mode. Reuse the same guarded, one-use handoff as a saved edit.
+    fn poll_vehicle_profile(&self) {
+        if self.closed.load(Ordering::Acquire) || self.profile_pending.load(Ordering::Acquire)!=0 || self.profile_automatic.pending() {return;}
+        let changed=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).vehicle_change();
+        let Some((owner,selection))=changed else {return;};
+        {
+            let state=self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner());
+            if state.last_vehicle_attempt.as_ref().is_some_and(|(previous,vehicle,at)|previous==&owner&&vehicle==&selection&&at.elapsed()<std::time::Duration::from_secs(5)) {return;}
+        }
+        let previous=self.profile_pending.fetch_add(1,Ordering::AcqRel);
+        let _pending=PendingProfileApply(&self.profile_pending);
+        if previous!=0{return;}
+        let capture=(|| {
+            let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+            if self.closed.load(Ordering::Acquire) || self.profile_pending.load(Ordering::Acquire)!=1 || self.profile_automatic.pending(){return Err("Vehicle profile switch was cancelled by a newer native control.".to_owned());}
+            let coordinator=self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
+            if !coordinator.validates(&owner){return Err("The active profile changed before vehicle switching.".into());}
+            let epoch=self.profile_admission_epoch.load(Ordering::Acquire);
+            coordinator.vehicle_candidate(&owner,epoch)
+        })();
+        if let Ok(candidate)=capture {
+            let epoch=candidate.admission_epoch.unwrap();
+            self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner()).last_vehicle_attempt=Some((owner.clone(),selection,std::time::Instant::now()));
+            let result=crate::profile_session::apply_staged_admitted_checked(
+                &self.profile_session,candidate,|candidate|self.prepare_profile_at(candidate,epoch),
+                |_| {
+                    let admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+                    let game=self.game_admission.read().unwrap_or_else(|p|p.into_inner());
+                    if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=epoch||self.profile_automatic.pending(){return Err("Vehicle profile preparation was cancelled by a newer native control.".to_owned());}
+                    self.guard_retired_recovery()?;
+                    Ok((admission,game))
+                },
+                ||{self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);},Some(&Some(owner.clone())));
+            if let Err(error)=result {
+                self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).vehicle_switch_failed(&owner,&error);
+            }
+        }
+    }
     pub(super) fn restore_automatic_selection(&self) {
         let legacy_stop = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).legacy_stop_requested();
         if legacy_stop { self.profile_automatic.control("profile_stop"); }
@@ -645,6 +686,7 @@ impl GatewayManager {
                     let Some(manager) = weak.upgrade() else {
                         break;
                     };
+                    manager.poll_vehicle_profile();
                     manager.poll_automatic();
                     drop(manager);
                     for _ in 0..5 {

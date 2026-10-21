@@ -231,6 +231,72 @@ fn button_graph() -> ProfileDocument {
 }
 
 #[test]
+fn vehicle_variants_ignore_other_vehicle_writers_but_report_base_conflicts() {
+    let mut document=button_graph();
+    document.eligibility.game_ids=vec!["dcs".into()];
+    document.bindings.push(edge("button-b",("device-b","button"),("controller","button")));
+    document.vehicle_tabs=[("hornet","device-a"),("viper","device-b")].into_iter().map(|(vehicle,node)|crate::VehicleTab {
+        id:vehicle.into(),game_id:"dcs".into(),vehicle_id:vehicle.into(),vehicle_name:vehicle.into(),node_ids:vec![node.into()],
+    }).collect();
+    crate::validate_document(&document).unwrap();
+    let captured=snapshot(&document);
+    let report=compile(&document,&captured);
+    assert!(!has(&report,"multipleWriters"),"{:?}",report.diagnostics);
+    assert!(!has_errors(&report),"{:?}",report.diagnostics);
+    // Two logical captures of the same physical source are safe in mutually
+    // exclusive vehicles, and are checked again with Base for every variant.
+    let mut aliased=captured.clone();aliased.assignments[1].source_id=aliased.assignments[0].source_id.clone();
+    assert!(!has(&compile(&document,&aliased),"duplicatePhysicalSource"));
+    document.vehicle_tabs[1].node_ids.clear();
+    assert!(crate::validate_document(&document).is_err(),"A Base writer must conflict with the Hornet writer.");
+    let report=compile(&document,&captured);
+    assert!(report.plan.is_none());assert!(has_errors(&report));
+}
+
+#[test]
+fn base_and_vehicle_can_share_one_native_game_telemetry_reader() {
+    let mut document=crate::new_document("Scoped game telemetry").unwrap();
+    document.eligibility.game_ids=vec!["dcs".into()];
+    for id in ["base-game","vehicle-game"] {
+        document.resources.push(Resource {id:id.into(),name:id.into(),kind:ResourceKind::Game,required:true,ports:vec![boolean("telemetry",Direction::Output)]});
+    }
+    document.virtual_outputs.push(VirtualOutput {
+        id:"controller".into(),name:"Controller".into(),required:true,
+        layout:ControllerLayout {buttons:vec!["base-button".into(),"vehicle-button".into()],axes:vec![],hats:vec![]},
+        ports:vec![boolean("base-button",Direction::Input),boolean("vehicle-button",Direction::Input)],
+    });
+    document.bindings=vec![edge("base-telemetry",("base-game","telemetry"),("controller","base-button")),edge("vehicle-telemetry",("vehicle-game","telemetry"),("controller","vehicle-button"))];
+    document.vehicle_tabs.push(crate::VehicleTab {id:"hornet".into(),game_id:"dcs".into(),vehicle_id:"FA-18C_hornet".into(),vehicle_name:"Hornet".into(),node_ids:vec!["vehicle-game".into()]});
+    let mut captured=snapshot(&document);
+    captured.assignments[1].source_id=captured.assignments[0].source_id.clone();
+    let before=serde_json::to_value((&document,&captured)).unwrap();
+    let preview=compile(&document,&captured);
+    assert!(!has_errors(&preview),"{:?}",preview.diagnostics);
+    assert!(!has(&preview,"duplicatePhysicalSource"));
+    let variant=document.for_vehicle(Some("dcs"),Some("FA-18C_hornet"));
+    let selected=compile(&variant,&captured);
+    assert_eq!(selected.readiness,PlanReadiness::Ready,"{:?}",selected.diagnostics);
+    assert_eq!(selected.plan.unwrap().sources.len(),2);
+    assert_eq!(serde_json::to_value((&document,&captured)).unwrap(),before);
+}
+
+#[test]
+fn base_and_vehicle_writers_of_the_same_native_game_action_still_conflict() {
+    let mut document=mixed();
+    let mut vehicle_game=document.resources.iter().find(|resource|resource.id=="dcs").unwrap().clone();
+    vehicle_game.id="vehicle-game".into();document.resources.push(vehicle_game);
+    document.vehicle_tabs.push(crate::VehicleTab {id:"hornet".into(),game_id:"dcs".into(),vehicle_id:"FA-18C_hornet".into(),vehicle_name:"Hornet".into(),node_ids:vec!["vehicle-game".into()]});
+    document.bindings.push(edge("vehicle-command",("command-trigger","action"),("vehicle-game","master-caution")));
+    let mut captured=snapshot(&document);
+    let native=captured.assignments.iter().find(|assignment|assignment.resource_id=="dcs").unwrap().source_id.clone();
+    captured.assignments.iter_mut().find(|assignment|assignment.resource_id=="vehicle-game").unwrap().source_id=native;
+    let report=compile(&document,&captured);
+    assert!(report.plan.is_none());
+    assert!(has(&report,"conflictingEndpointWriters"),"{:?}",report.diagnostics);
+    assert!(!has(&report,"duplicatePhysicalSource"));
+}
+
+#[test]
 fn mixed_graph_compiles_exact_typed_adapters_without_mutating_capture_or_document() {
     let document = mixed();
     let snapshot = snapshot(&document);

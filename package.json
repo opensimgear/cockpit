@@ -82,7 +82,10 @@
     "desktop:companion:native": "node --test tests/ui/desktop-companion-native.mjs",
     "desktop:ownership:native": "node --test tests/ui/desktop-ownership-native.mjs",
     "desktop:game:native": "node --test tests/ui/desktop-game-native.mjs",
-    "desktop:crash:native": "node --test tests/ui/desktop-crash-native.mjs"
+    "desktop:crash:native": "node --test tests/ui/desktop-crash-native.mjs",
+    "profile-vehicles:test": "node --test src/lib/profile-vehicle-tabs.test.mjs src/lib/profile-vehicle-conflicts.test.mjs src/lib/profile-palette.test.mjs src/lib/profile-game-context.test.mjs",
+    "profiles:vehicles:native": "node --test tests/ui/profile-vehicles-native.mjs",
+    "profiles:vehicles:switch:native": "node --test tests/ui/profile-vehicle-switch-native.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",

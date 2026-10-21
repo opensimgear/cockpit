@@ -17,6 +17,21 @@ async function components(hooks={}){
 }
 const component=await components();const Routing=await component('./ProfileRoutingEditor.svelte'),Processing=await component('./ProfileProcessingEditor.svelte'),Virtual=await component('./ProfileVirtualEditor.svelte');
 const renderRouting=(value,props={})=>render(Routing,{props:{...value,inventory:[],inventoryClient:{inspect:noRequest},change:noRequest,...props}}).body;
+
+test('vehicle canvas and exact route menus expose only the selected tab while Base retains its own graph',async()=>{
+ const value=draft();value.document.eligibility.gameIds=['dcs'];value.document.vehicleTabs=[{id:'a',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'F-16C',nodeIds:['third-party-a','can-one']},{id:'b',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'F/A-18C',nodeIds:['third-party-b','can-two']}];
+ for(const[tab,from,to]of[['a','third-party-a','can-one'],['b','third-party-b','can-two']]){value.document.resources.find(node=>node.id===to).ports.push(port('receive','input'));value.document.bindings.push({id:`route-${tab}`,from:{nodeId:from,portId:'button'},to:{nodeId:to,portId:'receive'}});}
+ const base=renderRouting(value);assert.ok(!base.includes('data-node-id="third-party-a"'));assert.ok(!base.includes('data-node-id="third-party-b"'));assert.ok(base.includes('data-node-id="dcs"'));assert.ok(base.includes('Exact signal bindings · 0'));
+ const h=await harness(value,{routeOpen:true},{activeVehicleTabId:'a'});assert.ok(h.body.includes('data-node-id="third-party-a"'));assert.ok(!h.body.includes('data-node-id="third-party-b"'));assert.ok(!h.body.includes('data-node-id="dcs"'));assert.ok(h.body.includes('Exact signal bindings · 1'));assert.ok(h.body.includes('<option value="third-party-a">'));assert.ok(!h.body.includes('<option value="third-party-b">'));assert.ok(!h.body.includes('route-b'));
+ h.handlers.editRoute('route-b');assert.equal(h.handlers.state.fromNode,'');h.handlers.addDesktop({x:20,y:40});assert.equal(h.edits.length,1);assert.ok(h.edits[0].next.document.vehicleTabs[0].nodeIds.includes(h.edits[0].next.document.desktopOutputs[0].id));assert.deepEqual(plain(h.edits[0].next.document.resources),value.document.resources);
+});
+
+test('auto layout of one vehicle preserves every hidden node position and never moves it into Base groups',async()=>{
+ const value=draft();value.document.eligibility.gameIds=['dcs'];value.document.vehicleTabs=[{id:'a',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'F-16C',nodeIds:['third-party-a']}];
+ value.document.editor.positions=value.document.resources.map((node,index)=>({nodeId:node.id,x:600+index*320,y:50}));value.document.editor.groups=[{id:'base-group',name:'Base controls',members:['can-one'],bounds:{x:1200,y:0,width:440,height:360}}];
+ const before=plain(value.document),h=await canvasHarness(value.document,{activeVehicleTabId:'a',selectedId:''});stageFor(h);h.handlers.layout();assert.equal(h.edits.length,1);
+ const next=h.edits[0].next;for(const position of before.editor.positions.filter(position=>position.nodeId!=='third-party-a'))assert.deepEqual(next.editor.positions.find(row=>row.nodeId===position.nodeId),position);assert.deepEqual(next.editor.groups,before.editor.groups);assert.deepEqual(next.vehicleTabs,before.vehicleTabs);assert.equal(h.handlers.addGroup('Hidden group'),undefined);
+});
 // These invoke the real Svelte handlers inside an SSR closure. They do not simulate DOM pointer capture.
 async function harness(value,seed={},props={}){let handlers;const component=await components({seed,capture:value=>handlers=value}),Component=await component('./ProfileRoutingEditor.svelte'),edits=[];const body=render(Component,{props:{...plain(value),inventory:[],inventoryClient:{inspect:noRequest},change:(next,label)=>edits.push({next,label}),...props}}).body;return{body,handlers,edits};}
 const connect=async(value,fromNode,fromPort,toNode,toPort)=>{const h=await harness(value,{fromNode,fromPort,toNode,toPort});h.handlers.connect();assert.equal(h.handlers.state.message,'');assert.equal(h.edits.length,1);return plain(h.edits[0].next);};

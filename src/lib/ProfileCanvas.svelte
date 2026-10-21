@@ -12,9 +12,10 @@
   import type{CompileDiagnostic}from'./profile-compilation';
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
-  let { document, assignments, inventory, inventoryClient, selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
+  import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
-    inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
+    inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
     inspector?:Snippet<[CanvasNode]>; selectProviderPort?:(nodeId:string,port:DeepReadonly<ObservedResourcePort>)=>void; removeProviderPort?:(nodeId:string,portId:string)=>void;
     connectBlocks?:(fromNodeId:string,toNodeId:string)=>void;connectionFrom?:(nodeId:string)=>void;connectionTo?:(nodeId:string)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
@@ -40,14 +41,16 @@
   type CanvasDrag = { id?: string; group?: {id:string;mode:'move'|'resize';frame:CanvasGroup;source:DeepReadonly<ProfileDocument>}; origin: CanvasPoint; start: CanvasPoint; viewport: CanvasViewport; pointer: number; moved: boolean };
   let drag = $state.raw<CanvasDrag|null>(null);
   const browser = new ProfilePortBrowser(untrack(() => inventoryClient));
-  const nodes = $derived(canvasNodes(groupPreview??document, assignments, inventory));
+  const visibleDocument=$derived(profileTabDocument(groupPreview??document,activeVehicleTabId));
+  const nodes = $derived(canvasNodes(visibleDocument, assignments, inventory));
   let knownNodeIds=new Set(untrack(()=>nodes.map(node=>node.id)));
   let savedViewportSignature='';
-  const controllerEffects=$derived(canvasControllerEffects(document));
+  let previousVehicleTab=untrack(()=>activeVehicleTabId);
+  const controllerEffects=$derived(canvasControllerEffects(visibleDocument));
   const renderedNodes = $derived(nodes.map(node => node.id === dragged?.id ? { ...node, position: dragged.position } : node));
-  const routes=$derived(diagramRoutes(renderedNodes,document.bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT));
-  const frames=$derived(canvasGroups(groupPreview??document,nodes));
-  const dropGroup=$derived(dragged?canvasGroupAt(document,{x:dragged.position.x+PROFILE_BLOCK_WIDTH/2,y:dragged.position.y+PROFILE_BLOCK_HEIGHT/2}):palettePreview?canvasGroupAt(document,{x:palettePreview.x+PROFILE_BLOCK_WIDTH/2,y:palettePreview.y+PROFILE_BLOCK_HEIGHT/2}):null);
+  const routes=$derived(diagramRoutes(renderedNodes,visibleDocument.bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT));
+  const frames=$derived(canvasGroups(visibleDocument,nodes));
+  const dropGroup=$derived(dragged?canvasGroupAt(visibleDocument,{x:dragged.position.x+PROFILE_BLOCK_WIDTH/2,y:dragged.position.y+PROFILE_BLOCK_HEIGHT/2}):palettePreview?canvasGroupAt(visibleDocument,{x:palettePreview.x+PROFILE_BLOCK_WIDTH/2,y:palettePreview.y+PROFILE_BLOCK_HEIGHT/2}):null);
   const selected = $derived(nodes.find(node => node.id === selectedId));
   const selectedDiagnostics=$derived(diagnostics.filter(diagnostic=>diagnostic.location.nodeId===selectedId||diagnostic.location.resourceId===selectedId||document.bindings.some(binding=>diagnostic.location.edgeIds.includes(binding.id)&&(binding.from.nodeId===selectedId||binding.to.nodeId===selectedId))));
   const matches = $derived(canvasSearch(nodes, search));
@@ -57,6 +60,7 @@
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
   $effect(() => { const signature=JSON.stringify(document.editor.viewport);if(signature!==savedViewportSignature){savedViewportSignature=signature;view = { ...document.editor.viewport };} });
+  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;drag=null;dragged=null;wire=null;groupPreview=null;palettePreview=null;layoutError='';view=canvasFit(nodes,stage?.clientWidth||900,stage?.clientHeight||600);}});
   $effect(()=>{const added=nodes.find(node=>node.id===selectedId&&!knownNodeIds.has(node.id));knownNodeIds=new Set(nodes.map(node=>node.id));if(added)focusNewNode(added);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(() => {
@@ -70,15 +74,16 @@
   function fit() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); persist(); }
   function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2});persist(); }
   function layout() {
-    editLayout(()=>{
+    editLayout(()=>scopedCanvasEdit(document,source=>{
       // Freeze old frames before positions change, then reconcile every membership in the same edit.
-      let next=nodes.length?canvasMoveIntoGroup(document,nodes[0].id,nodes[0].position):JSON.parse(JSON.stringify(document)) as ProfileDocument;
-      next.editor.positions=profileAutoLayout(nodes.map(node=>node.id),document.bindings);
-      for(const position of [...next.editor.positions])next=canvasMoveIntoGroup(next,position.nodeId,position);
-      const nextNodes=canvasNodes(next,assignments,inventory),nextFrames=canvasGroups(next,nextNodes);
+      let next=nodes.length?canvasMoveIntoGroup(source,nodes[0].id,nodes[0].position):JSON.parse(JSON.stringify(source)) as ProfileDocument;
+      const visibleIds=new Set(nodes.map(node=>node.id)),positions=profileAutoLayout([...visibleIds],visibleDocument.bindings);
+      next.editor.positions=[...next.editor.positions.filter(position=>!visibleIds.has(position.nodeId)),...positions];
+      for(const position of positions)next=canvasMoveIntoGroup(next,position.nodeId,position);
+      const nextVisible=profileTabDocument(next,activeVehicleTabId),nextNodes=canvasNodes(nextVisible,assignments,inventory),nextFrames=canvasGroups(nextVisible,nextNodes);
       next.editor.viewport=canvasFit([...nextNodes,...nextFrames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])],stage?.clientWidth||900,stage?.clientHeight||600);
       return next;
-    },'Auto-layout');
+    }),'Auto-layout');
   }
   function choose(id:string) { closeConnectionPanel?.();selectedId=id; }
   function blockPorts(node:CanvasNode,direction:'input'|'output'):readonly DeepReadonly<ProfilePort>[] {
@@ -119,9 +124,17 @@
       css: (t: number) => `transform:translateX(${(1-t)*100}%)` };
   }
   function editLayout(edit:()=>ProfileDocument,label:string){if(readOnly)return;layoutError='';try{change(edit(),label);}catch(error){layoutError=error instanceof Error?error.message:String(error);}}
-  export function addGroup(name='Group'){if(readOnly)return;layoutError='';try{const next=canvasCreateGroup(document,name,{x:(32-view.x)/view.zoom,y:(32-view.y)/view.zoom});const id=next.editor.groups!.at(-1)!.id;change(next,'Create group');return id;}catch(error){layoutError=error instanceof Error?error.message:String(error);}}
-  export function renameGroup(id:string,name:string){editLayout(()=>canvasRenameGroup(document,id,name),'Rename group');}
-  export function deleteGroup(id:string){editLayout(()=>canvasDeleteGroup(document,id),'Delete group');}
+  function scopedCanvasEdit(source:DeepReadonly<ProfileDocument>,edit:(source:ProfileDocument)=>ProfileDocument):ProfileDocument{
+    if(!source.vehicleTabs?.length)return edit(JSON.parse(JSON.stringify(source)) as ProfileDocument);
+    const ids=profileTabNodeIds(source,activeVehicleTabId),next=JSON.parse(JSON.stringify(source)) as ProfileDocument;
+    next.editor.groups=next.editor.groups?.filter(group=>group.members.some(id=>ids.has(id))||!activeVehicleTabId&&!group.members.length).map(group=>({...group,members:group.members.filter(id=>ids.has(id))}));
+    const visibleGroups=new Set(next.editor.groups?.map(group=>group.id)),result=edit(next),updatedGroups=result.editor.groups??[];
+    result.editor.groups=[...(source.editor.groups??[]).filter(group=>!visibleGroups.has(group.id)).map(group=>JSON.parse(JSON.stringify(group))),...updatedGroups.map(group=>({...group,members:[...group.members,...(source.editor.groups?.find(old=>old.id===group.id)?.members.filter(id=>!ids.has(id))??[])]}))];
+    if(!result.editor.groups.length)delete result.editor.groups;return result;
+  }
+  export function addGroup(name='Group'){if(readOnly||activeVehicleTabId)return;layoutError='';try{const next=canvasCreateGroup(document,name,{x:(32-view.x)/view.zoom,y:(32-view.y)/view.zoom});const id=next.editor.groups!.at(-1)!.id;change(next,'Create group');return id;}catch(error){layoutError=error instanceof Error?error.message:String(error);}}
+  export function renameGroup(id:string,name:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasRenameGroup(source,id,name)),'Rename group');}
+  export function deleteGroup(id:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasDeleteGroup(source,id)),'Delete group');}
   export function focusGroup(id:string){const frame=frames.find(group=>group.id===id);if(!frame)return;view=canvasFit([{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}],stage?.clientWidth||900,stage?.clientHeight||600);persist();}
   function togglePorts(category:ProfilePortGroup){if(selected)editLayout(()=>canvasTogglePorts(document,selected.id,category),canvasPortCollapsed(document,selected.id,category)?'Expand port category':'Collapse port category');}
   function focusMatch() { const node=matches[0];if(!node)return;choose(node.id);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+PROFILE_BLOCK_WIDTH/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+PROFILE_BLOCK_HEIGHT/2)*view.zoom};persist(); }
@@ -140,7 +153,7 @@
   }
   function previewGroup(delta:CanvasPoint){
     if(!drag?.group)return;const{source,id,frame,mode}=drag.group;
-    try{groupPreview=mode==='move'?canvasMoveGroup(source,id,{x:frame.x+delta.x/view.zoom,y:frame.y+delta.y/view.zoom}):canvasResizeGroup(source,id,{width:frame.width+delta.x/view.zoom,height:frame.height+delta.y/view.zoom});groupBlocked=false;layoutError='';}
+    try{groupPreview=scopedCanvasEdit(source,visible=>mode==='move'?canvasMoveGroup(visible,id,{x:frame.x+delta.x/view.zoom,y:frame.y+delta.y/view.zoom}):canvasResizeGroup(visible,id,{width:frame.width+delta.x/view.zoom,height:frame.height+delta.y/view.zoom}));groupBlocked=false;layoutError='';}
     catch(error){groupBlocked=true;layoutError=error instanceof Error?error.message:String(error);}
   }
   function beginWire(event:PointerEvent,nodeId:string,direction:'input'|'output'){
@@ -162,7 +175,7 @@
       }
       if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);return;
     }
-    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>canvasMoveIntoGroup(document,dragged!.id,dragged!.position),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else selectedId='';}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
+    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else selectedId='';}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
   }
   function wheel(event:WheelEvent) { event.preventDefault();if(event.ctrlKey||event.metaKey){const rect=stage.getBoundingClientRect();zoom(event.deltaY<0?1.1:1/1.1,{x:event.clientX-rect.left,y:event.clientY-rect.top});}else{view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});persist();} }
   function keyboard(event:KeyboardEvent) {
@@ -176,11 +189,11 @@
   }
   function lostPointer(event:PointerEvent){if(wire?.pointer===event.pointerId){wire=null;suppressWireClick=true;}if(drag?.pointer===event.pointerId){view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;}}
   function connectionKey(event:KeyboardEvent,id:string){if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();editConnection?.(id);}}
-  function moveBlock(event:KeyboardEvent,id:string) { if(!event.altKey||readOnly||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();const node=nodes.find(node=>node.id===id)!;const step=event.shiftKey?64:16;editLayout(()=>canvasMoveIntoGroup(document,id,{x:node.position.x+(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0),y:node.position.y+(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)}),'Move component'); }
+  function moveBlock(event:KeyboardEvent,id:string) { if(!event.altKey||readOnly||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();event.stopPropagation();const node=nodes.find(node=>node.id===id)!;const step=event.shiftKey?64:16;editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,id,{x:node.position.x+(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0),y:node.position.y+(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)})),'Move component'); }
   function groupKeyboard(event:KeyboardEvent,frame:CanvasGroup,mode:'move'|'resize'){
     if(readOnly||!event.altKey||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;
     event.preventDefault();event.stopPropagation();const step=event.shiftKey?64:16,x=event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0,y=event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0;
-    editLayout(()=>mode==='move'?canvasMoveGroup(document,frame.id,{x:frame.x+x,y:frame.y+y}):canvasResizeGroup(document,frame.id,{width:frame.width+x,height:frame.height+y}),mode==='move'?'Move group':'Resize group');
+    editLayout(()=>scopedCanvasEdit(document,source=>mode==='move'?canvasMoveGroup(source,frame.id,{x:frame.x+x,y:frame.y+y}):canvasResizeGroup(source,frame.id,{width:frame.width+x,height:frame.height+y})),mode==='move'?'Move group':'Resize group');
   }
   async function loadPorts(operation:'open'|'next'|'previous',resourceId?:string) {
     const epoch=portEpoch;portsBusy=true;portError='';
@@ -258,7 +271,7 @@
     </aside>
     {/if}
   </div>
-  <div class="graph-result-summary"><span>{document.resources.length} resource blocks</span><span>{document.bindings.length} signal routes</span><span>{document.processingNodes.length} transformations</span><span>{controllerEffects.virtual} requested virtual controllers</span><span>{document.desktopOutputs?.length??0} desktop endpoint</span><span>{controllerEffects.hidden} hide-while-active requests</span></div>
+  <div class="graph-result-summary"><span>{visibleDocument.resources.length} resource blocks</span><span>{visibleDocument.bindings.length} signal routes</span><span>{visibleDocument.processingNodes.length} transformations</span><span>{controllerEffects.virtual} requested virtual controllers</span><span>{visibleDocument.desktopOutputs?.length??0} desktop endpoint</span><span>{controllerEffects.hidden} hide-while-active requests</span></div>
   <section class="controller-effect-summary" aria-label="Draft controller effects"><strong>Draft controller effects</strong><p>Publication choices: <span>{controllerEffects.enabled} enable while active</span> · <span>{controllerEffects.disabled} disable while active</span> · <span>{controllerEffects.configured} keep configured</span>.</p><p>{controllerEffects.hidden} hide-while-active requests · {controllerEffects.virtual} requested virtual controllers.</p><small>Draft requests. Activation checks device support and ownership; Save applies changes when this profile is active.</small></section>
 </section>
 

@@ -20,6 +20,28 @@ const inventory=(id='native:resource')=>({id,name:'Inventory resource',resourceT
 const publicationProof=()=>({schema:1,epoch:1,revision:1,module:{id:'0123456789abcdef0123456789abcdef',boot:1,configurationGeneration:1,node:1,sourceNode:1,profile:{revision:1,buttons:2,axes:1,hats:0,neutral:[0],axisUsage:[0x30]},publicationSlot:0,configuredEnabled:true,publicationReportId:1,configuredDescriptorIndex:0}});
 const publicationResource=(proof=publicationProof())=>({...inventory(),resourceType:'osg-module',connections:[{scope:'gateway',key:'module',route:{id:'can:gateway:module',transport:'can',providerGeneration:'1',attributes:{},baselineReady:true,writable:true,priority:1}}],attributes:{controllerPublicationOverride:JSON.stringify(proof)}});
 
+test('vehicle graph admission checks Base with each vehicle and ignores cycles assembled only across exclusive tabs',()=>{
+ const value=draft();value.document.eligibility.gameIds=['dcs'];value.document.processingNodes=['base-x','base-y','aircraft-a','aircraft-b'].map(processing);
+ value.document.vehicleTabs=[{id:'a',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'F-16C',nodeIds:['aircraft-a']},{id:'b',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'F/A-18C',nodeIds:['aircraft-b']}];
+ let next=value;
+ for(const[from,to]of[['base-x','aircraft-a'],['aircraft-a','base-y'],['base-y','aircraft-b'],['aircraft-b','base-x']])next=graph.graphConnect(next,endpoint(from,'out'),endpoint(to,'in'));
+ assert.equal(next.document.bindings.length,4);assert.equal(profileDocumentError(next.document),'');
+ assert.match(graph.graphConnectionError(next.document,endpoint('aircraft-a','out'),endpoint('aircraft-b','in')),/Different vehicle tabs/);
+ assert.match(graph.graphConnectionError(next.document,endpoint('base-x','out'),endpoint('base-y','in')),/already has a writer/);
+ assert.deepEqual(value.document.bindings,[]);
+});
+
+test('vehicle output and transformation additions retain their scope through edits and removal',()=>{
+ const value=draft();value.document.eligibility.gameIds=['dcs'];value.document.vehicleTabs=[{id:'a',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'F-16C',nodeIds:[]},{id:'b',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'F/A-18C',nodeIds:[]}];
+ const desktop=id=>({id,name:id,required:false,scope:{kind:'selected-game'},ports:[],actions:[{portId:'key',action:{kind:'key-hold',key:44}}]});
+ let next=graph.graphSetDesktop(value,desktop('keys-a'),'a');next=graph.graphSetDesktop(next,desktop('keys-b'),'b');assert.equal(next.document.desktopOutputs.length,2);
+ next=graph.graphSetDesktop(next,{...desktop('keys-a'),name:'Updated keys'});assert.equal(next.document.desktopOutputs.length,2);assert.equal(next.document.desktopOutputs.find(node=>node.id==='keys-b').name,'keys-b');
+ assert.throws(()=>graph.graphSetDesktop(next,desktop('keys-base')),/one active/);
+ next=graph.graphSetProcessing(next,processing('aircraft-transform'),'a');assert.deepEqual(plain(next.document.vehicleTabs[0].nodeIds),['keys-a','aircraft-transform']);
+ next=graph.graphRemoveNode(next,'keys-a');assert.deepEqual(plain(next.document.vehicleTabs[0].nodeIds),['aircraft-transform']);assert.equal(profileDocumentError(next.document),'');
+ assert.deepEqual(value.document.vehicleTabs[0].nodeIds,[]);
+});
+
 test('publication capability is advisory only and rejects absent, offline, wrong-transport or malformed native metadata',()=>{
  const capability=graph.graphPublicationCapability;assert.equal(capability().status,'unavailable');assert.equal(capability(inventory()).status,'unsupported');const source=publicationResource();assert.equal(capability(source).status,'advertised');assert.equal(capability(source).configuredEnabled,true);assert.match(capability(source).message,/not a Ready result/);assert.equal(capability({...source,availability:'offline'}).status,'unavailable');assert.equal(capability({...source,availability:'unavailable'}).status,'unavailable');assert.equal(capability({...source,connections:[]}).status,'unsupported');assert.equal(capability({...source,connections:[{route:{transport:'usb'}}]}).status,'unsupported');
  for(const text of ['', '{', 'x'.repeat(4097)])assert.equal(capability({...source,attributes:{controllerPublicationOverride:text}}).status,'unsupported');

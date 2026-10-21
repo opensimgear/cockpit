@@ -57,12 +57,14 @@ export type ProfileVirtualOutput = { id: string; name: string; required: boolean
 export type ProfileEditorGroupBounds = { x: number; y: number; width: number; height: number };
 export type ProfileEditorGroup = { id: string; name: string; members: string[]; bounds?: ProfileEditorGroupBounds };
 export type ProfilePortGroup = 'outputs' | 'inputs' | 'actions';
+export type ProfileVehicleTab = { id: string; gameId: string; vehicleId: string; vehicleName: string; nodeIds: string[] };
 export type ProfileDocument = {
   schemaVersion: 2; id: string; name: string; revision: number; eligibility: { gameIds: string[] };
   resources: ProfileResource[]; bindings: ProfileBinding[]; processingNodes: ProfileProcessingNode[]; desktopOutputs?: ProfileDesktopOutput[];
   virtualOutputs: ProfileVirtualOutput[]; visibility: { resourceId: string; mode: 'visible' | 'hidden-while-active' }[];
   overrides: { resourceId: string; enabled: boolean }[];
   companionAssignments: { resourceId: string; panelId?: string; publicationHash: string }[];
+  vehicleTabs?: ProfileVehicleTab[];
   editor: { positions: { nodeId: string; x: number; y: number }[]; viewport: { x: number; y: number; zoom: number }; groups?: ProfileEditorGroup[]; collapsedPortGroups?: { nodeId: string; group: ProfilePortGroup }[] };
 };
 export type ProfilePortExpectation = { profilePortId: string; observedPortId: string; expectedContractHash: string };
@@ -217,17 +219,27 @@ export function profileDocumentError(value: unknown): string {
   let encoded: string;
   try { encoded = JSON.stringify(value); } catch { return 'Profile must be JSON data.'; }
   if (!encoded || new TextEncoder().encode(encoded).length > MAX_PROFILE_BYTES) return 'Use a profile no larger than 512 KiB.';
-  if (!exact(value, ['schemaVersion', 'id', 'name', 'revision', 'eligibility', 'resources', 'bindings', 'processingNodes', 'virtualOutputs', 'visibility', 'overrides', 'companionAssignments', 'editor',...(object(value)&&Object.hasOwn(value,'desktopOutputs')?['desktopOutputs']:[])])) return 'Use the unified portable profile document without local assignments or legacy fields.';
+  if (!exact(value, ['schemaVersion', 'id', 'name', 'revision', 'eligibility', 'resources', 'bindings', 'processingNodes', 'virtualOutputs', 'visibility', 'overrides', 'companionAssignments', 'editor',...(object(value)&&Object.hasOwn(value,'desktopOutputs')?['desktopOutputs']:[]),...(object(value)&&Object.hasOwn(value,'vehicleTabs')?['vehicleTabs']:[])])) return 'Use the unified portable profile document without local assignments or legacy fields.';
   if (value.schemaVersion !== PROFILE_SCHEMA_VERSION || !uuid(value.id) || !text(value.name) || !whole(value.revision, 1, Number.MAX_SAFE_INTEGER)) return 'Choose a supported profile schema, canonical UUID, name and revision.';
   if (!exact(value.eligibility, ['gameIds']) || !list(value.eligibility.gameIds, 32) || !value.eligibility.gameIds.every(identifier) || new Set(value.eligibility.gameIds).size !== value.eligibility.gameIds.length) return 'Choose unique logical game identifiers.';
   if (!list(value.resources, 64) || !value.resources.every(row => exact(row, [...labelKeys, 'kind', 'required', 'ports']) && nodeLabel(row) && ['device', 'companion', 'game'].includes(String(row.kind)) && typeof row.required === 'boolean' && ports(row.ports))) return 'Use valid logical resources and typed ports.';
   if (!list(value.processingNodes, 256) || !value.processingNodes.every(row => exact(row, [...labelKeys, 'operation', 'inputs', 'outputs']) && nodeLabel(row) && operation(row.operation) && ports(row.inputs) && ports(row.outputs) && ((row.operation as ProfileOperation).kind !== 'script' || row.inputs.length >= 1 && row.inputs.length <= 32 && row.outputs.length >= 1 && row.outputs.length <= 16))) return 'Use supported processing nodes and typed ports.';
   if (!list(value.virtualOutputs, 16) || !value.virtualOutputs.every(row => exact(row, [...labelKeys, 'required', 'ports', 'layout']) && nodeLabel(row) && typeof row.required === 'boolean' && ports(row.ports) && layout(row.layout))) return 'Use valid logical virtual outputs.';
   const desktops=Object.hasOwn(value,'desktopOutputs')?value.desktopOutputs:[];
-  if(!list(desktops,1)||!desktops.every(desktopOutput))return 'Use one desktop endpoint with one exact typed action per input port.';
+  if(!list(desktops,Object.hasOwn(value,'vehicleTabs')?33:1)||!desktops.every(desktopOutput))return 'Use one desktop endpoint per active tab with one exact typed action per input port.';
   if(value.processingNodes.length+desktops.reduce<number>((sum,row)=>sum+(row as ProfileDesktopOutput).actions.length,0)>256)return 'Desktop actions and processing nodes together support at most 256 definitions.';
   const nodes = [...value.resources, ...value.processingNodes, ...value.virtualOutputs,...desktops] as (ProfileResource | ProfileProcessingNode | ProfileVirtualOutput | ProfileDesktopOutput)[];
   if (new Set(nodes.map(row => row.id)).size !== nodes.length) return 'Graph node identifiers must be unique.';
+  if(Object.hasOwn(value,'vehicleTabs')){
+    if(!list(value.vehicleTabs,32)||!value.vehicleTabs.every(tab=>exact(tab,['id','gameId','vehicleId','vehicleName','nodeIds'])&&identifier(tab.id)&&identifier(tab.gameId)&&boundedText(tab.vehicleId,256)&&tab.vehicleId.trim()===tab.vehicleId&&text(tab.vehicleName)&&list(tab.nodeIds,337)&&tab.nodeIds.every(identifier)))return 'Use bounded vehicle tabs with a selected vehicle and known graph nodes.';
+    const tabs=value.vehicleTabs as ProfileVehicleTab[],nodeIds=new Set(nodes.map(node=>node.id)),owners=new Map<string,string>();
+    if(new Set(tabs.map(tab=>tab.id)).size!==tabs.length||new Set(tabs.map(tab=>`${tab.gameId}\0${tab.vehicleId}`)).size!==tabs.length)return 'Use each vehicle only once in a profile.';
+    for(const tab of tabs){
+      if((value.eligibility.gameIds as string[]).length!==1||!(value.eligibility.gameIds as string[]).includes(tab.gameId))return 'Vehicle tabs require their single selected game context.';
+      for(const nodeId of tab.nodeIds){if(!nodeIds.has(nodeId)||owners.has(nodeId))return 'Vehicle tab node is unknown, duplicated or belongs to another tab.';owners.set(nodeId,tab.id);}
+    }
+    if(desktops.filter(output=>!owners.has((output as ProfileDesktopOutput).id)).length>1||tabs.some(tab=>desktops.filter(output=>!owners.has((output as ProfileDesktopOutput).id)||owners.get((output as ProfileDesktopOutput).id)===tab.id).length>1))return 'Use at most one desktop endpoint in Base and each active vehicle combination.';
+  }
   if (nodes.reduce((sum, row) => sum + ('ports' in row ? row.ports.length : row.inputs.length + row.outputs.length), 0) > 1024) return 'Use at most 1024 graph ports.';
   if (!list(value.bindings, 512) || !value.bindings.every(row => exact(row, ['id', 'from', 'to']) && identifier(row.id) && endpoint(row.from) && endpoint(row.to)) || new Set(value.bindings.map(row => (row as ProfileBinding).id)).size !== value.bindings.length) return 'Use unique bindings with logical graph endpoints.';
   if (!list(value.visibility, 64) || !value.visibility.every(row => exact(row, ['resourceId', 'mode']) && identifier(row.resourceId) && ['visible', 'hidden-while-active'].includes(String(row.mode)))) return 'Use logical visibility policies.';

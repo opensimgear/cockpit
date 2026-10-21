@@ -5,9 +5,9 @@
   import {profileCategory} from './profile-editor';
   import {PROFILE_PALETTE_MIME,type ProfilePaletteDrag} from './profile-palette';
 
-  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, editorGroups=[], disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
     inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; desktopAdded:boolean;
-    editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];
+    editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];canAddGroup?:boolean;
     disabled?:boolean; refreshing?:boolean; error?:string; refresh:()=>void;
     addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDesktop:()=>void;
     addGroup?:()=>void;focusGroup?:(id:string)=>void;renameGroup?:(id:string,name:string)=>void;deleteGroup?:(id:string)=>void;
@@ -67,7 +67,7 @@
             </div>
           {/each}
           {#if !editorGroups.length}<p class="group-hint">Drag components into a group on the canvas to organize them.</p>{/if}
-          <button class="add-group" disabled={disabled||editorGroups.length>=32} onclick={addGroup}><Icon name="plus" size={14}/>Add group</button>
+          {#if canAddGroup}<button class="add-group" disabled={disabled||editorGroups.length>=32} onclick={addGroup}><Icon name="plus" size={14}/>Add group</button>{/if}
         </div>
       </details>
     {/if}

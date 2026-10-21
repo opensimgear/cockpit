@@ -194,6 +194,80 @@ fn owner(manager: &GatewayManager) -> Option<crate::profile_session::RunOwner> {
 }
 
 #[test]
+fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
+    let fixture=Fixture::new();let manager=&fixture.manager;
+    let id=create(manager,"Vehicle variants");
+    let mut document=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
+    document["eligibility"]["gameIds"]=json!(["dcs"]);
+    document["vehicleTabs"]=json!([
+        {"id":"hornet","gameId":"dcs","vehicleId":"FA-18C_hornet","vehicleName":"Hornet","nodeIds":["hornet-constant"]},
+        {"id":"viper","gameId":"dcs","vehicleId":"F-16C_50","vehicleName":"Viper","nodeIds":["viper-constant"]}
+    ]);
+    document["processingNodes"]=json!([
+        {"id":"base-constant","name":"Base","operation":{"kind":"constant","value":true},"inputs":[],"outputs":[{"id":"out","name":"out","direction":"output","contract":{"delivery":"state","schema":{"type":"boolean"},"freshnessMs":1000,"fallback":false}}]},
+        {"id":"hornet-constant","name":"Hornet","operation":{"kind":"constant","value":true},"inputs":[],"outputs":[{"id":"out","name":"out","direction":"output","contract":{"delivery":"state","schema":{"type":"boolean"},"freshnessMs":1000,"fallback":false}}]},
+        {"id":"viper-constant","name":"Viper","operation":{"kind":"constant","value":false},"inputs":[],"outputs":[{"id":"out","name":"out","direction":"output","contract":{"delivery":"state","schema":{"type":"boolean"},"freshnessMs":1000,"fallback":false}}]}
+    ]);
+    let revision=document["revision"].clone();
+    let saved=ok(manager,"profile_save",json!({"document":document,"expectedRevision":revision}));
+    let revision=saved["document"]["revision"].clone();
+    fixture.process("dcs",1);fixture.wait_game("dcs");
+    manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));
+    ok(manager,"profile_apply",json!({"id":id,"expectedRevision":revision,"gameId":"dcs"}));
+    let hornet=owner(manager).unwrap();
+    let active_nodes=|owner:&crate::profile_session::RunOwner| {
+        let request=crate::profile_session::topology::Request::parse(&json!({"command":"profile_runtime_topology","owner":owner,"section":"nodes"})).unwrap();
+        let page=serde_json::to_value(manager.profile_session.lock().unwrap().inspect_topology(&request).unwrap()).unwrap();
+        page["items"].as_array().unwrap().iter().map(|node|node["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>()
+    };
+    assert_eq!(active_nodes(&hornet),["base-constant","hornet-constant"]);
+    assert_eq!(manager.profile_automatic.config().0.mode,SelectionMode::Manual);
+    for _ in 0..3 {manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(hornet.clone()));}
+    // Saving without applying must not substitute a newer source into a
+    // vehicle switch of the existing admitted run.
+    let mut stored=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
+    let stored_revision=stored["revision"].clone();stored["vehicleTabs"].as_array_mut().unwrap().pop();
+    ok(manager,"profile_save",json!({"document":stored,"expectedRevision":stored_revision}));
+    manager.games.set_test_vehicle("dcs",Some("F-16C_50"));
+    manager.profile_session.lock().unwrap().poll().unwrap();
+    manager.poll_vehicle_profile();
+    let viper=owner(manager).expect("Vehicle change must install the matching profile variant");
+    assert!(viper.generation>hornet.generation);assert_eq!(viper.profile_id,id);
+    assert_eq!(viper.profile_revision,hornet.profile_revision);
+    assert_eq!(active_nodes(&viper),["base-constant","viper-constant"]);
+    for _ in 0..3 {manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(viper.clone()));}
+    manager.games.set_test_vehicle("dcs",None);
+    manager.profile_session.lock().unwrap().poll().unwrap();manager.poll_vehicle_profile();
+    let base=owner(manager).expect("Unknown vehicle keeps the Base profile active");assert!(base.generation>viper.generation);
+    assert_eq!(active_nodes(&base),["base-constant"]);
+    manager.games.set_test_vehicle("dcs",Some("unconfigured-aircraft"));manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()));
+    assert_eq!(manager.profile_automatic.config().0.mode,SelectionMode::Manual);
+    ok(manager,"profile_stop",json!({}));manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.poll_vehicle_profile();assert!(owner(manager).is_none());
+}
+
+#[test]
+fn vehicle_switch_failure_is_visible_and_retries_after_backoff_without_replaying_on_poll() {
+    let mut fixture=Fixture::new();fixture.process("dcs",1);fixture.wait_game("dcs");
+    let manager=&mut fixture.manager;let id=create(manager,"Retry vehicle settings");
+    let mut document=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
+    let revision=document["revision"].clone();document["eligibility"]["gameIds"]=json!(["dcs"]);
+    document["vehicleTabs"]=json!([{"id":"hornet","gameId":"dcs","vehicleId":"FA-18C_hornet","vehicleName":"Hornet","nodeIds":[]}]);
+    let revision=ok(manager,"profile_save",json!({"document":document,"expectedRevision":revision}))["document"]["revision"].clone();
+    manager.games.set_test_vehicle("dcs",None);ok(manager,"profile_apply",json!({"id":id,"expectedRevision":revision,"gameId":"dcs"}));
+    let base=owner(manager).unwrap();let prepare=manager.profile_prepare.clone();
+    manager.profile_prepare=Arc::new(|_|Err("Injected temporary vehicle preparation failure".into()));
+    manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.profile_session.lock().unwrap().poll().unwrap();
+    manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()));
+    assert!(manager.profile_session.lock().unwrap().status().degradation.iter().any(|message|message.contains("Injected temporary")));
+    manager.profile_prepare=prepare;
+    manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()),"The immediate poll must honor retry backoff");
+    manager.profile_automatic.state.lock().unwrap().last_vehicle_attempt.as_mut().unwrap().2=Instant::now()-Duration::from_secs(6);
+    manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.poll_vehicle_profile();
+    assert!(owner(manager).unwrap().generation>base.generation);
+    ok(manager,"profile_stop",json!({}));
+}
+
+#[test]
 fn native_rules_are_strict_passive_and_stale_rules_can_be_removed_or_disabled() {
     let fixture = Fixture::new();
     let manager = &fixture.manager;

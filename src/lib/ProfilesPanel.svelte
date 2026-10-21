@@ -4,6 +4,7 @@
   import { notify } from './notifications';
   import ProfileRoutingEditor from './ProfileRoutingEditor.svelte';
   import ProfileComponentPalette from './ProfileComponentPalette.svelte';
+  import ProfileVehicleConflicts from './ProfileVehicleConflicts.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
   import ProfileAutomaticControls from './ProfileAutomaticControls.svelte';
   import ProfileDebugView from './ProfileDebugView.svelte';
@@ -17,7 +18,8 @@
   import {ProfileEditorUndo}from'./profile-graph-history';
   import {profilePaletteCanAdd,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag}from'./profile-palette';
   import type {CanvasPoint}from'./profile-canvas';
-  import {profileGameContext,profileGameContextNeedsSync,profileGameName,profileSetGameContext}from'./profile-game-context';
+  import {profileGameContext,profileGameContextNeedsSync,profileGameName,profileSetGameContext,profileAddVehicleIntegration}from'./profile-game-context';
+  import {profileAddVehicleTab,profileChangeVehicleTab,profileRemoveVehicleTab,profileStampVehicleNodes,profileTabDocument,profileTabNodeIds}from'./profile-vehicle-tabs';
   import {ProfileCompilerClient}from'./profile-compilation';
   import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
@@ -27,7 +29,7 @@
   import {ProfileActivityController}from'./profile-activity-controller';
   import {ProfileLearningClient}from'./profile-learning';
   import type {DeepReadonly} from './profiles';
-  import { supportedGames, type GameId } from './games';
+  import { supportedGames, type Game, type GameId } from './games';
   let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, libraryClient:suppliedLibrary, openGameSettings, active=true, onNavigate }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient;libraryClient?:ProfileLibraryClient; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean; onNavigate?: (profileId:string|null)=>void } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
@@ -51,8 +53,16 @@
   let routingEditor=$state.raw<{addVirtual:(position?:CanvasPoint)=>void;addDesktop:(position?:CanvasPoint)=>void;addGroup:()=>string|undefined;focusGroup:(id:string)=>void;renameGroup:(id:string,name:string)=>void;deleteGroup:(id:string)=>void}>();
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let editingName = $state(false), nameDraft = $state('');
+  let gameCatalogue=$state.raw<Game[]>(supportedGames),vehicleError=$state(''),activeVehicleTabId=$state(''),addingVehicleTab=$state(false),customVehicle=$state(false),vehicleIdDraft=$state(''),vehicleNameDraft=$state('');
   const editor = $derived(workspace.editor);
   const selectedGame=$derived(editor?profileGameContext(editor.document):'');
+  const contextGame=$derived(gameCatalogue.find(game=>game.id===selectedGame));
+  const vehicleTabs=$derived(editor?.document.vehicleTabs??[]);
+  const vehicleTabsEnabled=$derived(!!selectedGame&&(contextGame?.vehicleSupport?.supported??true));
+  const activeVehicleTab=$derived(vehicleTabs.find(tab=>tab.id===activeVehicleTabId));
+  const tabDocument=$derived(editor?profileTabDocument(editor.document,activeVehicleTabId):null);
+  const tabNodeIds=$derived(editor?profileTabNodeIds(editor.document,activeVehicleTabId):new Set<string>());
+  const vehicleChoices=$derived.by(()=>{const choices=new Map<string,{id:string;name:string}>();for(const vehicle of contextGame?.vehicleSupport?.vehicles??[])choices.set(vehicle.id,vehicle);for(const tab of vehicleTabs)choices.set(tab.vehicleId,{id:tab.vehicleId,name:tab.vehicleName});if(contextGame?.currentVehicle)choices.set(contextGame.currentVehicle.id,contextGame.currentVehicle);return [...choices.values()].sort((a,b)=>a.name.localeCompare(b.name));});
   const editorIdentity=$derived(editor?.document.id??'');
   const canRename = $derived(!!editor && editor.document.id!==DEFAULT_PROFILE_ID && !workspace.readOnly && !workspace.busy && !libraryBusy);
   const nameChanged = $derived(!!editor && editingName && nameDraft.trim()!==editor.document.name);
@@ -60,7 +70,7 @@
   const error = $derived(editor ? profileDocumentError(editingName?{...editor.document,name:nameDraft.trim()}:editor.document) : '');
   const activeProfileId=$derived(runtimeState.stale?undefined:runtimeState.status?.owner?.profileId);
   const rows = $derived([...workspace.profiles].sort((a,b)=>Number(b.id===activeProfileId)-Number(a.id===activeProfileId)||Number(b.isDefault)-Number(a.isDefault)||a.name.localeCompare(b.name)));
-  const assignedIds = $derived(new Set(editor?.assignments.map(assignment=>assignment.sourceId)??[]));
+  const assignedIds = $derived(new Set(editor?.assignments.filter(assignment=>tabNodeIds.has(assignment.resourceId)).map(assignment=>assignment.sourceId)??[]));
   const appliedSnapshot=$derived(runtimeState.status?.owner&&!runtimeState.stale?runtimeState.status.appliedSnapshot:null);
   const appliedName = $derived(workspace.profiles.find(row=>row.id===appliedSnapshot?.profileId)?.name??appliedSnapshot?.profileId);
   const learningIdle=$derived(!!runtimeState.status&&!runtimeState.stale&&runtimeState.status.owner===null&&!['transitioning','recovery-needed'].includes(runtimeState.status.state));
@@ -69,13 +79,16 @@
   onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));if(workspace.view==='list')void store.refresh();return()=>{stop();stopSaved();}; });
   onDestroy(() => { navigationCancelled?.();runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
+  $effect(()=>{void editorIdentity;activeVehicleTabId='';addingVehicleTab=false;});
+  $effect(()=>{if(activeVehicleTabId&&!vehicleTabs.some(tab=>tab.id===activeVehicleTabId))activeVehicleTabId='';});
+  $effect(()=>{void selectedGame;addingVehicleTab=false;customVehicle=false;vehicleError='';});
   $effect(()=>{void editorContext;editingName=false;});
   $effect(()=>{void editorContext;paletteDrag=null;});
   $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,workspace.inventory))untrack(()=>setGameContext(selectedGame));});
   $effect(()=>{if(paletteDrag&&(!active||debugOpen||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
-    const refresh=()=>{if(!document.hidden){if(!store.state.inventoryBusy)void store.refreshInventory();if(!libraryBusy&&!editingName)void store.refreshSaved();}};
+    const refresh=()=>{if(!document.hidden){if(!store.state.inventoryBusy)void store.refreshInventory();if(!libraryBusy&&!editingName)void store.refreshSaved();void refreshVehicleCatalogue();}};
     refresh();const timer=setInterval(refresh,3000);
     document.addEventListener('visibilitychange',refresh);window.addEventListener('focus',refresh);
     return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',refresh);window.removeEventListener('focus',refresh);};
@@ -93,13 +106,22 @@
   async function openProfile(profileId:string) { await store.open(profileId);workspace=store.state;if(getNavigation()===profileId)onNavigate?.(profileId); }
   function add() { notice='';report(()=>store.beginBlank([])); }
   function showConfirmation(node:HTMLDialogElement) { node.showModal();return()=>node.close(); }
-  function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph') { report(()=>history.edit(document,assignments,label)); }
+  function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph',scope=true) { if(scope&&editor)profileStampVehicleNodes(editor.document,document,activeVehicleTabId);report(()=>history.edit(document,assignments,label)); }
+  let vehicleCatalogueBusy=false;
+  async function refreshVehicleCatalogue(){if(vehicleCatalogueBusy)return;vehicleCatalogueBusy=true;try{const state=await gatewayRequest({command:'game_get_state'});if(state.games?.catalogue)gameCatalogue=state.games.catalogue;}catch{/* Keep saved vehicle choices available when disconnected. */}finally{vehicleCatalogueBusy=false;}}
+  function selectTab(id:string){activeVehicleTabId=id;addingVehicleTab=false;customVehicle=false;vehicleError='';routingSelection='';}
+  function beginVehicleTab(){addingVehicleTab=true;customVehicle=false;vehicleError='';routingSelection='';vehicleIdDraft='';vehicleNameDraft='';}
+  function chooseVehicle(id:string){if(id==='__custom'){customVehicle=true;vehicleIdDraft=activeVehicleTab?.vehicleId??'';vehicleNameDraft=activeVehicleTab?.vehicleName??'';return;}const vehicle=vehicleChoices.find(vehicle=>vehicle.id===id);if(vehicle)saveVehicleChoice(vehicle);}
+  function saveVehicleChoice(vehicle:{id:string;name:string}){if(!editor||!selectedGame)return;vehicleError='';try{if(addingVehicleTab){const next=profileAddVehicleTab(editor.document,selectedGame,vehicle),integrated=profileAddVehicleIntegration({document:next.document,assignments:editor.assignments},next.tabId,workspace.inventory);change(integrated.document,integrated.assignments,'Add vehicle tab',false);activeVehicleTabId=next.tabId;addingVehicleTab=false;}else if(activeVehicleTab)change(profileChangeVehicleTab(editor.document,activeVehicleTab.id,vehicle),undefined,'Change tab vehicle',false);customVehicle=false;}catch(error){vehicleError=error instanceof Error?error.message:String(error);}}
+  function saveCustomVehicle(event:SubmitEvent){event.preventDefault();saveVehicleChoice({id:vehicleIdDraft.trim(),name:vehicleNameDraft.trim()||vehicleIdDraft.trim()});}
+  function removeVehicleTab(id:string){if(!editor)return;const next=profileRemoveVehicleTab(editor.document,editor.assignments,id);change(next.document,next.assignments,'Remove vehicle tab',false);if(activeVehicleTabId===id)selectTab('');}
+  function tabKeys(event:KeyboardEvent){if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const ids=['',...vehicleTabs.map(tab=>tab.id)],index=ids.indexOf(activeVehicleTabId),next=event.key==='Home'?0:event.key==='End'?ids.length-1:(index+(event.key==='ArrowRight'?1:-1)+ids.length)%ids.length;selectTab(ids[next]);(event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>(`[role="tab"][data-tab-index="${next}"]`)?.focus();}
   function name(value:string) { if(!editor)return;const next=JSON.parse(JSON.stringify(editor.document)) as ProfileDocument;next.name=value;change(next,undefined,'Rename profile'); }
   function editName() { if(!canRename||!editor)return;nameDraft=editor.document.name;editingName=true; }
   function focusName(node:HTMLInputElement) { node.focus();node.select(); }
   function finishName() { if(!editingName)return;editingName=false;const title=nameDraft.trim();if(canRename&&title!==editor?.document.name)name(title); }
   function historyStep(direction:'undo'|'redo'){report(()=>{history.step(direction);});}
-  function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,workspace.inventory);change(next.document,next.assignments,'Change game context');}); }
+  function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,workspace.inventory);change(next.document,next.assignments,'Change game context',false);if(gameId!==selectedGame)selectTab('');}); }
   export function requestNavigation(continueNavigation:()=>void,cancelNavigation?:()=>void):void {
     finishName();
     notice='';
@@ -118,11 +140,11 @@
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
   async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank([]));else{const previous=getNavigation();await store.beginCopy(id);workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());} }
   function canDropComponent(component:ProfilePaletteComponent):boolean {
-    return !!editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profilePaletteCanAdd(component,editor.document,editor.assignments,workspace.inventory);
+    return !!editor&&!addingVehicleTab&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profilePaletteCanAdd(component,editor.document,editor.assignments,workspace.inventory,activeVehicleTabId);
   }
   function addResource(resource:DeepReadonly<ResourceSummary>,position?:CanvasPoint) {
     if(!editor||!canDropComponent({kind:'resource',sourceId:resource.id}))return;
-    report(()=>{const before=editor!.document,previous=new Set(before.resources.map(resource=>resource.id));const next=addProfileResources(JSON.parse(JSON.stringify(before)),JSON.parse(JSON.stringify(editor!.assignments)),[resource]);const nodeId=next.document.resources.find(resource=>!previous.has(resource.id))!.id;change(profilePlaceComponent(before,next.document,nodeId,position),next.assignments,'Add component');});
+    report(()=>{const before=editor!.document,previous=new Set(before.resources.map(resource=>resource.id));const next=addProfileResources(JSON.parse(JSON.stringify(before)),JSON.parse(JSON.stringify(editor!.assignments)),[resource],activeVehicleTabId);const nodeId=next.document.resources.find(resource=>!previous.has(resource.id))!.id;change(profilePlaceComponent(before,next.document,nodeId,position,activeVehicleTabId),next.assignments,'Add component');});
   }
   function dropComponent(component:ProfilePaletteComponent,position:CanvasPoint){
     if(!canDropComponent(component))return;
@@ -185,8 +207,35 @@
     {#if editor.baseRevision===null}<div class="editor-basics panel"><fieldset class="draft-source"><legend>Start from</legend><button class="secondary-button" disabled={workspace.busy||workspace.readOnly} onclick={()=>source('blank')}>Blank profile</button><label>Copy saved profile<select aria-label="Copy source profile" bind:value={copyId} disabled={workspace.busy}>{#each rows as profile (profile.id)}<option value={profile.id}>{profile.name}</option>{/each}</select></label><button class="secondary-button" disabled={workspace.busy||workspace.readOnly||!copyId} onclick={()=>source(copyId)}>Use copy</button><p>Copies retain the graph and layout with a new identity. Select devices for the copy; machine assignments are excluded.</p></fieldset></div>{/if}
     {#if error}<p class="workspace-error" role="alert">{error}</p>{/if}
     <div class="profile-authoring">
-      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} editorGroups={editor.document.editor.groups??[]} addGroup={()=>routingEditor?.addGroup()} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.length} desktopAdded={!!editor.document.desktopOutputs?.length} disabled={workspace.readOnly||workspace.busy||libraryBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>void store.refreshInventory()} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDesktop={()=>{if(canDropComponent({kind:'desktop'}))routingEditor?.addDesktop();}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
-      <div class="profile-canvas-workspace">{#key editor.document.id}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} active={active&&!debugOpen} runtimeIdle={learningIdle} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}</div>
+      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} editorGroups={tabDocument?.editor.groups??[]} canAddGroup={!activeVehicleTabId} addGroup={()=>{if(!activeVehicleTabId)routingEditor?.addGroup();}} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.filter(node=>profileTabNodeIds(editor.document).has(node.id)||tabNodeIds.has(node.id)).length} desktopAdded={!!editor.document.desktopOutputs?.some(node=>profileTabNodeIds(editor.document).has(node.id)||tabNodeIds.has(node.id))} disabled={workspace.readOnly||workspace.busy||libraryBusy||addingVehicleTab} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>void store.refreshInventory()} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDesktop={()=>{if(canDropComponent({kind:'desktop'}))routingEditor?.addDesktop();}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
+      <div class="profile-canvas-workspace">
+        {#if vehicleTabsEnabled}
+          <div class="vehicle-tab-bar">
+            <div class="vehicle-tabs" role="tablist" aria-label="Profile vehicle tabs" tabindex="-1" onkeydown={tabKeys}>
+              <button type="button" role="tab" data-tab-index="0" aria-selected={!activeVehicleTabId&&!addingVehicleTab} aria-controls="profile-vehicle-canvas" tabindex={!activeVehicleTabId&&!addingVehicleTab?0:-1} onclick={()=>selectTab('')}>Base</button>
+              {#each vehicleTabs as tab,index (tab.id)}<div class="vehicle-tab"><button type="button" role="tab" data-tab-index={index+1} aria-selected={activeVehicleTabId===tab.id&&!addingVehicleTab} aria-controls="profile-vehicle-canvas" tabindex={activeVehicleTabId===tab.id&&!addingVehicleTab?0:-1} onclick={()=>selectTab(tab.id)}>{tab.vehicleName}</button><button type="button" class="remove-vehicle-tab" aria-label={`Remove ${tab.vehicleName} tab`} title="Remove tab and all its nodes" disabled={workspace.readOnly||workspace.busy||libraryBusy} onclick={()=>removeVehicleTab(tab.id)}><Icon name="close" size={12}/></button></div>{/each}
+              {#if addingVehicleTab}<button type="button" role="tab" aria-selected="true" aria-controls="profile-vehicle-canvas">New vehicle</button>{/if}
+            </div>
+            <button type="button" class="add-vehicle-tab" aria-label="Add vehicle tab" title="Add vehicle tab" disabled={workspace.readOnly||workspace.busy||libraryBusy||vehicleTabs.length>=32} onclick={beginVehicleTab}><Icon name="plus" size={15}/></button>
+          </div>
+          <div class="vehicle-context">
+            {#if addingVehicleTab||activeVehicleTab}
+              <label>Vehicle<select aria-label="Tab vehicle" value={addingVehicleTab?'':activeVehicleTab?.vehicleId??''} disabled={workspace.readOnly||workspace.busy||libraryBusy} onchange={event=>chooseVehicle(event.currentTarget.value)}><option value="" disabled>Choose a vehicle…</option>{#each vehicleChoices.filter(vehicle=>!addingVehicleTab&&vehicle.id===activeVehicleTab?.vehicleId||!vehicleTabs.some(tab=>tab.vehicleId===vehicle.id)) as vehicle (vehicle.id)}<option value={vehicle.id}>{vehicle.name}</option>{/each}<option value="__custom">Enter exact vehicle ID…</option></select></label>
+              <p>Applies with Base while this vehicle is loaded. Conflicts are checked against Base.</p>
+              {#if addingVehicleTab}<button class="text-button" onclick={()=>selectTab(activeVehicleTabId)}>Cancel</button>{/if}
+            {:else}<p>Base applies to every vehicle.</p>{/if}
+            {#if selectedGame==='dcs'&&contextGame?.integrationSetup?.aircraftModule}<span class="vehicle-hint">DCS-BIOS module: {contextGame.integrationSetup.aircraftModule}</span>{/if}
+            {#if contextGame?.currentVehicle}<span class="current-vehicle">Loaded: {contextGame.currentVehicle.name}</span>{/if}
+          </div>
+          {#if (addingVehicleTab||activeVehicleTab)&&customVehicle}<form class="vehicle-custom" onsubmit={saveCustomVehicle}><label>Exact vehicle ID<input aria-label="Exact vehicle ID" required maxlength="256" disabled={workspace.readOnly||workspace.busy||libraryBusy} bind:value={vehicleIdDraft}/></label><label>Vehicle name<input aria-label="Vehicle name" maxlength="80" disabled={workspace.readOnly||workspace.busy||libraryBusy} bind:value={vehicleNameDraft} placeholder="Same as ID"/></label><button class="secondary-button" type="submit" disabled={workspace.readOnly||workspace.busy||libraryBusy}>Use vehicle</button></form>{/if}
+          {#if addingVehicleTab&&contextGame?.vehicleSupport?.message}<p class="vehicle-hint">{contextGame.vehicleSupport.message}</p>{/if}
+          {#if vehicleError}<p class="workspace-error" role="alert">{vehicleError}</p>{/if}
+        {/if}
+        {#if vehicleTabsEnabled&&!addingVehicleTab}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {activeVehicleTabId} {compiler} inventoryRevision={store.inventoryRevision} active={active&&!debugOpen}/>{/if}
+        <div id="profile-vehicle-canvas" role={vehicleTabsEnabled?'tabpanel':undefined} aria-label={vehicleTabsEnabled?(addingVehicleTab?'New vehicle':activeVehicleTab?.vehicleName??'Base'):undefined}>
+          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} active={active&&!debugOpen} runtimeIdle={learningIdle} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}{/if}
+        </div>
+      </div>
     </div>
   {/if}
   </div>
@@ -197,6 +246,7 @@
 </section>
 
 <style>
+  .vehicle-tab-bar{display:flex;align-items:stretch;gap:5px;border-bottom:1px solid var(--line);margin-bottom:12px}.vehicle-tabs{display:flex;align-items:stretch;gap:3px;overflow-x:auto;min-width:0}.vehicle-tab{display:flex;align-items:center;flex-shrink:0}.vehicle-tabs [role=tab]{padding:12px 15px;background:transparent;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap;font-size:11px}.vehicle-tabs [role=tab][aria-selected=true]{border-bottom-color:var(--accent);color:var(--accent);background:var(--surface-raised)}.remove-vehicle-tab,.add-vehicle-tab{display:grid;place-items:center;background:transparent;color:var(--muted);padding:8px}.remove-vehicle-tab:hover:enabled{color:var(--danger,#e67979)}.add-vehicle-tab{flex-shrink:0;min-width:34px}.vehicle-context{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}.vehicle-context label,.vehicle-custom label{display:grid;gap:5px;font-size:10px;color:var(--muted)}.vehicle-context select,.vehicle-custom input{background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:8px;max-width:260px;font-size:11px}.vehicle-context p,.vehicle-hint{font-size:10px;color:var(--muted);line-height:1.6}.current-vehicle{margin-left:auto;font-size:10px;color:var(--accent)}.vehicle-custom{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:15px}.vehicle-custom button{font-size:10px}.vehicle-empty{display:grid;justify-items:center;align-content:center;min-height:430px;border:1px dashed var(--line);border-radius:7px;color:var(--muted);font-size:12px}.vehicle-tabs button:focus-visible,.add-vehicle-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
   .profile-game-badge{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%}
   .game-context{display:grid;gap:5px;font-size:9px;color:var(--muted)}.game-context select{min-width:180px;max-width:220px;padding:9px 12px;font-size:11px;background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px}
   .profile-authoring{display:grid;grid-template-columns:236px minmax(0,1fr);align-items:start;gap:18px}.profile-canvas-workspace{min-width:0}@media(max-width:1050px){.profile-authoring{grid-template-columns:minmax(0,1fr)}}

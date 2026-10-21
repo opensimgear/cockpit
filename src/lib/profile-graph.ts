@@ -9,6 +9,14 @@ const sameEndpoint = (a: DeepReadonly<ProfileEndpoint>, b: DeepReadonly<ProfileE
 const nodes = (document: DeepReadonly<ProfileDocument>) => [...document.resources, ...document.processingNodes, ...document.virtualOutputs,...(document.desktopOutputs??[])];
 const label = (value: string) => [...value.trim()].slice(0,80).join('') || 'Selected port';
 const hash = (value: string) => /^sha256:[0-9a-f]{64}$/.test(value);
+const nodeTab = (document:DeepReadonly<ProfileDocument>,nodeId:string):string => document.vehicleTabs?.find(tab=>tab.nodeIds.includes(nodeId))?.id??'';
+const activeNodes = (document:DeepReadonly<ProfileDocument>,tabId:string) => nodes(document).filter(node=>!nodeTab(document,node.id)||nodeTab(document,node.id)===tabId);
+/** Record scope before validation so a newly created vehicle block is never treated as Base. */
+function scopeNewNode(document:ProfileDocument,nodeId:string,tabId=''):void {
+  if(!tabId||nodes(document).some(node=>node.id===nodeId))return;
+  const tab=document.vehicleTabs?.find(tab=>tab.id===tabId);if(!tab)throw new Error('Choose an existing vehicle tab.');
+  tab.nodeIds.push(nodeId);
+}
 
 export function graphFreshId(document: DeepReadonly<ProfileDocument>, prefix: 'route'|'transform'|'virtual'|'desktop'|'port'): string {
   const used = new Set([...nodes(document).map(node=>node.id), ...document.bindings.map(binding=>binding.id), ...nodes(document).flatMap(node=>'ports' in node ? node.ports.map(port=>port.id) : [...node.inputs,...node.outputs].map(port=>port.id))]);
@@ -40,16 +48,23 @@ export function graphConnectionError(document: DeepReadonly<ProfileDocument>, fr
   if(!source||!target)return 'Choose an existing concrete source output and destination port.';
   if(source.direction!=='output'||target.direction!=='input')return 'Connect a source output to a destination input or action.';
   const contractError=graphContractError(source.contract,target.contract);if(contractError)return contractError;
-  const bindings=document.bindings.filter(binding=>binding.id!==replacingId);
+  const fromTab=nodeTab(document,from.nodeId),toTab=nodeTab(document,to.nodeId);
+  if(fromTab&&toTab&&fromTab!==toTab)return 'Connect blocks within one vehicle tab or Base. Different vehicle tabs are never active together.';
+  if(document.bindings.filter(binding=>binding.id!==replacingId).length>=512)return 'A profile supports at most 512 explicit signal routes. Remove a route first.';
+  const scopes=fromTab||toTab?[fromTab||toTab]:['',...(document.vehicleTabs??[]).map(tab=>tab.id)];
+  for(const scope of scopes){
+  const available=new Set(activeNodes(document,scope).map(node=>node.id));
+  const bindings=document.bindings.filter(binding=>binding.id!==replacingId&&available.has(binding.from.nodeId)&&available.has(binding.to.nodeId));
   if(bindings.some(binding=>sameEndpoint(binding.to,to)))return 'This input already has a writer. Use an explicit OR or priority node for fan-in.';
   if(bindings.length>=512)return 'A profile supports at most 512 explicit signal routes. Remove a route first.';
-  const processing=new Set(document.processingNodes.map(node=>node.id)),edges=new Map<string,string[]>();
+  const processing=new Set(document.processingNodes.filter(node=>available.has(node.id)).map(node=>node.id)),edges=new Map<string,string[]>();
   for(const binding of [...bindings,{from,to}])if(processing.has(binding.from.nodeId)&&processing.has(binding.to.nodeId))edges.set(binding.from.nodeId,[...(edges.get(binding.from.nodeId)??[]),binding.to.nodeId]);
   const visiting=new Set<string>(),done=new Set<string>();
   const cycle=(id:string):boolean=>{if(visiting.has(id))return true;if(done.has(id))return false;visiting.add(id);for(const next of edges.get(id)??[])if(cycle(next))return true;visiting.delete(id);done.add(id);return false;};
   if([...processing].some(cycle))return 'This connection creates a processing cycle. External command and telemetry directions remain separate.';
-  const resources=new Set(document.resources.map(resource=>resource.id));
+  const resources=new Set(document.resources.filter(resource=>available.has(resource.id)).map(resource=>resource.id));
   if(new Set([...bindings.map(binding=>binding.from.nodeId),from.nodeId].filter(id=>resources.has(id))).size>16)return 'The native engine supports at most 16 used source resources. Split this setup into profiles.';
+  }
   return '';
 }
 
@@ -80,10 +95,12 @@ export function graphDisconnect(value: DeepReadonly<ProfileGraphDraft>, bindingI
   next.document.bindings=next.document.bindings.filter(binding=>binding.id!==bindingId);return checked(next);
 }
 /** Scope belongs to the saved endpoint; native identities and enablement remain local. */
-export function graphSetDesktop(value:DeepReadonly<ProfileGraphDraft>,output:ProfileDesktopOutput):ProfileGraphDraft {
+export function graphSetDesktop(value:DeepReadonly<ProfileGraphDraft>,output:ProfileDesktopOutput,activeVehicleTabId=''):ProfileGraphDraft {
   const next=graphDraft(value),existing=next.document.desktopOutputs??[];
   if(nodes(next.document).some(node=>node.id===output.id)&&!existing.some(node=>node.id===output.id))throw new Error('Use a unique desktop endpoint identity.');
-  if(existing.some(node=>node.id!==output.id))throw new Error('A profile supports one logical keyboard and mouse endpoint.');
+  const scope=existing.some(node=>node.id===output.id)?nodeTab(next.document,output.id):activeVehicleTabId;
+  if(existing.some(node=>node.id!==output.id&&(!nodeTab(next.document,node.id)||!scope||nodeTab(next.document,node.id)===scope)))throw new Error('Base and each vehicle tab support one active logical keyboard and mouse endpoint.');
+  scopeNewNode(next.document,output.id,scope);
   const updated=clone<ProfileDesktopOutput>(output);
   updated.ports=updated.actions.map(definition=>{
     const previous=existing.find(node=>node.id===output.id),oldAction=previous?.actions.find(action=>action.portId===definition.portId),oldName=previous?.ports.find(port=>port.id===definition.portId)?.name;
@@ -95,7 +112,7 @@ export function graphSetDesktop(value:DeepReadonly<ProfileGraphDraft>,output:Pro
     const previous=existing.find(node=>node.id===updated.id)?.ports.find(port=>port.id===binding.to.portId),replacement=updated.ports.find(port=>port.id===binding.to.portId);
     if(!replacement||previous&&canonical(previous.contract)!==canonical(replacement.contract))throw new Error('Disconnect routes before removing an action or changing its input delivery.');
   }
-  next.document.desktopOutputs=[updated];return checked(next);
+  next.document.desktopOutputs=[...existing.filter(node=>node.id!==output.id),updated];return checked(next);
 }
 function portableContract(contract: DeepReadonly<ProfilePortContract>): ProfilePortContract {
   const next=clone(contract);if(next.delivery==='action'||next.delivery==='invocation')for(const parameter of next.parameters)parameter.name=parameter.id;return next;
@@ -142,17 +159,19 @@ export function graphRemoveNode(value: DeepReadonly<ProfileGraphDraft>, nodeId: 
   next.document.bindings=next.document.bindings.filter(binding=>binding.from.nodeId!==nodeId&&binding.to.nodeId!==nodeId);next.document.editor.positions=next.document.editor.positions.filter(position=>position.nodeId!==nodeId);
   if(next.document.editor.groups)next.document.editor.groups=next.document.editor.groups.map(group=>({...group,members:group.members.filter(member=>member!==nodeId)}));
   if(next.document.editor.collapsedPortGroups){next.document.editor.collapsedPortGroups=next.document.editor.collapsedPortGroups.filter(pair=>pair.nodeId!==nodeId);if(!next.document.editor.collapsedPortGroups.length)delete next.document.editor.collapsedPortGroups;}
+  for(const tab of next.document.vehicleTabs??[])tab.nodeIds=tab.nodeIds.filter(id=>id!==nodeId);
   next.document.visibility=next.document.visibility.filter(intent=>intent.resourceId!==nodeId);next.document.overrides=next.document.overrides.filter(intent=>intent.resourceId!==nodeId);next.document.companionAssignments=next.document.companionAssignments.filter(intent=>intent.resourceId!==nodeId);next.assignments=next.assignments.filter(assignment=>assignment.resourceId!==nodeId);return checked(next);
 }
-export function graphSetProcessing(value: DeepReadonly<ProfileGraphDraft>, node: ProfileProcessingNode): ProfileGraphDraft {
+export function graphSetProcessing(value: DeepReadonly<ProfileGraphDraft>, node: ProfileProcessingNode,activeVehicleTabId=''): ProfileGraphDraft {
   const next=graphDraft(value);if([...next.document.resources,...next.document.virtualOutputs,...(next.document.desktopOutputs??[])].some(row=>row.id===node.id))throw new Error('Use a unique processing block identity.');
   if(node.inputs.length>128||node.outputs.length>16||node.inputs.some(port=>port.direction!=='input')||node.outputs.some(port=>port.direction!=='output')||!node.outputs.length||new Set([...node.inputs,...node.outputs].map(port=>port.id)).size!==node.inputs.length+node.outputs.length)throw new Error('Processing blocks need unique directed ports and 1–16 declared outputs.');
+  scopeNewNode(next.document,node.id,activeVehicleTabId);
   next.document.processingNodes=next.document.processingNodes.filter(row=>row.id!==node.id);next.document.processingNodes.push(clone(node));return checked(next);
 }
 export function graphInsertProcessing(value: DeepReadonly<ProfileGraphDraft>, bindingId: string, node: ProfileProcessingNode, inputPortId: string, outputPortId: string): ProfileGraphDraft {
   const binding=value.document.bindings.find(binding=>binding.id===bindingId);if(!binding)throw new Error('Choose an existing route for this visible transformation.');
   if(nodes(value.document).some(existing=>existing.id===node.id))throw new Error('Insert a new transformation identity.');
-  let next=graphSetProcessing(graphDisconnect(value,bindingId),node);
+  let next=graphSetProcessing(graphDisconnect(value,bindingId),node,nodeTab(value.document,binding.from.nodeId)||nodeTab(value.document,binding.to.nodeId));
   next=graphConnect(next,clone(binding.from),{nodeId:node.id,portId:inputPortId});
   return graphConnect(next,{nodeId:node.id,portId:outputPortId},clone(binding.to));
 }
@@ -179,9 +198,13 @@ export function graphVirtualPorts(layout: DeepReadonly<ProfileControllerLayout>)
   const state=(id:string,name:string,schema:ProfileScalarSchema,fallback:boolean|number):ProfilePort=>({id,name,direction:'input',contract:{delivery:'state',schema,freshnessMs:1000,fallback}});
   return [...layout.buttons.map((id,index)=>state(id,`Button ${index+1}`,{type:'boolean'},false)),...layout.axes.map((axis,index)=>state(axis.portId,`Axis ${index+1}`,{type:'integer',min:axis.range==='bipolar'?-32768:0,max:32767,unit:null},axis.fallback)),...layout.hats.map((id,index)=>state(id,`Hat ${index+1}`,{type:'integer',min:-1,max:7,unit:null},-1))];
 }
-export function graphSetVirtual(value: DeepReadonly<ProfileGraphDraft>, output: Omit<ProfileVirtualOutput,'ports'>): ProfileGraphDraft {
+export function graphSetVirtual(value: DeepReadonly<ProfileGraphDraft>, output: Omit<ProfileVirtualOutput,'ports'>,activeVehicleTabId=''): ProfileGraphDraft {
   const next=graphDraft(value);if([...next.document.resources,...next.document.processingNodes,...(next.document.desktopOutputs??[])].some(node=>node.id===output.id))throw new Error('Use a unique virtual controller identity.');
-  if(!next.document.virtualOutputs.some(node=>node.id===output.id)&&next.document.virtualOutputs.length>=8)throw new Error('The native engine supports at most eight virtual controllers.');
+  if(!next.document.virtualOutputs.some(node=>node.id===output.id)){
+    const scopes=activeVehicleTabId?[activeVehicleTabId]:['',...(next.document.vehicleTabs??[]).map(tab=>tab.id)];
+    if(next.document.virtualOutputs.length>=16||scopes.some(scope=>next.document.virtualOutputs.filter(node=>!nodeTab(next.document,node.id)||nodeTab(next.document,node.id)===scope).length>=8))throw new Error('The native engine supports at most eight virtual controllers active together and sixteen saved controllers.');
+    scopeNewNode(next.document,output.id,activeVehicleTabId);
+  }
   next.document.virtualOutputs=next.document.virtualOutputs.filter(node=>node.id!==output.id);next.document.virtualOutputs.push({...clone(output),ports:graphVirtualPorts(output.layout)});return checked(next);
 }
 export function graphSetVisibility(value: DeepReadonly<ProfileGraphDraft>, resourceId: string, mode: 'visible'|'hidden-while-active'): ProfileGraphDraft {

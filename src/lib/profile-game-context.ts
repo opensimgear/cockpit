@@ -3,6 +3,7 @@ import {canvasNodes} from './profile-canvas';
 import {graphRemoveNode,type ProfileGraphDraft} from './profile-graph';
 import {profileDocumentError,profileDocumentAssignmentsError,type DeepReadonly,type ProfileDocument} from './profiles';
 import type {ResourceSummary} from './profile-inventory';
+import {profileRemoveVehicleTab,profileTabNodeIds} from './profile-vehicle-tabs';
 
 export function profileGameContext(document:Pick<DeepReadonly<ProfileDocument>,'eligibility'>):GameId|'' {
   return supportedGames.find(game=>game.id===document.eligibility.gameIds[0])?.id??'';
@@ -13,7 +14,8 @@ export function profileGameName(id:string):string{return supportedGames.find(gam
 export function profileSetGameContext(value:DeepReadonly<ProfileGraphDraft>,gameId:GameId|'',inventory:readonly DeepReadonly<ResourceSummary>[]):ProfileGraphDraft {
   if(gameId&&!supportedGames.some(game=>game.id===gameId))throw Error('Choose a supported game context or None.');
   let next=JSON.parse(JSON.stringify(value)) as ProfileGraphDraft;
-  const before=canvasNodes(value.document,value.assignments,inventory),games=value.document.resources.filter(resource=>resource.kind==='game');
+  if(profileGameContext(value.document)!==gameId)for(const tab of [...(next.document.vehicleTabs??[])])next=profileRemoveVehicleTab(next.document,next.assignments,tab.id);
+  const before=canvasNodes(next.document,next.assignments,inventory),baseIds=profileTabNodeIds(next.document),games=next.document.resources.filter(resource=>resource.kind==='game'&&baseIds.has(resource.id));
   const source=inventory.find(resource=>resource.resourceType==='game-integration'&&resource.attributes.gameId===gameId);
   const keep=gameId?games.find(resource=>{
     const assignment=value.assignments.find(assignment=>assignment.resourceId===resource.id),observed=inventory.find(resource=>resource.id===assignment?.sourceId);
@@ -36,8 +38,25 @@ export function profileSetGameContext(value:DeepReadonly<ProfileGraphDraft>,game
       next.document.editor.positions.push({nodeId:resource.id,x:oldPosition?.x??48,y:oldPosition?.y??bottom+48});
       if(oldGroup)next.document.editor.groups?.find(group=>group.id===oldGroup)?.members.push(resource.id);
     }
-    if(source&&!next.assignments.some(assignment=>assignment.resourceId===resource.id)&&!resource.ports.length)next.assignments.push({resourceId:resource.id,sourceId:source.id,ports:[]});
+    if(source)for(const block of next.document.resources.filter(resource=>resource.kind==='game'))if(!next.assignments.some(assignment=>assignment.resourceId===block.id)&&!block.ports.length)next.assignments.push({resourceId:block.id,sourceId:source.id,ports:[]});
   }
+  const error=profileDocumentError(next.document)||profileDocumentAssignmentsError(next.document,next.assignments);if(error)throw Error(error);
+  return next;
+}
+
+/** Each vehicle canvas can author simulator telemetry and commands independently. */
+export function profileAddVehicleIntegration(value:DeepReadonly<ProfileGraphDraft>,tabId:string,inventory:readonly DeepReadonly<ResourceSummary>[]):ProfileGraphDraft {
+  const next=JSON.parse(JSON.stringify(value)) as ProfileGraphDraft,tab=next.document.vehicleTabs?.find(tab=>tab.id===tabId);
+  if(!tab)throw Error('Choose an existing vehicle tab.');
+  if(next.document.resources.some(resource=>resource.kind==='game'&&tab.nodeIds.includes(resource.id)))return next;
+  if(next.document.resources.length>=64)throw Error('Remove a component before adding a vehicle tab; a profile supports 64 resources.');
+  const used=new Set([...next.document.resources,...next.document.processingNodes,...next.document.virtualOutputs,...(next.document.desktopOutputs??[])].map(node=>node.id));
+  let number=1;while(used.has(`game-context-${tab.gameId}-${number}`))number++;
+  const id=`game-context-${tab.gameId}-${number}`;
+  next.document.resources.push({id,name:profileGameName(tab.gameId),kind:'game',required:false,ports:[]});
+  tab.nodeIds.push(id);next.document.editor.positions.push({nodeId:id,x:48,y:48});
+  const source=inventory.find(resource=>resource.resourceType==='game-integration'&&resource.attributes.gameId===tab.gameId);
+  if(source)next.assignments.push({resourceId:id,sourceId:source.id,ports:[]});
   const error=profileDocumentError(next.document)||profileDocumentAssignmentsError(next.document,next.assignments);if(error)throw Error(error);
   return next;
 }
@@ -45,6 +64,7 @@ export function profileSetGameContext(value:DeepReadonly<ProfileGraphDraft>,game
 /** Empty context blocks can acquire their exact native integration when inventory arrives. */
 export function profileGameContextNeedsSync(value:DeepReadonly<ProfileGraphDraft>,inventory:readonly DeepReadonly<ResourceSummary>[]):boolean {
   const id=profileGameContext(value.document);if(!id)return false;
-  if(!value.document.resources.some(resource=>resource.kind==='game'))return true;
+  const base=profileTabNodeIds(value.document);
+  if(!value.document.resources.some(resource=>resource.kind==='game'&&base.has(resource.id)))return true;
   return value.document.resources.some(resource=>resource.kind==='game'&&!resource.ports.length&&!value.assignments.some(assignment=>assignment.resourceId===resource.id))&&inventory.some(resource=>resource.resourceType==='game-integration'&&resource.attributes.gameId===id);
 }

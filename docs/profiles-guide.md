@@ -5,6 +5,29 @@ together. Open **Profiles** to see Default and your saved profiles. Open a profi
 to edit it. Cockpit has either **No profile active** or one active profile, with
 **Deactivate** available. Opening an editor leaves the active profile alone.
 
+## Vehicle tabs
+
+When a profile has a game context, its canvas has a **Base** tab and a **+**
+button for vehicle tabs. Base applies to every vehicle. Add a tab, select an
+aircraft or car, and add components and routes to that vehicle's canvas. Its
+configuration applies together with Base only while native telemetry identifies
+that vehicle. Unknown or stale vehicle identity applies Base alone.
+Each canvas has its own game integration block for telemetry and simulator
+commands. Connection settings and the DCS-BIOS module catalogue remain in the
+game's provider settings; vehicle tabs do not change those settings while editing.
+
+The picker includes installed DCS-BIOS aircraft, installed X-Plane aircraft and
+previously observed Rally cars. Load a car once to discover its exact telemetry
+identity, or use **Enter exact vehicle ID** when that identity is already known.
+Saved vehicle names remain available while the game is closed.
+
+Removing a vehicle tab removes all of its components, routes and local resource
+assignments. Undo restores the complete edit. Changing or clearing the game
+context removes the old game's vehicle tabs in the same undoable edit.
+Conflict checks compare Base with each vehicle separately; different vehicle
+tabs never execute together. Vehicle changes switch configurations automatically
+in both Manual and Automatic profile mode.
+
 ## Create, save and activate
 
 Choose **Add profile** to go straight to an empty editor. Name the profile, then
