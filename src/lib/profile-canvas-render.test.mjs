@@ -5,7 +5,7 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./profile-canvas-render']);
 const {canvasRouteNodes,canvasPreviewRoutes}=modules.get('./profile-canvas-render');
-const {diagramPendingPath,diagramOrthogonalPath}=modules.get('./profile-diagram');
+const {diagramSmoothPath,diagramOrthogonalPath}=modules.get('./profile-diagram');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const node=(id,x,y)=>({id,position:{x,y},width:100,height:100});
 const binding=(id,from,to)=>({id,from:{nodeId:from,portId:'out'},to:{nodeId:to,portId:'in'}});
@@ -36,7 +36,7 @@ test('named input and output anchors override card footers independently for eve
   const moved=[{...source,outputAnchors:{out:{x:254,y:132},other:{x:254,y:160}}},{...target,inputAnchors:{in:{x:480,y:162}}}];
   const preview=canvasPreviewRoutes(frozen(routes),moved,288,188,'smooth');
   assert.deepEqual(plain(preview[0].points[0]),{x:254,y:132});assert.deepEqual(plain(preview[0].points.at(-1)),{x:480,y:162});
-  assert.equal(preview[0].path,diagramPendingPath({x:254,y:132},{x:480,y:162},'output','smooth'));
+  assert.equal(preview[0].path,diagramSmoothPath(preview[0].points,preview[0].points));
   assert.match(preview[0].path,/ C/);assert.doesNotMatch(preview[0].path,/ [LA]/);
 });
 
@@ -61,7 +61,7 @@ test('backward and same-height edges retain outward leads and rounded, finite no
 
 test('a dense 73-route drag regenerates only incident paths and performs no full router call',async()=>{
   const nodes=Array.from({length:74},(_,index)=>node(`node-${index}`,index?500:0,index*24));
-  const routes=Array.from({length:73},(_,index)=>route(`wire-${index}`,'node-0',`node-${index+1}`,[{x:100,y:80},{x:300,y:80},{x:300,y:(index+1)*24+80},{x:500,y:(index+1)*24+80}]));
+  const routes=Array.from({length:73},(_,index)=>({...route(`wire-${index}`,'node-0',`node-${index+1}`,[{x:100,y:80},{x:300,y:80},{x:300,y:(index+1)*24+80},{x:500,y:(index+1)*24+80}]),manual:false}));
   const moved=nodes.map(row=>row.id==='node-37'?{...row,position:{x:530,y:row.position.y+17}}:row),snapshot=plain(routes);
   const preview=canvasPreviewRoutes(frozen(routes),moved,100,100,'smooth');
   assert.equal(preview.filter((wire,index)=>wire!==routes[index]).length,1);assert.notEqual(preview[36].path,routes[36].path);assert.deepEqual(plain(routes),snapshot);

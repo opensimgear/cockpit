@@ -178,6 +178,16 @@ components and routes. Output, input and action sections can be collapsed.
 Layout and grouping follow Save, copy, import/export
 and Undo/Redo. Disconnected resources keep their blocks and routes.
 
+Connections automatically avoid blocks and use ordered lanes to separate nearby
+wires. Moving a block updates the affected connections while keeping unrelated
+routes stable. Choose **Settings → Styling → Arrows** for fully smooth curves or
+perpendicular segments with rounded corners.
+
+Double-click a connection to add a reroute point, then drag the point to reshape
+the connection. Selected perpendicular connections also expose draggable segments.
+Manual routing follows Save, import/export and Undo/Redo. Use **Reset bends** on
+the selected connection to return it to automatic routing.
+
 Open **Debug** from the list or editor to reach **Profile debug**. It contains
 draft/saved-profile preflight, applied port samples, path activity, keyboard/mouse
 recording preview, native runtime details and retired-output recovery.

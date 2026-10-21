@@ -5,7 +5,7 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./profile-editor','./profile-diagram','./profile-canvas']);
 const {profileAutoLayout,PROFILE_BLOCK_WIDTH:width,PROFILE_BLOCK_HEIGHT:height}=modules.get('./profile-editor');
-const {diagramRoutes,createDiagramRouter,diagramPortAnchor,diagramPendingPath,diagramSmoothPath,diagramOrthogonalPath,diagramSegmentLine}=modules.get('./profile-diagram');
+const {diagramRoutes,createDiagramRouter,diagramPortAnchor,diagramPendingPath,diagramSmoothPath,diagramOrthogonalPath,diagramSegmentLine,diagramRouteQuality}=modules.get('./profile-diagram');
 const edge=(from,to,id=`${from}-${to}`)=>({id,from:{nodeId:from,portId:'out'},to:{nodeId:to,portId:'in'}});
 const placed=positions=>positions.map(({nodeId,...position})=>({id:nodeId,position}));
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -141,11 +141,13 @@ test('saved and pending wires use fully smooth Beziers with horizontal port tang
   assert.match(diagramPendingPath(input,{x:10,y:0},'input'),/ C/);
   assert.equal(diagramSmoothPath([]),'');
   const curves=cubics(diagramSmoothPath([{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:200,y:100}]));
-  assert.equal(curves.length,3);assert.equal(curves[0].first.y,0);assert.equal(curves.at(-1).second.y,100);
+  assert.equal(curves.length,2);assert.equal(curves[0].first.y,0);assert.equal(curves.at(-1).second.y,100);
   assert.ok(curves[0].first.x>curves[0].start.x);assert.ok(curves.at(-1).second.x<curves.at(-1).end.x);
   const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:600,y:320}}];
-  const route=diagramRoutes(nodes,[edge('source','target')],width,height)[0];assert.equal(cubics(route.path).length,1,'A clear connection uses a single flowing curve');
-  const curve=cubics(route.path)[0];assert.notEqual(sample(curve,.25).y,curve.start.y);assert.notEqual(sample(curve,.75).y,curve.end.y);
+  const route=diagramRoutes(nodes,[edge('source','target')],width,height)[0],routedCurves=cubics(route.path);
+  assert.equal(routedCurves.length,route.points.length-2,'Smooth curves flow through channel stations instead of interpolating sharp orthogonal corners');
+  assert.equal(routedCurves[0].first.y,route.points[0].y);assert.equal(routedCurves.at(-1).second.y,route.points.at(-1).y);
+  for(let index=0;index<routedCurves.length-1;index++)assert.deepEqual(plain(routedCurves[index].end),{x:(route.points[index+1].x+route.points[index+2].x)/2,y:(route.points[index+1].y+route.points[index+2].y)/2});
 });
 
 test('segmented arrows round perpendicular lanes with the configured circular radius',()=>{
@@ -264,4 +266,109 @@ test('router caching observes dimensions, anchors, endpoints, styles, radii and 
   const manual=router(nodes,bindings,width,height,{style:'orthogonal',wireRoutes:[{bindingId:bindings[0].id,points}]});assert.equal(manual[0].manual,true);assert.deepEqual(plain(manual[0].points),points);
   assert.strictEqual(router(nodes,bindings,width,height),first,'An undo can reuse the original geometry');
   const bounded=createDiagramRouter(1),old=bounded(nodes,bindings,width,height);bounded(nodes,bindings,width,height,{style:'orthogonal'});assert.notStrictEqual(bounded(nodes,bindings,width,height)[0].points,old[0].points,'Eviction bounds retained geometry');
+});
+
+test('ordered parallel fans use centered separate lanes without crossings',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}}],bindings=Array.from({length:8},(_,index)=>edge('source','target',`ordered-${index}`));
+  for(const style of ['smooth','orthogonal']){
+    const routes=diagramRoutes(nodes,bindings,width,height,{style}),quality=diagramRouteQuality(routes);
+    assert.equal(quality.crossings,0,'Fan-out and fan-in keep the same lane order');
+    const lanes=routes.map(route=>route.points.slice(1).map((point,index)=>({point,length:Math.abs(point.x-route.points[index].x)})).sort((a,b)=>b.length-a.length)[0].point.y);
+    assert.equal(new Set(lanes).size,bindings.length);
+    assert.ok(Math.min(...lanes)<height-20&&Math.max(...lanes)>height-20,'The fan is centered around its common physical port');
+    assert.ok(quality.overlap<2000,'Only short leads share a port; the long signal corridors are separate');
+  }
+});
+
+test('coordinated Feature Lab routing reduces crossings and shared tracks against the captured baseline',async()=>{
+  const {nodes,bindings}=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/feature-lab-geometry.json',import.meta.url),'utf8'));
+  // Same exact geometry and pairwise segment metric: before this routing pass,
+  // the deterministic plan contained 342 crossings and 60516px of shared tracks.
+  const routes=diagramRoutes(nodes,bindings,width,height),quality=diagramRouteQuality(routes);
+  assert.equal(routes.length,73);
+  assert.ok(quality.crossings<300,`Expected fewer crossings than342, received${quality.crossings}`);
+  assert.ok(quality.overlap<45000,`Expected shorter shared tracks than60516px, received${quality.overlap}`);
+});
+
+test('incremental routing repairs moved obstacles and preserves unrelated route geometry',()=>{
+  const nodes=[{id:'upper-source',position:{x:0,y:0}},{id:'upper-target',position:{x:1000,y:0}},{id:'lower-source',position:{x:0,y:900}},{id:'lower-target',position:{x:1000,y:900}},{id:'obstacle',position:{x:500,y:400},width:100,height:100}];
+  const bindings=[edge('upper-source','upper-target'),edge('lower-source','lower-target')];
+  for(const style of ['smooth','orthogonal']){
+    const router=createDiagramRouter(),initial=router(nodes,bindings,width,height,{style});
+    const moved=nodes.map(node=>node.id==='obstacle'?{...node,position:{x:500,y:120}}:node),updated=router(moved,bindings,width,height,{style});
+    assert.equal(updated.length,2);assert.notEqual(updated[0].path,initial[0].path,'A wire intersected by the moved obstacle is repaired');
+    assert.strictEqual(updated[1].points,initial[1].points,'An unrelated chain retains the exact same geometry');
+    assert.equal(updated[1].path,initial[1].path);
+    assert.strictEqual(router(nodes,bindings,width,height,{style}),initial,'Undo returns the original complete route snapshot');
+    for(const route of updated)for(let index=1;index<route.points.length;index++){
+      const a=route.points[index-1],b=route.points[index];
+      assert.ok(!(a.x===b.x?a.x>500&&a.x<600&&Math.max(a.y,b.y)>120&&Math.min(a.y,b.y)<220:a.y>120&&a.y<220&&Math.max(a.x,b.x)>500&&Math.min(a.x,b.x)<600));
+    }
+  }
+});
+
+test('smooth manual routes interpolate explicit reroute handles after endpoint moves',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:320}}],binding=edge('source','target');
+  const points=[{x:width,y:height-20},{x:500,y:height-20},{x:500,y:320+height-20},{x:900,y:320+height-20}],handle={x:500,y:300},wireRoutes=[{bindingId:binding.id,points,handles:[handle]}];
+  for(const placed of [nodes,nodes.map(node=>node.id==='source'?{...node,position:{x:0,y:40}}:node)]){
+    const route=diagramRoutes(placed,[binding],width,height,{style:'smooth',wireRoutes})[0];
+    assert.equal(route.manual,true);assert.ok(cubics(route.path).some(curve=>curve.end.x===handle.x&&curve.end.y===handle.y),'The explicit handle remains an interpolated cubic knot');
+  }
+});
+
+test('incremental obstacle repair restores an authored lane once it becomes clear',()=>{
+  const binding=edge('source','target'),nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}},{id:'obstacle',position:{x:500,y:120},width:100,height:100}];
+  const points=[{x:width,y:height-20},{x:900,y:height-20}],wireRoutes=[{bindingId:binding.id,points}];
+  const router=createDiagramRouter(),blocked=router(nodes,[binding],width,height,{wireRoutes});
+  assert.equal(blocked[0].customBlocked,true);assert.equal(blocked[0].manual,false);
+  const clear=router(nodes.map(node=>node.id==='obstacle'?{...node,position:{x:500,y:400}}:node),[binding],width,height,{wireRoutes});
+  assert.equal(clear[0].customBlocked,false);assert.equal(clear[0].manual,true);
+  assert.deepEqual(plain(clear[0].points),points,'Temporary obstacle avoidance never replaces the authored route');
+});
+
+test('incremental smooth repair checks the rendered curve beyond its orthogonal guides',()=>{
+  const binding=edge('source','target'),nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:1000,y:600}},{id:'obstacle',position:{x:2000,y:2000},width:20,height:20}],router=createDiagramRouter();
+  const initial=router(nodes,[binding],width,height),route=initial[0];
+  const distance=point=>Math.min(...route.points.slice(1).map((end,index)=>{
+    const start=route.points[index],x=Math.max(Math.min(start.x,end.x),Math.min(Math.max(start.x,end.x),point.x)),y=Math.max(Math.min(start.y,end.y),Math.min(Math.max(start.y,end.y),point.y));
+    return Math.hypot(point.x-x,point.y-y);
+  }));
+  const point=cubics(route.path).flatMap(curve=>[.25,.5,.75].map(t=>sample(curve,t))).sort((a,b)=>distance(b)-distance(a))[0];
+  assert.ok(distance(point)>60,'The broad spline has room to curve away from its channel guides');
+  const position={x:point.x-10,y:point.y-10},moved=nodes.map(node=>node.id==='obstacle'?{...node,position}:node);
+  const updated=router(moved,[binding],width,height);
+  assert.equal(updated.length,1);assert.notEqual(updated[0].path,initial[0].path,'An obstacle crossing the rendered spline triggers repair');
+  for(const curve of cubics(updated[0].path))for(let step=0;step<=100;step++){
+    const at=sample(curve,step/100);
+    assert.ok(!(at.x>position.x&&at.x<position.x+20&&at.y>position.y&&at.y<position.y+20));
+  }
+});
+
+test('adding parallel signals replans their physical fan and leaves every wire selectable',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:432,y:0}},{id:'contributor',position:{x:0,y:316}},{id:'unrelated-source',position:{x:0,y:800}},{id:'unrelated-target',position:{x:900,y:800}}];
+  const first=edge('source','target','first'),second={...edge('source','target','second'),from:{nodeId:'source',portId:'another-output'},to:{nodeId:'target',portId:'another-input'}},contributor=edge('contributor','target','contributor'),unrelated=edge('unrelated-source','unrelated-target');
+  const distance=(point,a,b)=>{const dx=b.x-a.x,dy=b.y-a.y,scale=Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/(dx*dx+dy*dy||1)));return Math.hypot(point.x-a.x-dx*scale,point.y-a.y-dy*scale);};
+  for(const style of ['smooth','orthogonal']){
+    const router=createDiagramRouter(),initial=router(nodes,[first,unrelated],width,height,{style});
+    router(nodes,[first,contributor,unrelated],width,height,{style});
+    const updated=router(nodes,[first,contributor,second,unrelated],width,height,{style});
+    assert.notStrictEqual(updated[0].points,initial[0].points,'Adding a signal rebalances every peer at the shared physical resource port');
+    assert.strictEqual(updated[3].points,initial[1].points,'An unrelated chain keeps its exact geometry');
+    const samples=updated.slice(0,3).map(route=>style==='smooth'?cubics(route.path).flatMap(curve=>Array.from({length:81},(_,index)=>sample(curve,index/80))):roundedSamples(route.path));
+    for(let index=0;index<3;index++){
+      const otherSegments=samples.flatMap((other,peer)=>peer===index?[]:other.slice(1).map((end,i)=>[other[i],end]));
+      assert.ok(samples[index].some(point=>Math.min(...otherSegments.map(([start,end])=>distance(point,start,end)))>9.25),'Each arrow has a centerline outside every neighboring 18px pointer hit area');
+    }
+  }
+});
+
+test('reconnecting a signal invalidates fans at both previous and new physical attachments',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'first-target',position:{x:900,y:0}},{id:'second-target',position:{x:900,y:350}},{id:'other-source',position:{x:0,y:800}},{id:'other-target',position:{x:900,y:800}}];
+  const bindings=[edge('source','first-target','first'),edge('source','second-target','second'),edge('other-source','other-target','other')],router=createDiagramRouter();
+  const initial=router(nodes,bindings,width,height),next=bindings.map(binding=>binding.id==='second'?{...binding,to:{nodeId:'first-target',portId:'another-resource-input'}}:binding),updated=router(nodes,next,width,height);
+  assert.notStrictEqual(updated[0].points,initial[0].points,'An existing peer participates in the changed source and target fan');
+  assert.strictEqual(updated[2].points,initial[2].points);
+  assert.deepEqual(plain(updated[0].points[0]),plain(updated[1].points[0]));
+  assert.deepEqual(plain(updated[0].points.at(-1)),plain(updated[1].points.at(-1)));
+  assert.notEqual(updated[0].path,updated[1].path);
 });

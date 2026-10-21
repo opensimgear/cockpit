@@ -1,5 +1,5 @@
 import { canvasNodeAnchor, canvasNodeSize, type CanvasNode } from './profile-canvas';
-import { diagramOrthogonalPath, diagramPendingPath, diagramPortAnchor, type DiagramNode, type DiagramPoint, type diagramRoutes } from './profile-diagram';
+import { diagramOrthogonalPath, diagramSmoothPath, diagramPortAnchor, type DiagramNode, type DiagramPoint, type diagramRoutes } from './profile-diagram';
 import { profileAnchorWireRoute, profileWireCorners } from './profile-wire-layout';
 import type { ProfileWireStyle } from './profiles';
 
@@ -49,7 +49,9 @@ export function canvasPreviewRoutes(routes:CanvasRoutes,nodes:readonly DiagramNo
     if(equal(route.points[0],start)&&equal(route.points.at(-1)!,end))return route;
     changed=true;
     const points=previewCorners(route.points,start,end),radius=Math.min(route.cornerRadius,cornerRadius);
-    return {...route,points,path:style==='smooth'?diagramPendingPath(start,end,'output','smooth'):diagramOrthogonalPath(points,radius)};
+    // Carry the assigned corridor through the cheap preview too. A direct
+    // endpoint curve would collapse separate lanes for the duration of a drag.
+    return {...route,points,path:style==='smooth'?diagramSmoothPath(points,route.manual?points:[]):diagramOrthogonalPath(points,radius)};
   });
   return changed?preview:routes;
 }

@@ -494,6 +494,14 @@ fn validate_graph_document(document: &ProfileDocument) -> Result<(), String> {
         check(binding_ids.contains(route.binding_id.as_str())&&routed.insert(route.binding_id.as_str()),"Custom connection path is unknown or duplicated.")?;
         check((2..=128).contains(&route.points.len()),"Custom connection path requires 2 to 128 points.")?;
         check(route.points.iter().all(|point|coordinate(point.x)&&coordinate(point.y))&&route.points.windows(2).all(|pair|(pair[0].x==pair[1].x)!=(pair[0].y==pair[1].y)),"Custom connection path requires bounded distinct orthogonal points.")?;
+        check(route.handles.len()<=32,"Custom connection path supports up to 32 reroute points.")?;
+        for (index,handle) in route.handles.iter().enumerate() {
+            check(coordinate(handle.x)&&coordinate(handle.y)&&!route.handles[..index].contains(handle)&&route.points.windows(2).any(|pair|{
+                let(a,b)=(&pair[0],&pair[1]);
+                if a.x==b.x {handle.x==a.x&&handle.y>=a.y.min(b.y)&&handle.y<=a.y.max(b.y)}
+                else {handle.y==a.y&&handle.x>=a.x.min(b.x)&&handle.x<=a.x.max(b.x)}
+            }),"Reroute points must be unique bounded points on the custom connection path.")?;
+        }
     }
     let v = &document.editor.viewport;
     check(

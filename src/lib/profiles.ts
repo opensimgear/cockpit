@@ -59,7 +59,7 @@ export type ProfileVirtualOutput = { id: string; name: string; required: boolean
 export type ProfileEditorGroupBounds = { x: number; y: number; width: number; height: number };
 export type ProfileEditorGroup = { id: string; name: string; members: string[]; bounds?: ProfileEditorGroupBounds };
 export type ProfileWireStyle = 'smooth' | 'orthogonal';
-export type ProfileWireRoute = { bindingId: string; points: { x: number; y: number }[] };
+export type ProfileWireRoute = { bindingId: string; points: { x: number; y: number }[]; handles?: { x: number; y: number }[] };
 export type ProfilePortGroup = 'outputs' | 'inputs' | 'actions';
 export type ProfileVehicleTab = { id: string; gameId: string; vehicleId: string; vehicleName: string; nodeIds: string[] };
 export type ProfileDocument = {
@@ -261,7 +261,16 @@ export function profileDocumentError(value: unknown): string {
   if (Object.hasOwn(value.editor,'arrowStyle') && value.editor.arrowStyle !== 'smooth' && value.editor.arrowStyle !== 'orthogonal') return 'Choose smooth or orthogonal arrows.';
   const wireRoutes = Object.hasOwn(value.editor,'wireRoutes') ? value.editor.wireRoutes : [];
   const bindingIds = new Set((value.bindings as ProfileBinding[]).map(binding=>binding.id));
-  if (!list(wireRoutes,512) || !wireRoutes.every(row=>exact(row,['bindingId','points']) && identifier(row.bindingId) && bindingIds.has(row.bindingId) && list(row.points,128) && row.points.length>=2 && row.points.every(point=>exact(point,['x','y']) && coordinate(point.x) && coordinate(point.y)) && (row.points as {x:number;y:number}[]).every((point,index,points)=>!index || (point.x===points[index-1].x)!==(point.y===points[index-1].y))) || new Set(wireRoutes.map(row=>(row as ProfileWireRoute).bindingId)).size!==wireRoutes.length) return 'Use unique bounded orthogonal paths for existing connections.';
+  const validWireRoute=(row:unknown)=>{
+    if(!object(row)||Object.keys(row).some(key=>!['bindingId','points','handles'].includes(key))||!identifier(row.bindingId)||!bindingIds.has(row.bindingId)||!list(row.points,128)||row.points.length<2||!row.points.every(point=>exact(point,['x','y'])&&coordinate(point.x)&&coordinate(point.y)))return false;
+    const points=row.points as {x:number;y:number}[];
+    if(!points.every((point,index)=>!index||(point.x===points[index-1].x)!==(point.y===points[index-1].y)))return false;
+    if(!Object.hasOwn(row,'handles'))return true;
+    if(!list(row.handles,32)||!row.handles.every(handle=>exact(handle,['x','y'])&&coordinate(handle.x)&&coordinate(handle.y)))return false;
+    const handles=row.handles as {x:number;y:number}[];
+    return new Set(handles.map(handle=>`${handle.x}/${handle.y}`)).size===handles.length&&handles.every(handle=>points.some((a,index)=>{const b=points[index+1];return !!b&&(a.x===b.x?handle.x===a.x&&handle.y>=Math.min(a.y,b.y)&&handle.y<=Math.max(a.y,b.y):handle.y===a.y&&handle.x>=Math.min(a.x,b.x)&&handle.x<=Math.max(a.x,b.x));}));
+  };
+  if (!list(wireRoutes,512) || !wireRoutes.every(validWireRoute) || new Set(wireRoutes.map(row=>(row as ProfileWireRoute).bindingId)).size!==wireRoutes.length) return 'Use unique bounded orthogonal paths and reroute points for existing connections.';
   const groups = Object.hasOwn(value.editor, 'groups') ? value.editor.groups : [];
   if (!list(groups, 32) || !Array.from(groups).every(row => object(row) && ['id', 'name', 'members'].every(key => Object.hasOwn(row,key)) && Object.keys(row).every(key => ['id','name','members','bounds'].includes(key)) && identifier(row.id) && text(row.name) && list(row.members, 336) && Array.from(row.members).every(member => identifier(member) && nodeIds.has(member)) && (!Object.hasOwn(row,'bounds') || exact(row.bounds,['x','y','width','height']) && coordinate(row.bounds.x) && coordinate(row.bounds.y) && finite(row.bounds.width) && finite(row.bounds.height) && row.bounds.width >= 328 && row.bounds.height >= 300 && row.bounds.width <= 2_001_000 && row.bounds.height <= 2_001_000)) || new Set(groups.map(row => (row as ProfileEditorGroup).id)).size !== groups.length) return 'Use at most 32 named editor groups with bounded frames and existing block members.';
   const framedGroups = groups.filter(row => (row as ProfileEditorGroup).bounds).map(row => (row as ProfileEditorGroup).bounds!);

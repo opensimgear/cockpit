@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./profile-wire-layout','./profile-diagram','./profile-vehicle-tabs']);
 const {profileMoveWireSegment:move,profileAnchorWireRoute:anchor,profileSetWireStyle:setStyle,profileSetWireRoute:setRoute}=modules.get('./profile-wire-layout');
+const {profileInsertWireHandle:insertHandle,profileMoveWireHandle:moveHandle,profileRemoveWireHandle:removeHandle,profileWireHandleOnRoute:handleOnRoute,profileReshapeWireSegment:reshapeSegment}=modules.get('./profile-wire-layout');
 const {diagramRoutes,diagramPendingPath}=modules.get('./profile-diagram');
 const {profileDocumentError}=modules.get('./profiles');
 const graph=modules.get('./profile-graph');
@@ -68,7 +69,30 @@ test('portable wire metadata rejects unknown routes, duplicates, diagonal, empty
     {wireRoutes:[{bindingId:binding.id,points:[{x:0,y:0},{x:1_000_001,y:0}]}]},
     {wireRoutes:[{bindingId:binding.id,points:Array.from({length:129},(_,x)=>({x,y:0}))}]},
     {wireRoutes:[{bindingId:binding.id,points,extra:true}]},
+    {wireRoutes:[{bindingId:binding.id,points,handles:null}]},
+    {wireRoutes:[{bindingId:binding.id,points,handles:[{x:200,y:200}]}]},
+    {wireRoutes:[{bindingId:binding.id,points,handles:[{x:250,y:200},{x:250,y:200}]}]},
+    {wireRoutes:[{bindingId:binding.id,points,handles:Array.from({length:33},(_,index)=>({x:250,y:100+index}))}]},
+    {wireRoutes:[{bindingId:binding.id,points,handles:[{x:250,y:200,z:0}]}]},
   ])assert.ok(profileDocumentError({...valid,editor:{...valid.editor,...editor}}),JSON.stringify(editor));
+});
+test('reroute points survive straight span insertion, immutable dragging, anchoring and reset',()=>{
+  const original=draft(),inserted=insertHandle(original,binding.id,points,{x:255,y:200}),route=inserted.document.editor.wireRoutes[0];
+  assert.deepEqual(plain(route.handles),[{x:250,y:200}]);assert.ok(route.points.some(point=>point.x===250&&point.y===200));
+  assert.equal(profileDocumentError(inserted.document),'');assert.equal(original.document.editor.wireRoutes,undefined);
+  const moved=moveHandle(inserted,binding.id,0,{x:330,y:210}),after=moved.document.editor.wireRoutes[0];orthogonal(after.points);
+  assert.deepEqual(plain(after.points[0]),points[0]);assert.deepEqual(plain(after.points.at(-1)),points.at(-1));assert.deepEqual(plain(after.handles),[{x:330,y:210}]);assert.ok(handleOnRoute(after.handles[0],after.points));
+  assert.equal(after.points[0].y,after.points[1].y);assert.equal(after.points.at(-2).y,after.points.at(-1).y);
+  const anchored=anchor(route.points,{x:120,y:120},{x:550,y:420},route.handles);orthogonal(anchored);assert.ok(handleOnRoute(route.handles[0],anchored));
+  const added=insertHandle(moved,binding.id,after.points,{x:400,y:380}),twice=moveHandle(added,binding.id,0,{x:340,y:220});
+  assert.equal(twice.document.editor.wireRoutes[0].handles.length,2);assert.ok(twice.document.editor.wireRoutes[0].handles.every(handle=>handleOnRoute(handle,twice.document.editor.wireRoutes[0].points)));
+  assert.equal(removeHandle(inserted,binding.id,0).document.editor.wireRoutes[0].handles,undefined);
+  assert.equal(setRoute(inserted,binding.id).document.editor.wireRoutes,undefined);
+  assert.deepEqual(plain(reshapeSegment(inserted,binding.id,route.points,1,{x:300,y:0}).document.editor.wireRoutes[0].handles),[{x:300,y:200}],'Segment reshaping translates its waypoints');
+  const unrelated=insertHandle(inserted,binding.id,route.points,{x:400,y:380});
+  assert.deepEqual(plain(reshapeSegment(unrelated,binding.id,unrelated.document.editor.wireRoutes[0].points,0,{x:0,y:30}).document.editor.wireRoutes[0].handles),[{x:250,y:200},{x:400,y:380}],'Segment reshaping retains unrelated waypoints');
+  assert.throws(()=>moveHandle(inserted,binding.id,0,{x:Infinity,y:1}),/bounds/);assert.throws(()=>moveHandle(inserted,binding.id,2,{x:1,y:1}),/existing/);
+  assert.deepEqual(plain(inserted.document.editor.wireRoutes[0]),plain(route));
 });
 test('vehicle projection and tab removal retain only paths whose connections remain visible',()=>{
   const {profileTabDocument,profileVehicleDocument,profileRemoveVehicleTab}=modules.get('./profile-vehicle-tabs');

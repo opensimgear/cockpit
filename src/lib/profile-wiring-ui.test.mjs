@@ -24,7 +24,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,syncSelectionFocus,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},setInspector(value){inspectorPanel=value;},setSelection(value){selectedId=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,selectionView,focusedSelectionId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,addWireHandle,beginHandle,handleKeyboard,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,syncSelectionFocus,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},setInspector(value){inspectorPanel=value;},setSelection(value){selectedId=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,selectionView,focusedSelectionId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
@@ -399,6 +399,19 @@ test('segment cancellation, lost capture, insignificant movement and blocked mov
     else if(cancel==='undo'){h.handlers.scheduleMove(pointer(500,360));h.handlers.keyboard({key:'z',ctrlKey:true,target:{closest:()=>null},preventDefault(){}});assert.equal(h.frames.size,0);h.flushFrames();}
     else{if(cancel==='blocked')assert.equal(h.handlers.state.segmentBlocked,true);h.handlers.finish(pointer(500,cancel==='tiny'?302:370));}
     assert.deepEqual(h.edits,[],cancel);assert.equal(h.handlers.state.segmentDrag,null,cancel);assert.equal(h.handlers.state.segmentPreview,null,cancel);assert.equal(h.captured.size,0,cancel);assert.deepEqual(h.document,h.before,cancel);
+  }
+});
+test('both arrow styles add, drag and cancel geometric reroute points without selecting blocks or extra history',()=>{
+  for(const style of ['smooth','orthogonal']){
+    const document=orthogonalDocument(),h=harness({document,selectedEdgeId:'route'},style),route=h.handlers.state.routes[0],point={x:(route.points[0].x+route.points.at(-1).x)/2,y:route.points[0].y};
+    h.handlers.addWireHandle(pointer(point.x+100,point.y+50),'route');assert.equal(h.edits.length,1);assert.equal(h.edits[0][1],'Add reroute point');
+    const inserted=plain(h.edits[0][0]);assert.deepEqual(inserted.editor.wireRoutes[0].handles,[point]);
+    const editor=harness({document:inserted,selectedEdgeId:'route'},style);assert.match(editor.body,/data-reroute-binding="route"/);
+    editor.handlers.beginHandle(pointer(500,300),'route',0);editor.handlers.scheduleMove(pointer(505,315));assert.equal(editor.frames.size,1);assert.equal(editor.edits.length,0);editor.flushFrames();assert.equal(editor.handlers.state.segmentBlocked,false);assert.ok(editor.handlers.state.segmentPreview);
+    editor.handlers.finish(pointer(505,315));assert.equal(editor.edits.length,1);assert.equal(editor.edits[0][1],'Move reroute point');assert.deepEqual(plain(editor.edits[0][0].editor.wireRoutes[0].handles),[{x:point.x+5,y:point.y+15}]);assert.deepEqual(plain(editor.edits[0][0].bindings),document.bindings);assert.equal(editor.handlers.state.selectedId,'');
+    const cancelled=harness({document:inserted,selectedEdgeId:'route'},style);cancelled.handlers.beginHandle(pointer(500,300),'route',0);cancelled.handlers.move(pointer(505,315));cancelled.handlers.keyboard({key:'Escape',preventDefault(){}});assert.equal(cancelled.edits.length,0);assert.equal(cancelled.handlers.state.segmentPreview,null);assert.equal(cancelled.captured.size,0);
+    cancelled.handlers.handleKeyboard({key:'Delete',preventDefault(){},stopPropagation(){}},'route',0);assert.equal(cancelled.edits.length,1);assert.equal(cancelled.edits[0][1],'Remove reroute point');assert.equal(cancelled.edits[0][0].bindings.length,1);assert.equal(cancelled.edits[0][0].editor.wireRoutes[0].handles,undefined);
+    assert.deepEqual(document,h.before);assert.deepEqual(inserted,editor.before);
   }
 });
 

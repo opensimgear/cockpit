@@ -126,7 +126,7 @@ impl ProfileDocument {
             || document.editor.groups.iter().any(|group| group.members.len() > 336)
             || document.editor.collapsed_port_groups.len() > 1008
             || document.editor.wire_routes.len() > 512
-            || document.editor.wire_routes.iter().any(|route|route.points.len()>128)
+            || document.editor.wire_routes.iter().any(|route|route.points.len()>128||route.handles.len()>32)
             || ports
                 .iter()
                 .any(|count| *count > crate::validation::MAX_PORTS_PER_NODE)
@@ -360,7 +360,12 @@ fn editor_arrow_style<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Resu
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct EditorWireRoute { pub binding_id: String, pub points: Vec<EditorWirePoint> }
+pub struct EditorWireRoute {
+    pub binding_id: String,
+    pub points: Vec<EditorWirePoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handles: Vec<EditorWirePoint>,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EditorWirePoint { pub x:f64, pub y:f64 }

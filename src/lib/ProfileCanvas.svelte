@@ -8,7 +8,7 @@
   import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
   import { createDiagramRouter, diagramPendingPath, diagramRoutes, diagramSegmentLine } from './profile-diagram';
   import {canvasRouteNodes,canvasPreviewRoutes}from'./profile-canvas-render';
-  import {profileMoveWireSegment,profileSetWireRoute}from'./profile-wire-layout';
+  import {profileReshapeWireSegment,profileSetWireRoute,profileInsertWireHandle,profileMoveWireHandle,profileRemoveWireHandle,profileWireHandleOnRoute}from'./profile-wire-layout';
   import {canvasStyling}from'./canvas-styling';
   import {canvasNavigation}from'./canvas-navigation';
   import {inputAvailability}from'./profile-input-availability';
@@ -45,9 +45,10 @@
   let wire=$state<{nodeId:string;portId?:string;direction:'input'|'output';pointer:number;start:CanvasPoint;end:CanvasPoint;moved:boolean;reconnect?:{bindingId:string;side:'from'|'to'}}|null>(null);
   let wireTargetId=$state(''),wireTargetPort=$state(''),hoveredEdgeId=$state(''),paletteConnectionId=$state('');
   let wireRejectedId=$state(''),wireRejectedPort=$state(''),wireRejectedReason=$state('');
-  let segmentDrag=$state.raw<{bindingId:string;index:number;points:CanvasPoint[];source:DeepReadonly<ProfileDocument>;pointer:number;start:CanvasPoint;moved:boolean}|null>(null);
+  let segmentDrag=$state.raw<{bindingId:string;index:number;handleIndex?:number;points:CanvasPoint[];source:DeepReadonly<ProfileDocument>;pointer:number;start:CanvasPoint;moved:boolean}|null>(null);
   let segmentPreview=$state<ProfileDocument|null>(null),segmentBlocked=$state(false);
   let suppressWireClick=false;
+  let connectionClickTimer:ReturnType<typeof setTimeout>|undefined;
   let palettePreview=$state<CanvasPoint|null>(null);
   let page = $state<DeepReadonly<ResourceDetails>|null>(null), portsBusy = $state(false), portError = $state('');
   let layoutError=$state('');
@@ -90,7 +91,7 @@
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
-  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;selectionView=null;focusedSelectionId='';clearPendingMove();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
+  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;selectionView=null;focusedSelectionId='';clearPendingMove();clearConnectionClick();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
   $effect(()=>{void focusSelectionId;void inspectorPanel;void drag;void wire;void segmentDrag;void connectionOpen;if(mounted)untrack(syncSelectionFocus);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(() => {
@@ -99,7 +100,7 @@
     if (resourceId) void loadPorts('open',resourceId);
   });
   onMount(() => { if (fitOnMount) fitView();mounted=true; });
-  onDestroy(() => { portEpoch++; browser.clear();clearPendingMove(); });
+  onDestroy(() => { portEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
   function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
   function fit() { fitView(); }
   function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2}); }
@@ -116,8 +117,10 @@
       return next;
     }),'Auto-layout');
   }
-  function choose(id:string) { closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
+  function choose(id:string) { clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
   function chooseConnection(id:string) {stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView())void tick().then(()=>{if(!selectedId)selectConnection?.(id);});else selectConnection(id);}else editConnection?.(id);}
+  function clearConnectionClick(){if(connectionClickTimer!==undefined){clearTimeout(connectionClickTimer);connectionClickTimer=undefined;}}
+  function connectionClick(event:MouseEvent,id:string){clearConnectionClick();if(event.detail===0)chooseConnection(id);else if(event.detail===1)connectionClickTimer=setTimeout(()=>{connectionClickTimer=undefined;chooseConnection(id);},250);}
   function portName(nodeId:string,portId:string,direction:'input'|'output') {return portGroups.get(nodeId)?.names.get(`${direction}/${portId}`)??portId;}
   function activeHandle(nodeId:string,direction:'input'|'output',portId?:string) {
     const matches=(selected?:string)=>!portId||!selected||selected===portId;
@@ -193,14 +196,34 @@
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
-    if(target.closest('.signal-edge-hit,.connection-endpoint,.connection-segment')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
+    if(target.closest('.signal-edge-hit,.connection-endpoint,.connection-segment,.connection-reroute')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
+    clearConnectionClick();
     id ??= target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
     event.preventDefault();stage.setPointerCapture(event.pointerId);
     drag={id,origin:id?{...nodes.find(node=>node.id===id)!.position}:{x:0,y:0},start:{x:event.clientX,y:event.clientY},viewport:{...view},pointer:event.pointerId,moved:false};
   }
   function resetWireRoute(bindingId:string){editLayout(()=>profileSetWireRoute({document,assignments:[]},bindingId).document,'Reset wire bends');}
+  function validateWireEdit(next:ProfileDocument,bindingId:string){const scoped=profileTabDocument(next,activeVehicleTabId),route=diagramRoutes(routeNodes,scoped.bindings.filter(binding=>binding.id===bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:scoped.editor.wireRoutes})[0];if(!route||route.customBlocked)throw new Error('Keep the wire clear of block borders. Release here to cancel this route change.');return next;}
+  function canvasPointer(event:MouseEvent|PointerEvent):CanvasPoint{const rect=stage.getBoundingClientRect();return{x:(event.clientX-rect.left-view.x)/view.zoom,y:(event.clientY-rect.top-view.y)/view.zoom};}
+  function addWireHandle(event:MouseEvent,bindingId:string){
+    if(readOnly)return;clearConnectionClick();event.preventDefault();event.stopPropagation();closeConnectionPanel?.();selectedId='';stage?.focus?.({preventScroll:true});selectConnection?.(bindingId);
+    const route=routes.find(route=>route.binding.id===bindingId);if(!route)return;
+    editLayout(()=>{const next=profileInsertWireHandle({document,assignments:[]},bindingId,route.points,canvasPointer(event)).document;return validateWireEdit(next,bindingId);},'Add reroute point');
+  }
+  function routeHandles(bindingId:string,points:readonly CanvasPoint[]){return visibleDocument.editor.wireRoutes?.find(route=>route.bindingId===bindingId)?.handles?.map((point,index)=>({point,index})).filter(({point})=>profileWireHandleOnRoute(point,points))??[];}
+  function beginHandle(event:PointerEvent,bindingId:string,index:number){
+    if(readOnly||event.button!==0)return;const route=routes.find(route=>route.binding.id===bindingId),saved=visibleDocument.editor.wireRoutes?.find(route=>route.bindingId===bindingId);if(!route||!saved?.handles?.[index])return;
+    event.preventDefault();event.stopPropagation();stage?.focus?.({preventScroll:true});layoutError='';segmentBlocked=false;segmentPreview=null;
+    const source=profileSetWireRoute({document,assignments:[]},bindingId,route.points,saved.handles).document;
+    segmentDrag={bindingId,index:-1,handleIndex:index,points:route.points.map(point=>({...point})),source,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},moved:false};stage.setPointerCapture(event.pointerId);
+  }
+  function handleKeyboard(event:KeyboardEvent,bindingId:string,index:number){
+    if(readOnly||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Delete','Backspace'].includes(event.key))return;event.preventDefault();event.stopPropagation();const route=document.editor.wireRoutes?.find(route=>route.bindingId===bindingId),point=route?.handles?.[index];if(!point)return;
+    if(event.key==='Delete'||event.key==='Backspace'){editLayout(()=>profileRemoveWireHandle({document,assignments:[]},bindingId,index).document,'Remove reroute point');return;}
+    const step=event.shiftKey?40:10;editLayout(()=>validateWireEdit(profileMoveWireHandle({document,assignments:[]},bindingId,index,{x:point.x+(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0),y:point.y+(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)}).document,bindingId),'Move reroute point');
+  }
   function movedSegment(source:DeepReadonly<ProfileDocument>,bindingId:string,points:CanvasPoint[],index:number,position:CanvasPoint){
-    const next=profileSetWireRoute({document:source,assignments:[]},bindingId,profileMoveWireSegment(points,index,position)).document,scoped=profileTabDocument(next,activeVehicleTabId);
+    const next=profileReshapeWireSegment({document:source,assignments:[]},bindingId,points,index,position).document,scoped=profileTabDocument(next,activeVehicleTabId);
     const route=diagramRoutes(routeNodes,scoped.bindings.filter(binding=>binding.id===bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:'orthogonal',cornerRadius,wireRoutes:scoped.editor.wireRoutes})[0];
     if(!route||route.customBlocked)throw new Error('Keep the wire clear of block borders. Release here to cancel this bend change.');return next;
   }
@@ -208,7 +231,9 @@
     if(readOnly||wireStyle!=='orthogonal'||event.button!==0)return;const route=routes.find(route=>route.binding.id===bindingId);if(!route||!route.points[index+1])return;
     event.preventDefault();event.stopPropagation();stage?.focus?.({preventScroll:true});layoutError='';segmentBlocked=false;segmentPreview=null;segmentDrag={bindingId,index,points:route.points.map(point=>({...point})),source:document,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},moved:false};stage.setPointerCapture(event.pointerId);
   }
-  function moveSegment(event:PointerEvent){if(!segmentDrag||segmentDrag.pointer!==event.pointerId)return;const state=segmentDrag,a=state.points[state.index],b=state.points[state.index+1],delta={x:event.clientX-state.start.x,y:event.clientY-state.start.y};if(!state.moved&&Math.abs(a.y===b.y?delta.y:delta.x)<4)return;state.moved=true;
+  function moveSegment(event:PointerEvent){if(!segmentDrag||segmentDrag.pointer!==event.pointerId)return;const state=segmentDrag,delta={x:event.clientX-state.start.x,y:event.clientY-state.start.y};
+    if(state.handleIndex!==undefined){if(!state.moved&&Math.hypot(delta.x,delta.y)<4)return;state.moved=true;const point=state.source.editor.wireRoutes?.find(route=>route.bindingId===state.bindingId)?.handles?.[state.handleIndex];if(!point)return;try{segmentPreview=validateWireEdit(profileMoveWireHandle({document:state.source,assignments:[]},state.bindingId,state.handleIndex,{x:point.x+delta.x/view.zoom,y:point.y+delta.y/view.zoom}).document,state.bindingId);segmentBlocked=false;layoutError='';}catch(error){segmentBlocked=true;layoutError=error instanceof Error?error.message:String(error);}return;}
+    const a=state.points[state.index],b=state.points[state.index+1];if(!state.moved&&Math.abs(a.y===b.y?delta.y:delta.x)<4)return;state.moved=true;
     try{segmentPreview=movedSegment(state.source,state.bindingId,state.points,state.index,{x:(a.x+b.x)/2+delta.x/view.zoom,y:(a.y+b.y)/2+delta.y/view.zoom});segmentBlocked=false;layoutError='';}catch(error){segmentBlocked=true;layoutError=error instanceof Error?error.message:String(error);}
   }
   function cancelSegment(){clearPendingMove();const pointer=segmentDrag?.pointer;segmentDrag=null;segmentPreview=null;segmentBlocked=false;layoutError='';if(pointer!==undefined&&stage?.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);}
@@ -225,7 +250,7 @@
   }
   function beginWire(event:PointerEvent,nodeId:string,direction:'input'|'output',portId?:string){
     if(readOnly||!connectBlocks||event.button!==0||direction==='input'&&inputState(nodeId,portId).full)return;event.stopPropagation();event.preventDefault();stage?.focus?.({preventScroll:true});suppressWireClick=false;wireRejectedId='';wireRejectedPort='';wireRejectedReason='';
-    const node=nodes.find(node=>node.id===nodeId)!;
+    clearConnectionClick();const node=nodes.find(node=>node.id===nodeId)!;
     wireTargetId='';wireTargetPort='';wire={nodeId,portId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:canvasNodeAnchor(node,direction,portId),moved:false};stage.setPointerCapture(event.pointerId);
   }
   function beginReconnect(event:PointerEvent,bindingId:string,side:'from'|'to'){
@@ -243,7 +268,7 @@
   function flushMove(){const latest=pendingMove;clearPendingMove();if(latest)move(latest);}
   function finish(event:PointerEvent,cancel=false) {
     if(cancel)clearPendingMove();else flushMove();
-    if(segmentDrag&&segmentDrag.pointer===event.pointerId){if(!cancel&&segmentDrag.moved&&segmentPreview&&!segmentBlocked)change(segmentPreview,'Move wire segment');cancelSegment();return;}
+    if(segmentDrag&&segmentDrag.pointer===event.pointerId){if(!cancel&&segmentDrag.moved&&segmentPreview&&!segmentBlocked)change(segmentPreview,segmentDrag.handleIndex===undefined?'Move wire segment':'Move reroute point');cancelSegment();return;}
     if(wire&&event.pointerId===wire.pointer){
       const pending=wire;let rejected=wireRejectedReason;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';suppressWireClick=true;
       if(!cancel){
@@ -270,7 +295,7 @@
     else view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});
   }
   function keyboard(event:KeyboardEvent) {
-    if(event.key==='Escape')clearPendingMove();if(segmentDrag&&event.key==='Escape'){event.preventDefault();cancelSegment();return;}
+    if(event.key==='Escape'){clearPendingMove();clearConnectionClick();}if(segmentDrag&&event.key==='Escape'){event.preventDefault();cancelSegment();return;}
     if(segmentDrag&&(event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase()))cancelSegment();
     if(event.key==='Escape'&&paletteDrag){clearPalettePreview();endPaletteDrag?.();return;}
     if(event.key==='Escape'&&wire){event.preventDefault();const pointer=wire.pointer;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';suppressWireClick=true;if(stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);return;}
@@ -311,7 +336,7 @@
       <div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button><output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output><button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div>
     </div>
   </div>
-  <p class="canvas-help" id="profile-canvas-help">Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.</p>
+  <p class="canvas-help" id="profile-canvas-help">Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. Double-click a wire to add a draggable reroute point; select a point and press Delete to remove it. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.</p>
   <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
     <div class="canvas-stage" class:node-dragging={!!dragged||!!groupPreview} class:wire-blocked={!!wireRejectedReason||segmentBlocked} class:segment-dragging={!!segmentDrag} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={scheduleMove} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
@@ -337,16 +362,21 @@
             {@const visibleLabel=selectedEdgeId===binding.id||hoveredEdgeId===binding.id}
             <path class="signal-edge" class:orthogonal={wireStyle==='orthogonal'} data-binding-id={binding.id} data-arrow-style={wireStyle} class:selected={selectedEdgeId===binding.id} class:drop-target={paletteConnectionId===binding.id} class:highlighted={highlightedEdges.includes(binding.id)} class:problem={route.customBlocked||diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(binding.id))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{portName(binding.from.nodeId,binding.from.portId,'output')} → {portName(binding.to.nodeId,binding.to.portId,'input')}</title></path>
             {#if selectConnection||editConnection||dropOnConnection}
-              <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Select connection ${binding.id}: ${binding.from.portId} to ${binding.to.portId}`} aria-pressed={selectedEdgeId===binding.id} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onpointerenter={()=>hoveredEdgeId=binding.id} onpointerleave={()=>hoveredEdgeId=''} onclick={()=>chooseConnection(binding.id)} onkeydown={event=>connectionKey(event,binding.id)}><title>Select to manage connection; drag an endpoint to reconnect</title></path>
+              <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Select connection ${binding.id}: ${binding.from.portId} to ${binding.to.portId}`} aria-pressed={selectedEdgeId===binding.id} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onpointerenter={()=>hoveredEdgeId=binding.id} onpointerleave={()=>hoveredEdgeId=''} onclick={event=>connectionClick(event,binding.id)} ondblclick={event=>addWireHandle(event,binding.id)} onkeydown={event=>connectionKey(event,binding.id)}><title>Select to manage connection; double-click to add a reroute point</title></path>
             {/if}
             {#if wireStyle==='orthogonal'&&selectedEdgeId===binding.id&&!readOnly}
               {#each route.points.slice(0,-1) as a,index (index)}
                 {@const b=route.points[index+1]}{@const horizontal=a.y===b.y}
                 {@const line=diagramSegmentLine(route.points,index,route.cornerRadius??cornerRadius)}
                 {#if line&&Math.hypot(line.end.x-line.start.x,line.end.y-line.start.y)>12}
-                  <path class="connection-segment" class:horizontal data-connection-id={binding.id} data-segment-binding={binding.id} data-segment-index={index} data-segment-axis={horizontal?'horizontal':'vertical'} d={`M${line.start.x},${line.start.y} L${line.end.x},${line.end.y}`} role="button" tabindex="0" aria-label={`Move ${horizontal?'horizontal':'vertical'} segment ${index+1} of ${binding.id}`} onpointerdown={event=>beginSegment(event,binding.id,index)} onclick={event=>event.stopPropagation()} onkeydown={event=>segmentKeyboard(event,binding.id,index)}><title>Drag to move this segment; arrow keys adjust it</title></path>
+                  <path class="connection-segment" class:horizontal data-connection-id={binding.id} data-segment-binding={binding.id} data-segment-index={index} data-segment-axis={horizontal?'horizontal':'vertical'} d={`M${line.start.x},${line.start.y} L${line.end.x},${line.end.y}`} role="button" tabindex="0" aria-label={`Move ${horizontal?'horizontal':'vertical'} segment ${index+1} of ${binding.id}`} onpointerdown={event=>beginSegment(event,binding.id,index)} onclick={event=>event.stopPropagation()} ondblclick={event=>addWireHandle(event,binding.id)} onkeydown={event=>segmentKeyboard(event,binding.id,index)}><title>Drag to move this segment; double-click to add a reroute point</title></path>
                   <circle class="segment-grip" cx={(line.start.x+line.end.x)/2} cy={(line.start.y+line.end.y)/2} r="3"/>
                 {/if}
+              {/each}
+            {/if}
+            {#if selectedEdgeId===binding.id&&!readOnly}
+              {#each routeHandles(binding.id,route.points) as handle (handle.index)}
+                <circle class="connection-reroute" data-reroute-binding={binding.id} data-reroute-index={handle.index} cx={handle.point.x} cy={handle.point.y} r="5" role="button" tabindex="0" aria-label={`Move reroute point ${handle.index+1} of ${binding.id}`} onpointerdown={event=>beginHandle(event,binding.id,handle.index)} onclick={event=>event.stopPropagation()} onkeydown={event=>handleKeyboard(event,binding.id,handle.index)}><title>Drag to reroute; arrow keys adjust; Delete removes this point</title></circle>
               {/each}
             {/if}
             {#if visibleLabel}
@@ -420,6 +450,7 @@
 </section>
 
 <style>
+  .connection-reroute{fill:var(--surface);stroke:var(--accent);stroke-width:2;pointer-events:all;cursor:move;outline:none!important}.connection-reroute:hover,.connection-reroute:focus-visible{fill:var(--accent);stroke:var(--text);outline:none!important}
   .signal-edge.orthogonal{stroke-linejoin:miter}
   .signal-edges,.signal-edge,.signal-edge-hit,.connection-segment{outline:none!important}.signal-edge-hit:focus,.signal-edge-hit:focus-visible,.connection-segment:focus,.connection-segment:focus-visible{outline:none!important}.connection-segment{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:14;cursor:ew-resize}.connection-segment.horizontal{cursor:ns-resize}.connection-segment:hover,.connection-segment:focus-visible{stroke:var(--accent);stroke-opacity:.2}.segment-grip{fill:var(--surface);stroke:var(--accent);stroke-width:1;pointer-events:none}.wire-drop-error{fill:#d3a078;font-size:11px;paint-order:stroke;stroke:var(--bg);stroke-width:4px;pointer-events:none}.canvas-stage.wire-blocked,.canvas-stage.wire-blocked :global(*){cursor:not-allowed!important}.canvas-stage.segment-dragging .connection-segment{stroke-opacity:.12}.transform-port.connection-unavailable,.block-port-groups button.connection-unavailable{cursor:not-allowed;opacity:.45}.transform-port.connection-unavailable .port-dot,.block-port-groups button.connection-unavailable .port-dot{background:var(--line);border-color:var(--muted)}.transform-port.connection-rejected,.block-port-groups button.connection-rejected{background:#d3a07822;box-shadow:inset 0 0 0 1px #d3a078;opacity:.75}
   .canvas-world .resource-block{overflow:visible}.block-heading{border-radius:8px 8px 0 0}.processing .transform-heading{height:52px;padding:9px 12px;gap:3px;border-bottom:0}.transform-heading strong{font-size:12px}.transform-heading .block-category{font-size:7px}.transform-summary{height:26px;flex-shrink:0;padding:0 12px;display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);box-sizing:border-box}.transform-summary>span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.transform-summary .pending{color:#c6a0e5}.transform-ports{position:absolute;left:-1px;right:-1px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);padding:0}.transform-port-column{min-width:0}.transform-port{position:relative;display:flex;align-items:center;box-sizing:border-box;height:var(--port-row);width:100%;min-width:0;padding:0 13px;border:0;border-radius:4px;background:transparent;color:var(--soft);font-size:10px;text-align:left;cursor:crosshair}.transform-port[data-connection-source]{justify-content:flex-end;text-align:right}.transform-port-name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.transform-port:hover:not(:disabled),.transform-port.connection-active{background:color-mix(in srgb,#b794d2 14%,transparent);color:var(--text)}.transform-port.connection-hover{background:color-mix(in srgb,#b794d2 26%,transparent)}.transform-port:focus-visible{outline:1px solid #b794d2;outline-offset:-2px}.transform-port:disabled{cursor:default;opacity:.55}.port-dot{position:absolute;top:50%;width:8px;height:8px;box-sizing:border-box;border:1px solid var(--accent);border-radius:50%;background:var(--surface);pointer-events:none;z-index:3}[data-connection-target]>.port-dot{left:-1px;transform:translate(-50%,-50%)}[data-connection-source]>.port-dot{right:-1px;transform:translate(50%,-50%)}.transform-port[data-connection-target]>.port-dot{left:0}.transform-port[data-connection-source]>.port-dot{right:0}.transform-port .port-dot{border-color:#c6a0e5}button.connection-active>.port-dot,button:hover:not(:disabled)>.port-dot{background:var(--accent)}.transform-port.connection-active>.port-dot,.transform-port:hover:not(:disabled)>.port-dot{background:#c6a0e5}.block-port-groups button:disabled:not(.connection-unavailable)>.port-dot{display:none}.block-port-groups button:first-child{border-radius:0 0 0 8px}.block-port-groups button:last-child{border-radius:0 0 8px 0}

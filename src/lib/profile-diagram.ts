@@ -1,5 +1,7 @@
 import type { DeepReadonly, ProfileBinding, ProfileWireRoute, ProfileWireStyle } from './profiles';
 import { profileAnchorWireRoute, profileWireCorners } from './profile-wire-layout';
+import { refineDiagramLanes } from './profile-diagram-lanes';
+export { diagramRouteQuality } from './profile-diagram-lanes';
 
 type Edge = DeepReadonly<Pick<ProfileBinding, 'from' | 'to'>>;
 export type DiagramPoint = { x:number; y:number };
@@ -56,8 +58,13 @@ export function diagramOrthogonalPath(points:readonly DiagramPoint[],cornerRadiu
 }
 
 type Cubic={start:DiagramPoint;first:DiagramPoint;second:DiagramPoint;end:DiagramPoint};
-function smoothCurves(points:readonly DiagramPoint[],maximumHandle=Infinity):Cubic[]{
-  points=profileWireCorners(points);
+function smoothCurves(points:readonly DiagramPoint[],maximumHandle=Infinity,preserved:readonly DiagramPoint[]=[]):Cubic[]{
+  const corners=profileWireCorners(points);
+  points=corners.flatMap((point,index)=>{
+    const next=corners[index+1];if(!next)return [point];
+    const interior=preserved.filter(handle=>((point.x===next.x&&handle.x===point.x&&handle.y>Math.min(point.y,next.y)&&handle.y<Math.max(point.y,next.y))||(point.y===next.y&&handle.y===point.y&&handle.x>Math.min(point.x,next.x)&&handle.x<Math.max(point.x,next.x)))).sort((a,b)=>(Math.abs(a.x-point.x)+Math.abs(a.y-point.y))-(Math.abs(b.x-point.x)+Math.abs(b.y-point.y)));
+    return [point,...interior];
+  });
   if(points.length<2)return [];
   const unit=(x:number,y:number)=>{const length=Math.hypot(x,y);return length?{x:x/length,y:y/length}:{x:1,y:0};};
   const tangents=points.map((point,index)=>{
@@ -76,9 +83,18 @@ function cubicPath(curves:readonly Cubic[],start?:DiagramPoint){
   if(!curves.length)return start?`M${start.x},${start.y}`:'';
   return `M${curves[0].start.x},${curves[0].start.y}`+curves.map(({first,second,end})=>` C${first.x},${first.y} ${second.x},${second.y} ${end.x},${end.y}`).join('');
 }
-/** Smooth mode uses Beziers throughout, with horizontal tangents at the ports. */
-export function diagramSmoothPath(points:readonly DiagramPoint[]) {
-  return cubicPath(smoothCurves(points),points[0]);
+function flowingCurves(points:readonly DiagramPoint[]):Cubic[]{
+  points=profileWireCorners(points);
+  if(points.length<3)return smoothCurves(points);
+  const middle=(a:DiagramPoint,b:DiagramPoint)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+  return points.slice(1,-1).map((corner,index)=>{
+    const start=index?middle(points[index],corner):points[0],end=index===points.length-3?points.at(-1)!:middle(corner,points[index+2]);
+    return {start,first:{x:start.x+(corner.x-start.x)*2/3,y:start.y+(corner.y-start.y)*2/3},second:{x:end.x+(corner.x-end.x)*2/3,y:end.y+(corner.y-end.y)*2/3},end};
+  });
+}
+/** Cheap previews share the flowing fit. Authored knots remain interpolated. */
+export function diagramSmoothPath(points:readonly DiagramPoint[],preserved:readonly DiagramPoint[]=[]) {
+  return cubicPath(preserved.length?smoothCurves(points,18,preserved):flowingCurves(points),points[0]);
 }
 
 function cubicCrossesBox(curve:Cubic,box:Box,depth=0):boolean {
@@ -90,6 +106,16 @@ function cubicCrossesBox(curve:Cubic,box:Box,depth=0):boolean {
   const middle=(a:DiagramPoint,b:DiagramPoint)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
   const a=middle(curve.start,curve.first),b=middle(curve.first,curve.second),c=middle(curve.second,curve.end),d=middle(a,b),e=middle(b,c),m=middle(d,e);
   return cubicCrossesBox({start:curve.start,first:a,second:d,end:m},box,depth+1)||cubicCrossesBox({start:m,first:e,second:c,end:curve.end},box,depth+1);
+}
+function smoothPathCrossesBoxes(path:string,boxes:readonly Box[]):boolean {
+  const values=path.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi)?.map(Number)??[];
+  let start={x:values[0],y:values[1]};
+  for(let index=2;index+5<values.length;index+=6){
+    const curve={start,first:{x:values[index],y:values[index+1]},second:{x:values[index+2],y:values[index+3]},end:{x:values[index+4],y:values[index+5]}};
+    if(boxes.some(box=>cubicCrossesBox(curve,box)))return true;
+    start=curve.end;
+  }
+  return false;
 }
 
 function arcCrossesBox(points:readonly DiagramPoint[],index:number,cornerRadius:number,box:Box){
@@ -181,7 +207,11 @@ function crosses(a:DiagramPoint,b:DiagramPoint,box:Box){
 }
 
 /** Shared compressed visibility grid; search only visits the channels an edge needs. */
-export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:DiagramRouteOptions={}){
+type DiagramRoute={binding:DeepReadonly<ProfileBinding>;points:DiagramPoint[];path:string;cornerRadius:number;manual:boolean;customBlocked:boolean};
+export function diagramRoutes(nodes:readonly DiagramNode[],bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:DiagramRouteOptions={}):DiagramRoute[]{
+  return routeDiagram(nodes,bindings,width,height,options);
+}
+function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:DiagramRouteOptions={},retained:readonly DiagramRoute[]=[]):DiagramRoute[]{
   const requestedRadius=Number.isFinite(options.cornerRadius)?Math.max(0,options.cornerRadius!):24;
   const expanded=options.style==='orthogonal'?Math.max(20,Math.ceil(requestedRadius*(1-Math.SQRT1_2))+1):20;
   const expandedBoxes=nodes.map(node=>({left:node.position.x-expanded,right:node.position.x+(node.width??width)+expanded,top:node.position.y-expanded,bottom:node.position.y+(node.height??height)+expanded}));
@@ -190,6 +220,7 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
   const crowded=expandedBoxes.some((a,index)=>expandedBoxes.slice(index+1).some(b=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top));
   const clearance=crowded?20:expanded,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
   const saved=new Map(options.wireRoutes?.map(route=>[route.bindingId,route.points])??[]);
+  const savedHandles=new Map(options.wireRoutes?.map(route=>[route.bindingId,('handles' in route?route.handles:[]) as readonly DiagramPoint[]])??[]);
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+(node.width??width)+clearance,top:node.position.y-clearance,bottom:node.position.y+(node.height??height)+clearance}));
   const manualBoxes=nodes.map(node=>({left:node.position.x-20,right:node.position.x+(node.width??width)+20,top:node.position.y-20,bottom:node.position.y+(node.height??height)+20}));
   const blockBoxes=nodes.map(node=>({left:node.position.x,right:node.position.x+(node.width??width),top:node.position.y,bottom:node.position.y+(node.height??height)}));
@@ -201,22 +232,37 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
     const cornerRadius=options.style==='orthogonal'?clearCornerRadius(points,requestedRadius,blockBoxes):requestedRadius;
     if(options.style==='orthogonal')return {path:diagramOrthogonalPath(points,cornerRadius),cornerRadius};
     const safe=(curves:Cubic[])=>!curves.some(curve=>blockBoxes.some(box=>cubicCrossesBox(curve,box)));
-    if(!manual){
-      const start=points[0],end=points.at(-1)!,rank=parallel.get(`${binding.from.nodeId}\0${binding.to.nodeId}`)!.indexOf(binding.id);
-      const offset=rank?Math.ceil(rank/2)*24*(rank%2?1:-1):0;
-      const direct=smoothCurves(offset?[start,{x:(start.x+end.x)/2,y:(start.y+end.y)/2+offset},end]:[start,end]);
-      if(safe(direct))return {path:cubicPath(direct),cornerRadius};
-    }
     // The router's clear channels guide a continuously curved detour. Constrain
-    // control handles when necessary so a spline cannot cut across a block.
-    let curves=smoothCurves(points);
-    for(const limit of [15,7.5,3.75,.5]){if(safe(curves))break;curves=smoothCurves(points,limit);}
+    // the control polygon to the assigned lane instead of replacing it with a
+    // direct shortcut that silently loses spacing between nearby connections.
+    const handles=manual?savedHandles.get(binding.id)??[]:[];
+    if(!manual){const flowing=flowingCurves(points);if(safe(flowing))return {path:cubicPath(flowing),cornerRadius};}
+    let curves=smoothCurves(points,18,handles);
+    for(const limit of [9,4.5,1,.1]){if(safe(curves))break;curves=smoothCurves(points,limit,handles);}
     return {path:cubicPath(curves),cornerRadius};
   }
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
   for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:from.outputAnchors?.[binding.from.portId]??diagramPortAnchor(from.position,'output',from.width??width,from.height??height),end:to.inputAnchors?.[binding.to.portId]??diagramPortAnchor(to.position,'input',to.width??width,to.height??height)});}
+  const fan=new Map<string,{departure:DiagramPoint[];arrival:DiagramPoint[]}>();
+  const endpointGroups=new Map<string,DeepReadonly<ProfileBinding>[]>();
+  for(const binding of valid)for(const direction of ['start','end'] as const){const point=anchors.get(binding.id)![direction],key=`${direction}:${point.x}:${point.y}`,group=endpointGroups.get(key)??[];group.push(binding);endpointGroups.set(key,group);}
+  for(const binding of valid){const {start,end}=anchors.get(binding.id)!;fan.set(binding.id,{departure:[start,{x:start.x+clearance,y:start.y}],arrival:[{x:end.x-clearance,y:end.y},end]});}
+  for(const [key,group]of endpointGroups){
+    if(group.length<2)continue;
+    const outgoing=key.startsWith('start:'),opposite=outgoing?'end':'start';
+    group.sort((a,b)=>{const ap=anchors.get(a.id)![opposite],bp=anchors.get(b.id)![opposite];return ap.y-bp.y||ap.x-bp.x||a.id.localeCompare(b.id);});
+    for(let index=0;index<group.length;index++){
+      const binding=group[index],anchor=anchors.get(binding.id)![outgoing?'start':'end'],offset=index-(group.length-1)/2;
+      const reach=clearance+Math.min(48,Math.max(0,(group.length-1)/2-Math.abs(offset))*6),x=anchor.x+(outgoing?reach:-reach),shifted={x,y:anchor.y+offset*12};
+      const candidate=outgoing?[anchor,{x,y:anchor.y},shifted]:[shifted,{x,y:anchor.y},anchor];
+      // Tight saved layouts may not have room for an entire fan. Keep their
+      // ordinary departure when a fan would collide with any expanded block.
+      if(candidate.slice(1).every((point,i)=>boxes.every((box,nodeIndex)=>(nodes[nodeIndex].id===(outgoing?binding.from.nodeId:binding.to.nodeId)&&i===(outgoing?0:candidate.length-2))||!crosses(candidate[i],point,box))))fan.get(binding.id)![outgoing?'departure':'arrival']=candidate;
+    }
+  }
   const xs=new Set([...boxes.flatMap(box=>[box.left,box.right]),...[...anchors.values()].flatMap(pair=>[pair.start.x+clearance,pair.end.x-clearance])]);
   const ys=new Set([...boxes.flatMap(box=>[box.top,box.bottom]),...[...anchors.values()].flatMap(pair=>[pair.start.y,pair.end.y])]);
+  for(const {departure,arrival}of fan.values())for(const point of [...departure,...arrival]){xs.add(point.x);ys.add(point.y);}
   const corridorXs=[...xs].sort((a,b)=>a-b),corridorYs=[...ys].sort((a,b)=>a-b);
   const segmentCache=new Map<string,boolean>();
   type Interval={start:number;end:number};
@@ -264,7 +310,7 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
         const tracks=axis===1?vertical:horizontal,low=Math.min(axis===1?a.x:a.y,axis===1?b.x:b.y),high=Math.max(axis===1?a.x:a.y,axis===1?b.x:b.y);
         let crossings=0;
         for(const [coordinate,segments]of tracks)if(coordinate>low&&coordinate<high&&segments.some(segment=>{const at=axis===1?a.y:a.x;return at>segment.start&&at<segment.end;}))crossings++;
-        cost+=crossings*80;
+        cost+=crossings*3200;
         direction=axis;
         if(cost>=bestCost)return;
       }
@@ -320,24 +366,30 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
         const reuse=axis===2&&direction!==2&&vertical.has(p.x)?256:0;
         // Sharing the exact footer is intentional. Elsewhere prefer distinct lanes,
         // while allowing a short shared trunk when crowded layouts require one.
-        const key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction!==axis?16:0)+(next===target&&axis===2?16:0)+reuse+(crossing?80:0)+overlap(p,q)*6;
+        const key=next*3+axis,cost=current.cost+Math.abs(p.x-q.x)+Math.abs(p.y-q.y)+(direction!==axis?16:0)+(next===target&&axis===2?16:0)+reuse+(crossing?3200:0)+overlap(p,q)*6;
         if(cost>=(costs.get(key)??Infinity))continue;
         costs.set(key,cost);parent.set(key,current.key);const remaining=distance(next);push({key,cost,estimate:cost+remaining,remaining});
       }
     }
     return [];
   }
+  // Previously planned, unaffected routes reserve their lanes first. This keeps
+  // unrelated parts of a diagram still when one block is moved.
+  const retainedById=new Map(retained.map(route=>[route.binding.id,route]));
+  for(const previous of retained)reserve(previous.points);
   // Short connections claim their compact paths first; longer ones use free lanes.
   const span=(binding:DeepReadonly<ProfileBinding>)=>{const {start,end}=anchors.get(binding.id)!;return Math.abs(start.x-end.x)+Math.abs(start.y-end.y);};
   const routed=[...valid].sort((a,b)=>Number(saved.has(b.id))-Number(saved.has(a.id))||span(a)-span(b)||a.id.localeCompare(b.id)).flatMap(binding=>{
     const {start,end}=anchors.get(binding.id)!;
-    const custom=saved.get(binding.id),authored=custom?profileAnchorWireRoute(custom,start,end):[];
+    const previous=retainedById.get(binding.id);if(previous)return [{...previous,binding}];
+    const custom=saved.get(binding.id),authored=custom?profileAnchorWireRoute(custom,start,end,savedHandles.get(binding.id)):[];
     // Manual bends are retained while their channels are clear. A newly moved
     // block may cover a lane; use the safe automatic route until it clears.
     const horizontalLeads=authored.length>=2&&authored[1].y===start.y&&authored[1].x>start.x&&authored.at(-2)!.y===end.y&&authored.at(-2)!.x<end.x;
     const customBlocked=!!custom&&(!horizontalLeads||authored.some((point,index)=>index>0&&manualBoxes.some((box,nodeIndex)=>!(index===1&&nodes[nodeIndex].id===binding.from.nodeId)&&!(index===authored.length-1&&nodes[nodeIndex].id===binding.to.nodeId)&&crosses(authored[index-1],point,box))));
-    if(authored.length&&!customBlocked){reserve(authored);return[{binding,points:authored,...pathFor(authored,binding,true),manual:true,customBlocked:false}];}
-    const exit={x:start.x+clearance,y:start.y},entry={x:end.x-clearance,y:end.y};
+    if(authored.length&&!customBlocked){reserve(authored);return[{binding,points:authored,path:'',cornerRadius:requestedRadius,manual:true,customBlocked:false}];}
+    const {departure,arrival}=fan.get(binding.id)!;
+    const exit=departure.at(-1)!,entry=arrival[0];
     // Moving one block can bury a port's departure or arrival in another
     // obstacle. Every visibility-grid step would then cross that obstacle;
     // subdividing the grid cannot create a route. Reject it before a futile
@@ -355,15 +407,29 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
       }
       channel=route(exit,entry);
     }
-    const points=[start,...channel,end];
+    const points=[...departure.slice(0,-1),...channel,...arrival.slice(1)];
     // Overlapping manually placed blocks can enclose a port completely. Never draw
     // an invented direct line through those blocks when there is no visible route.
-    if(points.length===2)return[];
-    const corners=points.filter((p,index)=>!index||index===points.length-1||!((points[index-1].x===p.x&&p.x===points[index+1].x)||(points[index-1].y===p.y&&p.y===points[index+1].y)));
+    if(!channel.length)return[];
+    const corners=profileWireCorners(points);
     reserve(corners);
-    return[{binding,points:corners,...pathFor(corners,binding),manual:false,customBlocked}];
+    return[{binding,points:corners,path:'',cornerRadius:requestedRadius,manual:false,customBlocked}];
   });
-  const byBinding=new Map(routed.map(route=>[route.binding.id,route]));
+  const clearRoute=(route:DiagramRoute,points:DiagramPoint[])=>points.slice(1).every((point,index)=>{
+    const previous=points[index];if(previous.x===point.x&&previous.y===point.y||previous.x!==point.x&&previous.y!==point.y)return false;
+    // Keep the direction of every lane, including its short port leads. A
+    // nudge cannot create a reversal or hide a newly introduced self-loop.
+    const originalA=route.points[index],originalB=route.points[index+1];
+    if(Math.sign(point.x-previous.x)!==Math.sign(originalB.x-originalA.x)||Math.sign(point.y-previous.y)!==Math.sign(originalB.y-originalA.y))return false;
+    return manualBoxes.every((box,nodeIndex)=>((index===0&&nodes[nodeIndex].id===route.binding.from.nodeId)||(index===points.length-2&&nodes[nodeIndex].id===route.binding.to.nodeId))||!crosses(previous,point,box));
+  });
+  // Retained geometry is immutable during incremental repair. Its lanes still
+  // participate in congestion costs, but only affected routes may be refined.
+  const refined=refineDiagramLanes(routed.map(route=>retainedById.has(route.binding.id)?{...route,manual:true}:route),clearRoute);
+  const byBinding=new Map(refined.map(route=>{
+    const previous=retainedById.get(route.binding.id);if(previous)return[route.binding.id,{...previous,binding:route.binding}];
+    return[route.binding.id,{...route,...pathFor(route.points,route.binding,route.manual)}];
+  }));
   return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
 }
 
@@ -372,16 +438,49 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
  * or undoing a move can reuse geometry without retaining an entire workspace.
  */
 export function createDiagramRouter(maxEntries=4):typeof diagramRoutes {
-  const cache=new Map<string,ReturnType<typeof diagramRoutes>>(),limit=Math.max(1,Math.min(16,Math.floor(maxEntries)||1));
+  type EndpointKeys={start:string;end:string};
+  type Snapshot={routes:DiagramRoute[];settings:string;nodes:Map<string,{key:string;box:Box}>;bindings:Map<string,string>;endpoints:Map<string,EndpointKeys>};
+  const cache=new Map<string,Snapshot>(),limit=Math.max(1,Math.min(16,Math.floor(maxEntries)||1));
+  let latest:Snapshot|undefined;
   return (nodes,bindings,width,height,options={})=>{
-    const key=JSON.stringify([width,height,options.style??'smooth',options.cornerRadius??24,nodes.map(node=>[node.id,node.position.x,node.position.y,node.width??width,node.height??height,node.inputAnchors,node.outputAnchors]),bindings.map(binding=>[binding.id,binding.from.nodeId,binding.from.portId,binding.to.nodeId,binding.to.portId]),options.wireRoutes]);
+    const settings=JSON.stringify([width,height,options.style??'smooth',options.cornerRadius??24,options.wireRoutes]);
+    const nodeKeys=nodes.map(node=>[node.id,node.position.x,node.position.y,node.width??width,node.height??height,node.inputAnchors,node.outputAnchors]);
+    const bindingKeys=bindings.map(binding=>[binding.id,binding.from.nodeId,binding.from.portId,binding.to.nodeId,binding.to.portId]);
+    const key=JSON.stringify([settings,nodeKeys,bindingKeys]);
     const previous=cache.get(key);
     if(previous){
       const byId=new Map(bindings.map(binding=>[binding.id,binding]));
-      const routes=previous.some(route=>route.binding!==byId.get(route.binding.id))?previous.map(route=>({...route,binding:byId.get(route.binding.id)!})):previous;
-      cache.delete(key);cache.set(key,routes);return routes;
+      const routes=previous.routes.some(route=>route.binding!==byId.get(route.binding.id))?previous.routes.map(route=>({...route,binding:byId.get(route.binding.id)!})):previous.routes;
+      const snapshot={...previous,routes};latest=snapshot;cache.delete(key);cache.set(key,snapshot);return routes;
     }
-    const routes=diagramRoutes(nodes,bindings,width,height,options);cache.set(key,routes);
+    const currentNodes=new Map(nodes.map((node,index)=>[node.id,{key:JSON.stringify(nodeKeys[index]),box:{left:node.position.x-40,right:node.position.x+(node.width??width)+40,top:node.position.y-40,bottom:node.position.y+(node.height??height)+40}}]));
+    const currentBindings=new Map(bindings.map((binding,index)=>[binding.id,JSON.stringify(bindingKeys[index])]));
+    const byNodeId=new Map(nodes.map(node=>[node.id,node]));
+    const currentEndpoints=new Map<string,EndpointKeys>();
+    for(const binding of bindings){
+      const from=byNodeId.get(binding.from.nodeId),to=byNodeId.get(binding.to.nodeId);if(!from||!to)continue;
+      const start=from.outputAnchors?.[binding.from.portId]??diagramPortAnchor(from.position,'output',from.width??width,from.height??height),end=to.inputAnchors?.[binding.to.portId]??diagramPortAnchor(to.position,'input',to.width??width,to.height??height);
+      currentEndpoints.set(binding.id,{start:`output:${start.x}:${start.y}`,end:`input:${end.x}:${end.y}`});
+    }
+    let retained:DiagramRoute[]=[];
+    if(latest?.settings===settings){
+      const changed=new Set([...currentNodes.keys(),...latest.nodes.keys()].filter(id=>currentNodes.get(id)?.key!==latest!.nodes.get(id)?.key));
+      const affected=[...changed].flatMap(id=>[currentNodes.get(id)?.box,latest!.nodes.get(id)?.box].filter((box):box is Box=>!!box));
+      // A new or reconnected signal changes the ordered fan of every signal
+      // using its physical attachments. Retaining the former single centerline
+      // would leave it covered by the new fan's wider pointer hit area. Resource
+      // ports intentionally share one attachment, even with different port IDs.
+      const changedFans=new Set<string>();
+      for(const id of new Set([...currentBindings.keys(),...latest.bindings.keys()]))if(currentBindings.get(id)!==latest.bindings.get(id)){
+        for(const endpoints of [currentEndpoints.get(id),latest.endpoints.get(id)])if(endpoints){changedFans.add(endpoints.start);changedFans.add(endpoints.end);}
+      }
+      retained=latest.routes.filter(route=>{
+        const endpoints=currentEndpoints.get(route.binding.id);
+        return !(route.customBlocked&&changed.size)&&!!endpoints&&!changedFans.has(endpoints.start)&&!changedFans.has(endpoints.end)&&currentBindings.get(route.binding.id)===latest!.bindings.get(route.binding.id)&&!changed.has(route.binding.from.nodeId)&&!changed.has(route.binding.to.nodeId)&&!route.points.slice(1).some((point,index)=>affected.some(box=>crosses(route.points[index],point,box)))&&(options.style==='orthogonal'||!smoothPathCrossesBoxes(route.path,affected));
+      });
+    }
+    const routes=routeDiagram(nodes,bindings,width,height,options,retained);
+    const snapshot={routes,settings,nodes:currentNodes,bindings:currentBindings,endpoints:currentEndpoints};latest=snapshot;cache.set(key,snapshot);
     if(cache.size>limit)cache.delete(cache.keys().next().value!);
     return routes;
   };

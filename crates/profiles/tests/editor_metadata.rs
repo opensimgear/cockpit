@@ -133,7 +133,7 @@ fn arrow_style_and_authored_paths_roundtrip_without_changing_execution_identity(
     changed.editor.arrow_style=Some(EditorArrowStyle::Orthogonal);
     changed.editor.wire_routes=vec![EditorWireRoute{binding_id:changed.bindings[0].id.clone(),points:vec![
         EditorWirePoint{x:100.0,y:80.0},EditorWirePoint{x:250.0,y:80.0},EditorWirePoint{x:250.0,y:380.0},EditorWirePoint{x:500.0,y:380.0},
-    ]}];
+    ],handles:vec![EditorWirePoint{x:250.0,y:200.0}]}];
     assert_eq!(changed.semantic_hash().unwrap(),original.semantic_hash().unwrap());
     assert_eq!(ProfileDocument::parse(&changed.export().unwrap()).unwrap(),changed);
     let mut value=serde_json::to_value(&changed).unwrap();
@@ -152,6 +152,11 @@ fn arrow_style_and_authored_paths_roundtrip_without_changing_execution_identity(
     value=valid.clone();value["editor"]["wireRoutes"]=json!([valid["editor"]["wireRoutes"][0],valid["editor"]["wireRoutes"][0]]);rejected(&value);
     value=valid.clone();value["editor"]["wireRoutes"][0]["points"]=json!((0..129).map(|x|json!({"x":x,"y":0})).collect::<Vec<_>>());
     rejected(&value);assert!(ProfileDocument::parse_draft(&serde_json::to_vec(&value).unwrap()).is_err());
+    for handles in [Value::Null,json!([{"x":200,"y":200}]),json!([{"x":250,"y":200},{"x":250,"y":200}]),json!([{"x":250,"y":200,"z":0}])] {
+        value=valid.clone();value["editor"]["wireRoutes"][0]["handles"]=handles;rejected(&value);
+    }
+    value=valid.clone();value["editor"]["wireRoutes"][0]["handles"]=json!((0..33).map(|index|json!({"x":250,"y":100+index})).collect::<Vec<_>>());
+    rejected(&value);assert!(ProfileDocument::parse_draft(&serde_json::to_vec(&value).unwrap()).is_err());
     value=valid;value["editor"]["wireRoutes"]=json!(vec![value["editor"]["wireRoutes"][0].clone();513]);
     rejected(&value);assert!(ProfileDocument::parse_draft(&serde_json::to_vec(&value).unwrap()).is_err());
 }
@@ -161,7 +166,7 @@ fn saved_wire_layout_preserves_exact_metadata_across_service_restart() {
     let directory=tempfile::tempdir().unwrap();
     let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));
     let mut graph=decorated();graph.editor.arrow_style=Some(EditorArrowStyle::Smooth);
-    graph.editor.wire_routes=vec![EditorWireRoute{binding_id:graph.bindings[0].id.clone(),points:vec![EditorWirePoint{x:0.0,y:0.0},EditorWirePoint{x:100.0,y:0.0}]}];
+    graph.editor.wire_routes=vec![EditorWireRoute{binding_id:graph.bindings[0].id.clone(),points:vec![EditorWirePoint{x:0.0,y:0.0},EditorWirePoint{x:100.0,y:0.0}],handles:vec![EditorWirePoint{x:50.0,y:0.0}]}];
     let saved=service.request(&json!({"command":"profile_editor_save","document":graph,"assignments":[],"expectedRevision":null})).unwrap();
     drop(service);
     let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));
