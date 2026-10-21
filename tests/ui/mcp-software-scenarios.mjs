@@ -113,7 +113,7 @@ export async function softwareScenarios({ page, writer, connect, endpoint, token
     assert.equal(nativeCompile.readiness, prepared.compilation.readiness); assert.equal(nativeCompile.programHash, prepared.compilation.programHash);
     const trace = await ok(writer, 'compilation_inspect', { compilationId: nativeCompile.compilationId, section: 'nodes', offset: 0, limit: 64 });
     for (const node of graphNodes) assert.ok(JSON.stringify(trace.items).includes(node.id), `Native compiler trace is missing ${node.id}`);
-    report.graph = { profileId: graph.id, processingNodes: graphNodes.length, bindings: graphEdges.length, readiness: nativeCompile.readiness, nativeSavedAgrees: true, nativeCompilerAgrees: true, outputActivationRequested: false };
+    report.graph = { profileId: graph.id, processingNodes: graphNodes.length, bindings: graphEdges.length, readiness: nativeCompile.readiness, nativeSavedAgrees: true, nativeCompilerAgrees: true, hardwareOutputActivationRequested: false };
 
     // Independently authenticated clients prepare at the same revision, then
     // submit real concurrent saves. Native persistence must admit exactly one.
@@ -131,6 +131,23 @@ export async function softwareScenarios({ page, writer, connect, endpoint, token
     assert.deepEqual((await page.native({ command: 'profile_get', id: graph.id })).profiles.document, afterRace.document);
     report.concurrentWriters = { independentCredentials: true, submitted: 2, committed: 1, conflicts: 1, conflictCode: loser.error.code, revisionAdvancedBy: 1, nativeAndBothClientsAgree: true };
     report.graph.editor = await showGraph(page, afterRace.document.name, graphNodes, graphEdges);
+    assert.equal((await ok(writer, 'profile_status')).profileSession.owner, null);
+    // Apply the software-only graph through the real coordinator and inspect
+    // its computed ports; it declares no hardware, controller or desktop output.
+    try {
+      await ok(writer, 'profile_apply', mutation({ id: graph.id, expectedRevision: afterRace.document.revision, expectedActiveOwner: null }));
+      const owner = (await ok(writer, 'profile_status')).profileSession.owner;
+      assert.equal(owner.profileId, graph.id); assert.equal(owner.profileRevision, afterRace.document.revision);
+      assert.deepEqual((await page.native({ command: 'profile_status' })).profiles.profileSession.owner, owner);
+      const inspected = await until(async () => {
+        const page = await ok(writer, 'applied_ports_inspect', { owner, nodeId: 'mcp-not-second', limit: 8 });
+        return page.ports.some(port => port.endpoint.portId === 'out' && port.sample?.value?.value === true) && page;
+      }, 'Applied constant / NOT / NOT graph did not compute its expected output');
+      assert.ok(inspected.ports.some(port => port.endpoint.portId === 'in' && port.sample?.value?.value === false));
+      report.graph.runtime = { appliedExactRevision: owner.profileRevision, nativeOwnerAgrees: true, secondNotInput: false, secondNotOutput: true, hardwareOutputsDeclared: 0 };
+    } finally {
+      await ok(writer, 'profile_stop', mutation({}));
+    }
     assert.equal((await ok(writer, 'profile_status')).profileSession.owner, null);
 
     // Change an ordinary validated connection preference, without starting a
