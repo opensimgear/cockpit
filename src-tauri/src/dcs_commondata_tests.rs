@@ -47,6 +47,18 @@ fn rows() -> Vec<Value> {
     vec![json!({"id":"aircraft/altitude","channel":"common:CommonData:ALT_MSL_FT","output":0})]
 }
 
+#[test]
+fn explicit_base_catalogue_contains_only_read_only_commondata_and_keeps_aircraft_authority_exact() {
+    let fixture = Fixture::new();
+    let catalogue = resource_catalogue(&json!({"cataloguePath":fixture.0.path(),"aircraftModule":"CommonData"})).unwrap();
+    let controls = catalogue["controls"].as_array().unwrap();
+    assert!(!controls.is_empty());
+    assert!(controls.iter().all(|control| control["sourceModule"] == "CommonData" && control["inputs"] == json!([])));
+    let (_, _, metadata) = guarded_telemetry_sources(fixture.0.path(), "CommonData", &rows(), catalogue["sourceRevision"].as_str().unwrap()).unwrap();
+    assert_eq!(metadata.aircraft_names, HashSet::from(["A-10C".into()]));
+    assert_eq!(fixture.capture().metadata.aircraft_names, HashSet::from(["A-10C".into(), "A-10C_2".into()]));
+}
+
 fn assert_mh6_commondata_only(path: &Path) {
     // The repo example registers a genuine empty read-only module. Its official
     // JSON writer emits this object and adds only this exact aircraft alias.
@@ -238,8 +250,23 @@ fn only_alias_authorized_common_outputs_are_namespaced_and_legacy_commands_are_u
         &fixture.capture().revision
     )
     .is_err());
-    assert!(TelemetryCatalogue::load(fixture.0.path(), "CommonData").is_err());
+    assert!(TelemetryCatalogue::load(fixture.0.path(), "CommonData").unwrap().metadata.aircraft_names.is_empty());
     assert!(TelemetryCatalogue::load(fixture.0.path(), "../A-10C").is_err());
+}
+
+#[test]
+fn aircraft_variants_without_a_self_named_alias_capture_own_controls_and_commondata() {
+    let fixture = Fixture::new();
+    fs::copy(fixture.0.path().join("A-10C.json"), fixture.0.path().join("F-14.json")).unwrap();
+    fixture.edit("AircraftAliases.json", |aliases| {
+        aliases["F-14A-135-GR"] = json!(["CommonData", "F-14", "NS430"]);
+        aliases["F-14B"] = json!(["CommonData", "F-14", "NS430"]);
+    });
+    let capture = TelemetryCatalogue::load(fixture.0.path(), "F-14").unwrap();
+    assert!(capture.common.is_some());
+    assert_eq!(capture.metadata.aircraft_names, HashSet::from(["F-14A-135-GR".into(), "F-14B".into()]));
+    let catalogue = resource_catalogue(&json!({"cataloguePath":fixture.0.path(),"aircraftModule":"F-14"})).unwrap();
+    assert!(catalogue["controls"].as_array().unwrap().iter().any(|control|control["sourceModule"] == "CommonData"));
 }
 
 #[test]

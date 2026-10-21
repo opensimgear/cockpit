@@ -42,6 +42,7 @@ fn prepared(id: &str, connection: Value, catalogue: Value) -> PreparedGame {
             },
             provider_setup_revision: format!("sha256:{}", "a".repeat(64)),
             catalogue_revision: format!("sha256:{}", "b".repeat(64)),
+            vehicle_id: None,
         },
         connection,
         catalogue,
@@ -195,6 +196,7 @@ fn authorize(source: &mut GameSources) {
         process: proof.process.clone(),
         provider_setup_revision: proof.provider_setup_revision.clone(),
         catalogue_revision: proof.catalogue_revision.clone(),
+        vehicle_id: proof.vehicle_id.clone(),
     });
 }
 fn effect(port: &PortDescriptor, sequence: u64) -> Effect {
@@ -266,6 +268,59 @@ fn dcs_uses_actual_catalogue_decoder_and_never_promotes_first_or_frozen_counter(
             .writable
     );
     assert!(!fixture.folder.path().join("integration.json").exists());
+}
+#[test]
+fn dcs_delivery_keeps_base_and_aircraft_resources_separate_and_excludes_other_modules() {
+    let mut fixture = Dcs::new();
+    fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios/CommonData-altitude.json"), fixture.folder.path().join("CommonData.json")).unwrap();
+    let aliases_path = fixture.folder.path().join("AircraftAliases.json");
+    let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+    aliases["A-10C"].as_array_mut().unwrap().push(json!("CommonData"));
+    fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+    fixture.game.catalogue = crate::dcs_profile::resource_catalogue(&json!({"cataloguePath":fixture.folder.path(),"aircraftModule":"A-10C"})).unwrap();
+    let base_port = crate::profile_resource_ports::integration(&fixture.game.catalogue).unwrap().into_iter()
+        .find(|port| port.id == "channel:common:CommonData:ALT_MSL_FT:0").unwrap();
+    let module_attributes = BTreeMap::from([
+        ("gameId".into(), "dcs".into()),
+        ("aircraftModule".into(), "A-10C".into()),
+        ("catalogueRevision".into(), fixture.game.proof.catalogue_revision.clone()),
+    ]);
+    fixture.plan.sources[0].route.as_mut().unwrap().attributes = module_attributes.clone();
+    fixture.plan.sinks[0].route.as_mut().unwrap().attributes = module_attributes;
+    let mut other = fixture.plan.sources[0].clone();
+    other.endpoint.node_id = "other-aircraft".into();
+    other.route.as_mut().unwrap().attributes.insert("aircraftModule".into(), "F-16C_50".into());
+    fixture.plan.sources.push(other);
+    source(&mut fixture.plan, "dcs", &base_port);
+    let base = fixture.plan.sources.last_mut().unwrap();
+    base.endpoint.node_id = "base".into();
+    let base_revision = format!("sha256:{}", "c".repeat(64));
+    base.route.as_mut().unwrap().attributes = BTreeMap::from([
+        ("gameId".into(), "dcs".into()),
+        ("aircraftModule".into(), "CommonData".into()),
+        ("catalogueRevision".into(), base_revision.clone()),
+    ]);
+    let mut reader = fixture.sources();
+    reader.acquired = true;
+    assert!(!reader.sources.contains_key("other-aircraft"));
+    feed(&mut reader, 1, true, 0);
+    assert!(feed(&mut reader, 2, true, 10_000).fresh);
+    authorize(&mut reader);
+    let batch = reader.delivery_batch().unwrap();
+    batch.validate().unwrap();
+    assert_eq!(batch.scope, "profile-game:dcs");
+    assert_eq!(batch.observations.len(), 2);
+    let base = batch.observations.iter().find(|item| item.key == "dcs").unwrap();
+    assert_eq!(base.attributes["aircraftModule"], "CommonData");
+    assert_eq!(base.attributes["catalogueRevision"], base_revision);
+    assert_eq!(base.ports.as_ref().unwrap().ports, vec![base_port]);
+    assert!(!base.route.as_ref().unwrap().writable);
+    assert_eq!(base.route.as_ref().unwrap().id, "profile-game:dcs");
+    let aircraft = batch.observations.iter().find(|item| item.key == "dcs:A-10C").unwrap();
+    assert_eq!(aircraft.attributes["catalogueRevision"], fixture.game.proof.catalogue_revision);
+    assert_eq!(aircraft.ports.as_ref().unwrap().ports.len(), 2);
+    assert!(aircraft.route.as_ref().unwrap().writable);
+    assert_eq!(aircraft.route.as_ref().unwrap().id, "profile-game:dcs:A-10C");
 }
 #[test]
 fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frames() {

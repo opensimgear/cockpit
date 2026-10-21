@@ -6,10 +6,19 @@ use osg_profiles::{
     resources::{EvidenceKind, ResourceType, Transport},
 };
 
-pub(super) fn game_metadata_valid(item: &Observation, game: &str) -> bool {
-    item.key == game
+fn catalogue_game(key: &str) -> Option<&str> {
+    if matches!(key, "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12") { return Some(key); }
+    key.strip_prefix("dcs:").filter(|module| !module.is_empty() && module.trim()==*module && module.len() <= 63
+        && module.bytes().all(|byte|byte.is_ascii_alphanumeric() || b"_- ".contains(&byte))).map(|_|"dcs")
+}
+pub(super) fn game_metadata_valid(item: &Observation, key: &str) -> bool {
+    let Some(game)=catalogue_game(key) else{return false;};
+    item.key == key
         && item.resource_type == ResourceType::GameIntegration
         && item.attributes.get("gameId").map(String::as_str) == Some(game)
+        && (key == game || item.attributes.get("aircraftModule").map(String::as_str) == key.strip_prefix("dcs:"))
+        && (item.attributes.get("aircraftModule").map(String::as_str) != Some("CommonData")
+            || item.ports.as_ref().is_some_and(|ports|ports.ports.iter().all(|port|port.direction==osg_profiles::Direction::Output)))
         && item.attributes.get("processVerified").map(String::as_str) == Some("true")
         && matches!(
             item.attributes.get("gameContextStatus").map(String::as_str),
@@ -21,9 +30,9 @@ pub(super) fn game_metadata_valid(item: &Observation, game: &str) -> bool {
         && item
             .evidence
             .iter()
-            .any(|e| e.kind == EvidenceKind::GameScope && e.value == game)
+            .any(|e| e.kind == EvidenceKind::GameScope && e.value == key)
         && item.route.as_ref().is_some_and(|r| {
-            r.id == format!("game:{game}")
+            r.id == format!("game:{key}")
                 && r.transport == Transport::Integration
                 && !r.baseline_ready
                 && !r.writable
@@ -34,21 +43,24 @@ pub(super) fn game_metadata_valid(item: &Observation, game: &str) -> bool {
             .is_some_and(|p| p.complete && p.validate().is_ok())
 }
 
-pub(super) fn validate_game_delivery(
+#[cfg(test)]
+fn validate_game_delivery(
     batch: &ProviderBatch,
     metadata: &Observation,
 ) -> Result<(), String> {
     batch.validate()?;
-    let game = metadata.key.as_str();
-    if !game_metadata_valid(metadata, game)
-        || batch.scope != format!("profile-game:{game}")
-        || !batch.complete
-        || batch.observations.len() != 1
-    {
+    if !batch.complete || batch.observations.len()!=1 {
         return Err("Fresh game delivery requires one complete native game observation and current verified metadata.".into());
     }
-    let item = &batch.observations[0];
-    if item.key != game
+    validate_game_item(batch,&batch.observations[0],metadata)
+}
+fn validate_game_item(batch:&ProviderBatch,item:&Observation,metadata:&Observation)->Result<(),String>{
+    let key=metadata.key.as_str();
+    let game=catalogue_game(key).ok_or("Unknown game catalogue scope.")?;
+    if !game_metadata_valid(metadata,key) || batch.scope!=format!("profile-game:{game}") {
+        return Err("Game delivery requires current verified metadata for its exact native module.".into());
+    }
+    if item.key != key
         || item.resource_type != ResourceType::GameIntegration
         || item.evidence != metadata.evidence
         || item.attributes.get("gameId") != metadata.attributes.get("gameId")
@@ -57,7 +69,7 @@ pub(super) fn validate_game_delivery(
             .attributes
             .get("gamePreparationSession")
             .is_some_and(|proof| osg_profiles::resources_ports::text(proof, 256).is_ok())
-        || ["providerSetupRevision", "catalogueRevision"]
+        || ["providerSetupRevision", "catalogueRevision", "aircraftModule"]
             .iter()
             .any(|field| item.attributes.get(*field) != metadata.attributes.get(*field))
     {
@@ -69,7 +81,7 @@ pub(super) fn validate_game_delivery(
         .route
         .as_ref()
         .ok_or("Game delivery needs its actual native route.")?;
-    if route.id != batch.scope
+    if route.id != format!("profile-game:{key}")
         || route.transport != Transport::Integration
         || route.priority != 100
         || (route.writable && !route.baseline_ready)
@@ -79,6 +91,7 @@ pub(super) fn validate_game_delivery(
             "catalogueRevision",
             "gamePreparationSession",
             "gameReaderSession",
+            "aircraftModule",
         ]
         .iter()
         .any(|field| route.attributes.get(*field) != item.attributes.get(*field))
@@ -104,9 +117,31 @@ pub(super) fn validate_game_delivery(
     }
     Ok(())
 }
+pub(super) fn validate_game_catalogues(batch:&ProviderBatch,metadata:&BTreeMap<String,Observation>)->Result<(),String>{
+    batch.validate()?;
+    let game=batch.scope.strip_prefix("profile-game:").filter(|game|matches!(*game,"dcs"|"assetto-corsa-rally"|"x-plane-11"|"x-plane-12")).ok_or("Unknown native game delivery scope.")?;
+    if !batch.complete || batch.observations.is_empty() || batch.observations.len()>if game=="dcs"{2}else{1} {
+        return Err("Game delivery must contain one native catalogue, or DCS CommonData plus its single active aircraft catalogue.".into());
+    }
+    let mut keys=BTreeSet::new();
+    let mut module_count=0;
+    let first=&batch.observations[0];
+    for item in &batch.observations {
+        if !keys.insert(&item.key) || catalogue_game(&item.key)!=Some(game) {
+            return Err("Game delivery contains duplicate or foreign catalogue identities.".into());
+        }
+        if item.key.starts_with("dcs:"){module_count+=1;}
+        if module_count>1 || ["providerSetupRevision","gamePreparationSession","gameReaderSession"].iter().any(|field|item.attributes.get(*field)!=first.attributes.get(*field)) {
+            return Err("Game delivery catalogues must belong to one acquired aircraft reader.".into());
+        }
+        validate_game_item(batch,item,metadata.get(&item.key).ok_or("The game has no current verified native module metadata.")?)?;
+    }
+    Ok(())
+}
 impl Runtime {
     pub(super) fn command_withdrawn(state: &State, token: &ResourceToken) -> bool {
         token.access == Access::Invoke && token.route_id.strip_prefix("profile-game:")
+            .and_then(catalogue_game)
             .and_then(|game| state.game_command_withdrawals.get(&(game.into(), token.provider_session.clone())))
             .is_some_and(|ports| ports.contains(&token.port_id))
     }
@@ -156,11 +191,7 @@ impl Runtime {
             .strip_prefix("profile-game:")
             .ok_or("Game delivery needs its dedicated native scope.")?
             .to_owned();
-        let validation = state
-            .game_metadata
-            .get(&game)
-            .ok_or_else(|| "The game has no current verified native metadata.".to_owned())
-            .and_then(|metadata| validate_game_delivery(&batch, metadata));
+        let validation = validate_game_catalogues(&batch,&state.game_metadata);
         if let Err(error) = validation {
             if state
                 .game_deliveries
@@ -256,9 +287,10 @@ impl Runtime {
                     .ok_or("Game metadata was revoked before baseline acquisition.")?;
                 let delivery = state
                     .game_deliveries
-                    .get(game)
+                    .get(catalogue_game(game).ok_or("Unknown prepared native game catalogue.")?)
                     .ok_or("Acquire an advancing native game sample before its baseline.")?;
-                validate_game_delivery(delivery, metadata)?;
+                validate_game_catalogues(delivery,&state.game_metadata)?;
+                if !delivery.observations.iter().any(|item|item.key==game) {return Err("The acquired reader does not publish the prepared aircraft catalogue.".into());}
                 if current.scope != delivery.scope
                     || token.provider_session != delivery.session
                     || metadata.route.as_ref() != Some(&expected.route)

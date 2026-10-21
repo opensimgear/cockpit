@@ -108,6 +108,68 @@ fn runtime() -> Runtime {
     runtime
 }
 
+fn aircraft_metadata(module:&str)->Observation {
+    let mut item=metadata("dcs");let key=format!("dcs:{module}");
+    item.key=key.clone();item.name=module.into();item.evidence[0].value=key.clone();
+    item.attributes.insert("aircraftModule".into(),module.into());
+    item.attributes.insert("catalogueRevision".into(),format!("catalogue-{module}"));
+    item.route.as_mut().unwrap().id=format!("game:{key}");item
+}
+fn catalogue_delivery(items:&[Observation],reader:&str,revision:u64)->ProviderBatch {
+    let mut value=delivery("dcs",reader,revision);
+    value.observations=items.iter().map(|metadata|{
+        let mut item=metadata.clone();item.attributes.remove("gameContextStatus");item.attributes.remove("processVerified");
+        item.attributes.insert("gamePreparationSession".into(),"shared-native-proof".into());
+        item.attributes.insert("gameReaderSession".into(),reader.into());
+        let route=item.route.as_mut().unwrap();route.id=format!("profile-game:{}",item.key);route.priority=100;route.baseline_ready=true;route.writable=true;
+        route.attributes=item.attributes.clone();item
+    }).collect();value
+}
+#[test]
+fn one_aircraft_reader_publishes_commondata_and_its_module_as_independent_resources() {
+    let runtime=runtime();let module=aircraft_metadata("F-86F Sabre");
+    let mut common=metadata("dcs");common.attributes.insert("aircraftModule".into(),"CommonData".into());
+    common.ports.as_mut().unwrap().ports.retain(|port|port.direction==Direction::Output);
+    common.ports=Some(PortUpdate::complete(common.ports.take().unwrap().ports).unwrap());
+    Runtime::adopt(&runtime.state,vec![
+        ("game:dcs".into(),Ok(batch("game:dcs","metadata",2,vec![common.clone()]))),
+        ("game:dcs:F-86F Sabre".into(),Ok(batch("game:dcs:F-86F Sabre","module-catalogue",1,vec![module.clone()])))
+    ]);
+    let overlay=catalogue_delivery(&[common.clone(),module.clone()],"reader",1);
+    runtime.publish_profile_game_delivery(overlay).unwrap();
+    let state=runtime.state.lock().unwrap();
+    let resources=state.registry.list(0,64).unwrap().resources;
+    assert_eq!(resources.len(),2);assert_ne!(resources[0].id,resources[1].id);
+    let aircraft=resources.iter().find(|resource|resource.attributes.get("aircraftModule").map(String::as_str)==Some("F-86F Sabre")).unwrap();
+    let common_resource=resources.iter().find(|resource|resource.id!=aircraft.id).unwrap();
+    let hash=module.ports.as_ref().unwrap().ports[0].contract_hash().unwrap();
+    let prepared=state.registry.prepare_game_metadata_port(&aircraft.id,"altitude",&hash,osg_profiles::resources::Access::Read,"dcs").unwrap();
+    assert_eq!(prepared.resolved().scope,"game:dcs:F-86F Sabre");
+    let token=state.registry.token(&aircraft.id,"altitude",osg_profiles::resources::Access::Read).unwrap();
+    assert_eq!(token.route_id,"profile-game:dcs:F-86F Sabre");
+    assert!(state.registry.token(&common_resource.id,"command",osg_profiles::resources::Access::Invoke).is_err());
+    drop(state);
+    let mut incompatible=catalogue_delivery(&[common,module],"reader",2);
+    incompatible.observations[1].attributes.insert("aircraftModule".into(),"F-14".into());
+    incompatible.observations[1].route.as_mut().unwrap().attributes=incompatible.observations[1].attributes.clone();
+    assert!(runtime.publish_profile_game_delivery(incompatible).is_err());
+    assert!(runtime.validate_delivery(&token).is_err());
+}
+#[test]
+fn inactive_aircraft_metadata_cannot_authorize_a_reader_or_revoke_another_module() {
+    let runtime=runtime();let active=aircraft_metadata("A-10C");let mut inactive=aircraft_metadata("F-14");
+    inactive.attributes.insert("processVerified".into(),"false".into());
+    Runtime::adopt(&runtime.state,vec![("game:dcs:A-10C".into(),Ok(batch("game:dcs:A-10C","metadata-a",1,vec![active.clone()])))]);
+    runtime.publish_profile_game_delivery(catalogue_delivery(&[active.clone()],"active-reader",1)).unwrap();
+    Runtime::adopt(&runtime.state,vec![("game:dcs:F-14".into(),Ok(batch("game:dcs:F-14","metadata-b",1,vec![inactive.clone()])))]);
+    assert!(runtime.validate_profile_game_delivery("dcs","active-reader").is_ok());
+    assert!(runtime.publish_profile_game_delivery(catalogue_delivery(&[inactive],"other-reader",1)).is_err());
+    assert!(runtime.validate_profile_game_delivery("dcs","active-reader").is_ok());
+    let mut changed=active;changed.attributes.insert("processVerified".into(),"false".into());
+    Runtime::adopt(&runtime.state,vec![("game:dcs:A-10C".into(),Ok(batch("game:dcs:A-10C","metadata-a",2,vec![changed])))]);
+    assert!(runtime.validate_profile_game_delivery("dcs","active-reader").is_err());
+}
+
 #[test]
 fn dcs_publication_withdrawal_revokes_only_exact_command_tokens_and_preserves_live_telemetry() {
     let runtime = runtime();

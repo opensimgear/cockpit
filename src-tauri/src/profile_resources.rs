@@ -51,6 +51,25 @@ pub(crate) struct Runtime {
     capture_gate: Arc<Mutex<()>>,
 }
 impl Runtime {
+    /// Return the independently registered read-only authoring catalogue. This
+    /// does not mint delivery tokens or change an applied reader.
+    pub(crate) fn dcs_vehicle_authoring_resource(&self, module: &str) -> Result<Value, String> {
+        if self.stop.load(Ordering::Acquire) { return Err("Resource inventory has stopped.".into()); }
+        let state = self.state.lock().unwrap_or_else(|p|p.into_inner());
+        let mut offset = 0;
+        loop {
+            let page = state.registry.list(offset, 128)?;
+            if let Some(resource) = page.resources.iter().find(|resource|
+                resource.resource_type == osg_profiles::resources::ResourceType::GameIntegration
+                    && resource.attributes.get("gameId").map(String::as_str) == Some("dcs")
+                    && resource.attributes.get("aircraftModule").map(String::as_str) == Some(module)) {
+                return serde_json::to_value(resource).map_err(|error|error.to_string());
+            }
+            offset += page.resources.len();
+            if offset >= page.total || page.resources.is_empty() { break; }
+        }
+        Err("The aircraft catalogue is not yet available in native inventory.".into())
+    }
     /// Resolve only retained native identity. Authoring never triggers discovery,
     /// grants a port token or selects a transport for a future Apply.
     pub(crate) fn companion_authoring_identity(&self, resource: &str) -> Result<(String, String), String> {
@@ -513,13 +532,9 @@ impl Runtime {
                 } else {
                     state.game_metadata.remove(game);
                 }
-                if state.game_deliveries.get(game).is_some_and(|batch| {
-                    state
-                        .game_metadata
-                        .get(game)
-                        .is_none_or(|metadata| validate_game_delivery(batch, metadata).is_err())
-                }) {
-                    let overlay = state.game_deliveries.remove(game).unwrap();
+                let owner=game.split(':').next().unwrap_or(game);
+                if state.game_deliveries.get(owner).is_some_and(|batch| validate_game_catalogues(batch,&state.game_metadata).is_err()) {
+                    let overlay = state.game_deliveries.remove(owner).unwrap();
                     state.registry.provider_failed(&overlay.scope, "Game process, setup or catalogue changed; acquire a fresh native baseline.");
                     state.fingerprints.remove(&overlay.scope);
                     changed = true;
@@ -700,7 +715,7 @@ pub(crate) fn attributes<const N: usize>(fields: [(&str, String); N]) -> BTreeMa
 
 #[path = "profile_resources_game.rs"]
 mod game_delivery;
-use game_delivery::{game_metadata_valid, validate_game_delivery};
+use game_delivery::{game_metadata_valid, validate_game_catalogues};
 
 #[cfg(test)]
 #[path = "profile_resources_tests.rs"]

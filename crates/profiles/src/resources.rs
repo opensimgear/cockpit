@@ -760,12 +760,20 @@ impl Registry {
         if entry.saved.resource_type != ResourceType::GameIntegration {
             return Err("Only game resources have game metadata acquisition scopes.".into());
         }
+        let scopes = entry.saved.sightings.iter().flat_map(|sighting|&sighting.evidence)
+            .filter(|e| e.kind == EvidenceKind::GameScope)
+            .filter(|e| e.value == game_id || game_id == "dcs" && e.value.strip_prefix("dcs:").is_some_and(|module| {
+                !module.is_empty() && module.trim()==module && module.len() <= 63 && module.bytes().all(|b| b.is_ascii_alphanumeric() || b"_- ".contains(&b))
+            }))
+            .map(|e|format!("game:{}",e.value))
+            .collect::<BTreeSet<_>>();
+        if scopes.len() != 1 { return Err("The game resource has no single matching native catalogue scope.".into()); }
         self.prepare_port_selection(
             id,
             port_id,
             expected_contract_hash,
             access,
-            Some(format!("game:{game_id}")),
+            scopes.into_iter().next(),
         )
     }
     fn prepare_port_selection(

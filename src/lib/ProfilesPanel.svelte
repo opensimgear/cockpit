@@ -18,8 +18,8 @@
   import {ProfileEditorUndo}from'./profile-graph-history';
   import {profilePaletteCanAdd,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag}from'./profile-palette';
   import type {CanvasPoint}from'./profile-canvas';
-  import {profileGameContext,profileGameContextNeedsSync,profileGameName,profileSetGameContext,profileAddVehicleIntegration}from'./profile-game-context';
-  import {profileAddVehicleTab,profileChangeVehicleTab,profileRemoveVehicleTab,profileStampVehicleNodes,profileTabDocument,profileTabNodeIds}from'./profile-vehicle-tabs';
+  import {profileGameContext,profileGameContextNeedsSync,profileGameName,profileSetGameContext,profileAddVehicleIntegration,profileChangeVehicleIntegration,profileGameTabInventory,profileReconcileDcsVehicleCatalogue}from'./profile-game-context';
+  import {profileAddVehicleTab,profileRemoveVehicleTab,profileStampVehicleNodes,profileTabDocument,profileTabNodeIds}from'./profile-vehicle-tabs';
   import {ProfileCompilerClient}from'./profile-compilation';
   import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
@@ -54,12 +54,19 @@
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let editingName = $state(false), nameDraft = $state('');
   let gameCatalogue=$state.raw<Game[]>(supportedGames),vehicleError=$state(''),activeVehicleTabId=$state(''),addingVehicleTab=$state(false),customVehicle=$state(false),vehicleIdDraft=$state(''),vehicleNameDraft=$state('');
+  let dcsCatalogues=$state.raw<Record<string,DeepReadonly<ResourceSummary>>>({}),dcsCatalogueBusy=$state(false),dcsCatalogueError=$state(''),dcsCatalogueRevision=$state(0);
+  let requestedDcsCatalogue='',dcsCatalogueEpoch=0;
   const editor = $derived(workspace.editor);
+  const editorInventory=$derived([...workspace.inventory,...Object.values(dcsCatalogues).filter(source=>!workspace.inventory.some(current=>current.id===source.id))]);
   const selectedGame=$derived(editor?profileGameContext(editor.document):'');
   const contextGame=$derived(gameCatalogue.find(game=>game.id===selectedGame));
   const vehicleTabs=$derived(editor?.document.vehicleTabs??[]);
   const vehicleTabsEnabled=$derived(!!selectedGame&&(contextGame?.vehicleSupport?.supported??true));
   const activeVehicleTab=$derived(vehicleTabs.find(tab=>tab.id===activeVehicleTabId));
+  const dcsCatalogueKey=$derived(active&&selectedGame==='dcs'&&activeVehicleTab&&!addingVehicleTab?`${editor?.document.id}/${activeVehicleTab.id}/${activeVehicleTab.vehicleId}`:'');
+  const routingInventory=$derived(editor?profileGameTabInventory(editor.document,editorInventory,activeVehicleTabId):editorInventory);
+  const tabDcsModule=$derived(routingInventory.find(source=>source.attributes.gameId==='dcs')?.attributes.aircraftModule);
+  const inventoryRevision=$derived.by(()=>{void workspace;return store.inventoryRevision+dcsCatalogueRevision;});
   const tabDocument=$derived(editor?profileTabDocument(editor.document,activeVehicleTabId):null);
   const tabNodeIds=$derived(editor?profileTabNodeIds(editor.document,activeVehicleTabId):new Set<string>());
   const vehicleChoices=$derived.by(()=>{const choices=new Map<string,{id:string;name:string}>();for(const vehicle of contextGame?.vehicleSupport?.vehicles??[])choices.set(vehicle.id,vehicle);for(const tab of vehicleTabs)choices.set(tab.vehicleId,{id:tab.vehicleId,name:tab.vehicleName});if(contextGame?.currentVehicle)choices.set(contextGame.currentVehicle.id,contextGame.currentVehicle);return [...choices.values()].sort((a,b)=>a.name.localeCompare(b.name));});
@@ -77,14 +84,15 @@
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));if(workspace.view==='list')void store.refresh();return()=>{stop();stopSaved();}; });
-  onDestroy(() => { navigationCancelled?.();runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
+  onDestroy(() => { dcsCatalogueEpoch++;navigationCancelled?.();runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
   $effect(()=>{void editorIdentity;activeVehicleTabId='';addingVehicleTab=false;});
   $effect(()=>{if(activeVehicleTabId&&!vehicleTabs.some(tab=>tab.id===activeVehicleTabId))activeVehicleTabId='';});
   $effect(()=>{void selectedGame;addingVehicleTab=false;customVehicle=false;vehicleError='';});
   $effect(()=>{void editorContext;editingName=false;});
   $effect(()=>{void editorContext;paletteDrag=null;});
-  $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,workspace.inventory))untrack(()=>setGameContext(selectedGame));});
+  $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,editorInventory))untrack(()=>setGameContext(selectedGame));});
+  $effect(()=>{const key=dcsCatalogueKey;if(requestedDcsCatalogue===key)return;requestedDcsCatalogue=key;dcsCatalogueEpoch++;dcsCatalogueBusy=false;dcsCatalogueError='';if(key)untrack(()=>void loadDcsVehicleCatalogue());});
   $effect(()=>{if(paletteDrag&&(!active||debugOpen||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
@@ -109,10 +117,29 @@
   function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph',scope=true) { if(scope&&editor)profileStampVehicleNodes(editor.document,document,activeVehicleTabId);report(()=>history.edit(document,assignments,label)); }
   let vehicleCatalogueBusy=false;
   async function refreshVehicleCatalogue(){if(vehicleCatalogueBusy)return;vehicleCatalogueBusy=true;try{const state=await gatewayRequest({command:'game_get_state'});if(state.games?.catalogue)gameCatalogue=state.games.catalogue;}catch{/* Keep saved vehicle choices available when disconnected. */}finally{vehicleCatalogueBusy=false;}}
+  async function loadDcsVehicleCatalogue(){
+    const tab=activeVehicleTab,profileId=editor?.document.id;if(!tab||selectedGame!=='dcs')return;
+    const epoch=++dcsCatalogueEpoch;dcsCatalogueBusy=true;dcsCatalogueError='';
+    try{
+      const source=await resources.dcsVehicle(tab.vehicleId);if(epoch!==dcsCatalogueEpoch)return;
+      dcsCatalogues={...dcsCatalogues,[source.id]:source};dcsCatalogueRevision++;
+      const current=store.state.editor;if(!current||current.document.id!==profileId||!current.document.vehicleTabs?.some(current=>current.id===tab.id&&current.vehicleId===tab.vehicleId))return;
+      if(!workspace.readOnly&&!workspace.busy&&!libraryBusy){
+        const configured=current.document.resources.some(resource=>resource.kind==='game'&&tab.nodeIds.includes(resource.id)&&resource.ports.length&&current.assignments.find(assignment=>assignment.resourceId===resource.id)?.sourceId!==source.id);
+        const ports=configured?(await resources.inspectAll(source.id)).ports:[];if(epoch!==dcsCatalogueEpoch)return;
+        const latest=store.state.editor;if(latest&&latest.document.id===profileId&&latest.document.vehicleTabs?.some(current=>current.id===tab.id&&current.vehicleId===tab.vehicleId)){
+          const next=profileReconcileDcsVehicleCatalogue(latest,tab.id,source,ports,editorInventory);
+          if(JSON.stringify(next.assignments)!==JSON.stringify(latest.assignments))change(next.document,next.assignments,'Select aircraft catalogue',false);
+        }
+      }
+      await store.refreshInventory();
+    }catch(error){if(epoch===dcsCatalogueEpoch)dcsCatalogueError=error instanceof Error?error.message:String(error);}
+    finally{if(epoch===dcsCatalogueEpoch)dcsCatalogueBusy=false;}
+  }
   function selectTab(id:string){activeVehicleTabId=id;addingVehicleTab=false;customVehicle=false;vehicleError='';routingSelection='';}
   function beginVehicleTab(){addingVehicleTab=true;customVehicle=false;vehicleError='';routingSelection='';vehicleIdDraft='';vehicleNameDraft='';}
   function chooseVehicle(id:string){if(id==='__custom'){customVehicle=true;vehicleIdDraft=activeVehicleTab?.vehicleId??'';vehicleNameDraft=activeVehicleTab?.vehicleName??'';return;}const vehicle=vehicleChoices.find(vehicle=>vehicle.id===id);if(vehicle)saveVehicleChoice(vehicle);}
-  function saveVehicleChoice(vehicle:{id:string;name:string}){if(!editor||!selectedGame)return;vehicleError='';try{if(addingVehicleTab){const next=profileAddVehicleTab(editor.document,selectedGame,vehicle),integrated=profileAddVehicleIntegration({document:next.document,assignments:editor.assignments},next.tabId,workspace.inventory);change(integrated.document,integrated.assignments,'Add vehicle tab',false);activeVehicleTabId=next.tabId;addingVehicleTab=false;}else if(activeVehicleTab)change(profileChangeVehicleTab(editor.document,activeVehicleTab.id,vehicle),undefined,'Change tab vehicle',false);customVehicle=false;}catch(error){vehicleError=error instanceof Error?error.message:String(error);}}
+  function saveVehicleChoice(vehicle:{id:string;name:string}){if(!editor||!selectedGame)return;vehicleError='';try{if(addingVehicleTab){const next=profileAddVehicleTab(editor.document,selectedGame,vehicle),integrated=profileAddVehicleIntegration({document:next.document,assignments:editor.assignments},next.tabId,editorInventory);change(integrated.document,integrated.assignments,'Add vehicle tab',false);activeVehicleTabId=next.tabId;addingVehicleTab=false;}else if(activeVehicleTab){const next=profileChangeVehicleIntegration(editor,activeVehicleTab.id,vehicle,editorInventory);change(next.document,next.assignments,'Change tab vehicle',false);}customVehicle=false;}catch(error){vehicleError=error instanceof Error?error.message:String(error);}}
   function saveCustomVehicle(event:SubmitEvent){event.preventDefault();saveVehicleChoice({id:vehicleIdDraft.trim(),name:vehicleNameDraft.trim()||vehicleIdDraft.trim()});}
   function removeVehicleTab(id:string){if(!editor)return;const next=profileRemoveVehicleTab(editor.document,editor.assignments,id);change(next.document,next.assignments,'Remove vehicle tab',false);if(activeVehicleTabId===id)selectTab('');}
   function tabKeys(event:KeyboardEvent){if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const ids=['',...vehicleTabs.map(tab=>tab.id)],index=ids.indexOf(activeVehicleTabId),next=event.key==='Home'?0:event.key==='End'?ids.length-1:(index+(event.key==='ArrowRight'?1:-1)+ids.length)%ids.length;selectTab(ids[next]);(event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>(`[role="tab"][data-tab-index="${next}"]`)?.focus();}
@@ -121,7 +148,7 @@
   function focusName(node:HTMLInputElement) { node.focus();node.select(); }
   function finishName() { if(!editingName)return;editingName=false;const title=nameDraft.trim();if(canRename&&title!==editor?.document.name)name(title); }
   function historyStep(direction:'undo'|'redo'){report(()=>{history.step(direction);});}
-  function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,workspace.inventory);change(next.document,next.assignments,'Change game context',false);if(gameId!==selectedGame)selectTab('');}); }
+  function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,editorInventory);change(next.document,next.assignments,'Change game context',false);if(gameId!==selectedGame)selectTab('');}); }
   export function requestNavigation(continueNavigation:()=>void,cancelNavigation?:()=>void):void {
     finishName();
     notice='';
@@ -177,7 +204,7 @@
 {/snippet}
 
 <section class="profiles-workspace" aria-label="Profiles">
-  {#if debugOpen}<ProfileDebugView {editor} profiles={workspace.profiles} inventory={workspace.inventory} inventoryRevision={store.inventoryRevision} {compiler} {runtimeState} {runtime} onRuntimeState={next=>runtimeState=next} {inspection} {activity} selectedId={routingSelection} profileName={appliedName} {active} loadProfile={id=>profiles.getAssignments(id)} close={()=>debugOpen=false} locate={id=>{routingSelection=id;debugOpen=false;}}/>{/if}
+  {#if debugOpen}<ProfileDebugView {editor} profiles={workspace.profiles} inventory={workspace.inventory} {inventoryRevision} {compiler} {runtimeState} {runtime} onRuntimeState={next=>runtimeState=next} {inspection} {activity} selectedId={routingSelection} profileName={appliedName} {active} loadProfile={id=>profiles.getAssignments(id)} close={()=>debugOpen=false} locate={id=>{routingSelection=id;debugOpen=false;}}/>{/if}
   <div class="profile-content" hidden={debugOpen}>
   {#if workspace.view==='list'}
     <div class="page-heading"><div><div class="eyebrow">YOUR OPERATING SETUPS</div><h1>Profiles</h1><p>Edit Default or create an independent profile for your rig.</p></div><div class="page-actions"><ProfileAutomaticControls profiles={workspace.profiles} active={active&&!debugOpen}/><button class="secondary-button" onclick={()=>debugOpen=true}><Icon name="bug" size={14}/>Debug</button><button class="secondary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly||rows.length>=32} onclick={()=>libraryTools?.askImport()}><Icon name="upload" size={14}/>Import profile</button><button class="primary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={add}><Icon name="plus" size={14}/> Add profile</button></div></div>
@@ -224,16 +251,18 @@
               <p>Applies with Base while this vehicle is loaded. Conflicts are checked against Base.</p>
               {#if addingVehicleTab}<button class="text-button" onclick={()=>selectTab(activeVehicleTabId)}>Cancel</button>{/if}
             {:else}<p>Base applies to every vehicle.</p>{/if}
-            {#if selectedGame==='dcs'&&contextGame?.integrationSetup?.aircraftModule}<span class="vehicle-hint">DCS-BIOS module: {contextGame.integrationSetup.aircraftModule}</span>{/if}
+            {#if selectedGame==='dcs'&&!addingVehicleTab}<span class="vehicle-hint">DCS-BIOS catalogue: {activeVehicleTab?tabDcsModule??'Waiting for aircraft catalogue':'CommonData (shared flight telemetry)'}</span>{/if}
             {#if contextGame?.currentVehicle}<span class="current-vehicle">Loaded: {contextGame.currentVehicle.name}</span>{/if}
           </div>
           {#if (addingVehicleTab||activeVehicleTab)&&customVehicle}<form class="vehicle-custom" onsubmit={saveCustomVehicle}><label>Exact vehicle ID<input aria-label="Exact vehicle ID" required maxlength="256" disabled={workspace.readOnly||workspace.busy||libraryBusy} bind:value={vehicleIdDraft}/></label><label>Vehicle name<input aria-label="Vehicle name" maxlength="80" disabled={workspace.readOnly||workspace.busy||libraryBusy} bind:value={vehicleNameDraft} placeholder="Same as ID"/></label><button class="secondary-button" type="submit" disabled={workspace.readOnly||workspace.busy||libraryBusy}>Use vehicle</button></form>{/if}
           {#if addingVehicleTab&&contextGame?.vehicleSupport?.message}<p class="vehicle-hint">{contextGame.vehicleSupport.message}</p>{/if}
           {#if vehicleError}<p class="workspace-error" role="alert">{vehicleError}</p>{/if}
+          {#if dcsCatalogueBusy}<p class="vehicle-hint" role="status">Loading this aircraft’s controls and telemetry…</p>{/if}
+          {#if dcsCatalogueError}<p class="workspace-error" role="alert">{dcsCatalogueError}</p><button class="secondary-button" disabled={dcsCatalogueBusy} onclick={()=>void loadDcsVehicleCatalogue()}>Retry aircraft catalogue</button>{/if}
         {/if}
-        {#if vehicleTabsEnabled&&!addingVehicleTab}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {activeVehicleTabId} {compiler} inventoryRevision={store.inventoryRevision} active={active&&!debugOpen}/>{/if}
+        {#if vehicleTabsEnabled&&!addingVehicleTab}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {activeVehicleTabId} {compiler} {inventoryRevision} active={active&&!debugOpen}/>{/if}
         <div id="profile-vehicle-canvas" role={vehicleTabsEnabled?'tabpanel':undefined} aria-label={vehicleTabsEnabled?(addingVehicleTab?'New vehicle':activeVehicleTab?.vehicleName??'Base'):undefined}>
-          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={workspace.inventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} active={active&&!debugOpen} runtimeIdle={learningIdle} inventoryRevision={store.inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}{/if}
+          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={routingInventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} active={active&&!debugOpen} runtimeIdle={learningIdle} {inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')} canUndo={historyStatus.canUndo} canRedo={historyStatus.canRedo} undoLabel={historyStatus.undoLabel} redoLabel={historyStatus.redoLabel}/>{/key}{/if}
         </div>
       </div>
     </div>

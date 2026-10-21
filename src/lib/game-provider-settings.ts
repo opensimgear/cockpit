@@ -38,7 +38,7 @@ export function providerSettingsError(draft: ProviderSettingsDraft): string {
     const d = c as DcsConnection;
     if (!string(d.cataloguePath, 4096) || gameIntegrationFolderError(d.cataloguePath)) return 'Choose the absolute installed DCS-BIOS doc/json directory.';
     const folderError = gameIntegrationFolderError(draft.userFolder); if (folderError) return folderError;
-    if (!string(draft.userFolder, 4096) || !string(draft.aircraftModule, 63, true) || draft.aircraftModule !== '' && !/^[A-Za-z0-9_-]+$/.test(draft.aircraftModule)) return 'Use an absolute Saved Games folder and an aircraft module of up to 63 letters, numbers, underscores or hyphens.';
+    if (!string(draft.userFolder, 4096)) return 'Use an absolute Saved Games folder of up to 4096 bytes.';
     if (!unicast(d.commandHost,false) || !unicast(d.listenAddress,true) || !unicast(d.multicastInterface,true) || d.multicastGroup !== '' && (!ipv4(d.multicastGroup) || !multicast(d.multicastGroup))) return 'Use unicast IPv4 command/listen/interface addresses and a multicast group in 224.0.0.0–239.255.255.255, or leave the group empty. Command host cannot be 0.0.0.0.';
     if (!integer(d.commandPort,1,65535) || !integer(d.listenPort,1,65535)) return 'DCS UDP ports must be whole numbers from 1 to 65535.';
   } else if (draft.gameId === 'assetto-corsa-rally') {
@@ -72,7 +72,7 @@ export function rebaseProviderSettingsDraft(current: ProviderSettingsDraft, base
 export function prepareProviderSettingsSave(draft: ProviderSettingsDraft): ProviderSettingsSave {
   const error = providerSettingsError(draft); if (error) throw new Error(error);
   const submitted = clone(draft);
-  return { gameId: draft.gameId, baseRevision: draft.baseRevision!, submitted, request: { command: 'game_integration_settings_save', gameId: draft.gameId, expectedSetupRevision: draft.baseRevision!, connection: clone(draft.connection) as unknown as Record<string, unknown>, ...(draft.gameId === 'dcs' ? { userFolder: draft.userFolder.trim(), aircraftModule: draft.aircraftModule } : {}) } };
+  return { gameId: draft.gameId, baseRevision: draft.baseRevision!, submitted, request: { command: 'game_integration_settings_save', gameId: draft.gameId, expectedSetupRevision: draft.baseRevision!, connection: clone(draft.connection) as unknown as Record<string, unknown>, ...(draft.gameId === 'dcs' ? { userFolder: draft.userFolder.trim() } : {}) } };
 }
 
 /** Advance only the captured editor base. Newer edits remain local; a switched editor is untouched. */

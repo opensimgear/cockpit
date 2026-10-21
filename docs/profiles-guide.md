@@ -13,8 +13,22 @@ aircraft or car, and add components and routes to that vehicle's canvas. Its
 configuration applies together with Base only while native telemetry identifies
 that vehicle. Unknown or stale vehicle identity applies Base alone.
 Each canvas has its own game integration block for telemetry and simulator
-commands. Connection settings and the DCS-BIOS module catalogue remain in the
-game's provider settings; vehicle tabs do not change those settings while editing.
+commands. Connection settings, freshness and the installed catalogue directory
+remain in the game's provider settings; vehicle tabs do not change those settings
+while editing.
+
+For DCS, Base exposes **CommonData** shared flight telemetry. Each aircraft tab
+exposes that aircraft's DCS-BIOS controls and telemetry, resolved through the
+installed aircraft aliases. Opening a tab loads its catalogue even while the game
+is closed. It leaves the loaded aircraft and active module alone. During play,
+the fresh native aircraft identity selects the correct DCS-BIOS module
+automatically; Games shows the active module. There is no manual module selector.
+
+Existing aircraft-tab ports keep their routes when every saved port has the exact
+matching contract in the aircraft's catalogue. A mismatch leaves the configuration
+intact and reports the control that needs explicit reassignment or removal.
+To configure a different aircraft when a tab already contains its controls,
+add another aircraft tab or remove those controls before changing the selection.
 
 The picker includes installed DCS-BIOS aircraft, installed X-Plane aircraft and
 previously observed Rally cars. Load a car once to discover its exact telemetry

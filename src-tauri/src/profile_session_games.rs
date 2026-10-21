@@ -44,6 +44,11 @@ struct CommandPort {
     descriptor: PortDescriptor,
     command: String,
 }
+struct DeliveryCatalogue {
+    aircraft_module: Option<String>,
+    revision: String,
+    ports: BTreeMap<String, PortDescriptor>,
+}
 enum Reader {
     Dcs {
         network: crate::dcs_bios::Network,
@@ -67,7 +72,7 @@ pub(crate) struct GameSources {
     reader: Option<Reader>,
     sources: BTreeMap<String, SourceState>,
     commands: BTreeMap<(String, String), CommandPort>,
-    descriptors: Vec<PortDescriptor>,
+    delivery_catalogues: BTreeMap<String, DeliveryCatalogue>,
     context: Option<ContextToken>,
     fresh: bool,
     lost: bool,
@@ -97,6 +102,11 @@ fn game_route(route: Option<&Route>, game: &str) -> bool {
             && (route.id == format!("game:{game}")
                 || route.attributes.get("gameId").is_some_and(|id| id == game))
     })
+}
+fn compatible_game_route(route: Option<&Route>, game: &PreparedGame) -> bool {
+    game_route(route, &game.proof.game_id)
+        && (game.proof.game_id != "dcs" || route.and_then(|route| route.attributes.get("aircraftModule"))
+            .is_none_or(|module| module == "CommonData" || Some(module) == game.aircraft_module.as_ref()))
 }
 fn scalar(value: &Value) -> Option<PortValue> {
     if let Some(value) = value.as_bool() {
@@ -142,7 +152,7 @@ impl GameSources {
             reader: None,
             sources: BTreeMap::new(),
             commands: BTreeMap::new(),
-            descriptors: vec![],
+            delivery_catalogues: BTreeMap::new(),
             context: None,
             fresh: false,
             lost: false,
@@ -164,9 +174,24 @@ impl GameSources {
             .map(|port| (port.id.clone(), port))
             .collect::<BTreeMap<_, _>>();
         let mut rows = vec![];
-        let mut descriptors = BTreeMap::new();
+        let mut delivery_catalogues: BTreeMap<String, DeliveryCatalogue> = BTreeMap::new();
+        let mut capture_port = |route: Option<&Route>, native: &str, descriptor: &PortDescriptor| -> Result<(), String> {
+            let module = (game.proof.game_id == "dcs").then(|| route.and_then(|route| route.attributes.get("aircraftModule")).cloned()).flatten();
+            let key = module.as_ref().filter(|module| module.as_str() != "CommonData")
+                .map(|module| format!("dcs:{module}")).unwrap_or_else(|| game.proof.game_id.clone());
+            let revision = route.and_then(|route| route.attributes.get("catalogueRevision")).cloned()
+                .unwrap_or_else(|| game.proof.catalogue_revision.clone());
+            let captured = delivery_catalogues.entry(key).or_insert_with(|| DeliveryCatalogue {
+                aircraft_module: module.clone(), revision: revision.clone(), ports: BTreeMap::new(),
+            });
+            if captured.revision != revision || captured.aircraft_module != module {
+                return Err("The captured game resource combines different native aircraft catalogues.".into());
+            }
+            captured.ports.insert(native.into(), descriptor.clone());
+            Ok(())
+        };
         for source in &plan.sources {
-            if !game_route(source.route.as_ref(), &game.proof.game_id) {
+            if !compatible_game_route(source.route.as_ref(), game) {
                 continue;
             }
             let native = source
@@ -210,11 +235,11 @@ impl GameSources {
                     native: key,
                     contract: source.contract.clone(),
                 });
-            descriptors.insert(native.clone(), descriptor.clone());
+            capture_port(source.route.as_ref(), native, descriptor)?;
         }
         for sink in plan.sinks.iter().filter(|sink| {
             sink.adapter == SinkAdapter::SimulatorCommand
-                && game_route(sink.route.as_ref(), &game.proof.game_id)
+                && compatible_game_route(sink.route.as_ref(), game)
         }) {
             if game.proof.game_id != "dcs" {
                 return Err("This provider does not advertise native simulator commands.".into());
@@ -241,9 +266,9 @@ impl GameSources {
                     command: endpoint.clone(),
                 },
             );
-            descriptors.insert(native.clone(), descriptor.clone());
+            capture_port(sink.route.as_ref(), native, descriptor)?;
         }
-        result.descriptors = descriptors.into_values().collect();
+        result.delivery_catalogues = delivery_catalogues;
         if result.sources.is_empty() && result.commands.is_empty() {
             return Ok(result);
         }
@@ -252,7 +277,7 @@ impl GameSources {
                 let module = game
                     .aircraft_module
                     .as_deref()
-                    .ok_or("Select the DCS aircraft catalogue in game details.")?;
+                    .ok_or("The current DCS aircraft has no native module catalogue.")?;
                 let path = Path::new(
                     game.connection["cataloguePath"]
                         .as_str()
@@ -610,32 +635,43 @@ impl GameSources {
             ("gamePreparationSession".into(), game.proof.session.clone()),
             ("gameReaderSession".into(), self.reader_session.clone()),
         ]);
+        let observations = self.delivery_catalogues.iter().map(|(key, catalogue)| {
+            let mut attributes = attributes.clone();
+            attributes.insert("catalogueRevision".into(), catalogue.revision.clone());
+            if let Some(module) = &catalogue.aircraft_module {
+                attributes.insert("aircraftModule".into(), module.clone());
+            }
+            if let Some(vehicle) = &game.proof.vehicle_id {
+                attributes.insert("vehicleId".into(), vehicle.clone());
+            }
+            Some(Observation {
+                key: key.clone(),
+                name: id.clone(),
+                resource_type: ResourceType::GameIntegration,
+                evidence: vec![IdentityEvidence {
+                    kind: EvidenceKind::GameScope,
+                    value: key.clone(),
+                }],
+                attributes: attributes.clone(),
+                diagnostics: vec![],
+                route: Some(Route {
+                    id: format!("profile-game:{key}"),
+                    transport: Transport::Integration,
+                    provider_generation: format!("{}:{}", self.reader_session, self.epoch),
+                    attributes,
+                    baseline_ready: self.fresh,
+                    writable: writable && catalogue.aircraft_module.as_deref() != Some("CommonData"),
+                    priority: 100,
+                }),
+                ports: Some(PortUpdate::complete(catalogue.ports.values().cloned().collect()).ok()?),
+            })
+        }).collect::<Option<Vec<_>>>()?;
         let batch = ProviderBatch {
             scope: format!("profile-game:{id}"),
             session: self.reader_session.clone(),
             revision,
             complete: true,
-            observations: vec![Observation {
-                key: id.clone(),
-                name: id.clone(),
-                resource_type: ResourceType::GameIntegration,
-                evidence: vec![IdentityEvidence {
-                    kind: EvidenceKind::GameScope,
-                    value: id.clone(),
-                }],
-                attributes: attributes.clone(),
-                diagnostics: vec![],
-                route: Some(Route {
-                    id: format!("profile-game:{id}"),
-                    transport: Transport::Integration,
-                    provider_generation: format!("{}:{}", self.reader_session, self.epoch),
-                    attributes,
-                    baseline_ready: self.fresh,
-                    writable,
-                    priority: 100,
-                }),
-                ports: Some(PortUpdate::complete(self.descriptors.clone()).ok()?),
-            }],
+            observations,
         };
         self.revision = revision;
         self.published = Some(publication);

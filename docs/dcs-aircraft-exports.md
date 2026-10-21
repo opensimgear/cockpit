@@ -5,6 +5,11 @@ the checksum-pinned DCS-BIOS 0.11.7 runtime. Close DCS before running setup.
 Expand **Aircraft mod export hooks** to see detection and installation status.
 Launch DCS afterwards to generate the aircraft JSON catalogues and aliases.
 
+In Profiles, add an aircraft tab to browse that aircraft's installed controls and
+telemetry. Base exposes CommonData shared flight telemetry. The loaded aircraft
+selects the live DCS-BIOS module automatically through the generated aliases;
+browsing a tab does not change that selection or provider settings.
+
 | Aircraft | Capability | Audited mod definitions |
 | --- | --- | --- |
 | MH-6J | CommonData flight telemetry, with its exact aircraft identity; no aircraft commands | MH-6J declared by the AH-6J mod |

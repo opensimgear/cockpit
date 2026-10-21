@@ -37,11 +37,12 @@ const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup
 const state = g => ({catalogue:[g],cleanup:{phase:'idle'}});
 
 test('DCS game details group native locations and autosaved network settings without aircraft or manual save controls',()=>{
-  const g=game('dcs');g.integrationSetup.recoveryNeeded=true;
+  const g=game('dcs');g.integrationSetup.recoveryNeeded=true;g.integrationSetup.activeAircraftModule='F-86F Sabre';
   const html=render(GamesPanel,{props:{status:state(g),selectedGameId:'dcs',busy:false,request:noRequest,returnLabel:'Return to profile',returnToEditor:noRequest}}).body;
   for(const label of ['Matching profiles','Matching profiles will appear here.','DCS-BIOS locations','Network and timing','DCS Saved Games folder','DCS-BIOS doc/json directory','Command UDP port','Game context','Telemetry freshness','Waiting for an active profile','No verified matching process','Recover integration setup','Return to profile'])assert.ok(html.includes(label),label);
   for(const obsolete of ['Aircraft module','Save game settings','Discard changes','Start DCS-BIOS','Use saved integration','Update from saved integration','Save and open integrations','Synthetic test telemetry'])assert.ok(!html.includes(obsolete),obsolete);
   assert.ok(html.includes('C:\\DCS-BIOS\\doc\\json'));
+  assert.ok(html.includes('DCS-BIOS follows the loaded aircraft automatically'));assert.ok(html.includes('F-86F Sabre'));assert.ok(html.includes('Base uses shared flight telemetry'));
 });
 test('telemetry-only game forms expose no simulator command or synthetic/process-identity editor',()=>{
   for(const id of ['assetto-corsa-rally','x-plane-11','x-plane-12']){
@@ -76,8 +77,8 @@ test('provider autosave stays quiet on mount, unchanged commit and remote pollin
   const remote=game('dcs');remote.integrationSetup.providerSetupRevision=rev(2);remote.integrationSetup.connection.listenPort=5011;view.handlers.setGame(remote);await settle();assert.equal(view.handlers.fields.draft.connection.listenPort,5011);assert.deepEqual(view.calls,[]);assert.deepEqual(view.notifications,[]);
 });
 
-test('committed provider fields save once with revision and preserve hidden aircraft settings',async()=>{
-  const initial=game('dcs');initial.integrationSetup.aircraftModule='A-10C';const view=await providerView(initial);view.handlers.edit(draft=>{draft.connection.commandPort=7779;});assert.deepEqual(view.calls,[]);view.handlers.commit();await settle();assert.equal(view.calls.length,1);assert.equal(view.calls[0].expectedSetupRevision,rev(1));assert.equal(view.calls[0].connection.commandPort,7779);assert.equal(view.calls[0].aircraftModule,'A-10C');assert.equal(view.handlers.fields.base.baseRevision,rev(2));view.handlers.commit();await settle();assert.equal(view.calls.length,1);assert.deepEqual(view.notifications,[]);assert.equal(view.busyChanges.at(-1),false);
+test('committed provider fields save once without writing the automatically selected aircraft module',async()=>{
+  const initial=game('dcs');initial.integrationSetup.aircraftModule='A-10C';const view=await providerView(initial);view.handlers.edit(draft=>{draft.connection.commandPort=7779;});assert.deepEqual(view.calls,[]);view.handlers.commit();await settle();assert.equal(view.calls.length,1);assert.equal(view.calls[0].expectedSetupRevision,rev(1));assert.equal(view.calls[0].connection.commandPort,7779);assert.equal(view.calls[0].aircraftModule,undefined);assert.equal(view.handlers.fields.base.baseRevision,rev(2));view.handlers.commit();await settle();assert.equal(view.calls.length,1);assert.deepEqual(view.notifications,[]);assert.equal(view.busyChanges.at(-1),false);
 });
 
 test('invalid committed values stay inline and actual failures notify once while retaining edits',async()=>{

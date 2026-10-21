@@ -10,6 +10,7 @@ export type GameIntegrationSetup = {
   probeChannels?: Record<string, { status: 'available' | 'unknown' }>;
   aircraftExports?: { aircraft: string; detected: boolean; compatible: boolean; installed: boolean; path?: string | null; capability: string; message: string }[];
   providerSetupRevision?: string; catalogueRevision?: string | null; aircraftModule?: string | null;
+  activeAircraftModule?: string | null; aircraftModuleAutomatic?: boolean;
 };
 export type GameIntegrationContext = {
   status: 'waiting-profile' | 'waiting-game' | 'setup-required' | 'ready' | 'unsupported-platform' | 'error';

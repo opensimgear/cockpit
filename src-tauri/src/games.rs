@@ -59,6 +59,7 @@ struct Inner {
     setup: crate::game_integration_setup::GameIntegrationSetup,
     contexts: Mutex<crate::game_context::Broker>,
     vehicles: Mutex<crate::game_vehicles::Tracker>,
+    dcs_vehicle_catalogues: Mutex<std::collections::BTreeSet<String>>,
     context_setup_check: Mutex<Option<Instant>>,
     activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
@@ -80,6 +81,8 @@ mod activation_runtime;
 mod cleanup;
 #[path = "game_context_runtime.rs"]
 mod context_runtime;
+#[path = "game_dcs_catalogues.rs"]
+mod dcs_catalogues;
 #[path = "profile_game_launch.rs"]
 pub(crate) mod launch;
 pub(crate) use context_runtime::PreparedGame;
@@ -121,6 +124,7 @@ impl GamesRuntime {
                 journal_path: paths.recovery,
                 contexts: Mutex::new(Default::default()),
                 vehicles: Mutex::new(vehicles),
+                dcs_vehicle_catalogues: Mutex::new(Default::default()),
                 context_setup_check: Mutex::new(None),
                 activation: Default::default(),
                 settings: Mutex::new(Settings {

@@ -496,3 +496,21 @@ fn game_acquisition_selects_metadata_even_when_an_outgoing_reader_is_live() {
         .prepare_game_metadata_port(&id, "button:0", &hash, Access::Read, "dcs")
         .is_err());
 }
+
+#[test]
+fn aircraft_metadata_preparation_keeps_module_identity_and_cannot_select_another_game() {
+    let mut registry=Registry::new();
+    for module in ["F-14","F-86F Sabre"] {
+        let key=format!("dcs:{module}");let scope=format!("game:{key}");
+        let mut item=observation(true,false,false);item.key=key.clone();
+        item.evidence=vec![IdentityEvidence{kind:EvidenceKind::GameScope,value:key.clone()}];
+        item.route.as_mut().unwrap().id=scope.clone();
+        let hash=item.ports.as_ref().unwrap().ports[0].contract_hash().unwrap();
+        registry.reconcile(ProviderBatch{scope:scope.clone(),session:"catalogue".into(),revision:1,complete:true,observations:vec![item]}).unwrap();
+        let id=registry.list(0,64).unwrap().resources.iter().find(|resource|resource.connections.iter().any(|connection|connection.scope==scope)).unwrap().id.clone();
+        let pin=registry.prepare_game_metadata_port(&id,"button:0",&hash,Access::Read,"dcs").unwrap();
+        assert_eq!(pin.resolved().scope,scope);assert!(registry.validate_preparation(&pin).is_ok());
+        assert!(registry.prepare_game_metadata_port(&id,"button:0",&hash,Access::Read,"x-plane-12").is_err());
+    }
+    assert_eq!(registry.list(0,64).unwrap().resources.len(),2);
+}

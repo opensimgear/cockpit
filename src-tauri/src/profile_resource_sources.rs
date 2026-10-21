@@ -26,6 +26,21 @@ struct GameCatalogue {
     setup_revision: String,
     catalogue_revision: String,
     ports: PortUpdate,
+    aircraft_module: Option<String>,
+    vehicle_aliases: Option<String>,
+}
+impl GameCatalogue {
+    fn parse(catalogue: Value) -> Result<Self, String> {
+        let revision = |field: &str| catalogue[field].as_str().filter(|value| !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control))
+            .map(str::to_owned).ok_or_else(||format!("The game-owned {field} is missing."));
+        Ok(Self {
+            setup_revision: revision("providerSetupRevision")?,
+            catalogue_revision: revision("catalogueRevision")?,
+            ports: PortUpdate::complete(ports::integration(&catalogue)?)?,
+            aircraft_module: catalogue["aircraftModule"].as_str().map(str::to_owned),
+            vehicle_aliases: catalogue["vehicleAliases"].as_array().map(|aliases|json!(aliases).to_string()),
+        })
+    }
 }
 struct Sources {
     session: String,
@@ -305,26 +320,7 @@ impl Sources {
                         setup_revision.into(),
                         self.games
                             .resource_integration_catalogue(id)
-                            .and_then(|catalogue| {
-                                let revision = |field: &str| {
-                                    catalogue[field]
-                                        .as_str()
-                                        .filter(|value| {
-                                            !value.is_empty()
-                                                && value.len() <= 256
-                                                && !value.chars().any(char::is_control)
-                                        })
-                                        .map(str::to_owned)
-                                        .ok_or_else(|| {
-                                            format!("The game-owned {field} is missing.")
-                                        })
-                                };
-                                Ok(GameCatalogue {
-                                    setup_revision: revision("providerSetupRevision")?,
-                                    catalogue_revision: revision("catalogueRevision")?,
-                                    ports: PortUpdate::complete(ports::integration(&catalogue)?)?,
-                                })
-                            }),
+                            .and_then(GameCatalogue::parse),
                     ),
                 );
             }
@@ -337,6 +333,9 @@ impl Sources {
                         .attributes
                         .insert("catalogueRevision".into(), catalogue.catalogue_revision);
                     resource.ports = Some(catalogue.ports);
+                    if let Some(module) = catalogue.aircraft_module {
+                        resource.attributes.insert("aircraftModule".into(), module);
+                    }
                 }
                 Err(error) => resource.diagnostics.push(error),
             }
@@ -356,15 +355,57 @@ impl Sources {
                         .map(String::as_str)
                         .unwrap_or("unavailable")
                 ),
-                attributes: BTreeMap::new(),
+                attributes: resource.attributes.iter().filter(|(key,_)|["gameId", "aircraftModule", "providerSetupRevision", "catalogueRevision"].contains(&key.as_str())).map(|(key,value)|(key.clone(),value.clone())).collect(),
                 baseline_ready: false,
                 writable: false,
                 priority: 0,
             });
+            let base = resource.clone();
             batches.push((
                 scope.clone(),
                 Ok(batch(&scope, &self.session, revision, vec![resource])),
             ));
+            if id == "dcs" {
+                let mut modules = self.games.dcs_vehicle_catalogues().into_iter().collect::<BTreeSet<_>>();
+                let mut active_module = None;
+                // The native aircraft is exposed even when no editor has ever
+                // registered its tab in this process.
+                if let Some(vehicle) = self.games.current_vehicle_id("dcs") {
+                    if let Ok(module) = self.games.register_dcs_vehicle_catalogue(&vehicle) { modules.insert(module.clone()); active_module = Some(module); }
+                }
+                for module in modules {
+                    let key = format!("dcs:{module}");
+                    let scope = format!("game:{key}");
+                    if self.catalogues.get(&key).is_none_or(|(at, known, _)|known != setup_revision || at.elapsed() >= Duration::from_secs(5)) {
+                        let capture = self.games.resource_dcs_vehicle_catalogue(&module).and_then(GameCatalogue::parse);
+                        self.catalogues.insert(key.clone(), (Instant::now(), setup_revision.into(), capture));
+                    }
+                    let mut item = base.clone();
+                    item.key = key.clone();
+                    item.name = format!("DCS · {module}");
+                    item.evidence = vec![evidence(EvidenceKind::GameScope, key)];
+                    item.attributes.insert("aircraftModule".into(), module.clone());
+                    item.attributes.insert("vehicleId".into(), module.clone());
+                    if active_module.as_ref() != Some(&module) {
+                        item.attributes.insert("processVerified".into(), "false".into());
+                        item.attributes.insert("gameContextStatus".into(), "waiting-vehicle".into());
+                    }
+                    item.ports = None;
+                    match self.catalogues[&item.key].2.clone() {
+                        Ok(catalogue) => {
+                            item.attributes.insert("providerSetupRevision".into(), catalogue.setup_revision);
+                            item.attributes.insert("catalogueRevision".into(), catalogue.catalogue_revision);
+                            if let Some(aliases) = catalogue.vehicle_aliases { item.attributes.insert("vehicleAliases".into(), aliases); }
+                            item.ports = Some(catalogue.ports);
+                        }
+                        Err(error) => item.diagnostics.push(error),
+                    }
+                    item.route.as_mut().unwrap().id = scope.clone();
+                    item.route.as_mut().unwrap().provider_generation = format!("{}:{}", item.attributes.get("providerSetupRevision").map(String::as_str).unwrap_or("unconfigured"), item.attributes.get("catalogueRevision").map(String::as_str).unwrap_or("unavailable"));
+                    item.route.as_mut().unwrap().attributes = item.attributes.iter().filter(|(key,_)|["gameId", "aircraftModule", "providerSetupRevision", "catalogueRevision"].contains(&key.as_str())).map(|(key,value)|(key.clone(),value.clone())).collect();
+                    batches.push((scope.clone(), Ok(batch(&scope, &self.session, revision, vec![item]))));
+                }
+            }
         }
         for (_, batch) in &mut batches {
             if let Ok(batch) = batch {

@@ -67,7 +67,7 @@ Use **Inspect exact panel ports** and **Add control output** to select declared 
 
 ## Add feedback
 
-Feedback widgets are visual outputs; changing presentation does not press a control. Configure a simulator's installation, catalogue/aircraft, connection and freshness in its **Games** details. DCS-BIOS settings belong in DCS details. The profile graph selects actual catalogue telemetry outputs and the companion's declared feedback inputs. It contains no second integration configuration.
+Feedback widgets are visual outputs; changing presentation does not press a control. Configure a simulator's installation, catalogue directory, connection and freshness in its **Games** details. DCS-BIOS follows the loaded aircraft automatically. Select its controls and telemetry in the corresponding profile aircraft tab; Base exposes CommonData shared flight telemetry. The profile graph selects actual catalogue telemetry outputs and the companion's declared feedback inputs. It contains no second integration configuration.
 
 In the companion block, inspect the captured panel's **Feedback / widget inputs** and choose **Add feedback input** for each needed property. Connect exact ports through visible unit conversion, comparison/hysteresis, Gate or Format nodes as needed. A destination action requires a complete ordered invocation, using an explicit **Action pack** or supported **Set on change** node. Types, units and declared ranges must fit. Visibility, enabled and navigation properties are available only when the renderer advertises their supported semantics.
 

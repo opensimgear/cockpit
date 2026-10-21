@@ -358,12 +358,7 @@ impl Catalogue {
         )
     }
     pub(crate) fn load_module(path: &Path, module: &str) -> Result<Self, String> {
-        if module.is_empty()
-            || module.len() > 63
-            || !module
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-        {
+        if !safe_module_name(module) {
             return Err(CATALOGUE_ERROR.into());
         }
         read_json(&path.join(format!("{module}.json")), MAX_DOCUMENT)?;
@@ -464,7 +459,7 @@ impl Catalogue {
                 aircraft_names.insert(name.clone());
             }
         }
-        if !aircraft_names.contains(module) {
+        if aircraft_names.is_empty() && module != "CommonData" {
             return Err(CATALOGUE_ERROR.into());
         }
         Ok(Self {
@@ -479,6 +474,18 @@ impl Catalogue {
             }),
             counter,
         })
+    }
+    /// CommonData is an explicit read-only source. It accepts only aliases that
+    /// actually advertise CommonData, without broadening an aircraft decoder's
+    /// selected-module authority.
+    pub(crate) fn common_metadata(
+        start: &Value,
+        end: &Value,
+        aliases: &Value,
+    ) -> Result<Self, String> {
+        let mut result = Self::from_metadata("CommonData", start, end, aliases, None)?;
+        result.aircraft_names.remove("CommonData");
+        Ok(result)
     }
     pub(crate) fn output_only() -> Self {
         Self {
@@ -499,6 +506,12 @@ impl Catalogue {
             },
         }
     }
+}
+/// Installed module file stems include aircraft such as `F-86F Sabre`. Keep
+/// paths impossible while preserving these upstream names exactly.
+pub(crate) fn safe_module_name(module: &str) -> bool {
+    !module.is_empty() && module.len() <= 63 && module.trim() == module
+        && module.bytes().all(|b| b.is_ascii_alphanumeric() || b"_- ".contains(&b))
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -49,7 +49,7 @@ fn dcs_aliases(connection: &Value) -> Result<Value, String> {
         .filter(|object| object.len() <= MAX_VEHICLES)
         .ok_or("Invalid DCS aircraft aliases catalogue.")?;
     if object.iter().any(|(id, modules)| {
-        (!id.is_empty() && vehicle_id("dcs", id).is_none())
+        (!matches!(id.as_str(), "" | "NONE") && vehicle_id("dcs", id).is_none())
             || modules.as_array().is_none_or(|modules| {
                 modules.len() > 32 || modules.iter().any(|module| module.as_str().is_none())
             })
@@ -150,8 +150,11 @@ impl Reader {
                         .as_str()
                         .ok_or("DCS catalogue has no captured revision.")?,
                 )?;
-                catalogue.aircraft_names =
-                    names.keys().filter(|id| !id.is_empty()).cloned().collect();
+                catalogue.aircraft_names = names
+                    .keys()
+                    .filter(|id| vehicle_id("dcs", id).is_some())
+                    .cloned()
+                    .collect();
                 let network = dcs_bios::Network::parse(connection)?;
                 let decoder = dcs_profile::ExportSession::from_sources(
                     catalogue,
@@ -238,6 +241,9 @@ impl Reader {
 }
 struct Entry {
     signature: String,
+    installation: String,
+    setup_revision: String,
+    enabled: bool,
     process: Option<ProcessIdentity>,
     reader: Option<Reader>,
     current: Option<Value>,
@@ -255,6 +261,9 @@ pub(crate) struct Tracker {
     entries: BTreeMap<String, Entry>,
 }
 impl Tracker {
+    fn installation(game: &Value) -> String {
+        json!([game["installPath"], game["executable"], game["installed"]]).to_string()
+    }
     #[cfg(test)]
     pub(crate) fn set_test_vehicle(&mut self, id: &str, selected: Option<&str>) {
         self.observe(&json!({"id":id}), &json!({}), None, "test", false, u64::MAX);
@@ -320,12 +329,15 @@ impl Tracker {
         let signature = json!([
             process.as_ref().map(ProcessIdentity::value),
             setup_revision,
-            game["installPath"],
+            Self::installation(game),
             enabled
         ])
         .to_string();
         let entry = self.entries.entry(id.into()).or_insert_with(|| Entry {
             signature: String::new(),
+            installation: String::new(),
+            setup_revision: String::new(),
+            enabled: false,
             process: None,
             reader: None,
             current: None,
@@ -345,6 +357,9 @@ impl Tracker {
             entry.current = None;
             entry.error = None;
             entry.process = process;
+            entry.installation = Self::installation(game);
+            entry.setup_revision = setup_revision.into();
+            entry.enabled = enabled;
             entry.signature = signature;
             entry.retry = now;
             entry.catalogued = now - Duration::from_secs(31);
@@ -372,6 +387,30 @@ impl Tracker {
                 }
             }
         }
+    }
+    /// A separate native worker renews retained process identity without waiting
+    /// for setup inspection or aircraft catalogue construction. Telemetry still
+    /// has to advance through its own decoder freshness policy below.
+    pub(crate) fn poll_verified(
+        &mut self,
+        games: &[Value],
+        mut setup_revision: impl FnMut(&str) -> String,
+        mut alive: impl FnMut(&ProcessIdentity) -> bool,
+    ) {
+        for (id, entry) in &mut self.entries {
+            let qualified = entry.enabled
+                && games.iter().any(|game| game["id"] == id.as_str()
+                    && game["installed"] == true && Self::installation(game) == entry.installation)
+                && setup_revision(id) == entry.setup_revision
+                && entry.process.as_ref().is_some_and(&mut alive);
+            if qualified {
+                entry.observed = Instant::now();
+            } else {
+                entry.reader = None;
+                entry.current = None;
+            }
+        }
+        self.poll();
     }
     pub(crate) fn poll(&mut self) {
         let now_ms = self.origin.elapsed().as_millis() as u64;

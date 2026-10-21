@@ -101,6 +101,35 @@ fn closed_games_list_dcs_aliases_and_installed_xplane_aircraft() {
 }
 
 #[test]
+fn dcs_no_aircraft_aliases_are_valid_but_never_listed_or_promoted_to_fresh_aircraft() {
+    let scratch = scratch();
+    for name in ["A-10C.json", "AircraftAliases.json", "MetadataStart.json", "MetadataEnd.json"] {
+        fs::copy(fixtures().join(name), scratch.path().join(name)).unwrap();
+    }
+    let aliases_path = scratch.path().join("AircraftAliases.json");
+    let mut aliases: Value = serde_json::from_slice(&fs::read(&aliases_path).unwrap()).unwrap();
+    for sentinel in ["", "NONE"] { aliases[sentinel] = json!(["CommonData", "FC3", "NS430"]); }
+    fs::write(aliases_path, aliases.to_string()).unwrap();
+    let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = reserve.local_addr().unwrap().port();
+    drop(reserve);
+    let mut connection = connection(port);
+    connection["cataloguePath"] = json!(scratch.path());
+    let vehicles = dcs_catalogue(&connection).unwrap();
+    assert!(vehicles.iter().any(|vehicle|vehicle["id"] == "A-10C_2"));
+    assert!(vehicles.iter().all(|vehicle|vehicle["id"] != "NONE" && vehicle["id"] != ""));
+    let mut reader = Reader::open("dcs", &connection, &process()).unwrap();
+    let Reader::Dcs {decoder, ..} = &mut reader else { panic!("Expected a passive DCS reader"); };
+    decoder.feed(&frame("A-10C_2", 1), 0);
+    assert!(decoder.snapshot(0).fresh);
+    decoder.feed(&frame("NONE", 2), 100);
+    assert!(!decoder.snapshot(100).fresh);
+    decoder.feed(&frame("NONE", 3), 200);
+    assert!(!decoder.snapshot(200).fresh);
+    assert_eq!(reader.poll(200).unwrap(), None);
+}
+
+#[test]
 fn introspection_and_profile_share_unicast_exports_without_stealing_frames() {
     assert!(dcs_bios::Network::parse(&connection(0)).is_err());
     let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -176,6 +205,59 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
     let mut dcs = dcs;
     restored.decorate(&mut dcs);
     assert_eq!(dcs["vehicleSupport"]["vehicles"][0]["id"], "A-10C");
+}
+#[test]
+fn independent_process_checks_survive_slow_catalogue_observation_but_never_extend_telemetry_or_changed_identity() {
+    for changed in ["process", "setup", "installation"] {
+        let scratch = scratch();
+        let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = reserve.local_addr().unwrap().port();
+        drop(reserve);
+        let game = json!({"id":"dcs","installed":true,"executable":"DCS.exe"});
+        let games = vec![game.clone()];
+        let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
+        tracker.observe(&game, &connection(port), Some(process()), "setup", true, 1);
+        let producer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        producer.send_to(&frame("A-10C_2", 1), ("127.0.0.1", port)).unwrap();
+        for _ in 0..100 {
+            tracker.poll_verified(&games, |_|"setup".into(), |captured|captured == &process());
+            if tracker.current("dcs").is_some() { break; }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(tracker.current("dcs").unwrap()["id"], "A-10C_2");
+        // Simulate the expensive catalogue/setup observer being blocked beyond
+        // its normal freshness lease. The independent exact process check and
+        // advancing export retain the same aircraft without a Base transition.
+        tracker.entries.get_mut("dcs").unwrap().observed -= Duration::from_secs(3);
+        producer.send_to(&frame("A-10C_2", 2), ("127.0.0.1", port)).unwrap();
+        for _ in 0..100 {
+            tracker.poll_verified(&games, |_|"setup".into(), |captured|captured == &process());
+            if matches!(tracker.entries["dcs"].reader.as_ref(), Some(Reader::Dcs {decoder,..}) if decoder.snapshot(0).counter == Some(2)) { break; }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(tracker.current("dcs").unwrap()["id"], "A-10C_2");
+        tracker.origin -= Duration::from_millis(1501);
+        tracker.poll_verified(&games, |_|"setup".into(), |_|true);
+        assert_eq!(tracker.current("dcs"), None, "Process liveness cannot renew stale telemetry");
+        producer.send_to(&frame("A-10C_2", 3), ("127.0.0.1", port)).unwrap();
+        for _ in 0..100 {
+            tracker.poll_verified(&games, |_|"setup".into(), |_|true);
+            if tracker.current("dcs").is_some() { break; }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(tracker.current("dcs").is_some());
+        let mut current_games = games;
+        let mut current_process = process();
+        let mut revision = "setup";
+        match changed {
+            "process" => current_process.epoch += 1,
+            "setup" => revision = "new-setup",
+            _ => current_games[0]["executable"] = json!("different/DCS.exe"),
+        }
+        tracker.poll_verified(&current_games, |_|revision.into(), |captured|captured == &current_process);
+        assert_eq!(tracker.current("dcs"), None, "A changed {changed} must immediately withdraw the aircraft");
+        assert!(tracker.entries["dcs"].reader.is_none());
+    }
 }
 
 fn rally_sample(packet: u32, car: &str) -> game_telemetry::RawSample {

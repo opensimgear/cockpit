@@ -3,12 +3,24 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
-pub(super) type CatalogueCache = BTreeMap<String, (Instant, String, Result<Value, String>)>;
+pub(super) type CatalogueCache = BTreeMap<String, (Instant, String, Result<Arc<Value>, String>)>;
 fn digest(value: &Value) -> String {
     format!(
         "sha256:{:x}",
         Sha256::digest(serde_json::to_vec(value).expect("JSON value"))
     )
+}
+fn catalogue_metadata(cache: &CatalogueCache, id: &str, vehicle: Option<&str>, setup: &str) -> Option<Value> {
+    let selected = if let ("dcs", Some(vehicle)) = (id, vehicle) {
+        cache.iter().filter(|(key,_)|key.starts_with("dcs:")).find_map(|(_,(_,revision,result))| {
+            let value = result.as_ref().ok()?;
+            (revision == setup && (value["aircraftModule"] == vehicle || value["vehicleAliases"].as_array().is_some_and(|aliases|aliases.iter().any(|alias|alias == vehicle)))).then_some(value)
+        })
+    } else {
+        cache.get(if id == "dcs" { "dcs:CommonData" } else { id })
+            .filter(|(_,revision,_)|revision == setup).and_then(|(_,_,result)|result.as_ref().ok())
+    }?;
+    Some(json!({"aircraftModule":selected["aircraftModule"],"catalogueRevision":selected["catalogueRevision"],"providerSetupRevision":selected["providerSetupRevision"]}))
 }
 fn aircraft(value: &Value) -> Result<Option<String>, String> {
     if value.is_null() || value.as_str() == Some("") {
@@ -16,11 +28,7 @@ fn aircraft(value: &Value) -> Result<Option<String>, String> {
     }
     value
         .as_str()
-        .filter(|s| {
-            s.len() <= 63
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-        })
+        .filter(|s| crate::dcs_bios::safe_module_name(s))
         .map(|s| Some(s.to_owned()))
         .ok_or("Choose a valid DCS catalogue aircraft/module name.".into())
 }
@@ -117,16 +125,27 @@ impl GameIntegrationSetup {
         ))
     }
     pub(crate) fn current_catalogue_revision(&self, id: &str) -> Option<String> {
+        self.current_catalogue_revision_for_vehicle(id, None)
+    }
+    pub(crate) fn current_catalogue_revision_for_vehicle(&self, id: &str, vehicle: Option<&str>) -> Option<String> {
         let setup = self.provider_setup_revision(id);
-        self.inner
+        let cache = self.inner
             .catalogues
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(id)
-            .filter(|(_, revision, _)| *revision == setup)
-            .and_then(|(_, _, result)| result.as_ref().ok())
-            .and_then(|catalogue| catalogue["catalogueRevision"].as_str())
-            .map(str::to_owned)
+            .unwrap_or_else(|p| p.into_inner());
+        catalogue_metadata(&cache, id, vehicle, &setup)?["catalogueRevision"].as_str().map(str::to_owned)
+    }
+    /// Small captured identity only. Source guards and explicit preparation own
+    /// file validation; passive status/observation must not reparse an aircraft
+    /// catalogue or clone all its controls while holding the context lock.
+    pub(crate) fn integration_catalogue_metadata_for_vehicle(&self, id: &str, vehicle: Option<&str>) -> Result<Value, String> {
+        let setup = self.provider_setup_revision(id);
+        {
+            let cache = self.inner.catalogues.lock().unwrap_or_else(|p|p.into_inner());
+            if let Some(metadata) = catalogue_metadata(&cache, id, vehicle, &setup) { return Ok(metadata); }
+        }
+        let catalogue = self.resource_integration_catalogue_for_vehicle(id, vehicle)?;
+        Ok(json!({"aircraftModule":catalogue["aircraftModule"],"catalogueRevision":catalogue["catalogueRevision"],"providerSetupRevision":catalogue["providerSetupRevision"]}))
     }
     pub(super) fn decorate_provider_settings(&self, id: &str, status: &mut Value) {
         let (saved, setup_revision) = self.provider_snapshot(id);
@@ -149,7 +168,7 @@ impl GameIntegrationSetup {
             .catalogues
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .get(id)
+            .get(if id == "dcs" { "dcs:CommonData" } else { id })
             .and_then(|(_, setup, result)| {
                 (setup == status["providerSetupRevision"].as_str().unwrap_or("")).then_some(result)
             })
@@ -259,13 +278,18 @@ impl GameIntegrationSetup {
             .catalogues
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .remove(id);
+            .retain(|key, _| key != id && !key.starts_with(&format!("{id}:")));
         self.refresh(std::slice::from_ref(game));
         Ok(())
     }
     /// Full provider metadata remains available for a closed game. Reading never
     /// launches a process, opens telemetry or imports an alternate binding store.
     pub(crate) fn resource_integration_catalogue(&self, id: &str) -> Result<Value, String> {
+        self.resource_integration_catalogue_for_vehicle(id, None)
+    }
+    /// Independent authoring captures never change the saved provider module or
+    /// the current native aircraft. The Base capture contains CommonData only.
+    pub(crate) fn resource_integration_catalogue_for_vehicle(&self, id: &str, vehicle: Option<&str>) -> Result<Value, String> {
         if !matches!(
             id,
             "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally"
@@ -273,15 +297,18 @@ impl GameIntegrationSetup {
             return Err("Choose a supported game.".into());
         }
         let (record, revision) = self.provider_snapshot(id);
-        let mut cache = self
-            .inner
-            .catalogues
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if let Some((at, known, result)) = cache.get(id) {
-            if known == &revision && at.elapsed() < Duration::from_secs(2) {
-                return result.clone();
-            }
+        let module = if id == "dcs" {
+            validate_connection(id, &record["connection"])?;
+            let path = Path::new(record["connection"]["cataloguePath"].as_str().ok_or("Choose a DCS-BIOS catalogue folder.")?);
+            Some(match vehicle { Some(vehicle) => crate::dcs_profile::resolve_aircraft_module(path, vehicle)?, None => "CommonData".into() })
+        } else { None };
+        let key = module.as_ref().map(|module|format!("dcs:{module}")).unwrap_or_else(||id.into());
+        let cached = {
+            let cache = self.inner.catalogues.lock().unwrap_or_else(|p|p.into_inner());
+            cache.get(&key).filter(|(at,known,_)|known == &revision && at.elapsed() < Duration::from_secs(2)).map(|(_,_,result)|result.clone())
+        };
+        if let Some(cached) = cached {
+            return cached.map(|value|value.as_ref().clone());
         }
         let result = (|| {
             if let Some(error) = &self.inner.settings_error {
@@ -290,10 +317,15 @@ impl GameIntegrationSetup {
             let mut value = match id {
                 "dcs" => {
                     validate_connection(id, &record["connection"])?;
-                    let selected=aircraft(&record["aircraftModule"])?.ok_or("Choose a catalogue aircraft/module in DCS game details to expose its ports.")?;
                     let mut query = record["connection"].clone();
-                    query["aircraftModule"] = json!(selected);
-                    crate::dcs_profile::resource_catalogue(&query)?
+                    query["aircraftModule"] = json!(module.as_ref().unwrap());
+                    let mut value = crate::dcs_profile::resource_catalogue(&query)?;
+                    if let Some(vehicle) = vehicle {
+                        value["vehicleId"] = json!(module.as_ref().unwrap());
+                        value["vehicleAliases"] = json!(crate::dcs_profile::aircraft_aliases(Path::new(query["cataloguePath"].as_str().unwrap()), module.as_ref().unwrap())?);
+                        if Some(vehicle) != module.as_deref() && !value["vehicleAliases"].as_array().unwrap().iter().any(|alias|alias == vehicle) { return Err("The DCS aircraft alias changed during catalogue capture.".into()); }
+                    }
+                    value
                 }
                 "x-plane-11" | "x-plane-12" => crate::xplane::catalogue(),
                 _ => crate::game_telemetry::catalogue(),
@@ -303,8 +335,12 @@ impl GameIntegrationSetup {
             value["providerSetupRevision"] = json!(revision);
             Ok(value)
         })();
-        cache.insert(id.into(), (Instant::now(), revision, result.clone()));
-        result
+        if self.provider_setup_revision(id) != revision {
+            return Err("The provider settings changed during catalogue capture; refresh the aircraft catalogue.".into());
+        }
+        let cached = result.map(Arc::new);
+        self.inner.catalogues.lock().unwrap_or_else(|p|p.into_inner()).insert(key, (Instant::now(), revision, cached.clone()));
+        cached.map(|value|value.as_ref().clone())
     }
 }
 fn reject_game_install_folder_for_settings(target: &Path, game: &Value) -> Result<(), String> {
@@ -424,6 +460,49 @@ mod tests {
         bad["aircraftModule"] = json!("../outside");
         assert!(setup.save_provider_settings(&bad, &game("dcs")).is_err());
         assert_eq!(read_settings(&path).unwrap(), saved);
+    }
+    #[test]
+    fn dcs_vehicle_catalogues_are_independent_and_browsing_never_mutates_settings_or_current_revision() {
+        let scratch = Scratch::new();
+        let catalogue = scratch.0.join("catalogue");
+        fs::create_dir_all(&catalogue).unwrap();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios");
+        for name in ["A-10C.json", "AircraftAliases.json", "MetadataStart.json", "MetadataEnd.json"] { fs::copy(fixtures.join(name), catalogue.join(name)).unwrap(); }
+        fs::copy(fixtures.join("CommonData-altitude.json"), catalogue.join("CommonData.json")).unwrap();
+        fs::write(catalogue.join("OtherJet.json"), "{}").unwrap();
+        fs::write(catalogue.join("F-14.json"), "{}").unwrap();
+        fs::write(catalogue.join("AircraftAliases.json"), json!({"A-10C":["A-10C","CommonData"],"A-10C_2":["A-10C","CommonData"],"OtherJet":["OtherJet","CommonData"],"F-14B":["F-14","CommonData"],"F-14A-135-GR":["F-14","CommonData"]}).to_string()).unwrap();
+        let path = scratch.0.join("setup.json");
+        let setup = GameIntegrationSetup::new(path.clone(), false);
+        setup.save_provider_settings(&json!({"command":"game_integration_settings_save","expectedSetupRevision":setup.provider_setup_revision("dcs"),"connection":dcs_connection(&catalogue),"userFolder":scratch.0,"aircraftModule":"A-10C"}), &game("dcs")).unwrap();
+        let saved = fs::read(&path).unwrap();
+        let base = setup.resource_integration_catalogue("dcs").unwrap();
+        let first = setup.resource_integration_catalogue_for_vehicle("dcs", Some("A-10C_2")).unwrap();
+        let second = setup.resource_integration_catalogue_for_vehicle("dcs", Some("OtherJet")).unwrap();
+        let tomcat = setup.resource_integration_catalogue_for_vehicle("dcs", Some("F-14B")).unwrap();
+        setup.inner.catalogues.lock().unwrap().get_mut("dcs:F-14").unwrap().0 -= Duration::from_secs(3);
+        let refreshed_tomcat = setup.resource_integration_catalogue_for_vehicle("dcs", Some("F-14")).unwrap();
+        assert_eq!(tomcat, refreshed_tomcat);
+        assert_eq!(refreshed_tomcat["vehicleAliases"], json!(["F-14A-135-GR", "F-14B"]));
+        assert_eq!(first["aircraftModule"], "A-10C");
+        assert_eq!(second["aircraftModule"], "OtherJet");
+        assert!(first["controls"].as_array().unwrap().iter().any(|row| row["inputs"].as_array().is_some_and(|inputs|!inputs.is_empty())));
+        assert!(second["controls"].as_array().unwrap().iter().all(|row|row["sourceModule"] == "CommonData"));
+        assert_ne!(first["catalogueRevision"], second["catalogueRevision"]);
+        assert_ne!(base["catalogueRevision"], first["catalogueRevision"]);
+        assert_eq!(setup.current_catalogue_revision_for_vehicle("dcs", Some("A-10C_2")), first["catalogueRevision"].as_str().map(str::to_owned));
+        assert_eq!(setup.current_catalogue_revision("dcs"), base["catalogueRevision"].as_str().map(str::to_owned));
+        assert_eq!(fs::read(path).unwrap(), saved);
+        setup.inner.catalogues.lock().unwrap().get_mut("dcs:A-10C").unwrap().0 -= Duration::from_secs(3);
+        fs::write(catalogue.join("AircraftAliases.json"), "{changed and invalid}").unwrap();
+        // Passive observation keeps reading the small prior capture without
+        // touching source files. Full preparation still validates aliases.
+        let metadata = setup.integration_catalogue_metadata_for_vehicle("dcs", Some("A-10C_2")).unwrap();
+        assert_eq!(metadata["catalogueRevision"], first["catalogueRevision"]);
+        assert_eq!(metadata["aircraftModule"], "A-10C");
+        assert!(metadata.get("controls").is_none());
+        assert!(metadata.to_string().len() < 512);
+        assert!(setup.resource_integration_catalogue_for_vehicle("dcs", Some("A-10C_2")).is_err());
     }
     #[test]
     fn corrupt_or_oversized_preferences_remain_visible_and_read_only() {

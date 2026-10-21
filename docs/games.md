@@ -28,8 +28,8 @@ observation runs while the configured game is running, including before a profil
 is applied. DCS reads the DCS-BIOS aircraft name, ACR reads the shared-memory car
 model, and X-Plane reads the aircraft's relative `.acf` path through RREF. Process
 exit, stale telemetry, connection failure and a changed game session clear the
-current vehicle. Merely selecting an aircraft catalogue in settings does not
-claim that aircraft is loaded.
+current vehicle. Selecting an aircraft tab in the profile editor browses its
+catalogue without claiming that aircraft is loaded or changing the active module.
 
 The DCS vehicle list comes from the installed DCS-BIOS aliases. X-Plane scans the
 selected installation's Aircraft folder, including add-on aircraft. ACR's packed
@@ -44,6 +44,15 @@ Vehicle lists refresh in the background at most every 30 seconds, or when the
 installation or provider settings change. DCS telemetry subscribers share one
 UDP receiver with separate bounded queues, so vehicle observation also works
 with unicast exports while a profile is running.
+
+DCS resolves the fresh native aircraft identity through the installed
+`AircraftAliases.json` and selects its DCS-BIOS module automatically. Game details
+show the active module or **Waiting for aircraft**. Each profile aircraft tab has
+its own controls and telemetry catalogue; Base uses **CommonData** shared flight
+telemetry. Aircraft changes revoke the previous aircraft's contributions before
+the next aircraft supplies fresh data. Unknown or ambiguous aircraft aliases do
+not select a guessed module. Saved module preferences do not override the loaded
+aircraft.
 
 ## Integration setup and readiness
 
@@ -64,12 +73,13 @@ preserves external edits and reports conflicts instead of overwriting them. Unkn
 forks, changed module/configuration files and ambiguous loaders need attention.
 **Recheck readiness** observes the current files; **Rescan** also rechecks setup.
 
-Edit provider connection, freshness, catalogue and DCS aircraft/module settings
+Edit provider connection, freshness and the installed catalogue directory
 directly in the owning game's details. Saving preferences is separate from
 installing or repairing game files. Saves require the displayed opaque setup
 revision; stale forms and external settings edits cannot overwrite newer values.
-Setup preserves the game-owned aircraft selection and connection preferences.
-User UDP overrides that do not match the installed module remain Needs attention.
+Setup preserves connection preferences. Aircraft selection follows live native
+telemetry, and browsing an aircraft tab does not save provider preferences.
+User UDP overrides that do not match the installed runtime remain Needs attention.
 Native setup is unavailable on Linux/macOS, where profile editing remains available.
 
 For ACR, **Set up telemetry** prepares native shared-memory connection settings;
@@ -172,6 +182,13 @@ failure, offline recovery, stale identity and interrupted sessions. The native i
 coverage script also gates the new production modules above 70% line coverage.
 These checks do not qualify installed Windows games, USB enumeration or assembled
 hardware. Live game and physical hardware qualification remain separate work.
+
+`pnpm profiles:dcs:aircraft:native` runs the opt-in aircraft catalogue acceptance
+against the running dev Cockpit. Set `OSG_DCS_VEHICLES_NATIVE=1`, start the native
+dev app with its CDP endpoint available, and set up its actual DCS-BIOS integration
+first. The test uses installed catalogues, a verified fixture process and authored
+UDP exports to check tab catalogues, automatic module changes and stale-data
+fencing. Its evidence does not qualify a flight in the simulator.
 
 ## Local storage and retired configuration
 

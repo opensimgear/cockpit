@@ -70,9 +70,14 @@
   $effect(()=>{if(previousVehicleTab!==activeVehicleTabId){previousVehicleTab=activeVehicleTabId;routeOpen=false;fromNode='';fromPort='';toNode='';toPort='';editingRoute='';connectionRoute='';pendingConnection=false;chainOrder=[];highlighted=[];message='';}});
   $effect(()=>{
     const sources=assignments.filter(assignment=>visibleIds.has(assignment.resourceId)).map(assignment=>({sourceId:assignment.sourceId,resource:inventory.find(resource=>resource.id===assignment.sourceId),companion:document.resources.some(resource=>resource.id===assignment.resourceId&&resource.kind==='companion'),publication:document.companionAssignments.find(item=>item.resourceId===assignment.resourceId)?.publicationHash})),revision=inventoryRevision;
-    untrack(()=>{const wanted=new Set(sources.filter(source=>!source.companion||source.publication).map(source=>source.sourceId));discoveries=Object.fromEntries(Object.entries(discoveries).filter(([id])=>wanted.has(id)));for(const source of sources){if(!source.resource||source.companion&&!source.publication)continue;const signature=`${revision}/${graphInventorySignature([source.resource])}/${source.publication??''}`;if(discoveries[source.sourceId]?.signature!==signature)void discover(source.sourceId,signature,source.companion?source.publication:undefined);}});
+    untrack(()=>refreshDiscoveries(sources,revision));
   });
   onDestroy(()=>{discoveryDisposed=true;assignmentEpoch++;assignmentBrowser.clear();learning?.dispose();});
+  function refreshDiscoveries(sources:readonly {sourceId:string;resource?:DeepReadonly<ResourceSummary>;companion:boolean;publication?:string}[],revision:number){
+    const wanted=new Set(sources.filter(source=>!source.companion||source.publication).map(source=>source.sourceId));
+    discoveries=Object.fromEntries(Object.entries(discoveries).filter(([id])=>wanted.has(id)));
+    for(const source of sources){if(!source.resource||source.companion&&!source.publication)continue;const signature=`${revision}/${graphInventorySignature([source.resource])}/${source.publication??''}`;if(discoveries[source.sourceId]?.signature!==signature)void discover(source.sourceId,signature,source.companion?source.publication:undefined);}
+  }
   async function discover(sourceId:string,signature:string,publication?:string){
     discoveries={...discoveries,[sourceId]:{signature,details:null,busy:true,error:''}};
     try{const details=publication?await profileDiscoverCompanion(companionDiscovery,sourceId,publication):await profileDiscoverResource(inventoryClient,sourceId);if(!discoveryDisposed&&discoveries[sourceId]?.signature===signature)discoveries={...discoveries,[sourceId]:{signature,details,busy:false,error:''}};}

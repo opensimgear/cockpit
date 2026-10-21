@@ -2,23 +2,55 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./profile-game-context','./profile-editor','./profile-graph-history','./profiles']);
-const {profileSetGameContext,profileGameContext,profileGameContextNeedsSync,profileAddVehicleIntegration}=modules.get('./profile-game-context');
+const {profileSetGameContext,profileGameContext,profileGameContextNeedsSync,profileAddVehicleIntegration,profileGameTabInventory,profileDcsResourceMatchesVehicle,profileReconcileDcsVehicleCatalogue,profileChangeVehicleIntegration}=modules.get('./profile-game-context');
 const {blankProfile,ProfileEditorStore}=modules.get('./profile-editor'),{ProfileGraphHistory}=modules.get('./profile-graph-history');
 const id='11111111-1111-4111-8111-111111111111',plain=value=>JSON.parse(JSON.stringify(value));
-const source=gameId=>({id:`native:${gameId}`,name:gameId,resourceType:'game-integration',availability:'offline',attributes:{gameId}});
-const inventory=[source('dcs'),source('x-plane-12')];
+const source=gameId=>({id:`native:${gameId}`,name:gameId,resourceType:'game-integration',availability:'offline',attributes:{gameId,...(gameId==='dcs'?{aircraftModule:'CommonData'}:{})}});
+const aircraft=(module,alias=module)=>({...source('dcs'),id:`native:dcs:${module}`,attributes:{gameId:'dcs',aircraftModule:module,vehicleAliases:JSON.stringify([module,alias])}});
+const inventory=[source('dcs'),source('x-plane-12')],hornet=aircraft('FA-18C_hornet'),viper=aircraft('F-16C','F-16C_50');
 const draft=()=>({document:blankProfile(id,'Context rig'),assignments:[]});
 
 test('vehicle canvases own independent simulator integration blocks and same-game sync preserves all scopes',()=>{
  let value=profileSetGameContext(draft(),'dcs',inventory);
  value.document.vehicleTabs=[{id:'hornet',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'Hornet',nodeIds:[]},{id:'viper',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'Viper',nodeIds:[]}];
  value=profileAddVehicleIntegration(value,'hornet',[]);value=profileAddVehicleIntegration(value,'viper',[]);
- assert.equal(value.document.resources.length,3);assert.equal(value.assignments.length,1);assert.equal(profileGameContextNeedsSync(value,inventory),true);
- const scoped=plain(value.document.vehicleTabs),synced=profileSetGameContext(value,'dcs',inventory);
+ assert.equal(value.document.resources.length,3);assert.equal(value.assignments.length,1);assert.equal(profileGameContextNeedsSync(value,inventory),false);assert.equal(profileGameContextNeedsSync(value,[...inventory,hornet,viper]),true);
+ const scoped=plain(value.document.vehicleTabs),synced=profileSetGameContext(value,'dcs',[...inventory,hornet,viper]);
  assert.deepEqual(plain(synced.document.vehicleTabs),scoped);assert.equal(synced.document.resources.length,3);assert.equal(synced.assignments.length,3);assert.equal(profileGameContextNeedsSync(synced,inventory),false);
- assert.equal(new Set(synced.assignments.map(row=>row.sourceId)).size,1);
+ assert.equal(new Set(synced.assignments.map(row=>row.sourceId)).size,3);
  assert.deepEqual(plain(profileAddVehicleIntegration(synced,'hornet',inventory)),plain(synced));
  assert.equal(profileSetGameContext(synced,'',inventory).document.resources.length,0);
+});
+
+test('DCS tab catalogues match aliases, expose only their module and safely retarget empty integrations',()=>{
+ let value=profileSetGameContext(draft(),'dcs',inventory);value.document.vehicleTabs=[{id:'aircraft',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'Viper',nodeIds:[]}];
+ const liveBase={...source('dcs'),attributes:{...source('dcs').attributes,vehicleId:'F-16C_50',vehicleAliases:'["F-16C_50"]'}},scopedInventory=[liveBase,source('x-plane-12'),hornet,viper];
+ assert.equal(profileDcsResourceMatchesVehicle(liveBase,'F-16C_50'),false);assert.equal(profileDcsResourceMatchesVehicle(liveBase,''),true);
+ value=profileAddVehicleIntegration(value,'aircraft',scopedInventory);const node=value.document.vehicleTabs[0].nodeIds[0];
+ assert.equal(value.assignments.find(row=>row.resourceId===node).sourceId,viper.id);
+ assert.deepEqual(profileGameTabInventory(value.document,scopedInventory,'aircraft').map(row=>row.id),['native:x-plane-12',viper.id]);
+ assert.deepEqual(profileGameTabInventory(value.document,scopedInventory).map(row=>row.id),['native:dcs','native:x-plane-12']);
+ const pending=plain(value);pending.assignments=pending.assignments.filter(row=>row.resourceId!==node);assert.equal(profileSetGameContext(pending,'dcs',scopedInventory).assignments.find(row=>row.resourceId===node).sourceId,viper.id);
+ assert.equal(profileDcsResourceMatchesVehicle({...viper,attributes:{...viper.attributes,vehicleAliases:'bad json'}},'F-16C_50'),false);
+ const changed=profileChangeVehicleIntegration(value,'aircraft',{id:'FA-18C_hornet',name:'Hornet'},[...inventory,hornet,viper]);
+ assert.equal(changed.assignments.find(row=>row.resourceId===node).sourceId,hornet.id);assert.equal(value.assignments.find(row=>row.resourceId===node).sourceId,viper.id);
+ const unknown=profileChangeVehicleIntegration(value,'aircraft',{id:'unknown',name:'Unknown'},[...inventory,hornet,viper]);assert.equal(unknown.assignments.some(row=>row.resourceId===node),false);
+});
+
+test('legacy DCS pins migrate only with every exact contract; aircraft retarget never loses controls or routes',()=>{
+ let value=profileSetGameContext(draft(),'dcs',inventory);value.document.vehicleTabs=[{id:'aircraft',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'Viper',nodeIds:[]}];
+ value=profileAddVehicleIntegration(value,'aircraft',[]);const node=value.document.vehicleTabs[0].nodeIds[0],contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false},hash=`sha256:${'a'.repeat(64)}`;
+ value.document.resources.find(row=>row.id===node).ports=[{id:'lamp',name:'Aircraft lamp',direction:'output',contract}];value.assignments.push({resourceId:node,sourceId:'native:dcs',ports:[{profilePortId:'lamp',observedPortId:'MASTER_CAUTION',expectedContractHash:hash}]});
+ value.document.resources.push({id:'indicator',name:'Indicator',kind:'device',required:false,ports:[{id:'lamp',name:'Lamp',direction:'input',contract}]});value.document.vehicleTabs[0].nodeIds.push('indicator');value.document.bindings.push({id:'caution',from:{nodeId:node,portId:'lamp'},to:{nodeId:'indicator',portId:'lamp'}});
+ const port={descriptor:{id:'MASTER_CAUTION',name:'Master caution',direction:'output',contract},contractHash:hash,routeIds:[],current:false};
+ const next=profileReconcileDcsVehicleCatalogue(value,'aircraft',viper,[port],[...inventory,hornet,viper]);
+ assert.equal(next.assignments.find(row=>row.resourceId===node).sourceId,viper.id);assert.deepEqual(plain(next.document),plain(value.document));assert.deepEqual(plain(next.assignments.find(row=>row.resourceId===node).ports),plain(value.assignments.find(row=>row.resourceId===node).ports));
+ assert.throws(()=>profileReconcileDcsVehicleCatalogue(value,'aircraft',viper,[{...port,contractHash:`sha256:${'b'.repeat(64)}`}],inventory),/cannot preserve/);
+ assert.throws(()=>profileReconcileDcsVehicleCatalogue(value,'aircraft',viper,[{...port,descriptor:{...port.descriptor,contract:{...contract,freshnessMs:500}}}],inventory),/differs/);
+ assert.throws(()=>profileReconcileDcsVehicleCatalogue(value,'aircraft',hornet,[port],inventory),/does not match/);
+ assert.throws(()=>profileChangeVehicleIntegration(next,'aircraft',{id:'FA-18C_hornet',name:'Hornet'},[...inventory,hornet,viper]),/configured DCS controls/);
+ assert.deepEqual(plain(profileChangeVehicleIntegration(next,'aircraft',{id:'F-16C',name:'Viper canonical'},[...inventory,hornet,viper]).assignments),plain(next.assignments));
+ assert.equal(value.assignments.find(row=>row.resourceId===node).sourceId,'native:dcs');assert.equal(value.document.bindings.length,1);
 });
 
 test('selecting a saved context adds exactly its integration with a native assignment in one Undo edit',()=>{

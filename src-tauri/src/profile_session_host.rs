@@ -345,8 +345,12 @@ impl NativeProfileHost {
                         resource.game_id.as_deref() == Some(&game.proof.game_id)
                             && resource.provider_setup_revision.as_deref()
                                 == Some(&game.proof.provider_setup_revision)
-                            && resource.summary.attributes.get("catalogueRevision")
+                            && (resource.summary.attributes.get("catalogueRevision")
                                 == Some(&game.proof.catalogue_revision)
+                                || game.proof.game_id == "dcs"
+                                    && resource.summary.attributes.get("aircraftModule").map(String::as_str) == Some("CommonData"))
+                            && (game.proof.game_id != "dcs"
+                                || resource.summary.attributes.get("aircraftModule").is_none_or(|module| module == "CommonData" || Some(module.as_str()) == game.aircraft_module.as_deref()))
                     })
                     .map(|resource| {
                         (
@@ -578,6 +582,11 @@ impl NativeProfileHost {
     )->Result<Arc<crate::profile_session::Stage>,String> {
         if candidate.launch_preparation&&candidate.game_id.is_some(){return Err("Hardware-first launch preparation cannot capture a running game scope.".into())}
         let source_candidate=candidate;
+        if candidate.game_id.as_deref() == Some("dcs") {
+            for tab in candidate.document.vehicle_tabs.iter().filter(|tab| tab.game_id == "dcs") {
+                games.register_dcs_vehicle_catalogue(&tab.vehicle_id)?;
+            }
+        }
         let vehicle_selection=Self::selected_vehicle_tab(games,&candidate.document,candidate.game_id.as_deref());
         let vehicle_id=vehicle_selection.as_ref().and_then(|id|candidate.document.vehicle_tabs.iter().find(|tab|&tab.id==id)).map(|tab|tab.vehicle_id.as_str());
         let mut selected=candidate.clone();

@@ -21,6 +21,9 @@ pub(crate) struct Observation {
     pub setup_ready: bool,
     pub provider_setup_revision: String,
     pub catalogue_revision: Option<String>,
+    /// DCS aircraft identity comes from fresh native exports. Even aliases that
+    /// share a module must retire the previous flight's command authority.
+    pub vehicle_id: Option<String>,
     pub error: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +34,7 @@ pub(crate) struct ContextToken {
     pub process: ProcessIdentity,
     pub provider_setup_revision: String,
     pub catalogue_revision: String,
+    pub vehicle_id: Option<String>,
 }
 /// Read-only preparation evidence. It can authorize native source acquisition,
 /// never a simulator command or an applied-profile owner.
@@ -41,6 +45,7 @@ pub(crate) struct GamePreparation {
     pub process: ProcessIdentity,
     pub provider_setup_revision: String,
     pub catalogue_revision: String,
+    pub vehicle_id: Option<String>,
 }
 impl ContextToken {
     pub(crate) fn matches_preparation(&self, prepared: &GamePreparation) -> bool {
@@ -48,6 +53,7 @@ impl ContextToken {
             && self.process == prepared.process
             && self.provider_setup_revision == prepared.provider_setup_revision
             && self.catalogue_revision == prepared.catalogue_revision
+            && self.vehicle_id == prepared.vehicle_id
     }
 }
 struct Record {
@@ -144,6 +150,9 @@ impl Broker {
         }
         self.observation_commits.insert(id.into(), epoch);
         if !revision(&observation.provider_setup_revision)
+            || observation.vehicle_id.as_ref().is_some_and(|vehicle| {
+                id != "dcs" || crate::game_vehicles::vehicle_id(id, vehicle).is_none()
+            })
             || observation
                 .catalogue_revision
                 .as_deref()
@@ -182,6 +191,7 @@ impl Broker {
                         process: process.clone(),
                         provider_setup_revision: observation.provider_setup_revision.clone(),
                         catalogue_revision: catalogue.clone(),
+                        vehicle_id: observation.vehicle_id.clone(),
                     })
             } else {
                 None
@@ -259,6 +269,7 @@ impl Broker {
             process: observed.process.clone()?,
             provider_setup_revision: observed.provider_setup_revision.clone(),
             catalogue_revision: observed.catalogue_revision.clone()?,
+            vehicle_id: observed.vehicle_id.clone(),
         })
     }
     pub(crate) fn token(&self, id: &str) -> Result<ContextToken, String> {
@@ -326,6 +337,7 @@ mod tests {
             setup_ready: true,
             provider_setup_revision: format!("sha256:{}", "a".repeat(64)),
             catalogue_revision: Some(format!("sha256:{}", "b".repeat(64))),
+            vehicle_id: None,
             error: None,
         }
     }
@@ -508,6 +520,24 @@ mod tests {
         assert!(broker.validate(&catalogue).is_err());
         broker.set_owner(Some(owner(Some("dcs")))).unwrap();
         assert!(broker.validate(&catalogue).is_err());
+    }
+    #[test]
+    fn aircraft_identity_change_retires_authority_even_when_module_catalogue_is_unchanged() {
+        let mut broker = Broker::default();
+        broker.set_owner(Some(owner(Some("dcs")))).unwrap();
+        let mut aircraft = observed();
+        aircraft.vehicle_id = Some("F-14B".into());
+        observe(&mut broker, "dcs", aircraft.clone()).unwrap();
+        let first = broker.preparation("dcs").unwrap().unwrap();
+        let token = broker.token("dcs").unwrap();
+        aircraft.vehicle_id = Some("F-14A-135-GR".into());
+        observe(&mut broker, "dcs", aircraft).unwrap();
+        let second = broker.preparation("dcs").unwrap().unwrap();
+        assert_eq!(first.catalogue_revision, second.catalogue_revision);
+        assert_ne!(first.session, second.session);
+        assert!(broker.validate_preparation(&first).is_err());
+        assert!(broker.validate(&token).is_err());
+        assert!(!token.matches_preparation(&second));
     }
     #[test]
     fn missing_setup_unsupported_platform_and_native_errors_are_distinct() {

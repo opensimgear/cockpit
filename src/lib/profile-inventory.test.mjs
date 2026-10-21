@@ -15,6 +15,15 @@ const inspected = (ports, offset = 0, limit = 128) => ({ session: 'native-invent
 const token = () => ({ inventorySession: 'native-inventory-session', resourceId: 'native/resource:1', generation: '9007199254740999', capabilityRevision: 'sha256:capabilities', routeId: route().id, providerSession: 'provider-session', providerGeneration: route().providerGeneration, portId: 'axis:0', contractHash: 'sha256:port', access: 'read' });
 const action = () => ({ id: 'led.rgb.set', name: 'Set RGB', direction: 'input', contract: { delivery: 'action', parameters: [{ id: 'rgb', name: 'Color', schema: { type: 'rgb' } }], semantics: 'setter', endpoint: 'led:rgb', readable: true, display: null, ownership: { scope: 'endpoint', maxLeaseMs: 5000 } } });
 
+test('DCS aircraft catalogue acquisition is passive, typed and rejects malformed or unavailable results',async()=>{
+ const resource={...summary('native:dcs:F-16C'),resourceType:'game-integration',attributes:{gameId:'dcs',aircraftModule:'F-16C',vehicleAliases:'["F-16C_50"]'}},calls=[];
+ const client=new ProfileInventoryClient(async request=>{calls.push(request);return {resource};});const selected=await client.dcsVehicle('F-16C_50');
+ assert.equal(selected.id,resource.id);assert.ok(Object.isFrozen(selected.attributes));assert.deepEqual(calls,[{command:'profile_dcs_vehicle_resource',vehicleId:'F-16C_50'}]);
+ for(const result of [{},{resource:{...resource,resourceType:'host-controller'}},{resource:{...resource,attributes:{gameId:'dcs'}}}])await assert.rejects(new ProfileInventoryClient(async()=>result).dcsVehicle('F-16C_50'),/Malformed/);
+ for(const id of ['', 'x'.repeat(257),'bad\u0000'])await assert.rejects(client.dcsVehicle(id),/exact DCS aircraft/);
+ await assert.rejects(new ProfileInventoryClient(async()=>{throw Error('Unknown aircraft');}).dcsVehicle('unknown'),/Unknown aircraft/);
+});
+
 test('typed inventory retains opaque identities, transport attributes and offline blocks', async () => {
   const resources = [summary('can:gateway:a/module:same'), summary('can:gateway:b/module:same'), { ...summary('controller:no-serial-a'), resourceType: 'host-controller' }, { ...summary('controller:no-serial-b'), resourceType: 'host-controller' }, { ...summary('companion:tablet'), resourceType: 'companion' }, { ...summary('game:dcs'), resourceType: 'game-integration', availability: 'unavailable', connections: [], diagnostics: ['Catalogue not available'] }, { ...summary('removed:wheel'), availability: 'offline', connections: [] }];
   const calls = [];

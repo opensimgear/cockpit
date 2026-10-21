@@ -15,6 +15,9 @@ const INVALID: &str = "Invalid DCS-BIOS panel profile.";
 const CATALOGUE_ERROR: &str = "The installed DCS-BIOS catalogue is incompatible or malformed.";
 const SOURCE_CHANGED: &str = "The selected DCS aircraft, alias, CommonData or metadata catalogue changed; prepare a new native reader.";
 const COMMON_PREFIX: &str = "common:CommonData:";
+#[path = "dcs_aircraft.rs"]
+mod aircraft;
+pub(crate) use aircraft::{aircraft_aliases, resolve_aircraft_module};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CatalogueFile {
@@ -49,13 +52,7 @@ struct TelemetryCatalogue {
 }
 impl TelemetryCatalogue {
     fn load(path: &Path, module: &str) -> Result<Self, String> {
-        if module.is_empty()
-            || module.len() > 63
-            || !module
-                .bytes()
-                .all(|value| value.is_ascii_alphanumeric() || b"_-".contains(&value))
-            || module == "CommonData"
-        {
+        if !dcs_bios::safe_module_name(module) {
             return Err(
                 "Choose an actual aircraft catalogue; CommonData is read-only shared telemetry."
                     .into(),
@@ -77,12 +74,13 @@ impl TelemetryCatalogue {
             documents.insert(name.to_owned(), value.clone());
             Ok(Some(value))
         };
-        let selected = read(&format!("{module}.json"), false)?.unwrap();
+        let shared = module == "CommonData";
+        let selected = if shared { json!({}) } else { read(&format!("{module}.json"), false)?.unwrap() };
         let aliases = read("AircraftAliases.json", false)?.unwrap();
-        let authorized = aliases[module].as_array().is_some_and(|values| {
-            values.iter().any(|value| value == module)
-                && values.iter().any(|value| value == "CommonData")
-        });
+        let authorized = shared || aliases.as_object().is_some_and(|aliases|aliases.iter().any(|(name, values)| {
+            !name.is_empty() && values.as_array().is_some_and(|values|
+                values.iter().any(|value| value == module) && values.iter().any(|value| value == "CommonData"))
+        }));
         let mut metadata_documents = Vec::new();
         for (canonical, legacy) in [
             ("MetadataStart.json", "MetaDataStart.json"),
@@ -100,13 +98,11 @@ impl TelemetryCatalogue {
         };
         // The selected aircraft remains the sole mission/metadata authority.
         // This validates the complete alias table, never a browser module hint.
-        let metadata = Catalogue::from_metadata(
-            module,
-            &metadata_documents[0],
-            &metadata_documents[1],
-            &aliases,
-            None,
-        )?;
+        let metadata = if shared {
+            Catalogue::common_metadata(&metadata_documents[0], &metadata_documents[1], &aliases)?
+        } else {
+            Catalogue::from_metadata(module, &metadata_documents[0], &metadata_documents[1], &aliases, None)?
+        };
         if let Some(common) = &common {
             let mut count = 0;
             for controls in common.as_object().ok_or(CATALOGUE_ERROR)?.values() {
@@ -399,12 +395,7 @@ impl Profile {
         if !value.is_object()
             || value.to_string().len() > 65536
             || value["schemaVersion"] != 2
-            || !value["aircraftModule"].as_str().is_some_and(|s| {
-                !s.is_empty()
-                    && s.len() <= 63
-                    && s.bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-            })
+            || !value["aircraftModule"].as_str().is_some_and(dcs_bios::safe_module_name)
         {
             return Err(INVALID.into());
         }
@@ -855,10 +846,7 @@ fn query_catalogue_page(request: &Value, complete: bool) -> Result<Value, String
         .filter(|p| Path::new(p).is_absolute())
         .ok_or(INVALID)?;
     let aircraft_module = text(&request["aircraftModule"], 63, false)
-        .filter(|s| {
-            s.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-        })
+        .filter(|s| dcs_bios::safe_module_name(s))
         .ok_or(INVALID)?;
     let query = request
         .get("query")

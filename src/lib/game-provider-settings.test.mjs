@@ -16,8 +16,8 @@ test('closed game settings project exact provider keys without native process or
     const request=plain(prepareProviderSettingsSave(value).request);
     assert.equal(request.command,'game_integration_settings_save');assert.equal(request.expectedSetupRevision,rev(1));
     assert.equal(request.gameProfile,undefined);assert.equal(request.profileId,undefined);assert.equal(request.contextSession,undefined);
-    assert.equal('userFolder' in request,id==='dcs');assert.equal('aircraftModule' in request,id==='dcs');
-    if(id==='dcs')assert.equal(request.aircraftModule,'A-10C');
+    assert.equal('userFolder' in request,id==='dcs');assert.equal('aircraftModule' in request,false);
+    if(id==='dcs')assert.equal(request.aircraftModule,undefined);
     if(id==='x-plane-12')assert.equal(request.connection.version,12);
     if(id.startsWith('x-plane'))assert.equal(request.connection.source,'rref');
     request.connection.freshnessMs=800;assert.equal(value.connection.freshnessMs,1500);
@@ -29,10 +29,10 @@ test('missing and malformed setup hashes block save; default folders do not fabr
   }
   const g={...game(),integrationSetup:undefined};const d=providerSettingsDraft(g);assert.equal(d.aircraftModule,'');assert.equal(d.userFolder,'');assert.equal(d.connection.cataloguePath,'');
 });
-test('DCS saves require bounded absolute folders, a valid aircraft and actual network settings', () => {
-  const mutations=[d=>d.connection.cataloguePath='',d=>d.connection.cataloguePath='relative/path',d=>d.userFolder='',d=>d.userFolder='relative',d=>d.userFolder='C:\\bad\u0000',d=>d.userFolder='C:\\'+ 'a'.repeat(4096),d=>d.aircraftModule='A 10C',d=>d.aircraftModule='A'.repeat(64),d=>d.connection.commandHost='999.0.0.1',d=>d.connection.listenAddress='host',d=>d.connection.multicastInterface='127.0.0',d=>d.connection.multicastGroup='127.0.0.1',d=>d.connection.multicastGroup='240.1.1.1',d=>d.connection.commandPort=0,d=>d.connection.listenPort=65536,d=>d.connection.freshnessMs=99,d=>d.connection.freshnessMs=10001,d=>d.connection.freshnessMs=NaN,d=>d.connection.processId=1];
+test('DCS saves require bounded absolute folders and actual network settings without aircraft selection', () => {
+  const mutations=[d=>d.connection.cataloguePath='',d=>d.connection.cataloguePath='relative/path',d=>d.userFolder='',d=>d.userFolder='relative',d=>d.userFolder='C:\\bad\u0000',d=>d.userFolder='C:\\'+ 'a'.repeat(4096),d=>d.connection.commandHost='999.0.0.1',d=>d.connection.listenAddress='host',d=>d.connection.multicastInterface='127.0.0',d=>d.connection.multicastGroup='127.0.0.1',d=>d.connection.multicastGroup='240.1.1.1',d=>d.connection.commandPort=0,d=>d.connection.listenPort=65536,d=>d.connection.freshnessMs=99,d=>d.connection.freshnessMs=10001,d=>d.connection.freshnessMs=NaN,d=>d.connection.processId=1];
   for(const mutate of mutations){const d=draft();mutate(d);assert.notEqual(providerSettingsError(d),'');assert.throws(()=>prepareProviderSettingsSave(d));}
-  const d=draft();d.aircraftModule='';d.connection.multicastGroup='';assert.equal(providerSettingsError(d),'');assert.equal(prepareProviderSettingsSave(d).request.aircraftModule,'');
+  const d=draft();d.aircraftModule='F-86F Sabre';d.connection.multicastGroup='';assert.equal(providerSettingsError(d),'');assert.equal(prepareProviderSettingsSave(d).request.aircraftModule,undefined);
 });
 test('telemetry-only providers reject synthetic/process settings, wrong versions and impossible freshness', () => {
   for (const [id,mutate] of [['assetto-corsa-rally',d=>d.connection.source='synthetic'],['assetto-corsa-rally',d=>d.connection.processId=42],['x-plane-11',d=>d.connection.version=12],['x-plane-12',d=>d.connection.source='synthetic'],['x-plane-12',d=>d.connection.processIdentity={}],['x-plane-12',d=>d.connection.host='300.0.0.1'],['x-plane-12',d=>d.connection.port=0],['x-plane-12',d=>d.connection.listenPort=-1],['x-plane-12',d=>d.connection.updateHz=21],['x-plane-12',d=>{d.connection.updateHz=1;d.connection.freshnessMs=1500;}]]){const d=draft(id);mutate(d);assert.notEqual(providerSettingsError(d),'');}

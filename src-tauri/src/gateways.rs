@@ -746,6 +746,21 @@ impl GatewayManager {
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
+        if command == "profile_dcs_vehicle_resource" {
+            let result = (|| {
+                if request.as_object().is_none_or(|object| object.keys().any(|key| !["command", "clientId", "vehicleId"].contains(&key.as_str()))) {
+                    return Err("Unsupported aircraft catalogue request field.".to_owned());
+                }
+                let vehicle = request["vehicleId"].as_str().ok_or("Choose a DCS aircraft.")?;
+                let module = self.games.register_dcs_vehicle_catalogue(vehicle)?;
+                self.profile_resources.refresh_native()?;
+                self.profile_resources.dcs_vehicle_authoring_resource(&module)
+            })();
+            return match result {
+                Ok(resource) => json!({"ok":true,"state":{"profileResources":{"resource":resource}}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
+            };
+        }
         if command.starts_with("profile_resources_") {
             request.as_object_mut().unwrap().remove("clientId");
             return match self.profile_resources.request(&request) {

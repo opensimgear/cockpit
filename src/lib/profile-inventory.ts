@@ -17,12 +17,13 @@ export type ResourcePage = InventoryMetadata & { session: string; revision: stri
 export type ObservedResourcePort = { descriptor: ResourcePortDescriptor; contractHash: string; routeIds: string[]; current: boolean };
 export type ResourceDetails = InventoryMetadata & { session: string; revision: string; resource: ResourceSummary; evidence: ResourceEvidence[]; ports: ObservedResourcePort[]; offset: number; total: number };
 export type ResourceToken = { inventorySession: string; resourceId: string; generation: string; capabilityRevision: string; routeId: string; providerSession: string; providerGeneration: string; portId: string; contractHash: string; access: ResourceAccess };
-export type ProfileInventoryCommand = 'profile_resources_list' | 'profile_resources_inspect' | 'profile_resources_token' | 'profile_resources_validate';
+export type ProfileInventoryCommand = 'profile_resources_list' | 'profile_resources_inspect' | 'profile_resources_token' | 'profile_resources_validate' | 'profile_dcs_vehicle_resource';
 export type ProfileInventoryRequest = { command: 'profile_resources_list'; offset: number; limit: number }
+  | { command: 'profile_dcs_vehicle_resource'; vehicleId: string }
   | { command: 'profile_resources_inspect'; resourceId: string; offset: number; limit: number }
   | { command: 'profile_resources_token'; resourceId: string; portId: string; access: ResourceAccess }
   | { command: 'profile_resources_validate'; resourceToken: ResourceToken; portId: string; access: ResourceAccess };
-export type ProfileResourcesResult = InventoryMetadata & (ResourcePage | ResourceDetails | { resourceToken: ResourceToken } | { valid: true });
+export type ProfileResourcesResult = InventoryMetadata & (ResourcePage | ResourceDetails | { resource: ResourceSummary } | { resourceToken: ResourceToken } | { valid: true });
 export type ProfileInventorySend = (request: ProfileInventoryRequest) => Promise<ProfileResourcesResult>;
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -69,6 +70,13 @@ function requestPage(offset: number, limit: number, maximum: number): void {
 export class ProfileInventoryClient {
   private readonly send: ProfileInventorySend;
   constructor(send: ProfileInventorySend) { this.send = send; }
+  /** Load an aircraft's installed catalogue without changing the active simulator module. */
+  async dcsVehicle(vehicleId: string): Promise<DeepReadonly<ResourceSummary>> {
+    if (!text(vehicleId, 256)) throw new Error('Choose an exact DCS aircraft ID.');
+    const result = await this.send({ command: 'profile_dcs_vehicle_resource', vehicleId });
+    if (!object(result) || !('resource' in result) || !summary(result.resource) || result.resource.resourceType !== 'game-integration' || result.resource.attributes.gameId !== 'dcs' || !text(result.resource.attributes.aircraftModule, 256)) throw new Error('Malformed DCS aircraft catalogue resource.');
+    return freezeClone(result.resource);
+  }
   async list(offset = 0, limit = RESOURCE_PAGE_SIZE): Promise<DeepReadonly<ResourcePage>> {
     requestPage(offset, limit, 2048);
     const result = await this.send({ command: 'profile_resources_list', offset, limit });

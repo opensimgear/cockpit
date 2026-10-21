@@ -37,9 +37,14 @@ impl GamesRuntime {
         else {
             return Ok(None);
         };
-        let (connection, revision, aircraft_module) =
+        let (connection, revision, saved_aircraft_module) =
             self.inner.setup.provider_connection_snapshot(id)?;
-        let catalogue = self.inner.setup.resource_integration_catalogue(id)?;
+        let catalogue = self.inner.setup.resource_integration_catalogue_for_vehicle(id, proof.vehicle_id.as_deref())?;
+        let aircraft_module = if id == "dcs" {
+            catalogue["aircraftModule"].as_str().map(str::to_owned)
+        } else {
+            saved_aircraft_module
+        };
         if revision != proof.provider_setup_revision
             || catalogue["providerSetupRevision"] != revision
             || catalogue["catalogueRevision"] != proof.catalogue_revision
@@ -81,12 +86,15 @@ impl GamesRuntime {
                     "The prepared game process exited, was replaced or became ambiguous.".into(),
                 );
             }
+            if self.inner.runtime_vehicle_id(&proof.game_id) != proof.vehicle_id {
+                return Err("The loaded DCS aircraft changed; acquire its current module before using this branch.".into());
+            }
             if self.inner.setup.provider_setup_revision(&proof.game_id)
                 != proof.provider_setup_revision
                 || self
                     .inner
                     .setup
-                    .current_catalogue_revision(&proof.game_id)
+                    .current_catalogue_revision_for_vehicle(&proof.game_id, proof.vehicle_id.as_deref())
                     .as_ref()
                     != Some(&proof.catalogue_revision)
             {
@@ -145,6 +153,18 @@ impl GamesRuntime {
         }
         let inner = self.inner.clone();
         *self.observer.lock().unwrap_or_else(|p| p.into_inner()) = Some(thread::spawn(move || {
+            let polling_closed = Arc::new(AtomicBool::new(false));
+            let polling_inner = inner.clone();
+            let polling_stop = polling_closed.clone();
+            // Catalogue parsing and setup inspection can take longer than the
+            // native freshness window. Keep exact process checks and telemetry
+            // draining independent of that work, without extending either lease.
+            let polling = thread::spawn(move || {
+                while !polling_inner.closed.load(Ordering::Acquire) && !polling_stop.load(Ordering::Acquire) {
+                    polling_inner.poll_vehicle_telemetry();
+                    thread::sleep(Duration::from_millis(100));
+                }
+            });
             while !inner.closed.load(Ordering::Acquire) {
                 inner.refresh_game_contexts(false);
                 for _ in 0..5 {
@@ -152,9 +172,10 @@ impl GamesRuntime {
                         break;
                     }
                     thread::sleep(Duration::from_millis(100));
-                    inner.vehicles.lock().unwrap_or_else(|p|p.into_inner()).poll();
                 }
             }
+            polling_closed.store(true, Ordering::Release);
+            let _ = polling.join();
         }));
     }
     pub(super) fn decorate_game_contexts(&self, games: &mut [Value]) {
@@ -164,8 +185,16 @@ impl GamesRuntime {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         for game in games {
-            let id = game["id"].as_str().unwrap_or("");
-            let mut context = contexts.view(id);
+            let id = game["id"].as_str().unwrap_or("").to_owned();
+            if id == "dcs" {
+                let active_module = self.current_vehicle_id(&id).and_then(|vehicle| {
+                    self.inner.setup.integration_catalogue_metadata_for_vehicle(&id, Some(&vehicle)).ok()
+                        .and_then(|catalogue| catalogue["aircraftModule"].as_str().map(str::to_owned))
+                });
+                game["integrationSetup"]["aircraftModuleAutomatic"] = json!(true);
+                game["integrationSetup"]["activeAircraftModule"] = json!(active_module);
+            }
+            let mut context = contexts.view(&id);
             if context["providerSetupRevision"].is_null() {
                 context["providerSetupRevision"] =
                     game["integrationSetup"]["providerSetupRevision"].clone();
@@ -218,6 +247,24 @@ impl GamesRuntime {
 }
 
 impl Inner {
+    fn poll_vehicle_telemetry(&self) {
+        let games = if self.guard_installation_metadata().is_ok() {
+            self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone()
+        } else {
+            vec![]
+        };
+        self.vehicles.lock().unwrap_or_else(|p| p.into_inner()).poll_verified(
+            &games,
+            |id| self.setup.provider_setup_revision(id),
+            |process| self.platform.alive(process).unwrap_or(false),
+        );
+    }
+    fn runtime_vehicle_id(&self, id: &str) -> Option<String> {
+        // Other games already select their profile vehicle independently. DCS
+        // additionally binds decoder/command authority to its exact aircraft.
+        (id == "dcs").then(|| self.vehicles.lock().unwrap_or_else(|p| p.into_inner()).current(id))
+            .flatten().and_then(|vehicle| vehicle["id"].as_str().map(str::to_owned))
+    }
     pub(super) fn refresh_game_contexts(&self, force_setup: bool) {
         let epoch = match self
             .contexts
@@ -249,13 +296,7 @@ impl Inner {
             let Some(id) = game["id"].as_str() else {
                 continue;
             };
-            let catalogue = self.setup.resource_integration_catalogue(id);
-            let revision = catalogue
-                .as_ref()
-                .ok()
-                .and_then(|value| value["providerSetupRevision"].as_str())
-                .map(str::to_owned)
-                .unwrap_or_else(|| self.setup.provider_setup_revision(id));
+            let revision = self.setup.provider_setup_revision(id);
             let supported = self.platform.integration_setup_supported()
                 && game["processMonitoringSupported"]
                     .as_bool()
@@ -282,6 +323,15 @@ impl Inner {
             );
             let vehicle_process = process.as_ref().ok().cloned().flatten();
             let error = process.as_ref().err().cloned();
+            let connection = self.setup.provider_connection_snapshot(id).ok().map(|(connection, _, _)|connection);
+            if let Some(connection) = connection {
+                self.vehicles.lock().unwrap_or_else(|p|p.into_inner()).observe(
+                    &game, &connection, vehicle_process, &revision,
+                    supported && game["integrationSetup"]["state"] == "ready", epoch,
+                );
+            }
+            let vehicle_id = self.runtime_vehicle_id(id);
+            let catalogue = self.setup.integration_catalogue_metadata_for_vehicle(id, vehicle_id.as_deref());
             let setup_matches = game["integrationSetup"]["providerSetupRevision"].as_str()
                 == Some(revision.as_str());
             let observation = Observation {
@@ -295,6 +345,7 @@ impl Inner {
                 catalogue_revision: catalogue
                     .ok()
                     .and_then(|value| value["catalogueRevision"].as_str().map(str::to_owned)),
+                vehicle_id,
                 error,
             };
             let _ = self
@@ -302,13 +353,6 @@ impl Inner {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .observe(id, epoch, observation);
-            let connection = self.setup.provider_connection_snapshot(id).ok().map(|(connection, _, _)|connection);
-            if let Some(connection) = connection {
-                self.vehicles.lock().unwrap_or_else(|p|p.into_inner()).observe(
-                    &game, &connection, vehicle_process, &revision,
-                    supported && game["integrationSetup"]["state"] == "ready", epoch,
-                );
-            }
         }
     }
 }
@@ -667,6 +711,75 @@ mod tests {
         runtime.set_profile_context_owner(None).unwrap();
         assert!(runtime.validate_profile_game_context(&fresh).is_err());
         assert!(calls.lock().unwrap().is_empty());
+        runtime.shutdown();
+    }
+    struct DcsPlatform;
+    impl Platform for DcsPlatform {
+        fn integration_setup_supported(&self) -> bool { true }
+        fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+            vec![json!({"id":"dcs","name":"DCS World","provider":"dcs-bios","installed":true,"executable":"/fixture/DCS.exe","launchSupported":true,"processMonitoringSupported":true})]
+        }
+        fn validate(&self, id: &str, path: &str) -> Result<(), String> {
+            if id == "dcs" && path == "/fixture/DCS.exe" { Ok(()) } else { Err("Wrong DCS executable".into()) }
+        }
+        fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> { Err("Unexpected launch".into()) }
+        fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> {
+            Ok(Some(ProcessIdentity { pid: 42, path: "/fixture/DCS.exe".into(), epoch: 10 }))
+        }
+        fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> { Ok(self.find(&json!({}))?.as_ref() == Some(identity)) }
+    }
+    #[test]
+    fn loaded_dcs_aircraft_selects_module_without_saved_selection_and_editor_reads_do_not_revoke_it() {
+        let scratch = Scratch::new();
+        let target = scratch.path.join("DCS");
+        std::fs::create_dir(&target).unwrap();
+        crate::dcs_setup::fixture_module(&target);
+        std::fs::write(target.join("Scripts/Export.lua"), b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n").unwrap();
+        let catalogue_path = target.join("Scripts/DCS-BIOS/doc/json");
+        std::fs::copy(catalogue_path.join("A-10C.json"), catalogue_path.join("F-16C_50.json")).unwrap();
+        let aliases_path = catalogue_path.join("AircraftAliases.json");
+        let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+        aliases["F-16C_50"] = json!(["F-16C_50"]);
+        aliases["ViperAlias"] = json!(["F-16C_50"]);
+        std::fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
+        let paths = Paths::in_directory(&scratch.path);
+        let settings_path = paths.provider_setup.clone();
+        let saved = json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":crate::game_integration_setup::dcs_connection(&catalogue_path),"aircraftModule":"A-10C"}}});
+        std::fs::write(&settings_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let before = std::fs::read(&settings_path).unwrap();
+        let runtime = GamesRuntime::new(Arc::new(|request| panic!("DCS catalogue/vehicle introspection must not submit output: {request}")), paths, Arc::new(DcsPlatform));
+        runtime.inner.closed.store(true, Ordering::Release);
+        for observer in [&runtime.observer, &runtime.activation_observer] {
+            if let Some(observer) = observer.lock().unwrap().take() { observer.join().unwrap(); }
+        }
+        runtime.inner.closed.store(false, Ordering::Release);
+        runtime.set_test_vehicle("dcs", Some("A-10C"));
+        let first = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
+        assert_eq!(first.aircraft_module.as_deref(), Some("A-10C"));
+        runtime.set_profile_context_owner(Some(owner(Some("dcs")))).unwrap();
+        let token = runtime.admit_prepared_game_context(&first.proof).unwrap();
+        let browsed = runtime.resource_dcs_vehicle_catalogue("F-16C_50").unwrap();
+        assert_eq!(browsed["aircraftModule"], "F-16C_50");
+        runtime.validate_admitted_game_context(&token, &first.proof).unwrap();
+        assert_eq!(std::fs::read(&settings_path).unwrap(), before);
+        runtime.set_test_vehicle("dcs", Some("ViperAlias"));
+        assert!(runtime.validate_admitted_game_context(&token, &first.proof).is_err());
+        let replacement = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
+        assert_eq!(replacement.aircraft_module.as_deref(), Some("F-16C_50"));
+        assert_eq!(replacement.proof.vehicle_id.as_deref(), Some("ViperAlias"));
+        runtime.admit_prepared_game_context(&replacement.proof).unwrap();
+        runtime.set_test_vehicle("dcs", Some("F-16C_50"));
+        assert!(runtime.validate_game_preparation(&replacement.proof).is_err(), "An alias transition must fence the previous flight even when its module is unchanged");
+        let current = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
+        assert_eq!(current.aircraft_module, replacement.aircraft_module);
+        assert_ne!(current.proof.session, replacement.proof.session);
+        let display = runtime.resource_catalogue();
+        assert_eq!(display[0]["integrationSetup"]["activeAircraftModule"], "F-16C_50");
+        runtime.set_test_vehicle("dcs", None);
+        assert!(runtime.validate_game_preparation(&current.proof).is_err());
+        let base = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
+        assert_eq!(base.aircraft_module.as_deref(), Some("CommonData"));
+        assert_eq!(std::fs::read(&settings_path).unwrap(), before);
         runtime.shutdown();
     }
 }
