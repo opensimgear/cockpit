@@ -110,3 +110,17 @@ file is a tracker, not evidence that unchecked work exists.
   and present failures, and full-redraw recovery. The eight PNGs and coverage
   report are retained in `.research/lvgl-native/` and configured as CI artifacts.
   MCU cross-build results for the new component remain pending.
+- The Sunton and Waveshare physical-board configurations successfully compile
+  the LVGL component and adapter at `f5eaf07` in [CI run 39689943931](https://github.com/opensimgear/cockpit/actions/runs/39689943931).
+  Host-wire tests also pass there. Headless jobs exposed a pre-existing 2 MiB
+  default conflicting with the 3.9 MiB partition table; common defaults now use
+  4 MiB while board overrides retain their own sizes. The portable export budget
+  test now creates nonempty pages so it reaches the intended budget gate, and
+  compares generated C text independently of Windows checkout line endings.
+- Reused the allocation-free A/B content store and target-binary structural
+  inspector from render-package commit `f2c9147`; the old custom compositor was
+  excluded. Native SHA-256/ASan/UBSan tests pass all 318 modeled power cuts and
+  immutable-reader checks with maximum reads/writes of 2048 bytes. Store
+  coverage: 100% lines/functions, 72.44% branches; inspector: 100% lines/functions,
+  94.92% branches. Partition binding, source/semantic admission, compiler and
+  live delivery remain pending integration. These tests do not write hardware.

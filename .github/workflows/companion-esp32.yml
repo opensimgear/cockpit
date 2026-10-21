@@ -28,6 +28,10 @@ jobs:
         run: python3 apps/companion-esp32/test/run.py
       - name: Locked LVGL shared-source states, partial buffers, failure recovery and coverage
         run: python3 apps/companion-esp32/test/lvgl.py
+      - name: Bounded render content, binary structure and modeled power-cut recovery
+        run: |
+          python3 apps/companion-esp32/test/package.py
+          python3 apps/companion-esp32/test/content_store.py
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-portable-evidence
@@ -36,6 +40,10 @@ jobs:
             .research/esp32-native/preview.png
             .research/lvgl-native/coverage.json
             .research/lvgl-native/*.png
+            .research/esp32-content-store-native/coverage.json
+            .research/esp32-content-store-native/content-store-test.log
+            .research/esp32-render-package-native/coverage.json
+            .research/esp32-render-package-native/package-test.log
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json
             .research/esp32-network/*-test.log
