@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
+  import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
   import type { DeepReadonly, ProfileDocument, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout } from './profile-editor';
-  import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
+  import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
   import { createDiagramRouter, diagramPendingPath, diagramRoutes, diagramSegmentLine } from './profile-diagram';
   import {canvasRouteNodes,canvasPreviewRoutes}from'./profile-canvas-render';
   import {profileMoveWireSegment,profileSetWireRoute}from'./profile-wire-layout';
@@ -34,6 +34,9 @@
     connectionPanel?:Snippet;connectionOpen?:boolean;closeConnectionPanel?:()=>void;
   } = $props();
   let stage: HTMLDivElement;
+  let inspectorPanel=$state.raw<HTMLElement|undefined>();
+  let mounted=$state(false);
+  let selectionView:CanvasViewport|null=null,focusedSelectionId='';
   const inspectorContentId = $props.id();
   let search = $state('');
   let searchInput: HTMLInputElement;
@@ -61,7 +64,6 @@
   const nodes = $derived(visibleDocument===committedDocument?committedNodes:canvasNodes(visibleDocument, assignments, inventory));
   const nodesById=$derived(new Map(nodes.map(node=>[node.id,node])));
   const portGroups=$derived(new Map(nodes.map(node=>{const ports=node.resource?discoveredPorts[node.id]??node.resource.ports:null;const inputs=ports?ports.filter(port=>port.direction==='input'):node.processing?.inputs??node.virtual?.ports??node.desktop?.ports??[],outputs=ports?ports.filter(port=>port.direction==='output'):node.processing?.outputs??[];return[node.id,{inputs,outputs,names:new Map([...inputs,...outputs].map(port=>[`${port.direction}/${port.id}`,port.name]))}];})));
-  let knownNodeIds=new Set(untrack(()=>nodes.map(node=>node.id)));
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
   const controllerEffects=$derived(canvasControllerEffects(visibleDocument));
   const renderedNodes = $derived(nodes.map(node => node.id === dragged?.id ? { ...node, position: dragged.position } : node));
@@ -79,6 +81,7 @@
   const paletteSize=$derived.by(()=>{const size=canvasNodeSize({kind:paletteDrag?.component.kind==='transformation'?'processing':'resource'});return paletteDrag?.component.kind==='transformation'&&['gate','any','all','priority'].includes(paletteDrag.component.preset)?{...size,height:size.height+PROFILE_TRANSFORM_PORT_ROW}:size;});
   const dropGroup=$derived.by(()=>{if(dragged){const size=canvasNodeSize(nodes.find(node=>node.id===dragged!.id)??{});return canvasGroupAt(visibleDocument,{x:dragged.position.x+size.width/2,y:dragged.position.y+size.height/2});}return palettePreview?canvasGroupAt(visibleDocument,{x:palettePreview.x+paletteSize.width/2,y:palettePreview.y+paletteSize.height/2}):null;});
   const selected = $derived(nodes.find(node => node.id === selectedId));
+  const focusSelectionId=$derived(selected?.id??'');
   const selectedEdge=$derived(document.bindings.find(binding=>binding.id===selectedEdgeId));
   const selectedDiagnostics=$derived(diagnostics.filter(diagnostic=>diagnostic.location.nodeId===selectedId||diagnostic.location.resourceId===selectedId||document.bindings.some(binding=>diagnostic.location.edgeIds.includes(binding.id)&&(binding.from.nodeId===selectedId||binding.to.nodeId===selectedId))));
   const matches = $derived(canvasSearch(nodes, search));
@@ -87,15 +90,15 @@
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
-  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;clearPendingMove();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
-  $effect(()=>{const added=nodes.find(node=>node.id===selectedId&&!knownNodeIds.has(node.id));knownNodeIds=new Set(nodes.map(node=>node.id));if(added)focusNewNode(added);});
+  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;selectionView=null;focusedSelectionId='';clearPendingMove();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
+  $effect(()=>{void focusSelectionId;void inspectorPanel;void drag;void wire;void segmentDrag;void connectionOpen;if(mounted)untrack(syncSelectionFocus);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(() => {
     const resourceId = companionAuthoring&&selected?.resource?.kind==='companion'?undefined:observedId;
     portEpoch++; browser.clear(); page = null; portError = ''; portsBusy = false;
     if (resourceId) void loadPorts('open',resourceId);
   });
-  onMount(() => { if (fitOnMount) fitView(); });
+  onMount(() => { if (fitOnMount) fitView();mounted=true; });
   onDestroy(() => { portEpoch++; browser.clear();clearPendingMove(); });
   function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
   function fit() { fitView(); }
@@ -114,7 +117,7 @@
     }),'Auto-layout');
   }
   function choose(id:string) { closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
-  function chooseConnection(id:string) {stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';selectConnection(id);}else editConnection?.(id);}
+  function chooseConnection(id:string) {stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView())void tick().then(()=>{if(!selectedId)selectConnection?.(id);});else selectConnection(id);}else editConnection?.(id);}
   function portName(nodeId:string,portId:string,direction:'input'|'output') {return portGroups.get(nodeId)?.names.get(`${direction}/${portId}`)??portId;}
   function activeHandle(nodeId:string,direction:'input'|'output',portId?:string) {
     const matches=(selected?:string)=>!portId||!selected||selected===portId;
@@ -159,7 +162,15 @@
     const component=paletteDrag!.component,position=palettePosition(event),bindingId=component.kind==='transformation'?(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]')?.dataset.connectionId:undefined;clearPalettePreview();
     try{if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
   }
-  function focusNewNode(node:CanvasNode){const size=canvasNodeSize(node);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+size.width/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+size.height/2)*view.zoom};}
+  function restoreSelectionView(){const previous=selectionView;selectionView=null;focusedSelectionId='';if(previous)view={...previous};return !!previous;}
+  function syncSelectionFocus(){
+    if(drag||wire||segmentDrag)return;
+    const node=nodesById.get(selectedId);
+    if(!node||connectionOpen){restoreSelectionView();return;}
+    if(!stage||!inspectorPanel||node.id===focusedSelectionId)return;
+    const width=stage.clientWidth||900,height=stage.clientHeight||600,availableWidth=Math.max(1,width-inspectorPanel.offsetWidth);
+    selectionView??={...view};focusedSelectionId=node.id;view=canvasFocusNode(node,availableWidth,height);
+  }
   function slideDetails(_node: HTMLElement) {
     return { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
       css: (t: number) => `transform:translateX(${(1-t)*100}%)` };
@@ -178,7 +189,7 @@
   export function deleteGroup(id:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasDeleteGroup(source,id)),'Delete group');}
   export function focusGroup(id:string){const frame=frames.find(group=>group.id===id);if(!frame)return;view=canvasFit([{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}],stage?.clientWidth||900,stage?.clientHeight||600);}
   function togglePorts(category:ProfilePortGroup){if(selected)editLayout(()=>canvasTogglePorts(document,selected.id,category),canvasPortCollapsed(document,selected.id,category)?'Expand port category':'Collapse port category');}
-  function focusMatch() { const node=matches[0];if(!node)return;choose(node.id);const size=canvasNodeSize(node);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+size.width/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+size.height/2)*view.zoom}; }
+  function focusMatch() { const node=matches[0];if(node)choose(node.id); }
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
@@ -387,7 +398,7 @@
     {#if connectionOpen&&connectionPanel}
       <aside class="canvas-connection-panel" aria-label="Exact connection editor" transition:slideDetails>{@render connectionPanel()}</aside>
     {:else if selected}
-    <aside class="canvas-inspector" aria-label="Selected block inspector" data-expanded="true" transition:slideDetails>
+    <aside class="canvas-inspector" aria-label="Selected block inspector" data-expanded="true" bind:this={inspectorPanel} transition:slideDetails>
         <button class="inspector-close" aria-label="Close component settings" onclick={()=>selectedId=''}><Icon name="close" size={16}/></button>
         <div class="inspector-content" id={inspectorContentId} data-inspector-content>
         <p class="inspector-category">{selected.category}</p><h3>{selected.name}</h3><p class="inspector-state">{canvasStatus(selected)}</p>

@@ -50,6 +50,14 @@ export function canvasFit(nodes:readonly (CanvasNodeGeometry&Pick<CanvasNode,'po
   const zoom=clamp(Math.min((width-64)/(right-left),(height-64)/(bottom-top)),0.1,1.5);
   return{x:clamp((width-(right-left)*zoom)/2-left*zoom,-1e6,1e6),y:clamp((height-(bottom-top)*zoom)/2-top*zoom,-1e6,1e6),zoom};
 }
+/** Center a selected card in the region left of its inspector, with room around it. */
+export function canvasFocusNode(node:CanvasNodeGeometry&{position:CanvasPoint},availableWidth:number,height:number):CanvasViewport{
+  if(![availableWidth,height,node.position.x,node.position.y].every(finite)||availableWidth<=0||height<=0)throw new Error('Focus needs finite block coordinates and a positive viewport size.');
+  const size=canvasNodeSize(node),zoom=clamp(Math.min(availableWidth*.5/size.width,height*.5/size.height),0.1,4);
+  const x=availableWidth/2-(node.position.x+size.width/2)*zoom,y=height/2-(node.position.y+size.height/2)*zoom;
+  if(![x,y].every(finite))throw new Error('Keep the focused block within finite canvas coordinates.');
+  return{x,y,zoom};
+}
 export function canvasMove(document:DeepReadonly<ProfileDocument>,nodeId:string,position:CanvasPoint):ProfileDocument{
   if(![position.x,position.y].every(finite)||![...document.resources,...document.processingNodes,...document.virtualOutputs,...(document.desktopOutputs??[])].some(node=>node.id===nodeId))throw new Error('Move an existing block to finite coordinates.');
   const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;next.editor.positions=next.editor.positions.filter(p=>p.nodeId!==nodeId);next.editor.positions.push({nodeId,x:clamp(position.x,-1e6,1e6),y:clamp(position.y,-1e6,1e6)});return next;

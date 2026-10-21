@@ -84,6 +84,34 @@ test('missing positions are placed safely below saved nodes and processing/virtu
 test('pan and anchored zoom remain finite and bounded without altering world geometry',()=>{const view={x:20,y:40,zoom:1};const at={x:200,y:150};const next=canvasZoom(view,2,at);assert.equal((at.x-view.x)/view.zoom,(at.x-next.x)/next.zoom);assert.equal((at.y-view.y)/view.zoom,(at.y-next.y)/next.zoom);assert.equal(canvasZoom(view,100,at).zoom,4);assert.equal(canvasZoom(view,0.001,at).zoom,0.1);assert.deepEqual(plain(canvasPan(view,{x:1e9,y:-1e9})),{x:1e6,y:-1e6,zoom:1});assert.throws(()=>canvasZoom(view,-1,at));assert.throws(()=>canvasPan(view,{x:NaN,y:0}));assert.throws(()=>canvasZoom({...view,zoom:0},1,at));});
 test('fit includes every block and handles empty/small viewports without nonfinite zoom',()=>{const nodes=[{position:{x:-100,y:-20}},{position:{x:1000,y:800}}];const view=canvasFit(nodes,1000,700);for(const node of nodes){assert.ok(node.position.x*view.zoom+view.x>=31);assert.ok((node.position.x+PROFILE_BLOCK_WIDTH)*view.zoom+view.x<=969);assert.ok(node.position.y*view.zoom+view.y>=31);assert.ok((node.position.y+PROFILE_BLOCK_HEIGHT)*view.zoom+view.y<=669);}assert.deepEqual(plain(canvasFit([],400,300)),{x:0,y:0,zoom:1});assert.equal(canvasFit(nodes,20,20).zoom,0.1);assert.throws(()=>canvasFit(nodes,0,10));});
 
+test('selected-card focus uses exact resource and transform bounds within half the available inspector-free region',()=>{
+  const {canvasFocusNode,canvasNodeSize}=modules.get('./profile-canvas'),availableWidth=800,height=600;
+  const nodes=[{kind:'resource',position:{x:500,y:700}},{kind:'processing',position:{x:-120,y:80},processing:{inputs:[{id:'value'}],outputs:[{id:'result'}]}},{kind:'processing',position:{x:200,y:-350},processing:{inputs:Array.from({length:8},(_,index)=>({id:`in-${index}`})),outputs:[{id:'result'}]}}];
+  for(const node of nodes){
+    const before=plain(node),size=canvasNodeSize(node),view=canvasFocusNode(node,availableWidth,height),expectedZoom=Math.min(availableWidth*.5/size.width,height*.5/size.height);
+    assert.equal(view.zoom,expectedZoom);assert.ok(size.width*view.zoom<=availableWidth*.5+1e-8);assert.ok(size.height*view.zoom<=height*.5+1e-8);
+    assert.ok(Math.abs((node.position.x+size.width/2)*view.zoom+view.x-availableWidth/2)<1e-8);assert.ok(Math.abs((node.position.y+size.height/2)*view.zoom+view.y-height/2)<1e-8);
+    assert.deepEqual(plain(node),before,'Focusing is a local view operation and cannot alter authored nodes.');
+  }
+  assert.ok(canvasFocusNode(nodes[1],availableWidth,height).zoom>canvasFocusNode(nodes[0],availableWidth,height).zoom,'A compact transform uses its own width.');
+  assert.ok(canvasFocusNode(nodes[2],availableWidth,height).zoom<canvasFocusNode(nodes[0],availableWidth,height).zoom,'A tall transform is limited by its named port rows.');
+});
+
+test('selected-card focus clamps zoom while preserving exact centering at extreme legal canvas positions',()=>{
+  const {canvasFocusNode,canvasNodeSize}=modules.get('./profile-canvas'),node=Object.freeze({kind:'resource',position:Object.freeze({x:-1e6,y:1e6})}),before=plain(node),size=canvasNodeSize(node);
+  for(const [width,height,expectedZoom]of [[1,1,.1],[1e6,1e6,4]]){
+    const view=canvasFocusNode(node,width,height);assert.equal(view.zoom,expectedZoom);assert.ok(Object.values(view).every(Number.isFinite));
+    assert.equal((node.position.x+size.width/2)*view.zoom+view.x,width/2);assert.equal((node.position.y+size.height/2)*view.zoom+view.y,height/2);
+  }
+  assert.deepEqual(plain(node),before);
+});
+
+test('selected-card focus rejects invalid viewport sizes and nonfinite block coordinates',()=>{
+  const {canvasFocusNode}=modules.get('./profile-canvas'),node={position:{x:10,y:20}};
+  for(const value of [0,-1,NaN,Infinity,-Infinity]){assert.throws(()=>canvasFocusNode(node,value,600),/positive viewport/);assert.throws(()=>canvasFocusNode(node,800,value),/positive viewport/);}
+  for(const axis of ['x','y'])for(const value of [NaN,Infinity,-Infinity])assert.throws(()=>canvasFocusNode({position:{...node.position,[axis]:value}},800,600),/finite block/);
+});
+
 test('compact transforms size to named rows and use their actual bounds for fit and group drops',()=>{
   const {canvasNodeSize,canvasNodeAnchor,canvasCreateGroup,canvasMoveIntoGroup,canvasResizeGroup,canvasGroups,canvasSaveGroup}=modules.get('./profile-canvas');
   const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null},port=(id,direction)=>({id,name:id,direction,contract});

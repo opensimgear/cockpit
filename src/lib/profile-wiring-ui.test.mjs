@@ -24,7 +24,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,syncSelectionFocus,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},setInspector(value){inspectorPanel=value;},setSelection(value){selectedId=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,selectionView,focusedSelectionId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
@@ -60,6 +60,7 @@ function harness(props = {}, arrowStyle='smooth',cornerRadius=24,wheelAction='pa
     closeConnectionPanel: () => calls.push(['close']), ...props
   } }).body;
   handlers.setStage({
+    clientWidth:1000,clientHeight:800,
     focus:options=>focuses.push(options),
     setPointerCapture: id => captured.add(id), hasPointerCapture: id => captured.has(id), releasePointerCapture: id => captured.delete(id),
     getBoundingClientRect: () => ({ left: 100, top: 50, right: 1100, bottom: 850 }), contains: target => target.inside !== false
@@ -149,6 +150,25 @@ test('keyboard navigation and a later graph edit never write the local viewport 
   assert.deepEqual(h.edits,[]);assert.deepEqual(plain(h.document),h.before);
   h.handlers.setView({x:300,y:200,zoom:1.5});h.handlers.begin(pointer(100,100,{target}),'source');h.handlers.move(pointer(145,130));h.handlers.finish(pointer(145,130));
   assert.equal(h.edits.length,1);assert.equal(h.edits[0][1],'Move component');assert.deepEqual(plain(h.edits[0][0].editor.viewport),h.before.editor.viewport);assert.deepEqual(plain(h.handlers.state.view),{x:300,y:200,zoom:1.5});
+});
+
+test('selecting blocks focuses the unobscured left canvas and deselection restores one original viewport',()=>{
+  for(const readOnly of [false,true]){
+    const h=harness({readOnly}),overview={x:77,y:-33,zoom:.42};h.handlers.setView(overview);h.handlers.setInspector({offsetWidth:400});
+    h.handlers.choose('source');h.handlers.syncSelectionFocus();let focused=plain(h.handlers.state.view);
+    assert.ok(Math.abs(focused.x+(20+144)*focused.zoom-300)<1e-8);assert.ok(Math.abs(focused.y+(40+94)*focused.zoom-400)<1e-8);assert.ok(Math.abs(288*focused.zoom-300)<1e-8);
+    assert.deepEqual(plain(h.handlers.state.selectionView),overview);
+    h.handlers.choose('target');h.handlers.syncSelectionFocus();focused=plain(h.handlers.state.view);assert.ok(Math.abs(focused.x+(400+144)*focused.zoom-300)<1e-8);assert.deepEqual(plain(h.handlers.state.selectionView),overview);
+    const manual={x:200,y:80,zoom:1.3};h.handlers.setView(manual);h.handlers.syncSelectionFocus();assert.deepEqual(plain(h.handlers.state.view),manual,'The same selection must not recenter after a view or property change.');
+    h.handlers.setSelection('');h.handlers.syncSelectionFocus();assert.deepEqual(plain(h.handlers.state.view),overview);assert.equal(h.handlers.state.selectionView,null);assert.equal(h.handlers.state.focusedSelectionId,'');assert.deepEqual(h.edits,[]);assert.deepEqual(plain(h.document),h.before);
+  }
+});
+
+test('selection focus waits for active gestures and wire actions use the restored viewport',async()=>{
+  const selected=[],h=harness({selectConnection:id=>selected.push(id)}),overview={x:-125,y:48,zoom:.6};h.handlers.setView(overview);h.handlers.setInspector({offsetWidth:400});
+  h.handlers.beginWire(pointer(),'source','output');h.handlers.setSelection('target');h.handlers.syncSelectionFocus();assert.deepEqual(plain(h.handlers.state.view),overview);assert.equal(h.handlers.state.selectionView,null);
+  h.handlers.finish(pointer(),true);h.handlers.syncSelectionFocus();assert.equal(h.handlers.state.focusedSelectionId,'target');selected.length=0;
+  h.handlers.chooseConnection('route');assert.deepEqual(plain(h.handlers.state.view),overview);assert.deepEqual(selected,[],'Wait for the restored transform to render before measuring wire actions.');await svelte.tick();assert.deepEqual(selected,['route']);assert.equal(h.handlers.state.selectedId,'');assert.deepEqual(h.edits,[]);
 });
 
 test('wrong-side, same-block, disabled and off-canvas wire releases remain inert', () => {
