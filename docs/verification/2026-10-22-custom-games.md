@@ -127,11 +127,29 @@ remain in force. Non-Windows native launch/process monitoring is not newly
 qualified. Simulator regression fixtures are distinct from live DCS, Assetto and
 X-Plane gameplay.
 
-The portable `complete_rig` integration fixture fails at its existing
-`Unknown persistent resource identity` assertion after deleting an entry from an
-authoritative resource snapshot. An untouched archive of baseline `c144301`
-reproduced the same failure before compilation. That unrelated fixture remains
-unchanged.
+The initial CI run exposed an inherited `complete_rig` fixture mismatch, also
+reproduced on untouched baseline `c144301`. The fixture now uses non-authoritative
+native USB discovery to model disconnection and expects retained offline inputs
+to be Unavailable; changed-contract inputs remain Blocked and token/graph
+assertions remain intact. Production authoritative-removal behavior is unchanged.
+The combined complete-rig and editor-metadata targets pass 4 + 9 tests.
+
+Inherited validation maintenance also aligns the mapping-host lockfile with the
+image dependencies already required by companion-service, updates the desktop
+endpoint rejection assertion without changing its immutability check, and makes
+the exporter budget fixture otherwise valid before testing the budget. Locked
+offline mapping-host metadata resolves for Windows and macOS; its test library
+builds. The local mapping-host suite passes 110/112 including permission retries;
+the remaining two tests assume an unqualified driver backend, while this machine
+has a qualified vJoy/HidHide setup. Qualification behavior is unchanged.
+All 31 frontend checks from profile coverage through production build
+pass, including 268 workspace tests. Export tests pass 4/4 with exporter coverage
+96.83% lines, 95.59% branches and 92.86% functions.
+
+The generic ESP32-S3 cross-build in the initial CI still selects 2 MB flash for
+the existing 3.9 MB partition table. This feature changes no firmware, partition
+table or flash configuration; the unrelated build failure is not reported as a
+passing check. Wider CI results must be read for the current PR revision.
 
 A 16-thread native library run was stopped after 1081 of 1095 tests reported
 results because it exhausted host responsiveness alongside another checkout's

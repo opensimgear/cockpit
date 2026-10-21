@@ -16,7 +16,7 @@ test('shared designer publication keeps source identity, channels, pages and imm
   assert.equal(live.canonicalDocument, canonical(publication.document));
   assert.equal(live.publicationHash, publication.publicationHash);
   assert.equal(live.capabilityFingerprint, publication.capabilityFingerprint);
-  assert.equal(result.header, await readFile(new URL('./panel.h', import.meta.url), 'utf8'));
+  assert.equal(result.header, (await readFile(new URL('./panel.h', import.meta.url), 'utf8')).replaceAll('\r\n', '\n'));
   assert.match(result.header, /radio-channel/); assert.match(result.header, /master/);
   assert.match((await exportPanel(source, { width: 320, height: 240 })).header, /OSG_GAUGE/);
   assert.match((await exportPanel(source, { width: 480, height: 800 })).header, /OSG_NUMERIC/);
@@ -35,7 +35,13 @@ test('strict designer validation, target budgets and capabilities reject unsuppo
     d.presentation.widgets[1].kind = 'icon'; d.presentation.widgets[1].config = {symbol:'power'};
   })), /unsupported widget/);
   await assert.rejects(exportPanel(change(d => {
-    for (let i=2;i<5;i++) {d.ui.pages.push({id:'page-'+i,title:'Page '+i,items:[]});d.presentation.viewports.push({pageId:'page-'+i,width:800,height:480});}
+    for (let i=2;i<5;i++) {
+      const pageId='page-'+i;
+      d.ui.pages.push({id:pageId,title:'Page '+i,items:[]});
+      d.presentation.viewports.push({pageId,width:800,height:480});
+      // Keep every page publishable so this case reaches the embedded page budget.
+      d.presentation.widgets[i-1].pageId=pageId;
+    }
   })), /budget/);
 });
 test('supported styles, safe insets and text affixes retain source publication changes', async () => {
