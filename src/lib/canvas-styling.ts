@@ -3,13 +3,14 @@ export type CanvasArrowStyle = 'smooth' | 'orthogonal';
 export type CanvasStyling = Readonly<{
   arrowStyle: CanvasArrowStyle;
   cornerRadius: number;
+  collapseParallelWires: boolean;
   storageError: string | null;
 }>;
 
 export type CanvasStylingStorage = Pick<Storage, 'getItem' | 'setItem'>;
 export const CANVAS_STYLING_STORAGE_KEY = 'osg-canvas-styling';
 
-const defaults = { arrowStyle: 'smooth' as CanvasArrowStyle, cornerRadius: 24 };
+const defaults = { arrowStyle: 'smooth' as CanvasArrowStyle, cornerRadius: 24, collapseParallelWires: true };
 const loadError = 'Canvas styling could not be loaded locally. Default styling is active for this session.';
 const saveError = 'Changes apply to this session. Canvas styling could not be saved locally.';
 
@@ -36,6 +37,7 @@ export function createCanvasStylingStore(storage?: CanvasStylingStorage | null) 
         preferences = {
           arrowStyle: value.arrowStyle === 'orthogonal' ? 'orthogonal' : 'smooth',
           cornerRadius: cornerRadius(value.cornerRadius),
+          collapseParallelWires: typeof value.collapseParallelWires === 'boolean' ? value.collapseParallelWires : defaults.collapseParallelWires,
         };
       }
     } catch { storageError = loadError; }
@@ -60,13 +62,18 @@ export function createCanvasStylingStore(storage?: CanvasStylingStorage | null) 
     setArrowStyle(style: CanvasArrowStyle) {
       if (style !== 'smooth' && style !== 'orthogonal') return;
       if (style === current.arrowStyle && !current.storageError) return;
-      update({ arrowStyle: style, cornerRadius: current.cornerRadius });
+      update({ arrowStyle: style, cornerRadius: current.cornerRadius, collapseParallelWires: current.collapseParallelWires });
     },
     setCornerRadius(value: number) {
       if (!Number.isFinite(value)) return;
       const radius = cornerRadius(value);
       if (radius === current.cornerRadius && !current.storageError) return;
-      update({ arrowStyle: current.arrowStyle, cornerRadius: radius });
+      update({ arrowStyle: current.arrowStyle, cornerRadius: radius, collapseParallelWires: current.collapseParallelWires });
+    },
+    setCollapseParallelWires(value: boolean) {
+      if (typeof value !== 'boolean') return;
+      if (value === current.collapseParallelWires && !current.storageError) return;
+      update({ arrowStyle: current.arrowStyle, cornerRadius: current.cornerRadius, collapseParallelWires: value });
     },
   };
 }
@@ -74,3 +81,4 @@ export function createCanvasStylingStore(storage?: CanvasStylingStorage | null) 
 export const canvasStyling = createCanvasStylingStore();
 export const setArrowStyle = canvasStyling.setArrowStyle;
 export const setCornerRadius = canvasStyling.setCornerRadius;
+export const setCollapseParallelWires = canvasStyling.setCollapseParallelWires;

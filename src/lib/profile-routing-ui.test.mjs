@@ -71,6 +71,21 @@ async function canvasHarness(document,props={},hooks={}){
 const pointer=(x=0,y=0,extra={})=>({button:0,pointerId:7,clientX:x,clientY:y,target:{closest:()=>null},preventDefault(){},stopPropagation(){},...extra});
 function stageFor(h){const captured=new Set();h.handlers.setStage({clientWidth:1000,clientHeight:650,setPointerCapture:id=>captured.add(id),hasPointerCapture:id=>captured.has(id),releasePointerCapture:id=>captured.delete(id)});return captured;}
 
+test('canvas collapses shared physical endpoints while a selected signal retains its own wire and editing affordances',async()=>{
+ const document=draft().document;document.resources=document.resources.filter(node=>['can-one','can-two'].includes(node.id));
+ document.resources.find(node=>node.id==='can-two').ports.push(port('receive-a','input'),port('receive-b','input'));
+ document.bindings=['a','b'].map(id=>({id:`route-${id}`,from:{nodeId:'can-one',portId:'button'},to:{nodeId:'can-two',portId:`receive-${id}`}}));
+ document.editor.positions=[{nodeId:'can-one',x:0,y:0},{nodeId:'can-two',x:700,y:100}];
+ const before=plain(document),store=modules.get('./canvas-styling').canvasStyling;let previous;store.subscribe(value=>previous=value)();
+ const paths=body=>(body.match(/<path[^>]*class="signal-edge(?:\s|")/g)??[]).length;
+ try{
+   store.setCollapseParallelWires(true);
+   const collapsed=await canvasHarness(document,{selectedId:'',selectConnection(){}});assert.equal(paths(collapsed.body),1);assert.match(collapsed.body,/data-bundle-count="2"/);assert.match(collapsed.body,/Choose from 2 connections/);assert.match(collapsed.body,/connection-bundle-badge/);assert.deepEqual(collapsed.edits,[]);
+   const selected=await canvasHarness(document,{selectedId:'',selectedEdgeId:'route-b',selectConnection(){},reconnectConnection(){}});assert.equal(paths(selected.body),2);assert.equal((selected.body.match(/data-bundle-count="1"/g)??[]).length,2);assert.match(selected.body,/data-reconnect-binding="route-b"/);assert.doesNotMatch(selected.body,/data-reconnect-binding="route-a"/);
+   store.setCollapseParallelWires(false);const expanded=await canvasHarness(document,{selectedId:'',selectConnection(){}});assert.equal(paths(expanded.body),2);assert.deepEqual(expanded.edits,[]);assert.deepEqual(document,before);
+ }finally{store.setCollapseParallelWires(previous.collapseParallelWires);}
+});
+
 test('canvas exposes empty, named groups without the former membership form and deletion keeps every component',async()=>{
  let document=draft().document,h=await canvasHarness(document);assert.ok(!h.body.includes('Editor groups ·'));assert.ok(!h.body.includes('Group members'));
  assert.equal(h.handlers.addGroup('CAN controls'),'group-1');assert.equal(h.edits.length,1);document=h.edits[0].next;assert.deepEqual(document.editor.groups[0].members,[]);assert.equal(h.edits[0].label,'Create group');assert.equal(h.handlers.state.selectedId,'can-one');

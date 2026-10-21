@@ -501,6 +501,9 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     await until(() => native.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke === 'function'), 'Native gateway unavailable');
     await native.send('Page.bringToFront');
     originalStyling = await native.evaluate(() => localStorage.getItem('osg-canvas-styling'));
+    // This suite checks every individual wire; bundled rendering has its own
+    // native acceptance coverage without changing these geometry assertions.
+    await native.evaluate(async () => { const {canvasStyling}=await import('/src/lib/canvas-styling.ts');canvasStyling.setCollapseParallelWires(false); });
     const original = (await request({ command: 'profile_assignments_get', id: sourceId })).profiles;
     const baseBindings = await native.evaluate(async document => {
       const { profileTabDocument } = await import('/src/lib/profile-vehicle-tabs.ts');

@@ -192,6 +192,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     await native.send('Page.reload', { ignoreCache: true });
     await until(() => native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit IPC did not finish starting');
     beforeCanvasStyling=await native.evaluate(`localStorage.getItem('osg-canvas-styling')`);
+    await native.evaluate(`(async()=>{const{canvasStyling}=await import('/src/lib/canvas-styling.ts');canvasStyling.setCollapseParallelWires(false);})()`);
     assert.equal(await native.evaluate('document.visibilityState'), 'visible');
     await native.send('Input.cancelDragging'); await mouse('mouseReleased', { x: 10, y: 10 }, { button: 'left', buttons: 0 });
     beforeProfiles = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles, 'Native gateway did not become ready'); beforeAutomatic = await automatic();
