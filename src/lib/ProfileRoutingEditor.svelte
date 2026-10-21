@@ -19,8 +19,8 @@
   import {graphAssignResource,graphBypassProcessing,graphConnect,graphConnectionError,graphContractError,graphDisconnect,graphFreshId,graphInsertProcessing,graphInventorySignature,graphPort,graphPorts,graphPublicationCapability,graphRemoveNode,graphRemovePort,graphReorderProcessing,graphSelectProviderPort,graphSetProcessing,graphSetRuntimeOverride,graphSetVirtual,graphSetVisibility,type ProfileGraphDraft}from'./profile-graph';
   import {PROCESSING_PRESETS,processingActionPack,processingNodeError,processingTemplate,type ProcessingPreset}from'./profile-processing';
   import {ProfilePortBrowser}from'./profile-port-browser';
-  import {profileDiscoverResource,profileDiscoverCompanion,profileDiscoveredPorts,type ProfileDiscoveredPort}from'./profile-discovery';
-  import {canvasConnect,canvasConnectionPlan,canvasPortReason,canvasPortWriter,canvasInsertionPosition}from'./profile-canvas-construction';
+  import {profileDiscoverResource,profileDiscoverCompanion,ProfileDiscoveredPortCache,type ProfileDiscoveredPort}from'./profile-discovery';
+  import {canvasConnect,canvasConnectionPlan,canvasPortReason,canvasInsertionPosition}from'./profile-canvas-construction';
   import {graphDropProcessing,isProcessingDraft,graphUpdateProcessing,updateProcessingDraft}from'./profile-transform-drafts';
   import ProfileTransformSettings from './ProfileTransformSettings.svelte';
   import {gatewayRequest}from'./gateway';
@@ -41,6 +41,7 @@
   let sourceSearch=$state(''),targetSearch=$state('');
   let pickerAnchor=$state<CanvasPoint>({x:400,y:180}),wireAnchor=$state<CanvasPoint>({x:400,y:180});
   let selectedEdgeId=$state(''),autoCommitArmed=$state(false),wireTransforms=$state(false);
+  let advancedOpen=$state(false);
   let connectionTrigger:Element|null=null;
   let routingElement:HTMLElement;
   let canvas=$state.raw<{addGroup:(name?:string)=>string|undefined;focusGroup:(id:string)=>void;renameGroup:(id:string,name:string)=>void;deleteGroup:(id:string)=>void}>();
@@ -52,22 +53,26 @@
   const companionDiscovery=untrack(()=>companionClient)??new ProfileCompanionAuthoringClient(async request=>(await gatewayRequest(request)).profileCompanionAuthoring);
   let discoveries=$state.raw<Record<string,{signature:string;details:DeepReadonly<ResourceDetails|ProfileCompanionPage>|null;busy:boolean;error:string}>>({});
   let discoveryDisposed=false;
+  const discoveryChoices=new ProfileDiscoveredPortCache();
   const learning=untrack(()=>learningClient)?new ProfileLearningController(untrack(()=>learningClient)!):null;
   const visibleDocument=$derived(profileTabDocument(document,activeVehicleTabId)),visibleIds=$derived(profileTabNodeIds(document,activeVehicleTabId));
   const nodes=$derived(canvasNodes(visibleDocument,assignments,inventory)),selected=$derived(nodes.find(node=>node.id===selectedId));
+  const nodeNames=$derived(new Map(nodes.map(node=>[node.id,node.name])));
   const graph=$derived({document,assignments});
   const connectionBinding=$derived(pendingConnection?{id:'',from:{nodeId:fromNode,portId:fromPort},to:{nodeId:toNode,portId:toPort}}:visibleDocument.bindings.find(binding=>binding.id===connectionRoute));
   const connectionChoices=$derived.by(()=>connectionBinding?PROCESSING_PRESETS.filter(([kind])=>{try{processingInsertion(connectionBinding.id||null,kind);return true;}catch{return false;}}):[]);
-  const discoveredChoices=$derived(Object.fromEntries(nodes.map(node=>[node.id,profileDiscoveredPorts(graph,node.id,discoveries[node.assignment?.sourceId??'']?.details)])));
+  const discoveredChoices=$derived(discoveryChoices.collect(graph,nodes.map(node=>({nodeId:node.id,details:discoveries[node.assignment?.sourceId??'']?.details}))));
   const discoveredPorts=$derived(Object.fromEntries(Object.entries(discoveredChoices).map(([id,ports])=>[id,ports.map(port=>({id:port.key,name:port.name,direction:port.direction,contract:port.contract}))])));
   const discoveryBusy=$derived(nodes.filter(node=>discoveries[node.assignment?.sourceId??'']?.busy).map(node=>node.id));
   const discoveryErrors=$derived(Object.fromEntries(nodes.flatMap(node=>discoveries[node.assignment?.sourceId??'']?.error?[[node.id,discoveries[node.assignment!.sourceId].error]]:[])));
   const sourcePorts=$derived((discoveredChoices[fromNode]??[]).filter(port=>port.direction==='output')),targetPorts=$derived((discoveredChoices[toNode]??[]).filter(port=>port.direction==='input'));
   const fromChoice=$derived(sourcePorts.find(port=>port.key===fromPort)),toChoice=$derived(targetPorts.find(port=>port.key===toPort));
+  const inputWriters=$derived.by(()=>{const writers=new Map<string,Map<string,DeepReadonly<ProfileDocument['bindings'][number]>>>();for(const binding of document.bindings){if(binding.id===editingRoute)continue;let ports=writers.get(binding.to.nodeId);if(!ports){ports=new Map();writers.set(binding.to.nodeId,ports);}if(!ports.has(binding.to.portId))ports.set(binding.to.portId,binding);}return writers;});
+  function inputWriter(nodeId:string,port:ProfileDiscoveredPort){return port.profilePortId?inputWriters.get(nodeId)?.get(port.profilePortId):undefined;}
   function portOption(port:ProfileDiscoveredPort,side:'from'|'to'){
     const from=side==='from'?port:fromChoice,to=side==='to'?port:toChoice??(targetPorts.length===1?targetPorts[0]:undefined);
     const reason=from&&to?canvasPortReason(document,{nodeId:fromNode,port:from},{nodeId:toNode,port:to}):'';
-    const writer=side==='to'?canvasPortWriter(document,toNode,port,editingRoute||undefined):undefined;
+    const writer=side==='to'?inputWriter(toNode,port):undefined;
     return{value:port.key,label:port.name,description:`${port.observed?.descriptor.id??port.key} · ${portContractLabel(port.contract)}${port.companionPage?' · selected panel':port.current?'':' · saved / unavailable'}`,searchText:`${port.name} ${port.observed?.descriptor.id??port.key} ${port.key}`,reason:reason|| (writer?'Already connected. Select to replace its connection.':''),rank:reason?2:writer?1:0};
   }
   const sourceOptions=$derived(sourcePorts.map(port=>portOption(port,'from')).sort((a,b)=>a.rank-b.rank)),targetOptions=$derived(targetPorts.map(port=>portOption(port,'to')).sort((a,b)=>a.rank-b.rank));
@@ -91,7 +96,7 @@
   onDestroy(()=>{discoveryDisposed=true;assignmentEpoch++;assignmentBrowser.clear();learning?.dispose();});
   function refreshDiscoveries(sources:readonly {sourceId:string;resource?:DeepReadonly<ResourceSummary>;companion:boolean;publication?:string}[],revision:number){
     const wanted=new Set(sources.filter(source=>!source.companion||source.publication).map(source=>source.sourceId));
-    discoveries=Object.fromEntries(Object.entries(discoveries).filter(([id])=>wanted.has(id)));
+    if(Object.keys(discoveries).some(id=>!wanted.has(id)))discoveries=Object.fromEntries(Object.entries(discoveries).filter(([id])=>wanted.has(id)));
     for(const source of sources){if(!source.resource||source.companion&&!source.publication)continue;const signature=`${revision}/${graphInventorySignature([source.resource])}/${source.publication??''}`;if(discoveries[source.sourceId]?.signature!==signature)void discover(source.sourceId,signature,source.companion?source.publication:undefined);}
   }
   async function discover(sourceId:string,signature:string,publication?:string){
@@ -114,7 +119,7 @@
   function choosePort(side:'from'|'to',key:string){if(side==='from')fromPort=key;else toPort=key;autoCommitArmed=true;autoConnect();}
   function autoConnect(){if(!routeOpen||!autoCommitArmed||readOnly||!fromNode||!toNode)return;
     if(!fromPort){const choices=sourcePorts.filter(port=>!isProcessingDraft(document,fromNode)&&(!toChoice||!canvasPortReason(document,{nodeId:fromNode,port},{nodeId:toNode,port:toChoice})));if(choices.length===1)fromPort=choices[0].key;}
-    if(!toPort){const choices=targetPorts.filter(port=>!canvasPortWriter(document,toNode,port,editingRoute||undefined)&&(!fromChoice||!canvasPortReason(document,{nodeId:fromNode,port:fromChoice},{nodeId:toNode,port})));if(choices.length===1)toPort=choices[0].key;}
+    if(!toPort){const choices=targetPorts.filter(port=>!inputWriter(toNode,port)&&(!fromChoice||!canvasPortReason(document,{nodeId:fromNode,port:fromChoice},{nodeId:toNode,port})));if(choices.length===1)toPort=choices[0].key;}
     if(fromPort&&toPort){try{const plan=prepareConnection();if(!plan.error&&!plan.writer){autoCommitArmed=false;connect();}}catch{/* Show incompatibility beside the selected ports. */}}
   }
   function editRoute(id:string){const binding=visibleDocument.bindings.find(binding=>binding.id===id);if(!binding)return;editingRoute=id;fromNode=binding.from.nodeId;fromPort=binding.from.portId;toNode=binding.to.nodeId;toPort=binding.to.portId;routeOpen=true;autoCommitArmed=false;highlighted=[id];focusRoute(wireAnchor);}
@@ -241,9 +246,9 @@
       {#if wireTransforms}<ProfilePortCombobox label="Insert transformation" placeholder="Search transformations" options={insertOptions} disabled={readOnly} onselect={kind=>insertOnEdge(selectedEdge!.id,kind as ProcessingPreset)}/>{#if !insertOptions.length}<p>No compatible transformation preserves both contracts.</p>{/if}{/if}
     </section>
   {/if}
-  <details class="bindings-panel panel" aria-label="Exact bindings table"><summary>Advanced connections · {visibleDocument.bindings.length}</summary><div class="route-heading"><h3>Exact signal bindings · {visibleDocument.bindings.length}</h3><button class="text-button" onclick={()=>highlighted=[]}>Clear route highlight</button></div><p>Each row is one directed edge in this graph. Choose a row to inspect or retarget exact ports; insert a visible transformation using the selected preset.</p><div class="bindings-scroll"><table><thead><tr><th>Route</th><th>Source output</th><th>Destination input / action</th><th>Graph editing</th></tr></thead><tbody>{#each visibleDocument.bindings as binding (binding.id)}<tr class:highlighted={highlighted.includes(binding.id)}><td><button class="text-button" onclick={()=>editRoute(binding.id)}>{binding.id}</button></td><td><button class="endpoint-button" onclick={()=>selectedId=binding.from.nodeId}>{nodes.find(node=>node.id===binding.from.nodeId)?.name??binding.from.nodeId}<code>{binding.from.portId}</code></button></td><td><button class="endpoint-button" onclick={()=>selectedId=binding.to.nodeId}>{nodes.find(node=>node.id===binding.to.nodeId)?.name??binding.to.nodeId}<code>{binding.to.portId}</code></button></td><td><div class="small-actions"><button class="text-button" disabled={readOnly} onclick={()=>editRoute(binding.id)}>Edit ports</button><button class="text-button" onclick={()=>openConnection(binding.id)}>Transform connection</button><button class="text-button" disabled={readOnly} onclick={()=>apply(()=>graphDisconnect(graph,binding.id),'Remove exact route')}>Remove</button></div></td></tr>{:else}<tr><td colspan="4">No routes yet. Drag between block inputs and outputs to choose a connection.</td></tr>{/each}</tbody></table></div>
+  <details class="bindings-panel panel" aria-label="Exact bindings table" bind:open={advancedOpen}><summary>Advanced connections · {visibleDocument.bindings.length}</summary><div class="route-heading"><h3>Exact signal bindings · {visibleDocument.bindings.length}</h3><button class="text-button" onclick={()=>highlighted=[]}>Clear route highlight</button></div><p>Each row is one directed edge in this graph. Choose a row to inspect or retarget exact ports; insert a visible transformation using the selected preset.</p>{#if advancedOpen}<div class="bindings-scroll"><table><thead><tr><th>Route</th><th>Source output</th><th>Destination input / action</th><th>Graph editing</th></tr></thead><tbody>{#each visibleDocument.bindings as binding (binding.id)}<tr class:highlighted={highlighted.includes(binding.id)}><td><button class="text-button" onclick={()=>editRoute(binding.id)}>{binding.id}</button></td><td><button class="endpoint-button" onclick={()=>selectedId=binding.from.nodeId}>{nodeNames.get(binding.from.nodeId)??binding.from.nodeId}<code>{binding.from.portId}</code></button></td><td><button class="endpoint-button" onclick={()=>selectedId=binding.to.nodeId}>{nodeNames.get(binding.to.nodeId)??binding.to.nodeId}<code>{binding.to.portId}</code></button></td><td><div class="small-actions"><button class="text-button" disabled={readOnly} onclick={()=>editRoute(binding.id)}>Edit ports</button><button class="text-button" onclick={()=>openConnection(binding.id)}>Transform connection</button><button class="text-button" disabled={readOnly} onclick={()=>apply(()=>graphDisconnect(graph,binding.id),'Remove exact route')}>Remove</button></div></td></tr>{:else}<tr><td colspan="4">No routes yet. Drag between block inputs and outputs to choose a connection.</td></tr>{/each}</tbody></table></div>
     {#if visibleDocument.processingNodes.length>=2}<details><summary>Reorder a linear transformation chain</summary><p>Select a connected chain in the desired order. Each selected block must have one input and one output, without branches. Incompatible orders are rejected.</p><div class="chain-options">{#each visibleDocument.processingNodes.filter(node=>node.inputs.length===1&&node.outputs.length===1) as node (node.id)}<button class="secondary-button" class:chosen={chainOrder.includes(node.id)} disabled={readOnly} onclick={()=>chainOrder=chainOrder.includes(node.id)?chainOrder.filter(id=>id!==node.id):[...chainOrder,node.id]}>{chainOrder.includes(node.id)?`${chainOrder.indexOf(node.id)+1}. `:''}{node.name}</button>{/each}</div><button class="secondary-button" disabled={readOnly||chainOrder.length<2} onclick={()=>apply(()=>graphReorderProcessing(graph,chainOrder),'Reorder visible transformation chain')}>Use selected chain order</button></details>{/if}
-  </details>
+  {/if}</details>
 </section>
 <style>
   .canvas-port-picker,.wire-actions{position:fixed;z-index:35;width:350px;max-width:calc(100vw - 24px);box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:16px;box-shadow:0 12px 36px #0006}.canvas-port-picker{max-height:calc(100dvh - 24px);overflow:visible}.canvas-port-picker h3,.wire-actions h3{margin:0}.canvas-port-picker .connection-fields{gap:8px;margin:12px 0}.connection-fields strong{font-size:11px;font-weight:500;color:var(--soft)}.flow-direction{font-size:16px;color:var(--muted);text-align:center}.wire-actions .small-actions{gap:10px}.wire-actions p{overflow-wrap:anywhere}.quick-factor{display:flex;align-items:center;gap:6px;margin:0;color:var(--accent);font-size:12px}.quick-factor input{width:70px!important;padding:3px 5px!important}.bindings-panel>summary{cursor:pointer;color:var(--soft);font-size:11px}

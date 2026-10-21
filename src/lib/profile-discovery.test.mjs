@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { loadModules } from './test-module-loader.mjs';
 
 const modules = await loadModules(['./profile-discovery', './profile-editor', './profile-graph']);
-const { profileDiscoverResource: discover, profileDiscoverCompanion: discoverCompanion, profileDiscoveredPorts: choices, profilePrepareDiscoveredPorts: prepare, profileConnectDiscoveredPorts: connect } = modules.get('./profile-discovery');
+const { profileDiscoverResource: discover, profileDiscoverCompanion: discoverCompanion, profileDiscoveredPorts: choices, ProfileDiscoveredPortCache, profilePrepareDiscoveredPorts: prepare, profileConnectDiscoveredPorts: connect } = modules.get('./profile-discovery');
 const { blankProfile } = modules.get('./profile-editor');
 const { graphConnectionError, graphSelectProviderPort, graphSetVirtual } = modules.get('./profile-graph');
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -25,6 +25,47 @@ function companionDraft() {
   value.document.companionAssignments = [{ resourceId: 'target', panelId: 'selected-panel-b', publicationHash: hash('b') }];
   return value;
 }
+
+test('discovery cache keeps large catalogue identities through layout, route and inventory-only editor updates', () => {
+  const cache = new ProfileDiscoveredPortCache(), value = draft();
+  const catalogue = details('native:source', Array.from({ length: 8000 }, (_, index) => observed(`native:${index}`)));
+  let catalogueReads=0;const cataloguePorts=catalogue.ports;Object.defineProperty(catalogue,'ports',{enumerable:true,get(){catalogueReads++;return cataloguePorts;}});
+  const requests = [{ nodeId: 'source', details: catalogue }, { nodeId: 'target' }];
+  const first = cache.collect(value, requests);
+  const initialReads=catalogueReads;
+  assert.equal(first.source.length, 8000);
+  const positioned = plain(value);
+  positioned.document.editor.viewport = { x: 40, y: 60, zoom: .5 };
+  positioned.document.editor.positions = [{ nodeId: 'source', x: 80, y: 100 }];
+  positioned.document.bindings = [{ id: 'route', from: { nodeId: 'source', portId: 'output' }, to: { nodeId: 'target', portId: 'input' } }];
+  assert.equal(cache.collect(positioned, requests), first, 'Editor clones must retain the complete choice snapshot.');
+  assert.equal(cache.read(positioned, 'source', catalogue), first.source);
+  assert.equal(catalogueReads,initialReads,'Editor-only changes must not revisit any provider catalogue.');
+  const refreshed = { ...catalogue, revision: '2', ports: [observed('new-port')] };
+  const next = cache.collect(positioned, [{ nodeId: 'source', details: refreshed }, { nodeId: 'target' }]);
+  assert.notEqual(next, first);
+  assert.notEqual(next.source, first.source);
+  assert.equal(next.target, first.target, 'Only the changed provider receives new port objects.');
+  cache.collect(positioned, [{ nodeId: 'target' }]);
+  assert.notEqual(cache.read(positioned, 'source', refreshed), next.source, 'Hidden or removed nodes must not accumulate in the cache.');
+});
+
+test('discovery cache invalidates authored contracts, exact pins, assignment and captured companion publication', () => {
+  const cache = new ProfileDiscoveredPortCache(), value = draft();
+  const catalogue = details('native:source', [observed('native:output')]);
+  let current = cache.read(value, 'source', catalogue);
+  const pinned = graphSelectProviderPort(value, 'source', 'native:source', catalogue.ports[0], 'saved-output');
+  let next = cache.read(pinned, 'source', catalogue);
+  assert.notEqual(next, current);assert.equal(next[0].key, 'saved-output');current = next;
+  const renamed = plain(pinned);renamed.document.resources[0].ports[0].name = 'Renamed output';
+  next = cache.read(renamed, 'source', catalogue);assert.notEqual(next, current);assert.equal(next[0].name, 'Renamed output');current = next;
+  const reassigned = plain(renamed);reassigned.assignments[0].sourceId = 'native:other';
+  next = cache.read(reassigned, 'source', catalogue);assert.notEqual(next, current);assert.equal(next[0].sourceId, 'native:other');assert.equal(next[0].observed, null);
+  const companion = companionDraft(), page = companionPage([prospective('panel-input')]);
+  current = cache.read(companion, 'target', page);assert.equal(current.length, 1);
+  const switched = plain(companion);switched.document.companionAssignments[0].publicationHash = hash('f');
+  next = cache.read(switched, 'target', page);assert.notEqual(next, current);assert.equal(next.length, 0);
+});
 
 test('discovery loads every short page without declaring any of a large catalogue in the graph', async () => {
   const ports = Array.from({ length: 180 }, (_, index) => observed(`native:${index}`)), offsets = [];

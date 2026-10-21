@@ -1,0 +1,1603 @@
+{
+  "nodes": [
+    {
+      "id": "game-context-dcs-1",
+      "position": {
+        "x": 48,
+        "y": 2460
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "right-stick",
+      "position": {
+        "x": 48,
+        "y": 1656
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "left-stick",
+      "position": {
+        "x": 48,
+        "y": 1924
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "rudder-pedals",
+      "position": {
+        "x": 48,
+        "y": 2192
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "aux-panel",
+      "position": {
+        "x": 1776,
+        "y": 2058
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "right-stick-0-normalize",
+      "position": {
+        "x": 808.895,
+        "y": 2356.45
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 808.895,
+          "y": 2448.45
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1032.895,
+          "y": 2448.45
+        }
+      }
+    },
+    {
+      "id": "right-stick-0-deadzone",
+      "position": {
+        "x": 912,
+        "y": 1120
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 912,
+          "y": 1212
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1136,
+          "y": 1212
+        }
+      }
+    },
+    {
+      "id": "right-stick-0-curve",
+      "position": {
+        "x": 1344,
+        "y": 1388
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 1344,
+          "y": 1480
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1568,
+          "y": 1480
+        }
+      }
+    },
+    {
+      "id": "right-stick-1-normalize",
+      "position": {
+        "x": 480,
+        "y": 2728
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 2820
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 2820
+        }
+      }
+    },
+    {
+      "id": "right-stick-1-deadzone",
+      "position": {
+        "x": 912,
+        "y": 1656
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 912,
+          "y": 1748
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1136,
+          "y": 1748
+        }
+      }
+    },
+    {
+      "id": "right-stick-1-curve",
+      "position": {
+        "x": 1344,
+        "y": 1656
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 1344,
+          "y": 1748
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1568,
+          "y": 1748
+        }
+      }
+    },
+    {
+      "id": "rudder-pedals-0-normalize",
+      "position": {
+        "x": 480,
+        "y": 2460
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 2552
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 2552
+        }
+      }
+    },
+    {
+      "id": "rudder-pedals-0-deadzone",
+      "position": {
+        "x": 912,
+        "y": 1388
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 912,
+          "y": 1480
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1136,
+          "y": 1480
+        }
+      }
+    },
+    {
+      "id": "left-stick-0-normalize",
+      "position": {
+        "x": 480,
+        "y": 2996
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 3088
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 3088
+        }
+      }
+    },
+    {
+      "id": "left-stick-0-deadzone",
+      "position": {
+        "x": 912,
+        "y": 1924
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 912,
+          "y": 2016
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1136,
+          "y": 2016
+        }
+      }
+    },
+    {
+      "id": "left-stick-1-normalize",
+      "position": {
+        "x": 480,
+        "y": 4068
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 4160
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 4160
+        }
+      }
+    },
+    {
+      "id": "left-stick-1-deadzone",
+      "position": {
+        "x": 912,
+        "y": 2996
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 912,
+          "y": 3088
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1136,
+          "y": 3088
+        }
+      }
+    },
+    {
+      "id": "left-stick-1-invert",
+      "position": {
+        "x": 1344,
+        "y": 2728
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 1344,
+          "y": 2820
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1568,
+          "y": 2820
+        }
+      }
+    },
+    {
+      "id": "button-toggle",
+      "position": {
+        "x": 480,
+        "y": 48
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 140
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 140
+        }
+      }
+    },
+    {
+      "id": "button-pulse",
+      "position": {
+        "x": 480,
+        "y": 316
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 408
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 408
+        }
+      }
+    },
+    {
+      "id": "button-hold",
+      "position": {
+        "x": 480,
+        "y": 584
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 676
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 676
+        }
+      }
+    },
+    {
+      "id": "button-tap",
+      "position": {
+        "x": 480,
+        "y": 852
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 944
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 944
+        }
+      }
+    },
+    {
+      "id": "button-double-tap",
+      "position": {
+        "x": 480,
+        "y": 1120
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 1212
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 1212
+        }
+      }
+    },
+    {
+      "id": "button-macro",
+      "position": {
+        "x": 480,
+        "y": 1388
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 1480
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 1480
+        }
+      }
+    },
+    {
+      "id": "button-chord",
+      "position": {
+        "x": 480,
+        "y": 1656
+      },
+      "width": 224,
+      "height": 142,
+      "inputAnchors": {
+        "first": {
+          "x": 480,
+          "y": 1748
+        },
+        "second": {
+          "x": 480,
+          "y": 1776
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 1748
+        }
+      }
+    },
+    {
+      "id": "button-or",
+      "position": {
+        "x": 480,
+        "y": 1924
+      },
+      "width": 224,
+      "height": 142,
+      "inputAnchors": {
+        "first": {
+          "x": 480,
+          "y": 2016
+        },
+        "second": {
+          "x": 480,
+          "y": 2044
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 2016
+        }
+      }
+    },
+    {
+      "id": "panel-button-0",
+      "position": {
+        "x": 2208,
+        "y": 1924
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 2208,
+          "y": 2016
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 2432,
+          "y": 2016
+        }
+      }
+    },
+    {
+      "id": "panel-button-1",
+      "position": {
+        "x": 2208,
+        "y": 2192
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 2208,
+          "y": 2284
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 2432,
+          "y": 2284
+        }
+      }
+    },
+    {
+      "id": "panel-toggle-or",
+      "position": {
+        "x": 2208,
+        "y": 1656
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 2208,
+          "y": 1748
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 2432,
+          "y": 1748
+        }
+      }
+    },
+    {
+      "id": "panel-toggle",
+      "position": {
+        "x": 2640,
+        "y": 1924
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 2640,
+          "y": 2016
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 2864,
+          "y": 2016
+        }
+      }
+    },
+    {
+      "id": "panel-lighting",
+      "position": {
+        "x": 2208,
+        "y": 2460
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 2208,
+          "y": 2552
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 2432,
+          "y": 2552
+        }
+      }
+    },
+    {
+      "id": "altitude-feet",
+      "position": {
+        "x": 480,
+        "y": 3800
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 3892
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 3892
+        }
+      }
+    },
+    {
+      "id": "altitude-metres",
+      "position": {
+        "x": 912,
+        "y": 2728
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 912,
+          "y": 2820
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1136,
+          "y": 2820
+        }
+      }
+    },
+    {
+      "id": "altitude-format",
+      "position": {
+        "x": 1344,
+        "y": 2192
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 1344,
+          "y": 2284
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1568,
+          "y": 2284
+        }
+      }
+    },
+    {
+      "id": "altitude-hysteresis",
+      "position": {
+        "x": 1344,
+        "y": 2460
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 1344,
+          "y": 2552
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1568,
+          "y": 2552
+        }
+      }
+    },
+    {
+      "id": "rudder-ratio",
+      "position": {
+        "x": 480,
+        "y": 3532
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 3624
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 3624
+        }
+      }
+    },
+    {
+      "id": "rudder-declare",
+      "position": {
+        "x": 912,
+        "y": 2460
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 912,
+          "y": 2552
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1136,
+          "y": 2552
+        }
+      }
+    },
+    {
+      "id": "rudder-percent",
+      "position": {
+        "x": 1344,
+        "y": 1924
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 1344,
+          "y": 2016
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 1568,
+          "y": 2016
+        }
+      }
+    },
+    {
+      "id": "view-press",
+      "position": {
+        "x": 480,
+        "y": 3264
+      },
+      "width": 224,
+      "height": 114,
+      "inputAnchors": {
+        "in": {
+          "x": 480,
+          "y": 3356
+        }
+      },
+      "outputAnchors": {
+        "out": {
+          "x": 704,
+          "y": 3356
+        }
+      }
+    },
+    {
+      "id": "virtual-flight",
+      "position": {
+        "x": 3072,
+        "y": 2058
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "virtual-aux",
+      "position": {
+        "x": 2640,
+        "y": 2192
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "dcs-keyboard",
+      "position": {
+        "x": 912,
+        "y": 2192
+      },
+      "width": 288,
+      "height": 188
+    }
+  ],
+  "bindings": [
+    {
+      "id": "route-1",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "axis-1"
+      },
+      "to": {
+        "nodeId": "right-stick-0-normalize",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-2",
+      "from": {
+        "nodeId": "right-stick-0-normalize",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "right-stick-0-deadzone",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-3",
+      "from": {
+        "nodeId": "right-stick-0-deadzone",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "right-stick-0-curve",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-4",
+      "from": {
+        "nodeId": "right-stick-0-curve",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "axis-1"
+      }
+    },
+    {
+      "id": "route-5",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "axis-2"
+      },
+      "to": {
+        "nodeId": "right-stick-1-normalize",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-6",
+      "from": {
+        "nodeId": "right-stick-1-normalize",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "right-stick-1-deadzone",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-7",
+      "from": {
+        "nodeId": "right-stick-1-deadzone",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "right-stick-1-curve",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-8",
+      "from": {
+        "nodeId": "right-stick-1-curve",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "axis-2"
+      }
+    },
+    {
+      "id": "route-9",
+      "from": {
+        "nodeId": "rudder-pedals",
+        "portId": "axis-1"
+      },
+      "to": {
+        "nodeId": "rudder-pedals-0-normalize",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-10",
+      "from": {
+        "nodeId": "rudder-pedals-0-normalize",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "rudder-pedals-0-deadzone",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-11",
+      "from": {
+        "nodeId": "rudder-pedals-0-deadzone",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "axis-3"
+      }
+    },
+    {
+      "id": "route-12",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "axis-1"
+      },
+      "to": {
+        "nodeId": "left-stick-0-normalize",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-13",
+      "from": {
+        "nodeId": "left-stick-0-normalize",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "left-stick-0-deadzone",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-14",
+      "from": {
+        "nodeId": "left-stick-0-deadzone",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "axis-1"
+      }
+    },
+    {
+      "id": "route-15",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "axis-2"
+      },
+      "to": {
+        "nodeId": "left-stick-1-normalize",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-16",
+      "from": {
+        "nodeId": "left-stick-1-normalize",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "left-stick-1-deadzone",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-17",
+      "from": {
+        "nodeId": "left-stick-1-deadzone",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "left-stick-1-invert",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-18",
+      "from": {
+        "nodeId": "left-stick-1-invert",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "axis-2"
+      }
+    },
+    {
+      "id": "route-19",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "hat-1"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "hat-1"
+      }
+    },
+    {
+      "id": "route-20",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "hat-1"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "hat-2"
+      }
+    },
+    {
+      "id": "route-21",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "hat-1"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "hat-1"
+      }
+    },
+    {
+      "id": "route-22",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-1"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-1"
+      }
+    },
+    {
+      "id": "route-23",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-2"
+      },
+      "to": {
+        "nodeId": "button-toggle",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-24",
+      "from": {
+        "nodeId": "button-toggle",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-2"
+      }
+    },
+    {
+      "id": "route-25",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-3"
+      },
+      "to": {
+        "nodeId": "button-pulse",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-26",
+      "from": {
+        "nodeId": "button-pulse",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-3"
+      }
+    },
+    {
+      "id": "route-27",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-4"
+      },
+      "to": {
+        "nodeId": "button-hold",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-28",
+      "from": {
+        "nodeId": "button-hold",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-4"
+      }
+    },
+    {
+      "id": "route-29",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-5"
+      },
+      "to": {
+        "nodeId": "button-tap",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-30",
+      "from": {
+        "nodeId": "button-tap",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-5"
+      }
+    },
+    {
+      "id": "route-31",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-6"
+      },
+      "to": {
+        "nodeId": "button-double-tap",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-32",
+      "from": {
+        "nodeId": "button-double-tap",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-6"
+      }
+    },
+    {
+      "id": "route-33",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-7"
+      },
+      "to": {
+        "nodeId": "button-macro",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-34",
+      "from": {
+        "nodeId": "button-macro",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-7"
+      }
+    },
+    {
+      "id": "route-35",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-8"
+      },
+      "to": {
+        "nodeId": "button-chord",
+        "portId": "first"
+      }
+    },
+    {
+      "id": "route-36",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-9"
+      },
+      "to": {
+        "nodeId": "button-chord",
+        "portId": "second"
+      }
+    },
+    {
+      "id": "route-37",
+      "from": {
+        "nodeId": "button-chord",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-8"
+      }
+    },
+    {
+      "id": "route-38",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-9"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-9"
+      }
+    },
+    {
+      "id": "route-39",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-10"
+      },
+      "to": {
+        "nodeId": "button-or",
+        "portId": "first"
+      }
+    },
+    {
+      "id": "route-40",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-11"
+      },
+      "to": {
+        "nodeId": "button-or",
+        "portId": "second"
+      }
+    },
+    {
+      "id": "route-41",
+      "from": {
+        "nodeId": "button-or",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-10"
+      }
+    },
+    {
+      "id": "route-42",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-11"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-11"
+      }
+    },
+    {
+      "id": "route-43",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-12"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-12"
+      }
+    },
+    {
+      "id": "route-44",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-13"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-13"
+      }
+    },
+    {
+      "id": "route-45",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-14"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-14"
+      }
+    },
+    {
+      "id": "route-46",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-15"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-15"
+      }
+    },
+    {
+      "id": "route-47",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "button-1"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-1"
+      }
+    },
+    {
+      "id": "route-48",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "button-2"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-2"
+      }
+    },
+    {
+      "id": "route-49",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "button-3"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-3"
+      }
+    },
+    {
+      "id": "route-50",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "button-4"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-4"
+      }
+    },
+    {
+      "id": "route-51",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "button-5"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-5"
+      }
+    },
+    {
+      "id": "route-52",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": "button-6"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-6"
+      }
+    },
+    {
+      "id": "route-54",
+      "from": {
+        "nodeId": "aux-panel",
+        "portId": "button-1"
+      },
+      "to": {
+        "nodeId": "panel-button-0",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-55",
+      "from": {
+        "nodeId": "panel-button-0",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-7"
+      }
+    },
+    {
+      "id": "route-57",
+      "from": {
+        "nodeId": "aux-panel",
+        "portId": "button-2"
+      },
+      "to": {
+        "nodeId": "panel-button-1",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-58",
+      "from": {
+        "nodeId": "panel-button-1",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "button-8"
+      }
+    },
+    {
+      "id": "route-60",
+      "from": {
+        "nodeId": "aux-panel",
+        "portId": "button-3"
+      },
+      "to": {
+        "nodeId": "panel-toggle-or",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-61",
+      "from": {
+        "nodeId": "panel-toggle-or",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "panel-toggle",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-62",
+      "from": {
+        "nodeId": "panel-toggle",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "button-16"
+      }
+    },
+    {
+      "id": "route-64",
+      "from": {
+        "nodeId": "aux-panel",
+        "portId": "button-4"
+      },
+      "to": {
+        "nodeId": "panel-lighting",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-65",
+      "from": {
+        "nodeId": "game-context-dcs-1",
+        "portId": "altitude-ft-raw"
+      },
+      "to": {
+        "nodeId": "altitude-feet",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-66",
+      "from": {
+        "nodeId": "altitude-feet",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "altitude-metres",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-67",
+      "from": {
+        "nodeId": "altitude-metres",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "altitude-format",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-68",
+      "from": {
+        "nodeId": "altitude-metres",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "altitude-hysteresis",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-72",
+      "from": {
+        "nodeId": "altitude-metres",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "aux-panel",
+        "portId": "altitude-m"
+      }
+    },
+    {
+      "id": "route-73",
+      "from": {
+        "nodeId": "altitude-format",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "aux-panel",
+        "portId": "altitude-text"
+      }
+    },
+    {
+      "id": "route-74",
+      "from": {
+        "nodeId": "altitude-hysteresis",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "aux-panel",
+        "portId": "altitude-warning"
+      }
+    },
+    {
+      "id": "route-75",
+      "from": {
+        "nodeId": "rudder-pedals",
+        "portId": "axis-1"
+      },
+      "to": {
+        "nodeId": "rudder-ratio",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-76",
+      "from": {
+        "nodeId": "rudder-ratio",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "rudder-declare",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-77",
+      "from": {
+        "nodeId": "rudder-declare",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "rudder-percent",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-78",
+      "from": {
+        "nodeId": "rudder-percent",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "aux-panel",
+        "portId": "gauge"
+      }
+    },
+    {
+      "id": "route-79",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": "button-13"
+      },
+      "to": {
+        "nodeId": "view-press",
+        "portId": "in"
+      }
+    },
+    {
+      "id": "route-80",
+      "from": {
+        "nodeId": "view-press",
+        "portId": "out"
+      },
+      "to": {
+        "nodeId": "dcs-keyboard",
+        "portId": "view-tap"
+      }
+    }
+  ]
+}

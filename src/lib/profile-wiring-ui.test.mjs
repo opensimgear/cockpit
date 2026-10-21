@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling']);
+const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./profile-canvas-render']);
 const plain = value => JSON.parse(JSON.stringify(value));
 const port = (id, direction, name = id) => ({ id, direction, name, contract: { delivery: 'state', schema: { type: 'boolean' }, freshnessMs: 1000, fallback: null } });
 const resource = (id, ports = []) => ({ id, name: id, kind: 'device', required: false, ports });
@@ -24,7 +24,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,inputState,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
@@ -32,8 +32,10 @@ const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.sv
 function harness(props = {}, arrowStyle='smooth',cornerRadius=24) {
   const styling=modules.get('./canvas-styling').canvasStyling;styling.setArrowStyle(arrowStyle);styling.setCornerRadius(cornerRadius);
   const calls = [], edits = [], captured = new Set(), focuses=[];
+  const frames=new Map();let frameId=0;
   let handlers, hit = element();
   const context = {
+    requestAnimationFrame:callback=>{const id=++frameId;frames.set(id,callback);return id;},cancelAnimationFrame:id=>frames.delete(id),
     TextEncoder, captureCanvas: value => handlers = value,
     window: { document: { elementFromPoint: () => hit } },
     require(name) {
@@ -61,7 +63,7 @@ function harness(props = {}, arrowStyle='smooth',cornerRadius=24) {
     setPointerCapture: id => captured.add(id), hasPointerCapture: id => captured.has(id), releasePointerCapture: id => captured.delete(id),
     getBoundingClientRect: () => ({ left: 100, top: 50, right: 1100, bottom: 850 }), contains: target => target.inside !== false
   });
-  return { handlers, body, calls, edits, captured, focuses, document, before, setHit(value) { hit = value; } };
+  return { handlers, body, calls, edits, captured, focuses, document, before, frames,flushFrames(){const queued=[...frames.values()];frames.clear();for(const callback of queued)callback(0);}, setHit(value) { hit = value; } };
 }
 function element({ nodeId, input, output, portId, disabled = false, inside = true, panel = false } = {}) {
   const value = { disabled, inside, dataset: { connectionTarget: input, connectionSource: output, connectionPort: portId } };
@@ -111,6 +113,23 @@ test('both wire directions preserve output-to-input routing, world coordinates a
     assert.equal(h.edits.length, 0);
     assert.deepEqual(h.document, h.before, 'Dragging only opens the chooser; exact ports are saved later.');
   }
+});
+
+test('pointer bursts render once per frame and pointer release flushes the latest position',()=>{
+  const h=harness();h.handlers.begin(pointer(100,100,{target:element()}));
+  h.handlers.scheduleMove(pointer(120,110));h.handlers.scheduleMove(pointer(160,130));
+  assert.equal(h.frames.size,1);assert.equal(h.handlers.state.view.x,0);assert.deepEqual(h.edits,[]);
+  h.flushFrames();assert.deepEqual(plain(h.handlers.state.view),{x:60,y:30,zoom:1});assert.equal(h.edits.length,0);
+  h.handlers.scheduleMove(pointer(180,140));h.handlers.finish(pointer(180,140));
+  assert.deepEqual(plain(h.handlers.state.view),{x:80,y:40,zoom:1});assert.equal(h.frames.size,0);assert.equal(h.edits.length,1);assert.deepEqual(plain(h.edits[0][0].editor.viewport),{x:80,y:40,zoom:1});
+  const cancelled=harness();cancelled.handlers.begin(pointer(100,100,{target:element()}));cancelled.handlers.scheduleMove(pointer(180,140));cancelled.handlers.finish(pointer(180,140),true);cancelled.flushFrames();assert.deepEqual(plain(cancelled.handlers.state.view),{x:0,y:0,zoom:1});assert.deepEqual(cancelled.edits,[]);
+});
+
+test('wheel viewport updates share one save per animation frame without changing graph routing',()=>{
+  const h=harness(),before=plain(h.document),event={deltaX:0,deltaY:12,clientX:200,clientY:100,ctrlKey:false,metaKey:false,preventDefault(){}};
+  h.handlers.wheel(event);h.handlers.wheel(event);h.handlers.wheel(event);
+  assert.equal(h.frames.size,1);assert.equal(h.edits.length,0);assert.equal(h.handlers.state.view.y,-36);
+  h.flushFrames();assert.equal(h.edits.length,1);assert.equal(h.edits[0][0].editor.viewport.y,-36);assert.deepEqual(plain(h.edits[0][0].bindings),before.bindings);assert.deepEqual(plain(h.document),before);
 });
 
 test('wrong-side, same-block, disabled and off-canvas wire releases remain inert', () => {
@@ -331,13 +350,14 @@ test('horizontal and vertical segment gestures preview without edits, keep endpo
 });
 
 test('segment cancellation, lost capture, insignificant movement and blocked moves never create history',()=>{
-  for(const cancel of ['pointer','escape','capture','tiny','blocked']){
+  for(const cancel of ['pointer','escape','capture','undo','tiny','blocked']){
     const document=orthogonalDocument();if(cancel==='blocked'){const obstacle=document.editor.positions.find(position=>position.nodeId==='empty');obstacle.x=310;obstacle.y=260;}
-    const h=harness({document,selectedEdgeId:'route'},'orthogonal');h.handlers.beginSegment(pointer(500,300),'route',0);
+    const h=harness({document,selectedEdgeId:'route',undo(){}},'orthogonal');h.handlers.beginSegment(pointer(500,300),'route',0);
     h.handlers.move(pointer(500,cancel==='tiny'?302:cancel==='blocked'?370:335));
     if(cancel==='pointer')h.handlers.finish(pointer(500,335),true);
     else if(cancel==='escape')h.handlers.keyboard({key:'Escape',preventDefault(){}});
     else if(cancel==='capture'){h.captured.delete(7);h.handlers.lostPointer(pointer());}
+    else if(cancel==='undo'){h.handlers.scheduleMove(pointer(500,360));h.handlers.keyboard({key:'z',ctrlKey:true,target:{closest:()=>null},preventDefault(){}});assert.equal(h.frames.size,0);h.flushFrames();}
     else{if(cancel==='blocked')assert.equal(h.handlers.state.segmentBlocked,true);h.handlers.finish(pointer(500,cancel==='tiny'?302:370));}
     assert.deepEqual(h.edits,[],cancel);assert.equal(h.handlers.state.segmentDrag,null,cancel);assert.equal(h.handlers.state.segmentPreview,null,cancel);assert.equal(h.captured.size,0,cancel);assert.deepEqual(h.document,h.before,cancel);
   }

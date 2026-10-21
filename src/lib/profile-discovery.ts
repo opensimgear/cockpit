@@ -1,7 +1,7 @@
 import { graphConnect, graphDraft, graphPort, graphPorts, graphSelectProviderPort, type ProfileGraphDraft } from './profile-graph';
 import { RESOURCE_PORT_PAGE_SIZE, type ObservedResourcePort, type ProfileInventoryClient, type ResourceDetails } from './profile-inventory';
 import { graphSelectCompanionPort, type ProfileCompanionAuthoringClient, type ProfileCompanionPage } from './profile-companion-authoring';
-import type { DeepReadonly, ProfileEndpoint, ProfilePort } from './profiles';
+import type { DeepReadonly, ProfileEndpoint, ProfilePort, ProfileLocalAssignment } from './profiles';
 
 /** Discovered choices remain local until a route uses their exact contract. */
 export type ProfileDiscoveredPort = Omit<DeepReadonly<ProfilePort>, 'id'> & {
@@ -15,6 +15,7 @@ export type ProfileDiscoveredPort = Omit<DeepReadonly<ProfilePort>, 'id'> & {
 };
 export type ProfileDiscoveredEndpoint = { nodeId: string; port: DeepReadonly<ProfileDiscoveredPort> };
 export type ProfilePreparedConnection = { draft: ProfileGraphDraft; from: ProfileEndpoint; to: ProfileEndpoint };
+type DiscoveryDetails = DeepReadonly<ResourceDetails | ProfileCompanionPage> | null | undefined;
 
 const variantKey = (port: DeepReadonly<ObservedResourcePort>) => JSON.stringify([port.descriptor.id, port.contractHash]);
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
@@ -65,22 +66,61 @@ export function profileDiscoveredPorts(value: DeepReadonly<ProfileGraphDraft>, n
   const companionPage = resource?.kind === 'companion' && assignment && details && 'resourceId' in details && details.resourceId === assignment.sourceId && details.publicationHash === captured?.publicationHash ? details : undefined;
   const catalogue = companionPage?.ports ?? (resource?.kind !== 'companion' && assignment && details && 'resource' in details && details.resource.id === assignment.sourceId ? details.ports : []);
   const byVariant = new Map(catalogue.map(port => [variantKey(port), port]));
+  const pins = new Map(assignment?.ports.map(pin => [pin.profilePortId, pin]) ?? []);
   const selected = new Set<string>();
   const choices: ProfileDiscoveredPort[] = graphPorts(value.document, nodeId).map(port => {
-    const pin = assignment?.ports.find(row => row.profilePortId === port.id);
+    const pin = pins.get(port.id);
     const key = pin && JSON.stringify([pin.observedPortId, pin.expectedContractHash]);
     if (key) selected.add(key);
     const observed = key ? byVariant.get(key) ?? null : null;
     return { ...port, id: port.id, key: port.id, profilePortId: port.id, sourceId: assignment?.sourceId ?? null, observed, current: resource ? observed?.current === true : true, ...(companionPage && observed ? { companionPage } : {}) };
   });
-  for (const observed of catalogue) {
-    const variant = variantKey(observed);
+  for (const [variant, observed] of byVariant) {
     if ((!observed.current && !companionPage) || selected.has(variant)) continue;
     const key = `@observed:${variant}`;
     choices.push({ ...observed.descriptor, id: key, key, profilePortId: null, sourceId: assignment!.sourceId, observed, current: observed.current, ...(companionPage ? { companionPage } : {}) });
     selected.add(variant);
   }
   return choices;
+}
+
+/** Editor snapshots also change for pan, layout and unrelated routes. Keep
+ * catalogue choices stable until this node's authored ports or discovery change. */
+export class ProfileDiscoveredPortCache {
+  private entries = new Map<string, {
+    kind: string | undefined;
+    ports: readonly DeepReadonly<ProfilePort>[];
+    assignment: DeepReadonly<ProfileLocalAssignment> | undefined;
+    publication: string | undefined;
+    details: Exclude<DiscoveryDetails, undefined>;
+    signature: string;
+    choices: ProfileDiscoveredPort[];
+  }>();
+  private snapshot: Record<string, ProfileDiscoveredPort[]> = {};
+
+  read(value: DeepReadonly<ProfileGraphDraft>, nodeId: string, details: DiscoveryDetails = null): ProfileDiscoveredPort[] {
+    const kind = value.document.resources.find(resource => resource.id === nodeId)?.kind;
+    const ports = graphPorts(value.document, nodeId);
+    const assignment = value.assignments.find(row => row.resourceId === nodeId);
+    const publication = kind === 'companion' ? value.document.companionAssignments.find(row => row.resourceId === nodeId)?.publicationHash : undefined;
+    const catalogue = details ?? null;
+    const previous = this.entries.get(nodeId);
+    if (previous && previous.kind === kind && previous.ports === ports && previous.assignment === assignment && previous.publication === publication && previous.details === catalogue) return previous.choices;
+    // History/layout edits clone the document, so reference identity alone is
+    // insufficient. Only fingerprint authored data, never the full catalogue.
+    const signature = JSON.stringify([kind ?? null, ports, assignment ?? null, publication ?? null]);
+    const choices = previous?.signature === signature && previous.details === catalogue ? previous.choices : profileDiscoveredPorts(value, nodeId, catalogue);
+    this.entries.set(nodeId, { kind, ports, assignment, publication, details: catalogue, signature, choices });
+    return choices;
+  }
+
+  collect(value: DeepReadonly<ProfileGraphDraft>, requests: readonly { nodeId: string; details?: DiscoveryDetails }[]): Record<string, ProfileDiscoveredPort[]> {
+    const next = Object.fromEntries(requests.map(request => [request.nodeId, this.read(value, request.nodeId, request.details)]));
+    const wanted = new Set(requests.map(request => request.nodeId));
+    for (const nodeId of this.entries.keys()) if (!wanted.has(nodeId)) this.entries.delete(nodeId);
+    if (Object.keys(this.snapshot).length !== requests.length || requests.some(request => this.snapshot[request.nodeId] !== next[request.nodeId])) this.snapshot = next;
+    return this.snapshot;
+  }
 }
 
 function prepareEndpoint(value: ProfileGraphDraft, endpoint: DeepReadonly<ProfileDiscoveredEndpoint>): { draft: ProfileGraphDraft; endpoint: ProfileEndpoint } {

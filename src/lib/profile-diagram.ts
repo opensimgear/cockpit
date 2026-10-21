@@ -4,6 +4,7 @@ import { profileAnchorWireRoute, profileWireCorners } from './profile-wire-layou
 type Edge = DeepReadonly<Pick<ProfileBinding, 'from' | 'to'>>;
 export type DiagramPoint = { x:number; y:number };
 export type DiagramNode = {id:string;position:DiagramPoint;width?:number;height?:number;inputAnchors?:Readonly<Record<string,DiagramPoint>>;outputAnchors?:Readonly<Record<string,DiagramPoint>>};
+export type DiagramRouteOptions = {style?:ProfileWireStyle;cornerRadius?:number;wireRoutes?:readonly DeepReadonly<ProfileWireRoute>[]};
 type Box = {left:number;right:number;top:number;bottom:number};
 
 /** The side of each footer is the single attachment shared by all its signals. */
@@ -81,8 +82,8 @@ export function diagramSmoothPath(points:readonly DiagramPoint[]) {
 }
 
 function cubicCrossesBox(curve:Cubic,box:Box,depth=0):boolean {
-  const controls=[curve.start,curve.first,curve.second,curve.end];
-  if(Math.max(...controls.map(p=>p.x))<=box.left||Math.min(...controls.map(p=>p.x))>=box.right||Math.max(...controls.map(p=>p.y))<=box.top||Math.min(...controls.map(p=>p.y))>=box.bottom)return false;
+  const {start,first,second,end}=curve;
+  if(Math.max(start.x,first.x,second.x,end.x)<=box.left||Math.min(start.x,first.x,second.x,end.x)>=box.right||Math.max(start.y,first.y,second.y,end.y)<=box.top||Math.min(start.y,first.y,second.y,end.y)>=box.bottom)return false;
   const inside=(p:DiagramPoint)=>p.x>box.left&&p.x<box.right&&p.y>box.top&&p.y<box.bottom;
   if(inside(curve.start)||inside(curve.end))return true;
   if(depth===12)return inside({x:(curve.start.x+3*curve.first.x+3*curve.second.x+curve.end.x)/8,y:(curve.start.y+3*curve.first.y+3*curve.second.y+curve.end.y)/8});
@@ -180,7 +181,7 @@ function crosses(a:DiagramPoint,b:DiagramPoint,box:Box){
 }
 
 /** Shared compressed visibility grid; search only visits the channels an edge needs. */
-export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:{style?:ProfileWireStyle;cornerRadius?:number;wireRoutes?:readonly DeepReadonly<ProfileWireRoute>[]}={}){
+export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:DiagramRouteOptions={}){
   const requestedRadius=Number.isFinite(options.cornerRadius)?Math.max(0,options.cornerRadius!):24;
   const expanded=options.style==='orthogonal'?Math.max(20,Math.ceil(requestedRadius*(1-Math.SQRT1_2))+1):20;
   const expandedBoxes=nodes.map(node=>({left:node.position.x-expanded,right:node.position.x+(node.width??width)+expanded,top:node.position.y-expanded,bottom:node.position.y+(node.height??height)+expanded}));
@@ -216,15 +217,19 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
   for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:from.outputAnchors?.[binding.from.portId]??diagramPortAnchor(from.position,'output',from.width??width,from.height??height),end:to.inputAnchors?.[binding.to.portId]??diagramPortAnchor(to.position,'input',to.width??width,to.height??height)});}
   const xs=new Set([...boxes.flatMap(box=>[box.left,box.right]),...[...anchors.values()].flatMap(pair=>[pair.start.x+clearance,pair.end.x-clearance])]);
   const ys=new Set([...boxes.flatMap(box=>[box.top,box.bottom]),...[...anchors.values()].flatMap(pair=>[pair.start.y,pair.end.y])]);
+  const corridorXs=[...xs].sort((a,b)=>a-b),corridorYs=[...ys].sort((a,b)=>a-b);
   const segmentCache=new Map<string,boolean>();
   type Interval={start:number;end:number};
   const horizontal=new Map<number,Interval[]>(),vertical=new Map<number,Interval[]>();
+  const reservedPaths=new Set<string>();
+  const pathKey=(points:readonly DiagramPoint[])=>points.map(point=>`${point.x},${point.y}`).join(':');
   function overlap(a:DiagramPoint,b:DiagramPoint){
     const upright=a.x===b.x,track=(upright?vertical:horizontal).get(upright?a.x:a.y)??[];
     const start=Math.min(upright?a.y:a.x,upright?b.y:b.x),end=Math.max(upright?a.y:a.x,upright?b.y:b.x);
     return track.reduce((total,segment)=>total+Math.max(0,Math.min(end,segment.end)-Math.max(start,segment.start)),0);
   }
   function reserve(points:DiagramPoint[]){
+    reservedPaths.add(pathKey(profileWireCorners(points)));
     for(let i=1;i<points.length;i++){
       const a=points[i-1],b=points[i],upright=a.x===b.x,tracks=upright?vertical:horizontal,key=upright?a.x:a.y;
       tracks.set(key,[...(tracks.get(key)??[]),{start:Math.min(upright?a.y:a.x,upright?b.y:b.x),end:Math.max(upright?a.y:a.x,upright?b.y:b.x)}]);
@@ -233,6 +238,62 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
     }
   }
   function clear(a:DiagramPoint,b:DiagramPoint){const key=`${a.x},${a.y}:${b.x},${b.y}`;let value=segmentCache.get(key);if(value===undefined){value=!boxes.some(box=>crosses(a,b,box));segmentCache.set(key,value);}return value;}
+  // Most signal graphs have a clear corridor between their blocks. Checking a
+  // bounded set of complete corridors avoids exploring the Cartesian visibility
+  // grid once per connection, especially for many inputs on a shared footer.
+  // The full search remains the fallback for obstacles that need more bends.
+  function corridor(start:DiagramPoint,end:DiagramPoint,rank:number):DiagramPoint[]{
+    const middleX=(start.x+end.x)/2,middleY=(start.y+end.y)/2;
+    const near=(values:number[],targets:number[],count=12)=>{
+      const candidates=new Set<number>();
+      for(const target of targets){let low=0,high=values.length;while(low<high){const mid=(low+high)>>1;if(values[mid]<target)low=mid+1;else high=mid;}for(let i=Math.max(0,low-count);i<Math.min(values.length,low+count);i++)candidates.add(values[i]);}
+      const distance=(value:number)=>{let result=Infinity;for(const target of targets)result=Math.min(result,Math.abs(value-target));return result;};
+      return [...candidates].sort((a,b)=>distance(a)-distance(b)||a-b).slice(0,count);
+    };
+    const offset=Math.ceil((rank+1)/2)*laneSpacing*(rank%2?-1:1);
+    const columns=new Set([middleX,start.x,end.x,middleX+offset,middleX-offset,...near(corridorXs,[start.x,end.x,middleX])]);
+    const rows=new Set([middleY,start.y,end.y,start.y+offset,start.y-offset,end.y+offset,end.y-offset,...near(corridorYs,[start.y,end.y,middleY])]);
+    let best:DiagramPoint[]=[],bestCost=Infinity;
+    function consider(candidate:DiagramPoint[]){
+      const points=profileWireCorners(candidate);let cost=0,direction=1;
+      for(let i=1;i<points.length;i++){
+        const a=points[i-1],b=points[i],axis=a.x===b.x?2:1;
+        if(!clear(a,b))return;
+        cost+=Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+(direction!==axis?16:0)+(i===points.length-1&&axis===2?16:0)+(axis===2&&direction!==2&&vertical.has(a.x)?256:0)+overlap(a,b)*6;
+        if(cost+Math.abs(b.x-end.x)+Math.abs(b.y-end.y)>=bestCost)return;
+        const tracks=axis===1?vertical:horizontal,low=Math.min(axis===1?a.x:a.y,axis===1?b.x:b.y),high=Math.max(axis===1?a.x:a.y,axis===1?b.x:b.y);
+        let crossings=0;
+        for(const [coordinate,segments]of tracks)if(coordinate>low&&coordinate<high&&segments.some(segment=>{const at=axis===1?a.y:a.x;return at>segment.start&&at<segment.end;}))crossings++;
+        cost+=crossings*80;
+        direction=axis;
+        if(cost>=bestCost)return;
+      }
+      if(cost<bestCost&&!reservedPaths.has(pathKey(profileWireCorners([{x:start.x-clearance,y:start.y},...points,{x:end.x+clearance,y:end.y}])))){best=points;bestCost=cost;}
+    }
+    for(const x of columns)consider([start,{x,y:start.y},{x,y:end.y},end]);
+    for(const y of rows)consider([start,{x:start.x,y},{x:end.x,y},end]);
+    // Separate dense parallel signals after their short shared port leads.
+    // Their bend columns can spread too, instead of every wire sharing one
+    // vertical trunk even when plenty of space is available between blocks.
+    if(end.x-start.x>laneSpacing*2){
+      const lead=Math.min((end.x-start.x)/3,Math.max(laneSpacing,Math.abs(offset)));
+      for(const y of rows)consider([start,{x:start.x+lead,y:start.y},{x:start.x+lead,y},{x:end.x-lead,y},{x:end.x-lead,y:end.y},end]);
+    }
+    if(!best.length){
+      // An intermediate column can block departure and arrival at different
+      // heights. A pair of short clear leads reaches a common horizontal lane
+      // without expanding a two-dimensional A* search through every other wire.
+      const departures=near(corridorXs,[start.x],12).filter(x=>x>=start.x&&clear(start,{x,y:start.y}));
+      const arrivals=near(corridorXs,[end.x],12).filter(x=>x<=end.x&&clear({x,y:end.y},end));
+      const detours=[...corridorYs].sort((a,b)=>Math.abs(a-start.y)+Math.abs(a-end.y)-Math.abs(b-start.y)-Math.abs(b-end.y)||a-b);
+      for(const y of detours){
+        const exits=departures.filter(x=>clear({x,y:start.y},{x,y})),entries=arrivals.filter(x=>clear({x,y},{x,y:end.y}));
+        for(const x of exits)for(const toX of entries)consider([start,{x,y:start.y},{x,y},{x:toX,y},{x:toX,y:end.y},end]);
+        if(best.length)break;
+      }
+    }
+    return best;
+  }
   function route(start:DiagramPoint,end:DiagramPoint):DiagramPoint[]{
     const columns=[...xs].sort((a,b)=>a-b),rows=[...ys].sort((a,b)=>a-b);
     const xIndex=new Map(columns.map((x,index)=>[x,index])),yIndex=new Map(rows.map((y,index)=>[y,index]));
@@ -277,7 +338,14 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
     const customBlocked=!!custom&&(!horizontalLeads||authored.some((point,index)=>index>0&&manualBoxes.some((box,nodeIndex)=>!(index===1&&nodes[nodeIndex].id===binding.from.nodeId)&&!(index===authored.length-1&&nodes[nodeIndex].id===binding.to.nodeId)&&crosses(authored[index-1],point,box))));
     if(authored.length&&!customBlocked){reserve(authored);return[{binding,points:authored,...pathFor(authored,binding,true),manual:true,customBlocked:false}];}
     const exit={x:start.x+clearance,y:start.y},entry={x:end.x-clearance,y:end.y};
-    let channel=route(exit,entry);
+    // Moving one block can bury a port's departure or arrival in another
+    // obstacle. Every visibility-grid step would then cross that obstacle;
+    // subdividing the grid cannot create a route. Reject it before a futile
+    // whole-grid search (and retry) on a graph with many other connections.
+    if([exit,entry].some(point=>boxes.some(box=>point.x>box.left&&point.x<box.right&&point.y>box.top&&point.y<box.bottom)))return[];
+    const rank=parallel.get(`${binding.from.nodeId}\0${binding.to.nodeId}`)!.indexOf(binding.id);
+    let channel=corridor(exit,entry,rank);
+    if(!channel.length)channel=route(exit,entry);
     // Older saved layouts can leave less than one normal lane between blocks.
     // Subdivide those tight channels only when the regular tracks are occupied.
     for(let attempt=0;!channel.length&&attempt<2;attempt++){
@@ -297,4 +365,24 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
   });
   const byBinding=new Map(routed.map(route=>[route.binding.id,route]));
   return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
+}
+
+/** Keep route geometry stable across inventory, selection and viewport updates.
+ * The cache belongs to one canvas and has a bounded history, so switching tabs
+ * or undoing a move can reuse geometry without retaining an entire workspace.
+ */
+export function createDiagramRouter(maxEntries=4):typeof diagramRoutes {
+  const cache=new Map<string,ReturnType<typeof diagramRoutes>>(),limit=Math.max(1,Math.min(16,Math.floor(maxEntries)||1));
+  return (nodes,bindings,width,height,options={})=>{
+    const key=JSON.stringify([width,height,options.style??'smooth',options.cornerRadius??24,nodes.map(node=>[node.id,node.position.x,node.position.y,node.width??width,node.height??height,node.inputAnchors,node.outputAnchors]),bindings.map(binding=>[binding.id,binding.from.nodeId,binding.from.portId,binding.to.nodeId,binding.to.portId]),options.wireRoutes]);
+    const previous=cache.get(key);
+    if(previous){
+      const byId=new Map(bindings.map(binding=>[binding.id,binding]));
+      const routes=previous.some(route=>route.binding!==byId.get(route.binding.id))?previous.map(route=>({...route,binding:byId.get(route.binding.id)!})):previous;
+      cache.delete(key);cache.set(key,routes);return routes;
+    }
+    const routes=diagramRoutes(nodes,bindings,width,height,options);cache.set(key,routes);
+    if(cache.size>limit)cache.delete(cache.keys().next().value!);
+    return routes;
+  };
 }

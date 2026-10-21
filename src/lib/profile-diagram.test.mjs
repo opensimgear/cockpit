@@ -5,7 +5,7 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./profile-editor','./profile-diagram','./profile-canvas']);
 const {profileAutoLayout,PROFILE_BLOCK_WIDTH:width,PROFILE_BLOCK_HEIGHT:height}=modules.get('./profile-editor');
-const {diagramRoutes,diagramPortAnchor,diagramPendingPath,diagramSmoothPath,diagramOrthogonalPath,diagramSegmentLine}=modules.get('./profile-diagram');
+const {diagramRoutes,createDiagramRouter,diagramPortAnchor,diagramPendingPath,diagramSmoothPath,diagramOrthogonalPath,diagramSegmentLine}=modules.get('./profile-diagram');
 const edge=(from,to,id=`${from}-${to}`)=>({id,from:{nodeId:from,portId:'out'},to:{nodeId:to,portId:'in'}});
 const placed=positions=>positions.map(({nodeId,...position})=>({id:nodeId,position}));
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -191,4 +191,77 @@ test('named transform ports retain distinct row anchors while compact obstacles 
   assert.notEqual(routes[0].points.at(-1).y,routes[1].points.at(-1).y);assert.deepEqual(plain(routes[2].points[0]),{x:664,y:172});
   const unobstructed=verifyRoutes([{id:'source',position:{x:0,y:100}},{id:'small-transform',position:{x:430,y:100},width:224,height:114},{id:'sink',position:{x:860,y:100}}],[edge('source','sink')]);
   assert.ok(unobstructed[0].points.every(point=>point.y===268),'A route may pass beneath the compact transform without an obsolete full-card obstacle');
+});
+
+test('Feature Lab geometry preserves every route and block clearance in both styles',async()=>{
+  // Geometry only, captured from the actual DCS demo. No assignments, device
+  // identities, contracts or runtime state are needed to reproduce its routing.
+  const {nodes,bindings}=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/feature-lab-geometry.json',import.meta.url),'utf8'));
+  assert.equal(nodes.length,42);assert.equal(bindings.length,73);
+  const before=JSON.stringify({nodes,bindings});
+  const started=performance.now();verifyRoutes(nodes,bindings);
+  const routes=diagramRoutes(nodes,bindings,width,height,{style:'orthogonal',cornerRadius:64});
+  assert.equal(routes.length,bindings.length);
+  for(const route of routes)assertClearSamples(nodes,route.path);
+  assert.ok(performance.now()-started<2000,'The complete dense graph must route without a multi-second search');
+  assert.equal(JSON.stringify({nodes,bindings}),before);
+});
+
+test('a moved block burying ports does not search every lane in the dense graph',async()=>{
+  const {nodes,bindings,wireRoutes}=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/feature-lab-moved-geometry.json',import.meta.url),'utf8'));
+  const started=performance.now();
+  for(const style of ['smooth','orthogonal']){
+    const routes=diagramRoutes(nodes,bindings,width,height,{style,wireRoutes});
+    assert.equal(routes.length,71);
+    assert.deepEqual(bindings.filter(binding=>!routes.some(route=>route.binding.id===binding.id)).map(binding=>binding.id),['route-2','route-80'],'Only the two buried ports remain unrouted');
+    if(style==='orthogonal')for(const route of routes)assertClearSamples(nodes,route.path);
+  }
+  assert.ok(performance.now()-started<1500,'An impossible endpoint must not trigger repeated whole-grid searches');
+});
+
+test('endpoint rejection preserves a valid lane exactly on an obstacle boundary',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:500,y:300}},{id:'obstacle',position:{x:400,y:340},width:60,height:100}],bindings=[edge('source','target')];
+  for(const style of ['smooth','orthogonal']){
+    const clear=diagramRoutes(nodes,bindings,100,100,{style});assert.equal(clear.length,1);
+    const blocked=nodes.map(node=>node.id==='obstacle'?{...node,position:{x:401,y:340}}:node);
+    assert.equal(diagramRoutes(blocked,bindings,100,100,{style}).length,0,'Moving past the boundary buries the arrival point');
+  }
+});
+
+test('one hundred parallel inputs remain distinct and clear without an expanding grid search',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:320}}];
+  const bindings=Array.from({length:100},(_,index)=>edge('source','target',`parallel-${String(index).padStart(3,'0')}`));
+  const started=performance.now();
+  const smooth=verifyRoutes(nodes,bindings),rounded=diagramRoutes(nodes,bindings,width,height,{style:'orthogonal',cornerRadius:40});
+  for(const routes of [smooth,rounded]){assert.equal(routes.length,100);assert.equal(new Set(routes.map(route=>route.path)).size,100);}
+  for(const route of rounded)assertClearSamples(nodes.map(node=>({...node,width,height})),route.path);
+  assert.ok(performance.now()-started<2500,'Dense input fan-in must not trigger a full growing-grid search per wire');
+});
+
+test('a canvas router reuses geometry through unrelated document updates while returning current bindings',()=>{
+  const router=createDiagramRouter(),nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:320}}],bindings=[edge('source','target')];
+  const initial=router(nodes,bindings,width,height);
+  assert.strictEqual(router(nodes,bindings,width,height),initial,'Selection and viewport updates reuse the route array');
+  const nextBindings=bindings.map(binding=>({...binding,from:{...binding.from},to:{...binding.to},enabled:false}));
+  const updated=router(nodes.map(node=>({...node,name:'Updated inventory name',position:{...node.position}})),nextBindings,width,height);
+  assert.strictEqual(updated[0].binding,nextBindings[0],'Cached geometry never returns stale binding metadata');
+  assert.strictEqual(updated[0].points,initial[0].points);
+  assert.strictEqual(router(nodes,nextBindings,width,height),updated);
+  const secondCanvas=createDiagramRouter();assert.notStrictEqual(secondCanvas(nodes,bindings,width,height)[0].points,initial[0].points,'Caches are canvas-local');
+});
+
+test('router caching observes dimensions, anchors, endpoints, styles, radii and authored bends',()=>{
+  const router=createDiagramRouter(16),nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:320}}],bindings=[edge('source','target')];
+  const first=router(nodes,bindings,width,height),assertChanged=(current)=>assert.notStrictEqual(current[0].points,first[0].points);
+  assertChanged(router(nodes.map(node=>node.id==='source'?{...node,position:{x:0,y:20}}:node),bindings,width,height));
+  assertChanged(router(nodes.map(node=>node.id==='source'?{...node,width:240}:node),bindings,width,height));
+  const anchored=router(nodes.map(node=>node.id==='source'?{...node,outputAnchors:{out:{x:width,y:100}}}:node),bindings,width,height);assertChanged(anchored);assert.equal(anchored[0].points[0].y,100);
+  assertChanged(router(nodes,[{...bindings[0],from:{nodeId:'source',portId:'other'}}],width,height));
+  assertChanged(router(nodes,bindings,width+10,height));assertChanged(router(nodes,bindings,width,height+10));
+  const segmented=router(nodes,bindings,width,height,{style:'orthogonal',cornerRadius:8});assertChanged(segmented);assert.match(segmented[0].path,/ A8,8 /);
+  const radius=router(nodes,bindings,width,height,{style:'orthogonal',cornerRadius:40});assert.notEqual(radius[0].path,segmented[0].path);
+  const points=[{x:width,y:height-20},{x:500,y:height-20},{x:500,y:320+height-20},{x:900,y:320+height-20}];
+  const manual=router(nodes,bindings,width,height,{style:'orthogonal',wireRoutes:[{bindingId:bindings[0].id,points}]});assert.equal(manual[0].manual,true);assert.deepEqual(plain(manual[0].points),points);
+  assert.strictEqual(router(nodes,bindings,width,height),first,'An undo can reuse the original geometry');
+  const bounded=createDiagramRouter(1),old=bounded(nodes,bindings,width,height);bounded(nodes,bindings,width,height,{style:'orthogonal'});assert.notStrictEqual(bounded(nodes,bindings,width,height)[0].points,old[0].points,'Eviction bounds retained geometry');
 });
