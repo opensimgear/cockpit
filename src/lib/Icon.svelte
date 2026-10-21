@@ -19,6 +19,8 @@
     bluetooth: ['M7 7l10 10-5 4V3l5 4L7 17'],
     refresh: ['M20 8a8 8 0 0 0-14-3L3 8m0-5v5h5M4 16a8 8 0 0 0 14 3l3-3m0 5v-5h-5'],
     search: ['M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0m-2 6 6 6'],
+    fit: ['M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5'],
+    layout: ['M3 3h6v6H3zM15 3h6v6h-6zM9 15h6v6H9zM6 9v3h12V9M12 12v3'],
     folder: ['M3 5h6l2 2h10v13H3V5Z'],
     sun: ['M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1 1M18 18l1 1M5 19l1-1M18 6l1-1'],
     moon: ['M21 13a9 9 0 0 1-10-10A9 9 0 1 0 21 13Z'],

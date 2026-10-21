@@ -18,6 +18,7 @@
     startDrag?:(drag:ProfilePaletteDrag)=>void;endDrag?:()=>void;
   }=$props();
   let search=$state('');
+  let searchInput:HTMLInputElement;
   let expanded=$state<Record<string,boolean>>({});
   let editingGroup=$state<string|null>(null), groupName=$state('');
   let dragImage:HTMLSpanElement;
@@ -53,12 +54,13 @@
   function saveGroupName(){if(editingGroup&&groupName.trim()&&renameGroup)renameGroup(editingGroup,groupName.trim());editingGroup=null;}
   function groupNameKey(event:KeyboardEvent){if(event.key==='Enter'){event.preventDefault();saveGroupName();}else if(event.key==='Escape'){event.preventDefault();editingGroup=null;}}
   function focusGroupName(input:HTMLInputElement){input.focus();input.select();}
+  function clearSearch(){search='';searchInput?.focus();}
 </script>
 
 <aside class="component-palette" aria-label="Component palette">
   <span class="drag-image" bind:this={dragImage} aria-hidden="true"></span>
   <header><h2>Components</h2><button class="refresh" aria-label="Refresh components" title="Refresh components" disabled={refreshing} onclick={refresh}><Icon name="refresh" size={15}/></button></header>
-  <label class="palette-search"><Icon name="search" size={14}/><input aria-label="Search components" placeholder="Find a component…" bind:value={search}/></label>
+  <div class="palette-search"><Icon name="search" size={14}/><input aria-label="Search components" placeholder="Find a component…" bind:value={search} bind:this={searchInput}/>{#if search}<button type="button" class="clear-search" aria-label="Clear component search" title="Clear component search" onclick={clearSearch}><Icon name="close" size={13}/></button>{/if}</div>
   {#if error}<p class="palette-error" role="status">{error}</p>{/if}
   <div class="palette-items">
     {#if !query||visibleGroups.length}
@@ -124,7 +126,7 @@
   .refresh-panels{display:flex;align-items:center;gap:6px;justify-content:flex-start;padding:7px 6px;border:0;background:transparent;color:var(--muted);font-size:10px}.refresh-panels:hover:enabled{color:var(--accent)}.refresh-panels:disabled{opacity:.5}
   .component-palette{position:sticky;top:12px;display:flex;flex-direction:column;min-width:0;max-height:calc(100dvh - 130px);border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
   header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 14px 11px}h2{font-size:13px}button{font:inherit;color:var(--text)}.refresh{display:grid;place-items:center;padding:5px;background:transparent;color:var(--muted);border-radius:4px}.refresh:hover:enabled{color:var(--accent);background:var(--surface-raised)}
-  .palette-search{display:flex;align-items:center;gap:8px;margin:0 12px 12px;padding:9px;border:1px solid var(--line);border-radius:5px;background:var(--input-bg);color:var(--muted)}.palette-search input{width:100%;min-width:0;font:inherit;font-size:11px;border:0;background:transparent;color:var(--text);outline:none}.palette-search:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+  .palette-search{display:flex;align-items:center;gap:8px;margin:0 12px 12px;padding:9px;border:1px solid var(--line);border-radius:5px;background:var(--input-bg);color:var(--muted)}.palette-search input{width:100%;min-width:0;flex:1;font:inherit;font-size:11px;border:0;background:transparent;color:var(--text);outline:none}.palette-search:focus-within{outline:2px solid var(--accent);outline-offset:2px}.clear-search{display:grid;place-items:center;flex-shrink:0;width:20px;height:20px;margin:-3px 0;padding:0;border:0;border-radius:3px;background:transparent;color:var(--muted)}.clear-search:hover{background:var(--surface-raised);color:var(--text)}.clear-search:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
   .palette-items{min-height:0;overflow:auto}.editor-accordion{margin:0;border-top:1px solid var(--line);interpolate-size:allow-keywords}.editor-accordion>summary{position:relative;padding:14px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text);padding-right:36px}.category-count{position:absolute;right:14px;top:14px;font-size:10px;font-weight:400;color:var(--muted)}.accordion-content{padding:0 8px 10px;display:grid;gap:3px;min-width:0}.editor-accordion::details-content{height:0;overflow:clip;transition:height 180ms ease,content-visibility 180ms allow-discrete}.editor-accordion[open]::details-content{height:auto}
   .component{display:flex;align-items:center;gap:9px;width:100%;min-width:0;padding:10px 6px;border:1px solid transparent;border-radius:6px;background:transparent;text-align:left}.component:hover:enabled{border-color:var(--line);background:var(--surface-raised)}.component:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.component:disabled{opacity:.5}.component-icon{display:grid;place-items:center;flex-shrink:0;width:28px;height:30px;color:var(--accent)}.component-copy{display:grid;gap:5px;min-width:0;flex:1}.component-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600}.component-copy small{display:flex;align-items:center;gap:5px;font-size:9px;color:var(--muted)}.component :global(>svg){flex-shrink:0;color:var(--muted)}.presence{width:5px;height:5px;flex-shrink:0;border-radius:50%;background:var(--muted)}.presence.online{background:var(--accent)}
   footer{display:grid;gap:7px;padding:12px 14px;border-top:1px solid var(--line);font-size:9px;color:var(--muted);line-height:1.6}footer span{font-size:10px}.palette-error,.palette-empty{padding:0 14px;font-size:10px;line-height:1.7;color:var(--muted)}.palette-error{color:#d3a078}
