@@ -4,3 +4,4 @@ export * from "./editor.ts";
 export * from "./assets.ts";
 export * from "./library.ts";
 export * from "./fixtures.ts";
+export * from "./widget-model.ts";
