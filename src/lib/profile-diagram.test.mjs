@@ -14,14 +14,14 @@ function verifyRoutes(nodes,bindings){
   assert.equal(routes.length,bindings.length,'Every saved route stays visible');
   for(const {binding,points,path}of routes){
     const from=nodes.find(node=>node.id===binding.from.nodeId),to=nodes.find(node=>node.id===binding.to.nodeId);
-    assert.deepEqual(plain(points[0]),{x:from.position.x+width,y:from.position.y+height-20});
-    assert.deepEqual(plain(points.at(-1)),{x:to.position.x,y:to.position.y+height-20});
+    assert.deepEqual(plain(points[0]),plain(from.outputAnchors?.[binding.from.portId]??{x:from.position.x+(from.width??width),y:from.position.y+(from.height??height)-20}));
+    assert.deepEqual(plain(points.at(-1)),plain(to.inputAnchors?.[binding.to.portId]??{x:to.position.x,y:to.position.y+(to.height??height)-20}));
     assert.ok(!/NaN|Infinity/.test(path));
     for(let i=1;i<points.length;i++){
       const a=points[i-1],b=points[i];assert.ok(a.x===b.x||a.y===b.y,'Routes use orthogonal channels');
-      for(const {id,position:p}of nodes){
-        const crosses=a.x===b.x?a.x>p.x&&a.x<p.x+width&&Math.max(a.y,b.y)>p.y&&Math.min(a.y,b.y)<p.y+height:
-          a.y>p.y&&a.y<p.y+height&&Math.max(a.x,b.x)>p.x&&Math.min(a.x,b.x)<p.x+width;
+      for(const {id,position:p,width:nodeWidth=width,height:nodeHeight=height}of nodes){
+        const crosses=a.x===b.x?a.x>p.x&&a.x<p.x+nodeWidth&&Math.max(a.y,b.y)>p.y&&Math.min(a.y,b.y)<p.y+nodeHeight:
+          a.y>p.y&&a.y<p.y+nodeHeight&&Math.max(a.x,b.x)>p.x&&Math.min(a.x,b.x)<p.x+nodeWidth;
         assert.equal(crosses,false,`${binding.id} crosses block ${id}`);
       }
     }
@@ -107,4 +107,15 @@ test('saved and pending wires share footer geometry and every bend is smooth',()
   const pending=diagramPendingPath(output,{x:700,y:400},'output');assert.ok(pending.startsWith(`M${output.x},${output.y} C`));assert.ok(!pending.includes(' L'));
   assert.match(diagramPendingPath(input,{x:10,y:0},'input'),/ C/);
   assert.equal(diagramSmoothPath([]),'');assert.match(diagramSmoothPath([{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:200,y:100}]),/ Q100,0 .* Q100,100 /);
+});
+
+test('named transform ports retain distinct row anchors while compact obstacles use their true bounds',()=>{
+  const {canvasNodeSize,canvasNodeAnchor}=modules.get('./profile-canvas');
+  const transform={id:'gate',kind:'processing',position:{x:440,y:80},processing:{inputs:[{id:'value'},{id:'enabled'}],outputs:[{id:'result'}]}};
+  const gate={...transform,...canvasNodeSize(transform),inputAnchors:Object.fromEntries(transform.processing.inputs.map(port=>[port.id,canvasNodeAnchor(transform,'input',port.id)])),outputAnchors:{result:canvasNodeAnchor(transform,'output','result')}};
+  const bindings=[{id:'value',from:{nodeId:'source',portId:'out'},to:{nodeId:'gate',portId:'value'}},{id:'enabled',from:{nodeId:'source',portId:'out'},to:{nodeId:'gate',portId:'enabled'}},{id:'result',from:{nodeId:'gate',portId:'result'},to:{nodeId:'sink',portId:'in'}}];
+  const routes=verifyRoutes([{id:'source',position:{x:0,y:0}},gate,{id:'sink',position:{x:900,y:0}}],bindings);
+  assert.notEqual(routes[0].points.at(-1).y,routes[1].points.at(-1).y);assert.deepEqual(plain(routes[2].points[0]),{x:664,y:172});
+  const unobstructed=verifyRoutes([{id:'source',position:{x:0,y:100}},{id:'small-transform',position:{x:430,y:100},width:224,height:114},{id:'sink',position:{x:860,y:100}}],[edge('source','sink')]);
+  assert.ok(unobstructed[0].points.every(point=>point.y===268),'A route may pass beneath the compact transform without an obsolete full-card obstacle');
 });

@@ -2,7 +2,7 @@ import type { DeepReadonly, ProfileBinding } from './profiles';
 
 type Edge = DeepReadonly<Pick<ProfileBinding, 'from' | 'to'>>;
 export type DiagramPoint = { x:number; y:number };
-type Node = {id:string;position:DiagramPoint};
+export type DiagramNode = {id:string;position:DiagramPoint;width?:number;height?:number;inputAnchors?:Readonly<Record<string,DiagramPoint>>;outputAnchors?:Readonly<Record<string,DiagramPoint>>};
 type Box = {left:number;right:number;top:number;bottom:number};
 
 /** The side of each footer is the single attachment shared by all its signals. */
@@ -94,13 +94,13 @@ function crosses(a:DiagramPoint,b:DiagramPoint,box:Box){
 }
 
 /** Shared compressed visibility grid; search only visits the channels an edge needs. */
-export function diagramRoutes(nodes:readonly Node[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number){
+export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number){
   const clearance=20,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
-  const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+width+clearance,top:node.position.y-clearance,bottom:node.position.y+height+clearance}));
+  const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+(node.width??width)+clearance,top:node.position.y-clearance,bottom:node.position.y+(node.height??height)+clearance}));
   const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
-  for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:diagramPortAnchor(from.position,'output',width,height),end:diagramPortAnchor(to.position,'input',width,height)});}
-  const xs=new Set(boxes.flatMap(box=>[box.left,box.right]));
+  for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:from.outputAnchors?.[binding.from.portId]??diagramPortAnchor(from.position,'output',from.width??width,from.height??height),end:to.inputAnchors?.[binding.to.portId]??diagramPortAnchor(to.position,'input',to.width??width,to.height??height)});}
+  const xs=new Set([...boxes.flatMap(box=>[box.left,box.right]),...[...anchors.values()].flatMap(pair=>[pair.start.x+clearance,pair.end.x-clearance])]);
   const ys=new Set([...boxes.flatMap(box=>[box.top,box.bottom]),...[...anchors.values()].flatMap(pair=>[pair.start.y,pair.end.y])]);
   const segmentCache=new Map<string,boolean>();
   type Interval={start:number;end:number};

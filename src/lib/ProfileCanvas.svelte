@@ -5,22 +5,22 @@
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout } from './profile-editor';
-  import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
-  import { diagramPendingPath, diagramPortAnchor, diagramRoutes } from './profile-diagram';
+  import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
+  import { diagramPendingPath, diagramRoutes } from './profile-diagram';
   import {processingSummary} from './profile-processing';
   import type{CompileDiagnostic}from'./profile-compilation';
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = false, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
     inspector?:Snippet<[CanvasNode]>;nodeControls?:Snippet<[CanvasNode]>; selectProviderPort?:(nodeId:string,port:DeepReadonly<ObservedResourcePort>)=>void; removeProviderPort?:(nodeId:string,portId:string)=>void;
-    connectBlocks?:(fromNodeId:string,toNodeId:string,position?:CanvasPoint)=>void;connectionFrom?:(nodeId:string,position?:CanvasPoint)=>void;connectionTo?:(nodeId:string,position?:CanvasPoint)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
+    connectBlocks?:(fromNodeId:string,toNodeId:string,position?:CanvasPoint,fromPortId?:string,toPortId?:string)=>void;connectionFrom?:(nodeId:string,position?:CanvasPoint,portId?:string)=>void;connectionTo?:(nodeId:string,position?:CanvasPoint,portId?:string)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
     editConnection?:(bindingId:string)=>void;
-    selectedEdgeId?:string;selectConnection?:(bindingId:string)=>void;connectionSourceId?:string;connectionTargetId?:string;
-    reconnectConnection?:(bindingId:string,side:'from'|'to',nodeId:string,position?:CanvasPoint)=>void;disconnectConnection?:(bindingId:string)=>void;
+    selectedEdgeId?:string;selectConnection?:(bindingId:string)=>void;connectionSourceId?:string;connectionTargetId?:string;connectionSourcePort?:string;connectionTargetPort?:string;
+    reconnectConnection?:(bindingId:string,side:'from'|'to',nodeId:string,position?:CanvasPoint,portId?:string)=>void;disconnectConnection?:(bindingId:string)=>void;
     dropOnConnection?:(component:ProfilePaletteComponent,bindingId:string,position:CanvasPoint)=>void;
     diagnostics?:readonly DeepReadonly<CompileDiagnostic>[];
     paletteDrag?:ProfilePaletteDrag|null;canDropComponent?:(component:ProfilePaletteComponent)=>boolean;
@@ -33,8 +33,8 @@
   let search = $state('');
   let view = $state<CanvasViewport>({ ...untrack(() => document.editor.viewport) });
   let dragged = $state<{id:string;position:CanvasPoint}|null>(null);
-  let wire=$state<{nodeId:string;direction:'input'|'output';pointer:number;start:CanvasPoint;end:CanvasPoint;moved:boolean;reconnect?:{bindingId:string;side:'from'|'to'}}|null>(null);
-  let wireTargetId=$state(''),hoveredEdgeId=$state(''),paletteConnectionId=$state('');
+  let wire=$state<{nodeId:string;portId?:string;direction:'input'|'output';pointer:number;start:CanvasPoint;end:CanvasPoint;moved:boolean;reconnect?:{bindingId:string;side:'from'|'to'}}|null>(null);
+  let wireTargetId=$state(''),wireTargetPort=$state(''),hoveredEdgeId=$state(''),paletteConnectionId=$state('');
   let suppressWireClick=false;
   let palettePreview=$state<CanvasPoint|null>(null);
   let page = $state<DeepReadonly<ResourceDetails>|null>(null), portsBusy = $state(false), portError = $state('');
@@ -51,9 +51,10 @@
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
   const controllerEffects=$derived(canvasControllerEffects(visibleDocument));
   const renderedNodes = $derived(nodes.map(node => node.id === dragged?.id ? { ...node, position: dragged.position } : node));
-  const routes=$derived(diagramRoutes(renderedNodes,visibleDocument.bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT));
+  const routes=$derived(diagramRoutes(renderedNodes.map(node=>({...node,...canvasNodeSize(node),...(node.processing?{inputAnchors:Object.fromEntries(node.processing.inputs.map(port=>[port.id,canvasNodeAnchor(node,'input',port.id)])),outputAnchors:Object.fromEntries(node.processing.outputs.map(port=>[port.id,canvasNodeAnchor(node,'output',port.id)]))}:{})})),visibleDocument.bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT));
   const frames=$derived(canvasGroups(visibleDocument,nodes));
-  const dropGroup=$derived(dragged?canvasGroupAt(visibleDocument,{x:dragged.position.x+PROFILE_BLOCK_WIDTH/2,y:dragged.position.y+PROFILE_BLOCK_HEIGHT/2}):palettePreview?canvasGroupAt(visibleDocument,{x:palettePreview.x+PROFILE_BLOCK_WIDTH/2,y:palettePreview.y+PROFILE_BLOCK_HEIGHT/2}):null);
+  const paletteSize=$derived.by(()=>{const size=canvasNodeSize({kind:paletteDrag?.component.kind==='transformation'?'processing':'resource'});return paletteDrag?.component.kind==='transformation'&&['gate','any','all','priority'].includes(paletteDrag.component.preset)?{...size,height:size.height+PROFILE_TRANSFORM_PORT_ROW}:size;});
+  const dropGroup=$derived.by(()=>{if(dragged){const size=canvasNodeSize(nodes.find(node=>node.id===dragged!.id)??{});return canvasGroupAt(visibleDocument,{x:dragged.position.x+size.width/2,y:dragged.position.y+size.height/2});}return palettePreview?canvasGroupAt(visibleDocument,{x:palettePreview.x+paletteSize.width/2,y:palettePreview.y+paletteSize.height/2}):null;});
   const selected = $derived(nodes.find(node => node.id === selectedId));
   const selectedEdge=$derived(document.bindings.find(binding=>binding.id===selectedEdgeId));
   const selectedDiagnostics=$derived(diagnostics.filter(diagnostic=>diagnostic.location.nodeId===selectedId||diagnostic.location.resourceId===selectedId||document.bindings.some(binding=>diagnostic.location.edgeIds.includes(binding.id)&&(binding.from.nodeId===selectedId||binding.to.nodeId===selectedId))));
@@ -92,21 +93,22 @@
   function choose(id:string) { closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
   function chooseConnection(id:string) {if(selectConnection){selectedId='';selectConnection(id);}else editConnection?.(id);}
   function portName(nodeId:string,portId:string,direction:'input'|'output') {const node=nodes.find(node=>node.id===nodeId);return node?blockPorts(node,direction).find(port=>port.id===portId)?.name??portId:portId;}
-  function activeHandle(nodeId:string,direction:'input'|'output') {
-    return direction==='output'?(connectionSourceId===nodeId||selectedEdge?.from.nodeId===nodeId||wire?.direction==='output'&&wire.nodeId===nodeId||wire?.direction==='input'&&wireTargetId===nodeId):(connectionTargetId===nodeId||selectedEdge?.to.nodeId===nodeId||wire?.direction==='input'&&wire.nodeId===nodeId||wire?.direction==='output'&&wireTargetId===nodeId);
+  function activeHandle(nodeId:string,direction:'input'|'output',portId?:string) {
+    const matches=(selected?:string)=>!portId||!selected||selected===portId;
+    return direction==='output'?(connectionSourceId===nodeId&&matches(connectionSourcePort)||selectedEdge?.from.nodeId===nodeId&&matches(selectedEdge.from.portId)||wire?.direction==='output'&&wire.nodeId===nodeId&&matches(wire.portId)||wire?.direction==='input'&&wireTargetId===nodeId&&matches(wireTargetPort)):(connectionTargetId===nodeId&&matches(connectionTargetPort)||selectedEdge?.to.nodeId===nodeId&&matches(selectedEdge.to.portId)||wire?.direction==='input'&&wire.nodeId===nodeId&&matches(wire.portId)||wire?.direction==='output'&&wireTargetId===nodeId&&matches(wireTargetPort));
   }
   function blockPorts(node:CanvasNode,direction:'input'|'output'):readonly DeepReadonly<ProfilePort>[] {
     if(node.resource)return(discoveredPorts[node.id]??node.resource.ports).filter(port=>port.direction===direction);
     if(node.processing)return direction==='output'?node.processing.outputs:node.processing.inputs;
     return(direction==='input'?node.virtual?.ports??node.desktop?.ports:[])??[];
   }
-  function wireClick(event:MouseEvent,nodeId:string,direction:'input'|'output'){
+  function wireClick(event:MouseEvent,nodeId:string,direction:'input'|'output',portId?:string){
     event.stopPropagation();if(suppressWireClick&&event.detail!==0){suppressWireClick=false;return;}if(readOnly)return;
-    selectedId=nodeId;selectConnection?.('');const position=event.detail===0?clientAnchor(nodeId,direction):{x:event.clientX,y:event.clientY};if(direction==='output')connectionFrom?.(nodeId,position);else connectionTo?.(nodeId,position);
+    selectedId=nodeId;const position=event.detail===0?clientAnchor(nodeId,direction,portId):{x:event.clientX,y:event.clientY};if(direction==='output'){if(portId)connectionFrom?.(nodeId,position,portId);else connectionFrom?.(nodeId,position);}else if(portId)connectionTo?.(nodeId,position,portId);else connectionTo?.(nodeId,position);
   }
-  function clientAnchor(nodeId:string,direction:'input'|'output'):CanvasPoint|undefined {
+  function clientAnchor(nodeId:string,direction:'input'|'output',portId?:string):CanvasPoint|undefined {
     const node=renderedNodes.find(node=>node.id===nodeId);if(!node||!stage)return;
-    const anchor=diagramPortAnchor(node.position,direction,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),rect=stage.getBoundingClientRect();return{x:rect.left+view.x+anchor.x*view.zoom,y:rect.top+view.y+anchor.y*view.zoom};
+    const anchor=canvasNodeAnchor(node,direction,portId),rect=stage.getBoundingClientRect();return{x:rect.left+view.x+anchor.x*view.zoom,y:rect.top+view.y+anchor.y*view.zoom};
   }
   function clearPalettePreview(){palettePreview=null;paletteConnectionId='';}
   function acceptsPaletteDrop(event:DragEvent){
@@ -118,7 +120,7 @@
   }
   function palettePosition(event:DragEvent):CanvasPoint{
     const rect=stage.getBoundingClientRect(),clamp=(value:number)=>Math.min(1e6,Math.max(-1e6,value));
-    return{x:clamp((event.clientX-rect.left-view.x)/view.zoom-PROFILE_BLOCK_WIDTH/2),y:clamp((event.clientY-rect.top-view.y)/view.zoom-PROFILE_BLOCK_HEIGHT/2)};
+    return{x:clamp((event.clientX-rect.left-view.x)/view.zoom-paletteSize.width/2),y:clamp((event.clientY-rect.top-view.y)/view.zoom-paletteSize.height/2)};
   }
   function overPalette(event:DragEvent){
     if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
@@ -132,7 +134,7 @@
     const component=paletteDrag!.component,position=palettePosition(event),bindingId=component.kind==='transformation'?(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]')?.dataset.connectionId:undefined;clearPalettePreview();
     try{if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
   }
-  function focusNewNode(node:CanvasNode){view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+PROFILE_BLOCK_WIDTH/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+PROFILE_BLOCK_HEIGHT/2)*view.zoom};}
+  function focusNewNode(node:CanvasNode){const size=canvasNodeSize(node);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+size.width/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+size.height/2)*view.zoom};}
   function slideDetails(_node: HTMLElement) {
     return { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
       css: (t: number) => `transform:translateX(${(1-t)*100}%)` };
@@ -151,7 +153,7 @@
   export function deleteGroup(id:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasDeleteGroup(source,id)),'Delete group');}
   export function focusGroup(id:string){const frame=frames.find(group=>group.id===id);if(!frame)return;view=canvasFit([{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}],stage?.clientWidth||900,stage?.clientHeight||600);persist();}
   function togglePorts(category:ProfilePortGroup){if(selected)editLayout(()=>canvasTogglePorts(document,selected.id,category),canvasPortCollapsed(document,selected.id,category)?'Expand port category':'Collapse port category');}
-  function focusMatch() { const node=matches[0];if(!node)return;choose(node.id);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+PROFILE_BLOCK_WIDTH/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+PROFILE_BLOCK_HEIGHT/2)*view.zoom};persist(); }
+  function focusMatch() { const node=matches[0];if(!node)return;choose(node.id);const size=canvasNodeSize(node);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+size.width/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+size.height/2)*view.zoom};persist(); }
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
@@ -170,32 +172,33 @@
     try{groupPreview=scopedCanvasEdit(source,visible=>mode==='move'?canvasMoveGroup(visible,id,{x:frame.x+delta.x/view.zoom,y:frame.y+delta.y/view.zoom}):canvasResizeGroup(visible,id,{width:frame.width+delta.x/view.zoom,height:frame.height+delta.y/view.zoom}));groupBlocked=false;layoutError='';}
     catch(error){groupBlocked=true;layoutError=error instanceof Error?error.message:String(error);}
   }
-  function beginWire(event:PointerEvent,nodeId:string,direction:'input'|'output'){
+  function beginWire(event:PointerEvent,nodeId:string,direction:'input'|'output',portId?:string){
     if(readOnly||!connectBlocks||event.button!==0)return;event.stopPropagation();event.preventDefault();suppressWireClick=false;
     const node=nodes.find(node=>node.id===nodeId)!;
-    wireTargetId='';wire={nodeId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:diagramPortAnchor(node.position,direction,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),moved:false};stage.setPointerCapture(event.pointerId);
+    wireTargetId='';wireTargetPort='';wire={nodeId,portId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:canvasNodeAnchor(node,direction,portId),moved:false};stage.setPointerCapture(event.pointerId);
   }
   function beginReconnect(event:PointerEvent,bindingId:string,side:'from'|'to'){
     if(readOnly||!reconnectConnection||event.button!==0)return;event.stopPropagation();event.preventDefault();
     const binding=document.bindings.find(binding=>binding.id===bindingId);if(!binding)return;
     const nodeId=side==='from'?binding.to.nodeId:binding.from.nodeId,direction=side==='from'?'input':'output',node=nodes.find(node=>node.id===nodeId),moving=nodes.find(node=>node.id===binding[side].nodeId);if(!node||!moving)return;
-    wireTargetId='';wire={nodeId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:diagramPortAnchor(moving.position,side==='from'?'output':'input',PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),moved:false,reconnect:{bindingId,side}};stage.setPointerCapture(event.pointerId);
+    wireTargetId='';wireTargetPort='';wire={nodeId,portId:side==='from'?binding.to.portId:binding.from.portId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:canvasNodeAnchor(moving,side==='from'?'output':'input',binding[side].portId),moved:false,reconnect:{bindingId,side}};stage.setPointerCapture(event.pointerId);
   }
   function reconnectKey(event:KeyboardEvent,bindingId:string,side:'from'|'to') {
-    if(event.key!=='Enter'&&event.key!==' ')return;event.preventDefault();event.stopPropagation();const binding=document.bindings.find(binding=>binding.id===bindingId);if(binding)reconnectConnection?.(bindingId,side,binding[side].nodeId,clientAnchor(binding[side].nodeId,side==='from'?'output':'input'));
+    if(event.key!=='Enter'&&event.key!==' ')return;event.preventDefault();event.stopPropagation();const binding=document.bindings.find(binding=>binding.id===bindingId);if(binding)reconnectConnection?.(bindingId,side,binding[side].nodeId,clientAnchor(binding[side].nodeId,side==='from'?'output':'input',binding[side].portId));
   }
-  function move(event:PointerEvent) {if(wire&&event.pointerId===wire.pointer){const rect=stage.getBoundingClientRect(),hit=window.document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLButtonElement>(wire.direction==='output'?'[data-connection-target]':'[data-connection-source]');wireTargetId=hit&&!hit.disabled?(wire.direction==='output'?hit.dataset.connectionTarget:hit.dataset.connectionSource)??'':'';if(wireTargetId===wire.nodeId)wireTargetId='';wire={...wire,moved:wire.moved||Math.hypot(event.clientX-wire.start.x,event.clientY-wire.start.y)>=4,end:{x:(event.clientX-rect.left-view.x)/view.zoom,y:(event.clientY-rect.top-view.y)/view.zoom}};return;} if(!drag||event.pointerId!==drag.pointer)return;const delta={x:event.clientX-drag.start.x,y:event.clientY-drag.start.y};if(!drag.moved&&Math.hypot(delta.x,delta.y)<4)return;drag.moved=true;if(drag.group)previewGroup(delta);else if(drag.id&&!readOnly)dragged={id:drag.id,position:{x:drag.origin.x+delta.x/view.zoom,y:drag.origin.y+delta.y/view.zoom}};else if(!drag.id)view=canvasPan(drag.viewport,delta); }
+  function move(event:PointerEvent) {if(wire&&event.pointerId===wire.pointer){const rect=stage.getBoundingClientRect(),hit=window.document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLButtonElement>(wire.direction==='output'?'[data-connection-target]':'[data-connection-source]');wireTargetId=hit&&!hit.disabled?(wire.direction==='output'?hit.dataset.connectionTarget:hit.dataset.connectionSource)??'':'';wireTargetPort=hit&&!hit.disabled?hit.dataset.connectionPort??'':'';if(wireTargetId===wire.nodeId){wireTargetId='';wireTargetPort='';}wire={...wire,moved:wire.moved||Math.hypot(event.clientX-wire.start.x,event.clientY-wire.start.y)>=4,end:{x:(event.clientX-rect.left-view.x)/view.zoom,y:(event.clientY-rect.top-view.y)/view.zoom}};return;} if(!drag||event.pointerId!==drag.pointer)return;const delta={x:event.clientX-drag.start.x,y:event.clientY-drag.start.y};if(!drag.moved&&Math.hypot(delta.x,delta.y)<4)return;drag.moved=true;if(drag.group)previewGroup(delta);else if(drag.id&&!readOnly)dragged={id:drag.id,position:{x:drag.origin.x+delta.x/view.zoom,y:drag.origin.y+delta.y/view.zoom}};else if(!drag.id)view=canvasPan(drag.viewport,delta); }
   function finish(event:PointerEvent,cancel=false) {
     if(wire&&event.pointerId===wire.pointer){
-      const pending=wire;wire=null;wireTargetId='';suppressWireClick=true;
+      const pending=wire;wire=null;wireTargetId='';wireTargetPort='';suppressWireClick=true;
       if(!cancel){
         const element=window.document.elementFromPoint(event.clientX,event.clientY);
         const handle=element?.closest<HTMLButtonElement>(pending.direction==='output'?'[data-connection-target]':'[data-connection-source]');
         const target=handle?.disabled?undefined:pending.direction==='output'?handle?.dataset.connectionTarget:handle?.dataset.connectionSource;
         selectedId=pending.nodeId;
         const position={x:event.clientX,y:event.clientY};
-        if(target&&target!==pending.nodeId){if(pending.reconnect)reconnectConnection?.(pending.reconnect.bindingId,pending.reconnect.side,target,position);else if(pending.direction==='output')connectBlocks?.(pending.nodeId,target,position);else connectBlocks?.(target,pending.nodeId,position);}
-        else if(!pending.moved&&!pending.reconnect){if(pending.direction==='output')connectionFrom?.(pending.nodeId,position);else connectionTo?.(pending.nodeId,position);}
+        const targetPort=handle?.dataset.connectionPort;
+        if(target&&target!==pending.nodeId){if(pending.reconnect){if(targetPort)reconnectConnection?.(pending.reconnect.bindingId,pending.reconnect.side,target,position,targetPort);else reconnectConnection?.(pending.reconnect.bindingId,pending.reconnect.side,target,position);}else if(pending.direction==='output'){if(pending.portId||targetPort)connectBlocks?.(pending.nodeId,target,position,pending.portId,targetPort);else connectBlocks?.(pending.nodeId,target,position);}else if(pending.portId||targetPort)connectBlocks?.(target,pending.nodeId,position,targetPort,pending.portId);else connectBlocks?.(target,pending.nodeId,position);}
+        else if(!pending.moved&&!pending.reconnect){if(pending.direction==='output'){if(pending.portId)connectionFrom?.(pending.nodeId,position,pending.portId);else connectionFrom?.(pending.nodeId,position);}else if(pending.portId)connectionTo?.(pending.nodeId,position,pending.portId);else connectionTo?.(pending.nodeId,position);}
         else if(element&&stage.contains(element)&&!element.closest('[data-node-id],.canvas-inspector,.canvas-connection-panel')){closeConnectionPanel?.();selectConnection?.('');selectedId='';}
       }
       if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);return;
@@ -241,7 +244,7 @@
       {#if layoutError}<p class="canvas-layout-error port-error" role="alert">{layoutError}</p>{/if}
       <div class="canvas-world" style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
         {#if palettePreview&&paletteDrag}
-          <div class="palette-drop-preview" role="img" aria-label="Component drop preview" data-component-kind={paletteDrag.component.kind} data-preview-x={palettePreview.x} data-preview-y={palettePreview.y} style={`left:${palettePreview.x}px;top:${palettePreview.y}px;width:${PROFILE_BLOCK_WIDTH}px;height:${PROFILE_BLOCK_HEIGHT}px`}>
+          <div class="palette-drop-preview" role="img" aria-label="Component drop preview" data-component-kind={paletteDrag.component.kind} data-preview-x={palettePreview.x} data-preview-y={palettePreview.y} style={`left:${palettePreview.x}px;top:${palettePreview.y}px;width:${paletteSize.width}px;height:${paletteSize.height}px`}>
             <div class="preview-heading"><span class="block-category">{paletteDrag.category}</span><strong title={paletteDrag.name}>{paletteDrag.name}</strong></div>
             <span class="preview-hint"><Icon name="plus" size={18}/>{paletteConnectionId?'Release to insert into connection':'Release to add'}</span>
           </div>
@@ -272,23 +275,37 @@
               {/if}
             {/if}
           {/each}
-          {#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={diagramPendingPath(diagramPortAnchor(from.position,pending.direction,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT),pending.end,pending.direction)}><title>Choose the other block, then select compatible ports</title></path>{/if}{/if}
+          {#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={diagramPendingPath(canvasNodeAnchor(from,pending.direction,pending.portId),pending.end,pending.direction)}><title>Choose the other block, then select compatible ports</title></path>{/if}{/if}
         </svg>
         {#each renderedNodes as node (node.id)}
           {@const blockInputs=blockPorts(node,'input')}
           {@const blockOutputs=blockPorts(node,'output')}
           {@const discovering=discoveryBusy.includes(node.id)}
-          <article data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${PROFILE_BLOCK_WIDTH}px;height:${PROFILE_BLOCK_HEIGHT}px`} aria-label={`${node.name} · ${node.category}`}>
+          {@const size=canvasNodeSize(node)}
+          <article data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${size.width}px;height:${size.height}px`} aria-label={`${node.name} · ${node.category}`}>
+            {#if node.processing}
+              <button class="block-heading transform-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">Transform</span><strong title={node.name}>{node.name}</strong></button>
+              <div class="transform-summary" title={node.processing.draft?'Needs input · '+processingSummary(node.processing):processingSummary(node.processing)}><span class:pending={!!node.processing.draft}>{node.processing.draft?'Needs input · ':''}{processingSummary(node.processing)}</span>{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
+              <div class="transform-ports" style={`top:${PROFILE_TRANSFORM_HEADER-1}px;--port-row:${PROFILE_TRANSFORM_PORT_ROW}px`}>
+                <div class="transform-port-column">
+                  {#each blockInputs as port (port.id)}<button class="transform-port" data-connection-target={node.id} data-connection-port={port.id} class:connection-active={activeHandle(node.id,'input',port.id)} class:connection-hover={wire?.direction==='output'&&wireTargetId===node.id&&wireTargetPort===port.id} data-connection-active={activeHandle(node.id,'input',port.id)} aria-label={`${port.name} input for ${node.name}`} title={`${port.name} · ${portContractLabel(port.contract)}`} disabled={readOnly} onpointerdown={event=>beginWire(event,node.id,'input',port.id)} onclick={event=>wireClick(event,node.id,'input',port.id)}><span class="port-dot" aria-hidden="true"></span><span class="transform-port-name">{port.name}</span></button>{/each}
+                </div>
+                <div class="transform-port-column">
+                  {#each blockOutputs as port (port.id)}<button class="transform-port" data-connection-source={node.id} data-connection-port={port.id} class:connection-active={activeHandle(node.id,'output',port.id)} class:connection-hover={wire?.direction==='input'&&wireTargetId===node.id&&wireTargetPort===port.id} data-connection-active={activeHandle(node.id,'output',port.id)} aria-label={`${port.name} output for ${node.name}`} title={`${port.name} · ${portContractLabel(port.contract)}`} disabled={readOnly} onpointerdown={event=>beginWire(event,node.id,'output',port.id)} onclick={event=>wireClick(event,node.id,'output',port.id)}><span class="transform-port-name">{port.name}</span><span class="port-dot" aria-hidden="true"></span></button>{/each}
+                </div>
+              </div>
+            {:else}
             <button class="block-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">{node.category}</span><strong>{node.name}</strong><code>{node.id}</code></button>
-            <div class="block-body"><span class="block-state">{node.processing?.draft?'Needs input · choose transformation settings':canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else if node.processing}<p class="block-note" title={processingSummary(node.processing)}>{processingSummary(node.processing)}</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
+            <div class="block-body"><span class="block-state">{canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
             <div class="block-port-groups">
-              <button data-connection-target={node.id} class:connection-active={activeHandle(node.id,'input')} class:connection-hover={wire?.direction==='output'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'input')} aria-label={`Inputs / actions for ${node.name} (${blockInputs.length})`} title="Drag to Outputs on another block, or click to choose an output" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockInputs.length&&!node.processing?.draft)} onpointerdown={event=>beginWire(event,node.id,'input')} onclick={event=>wireClick(event,node.id,'input')}>
-                <span class="port-group-heading">Inputs / actions <span>{discovering&&!blockInputs.length?'…':blockInputs.length}</span></span>
+              <button data-connection-target={node.id} class:connection-active={activeHandle(node.id,'input')} class:connection-hover={wire?.direction==='output'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'input')} aria-label={`Inputs / actions for ${node.name} (${blockInputs.length})`} title="Drag to Outputs on another block, or click to choose an output" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockInputs.length)} onpointerdown={event=>beginWire(event,node.id,'input')} onclick={event=>wireClick(event,node.id,'input')}>
+                <span class="port-dot" aria-hidden="true"></span><span class="port-group-heading">Inputs / actions <span>{discovering&&!blockInputs.length?'…':blockInputs.length}</span></span>
               </button>
-              <button data-connection-source={node.id} class:connection-active={activeHandle(node.id,'output')} class:connection-hover={wire?.direction==='input'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'output')} aria-label={`Outputs for ${node.name} (${blockOutputs.length})`} title="Drag to Inputs / actions on another block, or click to choose an input" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockOutputs.length&&!node.processing?.draft)} onpointerdown={event=>beginWire(event,node.id,'output')} onclick={event=>wireClick(event,node.id,'output')}>
-                <span class="port-group-heading">Outputs <span>{discovering&&!blockOutputs.length?'…':blockOutputs.length}</span></span>
+              <button data-connection-source={node.id} class:connection-active={activeHandle(node.id,'output')} class:connection-hover={wire?.direction==='input'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'output')} aria-label={`Outputs for ${node.name} (${blockOutputs.length})`} title="Drag to Inputs / actions on another block, or click to choose an input" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockOutputs.length)} onpointerdown={event=>beginWire(event,node.id,'output')} onclick={event=>wireClick(event,node.id,'output')}>
+                <span class="port-dot" aria-hidden="true"></span><span class="port-group-heading">Outputs <span>{discovering&&!blockOutputs.length?'…':blockOutputs.length}</span></span>
               </button>
             </div>
+            {/if}
           </article>
         {/each}
       </div>
@@ -319,6 +336,7 @@
 </section>
 
 <style>
+  .canvas-world .resource-block{overflow:visible}.block-heading{border-radius:8px 8px 0 0}.processing .transform-heading{height:52px;padding:9px 12px;gap:3px;border-bottom:0}.transform-heading strong{font-size:12px}.transform-heading .block-category{font-size:7px}.transform-summary{height:26px;flex-shrink:0;padding:0 12px;display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);box-sizing:border-box}.transform-summary>span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.transform-summary .pending{color:#c6a0e5}.transform-ports{position:absolute;left:-1px;right:-1px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);padding:0}.transform-port-column{min-width:0}.transform-port{position:relative;display:flex;align-items:center;box-sizing:border-box;height:var(--port-row);width:100%;min-width:0;padding:0 13px;border:0;border-radius:4px;background:transparent;color:var(--soft);font-size:10px;text-align:left;cursor:crosshair}.transform-port[data-connection-source]{justify-content:flex-end;text-align:right}.transform-port-name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.transform-port:hover:not(:disabled),.transform-port.connection-active{background:color-mix(in srgb,#b794d2 14%,transparent);color:var(--text)}.transform-port.connection-hover{background:color-mix(in srgb,#b794d2 26%,transparent)}.transform-port:focus-visible{outline:1px solid #b794d2;outline-offset:-2px}.transform-port:disabled{cursor:default;opacity:.55}.port-dot{position:absolute;top:50%;width:8px;height:8px;box-sizing:border-box;border:1px solid var(--accent);border-radius:50%;background:var(--surface);pointer-events:none;z-index:3}[data-connection-target]>.port-dot{left:-1px;transform:translate(-50%,-50%)}[data-connection-source]>.port-dot{right:-1px;transform:translate(50%,-50%)}.transform-port[data-connection-target]>.port-dot{left:0}.transform-port[data-connection-source]>.port-dot{right:0}.transform-port .port-dot{border-color:#c6a0e5}button.connection-active>.port-dot,button:hover:not(:disabled)>.port-dot{background:var(--accent)}.transform-port.connection-active>.port-dot,.transform-port:hover:not(:disabled)>.port-dot{background:#c6a0e5}.block-port-groups button:disabled>.port-dot{display:none}.block-port-groups button:first-child{border-radius:0 0 0 8px}.block-port-groups button:last-child{border-radius:0 0 8px 0}
   .palette-drop-preview{position:absolute;box-sizing:border-box;z-index:4;pointer-events:none;display:flex;flex-direction:column;border:2px dashed var(--accent);border-radius:9px;background:color-mix(in srgb,var(--surface) 90%,var(--accent));box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent),0 8px 24px #0003;opacity:.88;overflow:hidden;}.preview-heading{display:grid;gap:6px;padding:14px;border-bottom:1px dashed var(--accent);}.preview-heading strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.preview-hint{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;color:var(--accent);font-size:12px;}.palette-dropping{outline:1px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:-1px;}
   .signal-edge-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer}.signal-edge-hit:hover,.signal-edge-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none;stroke-width:18}
   .canvas-stage.node-dragging, .canvas-stage.node-dragging :global(*) { cursor: grabbing; }
@@ -335,7 +353,7 @@
   .signal-edges{z-index:2;}.signal-edge.selected,.signal-edge.drop-target{stroke:var(--accent);stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent));}
   .connection-endpoint{fill:var(--surface);stroke:var(--accent);stroke-width:2;pointer-events:all;cursor:crosshair;}.connection-endpoint:hover,.connection-endpoint:focus-visible{fill:var(--accent);stroke:var(--text);outline:none;}
   .connection-port-label{font-size:10px;fill:var(--text);paint-order:stroke;stroke:var(--bg);stroke-width:5px;stroke-linejoin:round;pointer-events:none;}
-  .block-port-groups button{position:relative;transition:background .12s,box-shadow .12s;}.block-port-groups button.connection-active{background:color-mix(in srgb,var(--accent) 18%,var(--surface));box-shadow:inset 0 0 0 1px var(--accent);}.block-port-groups button.connection-hover{background:color-mix(in srgb,var(--accent) 32%,var(--surface));box-shadow:inset 0 0 0 2px var(--accent);}.block-port-groups button:not(:disabled)::after{content:'';position:absolute;top:50%;width:6px;height:6px;border:1px solid var(--accent);border-radius:50%;background:var(--surface);transform:translateY(-50%);}.block-port-groups button[data-connection-target]::after{left:1px;}.block-port-groups button[data-connection-source]::after{right:1px;}.block-port-groups button.connection-active::after,.block-port-groups button:hover:not(:disabled)::after{background:var(--accent);}
+  .block-port-groups button{position:relative;transition:background .12s,box-shadow .12s;}.block-port-groups button.connection-active{background:color-mix(in srgb,var(--accent) 18%,var(--surface));box-shadow:inset 0 0 0 1px var(--accent);}.block-port-groups button.connection-hover{background:color-mix(in srgb,var(--accent) 32%,var(--surface));box-shadow:inset 0 0 0 2px var(--accent);}
   @media(max-width:700px){.canvas-inspector,.canvas-inspector:global([data-expanded="true"]){width:min(380px,80%);}}
   @media(prefers-reduced-motion:reduce){.canvas-inspector{transition:none;}}
 </style>

@@ -24,7 +24,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,drag,view,selectedId,suppressWireClick,paletteConnectionId};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,drag,view,selectedId,suppressWireClick,paletteConnectionId};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
@@ -48,7 +48,7 @@ function harness(props = {}) {
   vm.runInNewContext(iconCode, { ...context, exports: iconExports }, { filename: 'Icon.svelte' });
   const Icon = iconExports.default, canvasExports = {};
   vm.runInNewContext(canvasCode, { ...context, exports: canvasExports }, { filename: 'ProfileCanvas.svelte' });
-  const document = profile(), before = plain(document);
+  const document = props.document ?? profile(), before = plain(document);
   const body = render(canvasExports.default, { props: {
     document, assignments: [], inventory: [], inventoryClient: { inspect: noRequest },
     change: (...args) => edits.push(args), connectBlocks: (...args) => calls.push(['connect', ...args]),
@@ -61,8 +61,8 @@ function harness(props = {}) {
   });
   return { handlers, body, calls, edits, captured, document, before, setHit(value) { hit = value; } };
 }
-function element({ nodeId, input, output, disabled = false, inside = true, panel = false } = {}) {
-  const value = { disabled, inside, dataset: { connectionTarget: input, connectionSource: output } };
+function element({ nodeId, input, output, portId, disabled = false, inside = true, panel = false } = {}) {
+  const value = { disabled, inside, dataset: { connectionTarget: input, connectionSource: output, connectionPort: portId } };
   value.closest = selector => {
     if (selector === '[data-connection-target]') return input ? value : null;
     if (selector === '[data-connection-source]') return output ? value : null;
@@ -77,6 +77,18 @@ const button = (body, attribute, id) => {
   assert.ok(tag, `Missing ${attribute} handle for ${id}`);
   return tag[0];
 };
+const namedButton = (body, nodeId, portId) => {
+  const tag = [...body.matchAll(/<button\b[^>]*>/g)].map(([tag]) => tag).find(tag => (tag.includes(`data-connection-source="${nodeId}"`) || tag.includes(`data-connection-target="${nodeId}"`)) && tag.includes(`data-connection-port="${portId}"`));
+  assert.ok(tag, `Missing ${nodeId}/${portId} named handle`);
+  return tag;
+};
+function namedTransforms() {
+  const document=profile(),processing=modules.get('./profile-processing'),contract=port('fixture','output').contract;
+  const gate=processing.processingTemplate('gate','gate',contract);gate.inputs[0].name='Enable';gate.inputs[1].name='Signal';gate.outputs[0].name='Result';
+  const script=processing.processingTemplate('script','script',contract);script.outputs[0].name='Primary';script.outputs.push({...plain(script.outputs[0]),id:'alternate',name:'Alternate'});
+  document.processingNodes=[gate,script];document.editor.positions.push({nodeId:'gate',x:600,y:250},{nodeId:'script',x:20,y:250});
+  return document;
+}
 
 test('both wire directions preserve output-to-input routing, world coordinates and the exact profile', () => {
   for (const direction of ['output', 'input']) {
@@ -196,6 +208,49 @@ test('port discovery falls back to intrinsic processing, virtual and desktop con
   const inspected = harness({ selectedId: 'source' });assert.ok(inspected.body.includes('aria-label="Selected block inspector"'));assert.ok(!inspected.body.includes('aria-label="Exact connection editor"'));
 });
 
+test('compact Transform cards show named border ports instead of aggregate input and output boxes',()=>{
+  const document=namedTransforms(),h=harness({document}),articles=[...h.body.matchAll(/<article\b[^>]*data-node-id="([^"]+)"[^>]*>[\s\S]*?<\/article>/g)];
+  for(const id of ['gate','script']){
+    const article=articles.find(([,nodeId])=>nodeId===id)?.[0];assert.ok(article,id);assert.match(article,/width:224px;height:142px/);assert.match(article,/class="block-category[^"]*">Transform/);assert.ok(!article.includes('Processing'));assert.ok(!article.includes('block-port-groups'));assert.ok(!article.includes('Inputs / actions'));assert.ok(!article.includes('port-group-heading'));
+    assert.equal((article.match(/class="port-dot[^"]*"/g)??[]).length,3,'Each real named port has one visible border dot.');
+  }
+  for(const [nodeId,portId,name,direction]of [['gate','gate','Enable','input'],['gate','value','Signal','input'],['gate','out','Result','output'],['script','alternate','Alternate','output']]){
+    assert.match(namedButton(h.body,nodeId,portId),new RegExp(`aria-label="${name} ${direction} for `));assert.ok(new RegExp(`class="transform-port-name[^"]*">${name}</span>`).test(h.body));
+  }
+  const locked=harness({document,readOnly:true});for(const [nodeId,portId]of [['gate','gate'],['gate','value'],['gate','out'],['script','alternate']])assert.match(namedButton(locked.body,nodeId,portId),/disabled/);
+  assert.deepEqual(plain(document),h.before);assert.deepEqual(h.edits,[]);
+});
+
+test('named-port drags preserve both exact identities in either direction and highlight only the intended rows',()=>{
+  const document=namedTransforms(),{canvasNodes,canvasNodeAnchor}=modules.get('./profile-canvas'),nodes=canvasNodes(document,[],[]);
+  for(const direction of ['output','input']){
+    const h=harness({document}),origin=direction==='output'?'script':'gate',originPort=direction==='output'?'alternate':'value',target=direction==='output'?'gate':'script',targetPort=direction==='output'?'value':'alternate';
+    h.handlers.beginWire(pointer(),origin,direction,originPort);assert.equal(h.handlers.state.wire.portId,originPort);assert.deepEqual(plain(h.handlers.state.wire.end),plain(canvasNodeAnchor(nodes.find(node=>node.id===origin),direction,originPort)),'The pending wire starts at its exact row border.');
+    assert.equal(h.handlers.activeHandle(origin,direction,originPort),true);assert.equal(h.handlers.activeHandle(origin,direction,direction==='output'?'out':'gate'),false);
+    h.setHit(element({nodeId:target,...(direction==='output'?{input:target}:{output:target}),portId:targetPort}));h.handlers.move(pointer(550,300));
+    assert.equal(h.handlers.state.wireTargetId,target);assert.equal(h.handlers.state.wireTargetPort,targetPort);assert.equal(h.handlers.activeHandle(target,direction==='output'?'input':'output',targetPort),true);assert.equal(h.handlers.activeHandle(target,direction==='output'?'input':'output',direction==='output'?'gate':'out'),false);
+    h.handlers.finish(pointer(550,300));assert.deepEqual(plain(h.calls),[['connect','script','gate',{x:550,y:300},'alternate','value']]);assert.equal(h.captured.size,0);assert.deepEqual(h.edits,[]);assert.deepEqual(plain(document),h.before);
+  }
+});
+
+test('named-port keyboard activation uses the exact row anchor and keeps an existing opposite endpoint pending',()=>{
+  const document=namedTransforms(),calls=[],h=harness({document,connectionOpen:true,connectionSourceId:'script',connectionSourcePort:'alternate',connectionFrom:(...args)=>calls.push(['from',...args]),connectionTo:(...args)=>calls.push(['to',...args]),selectConnection:id=>calls.push(['select',id])});
+  h.handlers.setView({x:20,y:30,zoom:.5});h.handlers.wireClick(click(0),'gate','input','value');h.handlers.wireClick(click(0),'script','output','alternate');
+  assert.deepEqual(plain(calls),[['to','gate',{x:420,y:265},'value'],['from','script',{x:242,y:265},'alternate']]);assert.deepEqual(h.calls,[],'Starting the other endpoint must not clear the route through closeConnectionPanel.');
+  assert.match(namedButton(h.body,'script','alternate'),/data-connection-active="true"/);assert.match(namedButton(h.body,'script','out'),/data-connection-active="false"/);
+});
+
+test('selected wires highlight only their exact named ports and reconnect either endpoint to another exact row',()=>{
+  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
+  const {canvasNodes,canvasNodeAnchor}=modules.get('./profile-canvas'),nodes=canvasNodes(document,[],[]);
+  for(const side of ['from','to']){
+    const reconnected=[],h=harness({document,selectedEdgeId:'route',reconnectConnection:(...args)=>reconnected.push(args)}),fixedNode=side==='from'?'gate':'script',fixedPort=side==='from'?'value':'alternate',movingNode=side==='from'?'script':'gate',movingDirection=side==='from'?'output':'input',oldPort=side==='from'?'alternate':'value',newPort=side==='from'?'out':'gate';
+    for(const [nodeId,portId,active]of [['script','alternate',true],['script','out',false],['gate','value',true],['gate','gate',false]])assert.match(namedButton(h.body,nodeId,portId),new RegExp(`data-connection-active="${active}"`));
+    h.handlers.beginReconnect(pointer(),'route',side);assert.equal(h.handlers.state.wire.nodeId,fixedNode);assert.equal(h.handlers.state.wire.portId,fixedPort);assert.deepEqual(plain(h.handlers.state.wire.end),plain(canvasNodeAnchor(nodes.find(node=>node.id===movingNode),movingDirection,oldPort)));
+    h.setHit(element({nodeId:movingNode,...(side==='from'?{output:movingNode}:{input:movingNode}),portId:newPort}));h.handlers.move(pointer(500,350));h.handlers.finish(pointer(500,350));assert.deepEqual(plain(reconnected),[['route',side,movingNode,{x:500,y:350},newPort]]);assert.equal(h.handlers.state.wire,null);assert.equal(h.captured.size,0);assert.deepEqual(h.edits,[]);assert.deepEqual(h.calls,[]);
+  }
+});
+
 test('selected wires expose endpoint labels, highlighted boxes, reconnect handles and delete access',()=>{
   const document=profile();document.bindings=[{id:'route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}}];
   const selected=[],removed=[],h=harness({document,selectedEdgeId:'route',selectConnection:id=>selected.push(id),disconnectConnection:id=>removed.push(id),reconnectConnection(){}});
@@ -227,7 +282,7 @@ test('dropping a transformation on a wire inserts there and ordinary canvas drop
   const target={closest:selector=>selector==='[data-connection-id]'?{dataset:{connectionId:'route'}}:null};
   const event={clientX:500,clientY:300,target,dataTransfer:{},preventDefault(){},stopPropagation(){}};
   h.handlers.overPalette(event);assert.equal(h.handlers.state.paletteConnectionId,'route');h.handlers.dropPalette(event);
-  assert.deepEqual(plain(insertions),[[component,'route',{x:400-modules.get('./profile-editor').PROFILE_BLOCK_WIDTH/2,y:250-modules.get('./profile-editor').PROFILE_BLOCK_HEIGHT/2}]]);
+  assert.deepEqual(plain(insertions),[[component,'route',{x:288,y:193}]],'A single-row transform is centered using its compact 224 × 114 bounds.');
   assert.deepEqual(drops,[]);assert.equal(ended.length,1);
   h.handlers.dropPalette({...event,target:{closest:()=>null}});assert.equal(drops.length,1);assert.equal(insertions.length,1);assert.equal(ended.length,2);
 });

@@ -176,7 +176,7 @@ test('Default editor name is protected; render, navigation and Save do not call 
 test('copy editor preserves real mixed graph/layout, distinguishes transformations/virtual outputs and leaves machine resources unassigned',async()=>{
   const fixture=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8'));
   const h=harness();h.docs.set(fixture.id,fixture);await h.store.refresh();await h.store.beginCopy(fixture.id);const body=html(h.store,h.client);
-  assert.ok(body.includes('Unassigned'));assert.ok(body.includes('machine assignments are excluded'));assert.ok(body.includes('Explicit transformation'));assert.ok(body.includes('Virtual controller'));assert.equal((body.match(/class="signal-edge(?: |")/g)||[]).length,fixture.bindings.length);
+  assert.ok(body.includes('Unassigned'));assert.ok(body.includes('machine assignments are excluded'));assert.ok(body.includes('>Transform</span>'));assert.ok(body.includes('Virtual controller'));assert.equal((body.match(/class="signal-edge(?: |")/g)||[]).length,fixture.bindings.length);
   assert.deepEqual(plain(h.store.state.editor.document.editor),fixture.editor);assert.equal(h.store.state.editor.assignments.length,0);assert.equal(h.docs.size,2);assert.deepEqual(h.calls,[['get',fixture.id]]);
 });
 test('game settings round-trip retains the same editor store, draft identity, latest edits and applied snapshot',async()=>{

@@ -6,6 +6,19 @@ import type { ProfileDesktopOutput } from './profile-desktop';
 export type CanvasPoint = {x:number;y:number};
 export type CanvasViewport = CanvasPoint & {zoom:number};
 export type CanvasNode = {id:string;name:string;kind:'resource'|'processing'|'virtual'|'desktop';category:string;position:CanvasPoint;desktop?:DeepReadonly<ProfileDesktopOutput>;resource?:DeepReadonly<ProfileDocument['resources'][number]>;processing?:DeepReadonly<ProfileDocument['processingNodes'][number]>;virtual?:DeepReadonly<ProfileDocument['virtualOutputs'][number]>;assignment?:DeepReadonly<ProfileLocalAssignment>;observation?:DeepReadonly<ResourceSummary>};
+export const PROFILE_TRANSFORM_WIDTH=224,PROFILE_TRANSFORM_HEADER=78,PROFILE_TRANSFORM_PORT_ROW=28,PROFILE_TRANSFORM_BOTTOM=8;
+type CanvasNodeGeometry=Partial<Pick<CanvasNode,'kind'|'processing'>>;
+/** Named transform ports determine the card height; resource cards retain their footer. */
+export function canvasNodeSize(node:CanvasNodeGeometry):{width:number;height:number}{
+  return node.kind==='processing'?{width:PROFILE_TRANSFORM_WIDTH,height:PROFILE_TRANSFORM_HEADER+PROFILE_TRANSFORM_BOTTOM+Math.max(1,node.processing?.inputs.length??0,node.processing?.outputs.length??0)*PROFILE_TRANSFORM_PORT_ROW}:{width:PROFILE_BLOCK_WIDTH,height:PROFILE_BLOCK_HEIGHT};
+}
+/** Attachments sit exactly on the block border, centered on their named port row. */
+export function canvasNodeAnchor(node:CanvasNodeGeometry&{position:CanvasPoint},direction:'input'|'output',portId?:string):CanvasPoint{
+  const {width,height}=canvasNodeSize(node);
+  const ports=direction==='input'?node.processing?.inputs:node.processing?.outputs;
+  const row=Math.max(0,ports?.findIndex(port=>port.id===portId)??0);
+  return{x:node.position.x+(direction==='output'?width:0),y:node.position.y+(node.kind==='processing'?PROFILE_TRANSFORM_HEADER+(row+.5)*PROFILE_TRANSFORM_PORT_ROW:height-20)};
+}
 /** Authored choices only: inventory or an applied run cannot change these counts. */
 export function canvasControllerEffects(document:DeepReadonly<ProfileDocument>):{enabled:number;disabled:number;configured:number;hidden:number;virtual:number}{
   const devices=document.resources.filter(resource=>resource.kind==='device');
@@ -16,9 +29,9 @@ const clamp=(value:number,min:number,max:number)=>Math.min(max,Math.max(min,valu
 const finite=(value:number)=>Number.isFinite(value);
 export function canvasNodes(document:DeepReadonly<ProfileDocument>,assignments:readonly DeepReadonly<ProfileLocalAssignment>[],inventory:readonly DeepReadonly<ResourceSummary>[]):CanvasNode[]{
   const positions=new Map(document.editor.positions.map(position=>[position.nodeId,position]));
-  const nodes:Omit<CanvasNode,'position'>[]=[...document.resources.map(resource=>{const assignment=assignments.find(value=>value.resourceId===resource.id);const observation=inventory.find(value=>value.id===assignment?.sourceId);return{id:resource.id,name:resource.name,kind:'resource' as const,category:observation?profileCategory(observation):resource.kind==='game'?'Game integration':resource.kind==='companion'?'Companion':'Physical resource',resource,assignment,observation};}),...document.processingNodes.map(processing=>({id:processing.id,name:processing.name,kind:'processing' as const,category:'Processing',processing})),...document.virtualOutputs.map(virtual=>({id:virtual.id,name:virtual.name,kind:'virtual' as const,category:'Virtual controller',virtual})),...(document.desktopOutputs??[]).map(desktop=>({id:desktop.id,name:desktop.name,kind:'desktop' as const,category:'Keyboard and mouse',desktop}))];
+  const nodes:Omit<CanvasNode,'position'>[]=[...document.resources.map(resource=>{const assignment=assignments.find(value=>value.resourceId===resource.id);const observation=inventory.find(value=>value.id===assignment?.sourceId);return{id:resource.id,name:resource.name,kind:'resource' as const,category:observation?profileCategory(observation):resource.kind==='game'?'Game integration':resource.kind==='companion'?'Companion':'Physical resource',resource,assignment,observation};}),...document.processingNodes.map(processing=>({id:processing.id,name:processing.name,kind:'processing' as const,category:'Transform',processing})),...document.virtualOutputs.map(virtual=>({id:virtual.id,name:virtual.name,kind:'virtual' as const,category:'Virtual controller',virtual})),...(document.desktopOutputs??[]).map(desktop=>({id:desktop.id,name:desktop.name,kind:'desktop' as const,category:'Keyboard and mouse',desktop}))];
   const missing=profileAutoLayout(nodes.filter(node=>!positions.has(node.id)).map(node=>node.id));
-  const bottom=document.editor.positions.reduce((max,p)=>Math.max(max,p.y+PROFILE_BLOCK_HEIGHT+48),0);
+  const bottom=document.editor.positions.reduce((max,p)=>Math.max(max,p.y+canvasNodeSize(nodes.find(node=>node.id===p.nodeId)??{}).height+48),0);
   return nodes.map(node=>({...node,position:positions.get(node.id)??{x:missing.find(p=>p.nodeId===node.id)!.x,y:missing.find(p=>p.nodeId===node.id)!.y+bottom}}));
 }
 export function canvasZoom(view:CanvasViewport,factor:number,at:CanvasPoint):CanvasViewport{
@@ -29,11 +42,11 @@ export function canvasPan(view:CanvasViewport,delta:CanvasPoint):CanvasViewport{
   if(![view.x,view.y,view.zoom,delta.x,delta.y].every(finite))throw new Error('Use finite canvas coordinates.');
   return{...view,x:clamp(view.x+delta.x,-1e6,1e6),y:clamp(view.y+delta.y,-1e6,1e6)};
 }
-export function canvasFit(nodes:readonly Pick<CanvasNode,'position'>[],width:number,height:number):CanvasViewport{
+export function canvasFit(nodes:readonly (CanvasNodeGeometry&Pick<CanvasNode,'position'>)[],width:number,height:number):CanvasViewport{
   if(![width,height].every(finite)||width<=0||height<=0)throw new Error('The canvas needs a positive viewport size.');
   if(!nodes.length)return{x:0,y:0,zoom:1};
   const left=Math.min(...nodes.map(node=>node.position.x)),top=Math.min(...nodes.map(node=>node.position.y));
-  const right=Math.max(...nodes.map(node=>node.position.x+PROFILE_BLOCK_WIDTH)),bottom=Math.max(...nodes.map(node=>node.position.y+PROFILE_BLOCK_HEIGHT));
+  const right=Math.max(...nodes.map(node=>node.position.x+canvasNodeSize(node).width)),bottom=Math.max(...nodes.map(node=>node.position.y+canvasNodeSize(node).height));
   const zoom=clamp(Math.min((width-64)/(right-left),(height-64)/(bottom-top)),0.1,1.5);
   return{x:clamp((width-(right-left)*zoom)/2-left*zoom,-1e6,1e6),y:clamp((height-(bottom-top)*zoom)/2-top*zoom,-1e6,1e6),zoom};
 }
@@ -48,7 +61,7 @@ const boundsOf=(group:Pick<CanvasGroup,'x'|'y'|'width'|'height'>):ProfileEditorG
 const overlaps=(a:ProfileEditorGroupBounds,b:ProfileEditorGroupBounds)=>a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;
 /** Old profiles derive their frames without changing the saved document. */
 export function canvasGroups(document:DeepReadonly<ProfileDocument>,nodes:readonly CanvasNode[]):CanvasGroup[]{
-  return(document.editor.groups??[]).map((group,index)=>{if(group.bounds)return{...group,...group.bounds};const members=nodes.filter(node=>group.members.includes(node.id));if(!members.length)return{...group,x:index*(GROUP_WIDTH+GROUP_GAP),y:0,width:GROUP_WIDTH,height:GROUP_HEIGHT};const x=Math.min(...members.map(node=>node.position.x))-20,y=Math.min(...members.map(node=>node.position.y))-44;return{...group,x,y,width:Math.max(PROFILE_GROUP_MIN_WIDTH,Math.max(...members.map(node=>node.position.x+PROFILE_BLOCK_WIDTH))-x+20),height:Math.max(PROFILE_GROUP_MIN_HEIGHT,Math.max(...members.map(node=>node.position.y+PROFILE_BLOCK_HEIGHT))-y+20)};});
+  return(document.editor.groups??[]).map((group,index)=>{if(group.bounds)return{...group,...group.bounds};const members=nodes.filter(node=>group.members.includes(node.id));if(!members.length)return{...group,x:index*(GROUP_WIDTH+GROUP_GAP),y:0,width:GROUP_WIDTH,height:GROUP_HEIGHT};const x=Math.min(...members.map(node=>node.position.x))-20,y=Math.min(...members.map(node=>node.position.y))-44;return{...group,x,y,width:Math.max(PROFILE_GROUP_MIN_WIDTH,Math.max(...members.map(node=>node.position.x+canvasNodeSize(node).width))-x+20),height:Math.max(PROFILE_GROUP_MIN_HEIGHT,Math.max(...members.map(node=>node.position.y+canvasNodeSize(node).height))-y+20)};});
 }
 function checkedLayout(document:ProfileDocument):ProfileDocument{const error=profileDocumentError(document);if(error)throw new Error(error);return document;}
 function freeBounds(bounds:ProfileEditorGroupBounds,occupied:readonly ProfileEditorGroupBounds[]):ProfileEditorGroupBounds{
@@ -89,7 +102,7 @@ export function canvasGroupAt(document:DeepReadonly<ProfileDocument>,point:Canva
 }
 /** A drop is one history action: move the block and update its single group membership. */
 export function canvasMoveIntoGroup(document:DeepReadonly<ProfileDocument>,nodeId:string,position:CanvasPoint):ProfileDocument{
-  const next=canvasMove(groupLayout(document),nodeId,position),saved=next.editor.positions.find(row=>row.nodeId===nodeId)!,id=canvasGroupAt(next,{x:saved.x+PROFILE_BLOCK_WIDTH/2,y:saved.y+PROFILE_BLOCK_HEIGHT/2});
+  const next=canvasMove(groupLayout(document),nodeId,position),saved=next.editor.positions.find(row=>row.nodeId===nodeId)!,size=canvasNodeSize(canvasNodes(next,[],[]).find(node=>node.id===nodeId)!),id=canvasGroupAt(next,{x:saved.x+size.width/2,y:saved.y+size.height/2});
   for(const group of next.editor.groups??[])group.members=group.members.filter(member=>member!==nodeId);
   if(id)next.editor.groups!.find(group=>group.id===id)!.members.push(nodeId);return checkedLayout(next);
 }
@@ -97,7 +110,7 @@ export function canvasSetGroupBounds(document:DeepReadonly<ProfileDocument>,id:s
   const next=groupLayout(document),group=next.editor.groups?.find(group=>group.id===id);if(!group)throw new Error('Choose an existing editor group.');
   if(next.editor.groups!.some(other=>other.id!==id&&overlaps(bounds,other.bounds!)))throw new Error('Groups cannot overlap.');
   const nodes=canvasNodes(next,[],[]).filter(node=>group.members.includes(node.id));
-  if(nodes.some(node=>node.position.x+PROFILE_BLOCK_WIDTH/2<bounds.x||node.position.x+PROFILE_BLOCK_WIDTH/2>bounds.x+bounds.width||node.position.y+PROFILE_BLOCK_HEIGHT/2<bounds.y+36||node.position.y+PROFILE_BLOCK_HEIGHT/2>bounds.y+bounds.height))throw new Error('Keep the group large enough for its components.');
+  if(nodes.some(node=>{const size=canvasNodeSize(node),x=node.position.x+size.width/2,y=node.position.y+size.height/2;return x<bounds.x||x>bounds.x+bounds.width||y<bounds.y+36||y>bounds.y+bounds.height;}))throw new Error('Keep the group large enough for its components.');
   group.bounds={...bounds};return checkedLayout(next);
 }
 export function canvasResizeGroup(document:DeepReadonly<ProfileDocument>,id:string,size:{width:number;height:number}):ProfileDocument{
