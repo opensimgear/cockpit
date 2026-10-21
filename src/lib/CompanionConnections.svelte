@@ -240,8 +240,10 @@
       {#if deviceKind(selected)==='esp32'}
         <label class="setting">USB port<input readonly value={detailPort??'Not connected by USB'} /></label>
         <label class="setting">Board / Screen<input readonly value={detailBoard} /></label>
-        <label class="setting">Screen size<input readonly value={selectedScreen?`${selectedScreen.width} × ${selectedScreen.height} px`:'Not identified — connect by USB'} /></label>
-        <CompanionMessage message={selectedScreen?`Panels must use ${selectedScreen.width} × ${selectedScreen.height} px on every page.`:'Connect this companion by USB to identify its screen size before assigning a panel.'}/>
+        <div class="setting"><label for="companion-screen-size">Screen size</label><div class="screen-size-input">
+          <input id="companion-screen-size" readonly value={selectedScreen?`${selectedScreen.width} × ${selectedScreen.height} px`:'Not identified — connect by USB'} />
+          <span class="screen-size-info"><CompanionMessage message={selectedScreen?`Panels must use ${selectedScreen.width} × ${selectedScreen.height} px on every page.`:'Connect this companion by USB to identify its screen size before assigning a panel.'}/></span>
+        </div></div>
       {/if}
       </div>
       {#if deviceKind(selected)==='esp32'}
@@ -284,6 +286,7 @@
 <style>
   .tile-messages,.companion-status-messages,.firmware-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.tile-messages{position:absolute;right:12px;bottom:12px;flex-wrap:nowrap}.companion-status-messages{align-self:center}.firmware-heading h3{margin:0}
   .setting input[readonly],.setting input:disabled,.setting select:disabled{color:var(--muted);background:var(--input-bg);border-color:var(--faint-line);cursor:default}.setting:has(input[readonly]),.setting:has(input:disabled),.setting:has(select:disabled){color:var(--muted)}
+  .screen-size-input{position:relative;min-width:0}.setting .screen-size-input input{box-sizing:border-box;width:100%;padding-right:42px}.screen-size-info{position:absolute;right:8px;top:0;bottom:0;display:flex;align-items:center}
   .companion-heading-copy{min-width:0}.companion-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px 16px}.companion-title h1{min-width:0}.companion-title .connection-state{display:inline-block;white-space:nowrap}.companion-title .connection-state>span{display:inline-block;vertical-align:middle;margin-right:6px}.firmware-update{display:inline-flex}.firmware-update:has(button:disabled){cursor:not-allowed}.firmware-update button:disabled{pointer-events:none}
   .back-companions{background:transparent;border:0;color:var(--accent);padding:6px 0;margin-bottom:18px;font-size:10px}.back-companions:hover{background:transparent;text-decoration:underline}.settings-panel{padding:21px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.settings-panel .settings-columns{margin-top:0}.page-heading h1{overflow-wrap:anywhere}.page-heading .connection-state{flex-shrink:0}@media(max-width:650px){.page-heading{align-items:flex-start;flex-wrap:wrap}.settings-panel{padding:16px}}
   .firmware-versions{display:grid;gap:6px;margin-top:12px}.firmware-versions p{margin:0}
