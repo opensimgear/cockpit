@@ -1,4 +1,5 @@
 #include "lvgl_backend.h"
+#include "widget_fonts.h"
 #include "cJSON.h"
 #include <assert.h>
 #include <math.h>
@@ -10,6 +11,7 @@ static uint16_t pixels[800 * 480];
 static uint16_t buffer[800 * 8] __attribute__((aligned(64)));
 static unsigned writes, fences;
 static bool fail_write, fail_fence;
+static osg_widget_fonts fonts;
 static const cJSON *field(const cJSON *node, const char *key) { return cJSON_GetObjectItemCaseSensitive(node, key); }
 static const char *string(const cJSON *node, const char *key) { return cJSON_GetStringValue(field(node, key)); }
 static double number(const cJSON *node, const char *key) { const cJSON *v = field(node, key); assert(cJSON_IsNumber(v)); return v->valuedouble; }
@@ -34,9 +36,10 @@ static bool paint(void *context, lv_layer_t *layer) {
         else if (!strcmp(kind, "indicator")) osg_lvgl_ellipse(layer, area, cJSON_IsTrue(field(node, "active")) ? fill : 0x42515a, OSG_LVGL_TRANSPARENT, 0, opacity);
         else if (!strcmp(kind, "text")) {
             const char *align = string(node, "align");
-            /* This smoke test deliberately uses one built-in font. Portable font
-             * assets/metrics are a separate integration requirement, not proven here. */
-            osg_lvgl_text(layer, area, string(node, "text"), LV_FONT_DEFAULT, !strcmp(align, "center") ? LV_TEXT_ALIGN_CENTER : !strcmp(align, "right") ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT, fill, opacity);
+            const osg_widget_font face = !strcmp(string(node, "font"), "mono") ? OSG_FONT_MONO : OSG_FONT_SANS;
+            osg_widget_text_metrics metrics; assert(osg_widget_text_measure(&fonts, face, (unsigned)number(node, "fontSize"), string(node, "text"), &metrics));
+            assert(metrics.width == number(field(node, "metrics"), "width") && metrics.baseline == number(field(node, "metrics"), "baseline"));
+            if (!osg_widget_text_draw(&fonts, layer, area, string(node, "text"), face, (unsigned)number(node, "fontSize"), !strcmp(align, "center") ? LV_TEXT_ALIGN_CENTER : !strcmp(align, "right") ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT, number(node, "scaleX"), number(node, "scaleY"), fill, opacity)) return false;
         } else if (!strcmp(kind, "gauge")) {
             double fraction = number(node, "fraction");
             const char *orientation = string(node, "orientation");
@@ -64,12 +67,33 @@ static bool primitives(void *context, lv_layer_t *layer) {
     osg_lvgl_line(layer, (lv_area_t){900, 900, 950, 950}, 0xffffff, 2, 255);
     osg_lvgl_text(layer, (lv_area_t){900, 900, 950, 950}, "Clipped", LV_FONT_DEFAULT, LV_TEXT_ALIGN_LEFT, 0xffffff, 255);
     osg_lvgl_text(layer, (lv_area_t){0, 0, 10, 10}, NULL, NULL, LV_TEXT_ALIGN_LEFT, 0xffffff, 255);
+    osg_lvgl_text(layer, (lv_area_t){500, 200, 700, 250}, "Legacy status", LV_FONT_DEFAULT, LV_TEXT_ALIGN_CENTER, 0xffffff, 255);
     osg_lvgl_arc(layer, (lv_area_t){900, 900, 950, 950}, .5, 0xffffff, 3, 255);
     osg_lvgl_arc(layer, (lv_area_t){0, 0, 10, 10}, NAN, 0xffffff, 0, 255);
     osg_lvgl_image(layer, (lv_area_t){900, 900, 950, 950}, &image, 255);
     osg_lvgl_image(layer, (lv_area_t){0, 0, 10, 10}, NULL, 255);
     osg_lvgl_image(layer, (lv_area_t){100, 100, 103, 103}, &image, 255);
+    assert(!osg_widget_text_draw(&fonts, NULL, (lv_area_t){0, 0, 10, 10}, "A", OSG_FONT_SANS, 22, LV_TEXT_ALIGN_LEFT, 1, 1, 0xffffff, 255));
+    assert(!osg_widget_text_draw(&fonts, layer, (lv_area_t){0, 0, 10, 10}, "A", OSG_FONT_SANS, 22, LV_TEXT_ALIGN_LEFT, NAN, 1, 0xffffff, 255));
+    assert(osg_widget_text_draw(&fonts, layer, (lv_area_t){900, 900, 950, 950}, "Clipped", OSG_FONT_SANS, 22, LV_TEXT_ALIGN_LEFT, 1, 1, 0xffffff, 255));
+    assert(osg_widget_text_draw(&fonts, layer, (lv_area_t){50, 150, 450, 250}, "jj — ç", OSG_FONT_SANS, 22, LV_TEXT_ALIGN_LEFT, 1.2, 1, 0xffffff, 255));
+    assert(osg_widget_text_draw(&fonts, layer, (lv_area_t){50, 250, 450, 350}, "123.4 %", OSG_FONT_MONO, 36, LV_TEXT_ALIGN_RIGHT, .8, 1.2, 0xffffff, 255));
     return true;
+}
+static void font_limits(void) {
+    osg_widget_text_metrics metrics;
+    assert(!osg_widget_text_measure(NULL, OSG_FONT_SANS, 22, "A", &metrics));
+    assert(!osg_widget_text_measure(&fonts, (osg_widget_font)9, 22, "A", &metrics));
+    assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 7, "A", &metrics));
+    assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 129, "A", &metrics));
+    assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, NULL, &metrics));
+    assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, "A", NULL));
+    assert(osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, "", &metrics) && metrics.width == 0);
+    for (unsigned size = 8; size <= 128; size += 6) assert(osg_widget_text_measure(&fonts, (size & 2) ? OSG_FONT_MONO : OSG_FONT_SANS, size, "Engine 50.0 % é —", &metrics));
+    const char *bad[] = {"\xc0\xaf", "\xe0\x80\x80", "\xed\xa0\x80", "\xf0\x80\x80\x80", "\xf4\x90\x80\x80", "\xe2\x82", "line\nfeed", "\xf0\x9f\x9b\xa9"};
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(*bad); i++) assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, bad[i], &metrics));
+    char long_text[122]; memset(long_text, 'A', 121); long_text[121] = 0; assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, long_text, &metrics));
+    osg_widget_fonts_destroy(NULL);
 }
 int main(int argc, char **argv) {
     assert(argc == 3); FILE *file = fopen(argv[1], "rb"); assert(file); assert(!fseek(file, 0, SEEK_END)); long bytes = ftell(file); assert(bytes > 0 && bytes <= 512000); rewind(file);
@@ -78,6 +102,7 @@ int main(int argc, char **argv) {
     osg_board board = {.width = 800, .height = 480, .write = write_pixels, .present = present}; osg_lvgl_backend backend;
     assert(!osg_lvgl_init(NULL, board, buffer, sizeof(buffer))); assert(!osg_lvgl_init(&backend, board, NULL, sizeof(buffer))); assert(!osg_lvgl_init(&backend, board, buffer, 1));
     assert(osg_lvgl_init(&backend, board, buffer, sizeof(buffer))); assert(!osg_lvgl_render(&backend, NULL, NULL));
+    font_limits();
     uint64_t hashes[8];
     for (unsigned i = 0; i < 8; i++) {
         cJSON *frame = cJSON_GetArrayItem(frames, (int)i); assert(osg_lvgl_render(&backend, paint, frame)); hashes[i] = digest(); assert(writes >= 60 && fences == i + 1);
@@ -93,7 +118,8 @@ int main(int argc, char **argv) {
     // channel step of quantization at each corner of this scaled 2x2 fixture.
     assert(near565(pixels[100 * 800 + 100], 0xf800)); assert(near565(pixels[100 * 800 + 103], 0x07e0));
     assert(near565(pixels[103 * 800 + 100], 0x001f)); assert(near565(pixels[103 * 800 + 103], 0xffff));
+    osg_widget_fonts_destroy(&fonts);
     osg_lvgl_destroy(NULL); osg_lvgl_destroy(&backend); osg_lvgl_destroy(&backend); assert(!osg_lvgl_render(&backend, paint, NULL)); cJSON_Delete(fixture);
-    puts("Locked LVGL shared-source geometry/state smoke test passed; fonts, live delivery and hardware qualification remain separate.");
+    puts("Locked LVGL shared-source geometry, portable font metrics and state drawing passed; live delivery and hardware qualification remain separate.");
     return 0;
 }

@@ -124,3 +124,44 @@ file is a tracker, not evidence that unchecked work exists.
   coverage: 100% lines/functions, 72.44% branches; inspector: 100% lines/functions,
   94.92% branches. Partition binding, source/semantic admission, compiler and
   live delivery remain pending integration. These tests do not write hardware.
+- The entire ESP32 workflow at `cc0ea17` passes [CI run 39690518696](https://github.com/opensimgear/cockpit/actions/runs/39690518696):
+  portable render/network/storage tests, both headless MCU targets, Sunton,
+  Waveshare and host-wire. This is cross-build/software evidence, not hardware.
+- Portable sans/mono fonts now share pinned TTF files, integer glyph advances
+  and baseline metrics between WidgetView and LVGL. Browser and Android frontend
+  bundles contain both fonts and their OFL notices; firmware font data retains
+  the corresponding notices. Native font ownership is confined to the display
+  task with eight face/size slots, unretained glyph bitmaps and strict UTF-8/text
+  limits. Missing glyphs are rejected by the native font API, not silently lost.
+- LVGL TinyTTF exposed an upstream 64-bit private-cache alignment fault under
+  UBSan. A declared, checksum-verified pointer-alignment patch fixes it without
+  suppressing checks or changing metrics. The harness now treats UBSan findings
+  as terminal failures. Native renderer/font tests pass: 100% lines/functions;
+  71.64% adapter and 82.46% font branches. Shared UI coverage passes 26 tests.
+- Actual native Cockpit font-load/authoring evidence is retained at
+  `.research/widgets-native-ui/1792624359614/`. Production Cockpit, browser and
+  Android frontend builds pass. The reference capture uses the actual WidgetView
+  rendered in the running Cockpit WebView at 800×480, independently of the C
+  adapter. Twelve text layers match bounds/ink placement within the documented
+  two-physical-pixel rasterizer tolerance. Files:
+  `.research/widget-browser-reference/typography-parity.json` and the browser and
+  LVGL `active.png` images. This is a typography fixture, not full cross-platform
+  or live-session acceptance.
+
+## Remaining runtime integration
+
+W2 allows bounded runtime construction from the portable source. Extend the
+existing authenticated canonical-document delivery and immutable candidate
+snapshots to schema 3, keeping the source publication hash unchanged. This avoids
+resurrecting the old branch's separate composite authoring format. Reuse current
+asset/image-cache transfer and board fences; the generic A/B target-content
+infrastructure remains available where prepared assets require it.
+
+The remaining work must implement device-side layer/state/property admission,
+typed component inputs/feedback, dynamic LVGL construction, capability/resource
+negotiation, main-loop adoption and same-firmware data updates. Rich S3 limits and
+lower-memory Sunton limits must be explicit and independent of browser/Android
+authoring. Preserve existing lease/baseline/cancellation and source-confirmation
+rules. Full publishing, all-core-widget parity, Android software build checks and
+assembled native Cockpit acceptance are still required; physical validation is
+deferred only as stated above.

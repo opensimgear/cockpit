@@ -38,6 +38,9 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input.panel-import' });
     await send('DOM.setFileInputFiles', { nodeId, files: [resolve('examples/companion/shared-systems.bundle.json')] });
     await until(`document.querySelectorAll('.component-widget').length===10`, 'Shared catalog panel did not import');
+    const loadedFonts = await evaluate(`(async()=>{const faces=await Promise.all(['OSGPortableSans','OSGPortableMono'].map(face=>document.fonts.load('22px '+face)));await document.fonts.ready;return faces.map(group=>group.map(font=>({family:font.family,status:font.status})));})()`);
+    for (const [index, name] of ['OSGPortableSans', 'OSGPortableMono'].entries()) assert.ok(loadedFonts[index].some(font => font.family === name && font.status === 'loaded'), 'The actual portable font face must load');
+    assert.equal(await evaluate(`document.querySelectorAll('.widget-artwork text tspan').length>40`), true);
     await click('Edit panel name');
     await change('[aria-label="Panel name"]', panelName);
     await evaluate(`document.querySelector('[aria-label="Panel name"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);

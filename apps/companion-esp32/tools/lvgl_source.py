@@ -36,6 +36,20 @@ def source():
         marker.write_text(lock['sha256'] + '\n')
     if marker.read_text().strip() != lock['sha256']:
         raise RuntimeError('LVGL cache marker does not match the locked source')
+    patch = json.loads((APP / 'third_party/lvgl-font-cache.patch.json').read_text())
+    target = directory / patch['path']
+    content = target.read_bytes()
+    digest = sha256(content).hexdigest()
+    if digest == patch['beforeSha256']:
+        before, after = patch['before'].encode(), patch['after'].encode()
+        if content.count(before) != 1:
+            raise RuntimeError('LVGL cache alignment patch context mismatch')
+        content = content.replace(before, after)
+        if sha256(content).hexdigest() != patch['afterSha256']:
+            raise RuntimeError('LVGL cache alignment patch result mismatch')
+        target.write_bytes(content)
+    elif digest != patch['afterSha256']:
+        raise RuntimeError('LVGL cache alignment source differs from its locked patch')
     return directory
 
 

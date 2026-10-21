@@ -1,0 +1,8 @@
+{
+  "path": "src/libs/tiny_ttf/lv_tiny_ttf.c",
+  "beforeSha256": "ba5b184fa1e9a7826c4ad84eae868bac95cf27c0657802197fdc831c43e9cfb6",
+  "afterSha256": "67622d0d84fa717e7f0a0e51d110a497b845df26bd3c39725ca780c9a22bff5c",
+  "before": "    uint16_t adv_w16;\n} tiny_ttf_kerning_cache_data_t;",
+  "after": "    uint16_t adv_w16;\n    uintptr_t alignment_padding; /* Pointer-aligned cache records on 64-bit hosts. */\n} tiny_ttf_kerning_cache_data_t;",
+  "reason": "The 12-byte kerning cache payload misaligns the following pointer-containing LVGL cache record on 64-bit hosts. Pointer-sized padding preserves the cache API and glyph metrics on both 32-bit ESP32 and 64-bit native builds. Found by the portable font UBSan test."
+}

@@ -37,7 +37,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -85,7 +91,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -133,7 +145,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -166,7 +184,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -214,7 +238,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -232,7 +262,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -265,7 +301,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -283,7 +325,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -348,7 +396,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -366,7 +420,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -399,7 +459,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -446,7 +512,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     },
@@ -484,7 +556,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -532,7 +610,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -580,7 +664,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -613,7 +703,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -661,7 +757,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -679,7 +781,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -712,7 +820,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -730,7 +844,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -795,7 +915,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -813,7 +939,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -846,7 +978,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -893,7 +1031,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     },
@@ -931,7 +1075,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -979,7 +1129,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -1027,7 +1183,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -1060,7 +1222,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -1108,7 +1276,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -1126,7 +1300,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -1159,7 +1339,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -1177,7 +1363,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -1242,7 +1434,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -1260,7 +1458,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -1293,7 +1497,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -1340,7 +1550,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     },
@@ -1378,7 +1594,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -1426,7 +1648,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -1474,7 +1702,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -1507,7 +1741,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -1555,7 +1795,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -1573,7 +1819,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -1606,7 +1858,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -1624,7 +1882,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -1689,7 +1953,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -1707,7 +1977,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -1740,7 +2016,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -1787,7 +2069,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     },
@@ -1825,7 +2113,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -1873,7 +2167,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -1921,7 +2221,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -1954,7 +2260,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -2002,7 +2314,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -2020,7 +2338,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -2053,7 +2377,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -2071,7 +2401,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -2136,7 +2472,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -2154,7 +2496,13 @@
           "text": "50.0 %",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 132,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -2187,7 +2535,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -2234,7 +2588,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     },
@@ -2272,7 +2632,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -2320,7 +2686,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -2368,7 +2740,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -2401,7 +2779,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -2449,7 +2833,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -2467,7 +2857,13 @@
           "text": "—",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 22,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -2500,7 +2896,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -2518,7 +2920,13 @@
           "text": "—",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 22,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -2583,7 +2991,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -2601,7 +3015,13 @@
           "text": "—",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 22,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -2634,7 +3054,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -2681,7 +3107,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     },
@@ -2719,7 +3151,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -2767,7 +3205,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -2815,7 +3259,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -2848,7 +3298,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -2896,7 +3352,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -2914,7 +3376,13 @@
           "text": "STALE",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 110,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -2947,7 +3415,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -2965,7 +3439,13 @@
           "text": "STALE",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 110,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -3030,7 +3510,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -3048,7 +3534,13 @@
           "text": "STALE",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 110,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -3081,7 +3573,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -3128,7 +3626,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     },
@@ -3166,7 +3670,13 @@
           "text": "ENGINE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 66,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-0/status",
@@ -3214,7 +3724,13 @@
           "text": "POWER",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 65,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-1/status",
@@ -3262,7 +3778,13 @@
           "text": "MODE",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 51,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/bezel",
@@ -3295,7 +3817,13 @@
           "text": "STATUS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 68,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-3/status",
@@ -3343,7 +3871,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-4/value",
@@ -3361,7 +3895,13 @@
           "text": "—",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 22,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/bezel",
@@ -3394,7 +3934,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-5/value",
@@ -3412,7 +3958,13 @@
           "text": "—",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 22,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-5/gauge",
@@ -3477,7 +4029,13 @@
           "text": "LEVEL",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 53,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-6/value",
@@ -3495,7 +4053,13 @@
           "text": "—",
           "align": "center",
           "font": "mono",
-          "fontSize": 36
+          "fontSize": 36,
+          "scaleX": 0.88,
+          "scaleY": 0.672,
+          "metrics": {
+            "width": 22,
+            "baseline": 14
+          }
         },
         {
           "id": "widget-7/bezel",
@@ -3528,7 +4092,13 @@
           "text": "SYSTEMS",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 84,
+            "baseline": 7
+          }
         },
         {
           "id": "widget-8/line",
@@ -3575,7 +4145,13 @@
           "text": "NEXT",
           "align": "center",
           "font": "sans",
-          "fontSize": 22
+          "fontSize": 22,
+          "scaleX": 0.88,
+          "scaleY": 1.12,
+          "metrics": {
+            "width": 46,
+            "baseline": 7
+          }
         }
       ]
     }
