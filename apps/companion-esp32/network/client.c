@@ -416,13 +416,14 @@ static void advance(void){
                 if(settings.persist&&!osg_store_save(&settings)){cJSON_Delete(reply);fail("setup-save-failed-repair-required");return;}
                 installation_saved=settings.persist;state=AUTH;report("paired");}
         }else if(ok){ok=equal(osg_string(reply,"type"),"pair-pending")&&equal(osg_string(reply,"requestId"),pending);next_request=millis()+400;}
-    }else if(state==AUTH){
+    }else if(state==AUTH||state==WAIT_ASSIGNMENT){
+        /* Assignment refresh requires a fresh authenticated connection. Keep
+         * the confirmed idle screen until a panel arrives or this probe fails;
+         * routine polling is not a visible reconnect operation. */
+        if(state==WAIT_ASSIGNMENT)osg_socket_close(&connection);
         if(!open_socket()){fail("host-tls-or-connection-failed");return;}
         v=message("auth");cJSON_AddStringToObject(v,"token",settings.token);
         ok=request(v,&reply,3000)&&identity(reply,"authenticated")&&choose(reply);
-    }else if(state==WAIT_ASSIGNMENT){
-        /* Refresh through a new authenticated connection, never authenticate twice. */
-        osg_socket_close(&connection);state=AUTH;next_request=millis();return;
     }else if(state==OPEN){
         load_interrupted=false;detail="Opening assigned panel";update_screen();
         xSemaphoreTake(ui.mutex,portMAX_DELAY);

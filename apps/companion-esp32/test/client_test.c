@@ -24,7 +24,7 @@ static bool request_ok=true,wrong_identity,wrong_session;
 static const char *host_rejection,*transport_error;
 static bool clock_ok=true,load_ok,obsolete_session;
 static osg_settings saved_settings;
-static int requests, baseline_requests, input_requests, close_requests, loss_requests;
+static int requests, baseline_requests, input_requests, close_requests, loss_requests, socket_opens, socket_closes;
 static unsigned mock_session_number;
 static char mock_session[65];
 static bool mock_host_armed, mock_button, permit_inputs, touch_during_baseline, cancel_during_input;
@@ -53,8 +53,8 @@ static bool base64_unused(const char *s,unsigned char *p,size_t cap,size_t *out)
 }
 const osg_crypto osg_platform_crypto={sha,base64_unused};
 bool osg_trusted_ca(const osg_settings *s,unsigned char *p,size_t n,size_t *out){(void)s;(void)p;(void)n;(void)out;return true;}
-bool osg_socket_open(osg_socket *s,const osg_settings *value){(void)value;if(network_ok)s->ws=s;return network_ok;}
-void osg_socket_close(osg_socket *s){if(s->ws&&mock_host_armed)loss_requests++;mock_host_armed=false;mock_button=false;memset(s,0,sizeof(*s));}
+bool osg_socket_open(osg_socket *s,const osg_settings *value){(void)value;socket_opens++;if(network_ok)s->ws=s;return network_ok;}
+void osg_socket_close(osg_socket *s){socket_closes++;if(s->ws&&mock_host_armed)loss_requests++;mock_host_armed=false;mock_button=false;memset(s,0,sizeof(*s));}
 bool osg_wifi_clock(void){return clock_ok;}
 bool osg_wifi_start(const osg_settings *s){(void)s;return network_ok;}
 void osg_wifi_stop(void){}
@@ -175,6 +175,42 @@ static void live_input_tests(void){
     live_ready();live_arm();fake_ms++;osg_network_touch(false,false,0,0);advance();assert(state==FAULT&&!mock_host_armed);
     permit_inputs=false;stop();
 }
+static void idle_assignment_screen_tests(void){
+    setup();state=AUTH;assigned_now=false;
+    osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    update_screen();assert(test_runtime.screen==OSG_SCREEN_CONNECTING);
+    advance();update_screen();assert(state==WAIT_ASSIGNMENT&&test_runtime.screen==OSG_SCREEN_NO_PANEL);
+    int baseline_before=baseline_requests,input_before=input_requests;
+    for(unsigned poll=0;poll<8;poll++){
+        int before=requests,opened=socket_opens,closed=socket_closes;test_dirty=false;
+        fake_ms=next_request-1;update_screen();advance();update_screen();
+        assert(requests==before&&!test_dirty&&test_runtime.screen==OSG_SCREEN_NO_PANEL);
+        fake_ms++;update_screen();advance();update_screen();
+        assert(state==WAIT_ASSIGNMENT&&test_runtime.screen==OSG_SCREEN_NO_PANEL&&!test_dirty);
+        assert(requests==before+1&&!strcmp(requested_type,"auth"));
+        assert(socket_opens==opened+1&&socket_closes==closed+1);
+        assert(!test_runtime.armed&&!remote_armed&&!mock_host_armed);
+    }
+    assert(baseline_requests==baseline_before&&input_requests==input_before);
+    assigned_now=true;fake_ms=next_request;advance();update_screen();
+    assert(state==OPEN&&test_runtime.screen==OSG_SCREEN_LOADING);
+    advance();update_screen();assert(state==LIVE&&test_runtime.screen==OSG_SCREEN_PANEL&&!test_runtime.armed);
+    for(unsigned fault=0;fault<3;fault++){
+        setup();state=AUTH;assigned_now=false;
+        osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        advance();update_screen();assert(test_runtime.screen==OSG_SCREEN_NO_PANEL);
+        if(fault==0)network_ok=false;
+        else if(fault==1)transport_error="Cockpit closed the connection";
+        else wrong_identity=true;
+        fake_ms=next_request;advance();update_screen();
+        assert(state==FAULT&&test_runtime.screen==OSG_SCREEN_ERROR&&!test_runtime.armed);
+        int before=requests;fake_ms+=2000;advance();assert(requests==before);
+        network_ok=true;transport_error=NULL;wrong_identity=false;
+        cmd("{\"command\":\"connect\"}");update_screen();assert(test_runtime.screen==OSG_SCREEN_CONNECTING);
+        advance();update_screen();assert(state==WAIT_ASSIGNMENT&&test_runtime.screen==OSG_SCREEN_NO_PANEL);
+    }
+    stop();
+}
 int main(int argc,char **argv){
     assert(argc==2);osg_json_init();char raw[OSG_REPLY_BYTES];FILE *f=fopen(argv[1],"rb");assert(f);size_t n=fread(raw,1,sizeof(raw),f);fclose(f);fixture=osg_json_parse(raw,n);assert(fixture);
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&images[0],800,480));
@@ -192,7 +228,7 @@ int main(int argc,char **argv){
     setup();advance();fake_ms+=400;wrong_identity=true;advance();assert(state==FAULT);
     setup();installation_saved=false;settings.persist=true;store_ok=false;advance();fake_ms+=400;advance();assert(state==FAULT&&!installation_saved);
     setup();settings.persist=true;advance();fake_ms+=400;advance();assert(state==AUTH&&installation_saved);
-    assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==AUTH);assigned_now=true;advance();
+    assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==WAIT_ASSIGNMENT);assigned_now=true;fake_ms=next_request;advance();
     assert(state==OPEN);test_drawing=&images[1-image_index].panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
     /* A bad panel does not close a healthy transport or enable live input. */
     stop();state=AUTH;advance();assert(state==OPEN);
@@ -351,6 +387,7 @@ int main(int argc,char **argv){
     pixel_error="cache_active_corrupt";assert(!cache_failure());assert(!operation.retryable&&strstr(detail,"restart the companion")&&active_pixels[0]==255);pixel_error="cache_io";
     image.panel.widget_count=0;cache_fail=true;assert(load_images(&image,0));assert(operation.total==0&&operation.completed==0);cache_fail=false;image.panel.widget_count=1;
     image.widgets[0].bounds.width=0;assert(!load_images(&image,0));assert(!strcmp(detail,"Invalid image dimensions"));
+    idle_assignment_screen_tests();
     for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

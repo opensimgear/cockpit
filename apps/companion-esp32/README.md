@@ -136,3 +136,5 @@ The ESP32-3248S035R resistive-touch board has a dedicated [display/touch profile
 Firmware 2026.10.20.1 adds the shared flash image cache and structured panel progress/failure feedback. USB and Wi-Fi failures distinguish timeouts, malformed replies and connection errors. Long messages wrap beneath the centered status icon and are also reported to Cockpit.
 
 Firmware 2026.10.20.2 preserves partial USB records across idle polling and protocol requests. A status probe interrupted by a heartbeat no longer makes the heartbeat parse a truncated JSON record and stop the panel.
+
+Firmware 2026.10.21.1 keeps an authenticated, unassigned screen on **No panel assigned** while it checks for assignments. A new panel still opens automatically, and a failed connection or authentication still displays its failure.

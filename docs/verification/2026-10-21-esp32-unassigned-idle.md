@@ -1,0 +1,15 @@
+# ESP32 unassigned idle screen
+
+Firmware `2026.10.21.1` keeps a connected screen on **No panel assigned** while checking for new assignments. The two-second refresh previously closed the transport and entered `AUTH`, causing the renderer to display **Connecting to OSG Cockpit** between every successful empty-assignment response. The refresh still uses a fresh authenticated transport, but retains `WAIT_ASSIGNMENT` until a panel arrives or a real request fails. Initial connection, explicit reconnect, assignment changes and genuine failures retain their existing feedback.
+
+## Verification
+
+- The new firmware client regression checks eight idle polls without changing the screen or setting its dirty flag; each poll still opens a fresh authenticated transport. It also checks automatic panel loading, absent input authority while idle, connection/read/identity failures and explicit reconnect. The same regression fails against the previous client at the stable-idle assertion.
+- `python3 apps/companion-esp32/test/network.py` passed under WSL with AddressSanitizer and UndefinedBehaviorSanitizer. Wire, client, input, serial wire and pixel checks passed, including all existing coverage gates. Client coverage: 96.44% lines, 72.20% branches, 97.67% functions.
+- Both Sunton and Waveshare builds passed using the existing offline ESP-IDF v5.5.2 image. Application sizes are 892,384 and 908,832 bytes respectively, within their existing 1.5 MiB allocation. Both partition tables retain SHA-256 `4c371bf1aef93f2aed6f99bec8b6f8e16c6b71f47e7fef6d6480c6b76591f369`.
+- The rebuilt native development Cockpit installed and verified the firmware on the paired Sunton/GUITION ESP32-3248S035R on COM8 through its setup-preserving updater. The established COM8 DTR/RTS helper entered download mode after Cockpit released that port. Saved pairing and direct USB setup survived.
+- Before the update, 95 actual-device status samples over 12 seconds reproduced alternating `awaiting-assignment` and `authenticating`, with no USB disconnect or recovery. After the update, 159 samples over 20 seconds remained `awaiting-assignment`, connected and ready, without a panel session or recovery.
+- Temporarily assigning the existing 480×320 Panel 2 automatically opened it and reached `live-armed` with operation `ready`; 80 samples over 10 seconds retained its session. Removing that temporary assignment restored idle: all 160 samples over a further 20 seconds remained `awaiting-assignment`, with no session or recovery. The Sunton was left unassigned.
+- Following the necessary development-app restart, the other physical Waveshare on COM5 retained the same live session throughout the Sunton firmware install and acceptance checks. Its firmware and assignment were not changed.
+
+Local evidence is retained under `.research/esp32-idle-native/`, `.research/esp32-idle-prefixtest/`, `.research/esp32-network/` and `.research/esp32-idle-*-build.log`. Physical verification used actual firmware status through the running native Cockpit; the portable renderer regression verifies no idle redraw. No camera observation or physical Wi-Fi test was performed.
