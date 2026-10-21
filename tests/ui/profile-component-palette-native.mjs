@@ -80,6 +80,17 @@ test('native palette authors an unassigned production companion and inserts conn
   const selectNode = id => until(() => native.evaluate(`(()=>{const node=[...document.querySelectorAll('.profiles-workspace .resource-block')].find(node=>node.dataset.nodeId===${JSON.stringify(id)});if(!node)return false;node.querySelector('.block-heading').click();return true;})()`), `Graph block unavailable: ${id}`);
   const selectedNode = () => native.evaluate(`document.querySelector('.profiles-workspace .resource-block.selected')?.dataset.nodeId??null`);
   const capture = async file => { const value = await native.send('Page.captureScreenshot', { format: 'png' }); await writeFile(resolve(artifacts, file), Buffer.from(value.data, 'base64')); };
+  const mouse = (type, location, extra = {}) => native.send('Input.dispatchMouseEvent', { type, ...location, ...extra });
+  const collapseInspector = async () => { await mouse('mouseMoved',{x:10,y:10});await until(()=>native.evaluate(`!document.querySelector('.canvas-inspector[data-expanded="true"]')`),'Moving away did not collapse the settings rail'); };
+  const center = selector => until(() => native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});if(!element||element.disabled)return null;const r=element.getBoundingClientRect(),x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);if(!r.width||!r.height||r.left<0||r.top<0||r.right>innerWidth||r.bottom>innerHeight||!element.contains(document.elementFromPoint(x,y)))return null;return{x,y};})()`), `Visible mouse target unavailable: ${selector}`);
+  const dragWire = async (source, target) => {
+    await native.evaluate(`document.querySelector('.canvas-stage').scrollIntoView({block:'start'});window.scrollBy(0,-150)`);await sleep(150);
+    const from=await center(source),to=await center(target);
+    await mouse('mouseMoved',from);await mouse('mousePressed',from,{button:'left',buttons:1,clickCount:1});
+    try{for(const fraction of [.2,.5,.8,1])await mouse('mouseMoved',{x:Math.round(from.x+(to.x-from.x)*fraction),y:Math.round(from.y+(to.y-from.y)*fraction)},{button:'left',buttons:1});}
+    finally{await mouse('mouseReleased',to,{button:'left',buttons:0,clickCount:1});}
+    await until(()=>native.evaluate(`(()=>{const panel=document.querySelector('.canvas-connection-panel'),r=panel?.getBoundingClientRect();return !!r&&r.width>0&&r.height>0&&r.top<innerHeight&&r.bottom>0;})()`),'A real connection drag did not open the exact port picker');
+  };
   const save = async () => {
     await click('Save profile');
     if (!profileId) profileId = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles.find(profile => profile.name === name)?.id, 'New temporary profile was not saved');
@@ -186,11 +197,13 @@ test('native palette authors an unassigned production companion and inserts conn
     assert.equal(state.document.companionAssignments[0].publicationHash, selectedPanel.publicationHash); assert.equal(await unassigned(), true);
     checks.push('Palette additions preserve selection; explicitly selecting the unassigned companion opens panel configuration without assigning it natively');
 
-    await click('Connect exact ports');
-    for (const [label, value] of [['Source block', companionNodeId], ['Exact source output', sourcePortId], ['Destination block', virtualId], ['Exact destination input / action', state.document.virtualOutputs[0].ports[0].id]]) await selectLabel(label, value, '.route-composer');
-    await click('Create exact route', '.route-composer');
-    await click('Close connection editor');
-    await click('Close node details');
+    await collapseInspector();await click('Auto-layout');await click('Fit all');
+    await dragWire(`[data-connection-source="${companionNodeId}"]`,`[data-connection-target="${virtualId}"]`);
+    assert.deepEqual(await native.evaluate(`(()=>{const panel=document.querySelector('.canvas-connection-panel');return{source:panel.querySelector('[aria-label="Source block"]').value,target:panel.querySelector('[aria-label="Destination block"]').value};})()`),{source:companionNodeId,target:virtualId});
+    for (const [label, value] of [['Exact source output', sourcePortId], ['Exact destination input / action', state.document.virtualOutputs[0].ports[0].id]]) await selectLabel(label, value, '.canvas-connection-panel');
+    await click('Create exact route', '.canvas-connection-panel');
+    await until(()=>native.evaluate(`!document.querySelector('.canvas-connection-panel')`),'Creating the exact route did not close the port picker');
+    await collapseInspector();
     await click('Fit all');
     await until(async () => (await uiGraph()).edges === 1, 'The explicit companion-to-virtual route was not drawn');
     const hit = await until(() => native.evaluate(`(()=>{const path=document.querySelector('.signal-edge-hit'),stage=document.querySelector('.canvas-stage');if(!path||!stage)return null;const bounds=stage.getBoundingClientRect(),length=path.getTotalLength(),matrix=path.getScreenCTM();for(const fraction of [.5,.35,.65,.2,.8]){const point=path.getPointAtLength(length*fraction),screen=new DOMPoint(point.x,point.y).matrixTransform(matrix);if(screen.x>bounds.left&&screen.x<bounds.right&&screen.y>bounds.top&&screen.y<bounds.bottom&&document.elementFromPoint(screen.x,screen.y)?.closest('.signal-edge-hit')===path)return{x:screen.x,y:screen.y};}return null;})()`), 'The actual SVG connection did not expose a visible hit target');
@@ -204,7 +217,7 @@ test('native palette authors an unassigned production companion and inserts conn
     await click('Undo'); await until(async () => { const graph = await uiGraph(); return graph.processing === 0 && graph.edges === 1; }, 'One Undo did not restore the original connection');
     await click('Redo'); await until(async () => { const graph = await uiGraph(); return graph.processing === 1 && graph.edges === 2; }, 'One Redo did not restore the inserted transformation');
     state = await save(); assert.equal(state.document.processingNodes[0].operation.kind, 'identity'); assert.equal(state.document.bindings.length, 2);
-    await click('Close node details'); await until(() => native.evaluate(`!document.querySelector('.canvas-inspector')`), 'Node inspector did not close');
+    await collapseInspector();
     await click('Fit all'); state = await save(); await native.evaluate(`document.querySelector('.profile-canvas-workspace').scrollIntoView({block:'start'})`); await capture('connection-transformation.png');
     checks.push('Actual SVG hit testing opens transformations; Identity replaces one edge with two in a single Undo/Redo edit');
 

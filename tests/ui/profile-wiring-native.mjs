@@ -115,6 +115,7 @@ test('native dropped blocks discover every port and wire in either drag directio
     await native.evaluate(`(()=>{const input=document.querySelector('.profile-name-input');input.value=${JSON.stringify(name)};input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);
     await save(); draftOpen = false;
     await click('Add virtual controller', '.component-palette');
+    assert.equal(await native.evaluate(`Array.from(document.querySelectorAll('.routing-toolbar button')).some(button=>button.textContent.trim()==='Connect exact ports')`), false, 'Connection creation starts from the canvas drag handles.');
 
     // Start the actual palette HTML5 drag with mouse input, then use its own data.
     intercepted = null;
@@ -208,7 +209,7 @@ test('native dropped blocks discover every port and wire in either drag directio
       await click('Use panel in profile', '[aria-label="Profile companion panel selection"]');
       const expectedOutputs = ports.filter(port => port.descriptor.direction === 'output').length, expectedInputs = ports.filter(port => port.descriptor.direction === 'input').length;
       await until(async () => (await snapshot()).nodes.some(node => node.id === companionNodeId && node.outputs === expectedOutputs && node.inputs === expectedInputs), 'Selecting the companion panel did not automatically discover its exact retained ports');
-      await click('Close node details'); await click('Auto-layout'); await click('Fit all'); companionState = await save();
+      await mouse('mouseMoved', { x: 10, y: 10 }); await click('Auto-layout'); await click('Fit all'); companionState = await save();
       assert.deepEqual(companionState.document.resources.find(node => node.id === companionNodeId).ports, []);
       assert.equal(companionState.document.companionAssignments.find(assignment => assignment.resourceId === companionNodeId).publicationHash, panel.publicationHash);
       const companionPanel = (await dragWire(`[data-connection-source="${companionNodeId}"]`, `[data-connection-target="${virtual.id}"]`)).panel;

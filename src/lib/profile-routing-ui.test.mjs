@@ -114,9 +114,9 @@ test('companion assignment uses its panel inspector and cannot bypass installati
   assert.ok(renderRouting(value,{selectedId:'third-party-a'}).includes('Inventory resource'));
 });
 
-test('routing retains exact connections, history and an accessible bindings table while component creation belongs to the palette',()=>{
-  const body=renderRouting(draft());for(const label of ['Connect exact ports','Undo','Redo','Exact signal bindings','No routes yet.','Choose a row'])assert.ok(body.includes(label),label);
-  for(const removed of ['Visible transformation','Add transformation','Add virtual controller','Add keyboard and mouse','Keyboard and mouse preset','Desktop output presets'])assert.ok(!body.includes(removed),removed);assert.ok(!body.includes('profile_apply'));assert.ok(!body.includes('Start integration'));assert.ok(!body.includes('Native preflight'));
+test('routing uses canvas connection gestures and retains history and an accessible bindings table',()=>{
+  const body=renderRouting(draft());for(const label of ['Undo','Redo','Exact signal bindings','No routes yet.','Choose a row'])assert.ok(body.includes(label),label);
+  for(const removed of ['Connect exact ports','Visible transformation','Add transformation','Add virtual controller','Add keyboard and mouse','Keyboard and mouse preset','Desktop output presets'])assert.ok(!body.includes(removed),removed);assert.ok(!body.includes('profile_apply'));assert.ok(!body.includes('Start integration'));assert.ok(!body.includes('Native preflight'));
 });
 test('block connection gesture opens explicit empty port choices; missing and incompatible choices never edit the graph',async()=>{
   const h=await harness(draft());h.handlers.connectBlocks('can-one','dcs');assert.equal(h.handlers.state.routeOpen,true);assert.equal(h.handlers.state.fromPort,'');assert.equal(h.handlers.state.toPort,'');assert.equal(h.edits.length,0);h.handlers.connect();assert.equal(h.edits.length,0);assert.match(h.handlers.state.message,/Select an output and an input/);
