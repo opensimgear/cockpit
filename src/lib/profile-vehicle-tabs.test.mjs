@@ -68,3 +68,18 @@ test('changing game context removes all former vehicle layers and their assignme
   const {document}=fixture();const next=profileSetGameContext({document,assignments:[{resourceId:'hornet',sourceId:'physical',ports:[]}]},'assetto-corsa-rally',[]);
   assert.equal(next.document.vehicleTabs,undefined);assert.equal(next.document.resources.some(node=>node.id==='hornet'||node.id==='viper'),false);assert.equal(next.assignments.length,0);assert.equal(profileDocumentError(next.document),'');
 });
+
+for(const operation of ['add','change'])test(`${operation} catalogue vehicle stores a valid Unicode tab label while preserving the full choice and exact ID`,()=>{
+  const unicodeLabel='A'.repeat(79)+'🚗',trimmedLabel='R'.repeat(79);
+  for(const [name,label] of [[unicodeLabel+' Track edition',unicodeLabel],[trimmedLabel+'\u2003Performance edition',trimmedLabel]]){
+    let document=blankProfile('11111111-1111-4111-8111-111111111111');document.eligibility.gameIds=['assetto-corsa'];
+    const initial=profileAddVehicleTab(document,'assetto-corsa',{id:'existing_car',name:'Existing car'});document=initial.document;
+    const before=plain(document),choice=Object.freeze({id:'My_Mod_variant_S1',name});
+    const next=operation==='add'?profileAddVehicleTab(document,'assetto-corsa',choice).document:profileChangeVehicleTab(document,initial.tabId,choice);
+    const tab=next.vehicleTabs.find(tab=>tab.vehicleId===choice.id);
+    assert.equal(tab.vehicleId,'My_Mod_variant_S1');assert.equal(tab.vehicleName,label);
+    assert.equal(profileDocumentError(next),'','The selected catalogue car must remain saveable.');
+    assert.deepEqual(plain(document),before);assert.equal(choice.name,name);
+    assert.equal(choice.id,'My_Mod_variant_S1');
+  }
+});

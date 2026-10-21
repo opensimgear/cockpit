@@ -35,13 +35,22 @@ current vehicle. Selecting an aircraft tab in the profile editor browses its
 catalogue without claiming that aircraft is loaded or changing the active module.
 
 The DCS vehicle list comes from the installed DCS-BIOS aliases. X-Plane scans the
-selected installation's Aircraft folder, including add-on aircraft. For the Assetto
-games, Cockpit remembers exact car models observed in live sessions. Load a car once to make it selectable later,
-or enter its exact native ID in the profile tab. Discovered vehicle names persist
-locally; a saved discovery never restores a vehicle as currently loaded.
+selected installation's Aircraft folder, including add-on aircraft. Original
+Assetto Corsa scans its installed `content/cars` during **Set up telemetry** and
+**Repair setup**, including complete mod cars and variants. Folder names remain
+the exact native car IDs; `ui/ui_car.json` supplies their display names. The saved
+list is specific to the selected installation and is available with the game
+closed and after Cockpit restarts. Run setup/repair again after adding or removing
+cars; ordinary status checks and telemetry checks do not rescan car content.
+This list describes installed content, rather than DLC ownership.
 
-Vehicle lists refresh in the background at most every 30 seconds, or when the
-installation or provider settings change. DCS telemetry subscribers share one
+For Competizione, EVO and Rally, Cockpit remembers exact car models observed in
+live sessions. Load a car once to make it selectable later, or enter its exact
+native ID in the profile tab. Discovered vehicle names persist locally; a saved
+discovery never restores a vehicle as currently loaded.
+
+The DCS and X-Plane vehicle lists refresh in the background at most every 30
+seconds, or when the installation or provider settings change. DCS telemetry subscribers share one
 UDP receiver with separate bounded queues, so vehicle observation also works
 with unicast exports while a profile is running.
 

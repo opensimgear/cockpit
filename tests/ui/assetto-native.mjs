@@ -55,6 +55,15 @@ test('seven game artworks and three native Assetto dialects work in the running 
   evidence.checks.push('Seven local images load; game grid fits 1440 and 390 pixel viewports.');
   for(const [gameId,name,basename] of specs){
     const directory=resolve(artifacts,gameId);await mkdir(directory,{recursive:true});
+    if(gameId==='assetto-corsa'){
+      for(const [id,label] of [['osg_fixture_car','Authored Live Car'],['osg_installed_mod','Authored Installed Mod']]){
+        const car=resolve(directory,'content/cars',id);
+        await mkdir(resolve(car,'ui'),{recursive:true});await mkdir(resolve(car,'skins/default'),{recursive:true});
+        await writeFile(resolve(car,'ui/ui_car.json'),JSON.stringify({name:label}));
+        await writeFile(resolve(car,'data.acd'),'Authored archive presence fixture');
+        await writeFile(resolve(car,'skins/default/livery.dds'),'Authored skin presence fixture');
+      }
+    }
     const executable=resolve(directory,basename),stopfile=resolve(directory,'stop');
     await execute('C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',['/nologo','/target:winexe',`/out:${executable}`,resolve('scripts/fixtures/assetto-telemetry/Program.cs')],{windowsHide:true});
     const previous=(await native({command:'game_get_state'})).games.manualInstallations?.[gameId]??null;
@@ -82,6 +91,11 @@ test('seven game artworks and three native Assetto dialects work in the running 
       assert.equal(game.integrationSetup.connection.source,'shared-memory');
       await native({command:'game_integration_check',gameId});
       const live=await wait(async()=>{const g=(await catalogue()).find(g=>g.id===gameId);return g.currentVehicle?.id==='osg_fixture_car'&&g;},`${name} did not discover the native car.`);
+      if(gameId==='assetto-corsa'){
+        assert.deepEqual(live.vehicleSupport.vehicles,[{id:'osg_fixture_car',name:'Authored Live Car'},{id:'osg_installed_mod',name:'Authored Installed Mod'}]);
+        assert.equal(live.currentVehicle.name,'Authored Live Car');
+        evidence.checks.push('Original AC setup lists both installed cars with metadata names, including a mod that was never driven.');
+      }
       evidence.games.push({gameId,setup:game.integrationSetup,vehicle:live.currentVehicle});
       const resources=(await native({command:'profile_resources_list',offset:0,limit:128})).profileResources.resources;
       const resource=resources.find(r=>r.attributes.gameId===gameId);assert.ok(resource,`${name} profile integration resource missing.`);

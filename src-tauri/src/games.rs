@@ -160,7 +160,10 @@ impl GamesRuntime {
         self.decorate_game_contexts(&mut catalogue);
         {
             let vehicles = self.inner.vehicles.lock().unwrap_or_else(|p|p.into_inner());
-            for game in &mut catalogue { vehicles.decorate(game); }
+            for game in &mut catalogue {
+                vehicles.decorate(game);
+                self.inner.setup.decorate_installed_cars(game);
+            }
         }
         for game in &mut catalogue {
             game["profileContext"] = self

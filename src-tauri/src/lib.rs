@@ -2,6 +2,8 @@ mod game_installations;
 mod retained_game_companions;
 mod config_paths;
 mod acr_setup;
+mod ac_car_catalogue;
+mod ac_car_catalogue_cache;
 mod acr_windows;
 mod companion_host;
 mod firmware_releases;

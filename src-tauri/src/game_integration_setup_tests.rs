@@ -694,10 +694,11 @@ fn assetto_setup_preserves_separate_build_evidence_and_requires_native_verificat
     let scratch = Scratch::new();
     let path = scratch.0.join("setup.json");
     let runtime = GameIntegrationSetup::new(path.clone(), true);
+    fs::create_dir_all(scratch.0.join("content/cars")).unwrap();
     for (id, filename) in [("assetto-corsa", "acs.exe"), ("assetto-corsa-competizione", "AC2-Win64-Shipping.exe"), ("assetto-corsa-evo", "AssettoCorsaEVO.exe")] {
         let executable = scratch.0.join(filename);
         fs::write(&executable, b"Unlaunched authored executable identity fixture").unwrap();
-        let game = json!({"id":id,"provider":id,"installed":true,"executable":executable});
+        let game = json!({"id":id,"provider":id,"installed":true,"executable":executable,"installPath":scratch.0});
         runtime.request(&json!({"command":"game_integration_setup","connection":{"freshnessMs":1800}}), &game, Arc::new(FakePlatform(false))).unwrap();
         wait_setup(&runtime);
         let saved = read_settings(&path).unwrap();
@@ -715,6 +716,177 @@ fn assetto_setup_preserves_separate_build_evidence_and_requires_native_verificat
         assert_eq!(runtime.inner.inspect(&game, None)["state"], "needs-attention");
     }
     assert_eq!(read_settings(&path).unwrap()["games"].as_object().unwrap().len(), 3);
+}
+
+fn ac_catalogue_game(root: &Path) -> Value {
+    fs::create_dir_all(root.join("content/cars")).unwrap();
+    let executable = root.join("acs.exe");
+    fs::write(&executable, b"Unlaunched AC car catalogue setup fixture").unwrap();
+    json!({"id":"assetto-corsa","provider":"assetto-corsa","installed":true,
+        "installPath":root,"executable":executable,"currentVehicle":null,
+        "vehicleSupport":{"vehicles":[]}})
+}
+
+fn ac_catalogue_car(root: &Path, id: &str, name: &str) {
+    let car = root.join("content/cars").join(id);
+    fs::create_dir_all(car.join("ui")).unwrap();
+    fs::create_dir_all(car.join("skins/default")).unwrap();
+    fs::write(car.join("ui/ui_car.json"), json!({"name":name}).to_string()).unwrap();
+    fs::write(car.join("data.acd"), b"Authored data archive presence fixture").unwrap();
+    fs::write(car.join("skins/default/livery.dds"), b"Authored skin presence fixture").unwrap();
+}
+
+fn ac_catalogue_choices(runtime: &GameIntegrationSetup, game: &Value) -> Value {
+    let mut decorated = game.clone();
+    runtime.decorate_installed_cars(&mut decorated);
+    assert_eq!(decorated["currentVehicle"], Value::Null, "Installed choices cannot establish a live car");
+    decorated["vehicleSupport"]["vehicles"].clone()
+}
+
+#[test]
+fn ac_setup_repair_replaces_catalogue_even_for_same_build_and_check_never_rescans() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("setup.json");
+    let game = ac_catalogue_game(&scratch.0.join("AC"));
+    let root = Path::new(game["installPath"].as_str().unwrap());
+    ac_catalogue_car(root, "lotus_elise_sc", "Lotus Elise SC");
+    ac_catalogue_car(root, "old_mod", "Old Mod");
+    let runtime = GameIntegrationSetup::new(path.clone(), true);
+    let setup = json!({"command":"game_integration_setup"});
+    runtime.request(&setup, &game, Arc::new(FakePlatform(false))).unwrap();
+    wait_setup(&runtime);
+    let initial = json!([{"id":"lotus_elise_sc","name":"Lotus Elise SC"},{"id":"old_mod","name":"Old Mod"}]);
+    assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
+    assert_eq!(runtime.inner.inspect(&game, None)["verified"], false);
+    let identity = read_settings(&path).unwrap()["games"]["assetto-corsa"]["configuredFingerprint"].clone();
+
+    fs::remove_file(root.join("content/cars/old_mod/data.acd")).unwrap();
+    ac_catalogue_car(root, "lotus_elise_sc", "Renamed Lotus");
+    ac_catalogue_car(root, "new_mod", "New Mod");
+    runtime.refresh(std::slice::from_ref(&game));
+    let mut passive = vec![game.clone()];
+    runtime.decorate(&mut passive);
+    assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
+    runtime.request(&json!({"command":"game_integration_check"}), &game, Arc::new(FakePlatform(false))).unwrap();
+    wait_setup(&runtime);
+    assert_eq!(ac_catalogue_choices(&runtime, &game), initial, "Check must not scan changed content");
+
+    runtime.request(&setup, &game, Arc::new(FakePlatform(false))).unwrap();
+    wait_setup(&runtime);
+    let repaired = json!([{"id":"lotus_elise_sc","name":"Renamed Lotus"},{"id":"new_mod","name":"New Mod"}]);
+    assert_eq!(ac_catalogue_choices(&runtime, &game), repaired);
+    assert_eq!(read_settings(&path).unwrap()["games"]["assetto-corsa"]["configuredFingerprint"], identity,
+        "Repair must refresh car content even when the executable identity did not change");
+    runtime.shutdown();
+
+    let restored = GameIntegrationSetup::new(path, true);
+    assert_eq!(ac_catalogue_choices(&restored, &game), repaired, "Friendly names must survive restart");
+    let other = ac_catalogue_game(&scratch.0.join("Other AC"));
+    assert_eq!(ac_catalogue_choices(&restored, &other), json!([]), "A different installation cannot inherit the old installed roster");
+    restored.shutdown();
+}
+
+#[test]
+fn ac_catalogue_publication_waits_for_setup_completion_and_cancelled_repair_preserves_it() {
+    use std::sync::mpsc;
+    struct PausedCarProbe { entered: mpsc::Sender<()>, release: Mutex<mpsc::Receiver<()>> }
+    impl Platform for PausedCarProbe {
+        fn catalogue(&self, _: &BTreeMap<String,String>) -> Vec<Value> { vec![] }
+        fn validate(&self, _: &str, _: &str) -> Result<(),String> { Ok(()) }
+        fn launch(&self, _: &Value) -> Result<ProcessIdentity,String> { Err("Unexpected launch".into()) }
+        fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>,String> {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            Ok(None)
+        }
+        fn alive(&self, _: &ProcessIdentity) -> Result<bool,String> { Ok(false) }
+    }
+    let scratch = Scratch::new();
+    let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
+    let game = ac_catalogue_game(&scratch.0.join("AC"));
+    let root = Path::new(game["installPath"].as_str().unwrap());
+    ac_catalogue_car(root, "car", "Original Car");
+    let (entered, observed) = mpsc::channel();
+    let (release, blocked) = mpsc::channel();
+    runtime.request(&json!({"command":"game_integration_setup"}), &game,
+        Arc::new(PausedCarProbe { entered, release:Mutex::new(blocked) })).unwrap();
+    observed.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(runtime.busy());
+    assert_eq!(ac_catalogue_choices(&runtime, &game), json!([]), "An unfinished setup must not publish its scanned choices");
+    release.send(()).unwrap();
+    wait_setup(&runtime);
+    let initial = json!([{"id":"car","name":"Original Car"}]);
+    assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
+
+    ac_catalogue_car(root, "new_car", "New Car");
+    let (entered, observed) = mpsc::channel();
+    let (release, blocked) = mpsc::channel();
+    runtime.request(&json!({"command":"game_integration_setup"}), &game,
+        Arc::new(PausedCarProbe { entered, release:Mutex::new(blocked) })).unwrap();
+    observed.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
+    runtime.request(&json!({"command":"game_integration_cancel"}), &game, Arc::new(FakePlatform(false))).unwrap();
+    release.send(()).unwrap();
+    wait_setup(&runtime);
+    assert_eq!(ac_catalogue_choices(&runtime, &game), initial, "Cancelled repair must retain the last completed catalogue");
+    runtime.shutdown();
+}
+
+#[test]
+fn ac_cancel_at_final_publication_boundary_preserves_memory_and_disk_catalogue() {
+    use std::sync::mpsc;
+    let scratch = Scratch::new();
+    let path = scratch.0.join("setup.json");
+    let cache_path = path.with_file_name("assetto-corsa-cars-v1.json");
+    let runtime = GameIntegrationSetup::new(path, true);
+    let game = ac_catalogue_game(&scratch.0.join("AC"));
+    let root = Path::new(game["installPath"].as_str().unwrap());
+    ac_catalogue_car(root, "car", "Original Car");
+    let setup = json!({"command":"game_integration_setup"});
+    runtime.request(&setup, &game, Arc::new(FakePlatform(false))).unwrap();
+    wait_setup(&runtime);
+    let initial = ac_catalogue_choices(&runtime, &game);
+    let persisted = fs::read(&cache_path).unwrap();
+
+    ac_catalogue_car(root, "new_car", "New Car");
+    let (entered, observed) = mpsc::channel();
+    let (release, blocked) = mpsc::channel();
+    *runtime.inner.ac_cars_publication_pause.lock().unwrap() = Some((entered, blocked));
+    runtime.request(&setup, &game, Arc::new(FakePlatform(false))).unwrap();
+    // The worker has finished scanning/probing and passed its early cancellation
+    // check. Pause only the final publication, then acknowledge a real cancel.
+    observed.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(runtime.busy());
+    runtime.request(&json!({"command":"game_integration_cancel"}), &game,
+        Arc::new(FakePlatform(false))).unwrap();
+    assert!(runtime.inner.cancel.load(Ordering::Acquire));
+    release.send(()).unwrap();
+    wait_setup(&runtime);
+
+    assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
+    assert_eq!(fs::read(&cache_path).unwrap(), persisted);
+    assert!(runtime.inner.states.lock().unwrap()["assetto-corsa"]["message"]
+        .as_str().unwrap().contains("cancelled"));
+    runtime.shutdown();
+}
+
+#[test]
+fn other_assetto_setup_providers_never_create_the_original_ac_car_catalogue() {
+    let scratch = Scratch::new();
+    let path = scratch.0.join("setup.json");
+    let runtime = GameIntegrationSetup::new(path.clone(), true);
+    for (id, filename) in [("assetto-corsa-rally","acr.exe"),("assetto-corsa-competizione","AC2-Win64-Shipping.exe"),("assetto-corsa-evo","AssettoCorsaEVO.exe")] {
+        let executable = scratch.0.join(filename);
+        fs::write(&executable, b"Unlaunched other-Assetto setup fixture").unwrap();
+        let game = json!({"id":id,"provider":id,"installed":true,"executable":executable});
+        runtime.request(&json!({"command":"game_integration_setup"}), &game, Arc::new(FakePlatform(false))).unwrap();
+        wait_setup(&runtime);
+        assert!(!path.with_file_name("assetto-corsa-cars-v1.json").exists());
+        let mut decorated = game.clone();
+        runtime.decorate_installed_cars(&mut decorated);
+        assert_eq!(decorated, game, "Car discovery must leave {id} unchanged");
+    }
+    runtime.shutdown();
 }
 
 #[test]

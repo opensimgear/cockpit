@@ -484,7 +484,9 @@ impl Tracker {
             "Aircraft come from this installation's Aircraft folder. Current aircraft requires fresh RREF telemetry."
         };
         game["vehicleSupport"] = json!({"supported":supported,"kind":if id.starts_with("assetto-corsa"){"car"}else{"aircraft"},"vehicles":values.values().collect::<Vec<_>>(),"message":message});
-        game["currentVehicle"] = self.current(&id).unwrap_or(Value::Null);
+        game["currentVehicle"] = self.entries.get(&id)
+            .filter(|entry| entry.installation == Self::installation(game))
+            .and_then(|_| self.current(&id)).unwrap_or(Value::Null);
         game["vehicleStatus"] = json!({"status":if game["currentVehicle"].is_object(){"ready"}else if self.entries.get(&id).is_some_and(|entry|entry.error.is_some()){"unavailable"}else{"waiting"},"message":self.entries.get(&id).and_then(|entry|entry.error.as_deref()).unwrap_or("Waiting for a running game and fresh vehicle telemetry.")});
     }
 }

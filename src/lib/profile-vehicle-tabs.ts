@@ -3,6 +3,7 @@ import type { GameId } from './games';
 
 type Document = DeepReadonly<ProfileDocument>;
 const clone = <T>(value: DeepReadonly<T>): T => JSON.parse(JSON.stringify(value));
+const vehicleTabName = (name: string): string => [...name.trim()].slice(0, 80).join('').trimEnd();
 export function profileNodeIds(document: Document): string[] {
   return [...document.resources, ...document.processingNodes, ...document.virtualOutputs, ...(document.desktopOutputs ?? [])].map(node => node.id);
 }
@@ -54,7 +55,7 @@ export function profileAddVehicleTab(document: Document, gameId: GameId, vehicle
   if ((next.vehicleTabs?.length ?? 0) >= 32) throw Error('A profile supports at most 32 vehicle tabs.');
   let number = 1; while (next.vehicleTabs?.some(tab => tab.id === `vehicle-${number}`)) number++;
   const tabId = `vehicle-${number}`;
-  next.vehicleTabs = [...(next.vehicleTabs ?? []), { id: tabId, gameId, vehicleId: vehicle.id, vehicleName: vehicle.name, nodeIds: [] }];
+  next.vehicleTabs = [...(next.vehicleTabs ?? []), { id: tabId, gameId, vehicleId: vehicle.id, vehicleName: vehicleTabName(vehicle.name), nodeIds: [] }];
   return { document: next, tabId };
 }
 export function profileChangeVehicleTab(document: Document, tabId: string, vehicle: { id: string; name: string }): ProfileDocument {
@@ -62,7 +63,7 @@ export function profileChangeVehicleTab(document: Document, tabId: string, vehic
   if (!tab) throw Error('Choose an existing vehicle tab.');
   if (next.vehicleTabs?.some(other => other.id !== tabId && other.gameId === tab.gameId && other.vehicleId === vehicle.id)) throw Error('This vehicle already has a tab.');
   if (!vehicle.id.trim() || !vehicle.name.trim()) throw Error('Choose a vehicle for this tab.');
-  tab.vehicleId = vehicle.id; tab.vehicleName = vehicle.name;
+  tab.vehicleId = vehicle.id; tab.vehicleName = vehicleTabName(vehicle.name);
   return next;
 }
 /** Remove the complete layer, routes, local assignments and editor references atomically. */

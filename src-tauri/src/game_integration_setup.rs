@@ -22,6 +22,9 @@ struct Inner {
     states: Mutex<BTreeMap<String, Value>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
+    ac_cars: Mutex<crate::ac_car_catalogue_cache::Cache>,
+    #[cfg(test)]
+    ac_cars_publication_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     cancel: AtomicBool,
     busy: AtomicBool,
     closed: AtomicBool,
@@ -217,6 +220,9 @@ impl GameIntegrationSetup {
         Self {
             inner: Arc::new(Inner {
                 work: path.with_extension("setup-work"),
+                ac_cars: Mutex::new(crate::ac_car_catalogue_cache::Cache::new(path.with_file_name("assetto-corsa-cars-v1.json"))),
+                #[cfg(test)]
+                ac_cars_publication_pause: Mutex::new(None),
                 path,
                 native,
                 settings_error: loaded.as_ref().err().cloned(),
@@ -249,6 +255,9 @@ impl GameIntegrationSetup {
     }
     pub(crate) fn busy(&self) -> bool {
         self.inner.busy.load(Ordering::Acquire)
+    }
+    pub(crate) fn decorate_installed_cars(&self, game: &mut Value) {
+        self.inner.ac_cars.lock().unwrap_or_else(|p| p.into_inner()).decorate(game);
     }
     pub(crate) fn pending(&self) -> bool {
         crate::dcs_setup::recovery_pending(&self.inner.work)
@@ -318,7 +327,7 @@ impl GameIntegrationSetup {
         }
         let command = request["command"].as_str().unwrap_or("");
         if command == "game_integration_cancel" {
-            self.inner.cancel.store(true, Ordering::Release);
+            self.inner.cancel();
             return Ok(());
         }
         if self.busy() {
@@ -684,6 +693,16 @@ impl GameIntegrationSetup {
                     write_settings(&inner.path, &draft)?;
                     *inner.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
                 }
+                let cars = if configure && id == "assetto-corsa" {
+                    if let Some(status) = inner.states.lock().unwrap_or_else(|p| p.into_inner()).get_mut(&id) {
+                        status["progress"] = json!("Scanning installed Assetto Corsa cars");
+                    }
+                    let root = game["installPath"].as_str().ok_or("Choose the Assetto Corsa installation before scanning cars.")?;
+                    Some(crate::ac_car_catalogue::scan(Path::new(root))?)
+                } else { None };
+                if inner.cancel.load(Ordering::Acquire) {
+                    return Err("Assetto telemetry check was cancelled.".into());
+                }
                 let proof = crate::acr_setup::probe(
                     &game,
                     platform.as_ref(),
@@ -697,6 +716,19 @@ impl GameIntegrationSetup {
                     },
                 )?;
                 inner.accept_assetto_proof(&id, &proof)?;
+                if let Some(cars) = cars {
+                    if inner.cancel.load(Ordering::Acquire) { return Err("Assetto telemetry check was cancelled.".into()); }
+                    #[cfg(test)]
+                    if let Some((entered, release)) = inner.ac_cars_publication_pause.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                        entered.send(()).map_err(|_| "Catalogue publication test disconnected.")?;
+                        release.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_| "Catalogue publication test timed out.")?;
+                    }
+                    let mut cache = inner.ac_cars.lock().unwrap_or_else(|p| p.into_inner());
+                    // Recheck under the same gate used by cancellation. A cancel
+                    // accepted while publication was waiting must retain the old snapshot.
+                    if inner.cancel.load(Ordering::Acquire) { return Err("Assetto telemetry check was cancelled.".into()); }
+                    cache.replace(&game, cars)?;
+                }
                 Ok(proof)
             })();
             let mut status = inner.inspect(&game, None);
@@ -731,13 +763,19 @@ impl GameIntegrationSetup {
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
-        self.inner.cancel.store(true, Ordering::Release);
+        self.inner.cancel();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
     }
 }
 impl Inner {
+    fn cancel(&self) {
+        // Publication that already owns this gate completes before cancellation;
+        // otherwise the worker observes cancellation before replacing the cache.
+        let _publication = self.ac_cars.lock().unwrap_or_else(|p| p.into_inner());
+        self.cancel.store(true, Ordering::Release);
+    }
     fn decorate_removal(&self, id: &str, status: &mut Value) {
         status["installed"] = json!(false);
         status["removable"] = json!(false);
