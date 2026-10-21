@@ -1,12 +1,14 @@
 import type { Bounds, PortableUi, Style } from "../../companion-contracts/src/index.ts";
+import type { WidgetDefinition, WidgetInstance } from "./widget-model.ts";
 export type { Bounds, PortableUi, Style };
 export const DESIGNER_LIMITS = Object.freeze({ history: 50, drafts: 20, widgets: 192, groups: 64, viewportRegions: 32, targets: 8, assetPixels: 16777216, totalAssetPixels: 33554432, assetDimension: 8192, bundleBytes: 13 * 1024 * 1024 });
-export type WidgetKind = "button" | "selector" | "hat" | "encoder" | "slider" | "xy" | "indicator" | "text" | "numeric" | "icon" | "gauge" | "image";
+export type WidgetKind = "button" | "selector" | "hat" | "encoder" | "slider" | "xy" | "indicator" | "text" | "numeric" | "icon" | "gauge" | "image" | "component";
 interface WidgetBase {
   id: string; pageId: string; label: string; bounds: Bounds; controlIds: string[];
   feedbackIds: string[]; groupId?: string; style?: Style;
 }
 export type DesignerWidget =
+  | (WidgetBase & { kind: "component"; config: WidgetInstance })
   | (WidgetBase & { kind: "image"; config: { assetId?: string } })
   | (WidgetBase & { kind: "button"; config: { buttonMode: "momentary" | "toggle" | "pulse" | "repeat"; pulseMs: number; repeatMs: number; iconAssetId?: string } })
   | (WidgetBase & { kind: "selector"; config: { options: { label: string; value: number }[] } })
@@ -24,8 +26,8 @@ export interface Viewport { pageId: string; width: number; height: number; safeI
 export interface LogicalTarget { id: string; label: string; axes: ("unipolar" | "bipolar")[]; buttons: number; hats: number }
 export interface LogicalBinding { controlId: string; targetId: string; kind: "axis" | "button" | "hat"; index: number }
 export interface DesignerDocument {
-  schemaVersion: 2; ui: PortableUi;
-  presentation: { widgets: DesignerWidget[]; groups: DesignerGroup[]; viewports: Viewport[]; grid: { columns: number; rows: number; snap: boolean } };
+  schemaVersion: 2 | 3; ui: PortableUi;
+  presentation: { widgets: DesignerWidget[]; groups: DesignerGroup[]; viewports: Viewport[]; grid: { columns: number; rows: number; snap: boolean }; definitions?: WidgetDefinition[] };
   targets: LogicalTarget[]; bindings: LogicalBinding[];
 }
 export interface AssetPayload { assetId: string; base64: string }

@@ -3,6 +3,7 @@ import { DESIGNER_LIMITS } from "./types.ts";
 import type { AssetPayload, DesignerDocument, PortableBundle, Publication } from "./types.ts";
 import { assert, canonical, checked, clone, digest, exact, newId, validateDesignerDocument } from "./model.ts";
 import { migratePortableUi } from "./editor.ts";
+import { widgetSemantics } from "./widget-model.ts";
 export function encodeBase64(bytes: Uint8Array): string {
   let binary = ""; for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768)); return btoa(binary);
 }
@@ -100,6 +101,10 @@ function capabilityData(document: DesignerDocument): unknown {
     controls: doc.ui.controls.map(({ id, kind, ...control }) => ({ id, kind, ...(kind === "axis" ? { axisMode: (control as { axisMode: string }).axisMode, fallback: (control as { fallback: number }).fallback } : {}) })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     feedback: doc.ui.feedbackWidgets.map(({ id, kind, channelId }) => ({ id, kind, channelId })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     widgets: doc.presentation.widgets.map(widget => {
+      if (widget.kind === "component") {
+        const definition = doc.presentation.definitions!.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion)!;
+        return { id: widget.id, kind: widget.kind, controlIds: widget.controlIds, feedbackIds: widget.feedbackIds, config: widgetSemantics(definition, widget.config.properties) };
+      }
       const config = clone(widget.config) as Record<string, unknown>;
       for (const key of ["assetId", "iconAssetId", "symbol", "prefix", "suffix", "orientation"]) delete config[key];
       if (widget.kind === "selector") config.options = widget.config.options.map(option => ({ value: option.value }));

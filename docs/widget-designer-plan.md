@@ -54,3 +54,11 @@ file is a tracker, not evidence that unchecked work exists.
 - Designer coverage suite: 88 tests pass; widget-model coverage is 100% lines,
   97.55% branches and 97.78% functions. No UI, native LVGL or hardware evidence
   is implied by this contract checkpoint.
+- Source-document checkpoint: explicit schema 3 definitions and component
+  instances, independent primitive/channel ownership, undo/duplication, pinned
+  revision adoption, ten original editable catalog recipes, bundle round-trip
+  identity and styling-versus-semantic fingerprints. Existing schema 2
+  publication behavior remains unchanged. Native admission and runtime delivery
+  integration remain pending.
+- Updated designer checks and coverage pass: 97 tests; 97.50% aggregate lines,
+  96.27% branches and 96.93% functions.
