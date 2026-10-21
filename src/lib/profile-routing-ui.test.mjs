@@ -303,6 +303,13 @@ test('Debug defaults to telemetry and retains working profile inspection and run
   }
 });
 
+test('standalone Debug retains all diagnostic sections without a profile-owned Back button',async()=>{
+  const h=await debugHarness(draft(),{},{editor:null,close:undefined,locate:undefined});
+  assert.match(h.body,/<h1\b[^>]*>Debug<\/h1>/);assert.ok(h.body.includes('aria-label="Debug sections"'));
+  for(const label of ['Incoming telemetry','Profile inspection','Runtime &amp; recovery'])assert.ok(h.body.includes(label),label);
+  assert.ok(!h.body.includes('Back to Profiles'));assert.ok(!h.body.includes('Current editor draft'));
+});
+
 test('Profile debug preflight captures the unsaved graph and pages diagnostics by actual returned counts without saving or effects',async()=>{
   const value=draft(),calls=[],report={schemaVersion:1,compilationId:'22222222-2222-4222-8222-222222222222',profileId:value.document.id,profileRevision:1,programHash:null,documentSemanticHash:null,captureFingerprint:`sha256:${'1'.repeat(64)}`,readiness:'blocked',diagnostics:[],sectionTotals:{diagnostics:0,nodes:0,order:0,sources:0,sinks:0,branches:0,controllers:0,visibility:0},budgets:null};
   const diagnostics=Array.from({length:7},(_,index)=>({code:`problem-${index}`,severity:'warning',message:`Diagnostic ${index}`,location:{resourceId:'third-party-a',nodeId:null,portId:'button',edgeIds:[]}}));report.diagnostics=diagnostics.slice(0,2);report.sectionTotals.diagnostics=7;

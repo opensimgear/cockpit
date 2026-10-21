@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import test from 'node:test';
 // Read-only UI acceptance against the real running native cockpit.
-test('incoming telemetry is organized and Debug is restricted to the profile list', {skip:process.env.OSG_GAME_TELEMETRY_NATIVE!=='1',timeout:120000}, async()=>{
+test('Debug navigation owns organized telemetry and profile diagnostics', {skip:process.env.OSG_GAME_TELEMETRY_NATIVE!=='1',timeout:120000}, async()=>{
 const targets=await(await fetch(`${process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9224'}/json/list`,{signal:AbortSignal.timeout(5000)})).json();
 const target=targets.find(t=>t.type==='page'&&t.url.includes(':1420'));
 assert.ok(target);
@@ -21,10 +21,15 @@ try{
  await click('Profiles',`document.querySelector('nav[aria-label="Main navigation"]')`);
  if(await evaluate(`!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='← Back to Profiles')`))await click('← Back to Profiles');
  assert.equal(await evaluate(`document.querySelectorAll('.page-heading .page-actions button').length>0`),true);
- await click('Debug');
+ assert.equal(await evaluate(`!![...document.querySelectorAll('.profiles-workspace button')].find(b=>b.textContent.trim()==='Debug')`),false);
+ await until(`document.querySelector('[aria-label="Edit Default"]')&&!document.querySelector('[aria-label="Edit Default"]').disabled`,'Profiles did not finish loading before navigation');
+ await click('Debug',`document.querySelector('nav[aria-label="Main navigation"]')`);
  await until(`document.querySelector('.game-telemetry .source-heading h2')&&!document.querySelector('.telemetry-error')`,'Incoming telemetry did not load');
  const initial=await evaluate(`({tabs:[...document.querySelectorAll('[aria-label="Debug sections"] button')].map(e=>e.textContent.trim()),games:[...document.querySelector('[aria-label="Telemetry game"]').options].map(o=>({id:o.value,label:o.textContent})),body:document.querySelector('.game-telemetry').innerText.slice(0,2500),overflow:document.documentElement.scrollWidth>innerWidth})`);
- assert.equal(initial.games.filter(g=>g.id).length,7);assert.equal(initial.overflow,false);checks.push('Profiles list opens incoming telemetry by default with seven game choices and no horizontal page overflow.');
+ assert.equal(initial.games.filter(g=>g.id).length,7);assert.equal(initial.overflow,false);
+ assert.equal(await evaluate(`document.querySelector('nav[aria-label="Main navigation"] button.current')?.textContent.trim()`),'Debug');
+ assert.equal(await evaluate(`!!document.querySelector('.profile-debug .back-debug')`),false);
+ checks.push('The dedicated Debug navigation opens incoming telemetry with seven game choices, no Profiles back button and no horizontal page overflow.');
  await change('[aria-label="Telemetry game"]','assetto-corsa-evo');
  await until(`document.querySelector('.source-heading h2')?.textContent.includes('EVO')&&!document.querySelector('.telemetry-error')`,'EVO selection failed');
  await evaluate(`(()=>{const e=document.querySelector('[aria-label="Search game telemetry"]');e.value='engine.rpm';e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
@@ -38,18 +43,26 @@ try{
  const screenshot=await send('Page.captureScreenshot',{format:'png'});await writeFile(directory+'/debug-physics.png',Buffer.from(screenshot.data,'base64'));
  await click('Profile inspection');
  assert.equal(await evaluate(`!document.querySelector('[aria-label="Native graph preflight"]').closest('[role="tabpanel"]').hidden`),true);
+ await until(`!!document.querySelector('[aria-label="Debug profile"]')?.value&&!![...document.querySelectorAll('.profile-debug button')].find(b=>b.textContent.trim()==='Inspect draft preflight'&&!b.disabled)`,'Saved profile inspection did not load');
+ await click('Inspect draft preflight',`document.querySelector('.profile-debug')`);
+ await until(`document.querySelector('[aria-label="Native graph preflight"]')?.textContent.includes('Readiness:')&&!document.querySelector('.debug-error')`,'Saved profile preflight did not complete');
  await click('Runtime & recovery');
  assert.equal(await evaluate(`document.querySelector('[aria-label="Debug sections"] [aria-selected="true"]').textContent.trim()`),'Runtime & recovery');
- checks.push('Profile inspection and Runtime & recovery remain available as separate Debug sections.');
- await click('← Back to Profiles',`document.querySelector('.profile-debug')`);
+ checks.push('Profile inspection loads saved profiles and completes native preflight; Runtime & recovery remains a separate Debug section.');
+ await click('Profiles',`document.querySelector('nav[aria-label="Main navigation"]')`);
+ await until(`!document.querySelector('.profile-debug')`,'Debug did not unmount when leaving its section');
  await click('Edit Default');
  await until(`!!document.querySelector('.editor-title')`,'Profile editor did not open');
- assert.equal(await evaluate(`!![...document.querySelectorAll('button')].find(b=>b.getClientRects().length&&b.textContent.trim()==='Debug')`),false);
- checks.push('The real Default profile editor has no Debug button.');
+ assert.equal(await evaluate(`!![...document.querySelectorAll('.profiles-workspace button')].find(b=>b.textContent.trim()==='Debug')`),false);
+ checks.push('Neither the saved profile list nor the real Default editor contains a Debug button. Debug unmounts when leaving its section.');
  await click('← Back to Profiles');
- await click('Debug');
+ await click('Debug',`document.querySelector('nav[aria-label="Main navigation"]')`);
  await until(`!!document.querySelector('.game-telemetry .source-heading h2')`,'Debug failed to reopen');
- checks.push('Debug remains accessible from the saved profile list.');
+ await evaluate('history.back()');
+ await until(`document.querySelector('nav[aria-label="Main navigation"] button.current')?.textContent.trim()==='Profiles'`,'Back did not restore Profiles');
+ await evaluate('history.forward()');
+ await until(`document.querySelector('nav[aria-label="Main navigation"] button.current')?.textContent.trim()==='Debug'&&!!document.querySelector('.game-telemetry .source-heading h2')`,'Forward did not restore Debug');
+ checks.push('Back and Forward restore the dedicated Debug section independently of Profiles.');
  await writeFile(directory+'/evidence.json',JSON.stringify({actualNativeCockpit:true,initial,rpm,physics,checks},null,2));
  console.log(JSON.stringify({directory,checks}));
 }finally{socket.close();}

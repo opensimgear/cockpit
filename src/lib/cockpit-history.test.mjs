@@ -60,6 +60,15 @@ test('main and detail visits restore through Back and Forward without adding ent
   assert.equal(ui.navigation.ownsLocation(),true);
 });
 
+test('Debug is a standalone history route restored between the profile editor and Games',async()=>{
+  const ui=fixture();assert.deepEqual(plain(cockpitRoute({view:'debug'})),{view:'debug'});
+  ui.navigation.record({view:'profiles',profileId:'saved-profile'});ui.navigation.record({view:'debug'});ui.navigation.record({view:'games',gameId:'dcs'});
+  ui.navigation.back();await settle();assert.deepEqual(plain(ui.navigation.route),{view:'debug'});
+  ui.navigation.back();await settle();assert.deepEqual(plain(ui.navigation.route),{view:'profiles',profileId:'saved-profile'});
+  ui.navigation.forward();await settle();assert.deepEqual(plain(ui.navigation.route),{view:'debug'});
+  assert.deepEqual(ui.restored,[{view:'debug'},{view:'profiles',profileId:'saved-profile'},{view:'debug'}]);assert.equal(ui.entries.length,4);
+});
+
 test('mouse Back and Forward consume their complete event sequence once and ordinary clicks remain untouched',async()=>{
   const ui=fixture();ui.navigation.record({view:'companions'});ui.navigation.record({view:'preferences'});
   for(const type of ['mousedown','mouseup','auxclick'])assert.equal(ui.dispatch(type,{button:3}).defaultPrevented,true);

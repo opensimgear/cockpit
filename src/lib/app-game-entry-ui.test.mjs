@@ -32,17 +32,18 @@ async function component(name){
   });
   components.set(name,result);return result;
 }
-async function appGames(selectedGameId=''){
+async function appView(view='games',selectedGameId=''){
   const filename=new URL('../App.svelte',import.meta.url),original=await readFile(filename,'utf8');
-  const source=original.replace("let view = $state<View>('overview');","let view = $state<View>('games');").replace('let games = $state<GamesState>();','let games = $state<GamesState>(fixtureGameState);').replace("let selectedGameId = $state<GameId | ''>('');","let selectedGameId = $state<GameId | ''>(fixtureSelectedGame);");
+  const source=original.replace("let view = $state<View>('overview');",`let view = $state<View>(${JSON.stringify(view)});`).replace('let games = $state<GamesState>();','let games = $state<GamesState>(fixtureGameState);').replace("let selectedGameId = $state<GameId | ''>('');","let selectedGameId = $state<GameId | ''>(fixtureSelectedGame);");
   assert.notEqual(source,original);
-  const {js}=compile(source,{filename:filename.pathname,generate:'server'}),GamesPanel=await component('./GamesPanel.svelte'),Icon=await component('./Icon.svelte');let props;
+  const {js}=compile(source,{filename:filename.pathname,generate:'server'}),GamesPanel=await component('./GamesPanel.svelte'),Icon=await component('./Icon.svelte');let props;const debugPanels=[];
   const game={...modules.get('./games').supportedGames.find(game=>game.id==='dcs'),installed:true,launchSupported:true,executable:'C:\\DCS\\bin\\DCS.exe',integrationSetup:{state:'setup-required',message:'Fixture provider has not been set up.',providerSetupRevision:`sha256:${'1'.repeat(64)}`,connection:modules.get('./game-provider-settings').defaultProviderConnection('dcs')},integrationContext:{status:'waiting-profile',message:'No verified matching game context.',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}};
   const App=evaluate(js.code,filename.pathname,name=>{
     if(name==='svelte/internal/server')return server;
     if(name==='svelte')return svelte;
     if(name.endsWith('/Icon.svelte'))return{default:Icon};
     if(name.endsWith('/GamesPanel.svelte'))return{default:(payload,current)=>{props=current;return GamesPanel(payload,current);}};
+    if(name.endsWith('/DebugPanel.svelte'))return{default:(_payload,current)=>{debugPanels.push(current);}};
     if(name.endsWith('.svelte'))return{default:()=>{}};
     const key=name.replace('./lib/','./');if(modules.has(key))return modules.get(key);
     if(name.endsWith('/gateway'))return{gatewayRequest:noRequest,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};
@@ -51,8 +52,18 @@ async function appGames(selectedGameId=''){
     if(name.endsWith('/notifications'))return{notify:noRequest};
     throw new Error(`Unexpected App dependency ${name}`);
   },{fixtureGameState:{catalogue:[game],cleanup:{phase:'idle'}},fixtureSelectedGame:selectedGameId});
-  return{body:render(App).body,props,source:original};
+  return{body:render(App).body,props,source:original,debugPanels};
 }
+const appGames=selectedGameId=>appView('games',selectedGameId);
+
+test('actual App gives Debug its own sidebar section and mounts it independently of Profiles',async()=>{
+  const debug=await appView('debug'),body=debug.body.replace(/<!--[\s\S]*?-->/g,'');
+  const navigation=body.match(/<nav\b[^>]*aria-label="Main navigation"[^>]*>([^]*?)<\/nav>/)?.[1];assert.ok(navigation);
+  const entry=navigation.match(/<button\b([^>]*title="Debug"[^>]*)>([^]*?)<\/button>/);assert.ok(entry,'Debug is a top-level navigation entry.');assert.match(entry[1],/\bclass="[^"]*\bcurrent\b/);assert.equal(entry[2].replace(/<[^>]*>/g,'').trim(),'Debug');
+  assert.equal(debug.debugPanels.length,1);assert.ok(debug.debugPanels[0].runtime,'Debug shares the App runtime controller.');assert.equal(typeof debug.debugPanels[0].runtimeState,'object');assert.equal(debug.props,undefined,'Debug does not render Games.');
+  assert.ok(!body.includes('Profile canvas'));assert.ok(!/<h1[^>]*>Profiles<\/h1>/.test(body));
+  for(const view of ['overview','games','profiles'])assert.equal((await appView(view)).debugPanels.length,0,`Debug is not mounted from ${view}.`);
+});
 
 test('actual App Games tiles expose unified launch without injecting hardware targets or configuration readers',async()=>{
   const{body,props,source}=await appGames();

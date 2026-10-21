@@ -1,4 +1,4 @@
-export type CockpitView = 'overview' | 'devices' | 'device' | 'profiles' | 'companions' | 'games' | 'activity' | 'preferences';
+export type CockpitView = 'overview' | 'devices' | 'device' | 'profiles' | 'companions' | 'games' | 'activity' | 'debug' | 'preferences';
 export type CompanionPage = { kind: 'main' } | { kind: 'companion' | 'panel'; id: string };
 export interface CockpitRoute {
   view: CockpitView;
@@ -11,7 +11,7 @@ export interface CockpitRoute {
 }
 type Entry = { index: number; route: CockpitRoute };
 type HistoryHost = Pick<Window, 'history' | 'location' | 'addEventListener' | 'removeEventListener'>;
-const views = new Set(['overview', 'devices', 'device', 'profiles', 'companions', 'games', 'activity', 'preferences']);
+const views = new Set(['overview', 'devices', 'device', 'profiles', 'companions', 'games', 'activity', 'debug', 'preferences']);
 const id = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 1024;
 
 export function cockpitRoute(value: unknown): CockpitRoute | null {

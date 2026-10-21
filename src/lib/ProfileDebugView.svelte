@@ -21,7 +21,7 @@
     inventoryRevision:number; compiler:Pick<ProfileCompilerClient,'compile'|'inspect'>; runtimeState:DeepReadonly<RuntimeControlState>;
     runtime?:ProfileRuntimeController;onRuntimeState?:(state:DeepReadonly<RuntimeControlState>)=>void;
     inspection:ProfileInspectionController; activity:ProfileActivityController; selectedId?:string;profileName?:string;active?:boolean;
-    loadProfile:(id:string)=>Promise<ProfileResult>;close:()=>void;locate:(id:string)=>void;
+    loadProfile:(id:string)=>Promise<ProfileResult>;close?:()=>void;locate?:(id:string)=>void;
   }=$props();
   let source=$state(untrack(()=>editor?'draft':runtimeState.status?.owner?.profileId??profiles[0]?.id??''));
   let saved=$state.raw<{document:ProfileDocument;assignments:ProfileLocalAssignment[]}|null>(null),loading=$state(false),error=$state(''),epoch=0;
@@ -41,6 +41,7 @@
   const requirements=$derived(preview?.requirements?[preview.requirements.desktopInput?'keyboard and mouse':'',preview.requirements.virtualDevices?'virtual controllers':'',preview.requirements.visibility?'device visibility':''].filter(Boolean):[]);
   onMount(()=>{mounted=true;return()=>{mounted=false;};});
   onDestroy(()=>{epoch++;});
+  $effect(()=>{if(!source&&profiles.length)source=runtimeState.status?.owner?.profileId??profiles[0].id;});
   $effect(()=>{if(mounted&&active&&section==='profile'&&source&&source!=='draft'&&!saved&&!loading&&!error)untrack(()=>void read());});
   $effect(()=>{
     if(!mounted||!active||section!=='runtime')return;
@@ -57,7 +58,7 @@
 </script>
 
 <section class="profile-debug" aria-label="Profile debug">
-  <button class="text-button back-debug" onclick={close}>← Back to {editor?'profile':'Profiles'}</button>
+  {#if close}<button class="text-button back-debug" onclick={close}>← Back to {editor?'profile':'Profiles'}</button>{/if}
   <div class="page-heading"><div><p class="eyebrow">DIAGNOSTICS</p><h1>Debug</h1><p>Watch incoming game telemetry, inspect profiles, and investigate output recovery.</p></div></div>
   <div class="debug-sections" role="tablist" aria-label="Debug sections">{#each sections as item (item.id)}<button id={`${debugId}-${item.id}-tab`} role="tab" aria-selected={section===item.id} aria-controls={`${debugId}-${item.id}-panel`} tabindex={section===item.id?0:-1} onclick={()=>section=item.id} onkeydown={sectionKey}>{item.label}</button>{/each}</div>
   <div id={`${debugId}-telemetry-panel`} role="tabpanel" aria-labelledby={`${debugId}-telemetry-tab`} hidden={section!=='telemetry'}><GameTelemetryInspector active={active&&section==='telemetry'}/></div>
@@ -69,7 +70,7 @@
     {#if error}<p class="debug-error" role="alert">{error}</p>{/if}
     {#if preview}<p role="status">Readiness: <strong>{preview.readiness}</strong>{#if !current} · Profile or inventory changed; refresh preflight.{/if}</p>
       {#if preview.budgets}<p>{preview.budgets.usedSources}/16 source resources · {preview.budgets.virtualTargets}/8 virtual controllers · {preview.budgets.bindings}/512 routes · {preview.budgets.timerCapacity} timers</p>{/if}
-      <ul class="diagnostics">{#each diagnostics as diagnostic,index (`${offset}/${index}`)}<li><strong>{diagnostic.code}</strong> · {diagnostic.message}{#if current&&draft?.document.id===editor?.document.id&&(diagnostic.location.nodeId||diagnostic.location.resourceId)} <button class="text-button" onclick={()=>locate(diagnostic.location.nodeId??diagnostic.location.resourceId!)}>Show block in editor</button>{/if}</li>{:else}<li>No diagnostics in this captured page.</li>{/each}</ul>
+      <ul class="diagnostics">{#each diagnostics as diagnostic,index (`${offset}/${index}`)}<li><strong>{diagnostic.code}</strong> · {diagnostic.message}{#if current&&locate&&draft?.document.id===editor?.document.id&&(diagnostic.location.nodeId||diagnostic.location.resourceId)} <button class="text-button" onclick={()=>locate?.(diagnostic.location.nodeId??diagnostic.location.resourceId!)}>Show block in editor</button>{/if}</li>{:else}<li>No diagnostics in this captured page.</li>{/each}</ul>
       {#if preview.sectionTotals.diagnostics>diagnostics.length}<div class="debug-toolbar"><button class="text-button" disabled={busy||offset===0} onclick={()=>page('previous')}>Previous diagnostics</button><span>{offset+1}–{offset+diagnostics.length} / {preview.sectionTotals.diagnostics}</span><button class="text-button" disabled={busy||offset+diagnostics.length>=preview.sectionTotals.diagnostics} onclick={()=>page('next')}>Next diagnostics</button></div>{/if}
       <p aria-label="Captured output requirements">Output requirements: {requirements.join(' · ')||'none'}</p>
     {/if}
@@ -87,5 +88,5 @@
 </section>
 
 <style>
-  .back-debug{font-size:11px;margin-bottom:20px;padding-left:0}.page-heading{margin-bottom:24px}h1{font-size:26px;margin:8px 0 10px}.eyebrow{font-size:8px;letter-spacing:1.5px}.page-heading p,.preflight p{font-size:11px;color:var(--muted);line-height:1.8}.debug-sections{display:flex;gap:6px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:22px;overflow:auto}.debug-sections button{background:none;border:1px solid transparent;border-radius:5px;padding:9px 13px;color:var(--muted);white-space:nowrap;cursor:pointer}.debug-sections button[aria-selected=true]{border-color:var(--line);background:var(--panel);color:var(--text)}[role=tabpanel][hidden]{display:none}.preflight,.native-details{padding:20px;margin-bottom:20px}.debug-toolbar{display:flex;align-items:end;gap:14px;flex-wrap:wrap}.debug-toolbar label{display:grid;gap:8px;font-size:10px;color:var(--muted)}select{min-width:220px;max-width:100%;font-size:11px}.profile-debug button{font-size:10px}.debug-error{color:#d3a078!important}.diagnostics{font-size:11px;line-height:1.8;padding-left:20px}.diagnostics li{margin:10px 0}.native-details summary{font-size:12px;cursor:pointer}.native-details button{margin-top:16px}pre{max-height:420px;overflow:auto;font-size:10px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+  .back-debug{font-size:11px;margin-bottom:20px;padding-left:0}.page-heading{margin-bottom:24px}h1{font-size:26px;margin:8px 0 10px}.eyebrow{font-size:8px;letter-spacing:1.5px}.page-heading p,.preflight p{font-size:11px;color:var(--muted);line-height:1.8}.debug-sections{display:flex;gap:6px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:22px;overflow:auto}.debug-sections button{background:none;border:1px solid transparent;border-radius:5px;padding:9px 13px;color:var(--muted);white-space:nowrap;cursor:pointer}.debug-sections button[aria-selected=true]{border-color:var(--line);background:var(--surface);color:var(--text)}[role=tabpanel][hidden]{display:none}.preflight,.native-details{padding:20px;margin-bottom:20px}.debug-toolbar{display:flex;align-items:end;gap:14px;flex-wrap:wrap}.debug-toolbar label{display:grid;gap:8px;font-size:10px;color:var(--muted)}select{min-width:220px;max-width:100%;font-size:11px}.profile-debug button{font-size:10px}.debug-error{color:#d3a078!important}.diagnostics{font-size:11px;line-height:1.8;padding-left:20px}.diagnostics li{margin:10px 0}.native-details summary{font-size:12px;cursor:pointer}.native-details button{margin-top:16px}pre{max-height:420px;overflow:auto;font-size:10px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
 </style>

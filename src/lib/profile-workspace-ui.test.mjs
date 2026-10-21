@@ -115,7 +115,7 @@ test('Profiles enters a Default-only list with visible Add and native keyboard-o
  assert.match(body,/<button[^>]*title="Activate saved profile \(hardware only\)"[^>]*aria-label="Activate Default"[^>]*disabled/);
  assert.match(plainHtml,/<strong[^>]*>Default<\/strong>\s*<(span|small)\b[^>]*>Built-in<\/\1>/);
  assert.ok(!body.includes('Built-in · editable'));assert.doesNotMatch(plainHtml,/>Saved profile<\/(?:span|small)>/);
- assert.ok(body.includes('aria-label="Profile selection mode"'));assert.ok(body.includes('Runtime profile status'));assert.ok(!body.includes('Saved revision'));assert.ok(body.includes('Debug'));assert.ok(!body.includes('Profile canvas'));assert.deepEqual(h.calls,[]);
+ assert.ok(body.includes('aria-label="Profile selection mode"'));assert.ok(body.includes('Runtime profile status'));assert.ok(!body.includes('Saved revision'));assert.ok(!body.includes('Profile canvas'));assert.deepEqual(h.calls,[]);
 });
 
 test('tile activation applies only the explicit saved target without editor navigation and respects current native admission',async()=>{
@@ -220,6 +220,13 @@ async function appHarness() {
 test('actual App sidebar exposes Profiles without eagerly mounting its list/editor on the overview',async()=>{
   const {body}=await appHarness();assert.match(body,/<nav[^>]*aria-label="Main navigation"/);assert.match(body.replace(/<!--[\s\S]*?-->/g,''),/<button[^>]*title="Profiles"[^>]*>[^]*?Profiles<\/button>/);assert.ok(!body.includes('Profile canvas'));assert.ok(!/<h1[^>]*>Profiles<\/h1>/.test(body));
 });
+test('opening the standalone Debug section follows the existing unsaved profile navigation guard',async()=>{
+  const app=await appHarness(),h=harness();await h.store.refresh();h.store.beginBlank([]);
+  const {ProfileNavigationGuard}=modules.get('./profile-editor'),guard=new ProfileNavigationGuard(h.store),nav=app.navigation,editor=h.store.state.editor,session=h.store.state.session;
+  nav.navigate('profiles');nav.setPanel({requestNavigation:next=>guard.request(next),getNavigation:()=>h.store.state.editor?.document.id??null});
+  nav.navigate('debug');assert.equal(nav.state.view,'profiles');assert.equal(guard.awaitingChoice,true);guard.keepEditing();assert.equal(h.store.state.editor,editor);
+  nav.navigate('debug');guard.discard();assert.equal(nav.state.view,'debug');assert.equal(h.store.state.editor,null);assert.equal(h.store.state.session,session);assert.deepEqual(h.calls,[]);
+});
 test('actual App game-settings handlers retain the original profile through game changes, return and guarded sidebar departure',async()=>{
   const app=await appHarness(),h=harness();await h.store.refresh();await h.store.refreshInventory();h.store.beginBlank();
   const {ProfileNavigationGuard}=modules.get('./profile-editor');const guard=new ProfileNavigationGuard(h.store),nav=app.navigation;
@@ -240,14 +247,14 @@ test('actual App hash navigation keeps the draft and saved canvas on browser Bac
   app.navigation.navigate('games');assert.equal(app.navigation.state.settingsVisit,null);app.setHash('#games/dcs/integration');assert.equal(app.navigation.state.settingsVisit,null);
 });
 test('retained selection metadata never marks an inactive profile as active or selected',async()=>{const h=harness();await h.store.refresh();const body=html(h.store,h.client);assert.ok(!body.includes('Selected for runtime'));assert.ok(!body.includes('<span>Active</span>'));assert.deepEqual(h.calls,[]);});
-test('profile pages keep runtime controls visible and load diagnostic views only through Debug',async()=>{
+test('profile list and editors keep runtime controls visible without a Debug entry point or diagnostic views',async()=>{
  const h=harness();await h.store.refresh();let body=html(h.store,h.client);
  const debugButtons=markup=>[...markup.matchAll(/<button\b[^>]*>([^]*?)<\/button>/g)].filter(([,content])=>content.replace(/<[^>]*>/g,'').trim()==='Debug');
  const title=body.indexOf('<h1'),add=body.indexOf('Add profile'),stop=body.indexOf('aria-label="Runtime profile status"'),list=body.indexOf('aria-label="Saved profiles"');
- assert.ok(title<add&&add<stop&&stop<list);assert.equal(debugButtons(body).length,1,'The profile list has one Debug entry point.');assert.ok(!body.includes('Applied port samples'));assert.ok(!body.includes('Native graph preflight'));assert.ok(!body.includes('Keyboard and mouse recording preview'));assert.ok(!body.includes('Saved revision'));assert.deepEqual(h.calls,[]);
+ assert.ok(title<add&&add<stop&&stop<list);assert.equal(debugButtons(body).length,0,'The profile list has no Debug entry point.');assert.ok(!body.includes('Applied port samples'));assert.ok(!body.includes('Native graph preflight'));assert.ok(!body.includes('Keyboard and mouse recording preview'));assert.ok(!body.includes('Saved revision'));assert.deepEqual(h.calls,[]);
  await h.store.open(DEFAULT_PROFILE_ID);body=html(h.store,h.client);assert.ok(body.indexOf('Back to Profiles')<body.indexOf('<h1'));assert.ok(body.indexOf('Save profile')<body.indexOf('Runtime profile status'));assert.ok(body.indexOf('Runtime profile status')<body.indexOf('Profile canvas'));assert.ok(!body.includes('Applied port samples'));assert.ok(!body.includes('Native graph preflight'));
  assert.equal(debugButtons(body).length,0,'An existing profile editor has no Debug entry point.');h.store.beginBlank([]);assert.equal(debugButtons(html(h.store,h.client)).length,0,'A new profile editor has no Debug entry point.');
- const source=await readFile(new URL('./ProfilesPanel.svelte',import.meta.url),'utf8');assert.match(source,/if debugOpen/);assert.ok(source.includes('<ProfileDebugView'));assert.ok(!source.includes('<ProfileLiveInspector'));assert.ok(!source.includes('<ProfileDesktopControls'));
+ const source=await readFile(new URL('./ProfilesPanel.svelte',import.meta.url),'utf8');assert.ok(!source.includes('debugOpen'));assert.ok(!source.includes('<ProfileDebugView'));assert.ok(!source.includes('<ProfileLiveInspector'));assert.ok(!source.includes('<ProfileDesktopControls'));
 });
 
 test('actual Add handler opens an empty editor immediately without requiring or truncating inventory',async()=>{
@@ -260,9 +267,9 @@ test('actual Add handler opens an empty editor immediately without requiring or 
  }
 });
 
-test('profile mode switch shares the Debug and Add action bar and appears only once on the list',async()=>{
+test('profile mode switch shares the Add action bar and appears only once on the list',async()=>{
  const h=harness();await h.store.refresh();const body=html(h.store,h.client),actions=body.match(/<div\b[^>]*class="[^"]*\bpage-actions\b[^"]*"[^>]*>([^]*?)<\/div><\/div>/)?.[1],runtimeCard=body.match(/<section\b[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];
- assert.ok(actions);assert.match(actions,/<button\b[^>]*role="switch"[^>]*aria-label="Automatic profile selection"/);assert.ok(actions.includes('Debug'));assert.ok(actions.includes('Add profile'));assert.ok(runtimeCard);assert.ok(!runtimeCard.includes('Profile selection mode'));assert.ok(!runtimeCard.includes('Activate a saved profile from its tile'));assert.equal((body.match(/aria-label="Profile selection mode"/g)??[]).length,1);assert.deepEqual(h.calls,[]);
+ assert.ok(actions);assert.match(actions,/<button\b[^>]*role="switch"[^>]*aria-label="Automatic profile selection"/);assert.ok(!actions.includes('Debug'));assert.ok(actions.includes('Add profile'));assert.ok(runtimeCard);assert.ok(!runtimeCard.includes('Profile selection mode'));assert.ok(!runtimeCard.includes('Activate a saved profile from its tile'));assert.equal((body.match(/aria-label="Profile selection mode"/g)??[]).length,1);assert.deepEqual(h.calls,[]);
  await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(!editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
 });
 

@@ -10,6 +10,7 @@
   import { isVisibleSystemComponent, type SystemSnapshot } from './lib/system-inventory';
   import OutputSettings from './lib/OutputSettings.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
+  import DebugPanel from './lib/DebugPanel.svelte';
   import HeaderStatus from './lib/HeaderStatus.svelte';
   import CompanionDesigner from './lib/CompanionDesigner.svelte';
   import CompanionListenerSettings from './lib/CompanionListenerSettings.svelte';
@@ -36,7 +37,7 @@
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
   import { automaticControllers, orderedModules, canChangeController, controllerStatus, controllerWarning, type ControllerAction } from './lib/controller-lifecycle';
 
-  type View = 'overview' | 'profiles' | 'companions' | 'games' | 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'preferences';
+  type View = 'overview' | 'profiles' | 'companions' | 'games' | 'gateways' | 'devices' | 'device' | 'topology' | 'activity' | 'debug' | 'preferences';
   type SettingsOrigin = { view: View; selectedGameId: GameId | ''; hash: string; returnState?: unknown };
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
@@ -46,6 +47,7 @@
     { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
+    { id: 'debug', label: 'Debug', icon: 'bug' },
   ];
   function showDialog(node: HTMLDialogElement) {
     node.showModal();
@@ -531,7 +533,9 @@
         <div hidden={view !== 'devices'}><SystemDevices bind:this={devicesPanel} active={view === 'devices'} {entries} gatewayError={inventoryError} openModule={(gatewayId, moduleId) => selectDevice(deviceKey(gatewayId, moduleId))} openCompanions={openCompanion} openIntegration={openGameSettings} onNavigate={() => {if(view==='devices')recordRoute();}} {gatewayDetails} oninventory={snapshot => { systemSnapshot = snapshot; }} /></div>
         {#if profilesMounted || view === 'profiles' || settingsVisit?.origin.view === 'profiles'}<div hidden={view !== 'profiles'}><ProfilesPanel bind:this={profilesPanel} {openGameSettings} onNavigate={() => {if(view==='profiles')recordRoute();}} active={view==='profiles'} /></div>{/if}
         {#if companionsMounted || view === 'companions'}<div hidden={view !== 'companions'}><CompanionDesigner bind:this={companionsPanel} active={view==='companions'} initialCompanionId={selectedCompanionId} onNavigate={() => {if(view==='companions')recordRoute();}} openSettings={() => navigate('preferences')} /></div>{/if}
-        {#if view === 'overview'}
+        {#if view === 'debug'}
+          <DebugPanel runtime={profileRuntime} runtimeState={profileState}/>
+        {:else if view === 'overview'}
           <OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>

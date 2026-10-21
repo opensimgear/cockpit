@@ -1,6 +1,6 @@
 # Game telemetry
 
-Games publish read-only, typed telemetry through the same game integration resources used by Profiles. Fields do not need an active binding to appear in **Profiles → Debug → Incoming telemetry**. Select a game, category, or search term to inspect its current values and native field names. Profile inspection and runtime recovery have separate Debug tabs.
+Games publish read-only, typed telemetry through the same game integration resources used by Profiles. Fields do not need an active binding to appear in **Debug → Incoming telemetry**. Open Debug from the main navigation, then select a game, category, or search term to inspect its current values and native field names. Profile inspection and runtime recovery have separate Debug tabs.
 
 The inspector reports source state, session context, packet progression, and sample age. Unknown, paused, stale, unsupported, and closed-game readings are distinct from numeric zero, false, and empty text. Inspection never applies a profile or commands a device.
 

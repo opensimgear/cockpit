@@ -7,7 +7,6 @@
   import ProfileVehicleConflicts from './ProfileVehicleConflicts.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
   import ProfileAutomaticControls from './ProfileAutomaticControls.svelte';
-  import ProfileDebugView from './ProfileDebugView.svelte';
   import ProfileLibraryTools from './ProfileLibraryTools.svelte';
   import type{ProfileSummary}from'./profiles';
   import type{ProfileLibraryClient}from'./profile-library';
@@ -23,10 +22,6 @@
   import {ProfileCompilerClient}from'./profile-compilation';
   import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
-  import {ProfileInspectorClient}from'./profile-inspection';
-  import {ProfileInspectionController}from'./profile-inspection-controller';
-  import {ProfileTopologyClient}from'./profile-activity';
-  import {ProfileActivityController}from'./profile-activity-controller';
   import {ProfileLearningClient}from'./profile-learning';
   import type {DeepReadonly} from './profiles';
   import { supportedGames, type Game, type GameId } from './games';
@@ -40,11 +35,8 @@
   const compiler=new ProfileCompilerClient(async request=>{const result=(await gatewayRequest(request)).profileCompilation;if(!result)throw new Error('Native compilation is unavailable. Reconnect the service.');return result;});
   const runtime=new ProfileRuntimeController(untrack(()=>suppliedRuntime)??new ProfileRuntimeClient(async request=>{const result=await gatewayRequest(request);return request.command==='profile_activation_status'||request.command==='profile_activation_cancel'?result.profileActivation:nativeProfileStatus(result.profiles?.profileSession);}));
   let runtimeState=$state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
-  const inspectionClient=new ProfileInspectorClient(async request=>{const result=(await gatewayRequest(request)).profileInspection;if(!result)throw new Error('Native applied port inspection is unavailable. Reconnect the service.');return result;});
-  const inspection=new ProfileInspectionController(inspectionClient);
-  const activity=new ProfileActivityController(new ProfileTopologyClient(async request=>{const result=(await gatewayRequest(request)).profileTopology;if(!result)throw new Error('Native applied topology is unavailable. Reconnect the service.');return result;}),inspectionClient);
   const learningClient=new ProfileLearningClient(async request=>{const result=(await gatewayRequest(request)).profileLearning;if(!result)throw new Error('Native input learning is unavailable. Reconnect the service.');return result;});
-  let routingSelection=$state(''),debugOpen=$state(false);
+  let routingSelection=$state('');
   const navigationGuard = new ProfileNavigationGuard(store);
   let navigationCancelled:(()=>void)|undefined;
   let workspace = $state.raw(store.state);
@@ -80,12 +72,11 @@
   const rows = $derived([...workspace.profiles].sort((a,b)=>Number(b.id===activeProfileId)-Number(a.id===activeProfileId)||Number(b.isDefault)-Number(a.isDefault)||a.name.localeCompare(b.name)));
   const assignedIds = $derived(new Set(editor?.assignments.filter(assignment=>tabNodeIds.has(assignment.resourceId)).map(assignment=>assignment.sourceId)??[]));
   const appliedSnapshot=$derived(runtimeState.status?.owner&&!runtimeState.stale?runtimeState.status.appliedSnapshot:null);
-  const appliedName = $derived(workspace.profiles.find(row=>row.id===appliedSnapshot?.profileId)?.name??appliedSnapshot?.profileId);
   const learningIdle=$derived(!!runtimeState.status&&!runtimeState.stale&&runtimeState.status.owner===null&&!['transitioning','recovery-needed'].includes(runtimeState.status.state));
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
   onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));if(workspace.view==='list')void store.refresh();return()=>{stop();stopSaved();}; });
-  onDestroy(() => { dcsCatalogueEpoch++;navigationCancelled?.();runtime.dispose();inspection.dispose();activity.dispose();if(!supplied)store.dispose(); });
+  onDestroy(() => { dcsCatalogueEpoch++;navigationCancelled?.();runtime.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
   $effect(()=>{void editorIdentity;activeVehicleTabId='';addingVehicleTab=false;});
   $effect(()=>{if(activeVehicleTabId&&!vehicleTabs.some(tab=>tab.id===activeVehicleTabId))activeVehicleTabId='';});
@@ -94,7 +85,7 @@
   $effect(()=>{void editorContext;paletteDrag=null;});
   $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,editorInventory))untrack(()=>setGameContext(selectedGame));});
   $effect(()=>{const key=dcsCatalogueKey;if(requestedDcsCatalogue===key)return;requestedDcsCatalogue=key;dcsCatalogueEpoch++;dcsCatalogueBusy=false;dcsCatalogueError='';if(key)untrack(()=>void loadDcsVehicleCatalogue());});
-  $effect(()=>{if(paletteDrag&&(!active||debugOpen||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
+  $effect(()=>{if(paletteDrag&&(!active||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
     const refresh=()=>{if(!document.hidden){if(!store.state.inventoryBusy)void store.refreshInventory();if(!libraryBusy&&!editingName)void store.refreshSaved();void refreshVehicleCatalogue();}};
@@ -105,7 +96,6 @@
   function report(operation:()=>void) { notice='';const previous=getNavigation();try{operation();workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());}catch(error){notice=error instanceof Error?error.message:String(error);} }
   export function getNavigation():string|null { const current=store.state;return current.view==='editor'?current.editor?.document.id??null:null; }
   export async function restoreNavigation(profileId:string|null):Promise<void> {
-    debugOpen=false;
     if(getNavigation()===profileId)return;
     if(profileId===null){store.back(true);workspace=store.state;return;}
     await store.open(profileId);
@@ -201,14 +191,13 @@
 </script>
 
 {#snippet runtimeTools()}
-  <ProfileRuntimeControls controller={runtime} profiles={workspace.profiles} compact active={active&&!debugOpen} onState={next=>runtimeState=next}/>
+  <ProfileRuntimeControls controller={runtime} profiles={workspace.profiles} compact {active} onState={next=>runtimeState=next}/>
 {/snippet}
 
 <section class="profiles-workspace" aria-label="Profiles">
-  {#if debugOpen}<ProfileDebugView {editor} profiles={workspace.profiles} inventory={workspace.inventory} {inventoryRevision} {compiler} {runtimeState} {runtime} onRuntimeState={next=>runtimeState=next} {inspection} {activity} selectedId={routingSelection} profileName={appliedName} {active} loadProfile={id=>profiles.getAssignments(id)} close={()=>debugOpen=false} locate={id=>{routingSelection=id;debugOpen=false;}}/>{/if}
-  <div class="profile-content" hidden={debugOpen}>
+  <div class="profile-content">
   {#if workspace.view==='list'}
-    <div class="page-heading"><div><div class="eyebrow">YOUR OPERATING SETUPS</div><h1>Profiles</h1><p>Edit Default or create an independent profile for your rig.</p></div><div class="page-actions"><ProfileAutomaticControls profiles={workspace.profiles} active={active&&!debugOpen}/><button class="secondary-button" onclick={()=>debugOpen=true}><Icon name="bug" size={14}/>Debug</button><button class="secondary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly||rows.length>=32} onclick={()=>libraryTools?.askImport()}><Icon name="upload" size={14}/>Import profile</button><button class="primary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={add}><Icon name="plus" size={14}/> Add profile</button></div></div>
+    <div class="page-heading"><div><div class="eyebrow">YOUR OPERATING SETUPS</div><h1>Profiles</h1><p>Edit Default or create an independent profile for your rig.</p></div><div class="page-actions"><ProfileAutomaticControls profiles={workspace.profiles} {active}/><button class="secondary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly||rows.length>=32} onclick={()=>libraryTools?.askImport()}><Icon name="upload" size={14}/>Import profile</button><button class="primary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={add}><Icon name="plus" size={14}/> Add profile</button></div></div>
   {:else if editor}
     <button class="text-button back-profiles" disabled={workspace.busy} onclick={back}>← Back to Profiles</button>
     <div class="editor-title">
@@ -252,7 +241,7 @@
           {#if dcsCatalogueBusy}<p class="vehicle-hint" role="status">Loading this aircraft’s controls and telemetry…</p>{/if}
           {#if dcsCatalogueError}<p class="workspace-error" role="alert">{dcsCatalogueError}</p><button class="secondary-button" disabled={dcsCatalogueBusy} onclick={()=>void loadDcsVehicleCatalogue()}>Retry aircraft catalogue</button>{/if}
         {/if}
-        {#if vehicleTabsEnabled&&!addingVehicleTab}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {activeVehicleTabId} {compiler} {inventoryRevision} active={active&&!debugOpen}/>{/if}
+        {#if vehicleTabsEnabled&&!addingVehicleTab}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {activeVehicleTabId} {compiler} {inventoryRevision} {active}/>{/if}
         {#if vehicleTabsEnabled}
           <div class="vehicle-tab-bar">
             <div class="vehicle-tabs" role="group" aria-label="Profile vehicle tabs" bind:this={vehicleTabsElement}>
@@ -277,7 +266,7 @@
           </div>
         {/if}
         <div id="profile-vehicle-canvas" role={vehicleTabsEnabled?'region':undefined} aria-label={vehicleTabsEnabled?(addingVehicleTab?'New vehicle':activeVehicleTab?.vehicleName??'Base'):undefined}>
-          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={routingInventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} active={active&&!debugOpen} runtimeIdle={learningIdle} {inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')}/>{/key}{/if}
+          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={routingInventory} inventoryClient={resources} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} {active} runtimeIdle={learningIdle} {inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')}/>{/key}{/if}
         </div>
       </div>
     </div>
@@ -296,7 +285,7 @@
   .game-context{display:grid;gap:5px;font-size:9px;color:var(--muted)}.game-context select{min-width:180px;max-width:220px;padding:9px 12px;font-size:11px;background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px}
   .profile-authoring{display:grid;grid-template-columns:236px minmax(0,1fr);align-items:start;gap:18px}.profile-canvas-workspace{min-width:0}@media(max-width:1050px){.profile-authoring{grid-template-columns:minmax(0,1fr)}}
   .profile-heading-copy{min-width:0;flex:1}.profile-title-button{display:inline-flex;align-items:center;gap:10px;max-width:100%;padding:0;background:transparent;color:inherit;font:inherit;letter-spacing:inherit;text-align:left}.profile-title-button span{min-width:0;overflow-wrap:anywhere}.profile-title-button :global(svg){flex-shrink:0;color:var(--muted);opacity:0;transition:opacity .15s}.profile-title-button:hover:enabled :global(svg),.profile-title-button:focus-visible :global(svg){opacity:1}.profile-name-input{width:100%;min-width:0;margin:0;padding:0 6px;font:inherit;letter-spacing:inherit;line-height:inherit;background:var(--input-bg);border:1px solid var(--line);border-radius:4px}.editor-save-actions{flex-shrink:0}@media(hover:none){.profile-title-button:enabled :global(svg){opacity:1}}
-  .profile-content[hidden]{display:none}.page-actions{display:flex;align-items:center;justify-content:flex-end;gap:18px;flex-wrap:wrap}.profile-tile.profile-active{border-color:var(--accent);background:var(--surface-raised)}.profile-tile.profile-muted{filter:grayscale(1);opacity:.6}.profile-tile.profile-muted:hover,.profile-tile.profile-muted:focus-within{filter:none;opacity:1}
+  .page-actions{display:flex;align-items:center;justify-content:flex-end;gap:18px;flex-wrap:wrap}.profile-tile.profile-active{border-color:var(--accent);background:var(--surface-raised)}.profile-tile.profile-muted{filter:grayscale(1);opacity:.6}.profile-tile.profile-muted:hover,.profile-tile.profile-muted:focus-within{filter:none;opacity:1}
   .profile-row-actions{position:relative;z-index:1;display:flex;align-items:center;justify-content:end;gap:6px;padding:0 16px 12px;}.profile-row-actions button{width:34px;height:34px;padding:0;border:1px solid var(--line);border-radius:5px;}.profile-row-actions button:hover:enabled{border-color:var(--accent);background:var(--surface-raised);}.profile-row-actions .activate-profile{width:auto;min-height:34px;margin-right:auto;padding:0 10px;font-size:10px;color:var(--accent);}.profile-row-actions .delete-profile{color:var(--danger,#e67979);}.profile-row-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
 
   .page-heading,.editor-title{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:24px;}h1{font-size:26px;letter-spacing:-.5px;margin:8px 0 10px;}h2{font-size:14px;}.page-heading p,.editor-title p{font-size:11px;color:var(--muted);line-height:1.8;}.page-heading button,.editor-save-actions button{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;font-size:11px;}.eyebrow{font-size:8px!important;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);}.list-tools{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:12px;}.profile-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:18px;list-style:none;padding:0;margin:0 0 22px;}.profile-tile{position:relative;display:flex;flex-direction:column;min-width:0;min-height:224px;border:1px solid var(--line);border-radius:9px;background:var(--surface);transition:border-color .15s,background .15s;}.profile-tile:hover{border-color:var(--accent);background:var(--surface-raised);}.profile-row{width:100%;flex:1;display:flex;flex-direction:column;align-items:stretch;gap:18px;background:transparent;color:var(--text);padding:20px;text-align:left;border-radius:9px;}.profile-row::after{content:'';position:absolute;inset:0;border-radius:9px;}.profile-row:focus-visible{outline:none;}.profile-row:focus-visible::after{outline:2px solid var(--accent);outline-offset:2px;}.profile-tile-heading{display:flex;align-items:start;justify-content:space-between;gap:14px;}.profile-mark{display:grid;place-items:center;width:43px;height:43px;flex-shrink:0;background:var(--accent-bg);border-radius:9px;color:var(--accent);}.profile-copy{display:flex;align-items:center;gap:8px;min-width:0;}.profile-copy strong{min-width:0;font-size:16px;line-height:1.4;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.built-in-badge{flex-shrink:0;font-size:9px;line-height:1.4;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:4px 6px;}.profile-badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:end;min-width:0;}.profile-badges span{font-size:9px;line-height:1.4;color:var(--accent);border:1px solid var(--line);border-radius:4px;padding:5px 7px;}.empty-profiles{grid-column:1/-1;border:1px solid var(--line);border-radius:9px;background:var(--surface);padding:30px;color:var(--muted);font-size:12px;}.workspace-error,.profile-diagnostics{border:1px solid #ad875440;color:#c9ab7b;background:#ad875408;border-radius:6px;padding:12px 15px;font-size:10px;line-height:1.8;margin-bottom:16px;}.profile-diagnostics p{margin:0;}.back-profiles{font-size:10px;padding-left:0;margin-bottom:20px;}.editor-save-actions{display:flex;align-items:end;justify-content:flex-end;gap:10px;flex-wrap:wrap;max-width:100%;}.editor-save-actions .destructive-button{background:#b32b38;border-color:#cd4552;color:#fff}.editor-save-actions .destructive-button:hover:enabled{background:#98232e;border-color:#e35d69;color:#fff}.editor-basics{padding:19px;margin-bottom:20px;}.editor-basics label{display:grid;gap:8px;font-size:10px;color:var(--muted);}.draft-source{border:0;margin:0;padding:0;display:flex;align-items:end;gap:12px;flex-wrap:wrap;}.draft-source legend{font-size:10px;color:var(--muted);padding-right:10px;}.draft-source label{min-width:170px;}.draft-source button{font-size:10px;}.draft-source p{flex-basis:100%;font-size:9px;color:var(--muted);line-height:1.8;margin:0;}.editor-confirmation{position:fixed;z-index:30;left:50%;top:50%;transform:translate(-50%,-50%);max-width:460px;width:calc(100% - 40px);padding:26px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005;color:var(--text);margin:0;}.editor-confirmation::backdrop{background:#0009;}.editor-confirmation p{font-size:11px;color:var(--muted);line-height:1.8;margin:15px 0 23px;}.editor-confirmation>div{display:flex;gap:10px;justify-content:end;flex-wrap:wrap;}.editor-confirmation button{font-size:10px;}@media(max-width:700px){.page-heading,.editor-title{align-items:start;flex-direction:column;}.editor-save-actions{align-self:end;}.profile-row{gap:11px;padding:16px;}.profile-copy strong{display:block;}}

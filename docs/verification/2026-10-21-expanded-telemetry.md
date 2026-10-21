@@ -153,3 +153,21 @@ Missing SDK units and unqualified coordinate frames retain their native meaning.
 
 No motor-control backend or hardware force-feedback qualification is implied by
 these telemetry and processing checks.
+
+## Dedicated Debug navigation
+
+A follow-up moves all three diagnostic views into the main navigation's Debug
+section and removes the Profiles entry button. Saved-profile preflight uses its
+own read-only context while runtime status comes from the cockpit's shared
+controller. Leaving Debug disposes the inspection controllers and polling.
+
+The updated native UI acceptance passed in 2.24 seconds against the running
+development Cockpit. It verifies the selected sidebar entry, incoming telemetry,
+native saved-profile preflight, runtime/recovery tab, absence of Debug buttons in
+the profile list and editor, unmount on departure, and Back/Forward restoration.
+The screenshot was visually reviewed. Evidence:
+`.research/game-telemetry-native-ui/1792588307153/`.
+
+All 81 focused rendered/navigation tests passed, including the unsaved-profile
+navigation guard. `pnpm check` reported zero errors and zero warnings in both
+Cockpit and the browser companion.
