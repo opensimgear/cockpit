@@ -114,7 +114,19 @@ pub fn feedback_descriptors(document: &Value) -> Result<Vec<FeedbackDescriptor>,
                     .is_some_and(|refs| refs.contains(&f["id"]))
             })
             .ok_or("Unbound published feedback channel.")?;
-        let (kind, unit, range) = match f["kind"].as_str() {
+        let component_port = if widget["kind"] == "component" {
+            let definition = document["presentation"]["definitions"].as_array().and_then(|definitions| definitions.iter().find(|d| d["id"] == widget["config"]["definitionId"] && d["version"] == widget["config"]["definitionVersion"])).ok_or("Unknown feedback widget definition.")?;
+            let index = widget["feedbackIds"].as_array().and_then(|ids| ids.iter().position(|id| *id == f["id"])).ok_or("Unknown widget feedback port.")?;
+            let port = definition["outputs"].get(index).ok_or("Unknown widget feedback port.")?;
+            ensure(port["kind"] == f["kind"], "Widget feedback port kind mismatch.")?;
+            Some(port)
+        } else { None };
+        let (kind, unit, range) = if let Some(port) = component_port {
+            let kind = match f["kind"].as_str() { Some("text") => FeedbackKind::Text, Some("indicator") => FeedbackKind::Boolean, Some("gauge") => FeedbackKind::Number, _ => return Err("Unsupported widget feedback kind.".into()) };
+            let unit = port.get("unit").map(|v| { let unit = v.as_str().ok_or("Invalid widget feedback unit.")?; ensure(text(unit, 120), "Invalid widget feedback unit.")?; Ok::<String, String>(if unit.trim().is_empty() { "ratio".into() } else { unit.into() }) }).transpose()?;
+            let range = port.get("range").map(|v| { let r: FeedbackRange = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?; ensure(kind == FeedbackKind::Number && r.min.is_finite() && r.max.is_finite() && r.min < r.max, "Invalid widget feedback range.")?; Ok::<FeedbackRange, String>(r) }).transpose()?;
+            (kind, unit, range)
+        } else { match f["kind"].as_str() {
             Some("text") => (FeedbackKind::Text, None, None),
             Some("indicator") => (FeedbackKind::Boolean, None, None),
             Some("gauge") => {
@@ -141,7 +153,7 @@ pub fn feedback_descriptors(document: &Value) -> Result<Vec<FeedbackDescriptor>,
                 )
             }
             _ => return Err("Unsupported published feedback kind.".into()),
-        };
+        } };
         let output = f["id"]
             .as_str()
             .filter(|v| id(v))

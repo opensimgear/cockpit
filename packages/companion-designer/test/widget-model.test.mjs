@@ -53,6 +53,7 @@ test('strict definition validation rejects invalid geometry, versions, ranges an
     d => d.properties[4].default = 2, d => d.properties[4].min = 1, d => d.properties[4].max = NaN,
     d => d.inputs.push(d.inputs[0]), d => d.outputs[0].name = 'press', d => d.inputs[0].kind = 'keyboard',
     d => d.outputs[0].kind = 'javascript', d => d.outputs[0].unit = '\t',
+    d => d.outputs[0].range = { min: 0, max: 1 },
     d => d.interaction.port = 'missing', d => d.interaction.kind = 'repeat',
     d => d.interaction = { kind: 'none' }, d => d.interaction = { kind: 'navigate', pageProperty: 'missing' },
     d => d.state.warningPort = 'absent', d => d.state.extra = true,

@@ -38,7 +38,7 @@ export function createWidgetCatalog(): WidgetDefinition[] {
   indicator.layers.push({ id: "status", label: "Status light", kind: "indicator", bounds: { x: .08, y: .08, width: .12, height: .14 }, outputPort: "active", fill: { property: "accent" } });
 
   const numeric = base("numeric-readout", "Numeric instrument"); numeric.properties[0].default = "LEVEL";
-  numeric.outputs = [{ name: "value", label: "Value", kind: "gauge", unit: "%" }];
+  numeric.outputs = [{ name: "value", label: "Value", kind: "gauge", unit: "%", range: { min: 0, max: 100 } }];
   numeric.layers[1].bounds = { x: .08, y: .08, width: .84, height: .25 };
   const readout: WidgetLayer = { id: "value", label: "Live value", kind: "text", bounds: { x: .08, y: .4, width: .84, height: .4 }, text: "—", outputPort: "value", font: "mono", fontSize: 36, align: "center", fill: { property: "foreground" }, precision: 1, unit: "%" };
   numeric.layers.push(readout);

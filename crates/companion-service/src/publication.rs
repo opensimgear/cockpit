@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+mod widgets;
 
 pub const DOCUMENT_BYTES: usize = 1024 * 1024;
 pub const ASSET_BYTES: usize = 2 * 1024 * 1024;
@@ -205,7 +206,7 @@ impl Publication {
             &["schemaVersion", "ui", "presentation", "targets", "bindings"],
             &[],
         )?;
-        ensure(doc["schemaVersion"] == 2, "Unsupported designer schema.")?;
+        ensure(doc["schemaVersion"] == 2 || doc["schemaVersion"] == 3, "Unsupported designer schema.")?;
         let canonical = serde_json_canonicalizer::to_vec(&doc)
             .map_err(|_| "Cannot canonicalize publication.")?;
         ensure(
@@ -360,7 +361,8 @@ impl Publication {
             )?;
         }
         let p = &doc["presentation"];
-        object(p, &["widgets", "groups", "viewports", "grid"], &[])?;
+        object(p, &["widgets", "groups", "viewports", "grid"], if doc["schemaVersion"] == 3 { &["definitions"] } else { &[] })?;
+        let definitions = if doc["schemaVersion"] == 3 { widgets::definitions(&p["definitions"], assets)? } else { Vec::new() };
         object(&p["grid"], &["columns", "rows", "snap"], &[])?;
         integer(&p["grid"]["columns"], 1, 128)?;
         integer(&p["grid"]["rows"], 1, 128)?;
@@ -470,7 +472,9 @@ impl Publication {
                 )?;
             }
             let kind = w["kind"].as_str().ok_or("Missing widget kind.")?;
-            let (expected, output): (&[&str], Option<&str>) = match kind {
+            let component = if kind == "component" { Some(widgets::instance(w, &definitions, ui, assets)?) } else { None };
+            let (legacy_inputs, legacy_output): (&[&str], Option<&str>) = match kind {
+                "component" => (&[], None),
                 "button" => (&["button"], None),
                 "selector" | "slider" => (&["axis"], None),
                 "xy" => (&["axis", "axis"], None),
@@ -482,6 +486,8 @@ impl Publication {
                 "icon" | "indicator" => (&[], Some("indicator")),
                 _ => return Err("Unsupported widget.".into()),
             };
+            let expected: Vec<&str> = match &component { Some((d, _)) => d["inputs"].as_array().unwrap().iter().map(|p| p["kind"].as_str().unwrap()).collect(), None => legacy_inputs.to_vec() };
+            let outputs: Vec<&str> = match &component { Some((d, _)) => d["outputs"].as_array().unwrap().iter().map(|p| p["kind"].as_str().unwrap()).collect(), None => legacy_output.into_iter().collect() };
             let refs = list(&w["controlIds"], expected.len(), expected.len())?;
             for (i, r) in refs.iter().enumerate() {
                 let r = stable(r)?;
@@ -494,23 +500,29 @@ impl Publication {
                             .any(|c| c["id"] == r && c["kind"] == expected[i]),
                     "Invalid widget input reference.",
                 )?;
+                if let Some((definition, _)) = &component {
+                    let port = &definition["inputs"][i];
+                    let control = ui["controls"].as_array().unwrap().iter().find(|c| c["id"] == r).unwrap();
+                    if port["kind"] == "axis" { ensure(control["axisMode"] == port["axisMode"] && control["fallback"] == port["fallback"], "Component axis contract mismatch.")?; }
+                    if port["kind"] == "hat" { ensure(control["fallback"] == port["fallback"], "Component hat contract mismatch.")?; }
+                }
             }
-            for r in list(
+            for (index, r) in list(
                 &w["feedbackIds"],
-                usize::from(output.is_some()),
-                usize::from(output.is_some()),
-            )? {
+                outputs.len(),
+                outputs.len(),
+            )?.iter().enumerate() {
                 let r = stable(r)?;
                 ensure(
                     used_feedback.insert(r)
                         && feedback
                             .iter()
-                            .any(|f| f["id"] == r && Some(f["kind"].as_str().unwrap()) == output),
+                            .any(|f| f["id"] == r && f["kind"] == outputs[index]),
                     "Invalid widget feedback reference.",
                 )?;
             }
-            validate_config(w, &controls, assets)?;
-            let mut config = w["config"].clone();
+            if component.is_none() { validate_config(w, &controls, assets)?; }
+            let mut config = component.map(|(_, semantics)| semantics).unwrap_or_else(|| w["config"].clone());
             for k in ["assetId", "iconAssetId", "symbol", "prefix", "suffix", "orientation"] {
                 config.as_object_mut().unwrap().remove(k);
             }

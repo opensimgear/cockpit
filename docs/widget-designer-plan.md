@@ -62,3 +62,14 @@ file is a tracker, not evidence that unchecked work exists.
   integration remain pending.
 - Updated designer checks and coverage pass: 97 tests; 97.50% aggregate lines,
   96.27% branches and 96.93% functions.
+- Native publication admission independently validates schema 3 definitions,
+  properties, layers, states, ports, navigation and numeric contracts. Exact
+  TypeScript-generated publication/capability fixtures are consumed by Rust;
+  artwork changes retain capability identity and interaction changes do not.
+- `cargo test --manifest-path crates/companion-service/Cargo.toml --lib --offline`
+  passes all 114 tests with the local socket/protected-storage permissions needed
+  by the existing native transport suite. Physical-device acceptance is deferred.
+- Prior render-package branch inspected: reuse candidates include the existing
+  bounded two-slot `render/content_store` and authenticated render-delivery path.
+  Its custom scene compositor must be adapted behind LVGL rather than retained
+  as a second new source/widget model. Integration is still pending.

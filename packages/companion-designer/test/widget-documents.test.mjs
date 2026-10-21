@@ -103,6 +103,15 @@ test('library version adoption is explicit and preserves bindings and instance o
   assert.equal(compareDesignerPublications(updated.present, props.present), 'styling');
 });
 
+test('typed output unit and range changes require semantic reconciliation', () => {
+  const h = apply(seed(), { type: 'add-component', definition: catalog[4] });
+  const changed = structuredClone(h.present);
+  changed.presentation.definitions.find(d => d.id === catalog[4].id).outputs[0].range.max = 200;
+  assert.equal(compareDesignerPublications(h.present, changed), 'capability');
+  changed.presentation.definitions.find(d => d.id === catalog[4].id).outputs[0].range.min = 300;
+  assert.equal(validateDesignerDocument(changed).ok, false);
+});
+
 test('component publications and bundles round-trip with exact identity', async () => {
   const doc = seed().present, publication = await publishDocument(doc, []);
   const imported = await importBundle(await exportBundle(doc, []));

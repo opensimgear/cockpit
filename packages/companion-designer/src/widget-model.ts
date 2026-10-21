@@ -28,7 +28,7 @@ export type WidgetLayer =
 export type WidgetInputPort = { name: string; label: string } & (
   { kind: "button" } | { kind: "axis"; axisMode: "unipolar" | "bipolar"; fallback: number } | { kind: "hat"; fallback: -1 }
 );
-export interface WidgetOutputPort { name: string; label: string; kind: "indicator" | "text" | "gauge"; unit?: string }
+export interface WidgetOutputPort { name: string; label: string; kind: "indicator" | "text" | "gauge"; unit?: string; range?: { min: number; max: number } }
 export type WidgetInteraction =
   | { kind: "none" }
   | { kind: "momentary" | "toggle"; port: string }
@@ -122,7 +122,10 @@ export function validateWidgetDefinition(input: unknown, assetIds?: readonly str
       if (p.kind === "axis") { ensure(["unipolar", "bipolar"].includes(p.axisMode), "Invalid widget axis mode"); num(p.fallback, p.axisMode === "bipolar" ? -1 : 0, 1); }
       if (p.kind === "hat") ensure(p.fallback === -1, "Invalid widget hat fallback");
     }
-    for (const p of outputs) { record(p, ["name", "label", "kind"], ["unit"]); ensure(["indicator", "text", "gauge"].includes(p.kind), "Unsupported widget output port"); if (p.unit !== undefined) text(p.unit); }
+    for (const p of outputs) {
+      record(p, ["name", "label", "kind"], ["unit", "range"]); ensure(["indicator", "text", "gauge"].includes(p.kind), "Unsupported widget output port"); if (p.unit !== undefined) text(p.unit);
+      if (p.range !== undefined) { record(p.range, ["min", "max"]); ensure(p.kind === "gauge", "Only numeric widget ports have ranges"); num(p.range.min, -1e9, 1e9); num(p.range.max, -1e9, 1e9); ensure(p.range.min < p.range.max, "Invalid widget output range"); }
+    }
     const interaction = d.interaction as WidgetInteraction;
     record(interaction, ["kind"], interaction.kind === "selector" ? ["port", "options"] : interaction.kind === "navigate" ? ["pageProperty"] : ["momentary", "toggle"].includes(interaction.kind) ? ["port"] : []);
     ensure(["none", "momentary", "toggle", "selector", "navigate"].includes(interaction.kind), "Unsupported widget interaction");
