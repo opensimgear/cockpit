@@ -258,7 +258,7 @@
           </div>
           {#if !updateOpen}
             <div class="firmware-actions">
-              <button disabled={busy || updating} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for firmware updates</button>
+              <button disabled={busy || updating} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for updates</button>
               {#if outdated(selected)}<span class="firmware-update" title={firmwareUpdateDisabledReason || undefined} aria-label={firmwareUpdateDisabledReason || undefined}><button disabled={!!firmwareUpdateDisabledReason} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button></span>{/if}
             </div>
           {:else}

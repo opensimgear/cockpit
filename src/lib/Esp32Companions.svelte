@@ -141,7 +141,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
       <h4>Firmware</h4>
       <p>{hostState.firmwareSource==='development'?'Development firmware from this Cockpit build':'Firmware from published ESP32 companion releases'}</p>
       {#if hostState.firmwareError}<CompanionMessage kind="warning" message={hostState.firmwareError}/>{/if}
-      <button disabled={busy || installing || installOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for firmware updates</button>
+      <button disabled={busy || installing || installOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for updates</button>
       {#if !port}
         <CompanionMessage message="Select a port to detect firmware"/>
       {:else if detecting}
