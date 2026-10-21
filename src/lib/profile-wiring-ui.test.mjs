@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./profile-canvas-render']);
+const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render']);
 const plain = value => JSON.parse(JSON.stringify(value));
 const port = (id, direction, name = id) => ({ id, direction, name, contract: { delivery: 'state', schema: { type: 'boolean' }, freshnessMs: 1000, fallback: null } });
 const resource = (id, ports = []) => ({ id, name: id, kind: 'device', required: false, ports });
@@ -29,8 +29,9 @@ const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.sv
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
 // Actual browser dispatch and hit testing are covered by the running cockpit UI checks.
-function harness(props = {}, arrowStyle='smooth',cornerRadius=24) {
+function harness(props = {}, arrowStyle='smooth',cornerRadius=24,wheelAction='pan') {
   const styling=modules.get('./canvas-styling').canvasStyling;styling.setArrowStyle(arrowStyle);styling.setCornerRadius(cornerRadius);
+  modules.get('./canvas-navigation').canvasNavigation.setWheelAction(wheelAction);
   const calls = [], edits = [], captured = new Set(), focuses=[];
   const frames=new Map();let frameId=0;
   let handlers, hit = element();
@@ -121,15 +122,33 @@ test('pointer bursts render once per frame and pointer release flushes the lates
   assert.equal(h.frames.size,1);assert.equal(h.handlers.state.view.x,0);assert.deepEqual(h.edits,[]);
   h.flushFrames();assert.deepEqual(plain(h.handlers.state.view),{x:60,y:30,zoom:1});assert.equal(h.edits.length,0);
   h.handlers.scheduleMove(pointer(180,140));h.handlers.finish(pointer(180,140));
-  assert.deepEqual(plain(h.handlers.state.view),{x:80,y:40,zoom:1});assert.equal(h.frames.size,0);assert.equal(h.edits.length,1);assert.deepEqual(plain(h.edits[0][0].editor.viewport),{x:80,y:40,zoom:1});
+  assert.deepEqual(plain(h.handlers.state.view),{x:80,y:40,zoom:1});assert.equal(h.frames.size,0);assert.deepEqual(h.edits,[]);assert.deepEqual(plain(h.document),h.before);
   const cancelled=harness();cancelled.handlers.begin(pointer(100,100,{target:element()}));cancelled.handlers.scheduleMove(pointer(180,140));cancelled.handlers.finish(pointer(180,140),true);cancelled.flushFrames();assert.deepEqual(plain(cancelled.handlers.state.view),{x:0,y:0,zoom:1});assert.deepEqual(cancelled.edits,[]);
 });
 
-test('wheel viewport updates share one save per animation frame without changing graph routing',()=>{
+test('wheel panning stays local and never schedules a profile update',()=>{
   const h=harness(),before=plain(h.document),event={deltaX:0,deltaY:12,clientX:200,clientY:100,ctrlKey:false,metaKey:false,preventDefault(){}};
   h.handlers.wheel(event);h.handlers.wheel(event);h.handlers.wheel(event);
-  assert.equal(h.frames.size,1);assert.equal(h.edits.length,0);assert.equal(h.handlers.state.view.y,-36);
-  h.flushFrames();assert.equal(h.edits.length,1);assert.equal(h.edits[0][0].editor.viewport.y,-36);assert.deepEqual(plain(h.edits[0][0].bindings),before.bindings);assert.deepEqual(plain(h.document),before);
+  assert.equal(h.frames.size,0);assert.equal(h.edits.length,0);assert.equal(h.handlers.state.view.y,-36);
+  h.flushFrames();assert.deepEqual(h.edits,[]);assert.deepEqual(plain(h.document),before);
+});
+
+test('wheel preferences choose pan or zoom and Ctrl or Meta reverses the action without profile edits',()=>{
+  for(const action of ['pan','zoom'])for(const modifier of [null,'ctrlKey','metaKey']){
+    const h=harness({},'smooth',24,action),event={deltaX:8,deltaY:-120,clientX:200,clientY:100,ctrlKey:false,metaKey:false,preventDefault(){},...(modifier?{[modifier]:true}:{})};
+    h.handlers.wheel(event);
+    if((action==='zoom')!==!!modifier){assert.ok(Math.abs(h.handlers.state.view.zoom-1.1)<1e-10);assert.ok(Math.abs(h.handlers.state.view.x+10)<1e-10);assert.ok(Math.abs(h.handlers.state.view.y+5)<1e-10);}
+    else assert.deepEqual(plain(h.handlers.state.view),{x:-8,y:120,zoom:1});
+    assert.deepEqual(h.edits,[]);assert.deepEqual(plain(h.document),h.before);
+  }
+});
+
+test('keyboard navigation and a later graph edit never write the local viewport into the profile',()=>{
+  const h=harness(),target={closest:()=>null};
+  for(const key of ['ArrowLeft','ArrowUp','=','-','0'])h.handlers.keyboard({key,target,preventDefault(){}});
+  assert.deepEqual(h.edits,[]);assert.deepEqual(plain(h.document),h.before);
+  h.handlers.setView({x:300,y:200,zoom:1.5});h.handlers.begin(pointer(100,100,{target}),'source');h.handlers.move(pointer(145,130));h.handlers.finish(pointer(145,130));
+  assert.equal(h.edits.length,1);assert.equal(h.edits[0][1],'Move component');assert.deepEqual(plain(h.edits[0][0].editor.viewport),h.before.editor.viewport);assert.deepEqual(plain(h.handlers.state.view),{x:300,y:200,zoom:1.5});
 });
 
 test('wrong-side, same-block, disabled and off-canvas wire releases remain inert', () => {
@@ -192,8 +211,8 @@ test('handle clicks retain keyboard access while empty-canvas clicks and moved w
   pan.handlers.begin(pointer(300, 100, { target: element() }));pan.handlers.move(pointer(350, 120));pan.handlers.finish(pointer(350, 120));
   assert.deepEqual(plain(pan.handlers.state.view), { x: 50, y: 20, zoom: 1 });assert.equal(pan.captured.size, 0);
   assert.deepEqual(pan.calls, [], 'Background panning does not dismiss the chooser.');
-  assert.equal(pan.edits.length, 1, 'Background panning still persists its viewport.');
-  assert.deepEqual(plain(pan.edits[0][0].bindings), pan.before.bindings);assert.deepEqual(plain(pan.edits[0][0].resources), pan.before.resources);
+  assert.deepEqual(pan.edits, [], 'Background panning never changes the profile.');
+  assert.deepEqual(plain(pan.document), pan.before);
 });
 
 test('blocks show discovered input and output counts while loading/error handles and read-only state remain clear', () => {

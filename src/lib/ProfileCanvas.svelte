@@ -10,6 +10,7 @@
   import {canvasRouteNodes,canvasPreviewRoutes}from'./profile-canvas-render';
   import {profileMoveWireSegment,profileSetWireRoute}from'./profile-wire-layout';
   import {canvasStyling}from'./canvas-styling';
+  import {canvasNavigation}from'./canvas-navigation';
   import {inputAvailability}from'./profile-input-availability';
   import {processingSummary} from './profile-processing';
   import type{CompileDiagnostic}from'./profile-compilation';
@@ -51,7 +52,7 @@
   const portCategories:readonly ProfilePortGroup[]=['outputs','inputs','actions'];
   type CanvasDrag = { id?: string; group?: {id:string;mode:'move'|'resize';frame:CanvasGroup;source:DeepReadonly<ProfileDocument>}; origin: CanvasPoint; start: CanvasPoint; viewport: CanvasViewport; pointer: number; moved: boolean };
   let drag = $state.raw<CanvasDrag|null>(null);
-  let moveFrame=0,pendingMove:PointerEvent|null=null,viewportFrame=0;
+  let moveFrame=0,pendingMove:PointerEvent|null=null;
   const browser = new ProfilePortBrowser(untrack(() => inventoryClient));
   const router=createDiagramRouter();
   const committedDocument=$derived(profileTabDocument(document,activeVehicleTabId));
@@ -61,7 +62,6 @@
   const nodesById=$derived(new Map(nodes.map(node=>[node.id,node])));
   const portGroups=$derived(new Map(nodes.map(node=>{const ports=node.resource?discoveredPorts[node.id]??node.resource.ports:null;const inputs=ports?ports.filter(port=>port.direction==='input'):node.processing?.inputs??node.virtual?.ports??node.desktop?.ports??[],outputs=ports?ports.filter(port=>port.direction==='output'):node.processing?.outputs??[];return[node.id,{inputs,outputs,names:new Map([...inputs,...outputs].map(port=>[`${port.direction}/${port.id}`,port.name]))}];})));
   let knownNodeIds=new Set(untrack(()=>nodes.map(node=>node.id)));
-  let savedViewportSignature=untrack(()=>JSON.stringify(document.editor.viewport));
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
   const controllerEffects=$derived(canvasControllerEffects(visibleDocument));
   const renderedNodes = $derived(nodes.map(node => node.id === dragged?.id ? { ...node, position: dragged.position } : node));
@@ -87,8 +87,7 @@
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
-  $effect(() => { const signature=JSON.stringify(document.editor.viewport);if(signature!==savedViewportSignature){savedViewportSignature=signature;view = { ...document.editor.viewport };} });
-  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;clearPendingMove();if(viewportFrame){cancelAnimationFrame(viewportFrame);viewportFrame=0;}drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
+  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;clearPendingMove();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
   $effect(()=>{const added=nodes.find(node=>node.id===selectedId&&!knownNodeIds.has(node.id));knownNodeIds=new Set(nodes.map(node=>node.id));if(added)focusNewNode(added);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(() => {
@@ -97,11 +96,10 @@
     if (resourceId) void loadPorts('open',resourceId);
   });
   onMount(() => { if (fitOnMount) fitView(); });
-  onDestroy(() => { portEpoch++; browser.clear();clearPendingMove();if(viewportFrame)cancelAnimationFrame(viewportFrame); });
-  function persist(nextView = view) { if(viewportFrame){cancelAnimationFrame(viewportFrame);viewportFrame=0;}if (!readOnly) { const next = JSON.parse(JSON.stringify(document)) as ProfileDocument; next.editor.viewport = { ...nextView }; change(next); } }
+  onDestroy(() => { portEpoch++; browser.clear();clearPendingMove(); });
   function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
-  function fit() { fitView();persist(); }
-  function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2});persist(); }
+  function fit() { fitView(); }
+  function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2}); }
   function layout() {
     editLayout(()=>scopedCanvasEdit(document,source=>{
       // Freeze old frames before positions change, then reconcile every membership in the same edit.
@@ -111,7 +109,7 @@
       next.editor.positions=[...next.editor.positions.filter(position=>!visibleIds.has(position.nodeId)),...positions];
       for(const position of positions)next=canvasMoveIntoGroup(next,position.nodeId,position);
       const nextVisible=profileTabDocument(next,activeVehicleTabId),nextNodes=canvasNodes(nextVisible,assignments,inventory),nextFrames=canvasGroups(nextVisible,nextNodes);
-      next.editor.viewport=canvasFit([...nextNodes,...nextFrames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])],stage?.clientWidth||900,stage?.clientHeight||600);
+      view=canvasFit([...nextNodes,...nextFrames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])],stage?.clientWidth||900,stage?.clientHeight||600);
       return next;
     }),'Auto-layout');
   }
@@ -178,9 +176,9 @@
   export function addGroup(name='Group'){if(readOnly||activeVehicleTabId)return;layoutError='';try{const next=canvasCreateGroup(document,name,{x:(32-view.x)/view.zoom,y:(32-view.y)/view.zoom});const id=next.editor.groups!.at(-1)!.id;change(next,'Create group');return id;}catch(error){layoutError=error instanceof Error?error.message:String(error);}}
   export function renameGroup(id:string,name:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasRenameGroup(source,id,name)),'Rename group');}
   export function deleteGroup(id:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasDeleteGroup(source,id)),'Delete group');}
-  export function focusGroup(id:string){const frame=frames.find(group=>group.id===id);if(!frame)return;view=canvasFit([{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}],stage?.clientWidth||900,stage?.clientHeight||600);persist();}
+  export function focusGroup(id:string){const frame=frames.find(group=>group.id===id);if(!frame)return;view=canvasFit([{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}],stage?.clientWidth||900,stage?.clientHeight||600);}
   function togglePorts(category:ProfilePortGroup){if(selected)editLayout(()=>canvasTogglePorts(document,selected.id,category),canvasPortCollapsed(document,selected.id,category)?'Expand port category':'Collapse port category');}
-  function focusMatch() { const node=matches[0];if(!node)return;choose(node.id);const size=canvasNodeSize(node);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+size.width/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+size.height/2)*view.zoom};persist(); }
+  function focusMatch() { const node=matches[0];if(!node)return;choose(node.id);const size=canvasNodeSize(node);view={...view,x:(stage?.clientWidth||900)/2-(node.position.x+size.width/2)*view.zoom,y:(stage?.clientHeight||600)/2-(node.position.y+size.height/2)*view.zoom}; }
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
@@ -252,9 +250,14 @@
       }
       if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);return;
     }
-    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeConnectionPanel?.();selectConnection?.('');selectedId='';}}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
+    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeConnectionPanel?.();selectConnection?.('');selectedId='';}}}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
   }
-  function wheel(event:WheelEvent) { event.preventDefault();if(segmentDrag)return;if(event.ctrlKey||event.metaKey){const rect=stage.getBoundingClientRect();view=canvasZoom(view,event.deltaY<0?1.1:1/1.1,{x:event.clientX-rect.left,y:event.clientY-rect.top});}else view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});if(!viewportFrame)viewportFrame=requestAnimationFrame(()=>{viewportFrame=0;persist();}); }
+  function wheel(event:WheelEvent) {
+    event.preventDefault();if(segmentDrag)return;
+    const zoomWheel=($canvasNavigation.wheelAction==='zoom')!==!!(event.ctrlKey||event.metaKey);
+    if(zoomWheel){if(!event.deltaY)return;const rect=stage.getBoundingClientRect();view=canvasZoom(view,event.deltaY<0?1.1:1/1.1,{x:event.clientX-rect.left,y:event.clientY-rect.top});}
+    else view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});
+  }
   function keyboard(event:KeyboardEvent) {
     if(event.key==='Escape')clearPendingMove();if(segmentDrag&&event.key==='Escape'){event.preventDefault();cancelSegment();return;}
     if(segmentDrag&&(event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase()))cancelSegment();
@@ -266,7 +269,7 @@
     if(!readOnly&&selectedEdgeId&&disconnectConnection&&['Delete','Backspace'].includes(event.key)){event.preventDefault();disconnectConnection(selectedEdgeId);return;}
     if(!readOnly&&(undo||redo)&&(event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())){event.preventDefault();if(event.shiftKey||event.key.toLowerCase()==='y')redo?.();else undo?.();return;}
     if((event.target as Element).closest('button,a'))return;
-    if(event.key==='+'||event.key==='='){event.preventDefault();zoom(1.2);}else if(event.key==='-'){event.preventDefault();zoom(1/1.2);}else if(event.key==='0'){event.preventDefault();fit();}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();view=canvasPan(view,{x:event.key==='ArrowLeft'?40:event.key==='ArrowRight'?-40:0,y:event.key==='ArrowUp'?40:event.key==='ArrowDown'?-40:0});persist();}
+    if(event.key==='+'||event.key==='='){event.preventDefault();zoom(1.2);}else if(event.key==='-'){event.preventDefault();zoom(1/1.2);}else if(event.key==='0'){event.preventDefault();fit();}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();view=canvasPan(view,{x:event.key==='ArrowLeft'?40:event.key==='ArrowRight'?-40:0,y:event.key==='ArrowUp'?40:event.key==='ArrowDown'?-40:0});}
   }
   function lostPointer(event:PointerEvent){clearPendingMove();if(segmentDrag?.pointer===event.pointerId)cancelSegment();if(wire?.pointer===event.pointerId){wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';suppressWireClick=true;}if(drag?.pointer===event.pointerId){view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;}}
   function connectionKey(event:KeyboardEvent,id:string){if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();chooseConnection(id);}else if(!readOnly&&['Delete','Backspace'].includes(event.key)&&disconnectConnection){event.preventDefault();event.stopPropagation();disconnectConnection(id);}}
@@ -297,7 +300,7 @@
       <div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button><output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output><button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div>
     </div>
   </div>
-  <p class="canvas-help" id="profile-canvas-help">Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan; Ctrl/⌘ + wheel zooms. Ctrl/⌘ + Z undoes; Shift + Z redoes.</p>
+  <p class="canvas-help" id="profile-canvas-help">Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.</p>
   <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
     <div class="canvas-stage" class:node-dragging={!!dragged||!!groupPreview} class:wire-blocked={!!wireRejectedReason||segmentBlocked} class:segment-dragging={!!segmentDrag} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={scheduleMove} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
