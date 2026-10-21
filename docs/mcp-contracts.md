@@ -75,6 +75,10 @@ All write rows also require `operationId` unless noted as passive preparation.
 | `local_settings_get`, `local_settings_save` · read/write | Scope enum; game ID for game scopes; saves require snapshot `expectedSettingsRevision`, exact owner and scope-specific settings | `profile_local_settings_get`/`save`. Shared admission validates a current native settings snapshot and owner before provider/desktop/automatic policy persistence. Paths remain local preferences. Automatic mode/rule edits may explicitly authorize runtime activation. |
 | `operation_status` · read | Original `operationId` | Adapter's per-credential bounded operation ledger. Unknown/restarted ledger means inspect actual native state; do not replay with a fresh ID blindly. |
 
+MCP profile reads do not persist follow-latest companion panel refreshes. Draft
+Save rejects `resource_changed` if native panel normalization would substitute
+references for the exact reviewed document; refresh metadata and prepare again.
+
 The exact local-setting scopes are `game-provider`, `desktop`, `selection-mode`,
 `game-rule`, and `game-preference`. Their native field sets are documented by the
 workflow resource and enforced in

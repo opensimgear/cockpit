@@ -32,7 +32,7 @@ trait Backend: Send + Sync {
 }
 impl Backend for GatewayManager {
     fn request(&self, request: Value) -> Value {
-        self.request(request)
+        self.mcp_request(request)
     }
     fn guarded(&self, request: Value, expected_owner: Value) -> Value {
         self.mcp_guarded_request(request, expected_owner)
@@ -750,6 +750,8 @@ fn native_result(response: Value, section: Option<&str>) -> Result<Value, Value>
         let lower = message.to_lowercase();
         let code = if lower.contains("authorization") {
             "access_denied"
+        } else if lower.contains("companion panel references") {
+            "resource_changed"
         } else if lower.contains("revision") || lower.contains("changed") {
             "revision_conflict"
         } else if lower.contains("owner") || lower.contains("owns") || lower.contains("claimed") {

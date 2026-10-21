@@ -113,6 +113,8 @@ Use this sequence for profile authoring:
    current context. Catalogue/setup stamps identify the captured metadata; a
    listed vehicle does not prove live readiness or select it. Companion
    inspection provides retained panel authoring context.
+   MCP profile reads preserve saved companion references, even when a newer
+   panel publication exists. The UI's follow-latest refresh remains separate.
    Registering an installed aircraft authoring resource with
    `game_aircraft_resource` is an explicit **Configure** operation and requires
    an `operationId`; it is not a passive read.
@@ -129,6 +131,9 @@ Use this sequence for profile authoring:
    returns the resulting saved revision. A concurrent UI/AI edit rejects the
    stale base revision instead of overwriting it. An MCP save leaves the running
    revision unchanged, including when saving the currently active profile.
+   If companion panel metadata changed and native normalization would replace
+   the reviewed references, Save returns `resource_changed` without saving.
+   Inspect the current panel metadata and prepare another explicit draft.
 6. When activation is intended, refresh `profile_status` and call `profile_apply`
    with the saved ID/revision, the exact observed `expectedActiveOwner` or
    explicit `null`, the relevant `gameId` where needed, and a fresh

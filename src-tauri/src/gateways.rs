@@ -583,7 +583,12 @@ impl GatewayManager {
         }
     }
     pub fn request(&self, request: Value) -> Value {
-        self.request_checked(request, None)
+        self.request_checked(request, None, false)
+    }
+    /// MCP inspection observes saved revisions without the UI's implicit
+    /// companion-library reference refresh. Explicit writes retain native rules.
+    pub(crate) fn mcp_request(&self, request: Value) -> Value {
+        self.request_checked(request, None, true)
     }
     /// Revocation is linearized against final native takeover. It fences only
     /// this client's pending work and never stops a previously committed run.
@@ -632,9 +637,9 @@ impl GatewayManager {
             Ok(expected) => expected,
             Err(_) => return self.error("Provide the exact observed active owner or null.", None),
         };
-        self.request_checked(request, Some(expected))
+        self.request_checked(request, Some(expected), true)
     }
-    fn request_checked(&self, mut request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>) -> Value {
+    fn request_checked(&self, mut request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>, passive_profile_reads: bool) -> Value {
         let command = request["command"].as_str().unwrap_or("");
         // A registry snapshot never waits for profile admission, so Stop/cancel
         // retain their fast path while native takeover owns that lock. Normal
@@ -742,7 +747,7 @@ impl GatewayManager {
                 }
                 if interrupt {self.invalidate_learning();}
                 let _game=self.game_admission.read().unwrap_or_else(|p|p.into_inner());
-                let response=self.request_inner_at(request,Some(epoch),native_authorization.as_ref());
+                let response=self.request_inner_at(request,Some(epoch),native_authorization.as_ref(),passive_profile_reads);
                 // Publish cleanup completion before a later activation can
                 // acquire the coordinator for slow device preparation.
                 if let Some(operation)=operation.as_deref(){self.finish_profile_activation(operation,&response);}
@@ -779,7 +784,7 @@ impl GatewayManager {
         // acquires profile then game admission together in the established order.
         if staging {
             let activation=request["activationId"].as_str().filter(|_|tracked_activation).map(str::to_owned);
-            let response=self.request_inner_at(request,arrival_epoch,native_authorization.as_ref());
+            let response=self.request_inner_at(request,arrival_epoch,native_authorization.as_ref(),passive_profile_reads);
             if let Some(activation)=activation {self.finish_profile_activation(&activation,&response);}
             return response;
         }
@@ -794,17 +799,17 @@ impl GatewayManager {
                 .game_admission
                 .write()
                 .unwrap_or_else(|p| p.into_inner());
-            self.request_inner(request)
+            self.request_inner_at(request,None,native_authorization.as_ref(),passive_profile_reads)
         } else {
             let _admission = self
                 .game_admission
                 .read()
                 .unwrap_or_else(|p| p.into_inner());
-            self.request_inner(request)
+            self.request_inner_at(request,None,native_authorization.as_ref(),passive_profile_reads)
         }
     }
-    fn request_inner(&self, request: Value) -> Value {self.request_inner_at(request,None,None)}
-    fn request_inner_at(&self, mut request: Value, native_arrival_epoch: Option<u64>, native_authorization: Option<&McpAuthorization>) -> Value {
+    fn request_inner(&self, request: Value) -> Value {self.request_inner_at(request,None,None,false)}
+    fn request_inner_at(&self, mut request: Value, native_arrival_epoch: Option<u64>, native_authorization: Option<&McpAuthorization>, passive_profile_reads: bool) -> Value {
         if self.closed.load(Ordering::Acquire) {
             return self.error("Cockpit gateway manager has closed.", None);
         }
@@ -970,7 +975,7 @@ impl GatewayManager {
                     Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
                 };
             }
-            if matches!(command.as_str(),"profile_get"|"profile_assignments_get"|"profile_list") {
+            if !passive_profile_reads && matches!(command.as_str(),"profile_get"|"profile_assignments_get"|"profile_list") {
                 if let Err(error)=self.refresh_saved_panel_references(){return json!({"ok":false,"error":error});}
             }
             if command == "profile_editor_save" {
