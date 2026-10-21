@@ -1,6 +1,7 @@
 <script lang="ts">
   import{onDestroy,tick,untrack}from'svelte';
   import ProfileCanvas from './ProfileCanvas.svelte';
+  import ProfilePortCombobox from './ProfilePortCombobox.svelte';
   import Icon from './Icon.svelte';
   import ProfileProcessingEditor from './ProfileProcessingEditor.svelte';
   import ProfileVirtualEditor from './ProfileVirtualEditor.svelte';
@@ -57,8 +58,8 @@
   const discoveryBusy=$derived(nodes.filter(node=>discoveries[node.assignment?.sourceId??'']?.busy).map(node=>node.id));
   const discoveryErrors=$derived(Object.fromEntries(nodes.flatMap(node=>discoveries[node.assignment?.sourceId??'']?.error?[[node.id,discoveries[node.assignment!.sourceId].error]]:[])));
   const sourcePorts=$derived((discoveredChoices[fromNode]??[]).filter(port=>port.direction==='output')),targetPorts=$derived((discoveredChoices[toNode]??[]).filter(port=>port.direction==='input'));
-  const sourceMatches=$derived(sourcePorts.filter(port=>`${port.name} ${port.observed?.descriptor.id??port.key}`.toLowerCase().includes(sourceSearch.toLowerCase()))),targetMatches=$derived(targetPorts.filter(port=>`${port.name} ${port.observed?.descriptor.id??port.key}`.toLowerCase().includes(targetSearch.toLowerCase())));
-  const filteredSourcePorts=$derived(sourceMatches.slice(0,200).concat(sourcePorts.filter(port=>port.key===fromPort&&!sourceMatches.slice(0,200).includes(port)))),filteredTargetPorts=$derived(targetMatches.slice(0,200).concat(targetPorts.filter(port=>port.key===toPort&&!targetMatches.slice(0,200).includes(port))));
+  const portOption=(port:(typeof sourcePorts)[number])=>({value:port.key,label:port.name,description:`${port.observed?.descriptor.id??port.key}${port.companionPage?' (selected panel)':port.current?'':' (saved / unavailable)'}`,searchText:`${port.name} ${port.observed?.descriptor.id??port.key} ${port.key}`});
+  const sourceOptions=$derived(sourcePorts.map(portOption)),targetOptions=$derived(targetPorts.map(portOption));
   const sourceContract=$derived(sourcePorts.find(port=>port.key===fromPort)?.contract);
   const targetAction=$derived(targetPorts.find(port=>port.key===toPort)?.contract);
   const connectionError=$derived.by(()=>{if(!fromNode||!fromPort||!toNode||!toPort)return'Select an output and an input.';try{const prepared=prepareConnection();return graphConnectionError(prepared.draft.document,prepared.from,prepared.to,editingRoute||undefined);}catch(error){return error instanceof Error?error.message:String(error);}});
@@ -166,15 +167,13 @@
         <p>Select an output and an input to connect these blocks.</p>
         <div class="connection-fields">
           <label>Source block<select aria-label="Source block" value={fromNode} disabled={readOnly} onchange={event=>{fromNode=event.currentTarget.value;fromPort='';sourceSearch='';}}><option value="">Choose source</option>{#each nodes.filter(node=>node.kind!=='virtual'&&node.kind!=='desktop') as node (node.id)}<option value={node.id}>{node.name}</option>{/each}</select></label>
-          {#if fromNode}<label>Find an output<input aria-label="Find an output" placeholder="Search outputs by name or ID" bind:value={sourceSearch}/></label>{/if}
-          <label>Output<select aria-label="Exact source output" value={fromPort} disabled={readOnly} onchange={event=>fromPort=event.currentTarget.value}><option value="">Choose output port</option>{#each filteredSourcePorts as port (port.key)}<option value={port.key}>{port.name} · {port.observed?.descriptor.id??port.key}{port.companionPage?' (selected panel)':port.current?'':' (saved / unavailable)'}</option>{/each}</select></label>
-          {#if fromNode}<p class="port-choice-count">{sourcePorts.length} outputs discovered{#if sourceMatches.length>200} · showing 200 of {sourceMatches.length} matches; search to narrow the list{/if}</p>{/if}
+          <ProfilePortCombobox label="Find an output" placeholder="Search outputs by name or ID" options={sourceOptions} bind:value={fromPort} bind:query={sourceSearch} disabled={readOnly||!fromNode}/>
+          {#if fromNode}<p class="port-choice-count">{sourcePorts.length} outputs discovered</p>{/if}
           {#if discoveryBusy.includes(fromNode)}<p role="status">Discovering outputs…</p>{/if}
           {#if discoveryErrors[fromNode]}<p class="routing-error" role="status">{discoveryErrors[fromNode]}</p><button class="text-button" onclick={()=>retryDiscovery(fromNode)}>Retry output discovery</button>{:else if fromNode&&!discoveryBusy.includes(fromNode)&&!sourcePorts.length}<p>No outputs available on this block.</p>{/if}
           <label>Destination block<select aria-label="Destination block" value={toNode} disabled={readOnly} onchange={event=>{toNode=event.currentTarget.value;toPort='';targetSearch='';}}><option value="">Choose destination</option>{#each nodes as node (node.id)}<option value={node.id}>{node.name}</option>{/each}</select></label>
-          {#if toNode}<label>Find an input<input aria-label="Find an input" placeholder="Search inputs by name or ID" bind:value={targetSearch}/></label>{/if}
-          <label>Input / action<select aria-label="Exact destination input / action" value={toPort} disabled={readOnly} onchange={event=>toPort=event.currentTarget.value}><option value="">Choose input or action</option>{#each filteredTargetPorts as port (port.key)}<option value={port.key}>{port.name} · {port.observed?.descriptor.id??port.key}{port.companionPage?' (selected panel)':port.current?'':' (saved / unavailable)'}</option>{/each}</select></label>
-          {#if toNode}<p class="port-choice-count">{targetPorts.length} inputs / actions discovered{#if targetMatches.length>200} · showing 200 of {targetMatches.length} matches; search to narrow the list{/if}</p>{/if}
+          <ProfilePortCombobox label="Find an input" placeholder="Search inputs by name or ID" options={targetOptions} bind:value={toPort} bind:query={targetSearch} disabled={readOnly||!toNode}/>
+          {#if toNode}<p class="port-choice-count">{targetPorts.length} inputs / actions discovered</p>{/if}
           {#if discoveryBusy.includes(toNode)}<p role="status">Discovering inputs…</p>{/if}
           {#if discoveryErrors[toNode]}<p class="routing-error" role="status">{discoveryErrors[toNode]}</p><button class="text-button" onclick={()=>retryDiscovery(toNode)}>Retry input discovery</button>{:else if toNode&&!discoveryBusy.includes(toNode)&&!targetPorts.length}<p>No inputs available on this block.</p>{/if}
         </div>

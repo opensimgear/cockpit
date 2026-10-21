@@ -75,7 +75,7 @@ test('native dropped blocks discover every port and wire in either drag directio
     if (!profileId) profileId = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles.find(profile => profile.name === name)?.id, 'Temporary profile was not saved');
     await until(saveDisabled, 'Profile save did not settle'); return saved();
   };
-  const snapshot = () => native.evaluate(`(()=>{const stage=document.querySelector('.canvas-stage'),rect=stage?.getBoundingClientRect(),panel=document.querySelector('.canvas-connection-panel'),pr=panel?.getBoundingClientRect();return{stage:rect?{left:rect.left,top:rect.top,width:rect.width,height:rect.height}:null,nodes:[...document.querySelectorAll('.canvas-stage .resource-block')].map(node=>({id:node.dataset.nodeId,inputs:Number(node.querySelector('[data-connection-target] .port-group-heading > span')?.textContent),outputs:Number(node.querySelector('[data-connection-source] .port-group-heading > span')?.textContent)})),edges:document.querySelectorAll('.canvas-stage .signal-edge').length,panel:panel?{source:panel.querySelector('[aria-label="Source block"]').value,target:panel.querySelector('[aria-label="Destination block"]').value,outputs:[...panel.querySelector('[aria-label="Exact source output"]').options].filter(option=>option.value).map(option=>({value:option.value,text:option.textContent})),inputs:[...panel.querySelector('[aria-label="Exact destination input / action"]').options].filter(option=>option.value).map(option=>({value:option.value,text:option.textContent})),visible:pr.width>0&&pr.height>0&&pr.top<innerHeight&&pr.bottom>0,right:pr.right,width:pr.width,insideCanvas:!!panel.closest('.canvas-layout')}:null};})()`);
+  const snapshot = () => native.evaluate(`(()=>{const stage=document.querySelector('.canvas-stage'),rect=stage?.getBoundingClientRect(),panel=document.querySelector('.canvas-connection-panel'),pr=panel?.getBoundingClientRect();return{stage:rect?{left:rect.left,top:rect.top,width:rect.width,height:rect.height}:null,nodes:[...document.querySelectorAll('.canvas-stage .resource-block')].map(node=>({id:node.dataset.nodeId,inputs:Number(node.querySelector('[data-connection-target] .port-group-heading > span')?.textContent),outputs:Number(node.querySelector('[data-connection-source] .port-group-heading > span')?.textContent)})),edges:document.querySelectorAll('.canvas-stage .signal-edge').length,panel:panel?{source:panel.querySelector('[aria-label="Source block"]').value,target:panel.querySelector('[aria-label="Destination block"]').value,output:panel.querySelector('input[aria-label="Find an output"]')?.dataset.value,input:panel.querySelector('input[aria-label="Find an input"]')?.dataset.value,visible:pr.width>0&&pr.height>0&&pr.top<innerHeight&&pr.bottom>0,right:pr.right,width:pr.width,insideCanvas:!!panel.closest('.canvas-layout')}:null};})()`);
   const stageVisible = async () => { await native.evaluate(`document.querySelector('.canvas-stage').scrollIntoView({block:'start'});window.scrollBy(0,-150)`); await sleep(150); return snapshot(); };
   const mouse = (type, location, extra = {}) => native.send('Input.dispatchMouseEvent', { type, ...location, ...extra });
   const center = selector => until(() => native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});if(!element||element.disabled)return null;const r=element.getBoundingClientRect(),x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);if(!r.width||!r.height||r.left<0||r.top<0||r.right>innerWidth||r.bottom>innerHeight||!element.contains(document.elementFromPoint(x,y)))return null;return{x,y};})()`), `Visible mouse target unavailable: ${selector}`);
@@ -86,12 +86,24 @@ test('native dropped blocks discover every port and wire in either drag directio
     await mouse('mouseReleased', to, { button: 'left', buttons: 0, clickCount: 1 });
     return until(async () => { const state = await snapshot(); return state.panel?.visible && state.panel.right <= state.stage.left + state.stage.width + 2 ? state : null; }, 'A real connection drag did not open the visible side panel');
   };
-  const select = (label, value) => until(() => native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(`.canvas-connection-panel select[aria-label="${label}"]`)});if(!element||element.disabled||![...element.options].some(option=>option.value===${JSON.stringify(value)}))return false;element.value=${JSON.stringify(value)};element.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`), `Connection choice unavailable: ${label}`);
-  const search = (label, value) => native.evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(`.canvas-connection-panel input[aria-label="${label}"]`)});input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  const portChoices = async label => {
+    await until(() => native.evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(`.canvas-connection-panel input[aria-label="${label}"]`)});if(!input||input.disabled)return false;input.focus();input.click();return true;})()`), `Port search unavailable: ${label}`);
+    return until(() => native.evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(`.canvas-connection-panel input[aria-label="${label}"]`)}),list=document.getElementById(input?.getAttribute('aria-controls'));return list?[...list.querySelectorAll('[role="option"]')].map(option=>({value:option.dataset.value,text:option.textContent})):null;})()`), `Port dropdown unavailable: ${label}`);
+  };
+  const search = async (label, value) => {
+    await portChoices(label);
+    await native.evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(`.canvas-connection-panel input[aria-label="${label}"]`)});input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  };
+  const choosePort = async (label, value) => {
+    await search(label, value);
+    const position = await until(() => native.evaluate(`(()=>{const input=document.querySelector(${JSON.stringify(`.canvas-connection-panel input[aria-label="${label}"]`)}),list=document.getElementById(input?.getAttribute('aria-controls'));const option=[...(list?.querySelectorAll('[role="option"]')??[])].find(option=>option.dataset.value===${JSON.stringify(value)});if(!option||option.disabled)return null;option.scrollIntoView({block:'nearest'});const r=option.getBoundingClientRect(),x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);return r.width&&r.height&&option.contains(document.elementFromPoint(x,y))?{x,y}:null;})()`), `Visible port result unavailable: ${label} ${value}`);
+    await mouse('mouseMoved', position); await mouse('mousePressed', position, { button: 'left', buttons: 1, clickCount: 1 }); await mouse('mouseReleased', position, { button: 'left', buttons: 0, clickCount: 1 });
+    await until(() => native.evaluate(`document.querySelector(${JSON.stringify(`.canvas-connection-panel input[aria-label="${label}"]`)})?.dataset.value===${JSON.stringify(value)}`), `Chosen port was not retained: ${label}`);
+  };
   const capture = async filename => { const result = await native.send('Page.captureScreenshot', { format: 'png' }); await writeFile(resolve(artifacts, filename), Buffer.from(result.data, 'base64')); };
   native.on('Input.dragIntercepted', event => { intercepted = event; });
   try {
-    assert.equal(await native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke'), 'function');
+    await until(() => native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit IPC did not finish starting');
     assert.equal(await native.evaluate('document.visibilityState'), 'visible');
     await native.send('Input.cancelDragging'); await mouse('mouseReleased', { x: 10, y: 10 }, { button: 'left', buttons: 0 });
     beforeProfiles = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles, 'Native gateway did not become ready'); beforeAutomatic = await automatic();
@@ -145,7 +157,8 @@ test('native dropped blocks discover every port and wire in either drag directio
     let state = await dragWire(`[data-connection-source="${resourceId}"]`, `[data-connection-target="${virtual.id}"]`);
     assert.equal(state.panel.source, resourceId); assert.equal(state.panel.target, virtual.id); assert.equal(state.panel.insideCanvas, true);
     assert.ok(state.panel.right <= state.stage.left + state.stage.width + 2); assert.ok(state.panel.width > 250);
-    assert.equal(state.panel.outputs.length, outputs.length); assert.equal(state.panel.inputs.length, virtual.ports.length);
+    assert.equal((await portChoices('Find an output')).length, Math.min(outputs.length, 200)); assert.equal((await portChoices('Find an input')).length, Math.min(virtual.ports.length, 200));
+    assert.equal(await native.evaluate(`document.querySelectorAll('.canvas-connection-panel select[aria-label="Exact source output"],.canvas-connection-panel select[aria-label="Exact destination input / action"]').length`), 0, 'Port search and selection share one combobox per direction.');
     assert.equal(await native.evaluate(`!!document.querySelector('.canvas-connection-panel button')&&[...document.querySelectorAll('.canvas-connection-panel button')].some(button=>button.textContent.trim()==='Use this exact port')`), false);
     await capture('output-to-input-side-panel.png');
     await click('Cancel', '.canvas-connection-panel');
@@ -157,9 +170,19 @@ test('native dropped blocks discover every port and wire in either drag directio
     state = await dragWire(`[data-connection-target="${virtual.id}"]`, `[data-connection-source="${resourceId}"]`);
     assert.equal(state.panel.source, resourceId); assert.equal(state.panel.target, virtual.id);
     const observedKey = `@observed:${JSON.stringify([boolean.descriptor.id, boolean.contractHash])}`;
-    await search('Find an output', boolean.descriptor.id); await search('Find an input', virtual.ports[0].name);
-    await until(async () => { const state = await snapshot(); return state.panel.outputs.length === 1 && state.panel.inputs.length === 1; }, 'Searching discovered input and output choices did not isolate the chosen ports');
-    await select('Exact source output', observedKey); await select('Exact destination input / action', virtual.ports[0].id);
+    await search('Find an output', observedKey);
+    await until(async () => (await portChoices('Find an output')).length === 1, 'Searching the exact output did not isolate its port');
+    await capture('port-search-results.png');
+    await choosePort('Find an output', observedKey);
+    await search('Find an input', virtual.ports[0].id);
+    await until(async () => (await portChoices('Find an input')).some(option => option.value === virtual.ports[0].id), 'Searching the exact input did not retain its selectable result');
+    await choosePort('Find an input', virtual.ports[0].id);
+    await search('Find an output', `no-matching-port-${randomUUID()}`);
+    await until(() => native.evaluate(`document.querySelector('.canvas-connection-panel .port-count')?.textContent.includes('No matching ports.')&&document.querySelector('input[aria-label="Find an output"]').dataset.value===''&&[...document.querySelectorAll('.canvas-connection-panel button')].some(button=>button.textContent.trim()==='Create exact route'&&button.disabled)`), 'Editing the search retained a stale selection or hid the empty result state');
+    await native.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await native.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    assert.ok((await snapshot()).panel, 'Escape should close the search dropdown before closing the connection panel');
+    assert.equal(await native.evaluate(`document.querySelector('input[aria-label="Find an output"]').getAttribute('aria-expanded')`), 'false');
+    await choosePort('Find an output', observedKey);
     await click('Create exact route', '.canvas-connection-panel');
     await until(async () => { const state = await snapshot(); return state.edges === 1 && !state.panel; }, 'Creating the chosen route did not close the panel and draw one connection');
     const connected = await save(), pin = connected.assignments.find(assignment => assignment.resourceId === resourceId).ports;
@@ -212,10 +235,11 @@ test('native dropped blocks discover every port and wire in either drag directio
       await mouse('mouseMoved', { x: 10, y: 10 }); await click('Auto-layout'); await click('Fit all'); companionState = await save();
       assert.deepEqual(companionState.document.resources.find(node => node.id === companionNodeId).ports, []);
       assert.equal(companionState.document.companionAssignments.find(assignment => assignment.resourceId === companionNodeId).publicationHash, panel.publicationHash);
-      const companionPanel = (await dragWire(`[data-connection-source="${companionNodeId}"]`, `[data-connection-target="${virtual.id}"]`)).panel;
-      assert.equal(companionPanel.outputs.length, expectedOutputs);
-      for (const port of ports.filter(port => port.descriptor.direction === 'output')) assert.ok(companionPanel.outputs.some(option => option.value === `@observed:${JSON.stringify([port.descriptor.id, port.contractHash])}`));
-      await select('Exact source output', `@observed:${JSON.stringify([output.descriptor.id, output.contractHash])}`); await select('Exact destination input / action', virtual.ports[1].id);
+      await dragWire(`[data-connection-source="${companionNodeId}"]`, `[data-connection-target="${virtual.id}"]`);
+      const companionOutputs = await portChoices('Find an output');
+      assert.equal(companionOutputs.length, Math.min(expectedOutputs, 200));
+      if (expectedOutputs <= 200) for (const port of ports.filter(port => port.descriptor.direction === 'output')) assert.ok(companionOutputs.some(option => option.value === `@observed:${JSON.stringify([port.descriptor.id, port.contractHash])}`));
+      await choosePort('Find an output', `@observed:${JSON.stringify([output.descriptor.id, output.contractHash])}`); await choosePort('Find an input', virtual.ports[1].id);
       await capture('companion-panel-wiring.png'); await click('Create exact route', '.canvas-connection-panel');
       await until(async () => (await snapshot()).edges === 2, 'The discovered companion control did not create a second route');
       const companionConnected = await save(), companionPins = companionConnected.assignments.find(assignment => assignment.resourceId === companionNodeId).ports;

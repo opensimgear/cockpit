@@ -130,6 +130,15 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
  async function chooseBlock(name){await page.getByLabel('Search profile blocks').fill(name);await page.getByLabel('Search profile blocks').press('Enter');await expect(inspector.getByRole('heading',{name,exact:true})).toBeVisible();}
  async function selectProvider(name,ports){await chooseBlock(name);for(const name of ports){const row=inspector.locator('.port-row').filter({has:page.getByText(name,{exact:true})}).filter({has:page.getByRole('button',{name:'Use this exact port',exact:true})});await row.getByRole('button',{name:'Use this exact port',exact:true}).click();}}
  async function option(select,label){const candidates=await select.locator('option').evaluateAll(options=>options.map(option=>({label:option.textContent,value:option.value})));const choice=candidates.find(option=>option.label===label||option.value===label)??candidates.find(option=>option.label.startsWith(label+' ·'));assert.ok(choice,'Missing select option '+label+' in '+JSON.stringify(candidates));await select.selectOption(choice.value);}
+ async function portOption(label,value){
+  const input=composer.getByRole('combobox',{name:label,exact:true});await input.click();await input.fill(value);
+  await expect(input).toHaveAttribute('aria-expanded','true');
+  const listbox=page.locator('[role="listbox"]:visible');
+  const candidates=await listbox.getByRole('option').evaluateAll(options=>options.map(option=>({label:(option.querySelector('.port-name')?.textContent??option.textContent).replace(/\s+/g,' ').trim(),value:option.getAttribute('data-value')})));
+  const choice=candidates.find(option=>option.value===value||option.label===value)??candidates.find(option=>option.label.startsWith(value+' ·')||option.label.startsWith(value+' '));
+  assert.ok(choice,'Missing port result '+value+' in '+JSON.stringify(candidates));
+  await listbox.getByRole('option').nth(candidates.indexOf(choice)).click();
+ }
  async function route(from,fromPort,to,toPort,commit=true){
   if(!await composer.isVisible()){
    await page.getByLabel('Search profile blocks').fill('');await page.getByRole('button',{name:'Fit all',exact:true}).click();
@@ -143,7 +152,7 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
    await page.mouse.move(target.x+target.width/2,target.y+target.height/2,{steps:8});await page.mouse.up();
    await expect(composer).toBeVisible();
   }
-  await option(composer.getByLabel('Source block'),from);await option(composer.getByLabel('Exact source output'),fromPort);await option(composer.getByLabel('Destination block'),to);await option(composer.getByLabel('Exact destination input / action'),toPort);if(commit){await expect(composer.getByRole('button',{name:'Create exact route',exact:true})).toBeEnabled();await composer.getByRole('button',{name:'Create exact route',exact:true}).click();}
+  await option(composer.getByLabel('Source block'),from);await portOption('Find an output',fromPort);await option(composer.getByLabel('Destination block'),to);await portOption('Find an input',toPort);if(commit){await expect(composer.getByRole('button',{name:'Create exact route',exact:true})).toBeEnabled();await composer.getByRole('button',{name:'Create exact route',exact:true}).click();}
  }
  async function renameProcessing(name,fields={}){const editor=page.getByRole('region',{name:'Visible transformation editor'});await editor.getByLabel('Block label',{exact:true}).fill(name);for(const [label,value]of Object.entries(fields))await editor.getByLabel(label,{exact:true}).fill(String(value));await expect(editor.getByRole('button',{name:'Update visible node',exact:true})).toBeEnabled();await editor.getByRole('button',{name:'Update visible node',exact:true}).click();}
  async function transform(preset,name,fields={}){await page.getByRole('combobox',{name:/^Visible transformation/}).selectOption(preset);await page.getByRole('button',{name:'Add transformation',exact:true}).click();await renameProcessing(name,fields);}
