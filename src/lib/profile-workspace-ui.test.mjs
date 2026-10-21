@@ -9,8 +9,23 @@ const ProfilesPanel=await component('./ProfilesPanel.svelte'),ProfileCanvas=awai
 const{DEFAULT_PROFILE_ID}=modules.get('./profiles');const{ProfileEditorStore,blankProfile,seedProfile}=modules.get('./profile-editor');const hash=`sha256:${'1'.repeat(64)}`;const uid=n=>`11111111-1111-4111-8111-${String(n).padStart(12,'0')}`;const plain=value=>JSON.parse(JSON.stringify(value));
 const resource=(type,n)=>({id:`native:${type}:${n}`,name:`${type} ${n}`,resourceType:type,availability:type==='game-integration'?'unavailable':'online',generation:'1',capabilityRevision:hash,portCount:type==='game-integration'?20000:10,cachedPortCount:10,connections:[{scope:'fixture',key:String(n),route:{id:`route${n}`,transport:type==='osg-module'?'can':type==='game-integration'?'integration':'hid',providerGeneration:'boot',attributes:{gateway:'Gateway-1',owner:'fixture-owner'},baselineReady:false,writable:false,priority:1}}],attributes:{gameId:type==='game-integration'?'dcs':''},diagnostics:type==='game-integration'?['Game closed; waiting for matching context']:[]});
 const inventory=['host-controller','osg-module','companion','game-integration'].flatMap(type=>[resource(type,1),resource(type,2)]);
-function harness(){const docs=new Map([[DEFAULT_PROFILE_ID,{...blankProfile(uid(1),'Default'),id:DEFAULT_PROFILE_ID}]]);const calls=[];let id=10;const summary=d=>({id:d.id,name:d.name,revision:d.revision,isDefault:d.id===DEFAULT_PROFILE_ID,semanticHash:hash});const session={selectedProfileId:DEFAULT_PROFILE_ID,selectionMode:'manual',state:'stopped',appliedSnapshot:{profileId:DEFAULT_PROFILE_ID,revision:1,semanticHash:hash},fault:null};const api={async list(){return{profiles:[...docs.values()].map(summary),session};},async getAssignments(id){calls.push(['get',id]);return{document:plain(docs.get(id)),assignments:[],session};},async editorSave(document,expectedRevision,assignments){calls.push(['save',expectedRevision]);const saved={...plain(document),revision:expectedRevision===null?1:expectedRevision+1};docs.set(saved.id,saved);return{document:saved,assignments:plain(assignments),profiles:[...docs.values()].map(summary),session};}};const client={listAll:async()=>({resources:inventory}),inspect:noRequest};return{docs,calls,client,store:new ProfileEditorStore(api,client,()=>uid(id++))};}
+function harness({readOnly=false}={}){const docs=new Map([[DEFAULT_PROFILE_ID,{...blankProfile(uid(1),'Default'),id:DEFAULT_PROFILE_ID}]]);const calls=[];let id=10;const summary=d=>({id:d.id,name:d.name,revision:d.revision,isDefault:d.id===DEFAULT_PROFILE_ID,semanticHash:hash});const session={selectedProfileId:DEFAULT_PROFILE_ID,selectionMode:'manual',state:'stopped',appliedSnapshot:{profileId:DEFAULT_PROFILE_ID,revision:1,semanticHash:hash},fault:null};const api={async list(){return{profiles:[...docs.values()].map(summary),session,readOnly};},async getAssignments(id){calls.push(['get',id]);return{document:plain(docs.get(id)),assignments:[],session};},async editorSave(document,expectedRevision,assignments){calls.push(['save',expectedRevision]);const saved={...plain(document),revision:expectedRevision===null?1:expectedRevision+1};docs.set(saved.id,saved);return{document:saved,assignments:plain(assignments),profiles:[...docs.values()].map(summary),session};}};const client={listAll:async()=>({resources:inventory}),inspect:noRequest};return{docs,calls,client,store:new ProfileEditorStore(api,client,()=>uid(id++))};}
 const html=(store,client)=>render(ProfilesPanel,{props:{editorStore:store,resourceClient:client,openGameSettings:noRequest}}).body;
+
+async function vehicleWorkspace({readOnly=false}={}){
+ const h=harness({readOnly}),document=blankProfile(uid(20),'Vehicle rig'),value=modules.get('./profile-game-context').profileSetGameContext({document,assignments:[]},'assetto-corsa',[]);
+ value.document.vehicleTabs=[{id:'roadster',gameId:'assetto-corsa',vehicleId:'roadster_model',vehicleName:'Roadster',nodeIds:[]},{id:'cup',gameId:'assetto-corsa',vehicleId:'cup_model',vehicleName:'Cup car',nodeIds:[]}];
+ h.docs.set(document.id,value.document);await h.store.refresh();await h.store.open(document.id);return h;
+}
+// Seed view state only. All rendered selectors, controls and child components
+// come from the production component; server rendering never dispatches keys.
+async function vehicleWorkspaceHtml(h,{activeId='',adding=false}={}){
+ const filename=new URL('./ProfilesPanel.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace("activeVehicleTabId=$state('')",`activeVehicleTabId=$state(${JSON.stringify(activeId)})`).replace('addingVehicleTab=$state(false)',`addingVehicleTab=$state(${adding})`),{js}=compile(source,{filename:filename.pathname,generate:'server'}),dependencies=new Map(),exports={};
+ for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});
+ vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(dependencies.has(name))return dependencies.get(name);if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected vehicle workspace dependency ${name}`);}},{filename:filename.pathname});
+ return render(exports.default,{props:{editorStore:h.store,resourceClient:h.client,openGameSettings:noRequest}}).body.replace(/<!--[\s\S]*?-->/g,'');
+}
+const physicalVehicleTabs=body=>[...body.matchAll(/<div\b([^>]*\bclass="(?:[^" ]*\s+)*vehicle-tab(?:\s+[^" ]*)*"[^>]*)>([^]*?)<\/div>/g)].map(([,attributes,content])=>({attributes,content}));
 
 test('actual aircraft tab acquisition assigns its own catalogue and ignores a late reply after changing profiles',async()=>{
  const filename=new URL('./ProfilesPanel.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace("activeVehicleTabId=$state('')","activeVehicleTabId=$state('aircraft')").replace('</script>','captureDcs({loadDcsVehicleCatalogue,get state(){return {dcsCatalogueBusy,dcsCatalogueError,routingInventory};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
@@ -249,13 +264,51 @@ test('profile mode switch shares the Debug and Add action bar and appears only o
  await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(!editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
 });
 
-test('profile editor has a saved game context selector, a top history toolbar, and no activation card',async()=>{
+test('profile editor keeps one global history group with Save and game context above the runtime and canvas',async()=>{
  const h=harness();await h.store.refresh();await h.store.open(DEFAULT_PROFILE_ID);const body=html(h.store,h.client).replace(/<!--[\s\S]*?-->/g,'');
  const context=body.match(/<select[^>]*aria-label="Game context"[^>]*>([^]*?)<\/select>/)?.[1];assert.ok(context);assert.match(context,/<option value=""[^>]*>None<\/option>/);
  for(const game of modules.get('./games').supportedGames)assert.ok(context.includes(`value="${game.id}"`),game.name);
  const runtime=body.match(/<section[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];assert.ok(runtime!==undefined);assert.ok(!runtime.includes('Game context'));assert.ok(!runtime.includes('Activate profile'));assert.ok(!body.includes('class="group-editor"'));
- assert.match(body,/<div class="routing-toolbar[^]*?aria-label="Edit history"[^]*?aria-label="Undo"[^]*?<svg[^]*?aria-label="Redo"[^]*?<svg/);
- assert.ok(body.indexOf('aria-label="Edit history"')<body.indexOf('aria-label="Search profile blocks"'));assert.deepEqual(h.calls.map(call=>call[0]),['get']);
+ const historyGroups=[...body.matchAll(/<div\b([^>]*aria-label="Edit history"[^>]*)>([^]*?)<\/div>/g)];assert.equal(historyGroups.length,1);assert.match(historyGroups[0][1],/role="group"/);
+ for(const label of ['Undo','Redo']){const control=historyGroups[0][2].match(new RegExp(`<button\\b[^>]*aria-label="${label}"[^>]*>([^]*?)<\\/button>`));assert.ok(control,label);assert.match(control[1],/<svg\b/);}
+ const actions=body.indexOf('class="editor-save-actions'),history=body.indexOf('aria-label="Edit history"'),runtimePosition=body.indexOf('aria-label="Runtime profile status"');
+ assert.ok(actions>=0&&actions<history&&history<runtimePosition);assert.ok(history<body.indexOf('Save profile'));assert.ok(history<body.indexOf('aria-label="Search profile blocks"'));assert.deepEqual(h.calls.map(call=>call[0]),['get']);
+});
+
+test('vehicle selectors and their own remove controls occupy physical tabs immediately above the content region',async()=>{
+ const h=await vehicleWorkspace(),before=plain(h.store.state.editor),calls=plain(h.calls);
+ for(const activeId of ['', 'cup']){
+  const body=await vehicleWorkspaceHtml(h,{activeId}),group=body.match(/<div\b[^>]*aria-label="Profile vehicle tabs"[^>]*>/)?.[0];assert.ok(group);assert.match(group,/role="group"/);assert.doesNotMatch(body,/role="(?:tablist|tab|tabpanel)"/);
+  const base=body.match(/<button\b[^>]*data-tab-index="0"[^>]*>\s*Base<\/button>/)?.[0];assert.ok(base);assert.match(base,new RegExp(`aria-pressed="${!activeId}"`));assert.doesNotMatch(base,/tabindex="-1"/);
+  const tabs=physicalVehicleTabs(body);assert.equal(tabs.length,2);
+  for(const [index,tab]of h.store.state.editor.document.vehicleTabs.entries()){
+   const physical=tabs.find(item=>item.content.includes(`data-vehicle-tab-id="${tab.id}"`));assert.ok(physical,tab.id);
+   const select=physical.content.match(/<select\b([^>]*)>([^]*?)<\/select>/);assert.ok(select);assert.ok(select[1].includes(`aria-label="Vehicle for ${tab.vehicleName} tab"`));assert.match(select[1],new RegExp(`data-tab-index="${index+1}"`));assert.match(select[1],new RegExp(`data-active="${activeId===tab.id}"`));assert.doesNotMatch(select[1],/\brole=|tabindex="-1"|\bdisabled(?:[\s=>]|$)/);assert.match(select[2],new RegExp(`<option\\b[^>]*value="${tab.vehicleId}"[^>]*selected`));
+   const remove=physical.content.match(/<button\b[^>]*class="[^"]*\bremove-vehicle-tab\b[^"]*"[^>]*>/)?.[0];assert.ok(remove);assert.ok(remove.includes(`aria-label="Remove ${tab.vehicleName} tab"`));assert.ok(physical.content.indexOf('</select>')<physical.content.indexOf(remove));
+  }
+  const region=body.match(/<div\b[^>]*id="profile-vehicle-canvas"[^>]*>/)?.[0];assert.ok(region);assert.match(region,/role="region"/);assert.ok(region.includes(`aria-label="${activeId?'Cup car':'Base'}"`));assert.ok(body.indexOf('aria-label="Profile vehicle tabs"')<body.indexOf(region));
+  assert.match(body,/<button\b[^>]*aria-label="Add vehicle tab"[^>]*>[^]*?<\/button>\s*<\/div>\s*<div\b[^>]*id="profile-vehicle-canvas"/);
+  const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';assert.doesNotMatch(context,/<select\b/);assert.ok(!body.includes('aria-label="Tab vehicle"'));
+ }
+ assert.deepEqual(plain(h.store.state.editor),before);assert.deepEqual(h.calls,calls);
+});
+
+test('the new vehicle picker stays in its physical tab while the content region explains the empty canvas',async()=>{
+ const h=await vehicleWorkspace(),body=await vehicleWorkspaceHtml(h,{activeId:'cup',adding:true}),tabs=physicalVehicleTabs(body),newTab=tabs.find(tab=>tab.content.includes('aria-label="Tab vehicle"'));
+ assert.ok(newTab);assert.equal(tabs.length,3);assert.match(newTab.content,/<select\b[^>]*aria-label="Tab vehicle"[^>]*>/);assert.doesNotMatch(newTab.content,/<button\b[^>]*aria-label="Remove /);
+ assert.ok(body.indexOf('aria-label="Tab vehicle"')<body.indexOf('id="profile-vehicle-canvas"'));assert.match(body,/<div\b[^>]*id="profile-vehicle-canvas"[^>]*role="region"[^>]*aria-label="New vehicle"/);assert.ok(body.includes('Choose a vehicle to start configuring its canvas.'));
+ const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';assert.doesNotMatch(context,/<select\b/);assert.deepEqual(h.calls,[['get',uid(20)]]);
+});
+
+test('read-only vehicle tabs keep native selectors focusable for browsing while disabling edits and removal',async()=>{
+ const h=await vehicleWorkspace({readOnly:true}),before=plain(h.store.state.editor),body=await vehicleWorkspaceHtml(h,{activeId:'roadster'});
+ const tabs=physicalVehicleTabs(body);assert.equal(tabs.length,2);
+ for(const tab of tabs){
+  const select=tab.content.match(/<select\b([^>]*)>([^]*?)<\/select>/);assert.ok(select);assert.doesNotMatch(select[1],/\bdisabled(?:[\s=>]|$)|tabindex="-1"|\brole=/);
+  const own=select[2].match(/<option\b[^>]*selected[^>]*>/)?.[0];assert.ok(own);assert.doesNotMatch(own,/\bdisabled(?:[\s=>]|$)/);assert.match(select[2],/<option\b[^>]*value="__custom"[^>]*disabled/);assert.match(tab.content,/<button\b[^>]*aria-label="Remove [^"]+ tab"[^>]*disabled/);
+ }
+ assert.match(body,/<button\b[^>]*aria-label="Add vehicle tab"[^>]*disabled/);
+ const adding=await vehicleWorkspaceHtml(h,{adding:true});assert.match(adding,/<select\b[^>]*aria-label="Tab vehicle"[^>]*disabled/);assert.deepEqual(plain(h.store.state.editor),before);assert.deepEqual(h.calls,[['get',uid(20)]]);
 });
 
 test('fresh active ownership puts its tile first and stale or absent ownership restores ordinary ordering and tile appearance',async()=>{

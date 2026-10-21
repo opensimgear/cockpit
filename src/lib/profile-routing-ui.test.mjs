@@ -114,10 +114,22 @@ test('companion assignment uses its panel inspector and cannot bypass installati
   assert.ok(renderRouting(value,{selectedId:'third-party-a'}).includes('Inventory resource'));
 });
 
-test('routing uses canvas connection gestures and retains history and an accessible bindings table',()=>{
-  const body=renderRouting(draft());for(const label of ['Undo','Redo','Exact signal bindings','No routes yet.','Choose a row'])assert.ok(body.includes(label),label);
+test('routing uses canvas connection gestures and leaves history controls to the profile header',()=>{
+  const body=renderRouting(draft());for(const label of ['Exact signal bindings','No routes yet.','Choose a row'])assert.ok(body.includes(label),label);
+  for(const label of ['Edit history','Undo','Redo'])assert.ok(!body.includes(`aria-label="${label}"`),label);
   for(const removed of ['Connect exact ports','Visible transformation','Add transformation','Add virtual controller','Add keyboard and mouse','Keyboard and mouse preset','Desktop output presets'])assert.ok(!body.includes(removed),removed);assert.ok(!body.includes('profile_apply'));assert.ok(!body.includes('Start integration'));assert.ok(!body.includes('Native preflight'));
 });
+test('routing forwards profile history callbacks to canvas keyboard shortcuts without local history controls',async()=>{
+  const calls=[],props={undo:()=>calls.push('undo'),redo:()=>calls.push('redo')};let canvas,prevented=0;
+  const hooks={captureCanvas:value=>canvas=value},h=await harness(draft(),{},props,hooks);
+  const press=options=>canvas.keyboard({key:'z',ctrlKey:true,target:{closest:()=>null},preventDefault(){prevented++;},...options});
+  press({});press({shiftKey:true});press({ctrlKey:false,metaKey:true});press({key:'y'});
+  assert.deepEqual(calls,['undo','redo','undo','redo']);assert.equal(prevented,4);assert.deepEqual(h.edits,[]);
+  press({target:{closest:selector=>selector.startsWith('input,')?{}:null}});
+  await harness(draft(),{},{...props,readOnly:true},hooks);press({});press({shiftKey:true});
+  assert.deepEqual(calls,['undo','redo','undo','redo']);assert.equal(prevented,4);
+});
+
 test('block connection gesture opens explicit empty port choices; missing and incompatible choices never edit the graph',async()=>{
   const h=await harness(draft());h.handlers.connectBlocks('can-one','dcs');assert.equal(h.handlers.state.routeOpen,true);assert.equal(h.handlers.state.fromPort,'');assert.equal(h.handlers.state.toPort,'');assert.equal(h.edits.length,0);h.handlers.connect();assert.equal(h.edits.length,0);assert.match(h.handlers.state.message,/Select an output and an input/);
   const incompatible=await harness(draft(),{fromNode:'can-one',fromPort:'button',toNode:'dcs',toPort:'command'});incompatible.handlers.connect();assert.equal(incompatible.edits.length,0);assert.match(incompatible.handlers.state.message,/complete invocation/);

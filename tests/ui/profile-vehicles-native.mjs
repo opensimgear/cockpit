@@ -28,11 +28,12 @@ test('native vehicle tabs isolate their canvases, save, reopen, delete and undo'
   const saved=async()=> (await request({command:'profile_assignments_get',id:profileId})).profiles;
   const save=async()=>{await click('Save profile');await until(()=>native.evaluate(`(()=>{const button=document.querySelector('.editor-save-actions .primary-button');return button?.disabled&&button.textContent.trim()==='Save profile';})()`),'Save did not complete');if(!profileId)profileId=await until(async()=>(await request({command:'profile_list'})).profiles.profiles.find(profile=>profile.name===name)?.id,'Profile was not persisted');return saved();};
   const nodes=()=>native.evaluate(`[...document.querySelectorAll('.canvas-stage [data-node-id]')].map(node=>node.dataset.nodeId)`);
-  const tabs=()=>native.evaluate(`[...document.querySelectorAll('[aria-label="Profile vehicle tabs"] [role=tab]')].map(tab=>({name:tab.textContent.trim(),selected:tab.getAttribute('aria-selected')}))`);
+  const tabs=()=>native.evaluate(`[...document.querySelectorAll('[aria-label="Profile vehicle tabs"] [data-tab-index]')].map(tab=>({name:tab instanceof HTMLSelectElement?tab.selectedOptions[0]?.textContent.trim():tab.textContent.trim(),selected:tab.getAttribute(tab instanceof HTMLSelectElement?'data-active':'aria-pressed')}))`);
+  const activateVehicle=name=>until(()=>native.evaluate(`(()=>{const select=document.querySelector('select[aria-label='+JSON.stringify(${JSON.stringify(`Vehicle for ${name} tab`)})+']');if(!select)return false;select.focus();return select.dataset.active==='true';})()`),`Vehicle canvas unavailable: ${name}`);
   async function addTab(id,name){await click('Add vehicle tab');await select('Tab vehicle','__custom');await fill('Exact vehicle ID',id);await fill('Vehicle name',name);await click('Use vehicle');await until(async()=>(await tabs()).some(tab=>tab.name===name&&tab.selected==='true'),'Vehicle tab was not selected');}
   async function back(){await click('← Back to Profiles');await until(()=>native.evaluate(`!!document.querySelector('[aria-label="Saved profiles"]')`),'Profile list unavailable');}
   async function compiledPreview(){
-    const {document,assignments}=await saved(),index=await native.evaluate(`Number(document.querySelector('[aria-label="Profile vehicle tabs"] [aria-selected="true"]')?.dataset.tabIndex??0)`);
+    const {document,assignments}=await saved(),index=await native.evaluate(`Number(document.querySelector('[aria-label="Profile vehicle tabs"] select[data-active="true"], [aria-label="Profile vehicle tabs"] button[aria-pressed="true"]')?.dataset.tabIndex??0)`);
     const scoped=new Set(document.vehicleTabs.flatMap(tab=>tab.nodeIds)),selected=new Set(document.vehicleTabs[index-1]?.nodeIds??[]),included=id=>!scoped.has(id)||selected.has(id);
     for(const field of ['resources','processingNodes','virtualOutputs','desktopOutputs'])if(document[field])document[field]=document[field].filter(node=>included(node.id));
     document.bindings=document.bindings.filter(edge=>included(edge.from.nodeId)&&included(edge.to.nodeId));
@@ -58,10 +59,27 @@ test('native vehicle tabs isolate their canvases, save, reopen, delete and undo'
     await addTab('FA-18C_hornet','F/A-18C');assert.equal((await nodes()).length,1);
     await click('Add virtual controller','.component-palette');await until(async()=>(await nodes()).length===2,'Vehicle controller missing');const hornetNodes=await nodes();
     await addTab('F-16C_50','F-16C');assert.equal((await nodes()).length,1);await click('Add virtual controller','.component-palette');await until(async()=>(await nodes()).length===2,'Second vehicle controller missing');const viperNodes=await nodes();
-    assert.notDeepEqual(hornetNodes,viperNodes);const first=await save();assert.equal(first.document.vehicleTabs.length,2);assert.equal(first.document.virtualOutputs.length,3);assert.equal(first.document.resources.filter(resource=>resource.kind==='game').length,3);
+    assert.notDeepEqual(hornetNodes,viperNodes);let first=await save();assert.equal(first.document.vehicleTabs.length,2);assert.equal(first.document.virtualOutputs.length,3);assert.equal(first.document.resources.filter(resource=>resource.kind==='game').length,3);
     assert.deepEqual(first.document.vehicleTabs.map(tab=>tab.nodeIds),[hornetNodes,viperNodes]);checks.push('Base and two vehicle canvases own distinct nodes and persist in the native library.');
+    assert.deepEqual(await native.evaluate(`(()=>{const group=document.querySelector('[aria-label="Profile vehicle tabs"]'),history=document.querySelector('.editor-save-actions [aria-label="Edit history"]');return{role:group.getAttribute('role'),selectors:group.querySelectorAll('select[data-vehicle-tab-id]').length,headerUndo:history?.querySelectorAll('[aria-label="Undo"]').length,headerRedo:history?.querySelectorAll('[aria-label="Redo"]').length,localHistory:document.querySelectorAll('.routing-workspace [aria-label="Edit history"]').length,nested:group.querySelectorAll('button select,button button').length,removesInside:[...group.querySelectorAll('select[data-vehicle-tab-id]')].every(select=>select.parentElement.classList.contains('vehicle-tab')&&!!select.parentElement.querySelector('.remove-vehicle-tab'))};})()`),{role:'group',selectors:2,headerUndo:1,headerRedo:1,localHistory:0,nested:0,removesInside:true});
+    await activateVehicle('F/A-18C');assert.deepEqual(await nodes(),hornetNodes);
+    const hornetTabId=first.document.vehicleTabs.find(tab=>tab.vehicleId==='FA-18C_hornet').id;
+    assert.deepEqual(await native.evaluate(`(()=>{const select=document.querySelector('select[data-vehicle-tab-id='+JSON.stringify(${JSON.stringify(hornetTabId)})+']');return{own:[...select.options].some(option=>option.value==='FA-18C_hornet'),other:[...select.options].some(option=>option.value==='F-16C_50')};})()`),{own:true,other:false});
+    // Real native End must reach the select's last option, without a tablist
+    // handler consuming it. The custom option then changes this exact tab.
+    await native.send('Input.dispatchKeyEvent',{type:'keyDown',key:'End',code:'End',windowsVirtualKeyCode:35,nativeVirtualKeyCode:35});
+    await native.send('Input.dispatchKeyEvent',{type:'keyUp',key:'End',code:'End',windowsVirtualKeyCode:35,nativeVirtualKeyCode:35});
+    await until(()=>native.evaluate(`!!document.querySelector('.vehicle-custom [aria-label="Exact vehicle ID"]')`),'Native select End key was intercepted instead of opening the custom vehicle choice');
+    await fill('Exact vehicle ID','A-10C_2');await fill('Vehicle name','A-10C test');await click('Use vehicle');
+    await until(()=>native.evaluate(`document.querySelector('select[data-vehicle-tab-id='+JSON.stringify(${JSON.stringify(hornetTabId)})+']')?.value==='A-10C_2'&&!document.querySelector('.profiles-workspace').textContent.includes('Loading this aircraft’s controls and telemetry')`),'Changing the inline vehicle selection did not settle');
+    const changed=await save(),changedTab=changed.document.vehicleTabs.find(tab=>tab.id===hornetTabId);
+    assert.equal(changedTab.vehicleId,'A-10C_2');assert.equal(changedTab.vehicleName,'A-10C test');assert.deepEqual(changedTab.nodeIds,hornetNodes);assert.deepEqual(await nodes(),hornetNodes);
+    await select('Vehicle for A-10C test tab','__custom');await fill('Exact vehicle ID','FA-18C_hornet');await fill('Vehicle name','F/A-18C');await click('Use vehicle');
+    await until(()=>native.evaluate(`document.querySelector('select[data-vehicle-tab-id='+JSON.stringify(${JSON.stringify(hornetTabId)})+']')?.value==='FA-18C_hornet'&&!document.querySelector('.profiles-workspace').textContent.includes('Loading this aircraft’s controls and telemetry')`),'Restoring the inline vehicle choice did not settle');
+    first=await save();assert.deepEqual(first.document.vehicleTabs.map(tab=>tab.nodeIds),[hornetNodes,viperNodes]);
+    checks.push('Header owns the global history controls; inline native selectors activate canvases, exclude duplicate vehicles, accept native End, and save exact retargeted vehicle IDs without moving canvas nodes.');
     await click('Base','[aria-label="Profile vehicle tabs"]');assert.equal((await nodes()).length,2);
-    await back();await click(`Edit ${name}`);await until(async()=>(await tabs()).length===3,'Reopened tabs missing');await click('F/A-18C','[aria-label="Profile vehicle tabs"]');assert.deepEqual(await nodes(),hornetNodes);checks.push('Reopening restores tab names and exact scoped canvases.');
+    await back();await click(`Edit ${name}`);await until(async()=>(await tabs()).length===3,'Reopened tabs missing');await activateVehicle('F/A-18C');assert.deepEqual(await nodes(),hornetNodes);checks.push('Reopening restores tab names and exact scoped canvases.');
     const cleanPreview=await compiledPreview();assert.ok(!cleanPreview.diagnostics.some(diagnostic=>diagnostic.code==='inputUnbound'));
     await conflictsHidden();checks.push('Native compiler preflight and the actual clean vehicle canvas leave no conflict section.');
     const screenshot=await native.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(resolve(artifacts,'vehicle-tab.png'),Buffer.from(screenshot.data,'base64'));
@@ -71,19 +89,25 @@ test('native vehicle tabs isolate their canvases, save, reopen, delete and undo'
     conflicted.processingNodes.push({id:conflictId,name:'Unbound processing input',operation:{kind:'identity'},inputs:[{id:'in',name:'Input',direction:'input',contract}],outputs:[{id:'out',name:'Output',direction:'output',contract}]});
     conflicted.vehicleTabs.find(tab=>tab.nodeIds.includes(hornetNodes[0])).nodeIds.push(conflictId);
     const conflictSaved=(await request({command:'profile_editor_save',document:conflicted,assignments:first.assignments,expectedRevision:conflicted.revision})).profiles.document;
-    await click(`Edit ${name}`);await until(async()=>(await tabs()).length===3,'Conflict profile did not reopen');await click('F/A-18C','[aria-label="Profile vehicle tabs"]');
+    await click(`Edit ${name}`);await until(async()=>(await tabs()).length===3,'Conflict profile did not reopen');await activateVehicle('F/A-18C');
     const conflictPreview=await compiledPreview();assert.ok(conflictPreview.diagnostics.some(diagnostic=>diagnostic.code==='inputUnbound'));
     await until(()=>native.evaluate(`(()=>{const section=document.querySelector('[aria-label="Vehicle configuration conflicts"]');return section?.textContent.includes('Base + F/A-18C conflicts')&&section.textContent.includes('Connect every declared processing input');})()`),'The genuine native unbound-input conflict was not shown in profile details');
     const conflictScreenshot=await native.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(resolve(artifacts,'vehicle-conflict.png'),Buffer.from(conflictScreenshot.data,'base64'));
     await click('Base','[aria-label="Profile vehicle tabs"]');await conflictsHidden();
-    await click('F-16C','[aria-label="Profile vehicle tabs"]');await conflictsHidden();
+    await activateVehicle('F-16C');await conflictsHidden();
     await back();const resolved=JSON.parse(JSON.stringify(first.document));resolved.revision=conflictSaved.revision;
     await request({command:'profile_editor_save',document:resolved,assignments:first.assignments,expectedRevision:resolved.revision});
-    await click(`Edit ${name}`);await until(async()=>(await tabs()).length===3,'Resolved profile did not reopen');await click('F/A-18C','[aria-label="Profile vehicle tabs"]');
+    await click(`Edit ${name}`);await until(async()=>(await tabs()).length===3,'Resolved profile did not reopen');await activateVehicle('F/A-18C');
     const resolvedPreview=await compiledPreview();assert.ok(!resolvedPreview.diagnostics.some(diagnostic=>diagnostic.code==='inputUnbound'));await conflictsHidden();
     checks.push('A genuine native unbound processing input is visible only for its vehicle; Base and the other vehicle stay clear, and resolving the graph hides the section again.');
-    await click('Remove F/A-18C tab');await until(async()=>(await tabs()).length===2,'Tab removal failed');const removed=await save();assert.equal(removed.document.virtualOutputs.some(node=>hornetNodes.includes(node.id)),false);assert.equal(removed.document.resources.some(node=>hornetNodes.includes(node.id)),false);assert.equal(removed.assignments.some(row=>hornetNodes.includes(row.resourceId)),false);assert.equal(removed.document.vehicleTabs.length,1);assert.equal(removed.document.virtualOutputs.length,2);
-    await click('Undo');await until(async()=>(await tabs()).length===3,'Undo did not restore deleted tab');const restored=await save();assert.deepEqual(restored.document.vehicleTabs.map(tab=>tab.nodeIds),[hornetNodes,viperNodes]);checks.push('Removing a tab deletes its complete graph, and Undo restores it atomically.');
+    await click('Remove F/A-18C tab');await until(async()=>(await tabs()).length===2,'Tab removal failed');
+    assert.equal(await native.evaluate(`document.activeElement===document.querySelector('[aria-label="Profile vehicle tabs"] button[data-tab-index="0"]')`),true,'Removing the active vehicle must focus Base');
+    assert.equal((await tabs()).find(tab=>tab.name==='Base').selected,'true');
+    const removed=await save();assert.equal(removed.document.virtualOutputs.some(node=>hornetNodes.includes(node.id)),false);assert.equal(removed.document.resources.some(node=>hornetNodes.includes(node.id)),false);assert.equal(removed.assignments.some(row=>hornetNodes.includes(row.resourceId)),false);assert.equal(removed.document.vehicleTabs.length,1);assert.equal(removed.document.virtualOutputs.length,2);
+    await click('Undo','.editor-save-actions [aria-label="Edit history"]');await until(async()=>(await tabs()).length===3,'Header Undo did not restore deleted tab');
+    await click('Redo','.editor-save-actions [aria-label="Edit history"]');await until(async()=>(await tabs()).length===2,'Header Redo did not remove the vehicle again');
+    await click('Undo','.editor-save-actions [aria-label="Edit history"]');await until(async()=>(await tabs()).length===3,'Header Undo did not restore the vehicle again');
+    const restored=await save();assert.deepEqual(restored.document.vehicleTabs.map(tab=>tab.nodeIds),[hornetNodes,viperNodes]);checks.push('Removing the active tab focuses Base and deletes its graph; global header Undo/Redo restores and removes it atomically.');
     await select('Game context','');await until(async()=>(await tabs()).length===0,'Removing game context retained tabs');await click('Undo');await until(async()=>(await tabs()).length===3,'Undo did not restore game/vehicle context');
     await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({actualNativeCockpit:true,profileId,checks,conflictPreview,document:restored.document},null,2)+'\n');
   }catch(error){await writeFile(resolve(artifacts,'failure.txt'),String(error));throw error;}
