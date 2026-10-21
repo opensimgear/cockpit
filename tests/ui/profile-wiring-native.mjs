@@ -57,10 +57,10 @@ async function connectNative() {
   };
 }
 
-test('native canvas constructs graphs, rejects full inputs and persists draggable orthogonal or smooth arrows', { timeout: 300000 }, async () => {
+test('native canvas constructs graphs and applies global Bezier or rounded orthogonal styling from tabbed Settings', { timeout: 300000 }, async () => {
   await mkdir(artifacts, { recursive: true });
   const native = await connectNative(), name = `Wiring ${randomUUID()}`, checks = [];
-  let profileId, beforeProfiles, beforeAutomatic, intercepted, dragging = false, draftOpen = false, companionEvidence;
+  let profileId, beforeProfiles, beforeAutomatic, beforeCanvasStyling, intercepted, dragging = false, draftOpen = false, companionEvidence, checkedSettingsHistory = false;
   const request = async value => {
     const result = await native.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({ ...value, clientId: 'profile-wiring-native' })}})`);
     assert.equal(result.ok, true, `${value.command}: ${redact(result.error ?? 'Native request failed')}`); return result.state;
@@ -131,9 +131,33 @@ test('native canvas constructs graphs, rejects full inputs and persists draggabl
     await mouse('mouseMoved',at);await mouse('mousePressed',at,{button:'left',buttons:1,clickCount:1});await mouse('mouseReleased',at,{button:'left',buttons:0,clickCount:1});
     await until(()=>native.evaluate(`document.querySelectorAll('.connection-endpoint[data-reconnect-binding="${bindingId}"]').length===2`),'Selecting a wire did not reveal its endpoint handles');
   };
-  const setArrowStyle = async value => {
+  const settingsTab = async label => {
+    await until(async()=>{if(await clickIfPresent(label,'[role="tablist"][aria-label="Settings sections"]'))return true;await clickIfPresent('Settings','.sidebar-bottom');return false;},`UI action unavailable: ${label}`);
+    await until(()=>native.evaluate(`[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')].some(tab=>tab.textContent.trim()===${JSON.stringify(label)}&&tab.getAttribute('aria-selected')==='true')`),`${label} Settings tab did not open`);
+  };
+  const setArrowStyle = async (value, radius) => {
+    const before=profileId?await saved():null;
+    const historyState=()=>native.evaluate(`['Undo','Redo'].map(label=>{const button=document.querySelector('.profiles-workspace button[aria-label="'+label+'"]');return{label,disabled:button?.disabled,title:button?.title};})`);
+    const beforeHistory=before?await historyState():null;
+    if(before)assert.equal(await saveDisabled(),true,'Save the graph before navigating to global styling preferences');
+    await click('Settings', '.sidebar-bottom');await settingsTab('Styling');
     await native.evaluate(`(()=>{const select=document.querySelector('select[aria-label="Arrow style"]');if(!select)throw new Error('Arrow style selector is missing');select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-    await until(()=>native.evaluate(`document.querySelector('select[aria-label="Arrow style"]')?.value===${JSON.stringify(value)}`),'Arrow style selection did not update');
+    await until(()=>native.evaluate(`document.querySelector('select[aria-label="Arrow style"]')?.value===${JSON.stringify(value)}&&(JSON.parse(localStorage.getItem('osg-canvas-styling')??'null')?.arrowStyle??'smooth')===${JSON.stringify(value)}`),'Global arrow style did not update and save automatically');
+    if(radius!==undefined){
+      await native.evaluate(`(()=>{const input=document.querySelector('input[aria-label="Arrow corner radius"]');if(!input)throw new Error('Arrow corner radius is missing');input.value=${JSON.stringify(String(radius))};input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+      await until(()=>native.evaluate(`Number(document.querySelector('input[aria-label="Arrow corner radius"]')?.value)===${radius}&&JSON.parse(localStorage.getItem('osg-canvas-styling')??'null')?.cornerRadius===${radius}`),'Arrow corner radius did not update and save automatically');
+    }
+    await click('Profiles','nav[aria-label="Main navigation"]');
+    if(before){
+      await until(()=>native.evaluate(`document.querySelector('.canvas-stage')?.getBoundingClientRect().width>0`),'Returning from Settings did not retain the profile editor');
+      if(!checkedSettingsHistory){
+        await native.evaluate('history.back()');await until(()=>native.evaluate(`document.querySelector('[role="tablist"][aria-label="Settings sections"]')?.getBoundingClientRect().width>0`),'Browser Back did not revisit Settings');
+        await native.evaluate('history.forward()');await until(()=>native.evaluate(`document.querySelector('.canvas-stage')?.getBoundingClientRect().width>0`),'Browser Forward did not restore the same profile editor');checkedSettingsHistory=true;
+      }
+      assert.equal(await saveDisabled(),true,'Global styling must not dirty the profile or create a graph history edit');
+      assert.deepEqual((await saved()).document,before.document,'Global styling must not change saved profile metadata or signal bindings');
+      assert.deepEqual(await historyState(),beforeHistory,'Global styling must not add, remove, or rename profile Undo/Redo steps');
+    }
   };
   const edgeGeometry = bindingId => native.evaluate(`(()=>{const path=[...document.querySelectorAll('.signal-edge')].find(path=>path.dataset.bindingId===${JSON.stringify(bindingId)});if(!path)return null;const length=path.getTotalLength(),start=path.getPointAtLength(0),end=path.getPointAtLength(length);return{path:path.getAttribute('d'),start:{x:start.x,y:start.y},end:{x:end.x,y:end.y}};})()`);
   const dragSegment = async (bindingId, orientation, delta) => {
@@ -160,6 +184,7 @@ test('native canvas constructs graphs, rejects full inputs and persists draggabl
   try {
     await native.send('Page.reload', { ignoreCache: true });
     await until(() => native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit IPC did not finish starting');
+    beforeCanvasStyling=await native.evaluate(`localStorage.getItem('osg-canvas-styling')`);
     assert.equal(await native.evaluate('document.visibilityState'), 'visible');
     await native.send('Input.cancelDragging'); await mouse('mouseReleased', { x: 10, y: 10 }, { button: 'left', buttons: 0 });
     beforeProfiles = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles, 'Native gateway did not become ready'); beforeAutomatic = await automatic();
@@ -175,6 +200,22 @@ test('native canvas constructs graphs, rejects full inputs and persists draggabl
     const outputs = observed.filter(port => port.current && port.descriptor.direction === 'output'), inputs = observed.filter(port => port.current && port.descriptor.direction === 'input');
     const boolean = outputs.find(port => port.descriptor.contract.delivery === 'state' && port.descriptor.contract.schema.type === 'boolean');
     assert.ok(boolean, 'A real boolean controller output is required for the virtual button route.');
+
+    await click('Settings','.sidebar-bottom');
+    await until(async()=>{if(await native.evaluate(`document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]').length===4`))return true;await clickIfPresent('Settings','.sidebar-bottom');return false;},'Tabbed Settings did not finish opening');
+    assert.deepEqual(await native.evaluate(`[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')].map(tab=>({name:tab.textContent.trim(),selected:tab.getAttribute('aria-selected')==='true'}))`),[{name:'General',selected:true},{name:'Styling',selected:false},{name:'Outputs',selected:false},{name:'Companions',selected:false}],'Settings must open with General first');
+    const visibleSetting=selector=>native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});return!!element&&element.getBoundingClientRect().width>0&&!element.closest('[hidden]');})()`);
+    assert.equal(await visibleSetting('[aria-label="Desktop behavior"]'),true);assert.equal(await visibleSetting('[aria-label="Progress notifications"]'),true);assert.equal(await visibleSetting('[aria-label="Arrow style"]'),false);
+    await native.evaluate(`document.getElementById('settings-tab-general').focus()`);
+    await native.send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});await native.send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+    await until(()=>native.evaluate(`document.getElementById('settings-tab-styling')?.getAttribute('aria-selected')==='true'&&document.activeElement?.id==='settings-tab-styling'`),'Arrow keys must select and focus the next Settings tab');
+    await native.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Home',code:'Home',windowsVirtualKeyCode:36});await native.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Home',code:'Home',windowsVirtualKeyCode:36});
+    await until(()=>native.evaluate(`document.getElementById('settings-tab-general')?.getAttribute('aria-selected')==='true'&&document.activeElement?.id==='settings-tab-general'`),'Home must select and focus the first Settings tab');
+    await settingsTab('Outputs');assert.equal(await visibleSetting('[aria-label="Controller and desktop output settings"]'),true);assert.equal(await visibleSetting('[aria-label="Desktop behavior"]'),false);
+    await settingsTab('Companions');assert.equal(await visibleSetting('[aria-label="Companion listener settings"]'),true);assert.equal(await visibleSetting('[aria-label="Controller and desktop output settings"]'),false);
+    await settingsTab('Styling');assert.equal(await visibleSetting('[aria-label="Light theme"]'),true);assert.equal(await visibleSetting('[aria-label="Arrow style"]'),true);await capture('tabbed-styling-settings.png');
+    await setArrowStyle('smooth');
+    checks.push('Settings opens on General; desktop and notifications, Styling appearance and arrows, Outputs, and Companions occupy their own accessible tabs');
 
     await click('Profiles', 'nav[aria-label="Main navigation"]');
     await until(async()=>{if(await clickIfPresent('Add profile'))return true;if(await clickIfPresent('Discard and continue'))return false;await clickIfPresent('← Back to Profiles');return false;},'The profile list did not finish opening',60000);draftOpen = true;
@@ -382,22 +423,29 @@ test('native canvas constructs graphs, rejects full inputs and persists draggabl
     await until(async()=>!(await snapshot()).panel,'Reconnecting to the original occupied named input did not complete');assert.deepEqual((await saved()).document.bindings,fullInputs.document.bindings);
     checks.push('Fully connected named and aggregate inputs show disabled drops; a real invalid drop leaves no picker/history, while the owning wire can reconnect to its input');
 
-    // The style and hand-adjusted channels are editor state: signal bindings and
-    // both physical port anchors remain unchanged throughout route edits.
-    await setArrowStyle('orthogonal');const orthogonal=await save();assert.equal(orthogonal.document.editor.arrowStyle,'orthogonal');
+    // Styling belongs to the cockpit; hand-adjusted channels belong to the
+    // graph. Global preferences never create profile edits or history entries.
+    if(!await saveDisabled())await save();
+    const orthogonal=await saved();await setArrowStyle('orthogonal',24);
     const routeId=ownGateEdge.id;await selectEdge(routeId);
     const focusedOutline=await native.evaluate(`(()=>{const path=[...document.querySelectorAll('.signal-edge-hit')].find(path=>path.dataset.connectionId===${JSON.stringify(routeId)});path.focus();return{style:getComputedStyle(path).outlineStyle,width:getComputedStyle(path).outlineWidth};})()`);assert.equal(focusedOutline.style,'none','Selecting/focusing an SVG arrow must not paint a white rectangular browser outline');
-    const beforeRoute=await edgeGeometry(routeId);assert.ok(!/[CQ]/.test(beforeRoute.path),'The 90-degree style must preserve actual sharp horizontal/vertical bends');
+    const roundedRoute=await edgeGeometry(routeId);assert.ok(/[LHV]/.test(roundedRoute.path)&&/[ACQ]/.test(roundedRoute.path),'Horizontal/vertical arrows must join straight segments with rounded curves');
+    await setArrowStyle('orthogonal',0);const squareRoute=await edgeGeometry(routeId);assert.ok(!/[ACQ]/.test(squareRoute.path),'A zero corner radius keeps square orthogonal bends');assert.notEqual(squareRoute.path,roundedRoute.path,'Changing the global radius changes the rendered path');
+    await setArrowStyle('orthogonal',4);const smallRadiusRoute=await edgeGeometry(routeId);assert.notEqual(smallRadiusRoute.path,roundedRoute.path,'A smaller corner radius visibly changes the rounded route');
+    await setArrowStyle('orthogonal',24);const beforeRoute=await edgeGeometry(routeId);assert.equal(beforeRoute.path,roundedRoute.path);
     await dragSegment(routeId,'vertical',{x:32,y:0});const movedVertical=await edgeGeometry(routeId);assert.notEqual(movedVertical.path,beforeRoute.path,'Dragging a vertical channel must move its x position');assert.deepEqual(movedVertical.start,beforeRoute.start);assert.deepEqual(movedVertical.end,beforeRoute.end);
     const verticalSaved=await save();assert.deepEqual(verticalSaved.document.bindings,orthogonal.document.bindings,'Route shape edits must not change signal bindings');assert.ok(verticalSaved.document.editor.wireRoutes?.some(route=>route.bindingId===routeId),'The moved channel must persist in editor state');
     await click('Undo');await until(async()=>(await edgeGeometry(routeId)).path===beforeRoute.path,'One Undo did not restore the vertical segment');await click('Redo');await until(async()=>(await edgeGeometry(routeId)).path===movedVertical.path,'One Redo did not restore the vertical segment');assert.equal(await saveDisabled(),true,'Redoing the saved route must restore its clean state');
     await dragSegment(routeId,'horizontal',{x:0,y:28});const movedHorizontal=await edgeGeometry(routeId);assert.notEqual(movedHorizontal.path,movedVertical.path,'Dragging a horizontal channel must move its y position');assert.deepEqual(movedHorizontal.start,beforeRoute.start);assert.deepEqual(movedHorizontal.end,beforeRoute.end);const routed=await save();
     await click('Undo');await until(async()=>(await edgeGeometry(routeId)).path===movedVertical.path,'One Undo did not restore the horizontal segment');await click('Redo');await until(async()=>(await edgeGeometry(routeId)).path===movedHorizontal.path,'One Redo did not restore the horizontal segment');assert.equal(await saveDisabled(),true,'Redoing the saved route must restore its clean state');await capture('orthogonal-segment-editing.png');
-    await click('← Back to Profiles');await click(`Edit ${name}`);await until(()=>native.evaluate(`document.querySelector('select[aria-label="Arrow style"]')?.value==='orthogonal'`),'The chosen arrow style did not survive reopening');assert.equal((await edgeGeometry(routeId)).path,movedHorizontal.path,'The adjusted route must survive reopening');assert.deepEqual((await saved()).document.editor.wireRoutes,routed.document.editor.wireRoutes);
-    await setArrowStyle('smooth');await selectEdge(routeId);const smooth=await edgeGeometry(routeId);assert.ok(/[CQ]/.test(smooth.path),'Switching back to smooth arrows must round channel bends');assert.equal(await native.evaluate(`document.querySelectorAll('[data-segment-binding]').length`),0,'Smooth arrows must not expose orthogonal drag controls');const final=await save();assert.equal(final.document.editor.arrowStyle,'smooth');assert.deepEqual(final.document.editor.wireRoutes,routed.document.editor.wireRoutes,'Style changes retain manually adjusted routes for later use');
-    await capture('smooth-arrow-without-outline.png');checks.push('Style selection, true horizontal/vertical segment drags, one-step Undo/Redo, Save/reopen, stable exact port anchors and removal of the SVG focus rectangle pass in the native cockpit');
+    await click('← Back to Profiles');await click(`Edit ${name}`);await until(async()=>(await edgeGeometry(routeId))?.path===movedHorizontal.path,'The adjusted route must survive reopening');assert.deepEqual((await saved()).document.editor.wireRoutes,routed.document.editor.wireRoutes);
+    await native.send('Page.reload',{ignoreCache:true});await until(()=>native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'),'Native cockpit did not reload');
+    await click('Settings','.sidebar-bottom');await settingsTab('Styling');assert.deepEqual(await native.evaluate(`({style:document.querySelector('select[aria-label="Arrow style"]')?.value,radius:Number(document.querySelector('input[aria-label="Arrow corner radius"]')?.value)})`),{style:'orthogonal',radius:24},'The global style and corner radius must survive a full cockpit reload');await capture('persisted-rounded-arrow-settings.png');
+    await click('Profiles','nav[aria-label="Main navigation"]');if(!await native.evaluate(`document.querySelector('.canvas-stage')?.getBoundingClientRect().width>0`))await click(`Edit ${name}`);await until(async()=>(await edgeGeometry(routeId))?.path===movedHorizontal.path,'Reloading must retain the saved route and global rendering preferences');
+    await setArrowStyle('smooth');await selectEdge(routeId);const smooth=await edgeGeometry(routeId);assert.ok(/C/.test(smooth.path)&&!/[LQHV]/.test(smooth.path),'Fully smooth arrows use Bezier curves without horizontal or vertical line segments');assert.equal(await native.evaluate(`document.querySelectorAll('[data-segment-binding]').length`),0,'Fully smooth arrows must not expose orthogonal drag controls');assert.equal(await native.evaluate(`document.querySelectorAll('.profiles-workspace select[aria-label="Arrow style"]').length`),0,'Arrow styling belongs in Settings rather than the profile toolbar');const final=await saved();assert.deepEqual(final.document,routed.document,'Global style changes must preserve the complete saved profile, including its manual channels');
+    await capture('smooth-arrow-without-outline.png');checks.push('Global smooth Bezier and rounded orthogonal styles, corner radii 0/4/24, preference reload, true horizontal/vertical drags, one-step Undo/Redo, Save/reopen, stable port anchors, and no SVG focus rectangle pass in the native cockpit');
     console.log('Canvas wiring evidence: '+resolve(artifacts,'evidence.json'));
-    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, realPaletteDrag: true, realConnectionMouseDrags: true, profileId, resource: { id: resource.id, name: resource.name, total: observed.length, outputs: outputs.length, inputs: inputs.length }, chosenPort: boolean.descriptor.id, companion: companionEvidence,geometry,insertedGeometry,multiplyGeometry,gateGeometry,draftCompilation,multiply:typedMultiply,arrowGeometry:{beforeRoute,movedVertical,movedHorizontal,smooth,focusedOutline},wireRoutes:routed.document.editor.wireRoutes,checks }, null, 2) + '\n');
+    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, realPaletteDrag: true, realConnectionMouseDrags: true, profileId, resource: { id: resource.id, name: resource.name, total: observed.length, outputs: outputs.length, inputs: inputs.length }, chosenPort: boolean.descriptor.id, companion: companionEvidence,geometry,insertedGeometry,multiplyGeometry,gateGeometry,draftCompilation,multiply:typedMultiply,arrowGeometry:{roundedRoute,squareRoute,smallRadiusRoute,beforeRoute,movedVertical,movedHorizontal,smooth,focusedOutline},wireRoutes:routed.document.editor.wireRoutes,checks }, null, 2) + '\n');
   } catch (error) {
     await capture('failure.png').catch(() => {});
     await writeFile(resolve(artifacts, 'failure.json'), JSON.stringify({ profileId, checks, error: redact(error.message), state: await snapshot().catch(() => null) }, null, 2) + '\n'); throw error;
@@ -414,6 +462,14 @@ test('native canvas constructs graphs, rejects full inputs and persists draggabl
       } else if (draftOpen) await clickIfPresent('Cancel creation');
       if (beforeProfiles) assert.deepEqual((await request({ command: 'profile_list' })).profiles.profiles, beforeProfiles, 'Acceptance must preserve every original saved profile');
       if (beforeAutomatic) { const after = await automatic(); assert.equal(after.mode, beforeAutomatic.mode); assert.equal(after.manualProfileId, beforeAutomatic.manualProfileId); assert.deepEqual(after.rules, beforeAutomatic.rules); }
-    } finally { native.close(); }
+    } finally {
+      try {
+        if(beforeCanvasStyling!==undefined){
+          await native.evaluate(`(()=>{const previous=${JSON.stringify(beforeCanvasStyling)};if(previous===null)localStorage.removeItem('osg-canvas-styling');else localStorage.setItem('osg-canvas-styling',previous);})()`);
+          await native.send('Page.reload',{ignoreCache:true});
+          await until(()=>native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'),'Native cockpit did not finish restoring its original styling preferences');
+        }
+      } finally { native.close(); }
+    }
   }
 });

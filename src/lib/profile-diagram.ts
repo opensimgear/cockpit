@@ -1,5 +1,5 @@
 import type { DeepReadonly, ProfileBinding, ProfileWireRoute, ProfileWireStyle } from './profiles';
-import { profileAnchorWireRoute } from './profile-wire-layout';
+import { profileAnchorWireRoute, profileWireCorners } from './profile-wire-layout';
 
 type Edge = DeepReadonly<Pick<ProfileBinding, 'from' | 'to'>>;
 export type DiagramPoint = { x:number; y:number };
@@ -12,30 +12,108 @@ export function diagramPortAnchor(position:DiagramPoint,direction:'input'|'outpu
 }
 
 /** A tangent-continuous preview uses the same attachment as a saved connection. */
-export function diagramPendingPath(start:DiagramPoint,end:DiagramPoint,direction:'input'|'output',style:ProfileWireStyle='smooth') {
+export function diagramPendingPath(start:DiagramPoint,end:DiagramPoint,direction:'input'|'output',style:ProfileWireStyle='smooth',cornerRadius=24) {
   const reach=Math.max(48,Math.min(240,Math.abs(end.x-start.x)*.5)),sign=direction==='output'?1:-1;
   if(style==='orthogonal'){
     const lane=start.x+reach*sign;
-    return diagramOrthogonalPath([start,{x:lane,y:start.y},{x:lane,y:end.y},end]);
+    return diagramOrthogonalPath([start,{x:lane,y:start.y},{x:lane,y:end.y},end],cornerRadius);
   }
   return `M${start.x},${start.y} C${start.x+reach*sign},${start.y} ${end.x-reach*sign},${end.y} ${end.x},${end.y}`;
 }
-export function diagramOrthogonalPath(points:readonly DiagramPoint[]) {
-  return points.map((point,index)=>`${index?'L':'M'}${point.x},${point.y}`).join(' ');
+function bendRadius(points:readonly DiagramPoint[],index:number,cornerRadius:number){
+  if(index<=0||index>=points.length-1)return 0;
+  const a=points[index-1],b=points[index],c=points[index+1];
+  if((a.x===b.x&&b.x===c.x)||(a.y===b.y&&b.y===c.y))return 0;
+  return Math.min(Number.isFinite(cornerRadius)?Math.max(0,cornerRadius):24,Math.hypot(a.x-b.x,a.y-b.y)/2,Math.hypot(c.x-b.x,c.y-b.y)/2);
 }
 
-/** Round every channel bend, retaining horizontal tangents at both block handles. */
-export function diagramSmoothPath(points:readonly DiagramPoint[]) {
+/** The draggable part of a lane excludes its rounded corners. */
+export function diagramSegmentLine(points:readonly DiagramPoint[],index:number,cornerRadius=24):{start:DiagramPoint;end:DiagramPoint}|null {
+  if(index<0||index>=points.length-1)return null;
+  const a=points[index],b=points[index+1],length=Math.hypot(b.x-a.x,b.y-a.y);
+  if(!length)return null;
+  const startRadius=bendRadius(points,index,cornerRadius),endRadius=bendRadius(points,index+1,cornerRadius);
+  if(length-startRadius-endRadius<1e-8)return null;
+  const dx=(b.x-a.x)/length,dy=(b.y-a.y)/length;
+  return {start:{x:a.x+dx*startRadius,y:a.y+dy*startRadius},end:{x:b.x-dx*endRadius,y:b.y-dy*endRadius}};
+}
+
+/** Axis-aligned lanes with circular, tangent-continuous corner arcs. */
+export function diagramOrthogonalPath(points:readonly DiagramPoint[],cornerRadius=24) {
   if(!points.length)return '';
   let path=`M${points[0].x},${points[0].y}`;
   for(let i=1;i<points.length-1;i++){
     const a=points[i-1],b=points[i],c=points[i+1];
-    const radius=Math.min(48,Math.hypot(a.x-b.x,a.y-b.y)/2,Math.hypot(c.x-b.x,c.y-b.y)/2);
+    const radius=bendRadius(points,i,cornerRadius);
+    if(!radius){path+=` L${b.x},${b.y}`;continue;}
     const before={x:b.x+Math.sign(a.x-b.x)*radius,y:b.y+Math.sign(a.y-b.y)*radius};
     const after={x:b.x+Math.sign(c.x-b.x)*radius,y:b.y+Math.sign(c.y-b.y)*radius};
-    path+=` L${before.x},${before.y} Q${b.x},${b.y} ${after.x},${after.y}`;
+    const clockwise=(b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x)>0?1:0;
+    path+=` L${before.x},${before.y} A${radius},${radius} 0 0 ${clockwise} ${after.x},${after.y}`;
   }
   const last=points.at(-1)!;return path+` L${last.x},${last.y}`;
+}
+
+type Cubic={start:DiagramPoint;first:DiagramPoint;second:DiagramPoint;end:DiagramPoint};
+function smoothCurves(points:readonly DiagramPoint[],maximumHandle=Infinity):Cubic[]{
+  points=profileWireCorners(points);
+  if(points.length<2)return [];
+  const unit=(x:number,y:number)=>{const length=Math.hypot(x,y);return length?{x:x/length,y:y/length}:{x:1,y:0};};
+  const tangents=points.map((point,index)=>{
+    if(!index||index===points.length-1)return {x:1,y:0};
+    const previous=points[index-1],next=points[index+1],incoming=unit(point.x-previous.x,point.y-previous.y),outgoing=unit(next.x-point.x,next.y-point.y);
+    return unit(incoming.x+outgoing.x,incoming.y+outgoing.y);
+  });
+  const handles=points.map((point,index)=>{
+    const previous=points[Math.max(0,index-1)],next=points[Math.min(points.length-1,index+1)];
+    const before=Math.hypot(point.x-previous.x,point.y-previous.y),after=Math.hypot(next.x-point.x,next.y-point.y);
+    return Math.min(maximumHandle,index&&index<points.length-1?Math.min(before,after)*.5:Math.max(48,Math.min(240,(before||after)*.5)));
+  });
+  return points.slice(1).map((end,index)=>({start:points[index],first:{x:points[index].x+tangents[index].x*handles[index],y:points[index].y+tangents[index].y*handles[index]},second:{x:end.x-tangents[index+1].x*handles[index+1],y:end.y-tangents[index+1].y*handles[index+1]},end}));
+}
+function cubicPath(curves:readonly Cubic[],start?:DiagramPoint){
+  if(!curves.length)return start?`M${start.x},${start.y}`:'';
+  return `M${curves[0].start.x},${curves[0].start.y}`+curves.map(({first,second,end})=>` C${first.x},${first.y} ${second.x},${second.y} ${end.x},${end.y}`).join('');
+}
+/** Smooth mode uses Beziers throughout, with horizontal tangents at the ports. */
+export function diagramSmoothPath(points:readonly DiagramPoint[]) {
+  return cubicPath(smoothCurves(points),points[0]);
+}
+
+function cubicCrossesBox(curve:Cubic,box:Box,depth=0):boolean {
+  const controls=[curve.start,curve.first,curve.second,curve.end];
+  if(Math.max(...controls.map(p=>p.x))<=box.left||Math.min(...controls.map(p=>p.x))>=box.right||Math.max(...controls.map(p=>p.y))<=box.top||Math.min(...controls.map(p=>p.y))>=box.bottom)return false;
+  const inside=(p:DiagramPoint)=>p.x>box.left&&p.x<box.right&&p.y>box.top&&p.y<box.bottom;
+  if(inside(curve.start)||inside(curve.end))return true;
+  if(depth===12)return inside({x:(curve.start.x+3*curve.first.x+3*curve.second.x+curve.end.x)/8,y:(curve.start.y+3*curve.first.y+3*curve.second.y+curve.end.y)/8});
+  const middle=(a:DiagramPoint,b:DiagramPoint)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+  const a=middle(curve.start,curve.first),b=middle(curve.first,curve.second),c=middle(curve.second,curve.end),d=middle(a,b),e=middle(b,c),m=middle(d,e);
+  return cubicCrossesBox({start:curve.start,first:a,second:d,end:m},box,depth+1)||cubicCrossesBox({start:m,first:e,second:c,end:curve.end},box,depth+1);
+}
+
+function arcCrossesBox(points:readonly DiagramPoint[],index:number,cornerRadius:number,box:Box){
+  const radius=bendRadius(points,index,cornerRadius);if(!radius)return false;
+  const a=points[index-1],b=points[index],c=points[index+1];
+  const incoming={x:Math.sign(b.x-a.x),y:Math.sign(b.y-a.y)},outgoing={x:Math.sign(c.x-b.x),y:Math.sign(c.y-b.y)};
+  const center={x:b.x-incoming.x*radius+outgoing.x*radius,y:b.y-incoming.y*radius+outgoing.y*radius};
+  // A quarter circle is monotone in both coordinates. Reflect its quadrant
+  // into positive x/y, then compare the rectangle's nearest/farthest radii.
+  const signX=incoming.x||-outgoing.x,signY=incoming.y||-outgoing.y;
+  const horizontal=[(box.left-center.x)*signX,(box.right-center.x)*signX],vertical=[(box.top-center.y)*signY,(box.bottom-center.y)*signY];
+  const left=Math.max(0,Math.min(...horizontal)),right=Math.min(radius,Math.max(...horizontal)),top=Math.max(0,Math.min(...vertical)),bottom=Math.min(radius,Math.max(...vertical));
+  if(left>=right||top>=bottom)return false;
+  const squared=radius*radius;
+  return left*left+top*top<squared-1e-8&&right*right+bottom*bottom>squared+1e-8;
+}
+
+function clearCornerRadius(points:readonly DiagramPoint[],requested:number,boxes:readonly Box[]){
+  const safe=(radius:number)=>points.every((_,index)=>!index||index===points.length-1||boxes.every(box=>!arcCrossesBox(points,index,radius,box)));
+  if(safe(requested))return requested;
+  // Manual lanes remain in place. Only reduce their rounding if an oversized
+  // corner would cut through a block, retaining the largest safe radius.
+  let low=0,high=requested;
+  for(let attempt=0;attempt<24;attempt++){const middle=(low+high)/2;if(safe(middle))low=middle;else high=middle;}
+  return low;
 }
 
 /** Rank the directed graph, keeping independent signal chains in separate bands. */
@@ -102,12 +180,38 @@ function crosses(a:DiagramPoint,b:DiagramPoint,box:Box){
 }
 
 /** Shared compressed visibility grid; search only visits the channels an edge needs. */
-export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:{style?:ProfileWireStyle;wireRoutes?:readonly DeepReadonly<ProfileWireRoute>[]}={}){
-  const clearance=20,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
+export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:{style?:ProfileWireStyle;cornerRadius?:number;wireRoutes?:readonly DeepReadonly<ProfileWireRoute>[]}={}){
+  const requestedRadius=Number.isFinite(options.cornerRadius)?Math.max(0,options.cornerRadius!):24;
+  const expanded=options.style==='orthogonal'?Math.max(20,Math.ceil(requestedRadius*(1-Math.SQRT1_2))+1):20;
+  const expandedBoxes=nodes.map(node=>({left:node.position.x-expanded,right:node.position.x+(node.width??width)+expanded,top:node.position.y-expanded,bottom:node.position.y+(node.height??height)+expanded}));
+  // Wide corners can claim more room in spacious layouts. Existing tight
+  // layouts keep their channels and cap rounding instead of hiding wires.
+  const crowded=expandedBoxes.some((a,index)=>expandedBoxes.slice(index+1).some(b=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top));
+  const clearance=crowded?20:expanded,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
   const saved=new Map(options.wireRoutes?.map(route=>[route.bindingId,route.points])??[]);
-  const pathFor=options.style==='orthogonal'?diagramOrthogonalPath:diagramSmoothPath;
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+(node.width??width)+clearance,top:node.position.y-clearance,bottom:node.position.y+(node.height??height)+clearance}));
+  const manualBoxes=nodes.map(node=>({left:node.position.x-20,right:node.position.x+(node.width??width)+20,top:node.position.y-20,bottom:node.position.y+(node.height??height)+20}));
+  const blockBoxes=nodes.map(node=>({left:node.position.x,right:node.position.x+(node.width??width),top:node.position.y,bottom:node.position.y+(node.height??height)}));
   const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
+  const parallel=new Map<string,string[]>();
+  for(const binding of valid){const key=`${binding.from.nodeId}\0${binding.to.nodeId}`,group=parallel.get(key)??[];group.push(binding.id);parallel.set(key,group);}
+  for(const group of parallel.values())group.sort();
+  function pathFor(points:DiagramPoint[],binding:DeepReadonly<ProfileBinding>,manual=false){
+    const cornerRadius=options.style==='orthogonal'?clearCornerRadius(points,requestedRadius,blockBoxes):requestedRadius;
+    if(options.style==='orthogonal')return {path:diagramOrthogonalPath(points,cornerRadius),cornerRadius};
+    const safe=(curves:Cubic[])=>!curves.some(curve=>blockBoxes.some(box=>cubicCrossesBox(curve,box)));
+    if(!manual){
+      const start=points[0],end=points.at(-1)!,rank=parallel.get(`${binding.from.nodeId}\0${binding.to.nodeId}`)!.indexOf(binding.id);
+      const offset=rank?Math.ceil(rank/2)*24*(rank%2?1:-1):0;
+      const direct=smoothCurves(offset?[start,{x:(start.x+end.x)/2,y:(start.y+end.y)/2+offset},end]:[start,end]);
+      if(safe(direct))return {path:cubicPath(direct),cornerRadius};
+    }
+    // The router's clear channels guide a continuously curved detour. Constrain
+    // control handles when necessary so a spline cannot cut across a block.
+    let curves=smoothCurves(points);
+    for(const limit of [15,7.5,3.75,.5]){if(safe(curves))break;curves=smoothCurves(points,limit);}
+    return {path:cubicPath(curves),cornerRadius};
+  }
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
   for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:from.outputAnchors?.[binding.from.portId]??diagramPortAnchor(from.position,'output',from.width??width,from.height??height),end:to.inputAnchors?.[binding.to.portId]??diagramPortAnchor(to.position,'input',to.width??width,to.height??height)});}
   const xs=new Set([...boxes.flatMap(box=>[box.left,box.right]),...[...anchors.values()].flatMap(pair=>[pair.start.x+clearance,pair.end.x-clearance])]);
@@ -170,8 +274,8 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
     // Manual bends are retained while their channels are clear. A newly moved
     // block may cover a lane; use the safe automatic route until it clears.
     const horizontalLeads=authored.length>=2&&authored[1].y===start.y&&authored[1].x>start.x&&authored.at(-2)!.y===end.y&&authored.at(-2)!.x<end.x;
-    const customBlocked=!!custom&&(!horizontalLeads||authored.some((point,index)=>index>0&&boxes.some((box,nodeIndex)=>!(index===1&&nodes[nodeIndex].id===binding.from.nodeId)&&!(index===authored.length-1&&nodes[nodeIndex].id===binding.to.nodeId)&&crosses(authored[index-1],point,box))));
-    if(authored.length&&!customBlocked){reserve(authored);return[{binding,points:authored,path:pathFor(authored),manual:true,customBlocked:false}];}
+    const customBlocked=!!custom&&(!horizontalLeads||authored.some((point,index)=>index>0&&manualBoxes.some((box,nodeIndex)=>!(index===1&&nodes[nodeIndex].id===binding.from.nodeId)&&!(index===authored.length-1&&nodes[nodeIndex].id===binding.to.nodeId)&&crosses(authored[index-1],point,box))));
+    if(authored.length&&!customBlocked){reserve(authored);return[{binding,points:authored,...pathFor(authored,binding,true),manual:true,customBlocked:false}];}
     const exit={x:start.x+clearance,y:start.y},entry={x:end.x-clearance,y:end.y};
     let channel=route(exit,entry);
     // Older saved layouts can leave less than one normal lane between blocks.
@@ -189,7 +293,7 @@ export function diagramRoutes(nodes:readonly DiagramNode[], bindings:readonly De
     if(points.length===2)return[];
     const corners=points.filter((p,index)=>!index||index===points.length-1||!((points[index-1].x===p.x&&p.x===points[index+1].x)||(points[index-1].y===p.y&&p.y===points[index+1].y)));
     reserve(corners);
-    return[{binding,points:corners,path:pathFor(corners),manual:false,customBlocked}];
+    return[{binding,points:corners,...pathFor(corners,binding),manual:false,customBlocked}];
   });
   const byBinding=new Map(routed.map(route=>[route.binding.id,route]));
   return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);

@@ -1,6 +1,6 @@
 import {webcrypto} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profile-discovery','./profile-wire-layout','./profile-input-availability','./profile-game-context','./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-telemetry','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-transform-drafts','./profile-canvas-construction','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser','./profile-vehicle-conflicts']);
+const modules=await loadModules(['./profile-discovery','./profile-wire-layout','./profile-input-availability','./canvas-styling','./profile-game-context','./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-telemetry','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-transform-drafts','./profile-canvas-construction','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser','./profile-vehicle-conflicts']);
 modules.set('./notifications',{notify:()=>{throw new Error('Rendering must not replay save notifications.');}});
 modules.set('./profile-palette',(await loadModules(['./profile-palette'])).get('./profile-palette'));
 const noRequest=()=>{throw new Error('Rendering/navigation must not send a native request.');};
@@ -198,8 +198,11 @@ test('profile navigation reports real page changes and Keep editing cancels hist
   const h=harness();await h.store.refresh();const visits=[],decisions=[];
   const panel=await panelNavigation(h.store,h.client,id=>visits.push(id));
   await panel.openProfile(DEFAULT_PROFILE_ID);assert.deepEqual(visits,[DEFAULT_PROFILE_ID]);
+  const clean=h.store.state.editor,epoch=h.store.editorEpoch;
+  panel.requestNavigation(()=>decisions.push('settings'),()=>decisions.push('cancel'),true);
+  assert.equal(h.store.state.editor,clean,'Visiting Settings keeps a clean editor and its history identity');assert.equal(h.store.editorEpoch,epoch);assert.deepEqual(decisions,['settings']);decisions.length=0;
   const changed=plain(h.store.state.editor.document);changed.editor.viewport={x:99,y:22,zoom:.7};h.store.update(changed);const editor=h.store.state.editor;
-  panel.requestNavigation(()=>decisions.push('left'),()=>decisions.push('cancel'));
+  panel.requestNavigation(()=>decisions.push('left'),()=>decisions.push('cancel'),true);
   assert.equal(panel.getNavigation(),DEFAULT_PROFILE_ID);assert.deepEqual(decisions,[]);
   panel.keepEditing();assert.deepEqual(decisions,['cancel']);assert.equal(h.store.state.editor,editor);
   await panel.restoreNavigation(DEFAULT_PROFILE_ID);assert.equal(h.store.state.editor,editor);assert.deepEqual(h.calls,[['get',DEFAULT_PROFILE_ID]]);

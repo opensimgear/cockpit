@@ -5,10 +5,33 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./profile-editor','./profile-diagram','./profile-canvas']);
 const {profileAutoLayout,PROFILE_BLOCK_WIDTH:width,PROFILE_BLOCK_HEIGHT:height}=modules.get('./profile-editor');
-const {diagramRoutes,diagramPortAnchor,diagramPendingPath,diagramSmoothPath}=modules.get('./profile-diagram');
+const {diagramRoutes,diagramPortAnchor,diagramPendingPath,diagramSmoothPath,diagramOrthogonalPath,diagramSegmentLine}=modules.get('./profile-diagram');
 const edge=(from,to,id=`${from}-${to}`)=>({id,from:{nodeId:from,portId:'out'},to:{nodeId:to,portId:'in'}});
 const placed=positions=>positions.map(({nodeId,...position})=>({id:nodeId,position}));
 const plain=value=>JSON.parse(JSON.stringify(value));
+function cubics(path){
+  assert.doesNotMatch(path,/[LQAHV]/,'Smooth paths contain only cubic Beziers');
+  const numbers=path.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi).map(Number),result=[];
+  let start={x:numbers[0],y:numbers[1]};
+  for(let i=2;i<numbers.length;i+=6){const curve={start,first:{x:numbers[i],y:numbers[i+1]},second:{x:numbers[i+2],y:numbers[i+3]},end:{x:numbers[i+4],y:numbers[i+5]}};result.push(curve);start=curve.end;}
+  return result;
+}
+function sample({start:a,first:b,second:c,end:d},t){const s=1-t;return{x:s*s*s*a.x+3*s*s*t*b.x+3*s*t*t*c.x+t*t*t*d.x,y:s*s*s*a.y+3*s*s*t*b.y+3*s*t*t*c.y+t*t*t*d.y};}
+function roundedSamples(path){
+  const samples=[];let start;
+  for(const [,command,parameters]of path.matchAll(/([MLA])([^MLA]*)/g)){
+    const values=parameters.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi).map(Number),end={x:values.at(-2),y:values.at(-1)};
+    if(command==='A'){
+      const sweep=values[4],sign=sweep?1:-1,center={x:(start.x+end.x-sign*(end.y-start.y))/2,y:(start.y+end.y+sign*(end.x-start.x))/2},angle=Math.atan2(start.y-center.y,start.x-center.x);
+      for(let step=0;step<=100;step++){const at=angle+sign*Math.PI/2*step/100;samples.push({x:center.x+values[0]*Math.cos(at),y:center.y+values[0]*Math.sin(at)});}
+    }else if(start)for(let step=0;step<=10;step++)samples.push({x:start.x+(end.x-start.x)*step/10,y:start.y+(end.y-start.y)*step/10});
+    start=end;
+  }
+  return samples;
+}
+function assertClearSamples(nodes,path){
+  for(const point of roundedSamples(path))for(const {id,position:p,width:nodeWidth=100,height:nodeHeight=100}of nodes)assert.ok(!(point.x>p.x+1e-7&&point.x<p.x+nodeWidth-1e-7&&point.y>p.y+1e-7&&point.y<p.y+nodeHeight-1e-7),`Rounded arc crosses block ${id} at ${JSON.stringify(point)}`);
+}
 function verifyRoutes(nodes,bindings){
   const routes=diagramRoutes(nodes,bindings,width,height);
   assert.equal(routes.length,bindings.length,'Every saved route stays visible');
@@ -17,6 +40,16 @@ function verifyRoutes(nodes,bindings){
     assert.deepEqual(plain(points[0]),plain(from.outputAnchors?.[binding.from.portId]??{x:from.position.x+(from.width??width),y:from.position.y+(from.height??height)-20}));
     assert.deepEqual(plain(points.at(-1)),plain(to.inputAnchors?.[binding.to.portId]??{x:to.position.x,y:to.position.y+(to.height??height)-20}));
     assert.ok(!/NaN|Infinity/.test(path));
+    const curves=cubics(path);
+    for(const curve of curves)for(let step=1;step<80;step++){
+      const point=sample(curve,step/80);
+      for(const {id,position:p,width:nodeWidth=width,height:nodeHeight=height}of nodes)assert.ok(!(point.x>p.x+1e-8&&point.x<p.x+nodeWidth-1e-8&&point.y>p.y+1e-8&&point.y<p.y+nodeHeight-1e-8),`${binding.id} Bezier crosses block ${id}`);
+    }
+    for(let i=1;i<curves.length;i++){
+      const previous=curves[i-1],next=curves[i];
+      assert.ok(Math.abs(previous.end.x-previous.second.x-(next.first.x-next.start.x))<1e-7);
+      assert.ok(Math.abs(previous.end.y-previous.second.y-(next.first.y-next.start.y))<1e-7,'Bezier joins have matching first derivatives');
+    }
     for(let i=1;i<points.length;i++){
       const a=points[i-1],b=points[i];assert.ok(a.x===b.x||a.y===b.y,'Routes use orthogonal channels');
       for(const {id,position:p,width:nodeWidth=width,height:nodeHeight=height}of nodes){
@@ -26,9 +59,6 @@ function verifyRoutes(nodes,bindings){
       }
     }
   }
-  // Shared footer attachments intentionally permit a short shared trunk. Each
-  // bend is drawn as a tangent-continuous quadratic instead of a sharp corner.
-  for(const route of routes)assert.equal((route.path.match(/ Q/g)??[]).length,Math.max(0,route.points.length-2));
   return routes;
 }
 
@@ -85,6 +115,9 @@ test('tight saved layouts preserve all separate paths without requiring auto-lay
   const doc=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/mixed.json',import.meta.url),'utf8'));
   const nodes=modules.get('./profile-canvas').canvasNodes(doc,[],[]);
   verifyRoutes(nodes,doc.bindings);
+  const routes=diagramRoutes(nodes,doc.bindings,width,height,{style:'orthogonal',cornerRadius:100});
+  assert.equal(routes.length,doc.bindings.length,'Large radii never close an existing narrow channel');
+  for(const route of routes)assertClearSamples(nodes.map(node=>({...node,width:node.width??width,height:node.height??height})),route.path);
 });
 
 
@@ -101,12 +134,52 @@ test('joystick axes and direct buttons use a single common input and output hand
   assert.equal(new Set(inputHeights).size,1);
 });
 
-test('saved and pending wires share footer geometry and every bend is smooth',()=>{
+test('saved and pending wires use fully smooth Beziers with horizontal port tangents',()=>{
   const output=diagramPortAnchor({x:20,y:40},'output',width,height),input=diagramPortAnchor({x:400,y:40},'input',width,height);
   assert.deepEqual(plain(output),{x:20+width,y:40+height-20});assert.deepEqual(plain(input),{x:400,y:40+height-20});
   const pending=diagramPendingPath(output,{x:700,y:400},'output');assert.ok(pending.startsWith(`M${output.x},${output.y} C`));assert.ok(!pending.includes(' L'));
   assert.match(diagramPendingPath(input,{x:10,y:0},'input'),/ C/);
-  assert.equal(diagramSmoothPath([]),'');assert.match(diagramSmoothPath([{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:200,y:100}]),/ Q100,0 .* Q100,100 /);
+  assert.equal(diagramSmoothPath([]),'');
+  const curves=cubics(diagramSmoothPath([{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:200,y:100}]));
+  assert.equal(curves.length,3);assert.equal(curves[0].first.y,0);assert.equal(curves.at(-1).second.y,100);
+  assert.ok(curves[0].first.x>curves[0].start.x);assert.ok(curves.at(-1).second.x<curves.at(-1).end.x);
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:600,y:320}}];
+  const route=diagramRoutes(nodes,[edge('source','target')],width,height)[0];assert.equal(cubics(route.path).length,1,'A clear connection uses a single flowing curve');
+  const curve=cubics(route.path)[0];assert.notEqual(sample(curve,.25).y,curve.start.y);assert.notEqual(sample(curve,.75).y,curve.end.y);
+});
+
+test('segmented arrows round perpendicular lanes with the configured circular radius',()=>{
+  const points=[{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:200,y:100}];
+  assert.equal(diagramOrthogonalPath(points),'M0,0 L76,0 A24,24 0 0 1 100,24 L100,76 A24,24 0 0 0 124,100 L200,100');
+  assert.equal(diagramOrthogonalPath(points,8),'M0,0 L92,0 A8,8 0 0 1 100,8 L100,92 A8,8 0 0 0 108,100 L200,100');
+  assert.equal(diagramOrthogonalPath(points,0),'M0,0 L100,0 L100,100 L200,100');
+  assert.deepEqual(plain(diagramSegmentLine(points,1,24)),{start:{x:100,y:24},end:{x:100,y:76}});
+  assert.deepEqual(plain(diagramSegmentLine(points,0,24)),{start:{x:0,y:0},end:{x:76,y:0}});
+  assert.equal(diagramSegmentLine(points,1,1000),null,'Adjacent corner radii consume at most the available segment');
+  assert.match(diagramOrthogonalPath(points,1000),/ A50,50 /);assert.doesNotMatch(diagramOrthogonalPath(points,-3),/ A/);
+  assert.equal(diagramSegmentLine(points,3),null);assert.equal(diagramSegmentLine([{x:0,y:0},{x:0,y:0}],0),null);
+  assert.match(diagramPendingPath(points[0],points.at(-1),'output','orthogonal',7),/ A7,7 /);
+  assert.doesNotMatch(diagramPendingPath(points[0],points.at(-1),'output','orthogonal',0),/ A/);
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:600,y:320}}];
+  const routes=diagramRoutes(nodes,[edge('source','target')],width,height,{style:'orthogonal',cornerRadius:9});
+  assert.match(routes[0].path,/ A9,9 /);assert.deepEqual(plain(routes[0].points[0]),{x:width,y:height-20});
+  assert.deepEqual(plain(routes[0].points.at(-1)),{x:600,y:320+height-20});
+});
+
+test('large circular corners clear blocks automatically and safely cap manual rounding without moving lanes',()=>{
+  const nodes=[{id:'source',position:{x:0,y:100}},{id:'obstacle',position:{x:200,y:200}},{id:'target',position:{x:500,y:300}}],binding=edge('source','target');
+  for(const cornerRadius of [0,24,64,100]){
+    const route=diagramRoutes(nodes,[binding],100,100,{style:'orthogonal',cornerRadius})[0];
+    assert.equal(route.cornerRadius,cornerRadius,'Automatic lanes leave enough space for the chosen radius');
+    assertClearSamples(nodes,route.path);
+  }
+  const points=[{x:100,y:180},{x:320,y:180},{x:320,y:380},{x:500,y:380}],wireRoutes=[{bindingId:binding.id,points}],before=JSON.stringify(wireRoutes);
+  const route=diagramRoutes(nodes,[binding],100,100,{style:'orthogonal',cornerRadius:100,wireRoutes})[0];
+  assert.equal(route.manual,true);assert.equal(route.customBlocked,false);assert.deepEqual(plain(route.points),points);
+  assert.ok(route.cornerRadius>68&&route.cornerRadius<69,'A tight manual corner uses the largest safe circular radius');
+  assertClearSamples(nodes,route.path);assert.equal(JSON.stringify(wireRoutes),before);
+  const span=diagramSegmentLine(route.points,1,route.cornerRadius);assert.ok(span);assert.equal(span.start.y,180+route.cornerRadius);assert.equal(span.end.y,380-route.cornerRadius);
+  assertClearSamples(nodes.map(node=>({...node,position:{x:-node.position.x-100,y:node.position.y}})),diagramRoutes(nodes.map(node=>({...node,position:{x:-node.position.x-100,y:node.position.y}})),[binding],100,100,{style:'orthogonal',cornerRadius:100})[0].path);
 });
 
 test('named transform ports retain distinct row anchors while compact obstacles use their true bounds',()=>{

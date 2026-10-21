@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability']);
+const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling']);
 const plain = value => JSON.parse(JSON.stringify(value));
 const port = (id, direction, name = id) => ({ id, direction, name, contract: { delivery: 'state', schema: { type: 'boolean' }, freshnessMs: 1000, fallback: null } });
 const resource = (id, ports = []) => ({ id, name: id, kind: 'device', required: false, ports });
@@ -24,12 +24,13 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,setWireStyle,inputState,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,inputState,wireClick,move,finish,keyboard,lostPointer,choose,chooseConnection,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
 // Actual browser dispatch and hit testing are covered by the running cockpit UI checks.
-function harness(props = {}) {
+function harness(props = {}, arrowStyle='smooth',cornerRadius=24) {
+  const styling=modules.get('./canvas-styling').canvasStyling;styling.setArrowStyle(arrowStyle);styling.setCornerRadius(cornerRadius);
   const calls = [], edits = [], captured = new Set(), focuses=[];
   let handlers, hit = element();
   const context = {
@@ -311,28 +312,28 @@ test('losing capture over an occupied input clears the rejected drop feedback',(
 
 function orthogonalDocument(){const document=profile();document.bindings=[{id:'route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}}];document.editor.arrowStyle='orthogonal';return document;}
 
-test('arrow style changes persist only editor state and selected orthogonal wires expose segment controls',()=>{
-  const document=orthogonalDocument(),h=harness({document,selectedEdgeId:'route'});
-  assert.match(h.body,/aria-label="Arrow style"/);assert.match(h.body,/data-segment-binding="route"/);assert.match(h.body,/Move horizontal segment/);
-  h.handlers.setWireStyle('smooth');assert.equal(h.edits.length,1);assert.equal(h.edits[0][1],'Change arrow style');assert.equal(h.edits[0][0].editor.arrowStyle,'smooth');assert.deepEqual(plain(h.edits[0][0].bindings),document.bindings);
-  const smooth=harness({document:{...document,editor:{...document.editor,arrowStyle:'smooth'}},selectedEdgeId:'route'});assert.ok(!smooth.body.includes('data-segment-binding='));
-  const locked=harness({document,selectedEdgeId:'route',readOnly:true});assert.ok(!locked.body.includes('data-segment-binding='));locked.handlers.beginSegment(pointer(),'route',0);assert.equal(locked.handlers.state.segmentDrag,null);assert.deepEqual(locked.edits,[]);
+test('app styling controls rendered arrows without profile edits or a canvas style selector',()=>{
+  const document=orthogonalDocument(),h=harness({document,selectedEdgeId:'route'},'orthogonal');
+  assert.doesNotMatch(h.body,/aria-label="Arrow style"/);assert.match(h.body,/data-segment-binding="route"/);assert.match(h.body,/Move horizontal segment/);
+  const smooth=harness({document,selectedEdgeId:'route'});assert.ok(!smooth.body.includes('data-segment-binding='),'Global styling overrides old profile appearance metadata');assert.doesNotMatch(smooth.handlers.state.routes[0].path,/\s[LQ]/);assert.match(smooth.handlers.state.routes[0].path,/\sC/);
+  assert.deepEqual(h.edits,[]);assert.deepEqual(smooth.edits,[]);assert.deepEqual(plain(document),h.before);
+  const locked=harness({document,selectedEdgeId:'route',readOnly:true},'orthogonal');assert.ok(!locked.body.includes('data-segment-binding='));locked.handlers.beginSegment(pointer(),'route',0);assert.equal(locked.handlers.state.segmentDrag,null);assert.deepEqual(locked.edits,[]);
 });
 
 test('horizontal and vertical segment gestures preview without edits, keep endpoints fixed and commit once',()=>{
-  const document=orthogonalDocument(),h=harness({document,selectedEdgeId:'route'}),before=plain(h.handlers.state.routes[0].points);
+  const document=orthogonalDocument(),h=harness({document,selectedEdgeId:'route'},'orthogonal'),before=plain(h.handlers.state.routes[0].points);
   assert.equal(before.length,2,'The fixture starts with a straight arrow so dragging adds useful bends.');
   h.handlers.setView({x:0,y:0,zoom:.5});h.handlers.beginSegment(pointer(500,300),'route',0);assert.equal(h.captured.has(7),true);assert.deepEqual(plain(h.focuses),[{preventScroll:true}],'Segment gestures focus the canvas so Escape and Undo work after using toolbar controls.');h.handlers.move(pointer(500,335));assert.equal(h.edits.length,0);assert.equal(h.handlers.state.segmentBlocked,false);assert.ok(h.handlers.state.segmentPreview);
   const preview=plain(h.handlers.state.segmentPreview),points=preview.editor.wireRoutes[0].points;assert.equal(points[2].y,before[0].y+70,'Segment movement compensates for the canvas zoom.');assert.deepEqual(points[0],before[0]);assert.deepEqual(points.at(-1),before.at(-1));
   h.handlers.finish(pointer(500,335));assert.equal(h.edits.length,1);assert.equal(h.edits[0][1],'Move wire segment');assert.deepEqual(plain(h.edits[0][0]),preview);assert.equal(h.handlers.state.segmentDrag,null);assert.equal(h.captured.size,0);assert.deepEqual(document,h.before);
-  const vertical=harness({document:preview,selectedEdgeId:'route'}),index=points.findIndex((point,index)=>index<points.length-1&&point.x===points[index+1].x);
+  const vertical=harness({document:preview,selectedEdgeId:'route'},'orthogonal'),index=points.findIndex((point,index)=>index<points.length-1&&point.x===points[index+1].x);
   assert.ok(index>=0);assert.match(vertical.body,/Move vertical segment/);vertical.handlers.beginSegment(pointer(500,300),'route',index);vertical.handlers.move(pointer(512,300));assert.equal(vertical.edits.length,0);assert.equal(vertical.handlers.state.segmentBlocked,false);vertical.handlers.finish(pointer(512,300));assert.equal(vertical.edits.length,1);const moved=plain(vertical.edits[0][0].editor.wireRoutes[0].points);assert.equal(moved[index].x,points[index].x+12);assert.deepEqual(moved[0],points[0]);assert.deepEqual(moved.at(-1),points.at(-1));assert.deepEqual(plain(vertical.edits[0][0].bindings),document.bindings);
 });
 
 test('segment cancellation, lost capture, insignificant movement and blocked moves never create history',()=>{
   for(const cancel of ['pointer','escape','capture','tiny','blocked']){
     const document=orthogonalDocument();if(cancel==='blocked'){const obstacle=document.editor.positions.find(position=>position.nodeId==='empty');obstacle.x=310;obstacle.y=260;}
-    const h=harness({document,selectedEdgeId:'route'});h.handlers.beginSegment(pointer(500,300),'route',0);
+    const h=harness({document,selectedEdgeId:'route'},'orthogonal');h.handlers.beginSegment(pointer(500,300),'route',0);
     h.handlers.move(pointer(500,cancel==='tiny'?302:cancel==='blocked'?370:335));
     if(cancel==='pointer')h.handlers.finish(pointer(500,335),true);
     else if(cancel==='escape')h.handlers.keyboard({key:'Escape',preventDefault(){}});
@@ -367,7 +368,7 @@ test('dropping a transformation on a wire inserts there and ordinary canvas drop
 
 test('selected right-angle segment handles retain transformation insertion targets',()=>{
   const component={kind:'transformation',preset:'scale'},insertions=[],drops=[];
-  const h=harness({document:orthogonalDocument(),selectedEdgeId:'route',paletteDrag:{component,name:'Multiply',category:'Transformation'},dropComponent:(...args)=>drops.push(args),dropOnConnection:(...args)=>insertions.push(args)});
+  const h=harness({document:orthogonalDocument(),selectedEdgeId:'route',paletteDrag:{component,name:'Multiply',category:'Transformation'},dropComponent:(...args)=>drops.push(args),dropOnConnection:(...args)=>insertions.push(args)},'orthogonal');
   const segments=[...h.body.matchAll(/<path\b[^>]*data-segment-binding="route"[^>]*>/g)].map(([tag])=>tag);
   assert.ok(segments.length,'The selected right-angle wire exposes draggable segments.');
   for(const tag of segments){

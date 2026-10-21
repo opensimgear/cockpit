@@ -30,12 +30,13 @@ test('segment drags constrain the moved axis and preserve both physical endpoint
 test('manual lanes re-anchor to moved blocks and styles use the same safe geometry',()=>{
   const nodes=[{id:'source',position:{x:0,y:0}},{id:'sink',position:{x:500,y:300}}],wireRoutes=[{bindingId:binding.id,points}];
   const smooth=diagramRoutes(nodes,[binding],100,100,{wireRoutes})[0];
-  assert.equal(smooth.manual,true);assert.equal(smooth.customBlocked,false);assert.match(smooth.path,/ Q/);
+  assert.equal(smooth.manual,true);assert.equal(smooth.customBlocked,false);assert.match(smooth.path,/ C/);assert.doesNotMatch(smooth.path,/[LQA]/);
   const angular=diagramRoutes(nodes,[binding],100,100,{style:'orthogonal',wireRoutes})[0];
-  assert.deepEqual(plain(angular.points),points);assert.doesNotMatch(angular.path,/[QC]/);assert.match(angular.path,/ L/);
+  assert.deepEqual(plain(angular.points),points);assert.doesNotMatch(angular.path,/[QC]/);assert.match(angular.path,/ L/);assert.match(angular.path,/ A24,24 /);
+  const sharp=diagramRoutes(nodes,[binding],100,100,{style:'orthogonal',cornerRadius:0,wireRoutes})[0];assert.deepEqual(plain(sharp.points),points);assert.doesNotMatch(sharp.path,/[AQC]/);
   const moved=diagramRoutes([{...nodes[0],position:{x:20,y:40}},{...nodes[1],position:{x:550,y:340}}],[binding],100,100,{style:'orthogonal',wireRoutes})[0];
   assert.equal(moved.manual,true);assert.deepEqual(plain(moved.points),[{x:120,y:120},{x:250,y:120},{x:250,y:420},{x:550,y:420}]);
-  assert.doesNotMatch(diagramPendingPath(points[0],points.at(-1),'output','orthogonal'),/[QC]/);
+  assert.match(diagramPendingPath(points[0],points.at(-1),'output','orthogonal'),/ A24,24 /);
   assert.deepEqual(plain(anchor(points,{x:280,y:80},{x:500,y:380})[0]),{x:280,y:80});
 });
 test('moving an obstacle into a manually chosen lane falls back visibly without losing the authored path',()=>{

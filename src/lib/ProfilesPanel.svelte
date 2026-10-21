@@ -146,11 +146,13 @@
   function finishName() { if(!editingName)return;editingName=false;const title=nameDraft.trim();if(canRename&&title!==editor?.document.name)name(title); }
   function historyStep(direction:'undo'|'redo'){report(()=>{history.step(direction);});}
   function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,editorInventory);change(next.document,next.assignments,'Change game context',false);if(gameId!==selectedGame)selectTab('');}); }
-  export function requestNavigation(continueNavigation:()=>void,cancelNavigation?:()=>void):void {
+  export function requestNavigation(continueNavigation:()=>void,cancelNavigation?:()=>void,preserveCleanEditor=false):void {
     finishName();
     notice='';
     navigationCancelled?.();navigationCancelled=undefined;navigationGuard.keepEditing();
     if(libraryBusy){notice='Wait for the current library operation before leaving.';cancelNavigation?.();return;}
+    const current=store.state;
+    if(preserveCleanEditor&&!current.busy&&current.editor&&!profileEditorDirty(current.editor)){leaveDialog=false;continueNavigation();return;}
     navigationCancelled=cancelNavigation;
     const result=navigationGuard.request(()=>{navigationCancelled=undefined;continueNavigation();});
     leaveDialog=result==='confirm';

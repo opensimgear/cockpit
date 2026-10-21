@@ -8,12 +8,11 @@
   import { createCockpitHistory, type CockpitRoute, type CompanionPage } from './lib/cockpit-history';
   import SystemDevices from './lib/SystemDevices.svelte';
   import { isVisibleSystemComponent, type SystemSnapshot } from './lib/system-inventory';
-  import OutputSettings from './lib/OutputSettings.svelte';
+  import SettingsPanel from './lib/SettingsPanel.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import DebugPanel from './lib/DebugPanel.svelte';
   import HeaderStatus from './lib/HeaderStatus.svelte';
   import CompanionDesigner from './lib/CompanionDesigner.svelte';
-  import CompanionListenerSettings from './lib/CompanionListenerSettings.svelte';
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';
@@ -23,8 +22,6 @@
   import ManualActions from './lib/ManualActions.svelte';
   import GamesPanel from './lib/GamesPanel.svelte';
   import OverviewPanel from './lib/OverviewPanel.svelte';
-  import DesktopPreferences from './lib/DesktopPreferences.svelte';
-  import ProgressNotificationSettings from './lib/ProgressNotificationSettings.svelte';
   import { supportedGames, type GameId, type GamesState, type GameRequest } from './lib/games';
   import { OPEN_GAME_SETTINGS_EVENT, RETURN_FROM_GAME_SETTINGS_EVENT, gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings, type GameSettingsVisit } from './lib/game-settings-navigation';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
@@ -72,7 +69,7 @@
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
   let devicesPanel = $state.raw<{showInventory:()=>void;getNavigation:()=>string|null;restoreNavigation:(id:string|null)=>void}>();
   let companionsPanel = $state.raw<{showMain:()=>boolean;getNavigation:()=>CompanionPage;restoreNavigation:(page:CompanionPage)=>Promise<void>;requestNavigation:(next:()=>void,cancel?:()=>void)=>void}>();
-  let profilesPanel = $state.raw<{getNavigation:()=>string|null;restoreNavigation:(id:string|null)=>Promise<void>;requestNavigation:(continueNavigation:()=>void,cancelNavigation?:()=>void)=>void}>();
+  let profilesPanel = $state.raw<{getNavigation:()=>string|null;restoreNavigation:(id:string|null)=>Promise<void>;requestNavigation:(continueNavigation:()=>void,cancelNavigation?:()=>void,preserveCleanEditor?:boolean)=>void}>();
   let profilesMounted = $state(false), companionsMounted = $state(false);
   let navigationHistory: ReturnType<typeof createCockpitHistory> | undefined;
   let applyingHistory = false, activeSettingsKey = '';
@@ -87,7 +84,7 @@
       if (section === 'profiles') { recordRoute(); return; }
     }
     if (view === 'profiles' && profilesPanel) {
-      profilesPanel.requestNavigation(() => commitNavigation(section));
+      profilesPanel.requestNavigation(() => commitNavigation(section),undefined,section==='preferences');
       return;
     }
     if (view === 'companions' && section !== 'companions' && companionsPanel) {
@@ -166,7 +163,7 @@
     const settingsOrigin=route.settingsKey?settingsOrigins.get(route.settingsKey):undefined;
     const keepingProfile=view==='profiles'&&settingsOrigin?.route.view==='profiles'&&settingsOrigin.route.profileId===profilesPanel?.getNavigation();
     const approved=await new Promise<boolean>(resolve=>{
-      if(view==='profiles'&&profilesPanel&&!keepingProfile&&(route.view!=='profiles'||route.profileId!==profilesPanel.getNavigation()))profilesPanel.requestNavigation(()=>resolve(true),()=>resolve(false));
+      if(view==='profiles'&&profilesPanel&&!keepingProfile&&(route.view!=='profiles'||route.profileId!==profilesPanel.getNavigation()))profilesPanel.requestNavigation(()=>resolve(true),()=>resolve(false),route.view==='preferences');
       else if(view==='companions'&&companionsPanel)companionsPanel.requestNavigation(()=>resolve(true),()=>resolve(false));
       else resolve(true);
     });
@@ -541,18 +538,7 @@
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
         {:else if view === 'preferences'}
-          <div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Settings</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
-          <section class="panel preferences-panel">
-            <div class="panel-heading"><h2>Appearance</h2></div>
-            <div class="preference-row">
-              <div><strong>Color theme</strong><p>{light ? 'Light' : 'Dark'} theme. Changes are saved automatically.</p></div>
-              <button class="toggle" class:on={light} role="switch" aria-label="Light theme" aria-checked={light} onclick={toggleTheme}><span></span></button>
-            </div>
-          </section>
-          <DesktopPreferences />
-          <ProgressNotificationSettings />
-          <OutputSettings />
-          <CompanionListenerSettings />
+          <SettingsPanel {light} onToggleTheme={toggleTheme} />
         {:else if view === 'profiles'}
           <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->
         {:else if view === 'companions'}
