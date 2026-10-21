@@ -3,6 +3,7 @@
   import ProgressNotificationSettings from './ProgressNotificationSettings.svelte';
   import OutputSettings from './OutputSettings.svelte';
   import CompanionListenerSettings from './CompanionListenerSettings.svelte';
+  import McpSettings from './McpSettings.svelte';
   import { canvasStyling, setArrowStyle, setCornerRadius, setCollapseParallelWires, type CanvasArrowStyle } from './canvas-styling';
   import { canvasNavigation, setWheelAction, type CanvasWheelAction } from './canvas-navigation';
   import { diagramPendingPath } from './profile-diagram';
@@ -13,6 +14,7 @@
     { id: 'styling', label: 'Styling' },
     { id: 'outputs', label: 'Outputs' },
     { id: 'companions', label: 'Companions' },
+    { id: 'ai', label: 'AI integration' },
   ] as const;
   let selected = $state<(typeof tabs)[number]['id']>('general');
   const preview = $derived(diagramPendingPath({ x: 24, y: 30 }, { x: 260, y: 130 }, 'output', $canvasStyling.arrowStyle, $canvasStyling.cornerRadius));
@@ -93,6 +95,10 @@
 
 <div class="settings-content" id="settings-panel-companions" role="tabpanel" aria-labelledby="settings-tab-companions" tabindex="0" hidden={selected !== 'companions'}>
   <CompanionListenerSettings />
+</div>
+
+<div class="settings-content" id="settings-panel-ai" role="tabpanel" aria-labelledby="settings-tab-ai" tabindex="0" hidden={selected !== 'ai'}>
+  {#if selected === 'ai'}<McpSettings />{/if}
 </div>
 
 <style>

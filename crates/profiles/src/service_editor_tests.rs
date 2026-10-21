@@ -33,6 +33,44 @@ fn save(
 include!("../../../tests/fixtures/profiles/editor-boundary.rs");
 
 #[test]
+fn duplicate_can_require_the_observed_source_revision_without_creating_on_conflict() {
+    let mut service = Service::new(None);
+    let created = service.request(&json!({"command":"profile_create","name":"Source"})).unwrap();
+    let document = created["document"].clone();
+    service.request(&json!({"command":"profile_rename","id":document["id"],"name":"Changed","expectedRevision":1})).unwrap();
+    let stale = service.request(&json!({"command":"profile_duplicate","id":document["id"],"name":"Stale copy","expectedRevision":1})).unwrap_err();
+    assert!(stale.contains("revision conflict"));
+    assert_eq!(service.saved_documents().len(),2);
+    let copied = service.request(&json!({"command":"profile_duplicate","id":document["id"],"name":"Fresh copy","expectedRevision":2})).unwrap();
+    assert_eq!(copied["document"]["revision"],1);
+    assert_eq!(copied["document"]["name"],"Fresh copy");
+    assert_eq!(service.saved_documents().len(),3);
+}
+
+#[test]
+fn draft_save_is_an_atomic_revision_checked_editor_transaction() {
+    let temp = crate::test_directory();
+    let root = temp.path().join("drafts");
+    let mut service = Service::new(Some(root.clone()));
+    let document = draft();
+    let pins = assignments(&document);
+    let selected = service.status()["session"].clone();
+    let saved = service.request(&json!({"command":"profile_draft_save","document":document,"expectedRevision":null,"assignments":pins})).unwrap();
+    assert_eq!(saved["document"],json!(document));
+    assert_eq!(saved["assignments"],pins);
+    assert_eq!(saved["session"],selected);
+    let mut changed = document.clone(); changed.name = "Edited draft".into();
+    let saved = service.request(&json!({"command":"profile_draft_save","document":changed,"expectedRevision":1,"assignments":pins})).unwrap();
+    assert_eq!(saved["document"]["revision"],2);
+    assert!(service.request(&json!({"command":"profile_draft_save","document":document,"expectedRevision":1,"assignments":[]})).unwrap_err().contains("revision conflict"));
+    let restored = Service::new(Some(root));
+    let (restored, restored_pins, _) = restored.compile_source(&document.id).unwrap();
+    assert_eq!(restored.name,"Edited draft");
+    assert_eq!(restored.revision,2);
+    assert_eq!(json!(restored_pins),pins);
+}
+
+#[test]
 fn new_and_existing_editor_saves_commit_graph_and_all_pins_in_one_revision() {
     let temp = crate::test_directory();
     let root = temp.path().join("profiles-v2");

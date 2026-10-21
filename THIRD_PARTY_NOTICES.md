@@ -8,6 +8,8 @@ upstream library data or other separately licensed portions.
 
 - Rust dependencies are recorded in `src-tauri/Cargo.lock` and the package
   manifests under `src-tauri/` and `crates/`.
+- Local MCP uses the official Model Context Protocol Rust SDK, rmcp 3.6.0
+  (Apache-2.0), from https://github.com/modelcontextprotocol/rust-sdk.
 - JavaScript dependencies are recorded in `package.json` and `pnpm-lock.yaml`.
 - Canvas Auto-layout uses unmodified elkjs 0.12.0 (Eclipse Public License 2.0),
   from https://github.com/kieler/elkjs. Its complete license is distributed in

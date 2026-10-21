@@ -36,6 +36,8 @@ mod retired_game_io;
 pub(crate) mod recovery_transport;
 #[path = "profile_editor_save.rs"]
 mod profile_editor_save;
+#[path = "profile_local_settings.rs"]
+mod profile_local_settings;
 #[path = "profile_panel_save.rs"]
 mod profile_panel_save;
 #[path = "profile_activation_progress.rs"]
@@ -185,6 +187,10 @@ impl ProfileWake {
 struct WakeProfileOnDrop<'a>(&'a ProfileWake);
 impl Drop for WakeProfileOnDrop<'_> { fn drop(&mut self) { self.0.notify(); } }
 
+#[derive(Clone)]
+struct McpAuthorization { client: String, epoch: Option<u64> }
+struct McpClientAuthorization { enabled: bool, epoch: u64 }
+
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 pub struct GatewayManager {
@@ -193,6 +199,7 @@ pub struct GatewayManager {
     profile_compilation: crate::profile_compilation::Runtime,
     profile_session: Arc<Mutex<crate::profile_session::Coordinator<crate::profile_session_host::NativeProfileHost>>>,
     profile_admission: RwLock<()>,
+    mcp_clients: Mutex<BTreeMap<String, McpClientAuthorization>>,
     profile_prepare: ProfilePrepare,
     profile_native: bool,
     profile_admission_epoch: Arc<AtomicU64>,
@@ -243,6 +250,19 @@ impl GatewayManager {
         Self::with_options(provider, false)
     }
     fn with_options(provider: Arc<dyn Provider>, native: bool) -> Self {
+        Self::with_options_at(provider, native, None)
+    }
+    #[cfg(test)]
+    pub(crate) fn mcp_test_manager() -> Self {
+        struct NoDevices;
+        impl Provider for NoDevices {
+            fn ports(&self) -> Result<Vec<PortInfo>, String> { Ok(vec![]) }
+            fn adapter(&self, _: &str) -> Arc<dyn Adapter> { panic!("MCP service tests must not acquire hardware") }
+        }
+        let directory = crate::test_directory().keep();
+        Self::with_options_at(Arc::new(NoDevices), false, Some(directory.join("config.json")))
+    }
+    fn with_options_at(provider: Arc<dyn Provider>, native: bool, game_anchor: Option<std::path::PathBuf>) -> Self {
         let controllers = Arc::new(osg_controller_input::ControllerService::new(
             native.then(|| crate::config_paths::config_path().with_file_name("controllers.json")),
             native,
@@ -276,11 +296,12 @@ impl GatewayManager {
             )
         });
         let game_panel = retired_game_io::panel(panel, retired_recovery.clone(), controllers.clone(), companion_host.clone());
-        let anchor = crate::config_paths::config_path();
+        let isolated = game_anchor.is_some();
+        let anchor = game_anchor.unwrap_or_else(crate::config_paths::config_path);
         let mut game_paths = crate::games::Paths::in_directory(anchor.parent().unwrap_or_else(|| std::path::Path::new(".")));
         // Only locate separately retained setup/recovery evidence at an explicit
         // old anchor. The obsolete game-profile configuration is never opened.
-        if let Some(retained_anchor) = std::env::var_os("OSG_GAMES_CONFIG") {
+        if let Some(retained_anchor) = std::env::var_os("OSG_GAMES_CONFIG").filter(|_|!isolated) {
             let retained_anchor = std::path::PathBuf::from(retained_anchor);
             game_paths.provider_setup = retained_anchor.with_extension("integration-setup.json");
             game_paths.recovery = retained_anchor.with_extension("recovery.json");
@@ -347,6 +368,7 @@ impl GatewayManager {
             profile_compilation: crate::profile_compilation::Runtime::default(),
             profile_session,
             profile_admission: RwLock::new(()),
+            mcp_clients: Mutex::new(BTreeMap::new()),
             profile_prepare,
             profile_native: native,
             profile_admission_epoch,
@@ -386,7 +408,7 @@ impl GatewayManager {
         response["profileSession"] = status;
         response["automatic"] = self.profile_automatic.view();
     }
-    fn profile_session_request(&self, request: &Value, native_arrival_epoch: Option<u64>) -> Result<Value, String> {
+    fn profile_session_request(&self, request: &Value, native_arrival_epoch: Option<u64>, native_authorization: Option<&McpAuthorization>) -> Result<Value, String> {
         let command = request["command"].as_str().ok_or("Choose a profile session operation.")?;
         let fields: &[&str] = match command {
             "profile_apply" => &["id", "expectedRevision", "gameId", "expectedActiveOwner", "activationId"],
@@ -418,7 +440,7 @@ impl GatewayManager {
                 self.capture_profile_activation(request, &document, &assignments);
                 let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
-                self.pin_staged_manual(id,admission_epoch,expected_owner.as_ref())?;
+                self.pin_staged_manual(id,admission_epoch,expected_owner.as_ref(),native_authorization)?;
                 crate::profile_session::apply_staged_admitted_checked(
                     &self.profile_session,
                     crate::profile_session::Candidate { launch_preparation: false, document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
@@ -426,6 +448,7 @@ impl GatewayManager {
                     |candidate| {
                         let admission = self.profile_admission.write().unwrap_or_else(|p| p.into_inner());
                         let game_admission = self.game_admission.read().unwrap_or_else(|p| p.into_inner());
+                        self.check_mcp_authorization(native_authorization)?;
                         if self.closed.load(Ordering::Acquire)
                             || self.profile_admission_epoch.load(Ordering::Acquire) != admission_epoch {
                             return Err("Profile activation was cancelled by deactivation, recovery or a newer activation. Activate again explicitly.".into());
@@ -463,8 +486,9 @@ impl GatewayManager {
         self.decorate_profile_session(&mut response);
         Ok(response)
     }
-    fn pin_staged_manual(&self,id:&str,arrival_epoch:u64,expected_owner:Option<&Option<crate::profile_session::RunOwner>>)->Result<(),String>{
+    fn pin_staged_manual(&self,id:&str,arrival_epoch:u64,expected_owner:Option<&Option<crate::profile_session::RunOwner>>,native_authorization:Option<&McpAuthorization>)->Result<(),String>{
         let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+        self.check_mcp_authorization(native_authorization)?;
         if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=arrival_epoch{return Err("Profile activation was cancelled by a newer native control.".into());}
         if let Some(expected)=expected_owner{self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).check_expected_owner(expected)?;}
         self.automatic_manual_pin(id)?;
@@ -558,8 +582,67 @@ impl GatewayManager {
             _=>self.profile_learning.cancel(text("learnId")?),
         }
     }
-    pub fn request(&self, mut request: Value) -> Value {
+    pub fn request(&self, request: Value) -> Value {
+        self.request_checked(request, None)
+    }
+    /// Revocation is linearized against final native takeover. It fences only
+    /// this client's pending work and never stops a previously committed run.
+    pub(crate) fn mcp_authorize_client(&self, client: &str, authorized: bool) {
+        let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+        self.set_mcp_authorization_admitted(client, authorized);
+    }
+    // The caller owns profile admission for this policy transition. Keeping the
+    // registry update separate also permits deterministic queued-writer tests.
+    fn set_mcp_authorization_admitted(&self, client: &str, authorized: bool) {
+        let mut clients = self.mcp_clients.lock().unwrap_or_else(|p|p.into_inner());
+        match clients.get_mut(client) {
+            Some(current) if current.enabled != authorized => {
+                if let Some(epoch) = current.epoch.checked_add(1) {
+                    current.epoch = epoch;
+                    current.enabled = authorized;
+                } else {
+                    current.enabled = false;
+                }
+            }
+            Some(_) => {}
+            None => { clients.insert(client.into(), McpClientAuthorization { enabled: authorized, epoch: 1 }); }
+        }
+    }
+    fn capture_mcp_authorization(&self, client: &str) -> Result<Option<McpAuthorization>, String> {
+        let clients = self.mcp_clients.lock().unwrap_or_else(|p|p.into_inner());
+        let current = clients.get(client);
+        if current.is_some_and(|current|!current.enabled) {
+            return Err("MCP authorization was revoked or disabled before native activation admission.".into());
+        }
+        Ok(current.map(|current|McpAuthorization { client: client.into(), epoch: Some(current.epoch) }))
+    }
+    fn check_mcp_authorization(&self, captured: Option<&McpAuthorization>) -> Result<(), String> {
+        let Some(captured) = captured else { return Ok(()); };
+        let clients = self.mcp_clients.lock().unwrap_or_else(|p|p.into_inner());
+        match (captured.epoch, clients.get(&captured.client)) {
+            (None, None) => Ok(()),
+            (Some(epoch), Some(current)) if current.enabled && current.epoch == epoch => Ok(()),
+            _ => Err("MCP authorization was revoked or changed during native preparation; no late profile was activated.".into()),
+        }
+    }
+    /// Native MCP adapters use the same admission boundary as the UI. The
+    /// observed owner is compared while admission remains held through dispatch.
+    pub(crate) fn mcp_guarded_request(&self, request: Value, expected_owner: Value) -> Value {
+        let expected = match serde_json::from_value::<Option<crate::profile_session::RunOwner>>(expected_owner) {
+            Ok(expected) => expected,
+            Err(_) => return self.error("Provide the exact observed active owner or null.", None),
+        };
+        self.request_checked(request, Some(expected))
+    }
+    fn request_checked(&self, mut request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>) -> Value {
         let command = request["command"].as_str().unwrap_or("");
+        // A registry snapshot never waits for profile admission, so Stop/cancel
+        // retain their fast path while native takeover owns that lock. Normal
+        // dispatch rechecks the captured epoch under its admission guard below.
+        let native_authorization = match request["clientId"].as_str().map(|client|self.capture_mcp_authorization(client)).transpose() {
+            Ok(captured) => captured.flatten(),
+            Err(error) => return self.error(&error, None),
+        };
         // Activation progress and cancellation remain responsive while takeover
         // owns the admission/coordinator locks. These APIs never claim outputs.
         if matches!(command,"profile_activation_status"|"profile_activation_cancel"|"profile_activation_current") {
@@ -627,7 +710,7 @@ impl GatewayManager {
             matches!(status.state, crate::profile_session::State::Running | crate::profile_session::State::Degraded)
                 && status.owner.as_ref().is_some_and(|owner| request["document"]["id"] == owner.profile_id)
         };
-        let profile_mutation = editor_save || panel_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_game_preference_save" | "profile_game_preference_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = editor_save || panel_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_draft_save" | "profile_local_settings_save" | "game_installation" | "game_integration_settings_save" | "profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_game_preference_save" | "profile_game_preference_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         // Created before admission guards so notification follows their release,
         // including staged Apply's early-return paths.
         let _wake = profile_mutation.then(|| WakeProfileOnDrop(&self.profile_wake));
@@ -652,9 +735,14 @@ impl GatewayManager {
             let operation=self.begin_profile_cleanup(&mut request,epoch);
             let response={
                 let _profile=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+                if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()) {
+                    let response=self.error(&error,None);
+                    if let Some(operation)=operation.as_deref(){self.finish_profile_activation(operation,&response);}
+                    return response;
+                }
                 if interrupt {self.invalidate_learning();}
                 let _game=self.game_admission.read().unwrap_or_else(|p|p.into_inner());
-                let response=self.request_inner_at(request,Some(epoch));
+                let response=self.request_inner_at(request,Some(epoch),native_authorization.as_ref());
                 // Publish cleanup completion before a later activation can
                 // acquire the coordinator for slow device preparation.
                 if let Some(operation)=operation.as_deref(){self.finish_profile_activation(operation,&response);}
@@ -664,6 +752,11 @@ impl GatewayManager {
         }
         if staging && !editor_save&&!panel_save {
             let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+            if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()) {
+                let response=self.error(&error,None);
+                if tracked_activation {if let Some(id)=request["activationId"].as_str(){self.finish_profile_activation(id,&response);}}
+                return response;
+            }
             if arrival_epoch!=Some(self.profile_admission_epoch.load(Ordering::Acquire)) {
                 let response=self.error("This staged profile request was cancelled by a newer native control. Submit it again explicitly.",None);
                 if tracked_activation {if let Some(id)=request["activationId"].as_str(){self.finish_profile_activation(id,&response);}}
@@ -673,12 +766,20 @@ impl GatewayManager {
         if learning_start||learning_passive{return self.request_inner(request);}
         let _profile_write = (profile_mutation && !staging).then(|| self.profile_admission.write().unwrap_or_else(|p| p.into_inner()));
         let _profile_read = (!profile_mutation&&!publication_transport).then(|| self.profile_admission.read().unwrap_or_else(|p| p.into_inner()));
+        if let Err(error) = self.check_mcp_authorization(native_authorization.as_ref()) {
+            return self.error(&error, None);
+        }
+        if let Some(expected) = expected_owner.as_ref() {
+            if let Err(error) = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).check_expected_owner(expected) {
+                return self.error(&error, None);
+            }
+        }
         if interrupt&&!staging{self.invalidate_learning();}
         // Slow read-only staging holds neither admission lock. Final takeover
         // acquires profile then game admission together in the established order.
         if staging {
             let activation=request["activationId"].as_str().filter(|_|tracked_activation).map(str::to_owned);
-            let response=self.request_inner_at(request,arrival_epoch);
+            let response=self.request_inner_at(request,arrival_epoch,native_authorization.as_ref());
             if let Some(activation)=activation {self.finish_profile_activation(&activation,&response);}
             return response;
         }
@@ -687,7 +788,7 @@ impl GatewayManager {
         // Coordinator callbacks address adapters directly after admission.
         if request["command"]
             .as_str()
-            .is_some_and(|c| c.starts_with("game_") && !matches!(c,"game_get_state"|"game_telemetry_inspect"))
+            .is_some_and(|c| c == "profile_local_settings_save" || c.starts_with("game_") && !matches!(c,"game_get_state"|"game_telemetry_inspect"))
         {
             let _admission = self
                 .game_admission
@@ -702,15 +803,15 @@ impl GatewayManager {
             self.request_inner(request)
         }
     }
-    fn request_inner(&self, request: Value) -> Value {self.request_inner_at(request,None)}
-    fn request_inner_at(&self, mut request: Value, native_arrival_epoch: Option<u64>) -> Value {
+    fn request_inner(&self, request: Value) -> Value {self.request_inner_at(request,None,None)}
+    fn request_inner_at(&self, mut request: Value, native_arrival_epoch: Option<u64>, native_authorization: Option<&McpAuthorization>) -> Value {
         if self.closed.load(Ordering::Acquire) {
             return self.error("Cockpit gateway manager has closed.", None);
         }
         let profile_request = request["command"]
             .as_str()
             .is_some_and(|command| command.starts_with("profile_"));
-        let request_limit = if matches!(request["command"].as_str(), Some("profile_editor_save" | "profile_compile" | "profile_desktop_preview")) {
+        let request_limit = if matches!(request["command"].as_str(), Some("profile_editor_save" | "profile_draft_save" | "profile_compile" | "profile_desktop_preview")) {
             PROFILE_EDITOR_REQUEST_LIMIT
         } else if profile_request {
             PROFILE_REQUEST_LIMIT
@@ -863,11 +964,23 @@ impl GatewayManager {
         }
         if profile_request {
             request.as_object_mut().unwrap().remove("clientId");
+            if matches!(command.as_str(), "profile_local_settings_get" | "profile_local_settings_save") {
+                return match self.local_settings_request(&request) {
+                    Ok(settings) => json!({"ok":true,"state":{"localSettings":settings}}),
+                    Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
+                };
+            }
             if matches!(command.as_str(),"profile_get"|"profile_assignments_get"|"profile_list") {
                 if let Err(error)=self.refresh_saved_panel_references(){return json!({"ok":false,"error":error});}
             }
             if command == "profile_editor_save" {
                 return match self.save_profile_editor(&request, native_arrival_epoch) {
+                    Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
+                    Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
+                };
+            }
+            if command == "profile_draft_save" {
+                return match self.save_profile_draft(&request) {
                     Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
                     Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
                 };
@@ -888,7 +1001,7 @@ impl GatewayManager {
                 return match self.automatic_request(&request){Ok(profiles)=>json!({"ok":true,"state":{"profiles":profiles}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
             }
             if matches!(command.as_str(), "profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover") {
-                return match self.profile_session_request(&request,native_arrival_epoch) {
+                return match self.profile_session_request(&request,native_arrival_epoch,native_authorization) {
                     Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
                     Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
                 };

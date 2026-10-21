@@ -8,6 +8,16 @@ fn saved_game_context(document:&osg_profiles::ProfileDocument)->Option<String> {
 }
 
 impl GatewayManager {
+    /// Save an AI draft through the editor's normalization and atomic store
+    /// transaction. Saving a draft never replaces or prepares a running owner.
+    pub(super) fn save_profile_draft(&self, request: &Value) -> Result<Value, String> {
+        let normalized = self.normalize_editor_panels(request)?;
+        let mut response = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(&normalized)?;
+        self.decorate_profile_session(&mut response);
+        response["saveApplication"] = json!({"state":"saved","error":null});
+        Ok(response)
+    }
+
     pub(super) fn save_profile_editor(&self, request: &Value, arrival: Option<u64>) -> Result<Value, String> {
         // Capture the run and commit storage under the same admission guard. A
         // later Stop or replacement owner must never be rearmed by Save.

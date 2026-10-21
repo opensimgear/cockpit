@@ -14,7 +14,7 @@ impl GatewayManager {
     pub(super) fn desktop_request(&self, request: &Value) -> Result<Value, String> {
         let command = request["command"].as_str().ok_or("Choose a desktop output operation.")?;
         let fields: &[&str] = match command {
-            "profile_desktop_configure" => &["enabled", "scope"],
+            "profile_desktop_configure" => &["enabled", "scope", "expectedSettingsRevision"],
             "profile_desktop_status" | "profile_desktop_capture_application" | "profile_desktop_stop" | "profile_desktop_recover" | "profile_desktop_audit_checkpoint" => &[],
             "profile_desktop_audit_marker" => &["phase"],
             _ => return Err("Unknown desktop output operation.".into()),
@@ -47,6 +47,11 @@ impl GatewayManager {
             return Ok(json!({"audit":report}));
         }
         let mut preferences = if self.profile_native { settings::Settings::native() } else { settings::Settings::open(None) };
+        if let Some(expected) = request.get("expectedSettingsRevision") {
+            if expected.as_str() != Some(preferences.revision().as_str()) {
+                return Err("Desktop input settings revision conflict. Reload their current settings before saving.".into());
+            }
+        }
         let mut captured_application = None;
         match command {
             "profile_desktop_configure" | "profile_desktop_capture_application" => {

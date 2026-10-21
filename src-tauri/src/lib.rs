@@ -1,6 +1,9 @@
 mod game_installations;
 mod retained_game_companions;
 mod config_paths;
+mod mcp;
+mod mcp_credentials;
+mod mcp_tools;
 mod acr_setup;
 mod ac_car_catalogue;
 mod ac_car_catalogue_cache;
@@ -81,16 +84,29 @@ use serde_json::Value;
 use std::sync::Arc;
 use tauri::Manager;
 
-fn local_document(url: &tauri::Url) -> bool {
+fn local_document(url: &tauri::Url, development_url: Option<&tauri::Url>) -> bool {
     (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
         || (url.scheme() == "http" && url.host_str() == Some("tauri.localhost"))
         || (cfg!(debug_assertions)
-            && url.scheme() == "http"
-            && url.host_str() == Some("127.0.0.1")
-            && url.port() == Some(1420))
+            && development_url.is_some_and(|development| {
+                development.scheme() == "http"
+                    && matches!(development.host_str(), Some("127.0.0.1") | Some("localhost"))
+                    && url.origin() == development.origin()
+            }))
 }
 
 struct NativeGateway(Arc<gateways::GatewayManager>);
+
+#[cfg(test)] mod local_navigation_tests {
+    #[test] fn debug_navigation_uses_only_the_configured_loopback_origin() {
+        let development=tauri::Url::parse("http://127.0.0.1:1449/").unwrap();
+        assert_eq!(super::local_document(&development,Some(&development)),cfg!(debug_assertions));
+        assert!(!super::local_document(&tauri::Url::parse("http://127.0.0.1:1420/").unwrap(),Some(&development)));
+        assert!(!super::local_document(&tauri::Url::parse("https://example.invalid/").unwrap(),Some(&development)));
+        let remote=tauri::Url::parse("http://example.invalid:1449/").unwrap();
+        assert!(!super::local_document(&remote,Some(&remote)));
+    }
+}
 
 #[tauri::command]
 async fn pick_game_executable(
@@ -267,12 +283,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("local-navigation")
-                .on_navigation(|_, url| local_document(url))
+                .on_navigation(|window, url| local_document(url, window.app_handle().config().build.dev_url.as_ref()))
                 .build(),
         )
         .setup(|app| {
             let gateway = Arc::new(gateways::GatewayManager::new());
             gateway.start_automatic();
+            app.manage(mcp::Server::native(gateway.clone()));
             app.manage(NativeGateway(gateway));
             app.manage(profile_activation_window::ActivationWindowState::default());
             desktop::setup(app)?;
@@ -280,6 +297,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             gateway_request,
+            mcp::mcp_settings_get,
+            mcp::mcp_settings_update,
+            mcp::mcp_credential_create,
+            mcp::mcp_credential_revoke,
             profile_activation_window::profile_activation_window_open,
             profile_activation_window::profile_activation_window_update,
             profile_activation_window::profile_activation_window_state,
@@ -302,6 +323,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             desktop::window_event(window, event);
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<Arc<mcp::Server>>().shutdown();
                 window.state::<NativeGateway>().0.shutdown();
                 window.app_handle().exit(0);
             }
@@ -317,6 +339,7 @@ pub fn run() {
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
             handle.state::<profile_activation_window::ActivationWindowState>().shutdown();
+            handle.state::<Arc<mcp::Server>>().shutdown();
             handle.state::<NativeGateway>().0.shutdown();
         }
     });

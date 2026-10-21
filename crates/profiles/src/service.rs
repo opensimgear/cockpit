@@ -46,7 +46,7 @@ impl Service {
     }
 
     pub fn request(&mut self, request: &Value) -> Result<Value, String> {
-        let request_limit = if request["command"] == "profile_editor_save" {
+        let request_limit = if matches!(request["command"].as_str(), Some("profile_editor_save" | "profile_draft_save")) {
             crate::MAX_EDITOR_REQUEST_BYTES
         } else {
             crate::MAX_PROFILE_BYTES + 64 * 1024
@@ -68,10 +68,10 @@ impl Service {
             "profile_assignments_save" => &["id", "expectedRevision", "assignments"],
             "profile_create" => &["name"],
             "profile_rename" => &["id", "name", "expectedRevision"],
-            "profile_duplicate" => &["id", "name"],
+            "profile_duplicate" => &["id", "name", "expectedRevision"],
             "profile_delete" => &["id", "expectedRevision"],
             "profile_save" => &["document", "expectedRevision"],
-            "profile_editor_save" => &["document", "expectedRevision", "assignments"],
+            "profile_editor_save" | "profile_draft_save" => &["document", "expectedRevision", "assignments"],
             "profile_import" => &["document", "name"],
             "profile_select" => &["id", "selectionSource"],
             "profile_selection_mode" => &["mode"],
@@ -224,7 +224,7 @@ impl Service {
     fn mutate(&mut self, command: &str, request: &Value) -> Result<Value, String> {
         let mut library = self.library.clone();
         let output = match command {
-            "profile_editor_save" => {
+            "profile_editor_save" | "profile_draft_save" => {
                 let mut document = decode_document(&request["document"])?;
                 let assignments: Vec<LocalAssignment> =
                     serde_json::from_value(request["assignments"].clone())
@@ -291,7 +291,11 @@ impl Service {
                 let mut document = if command == "profile_import" {
                     decode_document(&request["document"])?
                 } else {
-                    self.document(required_text(request, "id")?)?.clone()
+                    let source = self.document(required_text(request, "id")?)?;
+                    if request.get("expectedRevision").is_some() {
+                        check_revision(source, expected_revision(request)?)?;
+                    }
+                    source.clone()
                 };
                 let name = optional_text(request, "name")?
                     .map(str::to_owned)
