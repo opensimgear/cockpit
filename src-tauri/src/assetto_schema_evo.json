@@ -1,0 +1,4762 @@
+[
+  {
+    "group": "physics",
+    "field": "packetId",
+    "offset": 0,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "gas",
+    "offset": 4,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "brake",
+    "offset": 8,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "fuel",
+    "offset": 12,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "gear",
+    "offset": 16,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "rpms",
+    "offset": 20,
+    "kind": "i32",
+    "shape": [],
+    "unit": "rpm",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "steerAngle",
+    "offset": 24,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "speedKmh",
+    "offset": 28,
+    "kind": "f32",
+    "shape": [],
+    "unit": "km/h",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "velocity",
+    "offset": 32,
+    "kind": "f32",
+    "shape": [
+      3
+    ],
+    "unit": "m/s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "accG",
+    "offset": 44,
+    "kind": "f32",
+    "shape": [
+      3
+    ],
+    "unit": "g",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508",
+    "axes": [
+      "lateral",
+      "longitudinal",
+      "vertical"
+    ]
+  },
+  {
+    "group": "physics",
+    "field": "wheelSlip",
+    "offset": 56,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "wheelLoad",
+    "offset": 72,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "N",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "wheelsPressure",
+    "offset": 88,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "psi",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "wheelAngularSpeed",
+    "offset": 104,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "rad/s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreWear",
+    "offset": 120,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreDirtyLevel",
+    "offset": 136,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreCoreTemperature",
+    "offset": 152,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "camberRAD",
+    "offset": 168,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "rad",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "suspensionTravel",
+    "offset": 184,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "m",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "drs",
+    "offset": 200,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tc",
+    "offset": 204,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "heading",
+    "offset": 208,
+    "kind": "f32",
+    "shape": [],
+    "unit": "rad",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "pitch",
+    "offset": 212,
+    "kind": "f32",
+    "shape": [],
+    "unit": "rad",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "roll",
+    "offset": 216,
+    "kind": "f32",
+    "shape": [],
+    "unit": "rad",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "cgHeight",
+    "offset": 220,
+    "kind": "f32",
+    "shape": [],
+    "unit": "m",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "carDamage",
+    "offset": 224,
+    "kind": "f32",
+    "shape": [
+      5
+    ],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "numberOfTyresOut",
+    "offset": 244,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "pitLimiterOn",
+    "offset": 248,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "abs",
+    "offset": 252,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "kersCharge",
+    "offset": 256,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "kersInput",
+    "offset": 260,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "autoShifterOn",
+    "offset": 264,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "rideHeight",
+    "offset": 268,
+    "kind": "f32",
+    "shape": [
+      2
+    ],
+    "unit": "m",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "turboBoost",
+    "offset": 276,
+    "kind": "f32",
+    "shape": [],
+    "unit": "bar",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "ballast",
+    "offset": 280,
+    "kind": "f32",
+    "shape": [],
+    "unit": "kg",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "airDensity",
+    "offset": 284,
+    "kind": "f32",
+    "shape": [],
+    "unit": "kg/m3",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "airTemp",
+    "offset": 288,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "roadTemp",
+    "offset": 292,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "localAngularVel",
+    "offset": 296,
+    "kind": "f32",
+    "shape": [
+      3
+    ],
+    "unit": "rad/s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "finalFF",
+    "offset": 308,
+    "kind": "f32",
+    "shape": [],
+    "unit": "Nm",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "performanceMeter",
+    "offset": 312,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "engineBrake",
+    "offset": 316,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "ersRecoveryLevel",
+    "offset": 320,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "ersPowerLevel",
+    "offset": 324,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "ersHeatCharging",
+    "offset": 328,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "ersIsCharging",
+    "offset": 332,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "kersCurrentKJ",
+    "offset": 336,
+    "kind": "f32",
+    "shape": [],
+    "unit": "kJ",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "drsAvailable",
+    "offset": 340,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "drsEnabled",
+    "offset": 344,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "brakeTemp",
+    "offset": 348,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "clutch",
+    "offset": 364,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreTempI",
+    "offset": 368,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreTempM",
+    "offset": 384,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreTempO",
+    "offset": 400,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "isAIControlled",
+    "offset": 416,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreContactPoint",
+    "offset": 420,
+    "kind": "f32",
+    "shape": [
+      4,
+      3
+    ],
+    "unit": "m",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreContactNormal",
+    "offset": 468,
+    "kind": "f32",
+    "shape": [
+      4,
+      3
+    ],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreContactHeading",
+    "offset": 516,
+    "kind": "f32",
+    "shape": [
+      4,
+      3
+    ],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "brakeBias",
+    "offset": 564,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "localVelocity",
+    "offset": 568,
+    "kind": "f32",
+    "shape": [
+      3
+    ],
+    "unit": "m/s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "P2PActivations",
+    "offset": 580,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "P2PStatus",
+    "offset": 584,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "currentMaxRpm",
+    "offset": 588,
+    "kind": "i32",
+    "shape": [],
+    "unit": "rpm",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "mz",
+    "offset": 592,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "Nm",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "fx",
+    "offset": 608,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "N",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "fy",
+    "offset": 624,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "N",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "slipRatio",
+    "offset": 640,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "slipAngle",
+    "offset": 656,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "rad",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tcinAction",
+    "offset": 672,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "absInAction",
+    "offset": 676,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "suspensionDamage",
+    "offset": 680,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "tyreTemp",
+    "offset": 696,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "waterTemp",
+    "offset": 712,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "brakeTorque",
+    "offset": 716,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "Nm",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "frontBrakeCompound",
+    "offset": 732,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "rearBrakeCompound",
+    "offset": 736,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "padLife",
+    "offset": 740,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "discLife",
+    "offset": 756,
+    "kind": "f32",
+    "shape": [
+      4
+    ],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "ignitionOn",
+    "offset": 772,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "starterEngineOn",
+    "offset": 776,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "isEngineRunning",
+    "offset": 780,
+    "kind": "bool32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "kerbVibration",
+    "offset": 784,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "slipVibrations",
+    "offset": 788,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "roadVibrations",
+    "offset": 792,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "physics",
+    "field": "absVibrations",
+    "offset": 796,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "packetId",
+    "offset": 0,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "status",
+    "offset": 4,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "focused_car_id_a",
+    "offset": 8,
+    "kind": "u64text",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "focused_car_id_b",
+    "offset": 16,
+    "kind": "u64text",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_car_id_a",
+    "offset": 24,
+    "kind": "u64text",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_car_id_b",
+    "offset": 32,
+    "kind": "u64text",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "rpm",
+    "offset": 40,
+    "kind": "u16",
+    "shape": [],
+    "unit": "rpm",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_rpm_limiter_on",
+    "offset": 42,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_change_up_rpm",
+    "offset": 43,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_change_down_rpm",
+    "offset": 44,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tc_active",
+    "offset": 45,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "abs_active",
+    "offset": 46,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "esc_active",
+    "offset": 47,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "launch_active",
+    "offset": 48,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_ignition_on",
+    "offset": 49,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_engine_running",
+    "offset": 50,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "kers_is_charging",
+    "offset": 51,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_wrong_way",
+    "offset": 52,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_drs_available",
+    "offset": 53,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "battery_is_charging",
+    "offset": 54,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_max_kj_per_lap_reached",
+    "offset": 55,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_max_charge_kj_per_lap_reached",
+    "offset": 56,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "display_speed_kmh",
+    "offset": 58,
+    "kind": "i16",
+    "shape": [],
+    "unit": "km/h",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "display_speed_mph",
+    "offset": 60,
+    "kind": "i16",
+    "shape": [],
+    "unit": "mph",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "display_speed_ms",
+    "offset": 62,
+    "kind": "i16",
+    "shape": [],
+    "unit": "m/s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "pitspeeding_delta",
+    "offset": 64,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "gear_int",
+    "offset": 68,
+    "kind": "i16",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "rpm_percent",
+    "offset": 72,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "gas_percent",
+    "offset": 76,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "brake_percent",
+    "offset": 80,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "handbrake_percent",
+    "offset": 84,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "clutch_percent",
+    "offset": 88,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "steering_percent",
+    "offset": 92,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "ffb_strength",
+    "offset": 96,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_ffb_mupliplier",
+    "offset": 100,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "water_temperature_percent",
+    "offset": 104,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "water_pressure_bar",
+    "offset": 108,
+    "kind": "f32",
+    "shape": [],
+    "unit": "bar",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_pressure_bar",
+    "offset": 112,
+    "kind": "f32",
+    "shape": [],
+    "unit": "bar",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "water_temperature_c",
+    "offset": 116,
+    "kind": "i8",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "air_temperature_c",
+    "offset": 117,
+    "kind": "i8",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "oil_temperature_c",
+    "offset": 120,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "oil_pressure_bar",
+    "offset": 124,
+    "kind": "f32",
+    "shape": [],
+    "unit": "bar",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "exhaust_temperature_c",
+    "offset": 128,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "g_forces_x",
+    "offset": 132,
+    "kind": "f32",
+    "shape": [],
+    "unit": "g",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "g_forces_y",
+    "offset": 136,
+    "kind": "f32",
+    "shape": [],
+    "unit": "g",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "g_forces_z",
+    "offset": 140,
+    "kind": "f32",
+    "shape": [],
+    "unit": "g",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "turbo_boost",
+    "offset": 144,
+    "kind": "f32",
+    "shape": [],
+    "unit": "bar",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "turbo_boost_level",
+    "offset": 148,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "turbo_boost_perc",
+    "offset": 152,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "steer_degrees",
+    "offset": 156,
+    "kind": "i32",
+    "shape": [],
+    "unit": "deg",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "current_km",
+    "offset": 160,
+    "kind": "f32",
+    "shape": [],
+    "unit": "km",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "total_km",
+    "offset": 164,
+    "kind": "u32",
+    "shape": [],
+    "unit": "km",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "total_driving_time_s",
+    "offset": 168,
+    "kind": "u32",
+    "shape": [],
+    "unit": "s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "time_of_day_hours",
+    "offset": 172,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "time_of_day_minutes",
+    "offset": 176,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "time_of_day_seconds",
+    "offset": 180,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "delta_time_ms",
+    "offset": 184,
+    "kind": "i32",
+    "shape": [],
+    "unit": "ms",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "current_lap_time_ms",
+    "offset": 188,
+    "kind": "i32",
+    "shape": [],
+    "unit": "ms",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "predicted_lap_time_ms",
+    "offset": 192,
+    "kind": "i32",
+    "shape": [],
+    "unit": "ms",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_liter_current_quantity",
+    "offset": 196,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_liter_current_quantity_percent",
+    "offset": 200,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_liter_per_km",
+    "offset": 204,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L/km",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "km_per_fuel_liter",
+    "offset": 208,
+    "kind": "f32",
+    "shape": [],
+    "unit": "km/L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "current_torque",
+    "offset": 212,
+    "kind": "f32",
+    "shape": [],
+    "unit": "Nm",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "current_bhp",
+    "offset": 216,
+    "kind": "i32",
+    "shape": [],
+    "unit": "bhp",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.slip",
+    "offset": 220,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.lock",
+    "offset": 224,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_pression",
+    "offset": 228,
+    "kind": "f32",
+    "shape": [],
+    "unit": "psi",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_temperature_c",
+    "offset": 232,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.brake_temperature_c",
+    "offset": 236,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.brake_pressure",
+    "offset": 240,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_temperature_left",
+    "offset": 244,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_temperature_center",
+    "offset": 248,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_temperature_right",
+    "offset": 252,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_compound_front",
+    "offset": 256,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_compound_rear",
+    "offset": 289,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_normalized_pressure",
+    "offset": 324,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_normalized_temperature_left",
+    "offset": 328,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_normalized_temperature_center",
+    "offset": 332,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_normalized_temperature_right",
+    "offset": 336,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.brake_normalized_temperature",
+    "offset": 340,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lf.tyre_normalized_temperature_core",
+    "offset": 344,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.slip",
+    "offset": 476,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.lock",
+    "offset": 480,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_pression",
+    "offset": 484,
+    "kind": "f32",
+    "shape": [],
+    "unit": "psi",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_temperature_c",
+    "offset": 488,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.brake_temperature_c",
+    "offset": 492,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.brake_pressure",
+    "offset": 496,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_temperature_left",
+    "offset": 500,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_temperature_center",
+    "offset": 504,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_temperature_right",
+    "offset": 508,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_compound_front",
+    "offset": 512,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_compound_rear",
+    "offset": 545,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_normalized_pressure",
+    "offset": 580,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_normalized_temperature_left",
+    "offset": 584,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_normalized_temperature_center",
+    "offset": 588,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_normalized_temperature_right",
+    "offset": 592,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.brake_normalized_temperature",
+    "offset": 596,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rf.tyre_normalized_temperature_core",
+    "offset": 600,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.slip",
+    "offset": 732,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.lock",
+    "offset": 736,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_pression",
+    "offset": 740,
+    "kind": "f32",
+    "shape": [],
+    "unit": "psi",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_temperature_c",
+    "offset": 744,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.brake_temperature_c",
+    "offset": 748,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.brake_pressure",
+    "offset": 752,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_temperature_left",
+    "offset": 756,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_temperature_center",
+    "offset": 760,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_temperature_right",
+    "offset": 764,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_compound_front",
+    "offset": 768,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_compound_rear",
+    "offset": 801,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_normalized_pressure",
+    "offset": 836,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_normalized_temperature_left",
+    "offset": 840,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_normalized_temperature_center",
+    "offset": 844,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_normalized_temperature_right",
+    "offset": 848,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.brake_normalized_temperature",
+    "offset": 852,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_lr.tyre_normalized_temperature_core",
+    "offset": 856,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.slip",
+    "offset": 988,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.lock",
+    "offset": 992,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_pression",
+    "offset": 996,
+    "kind": "f32",
+    "shape": [],
+    "unit": "psi",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_temperature_c",
+    "offset": 1000,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.brake_temperature_c",
+    "offset": 1004,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.brake_pressure",
+    "offset": 1008,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_temperature_left",
+    "offset": 1012,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_temperature_center",
+    "offset": 1016,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_temperature_right",
+    "offset": 1020,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_compound_front",
+    "offset": 1024,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_compound_rear",
+    "offset": 1057,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_normalized_pressure",
+    "offset": 1092,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_normalized_temperature_left",
+    "offset": 1096,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_normalized_temperature_center",
+    "offset": 1100,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_normalized_temperature_right",
+    "offset": 1104,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.brake_normalized_temperature",
+    "offset": 1108,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "tyre_rr.tyre_normalized_temperature_core",
+    "offset": 1112,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "npos",
+    "offset": 1244,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "kers_charge_perc",
+    "offset": 1248,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "kers_current_perc",
+    "offset": 1252,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "control_lock_time",
+    "offset": 1256,
+    "kind": "f32",
+    "shape": [],
+    "unit": "s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_front",
+    "offset": 1260,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_rear",
+    "offset": 1264,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_left",
+    "offset": 1268,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_right",
+    "offset": 1272,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_center",
+    "offset": 1276,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_suspension_lf",
+    "offset": 1280,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_suspension_rf",
+    "offset": 1284,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_suspension_lr",
+    "offset": 1288,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_damage.damage_suspension_rr",
+    "offset": 1292,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_location",
+    "offset": 1388,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "pit_info.damage",
+    "offset": 1392,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "pit_info.fuel",
+    "offset": 1393,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "pit_info.tyres_lf",
+    "offset": 1394,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "pit_info.tyres_rf",
+    "offset": 1395,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "pit_info.tyres_lr",
+    "offset": 1396,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "pit_info.tyres_rr",
+    "offset": 1397,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_liter_used",
+    "offset": 1456,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_liter_per_lap",
+    "offset": 1460,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "laps_possible_with_fuel",
+    "offset": 1464,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "battery_temperature",
+    "offset": 1468,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "battery_voltage",
+    "offset": 1472,
+    "kind": "f32",
+    "shape": [],
+    "unit": "V",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instantaneous_fuel_liter_per_km",
+    "offset": 1476,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L/km",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instantaneous_km_per_fuel_liter",
+    "offset": 1480,
+    "kind": "f32",
+    "shape": [],
+    "unit": "km/L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "gear_rpm_window",
+    "offset": 1484,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.main_light_stage",
+    "offset": 1488,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.special_light_stage",
+    "offset": 1489,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.cockpit_light_stage",
+    "offset": 1490,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.wiper_level",
+    "offset": 1491,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.rain_lights",
+    "offset": 1492,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.direction_light_left",
+    "offset": 1493,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.direction_light_right",
+    "offset": 1494,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.flashing_lights",
+    "offset": 1495,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.warning_lights",
+    "offset": 1496,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.selected_display_index",
+    "offset": 1497,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.display_current_page_index",
+    "offset": 1498,
+    "kind": "i8",
+    "shape": [
+      16
+    ],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation.are_headlights_visible",
+    "offset": 1514,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.main_light_stage",
+    "offset": 1616,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.special_light_stage",
+    "offset": 1617,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.cockpit_light_stage",
+    "offset": 1618,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.wiper_level",
+    "offset": 1619,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.rain_lights",
+    "offset": 1620,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.direction_light_left",
+    "offset": 1621,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.direction_light_right",
+    "offset": 1622,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.flashing_lights",
+    "offset": 1623,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.warning_lights",
+    "offset": 1624,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.selected_display_index",
+    "offset": 1625,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.display_current_page_index",
+    "offset": 1626,
+    "kind": "i8",
+    "shape": [
+      16
+    ],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_min_limit.are_headlights_visible",
+    "offset": 1642,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.main_light_stage",
+    "offset": 1744,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.special_light_stage",
+    "offset": 1745,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.cockpit_light_stage",
+    "offset": 1746,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.wiper_level",
+    "offset": 1747,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.rain_lights",
+    "offset": 1748,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.direction_light_left",
+    "offset": 1749,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.direction_light_right",
+    "offset": 1750,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.flashing_lights",
+    "offset": 1751,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.warning_lights",
+    "offset": 1752,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.selected_display_index",
+    "offset": 1753,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.display_current_page_index",
+    "offset": 1754,
+    "kind": "i8",
+    "shape": [
+      16
+    ],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "instrumentation_max_limit.are_headlights_visible",
+    "offset": 1770,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.tc_level",
+    "offset": 1872,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.tc_cut_level",
+    "offset": 1873,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.abs_level",
+    "offset": 1874,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.esc_level",
+    "offset": 1875,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.ebb_level",
+    "offset": 1876,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.brake_bias",
+    "offset": 1880,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.engine_map_level",
+    "offset": 1884,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.turbo_level",
+    "offset": 1888,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.ers_deployment_map",
+    "offset": 1892,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.ers_recharge_map",
+    "offset": 1896,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.is_ers_heat_charging_on",
+    "offset": 1900,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.is_ers_overtake_mode_on",
+    "offset": 1901,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.is_drs_open",
+    "offset": 1902,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.diff_power_level",
+    "offset": 1903,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.diff_coast_level",
+    "offset": 1904,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.front_bump_damper_level",
+    "offset": 1905,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.front_rebound_damper_level",
+    "offset": 1906,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.rear_bump_damper_level",
+    "offset": 1907,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.rear_rebound_damper_level",
+    "offset": 1908,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.is_ignition_on",
+    "offset": 1909,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.is_pitlimiter_on",
+    "offset": 1910,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics.active_performance_mode",
+    "offset": 1911,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.tc_level",
+    "offset": 2000,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.tc_cut_level",
+    "offset": 2001,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.abs_level",
+    "offset": 2002,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.esc_level",
+    "offset": 2003,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.ebb_level",
+    "offset": 2004,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.brake_bias",
+    "offset": 2008,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.engine_map_level",
+    "offset": 2012,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.turbo_level",
+    "offset": 2016,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.ers_deployment_map",
+    "offset": 2020,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.ers_recharge_map",
+    "offset": 2024,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.is_ers_heat_charging_on",
+    "offset": 2028,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.is_ers_overtake_mode_on",
+    "offset": 2029,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.is_drs_open",
+    "offset": 2030,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.diff_power_level",
+    "offset": 2031,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.diff_coast_level",
+    "offset": 2032,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.front_bump_damper_level",
+    "offset": 2033,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.front_rebound_damper_level",
+    "offset": 2034,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.rear_bump_damper_level",
+    "offset": 2035,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.rear_rebound_damper_level",
+    "offset": 2036,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.is_ignition_on",
+    "offset": 2037,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.is_pitlimiter_on",
+    "offset": 2038,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_min_limit.active_performance_mode",
+    "offset": 2039,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.tc_level",
+    "offset": 2128,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.tc_cut_level",
+    "offset": 2129,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.abs_level",
+    "offset": 2130,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.esc_level",
+    "offset": 2131,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.ebb_level",
+    "offset": 2132,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.brake_bias",
+    "offset": 2136,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.engine_map_level",
+    "offset": 2140,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.turbo_level",
+    "offset": 2144,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.ers_deployment_map",
+    "offset": 2148,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.ers_recharge_map",
+    "offset": 2152,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.is_ers_heat_charging_on",
+    "offset": 2156,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.is_ers_overtake_mode_on",
+    "offset": 2157,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.is_drs_open",
+    "offset": 2158,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.diff_power_level",
+    "offset": 2159,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.diff_coast_level",
+    "offset": 2160,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.front_bump_damper_level",
+    "offset": 2161,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.front_rebound_damper_level",
+    "offset": 2162,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.rear_bump_damper_level",
+    "offset": 2163,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.rear_rebound_damper_level",
+    "offset": 2164,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.is_ignition_on",
+    "offset": 2165,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.is_pitlimiter_on",
+    "offset": 2166,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_max_limit.active_performance_mode",
+    "offset": 2167,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.tc_level",
+    "offset": 2256,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.tc_cut_level",
+    "offset": 2257,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.abs_level",
+    "offset": 2258,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.esc_level",
+    "offset": 2259,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.ebb_level",
+    "offset": 2260,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.brake_bias",
+    "offset": 2264,
+    "kind": "f32",
+    "shape": [],
+    "unit": "ratio",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.engine_map_level",
+    "offset": 2268,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.turbo_level",
+    "offset": 2272,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.ers_deployment_map",
+    "offset": 2276,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.ers_recharge_map",
+    "offset": 2280,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.is_ers_heat_charging_on",
+    "offset": 2284,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.is_ers_overtake_mode_on",
+    "offset": 2285,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.is_drs_open",
+    "offset": 2286,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.diff_power_level",
+    "offset": 2287,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.diff_coast_level",
+    "offset": 2288,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.front_bump_damper_level",
+    "offset": 2289,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.front_rebound_damper_level",
+    "offset": 2290,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.rear_bump_damper_level",
+    "offset": 2291,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.rear_rebound_damper_level",
+    "offset": 2292,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.is_ignition_on",
+    "offset": 2293,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.is_pitlimiter_on",
+    "offset": 2294,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "electronics_is_modifiable.active_performance_mode",
+    "offset": 2295,
+    "kind": "i8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "total_lap_count",
+    "offset": 2384,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "current_pos",
+    "offset": 2388,
+    "kind": "u32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "total_drivers",
+    "offset": 2392,
+    "kind": "u32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "last_laptime_ms",
+    "offset": 2396,
+    "kind": "i32",
+    "shape": [],
+    "unit": "ms",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "best_laptime_ms",
+    "offset": 2400,
+    "kind": "i32",
+    "shape": [],
+    "unit": "ms",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "flag",
+    "offset": 2404,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "global_flag",
+    "offset": 2408,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "max_gears",
+    "offset": 2412,
+    "kind": "u32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "engine_type",
+    "offset": 2416,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "has_kers",
+    "offset": 2420,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_last_lap",
+    "offset": 2421,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "performance_mode_name",
+    "offset": 2422,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "diff_coast_raw_value",
+    "offset": 2456,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "diff_power_raw_value",
+    "offset": 2460,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "race_cut_gained_time_ms",
+    "offset": 2464,
+    "kind": "i32",
+    "shape": [],
+    "unit": "ms",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "distance_to_deadline",
+    "offset": 2468,
+    "kind": "i32",
+    "shape": [],
+    "unit": "m",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "race_cut_current_delta",
+    "offset": 2472,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.phase_name",
+    "offset": 2476,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.time_left",
+    "offset": 2509,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.time_left_ms",
+    "offset": 2524,
+    "kind": "i32",
+    "shape": [],
+    "unit": "ms",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.wait_time",
+    "offset": 2528,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.total_lap",
+    "offset": 2544,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.current_lap",
+    "offset": 2548,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.lights_on",
+    "offset": 2552,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.lights_mode",
+    "offset": 2556,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.lap_length_km",
+    "offset": 2560,
+    "kind": "f32",
+    "shape": [],
+    "unit": "km",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.end_session_flag",
+    "offset": 2564,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.time_to_next_session",
+    "offset": 2568,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.disconnected_from_server",
+    "offset": 2583,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.restart_season_enabled",
+    "offset": 2584,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.ui_enable_drive",
+    "offset": 2585,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.ui_enable_setup",
+    "offset": 2586,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.is_ready_to_next_blinking",
+    "offset": 2587,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "session_state.show_waiting_for_players",
+    "offset": 2588,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.current_laptime",
+    "offset": 2732,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.delta_current",
+    "offset": 2747,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.delta_current_p",
+    "offset": 2764,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.last_laptime",
+    "offset": 2768,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.delta_last",
+    "offset": 2783,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.delta_last_p",
+    "offset": 2800,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.best_laptime",
+    "offset": 2804,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.ideal_laptime",
+    "offset": 2819,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.total_time",
+    "offset": 2834,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "timing_state.is_invalid",
+    "offset": 2849,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_ping",
+    "offset": 2988,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_latency",
+    "offset": 2992,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_cpu_usage",
+    "offset": 2996,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_cpu_usage_avg",
+    "offset": 3000,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_qos",
+    "offset": 3004,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_qos_avg",
+    "offset": 3008,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_fps",
+    "offset": 3012,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "player_fps_avg",
+    "offset": 3016,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "driver_name",
+    "offset": 3020,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "driver_surname",
+    "offset": 3053,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_model",
+    "offset": 3086,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_in_pit_box",
+    "offset": 3119,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_in_pit_lane",
+    "offset": 3120,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "is_valid_lap",
+    "offset": 3121,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "car_coordinates",
+    "offset": 3124,
+    "kind": "f32",
+    "shape": [
+      60,
+      3
+    ],
+    "unit": "m",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "gap_ahead",
+    "offset": 3844,
+    "kind": "f32",
+    "shape": [],
+    "unit": "s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "gap_behind",
+    "offset": 3848,
+    "kind": "f32",
+    "shape": [],
+    "unit": "s",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "active_cars",
+    "offset": 3852,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_per_lap",
+    "offset": 3856,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "fuel_estimated_laps",
+    "offset": 3860,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.auto_gear",
+    "offset": 3864,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.auto_blip",
+    "offset": 3865,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.auto_clutch",
+    "offset": 3866,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.auto_clutch_on_start",
+    "offset": 3867,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.manual_ignition_e_start",
+    "offset": 3868,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.auto_pit_limiter",
+    "offset": 3869,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.standing_start_assist",
+    "offset": 3870,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.auto_steer",
+    "offset": 3872,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "assists_state.arcade_stability_control",
+    "offset": 3876,
+    "kind": "f32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "max_fuel",
+    "offset": 3928,
+    "kind": "f32",
+    "shape": [],
+    "unit": "L",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "max_turbo_boost",
+    "offset": 3932,
+    "kind": "f32",
+    "shape": [],
+    "unit": "bar",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "graphics",
+    "field": "use_single_compound",
+    "offset": 3936,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "sm_version",
+    "offset": 0,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "ac_evo_version",
+    "offset": 15,
+    "kind": "utf8",
+    "shape": [],
+    "count": 15,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "session",
+    "offset": 32,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "session_name",
+    "offset": 36,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "event_id",
+    "offset": 69,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "session_id",
+    "offset": 70,
+    "kind": "u8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "starting_grip",
+    "offset": 72,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "starting_ambient_temperature_c",
+    "offset": 76,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "starting_ground_temperature_c",
+    "offset": 80,
+    "kind": "f32",
+    "shape": [],
+    "unit": "degC",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "is_static_weather",
+    "offset": 84,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "is_timed_race",
+    "offset": 85,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "is_online",
+    "offset": 86,
+    "kind": "bool8",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "number_of_sessions",
+    "offset": 88,
+    "kind": "i32",
+    "shape": [],
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "nation",
+    "offset": 92,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "longitude",
+    "offset": 128,
+    "kind": "f32",
+    "shape": [],
+    "unit": "deg",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "latitude",
+    "offset": 132,
+    "kind": "f32",
+    "shape": [],
+    "unit": "deg",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "track",
+    "offset": 136,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "track_configuration",
+    "offset": 169,
+    "kind": "utf8",
+    "shape": [],
+    "count": 33,
+    "unit": "",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  },
+  {
+    "group": "static",
+    "field": "track_length_m",
+    "offset": 204,
+    "kind": "f32",
+    "shape": [],
+    "unit": "m",
+    "supported": true,
+    "source": "https://steamcommunity.com/sharedfiles/filedetails/?id=3707421508"
+  }
+]

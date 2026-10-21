@@ -1,0 +1,3763 @@
+{
+  "assetto-corsa": [
+    {
+      "group": "physics",
+      "field": "packetId",
+      "offset": 0,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "gas",
+      "offset": 4,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "brake",
+      "offset": 8,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "fuel",
+      "offset": 12,
+      "kind": "f32",
+      "shape": [],
+      "unit": "L",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "gear",
+      "offset": 16,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Native enum: 0 reverse, 1 neutral, 2 first gear."
+    },
+    {
+      "group": "physics",
+      "field": "rpms",
+      "offset": 20,
+      "kind": "i32",
+      "shape": [],
+      "unit": "rpm",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "steerAngle",
+      "offset": 24,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "AC SDK calls this steer angle without defining a unit; do not label it radians or degrees."
+    },
+    {
+      "group": "physics",
+      "field": "speedKmh",
+      "offset": 28,
+      "kind": "f32",
+      "shape": [],
+      "unit": "km/h",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "velocity",
+      "offset": 32,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "accG",
+      "offset": 44,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "g",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "AC SDK describes a local-coordinate acceleration vector; XYZ axis order."
+    },
+    {
+      "group": "physics",
+      "field": "wheelSlip",
+      "offset": 56,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "wheelLoad",
+      "offset": 72,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "N",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "wheelsPressure",
+      "offset": 88,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "wheelAngularSpeed",
+      "offset": 104,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "tyreWear",
+      "offset": 120,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "tyreDirtyLevel",
+      "offset": 136,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "tyreCoreTemperature",
+      "offset": 152,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "camberRAD",
+      "offset": 168,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "rad",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "suspensionTravel",
+      "offset": 184,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "drs",
+      "offset": 200,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "tc",
+      "offset": 204,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "AC SDK: traction-control slip-ratio limit, when enabled."
+    },
+    {
+      "group": "physics",
+      "field": "heading",
+      "offset": 208,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "pitch",
+      "offset": 212,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "roll",
+      "offset": 216,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "cgHeight",
+      "offset": 220,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "carDamage",
+      "offset": 224,
+      "kind": "f32",
+      "shape": [
+        5
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Five slots exist; AC SDK states only the first four are valid."
+    },
+    {
+      "group": "physics",
+      "field": "numberOfTyresOut",
+      "offset": 244,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "AC SDK describes the allowed off-track tyre count before a penalty; do not reinterpret this as a verified live track-limit sensor."
+    },
+    {
+      "group": "physics",
+      "field": "pitLimiterOn",
+      "offset": 248,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "abs",
+      "offset": 252,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "AC SDK: ABS slip-ratio limit, when enabled."
+    },
+    {
+      "group": "physics",
+      "field": "kersCharge",
+      "offset": 256,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "kersInput",
+      "offset": 260,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "autoShifterOn",
+      "offset": 264,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "rideHeight",
+      "offset": 268,
+      "kind": "f32",
+      "shape": [
+        2
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "turboBoost",
+      "offset": 276,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "ballast",
+      "offset": 280,
+      "kind": "f32",
+      "shape": [],
+      "unit": "kg",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "airDensity",
+      "offset": 284,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "airTemp",
+      "offset": 288,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "roadTemp",
+      "offset": 292,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "localAngularVel",
+      "offset": 296,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "finalFF",
+      "offset": 308,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Native force-feedback signal; SDK gives no calibrated physical torque unit."
+    },
+    {
+      "group": "physics",
+      "field": "performanceMeter",
+      "offset": 312,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "engineBrake",
+      "offset": 316,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "ersRecoveryLevel",
+      "offset": 320,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "ersPowerLevel",
+      "offset": 324,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "ersHeatCharging",
+      "offset": 328,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "ersIsCharging",
+      "offset": 332,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "kersCurrentKJ",
+      "offset": 336,
+      "kind": "f32",
+      "shape": [],
+      "unit": "kJ",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "drsAvailable",
+      "offset": 340,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "drsEnabled",
+      "offset": 344,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "brakeTemp",
+      "offset": 348,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "clutch",
+      "offset": 364,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "tyreTempI",
+      "offset": 368,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "tyreTempM",
+      "offset": 384,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "tyreTempO",
+      "offset": 400,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "isAIControlled",
+      "offset": 416,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "tyreContactPoint",
+      "offset": 420,
+      "kind": "f32",
+      "shape": [
+        4,
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "tyreContactNormal",
+      "offset": 468,
+      "kind": "f32",
+      "shape": [
+        4,
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "tyreContactHeading",
+      "offset": 516,
+      "kind": "f32",
+      "shape": [
+        4,
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "physics",
+      "field": "brakeBias",
+      "offset": 564,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "physics",
+      "field": "localVelocity",
+      "offset": 568,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "packetId",
+      "offset": 0,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "status",
+      "offset": 4,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "session",
+      "offset": 8,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "currentTime",
+      "offset": 12,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "lastTime",
+      "offset": 42,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "bestTime",
+      "offset": 72,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "split",
+      "offset": 102,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "completedLaps",
+      "offset": 132,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "position",
+      "offset": 136,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "iCurrentTime",
+      "offset": 140,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "iLastTime",
+      "offset": 144,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "iBestTime",
+      "offset": 148,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "sessionTimeLeft",
+      "offset": 152,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "distanceTraveled",
+      "offset": 156,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "isInPit",
+      "offset": 160,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "currentSectorIndex",
+      "offset": 164,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "lastSectorTime",
+      "offset": 168,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "numberOfLaps",
+      "offset": 172,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "tyreCompound",
+      "offset": 176,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "graphics",
+      "field": "replayTimeMultiplier",
+      "offset": 244,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "normalizedCarPosition",
+      "offset": 248,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "carCoordinates",
+      "offset": 252,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "penaltyTime",
+      "offset": 264,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "flag",
+      "offset": 268,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "idealLineOn",
+      "offset": 272,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "isInPitLane",
+      "offset": 276,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "surfaceGrip",
+      "offset": 280,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "mandatoryPitDone",
+      "offset": 284,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "windSpeed",
+      "offset": 288,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "graphics",
+      "field": "windDirection",
+      "offset": 292,
+      "kind": "f32",
+      "shape": [],
+      "unit": "deg",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "smVersion",
+      "offset": 0,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 15
+    },
+    {
+      "group": "static",
+      "field": "acVersion",
+      "offset": 30,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 15
+    },
+    {
+      "group": "static",
+      "field": "numberOfSessions",
+      "offset": 60,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "numCars",
+      "offset": 64,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "carModel",
+      "offset": 68,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "track",
+      "offset": 134,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "playerName",
+      "offset": 200,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "playerSurname",
+      "offset": 266,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "playerNick",
+      "offset": 332,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "sectorCount",
+      "offset": 400,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "maxTorque",
+      "offset": 404,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "maxPower",
+      "offset": 408,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "maxRpm",
+      "offset": 412,
+      "kind": "i32",
+      "shape": [],
+      "unit": "rpm",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "maxFuel",
+      "offset": 416,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "suspensionMaxTravel",
+      "offset": 420,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "static",
+      "field": "tyreRadius",
+      "offset": 436,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Wheel order: front-left, front-right, rear-left, rear-right."
+    },
+    {
+      "group": "static",
+      "field": "maxTurboBoost",
+      "offset": 452,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "deprecated_1",
+      "offset": 456,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Reserved deprecated field; the AC SDK instructs consumers not to use it."
+    },
+    {
+      "group": "static",
+      "field": "deprecated_2",
+      "offset": 460,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Reserved deprecated field; the AC SDK instructs consumers not to use it."
+    },
+    {
+      "group": "static",
+      "field": "penaltiesEnabled",
+      "offset": 464,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "aidFuelRate",
+      "offset": 468,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "aidTireRate",
+      "offset": 472,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "aidMechanicalDamage",
+      "offset": 476,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "aidAllowTyreBlankets",
+      "offset": 480,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "aidStability",
+      "offset": 484,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "aidAutoClutch",
+      "offset": 488,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "aidAutoBlip",
+      "offset": 492,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "hasDRS",
+      "offset": 496,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "hasERS",
+      "offset": 500,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "hasKERS",
+      "offset": 504,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "kersMaxJ",
+      "offset": 508,
+      "kind": "f32",
+      "shape": [],
+      "unit": "J",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "engineBrakeSettingsCount",
+      "offset": 512,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "ersPowerControllerCount",
+      "offset": 516,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "trackSPlineLength",
+      "offset": 520,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "trackConfiguration",
+      "offset": 524,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "ersMaxJ",
+      "offset": 592,
+      "kind": "f32",
+      "shape": [],
+      "unit": "J",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "isTimedRace",
+      "offset": 596,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "hasExtraLap",
+      "offset": 600,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "carSkin",
+      "offset": 604,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "reversedGridPositions",
+      "offset": 672,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf"
+    },
+    {
+      "group": "static",
+      "field": "PitWindowStart",
+      "offset": 676,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Opening/closing lap or minute, depending on race settings."
+    },
+    {
+      "group": "static",
+      "field": "PitWindowEnd",
+      "offset": 680,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://raw.githubusercontent.com/hamakobe/Kabal/master/ACSharedMemoryDocumentation.pdf",
+      "note": "Opening/closing lap or minute, depending on race settings."
+    }
+  ],
+  "assetto-corsa-competizione": [
+    {
+      "group": "physics",
+      "field": "packetId",
+      "offset": 0,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "gas",
+      "offset": 4,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "brake",
+      "offset": 8,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "fuel",
+      "offset": 12,
+      "kind": "f32",
+      "shape": [],
+      "unit": "kg",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC v1.8.12 SDK explicitly labels this kg, whereas AC labels the same offset litres; preserve the source value."
+    },
+    {
+      "group": "physics",
+      "field": "gear",
+      "offset": 16,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "rpms",
+      "offset": 20,
+      "kind": "i32",
+      "shape": [],
+      "unit": "rpm",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "steerAngle",
+      "offset": 24,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC SDK documents a steering input from -1 to 1."
+    },
+    {
+      "group": "physics",
+      "field": "speedKmh",
+      "offset": 28,
+      "kind": "f32",
+      "shape": [],
+      "unit": "km/h",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "velocity",
+      "offset": 32,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "accG",
+      "offset": 44,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "g",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC SDK describes global coordinates, while AC SDK describes local coordinates. No coordinate transformation is applied."
+    },
+    {
+      "group": "physics",
+      "field": "wheelSlip",
+      "offset": 56,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "wheelLoad",
+      "offset": 72,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "N",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "wheelsPressure",
+      "offset": 88,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "wheelAngularSpeed",
+      "offset": 104,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "rad/s",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "tyreWear",
+      "offset": 120,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "tyreDirtyLevel",
+      "offset": 136,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "tyreCoreTemperature",
+      "offset": 152,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC uses this field; the later similarly named duplicate is marked unused by its SDK."
+    },
+    {
+      "group": "physics",
+      "field": "camberRAD",
+      "offset": 168,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "rad",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "suspensionTravel",
+      "offset": 184,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "drs",
+      "offset": 200,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "tc",
+      "offset": 204,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC uses this field; the later similarly named duplicate is marked unused by its SDK."
+    },
+    {
+      "group": "physics",
+      "field": "heading",
+      "offset": 208,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "pitch",
+      "offset": 212,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "roll",
+      "offset": 216,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "cgHeight",
+      "offset": 220,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "carDamage",
+      "offset": 224,
+      "kind": "f32",
+      "shape": [
+        5
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Slots: front, rear, left, right, centre."
+    },
+    {
+      "group": "physics",
+      "field": "numberOfTyresOut",
+      "offset": 244,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "pitLimiterOn",
+      "offset": 248,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "abs",
+      "offset": 252,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC uses this field; the later similarly named duplicate is marked unused by its SDK."
+    },
+    {
+      "group": "physics",
+      "field": "kersCharge",
+      "offset": 256,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "kersInput",
+      "offset": 260,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "autoShifterOn",
+      "offset": 264,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "rideHeight",
+      "offset": 268,
+      "kind": "f32",
+      "shape": [
+        2
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "turboBoost",
+      "offset": 276,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "ballast",
+      "offset": 280,
+      "kind": "f32",
+      "shape": [],
+      "unit": "kg",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "airDensity",
+      "offset": 284,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "airTemp",
+      "offset": 288,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "roadTemp",
+      "offset": 292,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "localAngularVel",
+      "offset": 296,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "finalFF",
+      "offset": 308,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "performanceMeter",
+      "offset": 312,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "engineBrake",
+      "offset": 316,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "ersRecoveryLevel",
+      "offset": 320,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "ersPowerLevel",
+      "offset": 324,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "ersHeatCharging",
+      "offset": 328,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "ersIsCharging",
+      "offset": 332,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "kersCurrentKJ",
+      "offset": 336,
+      "kind": "f32",
+      "shape": [],
+      "unit": "kJ",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "drsAvailable",
+      "offset": 340,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "drsEnabled",
+      "offset": 344,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "brakeTemp",
+      "offset": 348,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "clutch",
+      "offset": 364,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "tyreTempI",
+      "offset": 368,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "tyreTempM",
+      "offset": 384,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "tyreTempO",
+      "offset": 400,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "isAIControlled",
+      "offset": 416,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "tyreContactPoint",
+      "offset": 420,
+      "kind": "f32",
+      "shape": [
+        4,
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "tyreContactNormal",
+      "offset": 468,
+      "kind": "f32",
+      "shape": [
+        4,
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "tyreContactHeading",
+      "offset": 516,
+      "kind": "f32",
+      "shape": [
+        4,
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "brakeBias",
+      "offset": 564,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Front bias source fraction; some car dashboards apply an offset (ACC SDK Appendix 4)."
+    },
+    {
+      "group": "physics",
+      "field": "localVelocity",
+      "offset": 568,
+      "kind": "f32",
+      "shape": [
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "P2PActivations",
+      "offset": 580,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "P2PStatus",
+      "offset": 584,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "currentMaxRpm",
+      "offset": 588,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK. The PDF calls its type float; the legacy shared C++ ABI declares a 32-bit integer. ACC does not populate it; use static.maxRpm."
+    },
+    {
+      "group": "physics",
+      "field": "mz",
+      "offset": 592,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "fx",
+      "offset": 608,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "fy",
+      "offset": 624,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "slipRatio",
+      "offset": 640,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Raw native slip ratio. SDK text calls this radians, which is dimensionally inconsistent; no unit is asserted."
+    },
+    {
+      "group": "physics",
+      "field": "slipAngle",
+      "offset": 656,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "tcinAction",
+      "offset": 672,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "absInAction",
+      "offset": 676,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "suspensionDamage",
+      "offset": 680,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "tyreTemp",
+      "offset": 696,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "physics",
+      "field": "waterTemp",
+      "offset": 712,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "brakePressure",
+      "offset": 716,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Raw brake-pressure source values; Appendix 3 gives car-specific maxima, so this is not normalized brake input."
+    },
+    {
+      "group": "physics",
+      "field": "frontBrakeCompound",
+      "offset": 732,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "rearBrakeCompound",
+      "offset": 736,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "padLife",
+      "offset": 740,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "discLife",
+      "offset": 756,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "ignitionOn",
+      "offset": 772,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "starterEngineOn",
+      "offset": 776,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "isEngineRunning",
+      "offset": 780,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "physics",
+      "field": "kerbVibration",
+      "offset": 784,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "SDK describes the vibration signal sent to force-feedback effects; no physical unit is specified."
+    },
+    {
+      "group": "physics",
+      "field": "slipVibrations",
+      "offset": 788,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "SDK describes the vibration signal sent to force-feedback effects; no physical unit is specified."
+    },
+    {
+      "group": "physics",
+      "field": "gVibrations",
+      "offset": 792,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "SDK describes the vibration signal sent to force-feedback effects; no physical unit is specified."
+    },
+    {
+      "group": "physics",
+      "field": "absVibrations",
+      "offset": 796,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "SDK describes the vibration signal sent to force-feedback effects; no physical unit is specified."
+    },
+    {
+      "group": "graphics",
+      "field": "packetId",
+      "offset": 0,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "status",
+      "offset": 4,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "session",
+      "offset": 8,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "currentTime",
+      "offset": 12,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "lastTime",
+      "offset": 42,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "bestTime",
+      "offset": 72,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "split",
+      "offset": 102,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "completedLaps",
+      "offset": 132,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "position",
+      "offset": 136,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "iCurrentTime",
+      "offset": 140,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "iLastTime",
+      "offset": 144,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "iBestTime",
+      "offset": 148,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "sessionTimeLeft",
+      "offset": 152,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "distanceTraveled",
+      "offset": 156,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "isInPit",
+      "offset": 160,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "currentSectorIndex",
+      "offset": 164,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "lastSectorTime",
+      "offset": 168,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "numberOfLaps",
+      "offset": 172,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "tyreCompound",
+      "offset": 176,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "graphics",
+      "field": "replayTimeMultiplier",
+      "offset": 244,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "graphics",
+      "field": "normalizedCarPosition",
+      "offset": 248,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "activeCars",
+      "offset": 252,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "carCoordinates",
+      "offset": 256,
+      "kind": "f32",
+      "shape": [
+        60,
+        3
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "carID",
+      "offset": 976,
+      "kind": "i32",
+      "shape": [
+        60
+      ],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "playerCarID",
+      "offset": 1216,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "penaltyTime",
+      "offset": 1220,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "flag",
+      "offset": 1224,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "penalty",
+      "offset": 1228,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "idealLineOn",
+      "offset": 1232,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "isInPitLane",
+      "offset": 1236,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "surfaceGrip",
+      "offset": 1240,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mandatoryPitDone",
+      "offset": 1244,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "windSpeed",
+      "offset": 1248,
+      "kind": "f32",
+      "shape": [],
+      "unit": "m/s",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "windDirection",
+      "offset": 1252,
+      "kind": "f32",
+      "shape": [],
+      "unit": "rad",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "isSetupMenuVisible",
+      "offset": 1256,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mainDisplayIndex",
+      "offset": 1260,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "secondaryDisplayIndex",
+      "offset": 1264,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Native C++ spelling; SDK PDF misspells this secondaryDisplyIndex."
+    },
+    {
+      "group": "graphics",
+      "field": "TC",
+      "offset": 1268,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "TCCut",
+      "offset": 1272,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Native C++ spelling; SDK PDF displays TCCUT."
+    },
+    {
+      "group": "graphics",
+      "field": "EngineMap",
+      "offset": 1276,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "ABS",
+      "offset": 1280,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "fuelXLap",
+      "offset": 1284,
+      "kind": "f32",
+      "shape": [],
+      "unit": "L/lap",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "rainLights",
+      "offset": 1288,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "flashingLights",
+      "offset": 1292,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "lightsStage",
+      "offset": 1296,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "exhaustTemperature",
+      "offset": 1300,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "wiperLV",
+      "offset": 1304,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "driverStintTotalTimeLeft",
+      "offset": 1308,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "driverStintTimeLeft",
+      "offset": 1312,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "rainTyres",
+      "offset": 1316,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "sessionIndex",
+      "offset": 1320,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "usedFuel",
+      "offset": 1324,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "deltaLapTime",
+      "offset": 1328,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "iDeltaLapTime",
+      "offset": 1360,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "estimatedLapTime",
+      "offset": 1364,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "graphics",
+      "field": "iEstimatedLapTime",
+      "offset": 1396,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "isDeltaPositive",
+      "offset": 1400,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "iSplit",
+      "offset": 1404,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "isValidLap",
+      "offset": 1408,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "fuelEstimatedLaps",
+      "offset": 1412,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "trackStatus",
+      "offset": 1416,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "graphics",
+      "field": "missingMandatoryPits",
+      "offset": 1484,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "Clock",
+      "offset": 1488,
+      "kind": "f32",
+      "shape": [],
+      "unit": "s",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "directionLightsLeft",
+      "offset": 1492,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "directionLightsRight",
+      "offset": 1496,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalYellow",
+      "offset": 1500,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalYellow1",
+      "offset": 1504,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalYellow2",
+      "offset": 1508,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalYellow3",
+      "offset": 1512,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalWhite",
+      "offset": 1516,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalGreen",
+      "offset": 1520,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalChequered",
+      "offset": 1524,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "GlobalRed",
+      "offset": 1528,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mfdTyreSet",
+      "offset": 1532,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mfdFuelToAdd",
+      "offset": 1536,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mfdTyrePressureLF",
+      "offset": 1540,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mfdTyrePressureRF",
+      "offset": 1544,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mfdTyrePressureLR",
+      "offset": 1548,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "mfdTyrePressureRR",
+      "offset": 1552,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "trackGripStatus",
+      "offset": 1556,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "rainIntensity",
+      "offset": 1560,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "rainIntensityIn10min",
+      "offset": 1564,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "rainIntensityIn30min",
+      "offset": 1568,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "currentTyreSet",
+      "offset": 1572,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "strategyTyreSet",
+      "offset": 1576,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "gapAhead",
+      "offset": 1580,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "graphics",
+      "field": "gapBehind",
+      "offset": 1584,
+      "kind": "i32",
+      "shape": [],
+      "unit": "ms",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "smVersion",
+      "offset": 0,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "static",
+      "field": "acVersion",
+      "offset": 30,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 15
+    },
+    {
+      "group": "static",
+      "field": "numberOfSessions",
+      "offset": 60,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "numCars",
+      "offset": 64,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "carModel",
+      "offset": 68,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "track",
+      "offset": 134,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "playerName",
+      "offset": 200,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "playerSurname",
+      "offset": 266,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "playerNick",
+      "offset": 332,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "sectorCount",
+      "offset": 400,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "maxTorque",
+      "offset": 404,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "maxPower",
+      "offset": 408,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "maxRpm",
+      "offset": 412,
+      "kind": "i32",
+      "shape": [],
+      "unit": "rpm",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "maxFuel",
+      "offset": 416,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "suspensionMaxTravel",
+      "offset": 420,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "tyreRadius",
+      "offset": 436,
+      "kind": "f32",
+      "shape": [
+        4
+      ],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "maxTurboBoost",
+      "offset": 452,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "deprecated_1",
+      "offset": 456,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "deprecated_2",
+      "offset": 460,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "penaltiesEnabled",
+      "offset": 464,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "aidFuelRate",
+      "offset": 468,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "aidTireRate",
+      "offset": 472,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "aidMechanicalDamage",
+      "offset": 476,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "aidAllowTyreBlankets",
+      "offset": 480,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Native 32-bit integer flag; SDK PDF labels this AllowTyreBlankets as float."
+    },
+    {
+      "group": "static",
+      "field": "aidStability",
+      "offset": 484,
+      "kind": "f32",
+      "shape": [],
+      "unit": "ratio",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "aidAutoClutch",
+      "offset": 488,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Native C++ spelling; SDK PDF displays aidAutoclutch."
+    },
+    {
+      "group": "static",
+      "field": "aidAutoBlip",
+      "offset": 492,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "hasDRS",
+      "offset": 496,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "hasERS",
+      "offset": 500,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "hasKERS",
+      "offset": 504,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "kersMaxJ",
+      "offset": 508,
+      "kind": "f32",
+      "shape": [],
+      "unit": "J",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "engineBrakeSettingsCount",
+      "offset": 512,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "ersPowerControllerCount",
+      "offset": 516,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "trackSPlineLength",
+      "offset": 520,
+      "kind": "f32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "trackConfiguration",
+      "offset": 524,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33,
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "ersMaxJ",
+      "offset": 592,
+      "kind": "f32",
+      "shape": [],
+      "unit": "J",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "isTimedRace",
+      "offset": 596,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "hasExtraLap",
+      "offset": 600,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "carSkin",
+      "offset": 604,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33,
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "reversedGridPositions",
+      "offset": 672,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": false,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "Marked unused/not populated in the ACC v1.8.12 SDK."
+    },
+    {
+      "group": "static",
+      "field": "PitWindowStart",
+      "offset": 676,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC SDK labels this pit-window opening/closing time without a unit."
+    },
+    {
+      "group": "static",
+      "field": "PitWindowEnd",
+      "offset": 680,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "note": "ACC SDK labels this pit-window opening/closing time without a unit."
+    },
+    {
+      "group": "static",
+      "field": "isOnline",
+      "offset": 684,
+      "kind": "i32",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/"
+    },
+    {
+      "group": "static",
+      "field": "dryTyresName",
+      "offset": 688,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    },
+    {
+      "group": "static",
+      "field": "wetTyresName",
+      "offset": 754,
+      "kind": "utf16",
+      "shape": [],
+      "unit": "",
+      "supported": true,
+      "source": "https://www.assettocorsamods.net/attachments/accsharedmemorydocumentationv1-8-12-pdf.7992/",
+      "count": 33
+    }
+  ]
+}

@@ -2,6 +2,110 @@ use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[test]
+fn ownship_physics_setup_is_ready_idempotent_and_owned_removal_restores_other_hooks() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    fs::create_dir_all(target.join("Scripts")).unwrap();
+    let original = b"-- third-party hooks\r\nLuaExportStart = otherStart\r\n";
+    fs::write(target.join("Scripts/Export.lua"), original).unwrap();
+    let ready = install(&target, &work, fixture_files(), &|| false, &|_, _| {}).unwrap();
+    assert_eq!(ready["physicsExportsReady"], true);
+    assert_eq!(ready["physicsChannelCount"], 101);
+    let path = target.join("Scripts").join(physics::RELATIVE);
+    let source = read(&path, MAX_FILE).unwrap();
+    let export = read(&target.join("Scripts/Export.lua"), MAX_EXPORT).unwrap();
+    assert!(export.starts_with(original));
+    setup(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert_eq!(read(&path, MAX_FILE).unwrap(), source);
+    assert_eq!(completed_receipts(&target, &work).unwrap().len(), 1);
+    remove(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert!(!path.exists());
+    assert_eq!(
+        read(&target.join("Scripts/Export.lua"), MAX_EXPORT).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn ownship_physics_repair_backs_up_previous_managed_source_and_preserves_external_edits() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    fixture_module(&target);
+    fs::create_dir_all(target.join("Scripts/OpenSimGear")).unwrap();
+    let old_body = "-- earlier managed ownship source\n";
+    let old = format!(
+        "-- OpenSimGear managed ownship physics v1\n-- sha256: {}\n{old_body}",
+        hash(old_body.as_bytes())
+    );
+    let path = target.join("Scripts").join(physics::RELATIVE);
+    fs::write(&path, old.as_bytes()).unwrap();
+    fs::write(target.join("Scripts/Export.lua"), LOADER).unwrap();
+    let ready = setup(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert_eq!(ready["physicsExportsReady"], true);
+    let receipts = completed_receipts(&target, &work).unwrap();
+    assert_eq!(receipts.len(), 1);
+    let receipt = &receipts[0].2;
+    assert_eq!(receipt["physicsBefore"], hash(old.as_bytes()));
+    assert_eq!(
+        read(
+            &work
+                .join(receipt["id"].as_str().unwrap())
+                .join("DCSPhysics.lua.before"),
+            MAX_FILE
+        )
+        .unwrap(),
+        old.as_bytes()
+    );
+    let installed = read(&path, MAX_FILE).unwrap();
+    fs::write(&path, b"-- external customization\n").unwrap();
+    assert!(remove(&target, &work, || false, |_, _| {}, || Ok(())).is_err());
+    assert_eq!(
+        read(&path, MAX_FILE).unwrap(),
+        b"-- external customization\n"
+    );
+    assert_eq!(inspect(&target).unwrap()["repairable"], false);
+    fs::write(&path, installed).unwrap();
+    remove(&target, &work, || false, |_, _| {}, || Ok(())).unwrap();
+    assert_eq!(read(&path, MAX_FILE).unwrap(), old.as_bytes());
+    assert!(target.join("Scripts/DCS-BIOS/BIOS.lua").exists());
+    assert_eq!(
+        read(&target.join("Scripts/Export.lua"), MAX_EXPORT).unwrap(),
+        LOADER.as_bytes()
+    );
+}
+
+#[test]
+fn ownship_physics_cancel_after_export_write_restores_exact_original_bytes() {
+    let scratch = Scratch::new();
+    let target = scratch.target();
+    let work = scratch.work();
+    fs::create_dir_all(target.join("Scripts")).unwrap();
+    let original = b"-- preserved user hook\n";
+    fs::write(target.join("Scripts/Export.lua"), original).unwrap();
+    let cancelled = AtomicBool::new(false);
+    assert!(install(
+        &target,
+        &work,
+        fixture_files(),
+        &|| cancelled.load(Ordering::SeqCst),
+        &|_, percent| {
+            if percent == 95 {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+        }
+    )
+    .is_err());
+    assert!(!target.join("Scripts").join(physics::RELATIVE).exists());
+    assert_eq!(
+        read(&target.join("Scripts/Export.lua"), MAX_EXPORT).unwrap(),
+        original
+    );
+    assert!(!recovery_pending(&work));
+}
+
+#[test]
 fn remove_owned_install_restores_original_scripts_and_preserves_other_files() {
     let scratch = Scratch::new();
     let target = scratch.target();

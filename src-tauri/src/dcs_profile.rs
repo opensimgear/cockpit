@@ -49,6 +49,7 @@ struct TelemetryCatalogue {
     metadata: Catalogue,
     revision: String,
     files: Vec<(PathBuf, Option<CatalogueFile>)>,
+    all_aircraft_names: HashSet<String>,
 }
 impl TelemetryCatalogue {
     fn load(path: &Path, module: &str) -> Result<Self, String> {
@@ -168,6 +169,7 @@ impl TelemetryCatalogue {
             metadata,
             revision,
             files,
+            all_aircraft_names: aliases.as_object().ok_or(CATALOGUE_ERROR)?.keys().cloned().collect(),
         })
     }
     fn guard(&self) -> DcsCatalogueGuard {
@@ -831,6 +833,53 @@ pub(crate) fn guarded_telemetry_sources(
     guard.validate(true)?;
     Ok((sources, guard, capture.metadata))
 }
+/// Capture the full read-only export surface for one freshly observed aircraft.
+/// The returned decoder and catalogue share an exact installed-document
+/// revision; no editable profile or output command is constructed.
+pub(crate) fn passive_telemetry_sources(
+    path: &Path,
+    module: &str,
+    freshness_ms: u64,
+) -> Result<(ExportSession, DcsCatalogueGuard, Value), String> {
+    let resource = resource_catalogue(&json!({"cataloguePath":path,"aircraftModule":module,"kind":"output"}))?;
+    let revision = resource["sourceRevision"].as_str().ok_or(CATALOGUE_ERROR)?;
+    let mut rows = Vec::new();
+    let mut channels = Vec::new();
+    for control in resource["controls"].as_array().ok_or(CATALOGUE_ERROR)? {
+        let control_id = control["id"].as_str().ok_or(CATALOGUE_ERROR)?;
+        let native = control["sourceControl"].as_str().unwrap_or(control_id);
+        let source_module = control["sourceModule"].as_str().unwrap_or(module);
+        for output in control["outputs"].as_array().ok_or(CATALOGUE_ERROR)? {
+            let index = output["index"].as_u64().ok_or(CATALOGUE_ERROR)?;
+            let id = format!("{control_id}:{index}");
+            rows.push(json!({"id":id,"channel":control_id,"output":index}));
+            let mut channel = json!({"id":id,"label":control["label"],"group":control["category"],"unit":"","type":if output["type"] == "string" {"string"} else {"number"},"nativeField":native,"sourceModule":source_module,"nativeType":output["type"],"output":index,"supported":true,"readOnly":true,"source":"https://dcs-skunkworks.github.io/dcs-bios-docs/"});
+            if output["type"] == "integer" {
+                channel["minimum"] = json!(0);
+                channel["maximum"] = output["maxValue"].clone();
+                channel["note"] = json!("Raw installed DCS-BIOS export quantity; its encoded range does not establish a physical unit.");
+            } else {
+                channel["maxLength"] = output["maxLength"].clone();
+            }
+            if let Some(quality) = control.get("reportedQuality") { channel["reportedQuality"] = quality.clone(); }
+            channels.push(channel);
+        }
+    }
+    let capture = TelemetryCatalogue::load(path, module)?;
+    if capture.revision != revision { return Err(SOURCE_CHANGED.into()); }
+    let sources = telemetry_sources_from_capture(&capture, &capture.metadata, &rows)?;
+    let mut guard = capture.guard();
+    let mut metadata = capture.metadata;
+    let export_aircraft_names = metadata.aircraft_names.clone();
+    // Discovery must observe a fresh different aircraft so the passive owner
+    // can rebuild the reader. Its old aircraft's output addresses remain
+    // unavailable throughout that transition.
+    metadata.aircraft_names = capture.all_aircraft_names;
+    let mut decoder = ExportSession::from_sources_with_limit(metadata, freshness_ms, sources, 65_536)?;
+    decoder.export_aircraft_names = Some(export_aircraft_names);
+    guard.validate(true)?;
+    Ok((decoder, guard, json!({"provider":"dcs-bios","aircraftModule":module,"sourceRevision":revision,"channels":channels,"commands":[]})))
+}
 pub(crate) fn query_catalogue(request: &Value) -> Result<Value, String> {
     query_catalogue_page(request, false)
 }
@@ -1171,6 +1220,7 @@ pub(crate) struct ExportSession {
     last_frame: Option<u64>,
     epoch: u64,
     malformed_frames: u64,
+    export_aircraft_names: Option<HashSet<String>>,
 }
 impl ExportSession {
     pub(crate) fn from_sources(
@@ -1178,8 +1228,16 @@ impl ExportSession {
         freshness_ms: u64,
         sources: Vec<(String, OutputSource)>,
     ) -> Result<Self, String> {
+        Self::from_sources_with_limit(catalogue, freshness_ms, sources, osg_mapping::program::MAX_PORTS)
+    }
+    fn from_sources_with_limit(
+        catalogue: Catalogue,
+        freshness_ms: u64,
+        sources: Vec<(String, OutputSource)>,
+        limit: usize,
+    ) -> Result<Self, String> {
         if !(100..=10_000).contains(&freshness_ms)
-            || sources.len() > osg_mapping::program::MAX_PORTS
+            || sources.len() > limit
         {
             return Err("Invalid bounded native DCS export source plan.".into());
         }
@@ -1201,6 +1259,7 @@ impl ExportSession {
             last_frame: None,
             epoch: 1,
             malformed_frames: 0,
+            export_aircraft_names: None,
         })
     }
     pub fn new(profile: &CompiledProfile) -> Self {
@@ -1216,6 +1275,7 @@ impl ExportSession {
             last_frame: None,
             epoch: 1,
             malformed_frames: 0,
+            export_aircraft_names: None,
         }
     }
     pub(crate) fn extend_sources(&mut self, values: Vec<(String, OutputSource)>) {
@@ -1317,7 +1377,8 @@ impl ExportSession {
                 .last_frame
                 .is_some_and(|t| now_ms.saturating_sub(t) <= self.freshness_ms);
         let values =
-            if fresh {
+            if fresh && self.export_aircraft_names.as_ref().is_none_or(|names|
+                self.aircraft.as_ref().is_some_and(|aircraft| names.contains(aircraft))) {
                 self.outputs
                     .iter()
                     .filter_map(|output| {
@@ -1461,6 +1522,46 @@ mod tests {
         }
         block(&mut bytes, 0xfffe, &[counter, 0]);
         bytes
+    }
+
+    #[test]
+    fn passive_catalogue_decodes_complete_aircraft_and_common_exports_with_revision_guard() {
+        let fixture = Fixture::new();
+        let mut aliases = dcs_bios::read_json(&fixture.0.join("AircraftAliases.json"), dcs_bios::MAX_DOCUMENT).unwrap();
+        aliases["A-10C"] = json!(["A-10C", "CommonData"]);
+        fs::write(fixture.0.join("AircraftAliases.json"), aliases.to_string()).unwrap();
+        fs::write(fixture.0.join("CommonData.json"), json!({"Motion":{"RAW_RPM":{"identifier":"RAW_RPM","inputs":[],"outputs":[{"type":"integer","address":30000,"mask":65535,"shift_by":0,"max_value":65535}]}}}).to_string()).unwrap();
+        // A passive catalogue may contain more sources than an executable
+        // profile's 1024-port budget. DCS export memory remains fixed at 64 KiB.
+        fixture.edit(|document| {
+            let mut controls = serde_json::Map::new();
+            for i in 0..1030u64 {
+                let id = format!("BULK_{i}");
+                controls.insert(id.clone(), json!({"identifier":id,"inputs":[],"outputs":[{"type":"integer","address":4000+2*i,"mask":65535,"shift_by":0,"max_value":65535}]}));
+            }
+            document["Bulk"] = json!(controls);
+        });
+        let (mut decoder, mut guard, catalogue) = passive_telemetry_sources(&fixture.0, "A-10C", 1500).unwrap();
+        assert!(catalogue["channels"].as_array().unwrap().len() > osg_mapping::program::MAX_PORTS);
+        assert!(catalogue["channels"].as_array().unwrap().iter().any(|c| c["id"] == "common:CommonData:RAW_RPM:0" && c["unit"] == ""));
+        let mut packet = vec![0x55; 4];
+        let mut name = [b' '; 24]; name[..5].copy_from_slice(b"A-10C");
+        block(&mut packet, 0, &name);
+        block(&mut packet, 30000, &1234u16.to_le_bytes());
+        block(&mut packet, 0xfffe, &[1,0]);
+        packet.extend([0x55; 4]);
+        decoder.feed(&packet, 100);
+        let snapshot = decoder.snapshot(100);
+        assert!(snapshot.fresh);
+        assert_eq!(snapshot.values["common:CommonData:RAW_RPM:0"], json!(1234));
+        assert!(!snapshot.values.contains_key("BULK_0:0"));
+        decoder.feed(&frame(Some("Other aircraft"), None, 2), 200);
+        decoder.feed(&[0x55;4], 200);
+        assert!(decoder.snapshot(200).fresh);
+        assert_eq!(decoder.snapshot(200).aircraft.as_deref(), Some("Other aircraft"));
+        assert!(decoder.snapshot(200).values.is_empty());
+        fs::write(fixture.0.join("CommonData.json"), "{}").unwrap();
+        assert!(guard.validate(true).is_err());
     }
 
     #[test]

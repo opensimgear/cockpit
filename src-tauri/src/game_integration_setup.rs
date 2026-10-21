@@ -937,6 +937,7 @@ impl Inner {
                 status["diagnostics"] = inspected["diagnostics"].clone();
                 status["repairable"] = inspected["repairable"].clone();
                 status["aircraftExports"] = inspected["aircraftExports"].clone();
+                for field in ["physicsExportsReady","physicsChannelCount","physicsCatalogueRevision","physicsExportRevision","physicsPort"] { status[field]=inspected[field].clone(); }
                 if inspected["ready"] == true {
                     let connection = if saved["userFolder"] == chosen
                         && saved["connection"].is_object()
@@ -949,7 +950,7 @@ impl Inner {
                     match compatible_dcs_connection(&connection) {
                         Ok(()) => {
                             status["state"] = json!("ready");
-                            status["message"] = json!("DCS-BIOS module, export loader, catalogue and local connection settings are ready.");
+                            status["message"] = json!("DCS-BIOS, ownship physics exports, catalogue and local connection settings are ready.");
                         }
                         Err(error) => {
                             status["state"] = json!("needs-attention");
@@ -960,7 +961,7 @@ impl Inner {
                     status["state"] = json!("needs-attention");
                     status["message"] = inspected["diagnostics"][0].clone();
                 } else {
-                    status["message"] = json!("DCS-BIOS or its export loader needs setup. Existing scripts will be preserved.");
+                    status["message"] = json!("DCS-BIOS or its ownship telemetry export needs setup. Existing scripts will be preserved.");
                 }
             }
         }

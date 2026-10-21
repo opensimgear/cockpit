@@ -20,7 +20,9 @@ pub enum PortValue {
     Text(String),
 }
 
-pub const MAX_CATALOGUE_PORTS: usize = 20_000;
+// Installed X-Plane datarefs contain over 30,000 scalar/array components.
+// Execution remains bounded separately to its selected 1,024 ports.
+pub const MAX_CATALOGUE_PORTS: usize = 65_536;
 pub const MAX_PORT_PAGE: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,8 +231,6 @@ impl ScalarSchema {
                 if !min.is_finite()
                     || !max.is_finite()
                     || min > max
-                    || min.abs() > MAX_SAFE_INTEGER as f64
-                    || max.abs() > MAX_SAFE_INTEGER as f64
                 {
                     return Err("Invalid numeric signal range.".into());
                 }
@@ -404,7 +404,7 @@ impl PortDescriptor {
 
 pub fn validate_ports(ports: &[PortDescriptor]) -> Result<(), String> {
     if ports.len() > MAX_CATALOGUE_PORTS {
-        return Err("Resource catalogue exceeds 20000 ports.".into());
+        return Err("Resource catalogue exceeds 65536 ports.".into());
     }
     let mut ids = BTreeSet::new();
     for port in ports {

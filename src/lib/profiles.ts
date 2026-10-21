@@ -124,7 +124,7 @@ export function profileScalarValid(value: unknown): value is ProfileScalarSchema
   if (value.type === 'boolean' || value.type === 'rgb') return exact(value, ['type']);
   if (value.type === 'text') return exact(value, ['type', 'maxBytes', 'encoding']) && whole(value.maxBytes, 1, 4096) && ['utf8', 'ascii'].includes(String(value.encoding));
   if (value.type === 'enum') return exact(value, ['type', 'values']) && list(value.values, 64) && value.values.length > 0 && value.values.every(item => boundedText(item, 256)) && new Set(value.values).size === value.values.length;
-  return ['integer', 'number'].includes(String(value.type)) && exact(value, ['type', 'min', 'max', 'unit']) && finite(value.min) && finite(value.max) && value.min <= value.max && Math.abs(value.min) <= Number.MAX_SAFE_INTEGER && Math.abs(value.max) <= Number.MAX_SAFE_INTEGER && (value.type !== 'integer' || Number.isSafeInteger(value.min) && Number.isSafeInteger(value.max)) && (value.unit === null || boundedText(value.unit, 128));
+  return ['integer', 'number'].includes(String(value.type)) && exact(value, ['type', 'min', 'max', 'unit']) && finite(value.min) && finite(value.max) && value.min <= value.max && (value.type !== 'integer' || Number.isSafeInteger(value.min) && Number.isSafeInteger(value.max)) && (value.unit === null || boundedText(value.unit, 128));
 }
 export function profileScalarAccepts(schema: ProfileScalarSchema, value: unknown): boolean {
   if (schema.type === 'boolean') return typeof value === 'boolean';

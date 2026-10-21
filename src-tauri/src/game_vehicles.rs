@@ -1,5 +1,6 @@
 //! Passive vehicle discovery. Identity is qualified by native process and fresh
 //! simulator telemetry, independently of whether a profile is applied.
+use crate::game_telemetry_inspection::Capture;
 use crate::{dcs_bios, dcs_profile, game_discovery::ProcessIdentity, game_telemetry};
 use serde_json::{json, Value};
 use std::{
@@ -115,6 +116,12 @@ enum Reader {
         source: dcs_bios::Transport,
         decoder: dcs_profile::ExportSession,
         guard: dcs_profile::DcsCatalogueGuard,
+        connection: Value,
+        module: String,
+        catalogue: Value,
+        physics: Option<crate::dcs_physics::Source>,
+        physics_retry: Instant,
+        physics_error: Option<String>,
     },
     Rally {
         source: Box<dyn game_telemetry::Source>,
@@ -139,35 +146,29 @@ impl Reader {
                     .map(|(id, _)| id)
                     .ok_or("DCS aircraft catalogue is empty.")?;
                 let path = Path::new(connection["cataloguePath"].as_str().unwrap());
-                let mut query = connection.clone();
-                query["aircraftModule"] = json!(module);
-                let ports = dcs_profile::resource_catalogue(&query)?;
-                let (_, guard, mut catalogue) = dcs_profile::guarded_telemetry_sources(
-                    path,
-                    module,
-                    &[],
-                    ports["sourceRevision"]
-                        .as_str()
-                        .ok_or("DCS catalogue has no captured revision.")?,
-                )?;
-                catalogue.aircraft_names = names
-                    .keys()
-                    .filter(|id| vehicle_id("dcs", id).is_some())
-                    .cloned()
-                    .collect();
                 let network = dcs_bios::Network::parse(connection)?;
-                let decoder = dcs_profile::ExportSession::from_sources(
-                    catalogue,
-                    network.freshness_ms,
-                    vec![],
-                )?;
+                let (decoder, guard, catalogue) =
+                    dcs_profile::passive_telemetry_sources(path, module, network.freshness_ms)?;
+                let (physics, physics_error) = match crate::dcs_physics::Source::open() {
+                    Ok(source) => (Some(source), None),
+                    Err(error) => (None, Some(error)),
+                };
                 Ok(Self::Dcs {
                     source: dcs_bios::Transport::open_network(&network)?,
                     decoder,
                     guard,
+                    connection: connection.clone(),
+                    module: module.clone(),
+                    catalogue,
+                    physics,
+                    physics_error,
+                    physics_retry: Instant::now() + Duration::from_secs(2),
                 })
             }
-            "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo" => {
+            "assetto-corsa-rally"
+            | "assetto-corsa"
+            | "assetto-corsa-competizione"
+            | "assetto-corsa-evo" => {
                 let image = process
                     .path
                     .rsplit(['/', '\\'])
@@ -199,12 +200,28 @@ impl Reader {
             _ => Err("Vehicle introspection is unavailable for this game.".into()),
         }
     }
+    #[cfg(test)]
     fn poll(&mut self, now_ms: u64) -> Result<Option<String>, String> {
+        self.poll_telemetry(now_ms).map(|(vehicle, _)| vehicle)
+    }
+    fn inspect(&mut self, game: &str, ids: &[String]) -> Result<(), String> {
+        if let Self::Xplane(source) = self {
+            source.set_inspection_channels(&crate::game_channels::native_ids(game, ids))?;
+        }
+        Ok(())
+    }
+    fn poll_telemetry(&mut self, now_ms: u64) -> Result<(Option<String>, Capture), String> {
         match self {
             Self::Dcs {
                 source,
                 decoder,
                 guard,
+                connection,
+                module,
+                catalogue,
+                physics,
+                physics_retry,
+                physics_error,
             } => {
                 guard.validate(false)?;
                 let mut drained = false;
@@ -221,7 +238,59 @@ impl Reader {
                 }
                 decoder.tick(now_ms);
                 let snapshot = decoder.snapshot(now_ms);
-                Ok(snapshot.aircraft.filter(|_| snapshot.fresh))
+                if let Some(aircraft) = snapshot.aircraft.as_ref().filter(|_| snapshot.fresh) {
+                    let path = Path::new(connection["cataloguePath"].as_str().unwrap());
+                    let current = dcs_profile::resolve_aircraft_module(path, aircraft)?;
+                    if current != *module {
+                        let next = dcs_profile::passive_telemetry_sources(
+                            path,
+                            &current,
+                            connection["freshnessMs"].as_u64().unwrap_or(1500),
+                        )?;
+                        *decoder = next.0;
+                        *guard = next.1;
+                        *catalogue = next.2;
+                        *module = current;
+                        let mut capture = Capture::export("dcs", &snapshot);
+                        capture.status = "waiting".into();
+                        capture.values.clear();
+                        return Ok((None, capture));
+                    }
+                }
+                if physics.is_none() && Instant::now() >= *physics_retry {
+                    match crate::dcs_physics::Source::open() {
+                        Ok(source) => {
+                            *physics = Some(source);
+                            *physics_error = None;
+                        }
+                        Err(error) => *physics_error = Some(error),
+                    }
+                    *physics_retry = Instant::now() + Duration::from_secs(2);
+                }
+                let mut capture = Capture::export("dcs", &snapshot);
+                let ownship = match physics.as_mut().map(|physics| physics.poll()) {
+                    Some(Ok(snapshot)) => {
+                        *physics_error = snapshot.error.clone();
+                        Some(snapshot)
+                    }
+                    Some(Err(error)) => {
+                        *physics = None;
+                        *physics_retry = Instant::now() + Duration::from_secs(2);
+                        *physics_error = Some(error);
+                        None
+                    }
+                    None => None,
+                };
+                merge_ownship_capture(
+                    &mut capture,
+                    &snapshot,
+                    ownship.as_ref(),
+                    physics_error.as_deref(),
+                );
+                Ok((
+                    snapshot.aircraft.clone().filter(|_| snapshot.fresh),
+                    capture,
+                ))
             }
             Self::Rally { source, decoder } => {
                 let snapshot = decoder.poll(source.as_mut(), now_ms);
@@ -230,16 +299,84 @@ impl Reader {
                         .error
                         .unwrap_or_else(|| "Assetto vehicle telemetry failed.".into()));
                 }
-                Ok(snapshot
-                    .context
-                    .filter(|_| snapshot.fresh)
-                    .map(|context| context.car_model))
+                let capture = Capture::assetto(&snapshot);
+                Ok((
+                    snapshot
+                        .context
+                        .filter(|_| snapshot.fresh)
+                        .map(|context| context.car_model),
+                    capture,
+                ))
             }
             Self::Xplane(source) => {
                 let snapshot = source.poll(Instant::now()).0;
-                Ok(snapshot.aircraft.filter(|_| snapshot.fresh))
+                Ok((
+                    snapshot.aircraft.clone().filter(|_| snapshot.fresh),
+                    Capture::export("x-plane-12", &snapshot),
+                ))
             }
         }
+    }
+}
+fn merge_ownship_capture(
+    capture: &mut Capture,
+    bios: &dcs_profile::ExportSnapshot,
+    physics: Option<&crate::dcs_physics::Snapshot>,
+    error: Option<&str>,
+) {
+    static IDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let ids = IDS.get_or_init(|| {
+        let mut catalogue = json!({"channels":crate::dcs_physics::catalogue()});
+        crate::game_channels::catalogue("dcs", &mut catalogue);
+        catalogue["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|field| field["id"].as_str().map(str::to_owned))
+            .collect()
+    });
+    let fresh = bios.fresh
+        && physics.is_some_and(|physics| physics.fresh && physics.aircraft == bios.aircraft);
+    capture.context["physicsStatus"] = json!(if error.is_some() {
+        "error"
+    } else if physics.is_some_and(|physics| physics.fresh) && !fresh {
+        "waiting-aircraft"
+    } else {
+        physics.map_or("waiting", |physics| physics.status.as_str())
+    });
+    capture.context["physicsAgeMs"] = json!(physics.and_then(|physics| physics.age_ms));
+    if let Some(error) = error {
+        let error = error
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(512)
+            .collect::<String>();
+        capture.context["physicsError"] = json!(error);
+        capture.message = Some(format!("DCS ownship telemetry: {error}"));
+    }
+    let values = if fresh {
+        crate::game_channels::values("dcs", &physics.unwrap().values)
+    } else {
+        BTreeMap::new()
+    };
+    for id in ids {
+        capture.values.remove(id);
+        capture.stale_ids.remove(id);
+        capture.ages.insert(
+            id.clone(),
+            if fresh && !values.contains_key(id) {
+                None
+            } else {
+                physics.and_then(|physics| physics.age_ms)
+            },
+        );
+        if !fresh {
+            capture.stale_ids.insert(id.clone());
+        }
+    }
+    if fresh {
+        capture.values.extend(values);
+        capture.source = "dcs-bios + ownship".into();
     }
 }
 struct Entry {
@@ -250,6 +387,9 @@ struct Entry {
     process: Option<ProcessIdentity>,
     reader: Option<Reader>,
     current: Option<Value>,
+    telemetry: Option<Capture>,
+    inspection: Vec<String>,
+    inspected: Instant,
     catalogued: Instant,
     vehicles: Vec<Value>,
     error: Option<String>,
@@ -289,7 +429,13 @@ impl Tracker {
             for (game, vehicles) in games {
                 if !matches!(
                     game.as_str(),
-                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
+                    "dcs"
+                        | "assetto-corsa-rally"
+                        | "x-plane-11"
+                        | "x-plane-12"
+                        | "assetto-corsa"
+                        | "assetto-corsa-competizione"
+                        | "assetto-corsa-evo"
                 ) {
                     return None;
                 }
@@ -344,6 +490,9 @@ impl Tracker {
             process: None,
             reader: None,
             current: None,
+            telemetry: None,
+            inspection: vec![],
+            inspected: now,
             catalogued: now - Duration::from_secs(31),
             vehicles: vec![],
             error: None,
@@ -358,6 +507,7 @@ impl Tracker {
         if entry.signature != signature {
             entry.reader = None;
             entry.current = None;
+            entry.telemetry = None;
             entry.error = None;
             entry.process = process;
             entry.installation = Self::installation(game);
@@ -379,7 +529,8 @@ impl Tracker {
         if enabled && entry.reader.is_none() && now >= entry.retry {
             if let Some(process) = &entry.process {
                 match Reader::open(id, connection, process) {
-                    Ok(reader) => {
+                    Ok(mut reader) => {
+                        let _ = reader.inspect(id, &entry.inspection);
                         entry.reader = Some(reader);
                         entry.error = None;
                     }
@@ -402,8 +553,11 @@ impl Tracker {
     ) {
         for (id, entry) in &mut self.entries {
             let qualified = entry.enabled
-                && games.iter().any(|game| game["id"] == id.as_str()
-                    && game["installed"] == true && Self::installation(game) == entry.installation)
+                && games.iter().any(|game| {
+                    game["id"] == id.as_str()
+                        && game["installed"] == true
+                        && Self::installation(game) == entry.installation
+                })
                 && setup_revision(id) == entry.setup_revision
                 && entry.process.as_ref().is_some_and(&mut alive);
             if qualified {
@@ -411,6 +565,7 @@ impl Tracker {
             } else {
                 entry.reader = None;
                 entry.current = None;
+                entry.telemetry = None;
             }
         }
         self.poll();
@@ -423,13 +578,19 @@ impl Tracker {
             if entry.observed.elapsed() > Duration::from_secs(2) {
                 entry.reader = None;
                 entry.current = None;
+                entry.telemetry = None;
                 continue;
             }
             let Some(reader) = &mut entry.reader else {
                 continue;
             };
-            match reader.poll(now_ms) {
-                Ok(current) => {
+            if !entry.inspection.is_empty() && entry.inspected.elapsed() > Duration::from_secs(5) {
+                entry.inspection.clear();
+                let _ = reader.inspect(id, &[]);
+            }
+            match reader.poll_telemetry(now_ms) {
+                Ok((current, capture)) => {
+                    entry.telemetry = Some(capture);
                     entry.current = current.and_then(|value| vehicle(id, &value));
                     if let Some(value) = &entry.current {
                         let seen = self.seen.entry(id.clone()).or_default();
@@ -442,6 +603,7 @@ impl Tracker {
                 }
                 Err(error) => {
                     entry.current = None;
+                    entry.telemetry = None;
                     entry.reader = None;
                     entry.error = Some(error);
                     entry.retry = Instant::now() + Duration::from_secs(2);
@@ -464,11 +626,58 @@ impl Tracker {
             .filter(|entry| entry.observed.elapsed() <= Duration::from_secs(2))
             .and_then(|entry| entry.current.clone())
     }
+    pub(crate) fn telemetry(&self, game: &Value) -> Option<Capture> {
+        self.entries
+            .get(game["id"].as_str()?)
+            .filter(|entry| {
+                entry.installation == Self::installation(game)
+                    && entry.enabled
+                    && entry.reader.is_some()
+                    && entry.observed.elapsed() <= Duration::from_secs(2)
+            })
+            .and_then(|entry| entry.telemetry.clone())
+    }
+    pub(crate) fn dcs_physics(
+        &mut self,
+        process: &ProcessIdentity,
+    ) -> Option<crate::dcs_physics::Snapshot> {
+        let entry = self.entries.get_mut("dcs").filter(|entry| {
+            entry.enabled
+                && entry.process.as_ref() == Some(process)
+                && entry.observed.elapsed() <= Duration::from_secs(2)
+        })?;
+        let Reader::Dcs {
+            physics: Some(physics),
+            ..
+        } = entry.reader.as_mut()?
+        else {
+            return None;
+        };
+        Some(physics.snapshot())
+    }
+    pub(crate) fn inspect(&mut self, id: &str, channels: Vec<String>) -> Result<(), String> {
+        if let Some(entry) = self.entries.get_mut(id) {
+            if channels != entry.inspection {
+                if let Some(reader) = &mut entry.reader {
+                    reader.inspect(id, &channels)?;
+                }
+                entry.inspection = channels;
+            }
+            entry.inspected = Instant::now();
+        }
+        Ok(())
+    }
     pub(crate) fn decorate(&self, game: &mut Value) {
         let id = game["id"].as_str().unwrap_or("").to_owned();
         let supported = matches!(
             id.as_str(),
-            "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
+            "dcs"
+                | "assetto-corsa-rally"
+                | "x-plane-11"
+                | "x-plane-12"
+                | "assetto-corsa"
+                | "assetto-corsa-competizione"
+                | "assetto-corsa-evo"
         );
         let mut values = self.seen.get(&id).cloned().unwrap_or_default();
         if let Some(entry) = self.entries.get(&id) {
@@ -484,9 +693,12 @@ impl Tracker {
             "Aircraft come from this installation's Aircraft folder. Current aircraft requires fresh RREF telemetry."
         };
         game["vehicleSupport"] = json!({"supported":supported,"kind":if id.starts_with("assetto-corsa"){"car"}else{"aircraft"},"vehicles":values.values().collect::<Vec<_>>(),"message":message});
-        game["currentVehicle"] = self.entries.get(&id)
+        game["currentVehicle"] = self
+            .entries
+            .get(&id)
             .filter(|entry| entry.installation == Self::installation(game))
-            .and_then(|_| self.current(&id)).unwrap_or(Value::Null);
+            .and_then(|_| self.current(&id))
+            .unwrap_or(Value::Null);
         game["vehicleStatus"] = json!({"status":if game["currentVehicle"].is_object(){"ready"}else if self.entries.get(&id).is_some_and(|entry|entry.error.is_some()){"unavailable"}else{"waiting"},"message":self.entries.get(&id).and_then(|entry|entry.error.as_deref()).unwrap_or("Waiting for a running game and fresh vehicle telemetry.")});
     }
 }

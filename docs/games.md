@@ -57,8 +57,8 @@ with unicast exports while a profile is running.
 DCS resolves the fresh native aircraft identity through the installed
 `AircraftAliases.json` and selects its DCS-BIOS module automatically. Game details
 show the active module or **Waiting for aircraft**. Each profile aircraft tab has
-its own controls and telemetry catalogue; Base uses **CommonData** shared flight
-telemetry. Aircraft changes revoke the previous aircraft's contributions before
+its own controls and telemetry catalogue; Base uses **CommonData** and the managed
+read-only ownship telemetry catalogue. Aircraft changes revoke the previous aircraft's contributions before
 the next aircraft supplies fresh data. Unknown or ambiguous aircraft aliases do
 not select a guessed module. Saved module preferences do not override the loaded
 aircraft.
@@ -72,9 +72,23 @@ for game data is omitted from the UI.
 
 For DCS on Windows, choose its Saved Games user folder and **Set up integration**.
 Cockpit installs checksum-pinned DCS-Skunkworks DCS-BIOS 0.11.7, preserves existing
-Export.lua scripts and adds its loader once. It checks the actual module runtime,
-JSON catalogue, loader and compatible UDP settings before reporting Ready. Close
+Export.lua scripts and adds its loader once. It also installs the managed
+`Scripts/OpenSimGear/DCSPhysics.lua` ownship extension; existing DCS-BIOS-only
+setups need **Repair setup** to add it. The extension chains existing export
+callbacks, reads selected documented ownship getters and sends bounded local UDP
+telemetry at up to 20 Hz on `127.0.0.1:7781`. It does not send simulator commands,
+enumerate other aircraft or expose weapon targeting. Cockpit checks the actual module runtime,
+JSON catalogue, both loaders, managed ownship source and compatible UDP settings before reporting Ready. Close
 DCS before setup or recovery; installation does not start bindings or alter hardware.
+
+The ownship catalogue adds 101 native fields for flight parameters, motion,
+attitude, engines/fuel, wind/pressure, ownship position/identity, simulation state
+and mechanics. DCS engine `RPM.left/right` is percentage, exposed separately from
+absolute RPM. Unsupported SDK fields remain unknown; undocumented native units
+and axes are preserved without guessed conversions. Live values require fresh
+matching aircraft identity, ownship export permission and advancing simulation
+time. See [DCS ownship coverage and units](telemetry.md#dcs-ownship-export) for the
+field groups, source reference, freshness and protocol limits.
 
 Setup keeps backups and a journal beside local integration setup settings. Cancelled
 or failed operations restore matching owned files. **Recover integration setup**

@@ -319,7 +319,7 @@ impl Sources {
                 "Waiting for an applied profile in its matching verified game context.".into(),
             );
             if self.catalogues.get(id).is_none_or(|(at, revision, _)| {
-                revision != setup_revision || at.elapsed() >= Duration::from_secs(5)
+                revision != setup_revision || at.elapsed() >= if id.starts_with("x-plane-") {Duration::from_secs(60)} else {Duration::from_secs(5)}
             }) {
                 self.catalogues.insert(
                     id.into(),

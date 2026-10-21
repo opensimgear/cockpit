@@ -87,6 +87,7 @@ impl Fixture {
             std::fs::create_dir(&target).unwrap();
             crate::dcs_setup::fixture_module(&target);
             std::fs::write(target.join("Scripts/Export.lua"), b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n").unwrap();
+            crate::dcs_setup::fixture_exports(&target);
             let catalogue = target.join("Scripts/DCS-BIOS/doc/json");
             let aliases_path = catalogue.join("AircraftAliases.json");
             let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();

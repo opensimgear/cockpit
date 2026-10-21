@@ -47,13 +47,13 @@ function route(value: unknown): boolean {
   return object(value) && text(value.id) && ['hid', 'can', 'usb', 'network', 'integration'].includes(String(value.transport)) && text(value.providerGeneration) && attributes(value.attributes) && typeof value.baselineReady === 'boolean' && typeof value.writable === 'boolean' && typeof value.priority === 'number' && Number.isInteger(value.priority) && value.priority >= -2147483648 && value.priority <= 2147483647;
 }
 function summary(value: unknown): value is ResourceSummary {
-  return object(value) && text(value.id) && text(value.name) && ['host-controller', 'osg-module', 'companion', 'game-integration'].includes(String(value.resourceType)) && ['online', 'offline', 'unavailable'].includes(String(value.availability)) && counter(value.generation) && text(value.capabilityRevision) && whole(value.portCount, 40000) && whole(value.cachedPortCount, 40000) && attributes(value.attributes, 2048) && strings(value.diagnostics, 1152) && array(value.connections, 64) && value.connections.every(connection => object(connection) && text(connection.scope) && text(connection.key) && route(connection.route));
+  return object(value) && text(value.id) && text(value.name) && ['host-controller', 'osg-module', 'companion', 'game-integration'].includes(String(value.resourceType)) && ['online', 'offline', 'unavailable'].includes(String(value.availability)) && counter(value.generation) && text(value.capabilityRevision) && whole(value.portCount, 262144) && whole(value.cachedPortCount, 262144) && attributes(value.attributes, 2048) && strings(value.diagnostics, 1152) && array(value.connections, 64) && value.connections.every(connection => object(connection) && text(connection.scope) && text(connection.key) && route(connection.route));
 }
 function page(value: unknown, offset: number, limit: number): value is ResourcePage {
   return object(value) && text(value.session) && counter(value.revision) && value.offset === offset && whole(value.total, 2048) && array(value.resources, limit) && value.resources.every(summary) && offset + value.resources.length <= value.total && (offset >= value.total || value.resources.length > 0);
 }
 function details(value: unknown, resourceId: string, offset: number, limit: number): value is ResourceDetails {
-  return object(value) && text(value.session) && counter(value.revision) && summary(value.resource) && value.resource.id === resourceId && value.offset === offset && whole(value.total, 40000) && array(value.evidence, 1024) && value.evidence.every(evidence => object(evidence) && ['local-path', 'serial', 'verified-physical', 'companion-instance', 'game-scope'].includes(String(evidence.kind)) && text(evidence.value)) && array(value.ports, limit) && value.ports.every(port => object(port) && resourcePortError(port.descriptor) === '' && text(port.contractHash) && strings(port.routeIds, 64) && typeof port.current === 'boolean') && offset + value.ports.length <= value.total && (offset >= value.total || value.ports.length > 0);
+  return object(value) && text(value.session) && counter(value.revision) && summary(value.resource) && value.resource.id === resourceId && value.offset === offset && whole(value.total, 262144) && array(value.evidence, 1024) && value.evidence.every(evidence => object(evidence) && ['local-path', 'serial', 'verified-physical', 'companion-instance', 'game-scope'].includes(String(evidence.kind)) && text(evidence.value)) && array(value.ports, limit) && value.ports.every(port => object(port) && resourcePortError(port.descriptor) === '' && text(port.contractHash) && strings(port.routeIds, 64) && typeof port.current === 'boolean') && offset + value.ports.length <= value.total && (offset >= value.total || value.ports.length > 0);
 }
 const tokenFields = ['inventorySession', 'resourceId', 'generation', 'capabilityRevision', 'routeId', 'providerSession', 'providerGeneration', 'portId', 'contractHash', 'access'] as const;
 function token(value: unknown): value is ResourceToken {
@@ -95,7 +95,7 @@ export class ProfileInventoryClient {
     return freezeClone({ ...first, resources });
   }
   async inspect(resourceId: string, offset = 0, limit = RESOURCE_PORT_PAGE_SIZE): Promise<DeepReadonly<ResourceDetails>> {
-    requestPage(offset, limit, 40000);
+    requestPage(offset, limit, 262144);
     const result = await this.send({ command: 'profile_resources_inspect', resourceId, offset, limit });
     if (!details(result, resourceId, offset, limit)) throw new Error('Malformed resource detail page.');
     return freezeClone(result);

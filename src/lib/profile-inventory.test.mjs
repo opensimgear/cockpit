@@ -15,6 +15,14 @@ const inspected = (ports, offset = 0, limit = 128) => ({ session: 'native-invent
 const token = () => ({ inventorySession: 'native-inventory-session', resourceId: 'native/resource:1', generation: '9007199254740999', capabilityRevision: 'sha256:capabilities', routeId: route().id, providerSession: 'provider-session', providerGeneration: route().providerGeneration, portId: 'axis:0', contractHash: 'sha256:port', access: 'read' });
 const action = () => ({ id: 'led.rgb.set', name: 'Set RGB', direction: 'input', contract: { delivery: 'action', parameters: [{ id: 'rgb', name: 'Color', schema: { type: 'rgb' } }], semantics: 'setter', endpoint: 'led:rgb', readable: true, display: null, ownership: { scope: 'endpoint', maxLeaseMs: 5000 } } });
 
+test('large installed telemetry catalogues remain paged and accept finite floating ranges',async()=>{
+ const result=inspected([observed('channel:sim/flightmodel/forces/g_nrml')],0,32);
+ result.total=63605;result.resource.portCount=63605;result.resource.cachedPortCount=63605;
+ result.ports[0].descriptor.contract.schema={type:'number',min:-3.4028234663852886e38,max:3.4028234663852886e38,unit:'g'};
+ const page=await new ProfileInventoryClient(async()=>result).inspect(result.resource.id);
+ assert.equal(page.total,63605);assert.equal(page.ports.length,1);assert.equal(page.resource.portCount,63605);
+});
+
 test('DCS aircraft catalogue acquisition is passive, typed and rejects malformed or unavailable results',async()=>{
  const resource={...summary('native:dcs:F-16C'),resourceType:'game-integration',attributes:{gameId:'dcs',aircraftModule:'F-16C',vehicleAliases:'["F-16C_50"]'}},calls=[];
  const client=new ProfileInventoryClient(async request=>{calls.push(request);return {resource};});const selected=await client.dcsVehicle('F-16C_50');

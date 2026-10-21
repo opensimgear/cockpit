@@ -166,7 +166,12 @@ pub(super) fn baseline_reader() -> (GameSources, std::net::SocketAddr, tempfile:
     // The real decoder/socket is exercised; native process proof has separate
     // tests. This fixture cannot admit simulator commands or a real game.
     source.game = None;
-    let Some(Reader::Dcs { network, transport, .. }) = &mut source.reader else { panic!() };
+    let Some(Reader::Dcs {
+        network, transport, ..
+    }) = &mut source.reader
+    else {
+        panic!()
+    };
     network.listen_port = 0;
     *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
     let address = transport.as_ref().unwrap().local_addr().unwrap();
@@ -225,6 +230,146 @@ fn effect(port: &PortDescriptor, sequence: u64) -> Effect {
 }
 
 #[test]
+fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
+    let mut fixture = Dcs::new();
+    fixture.game.catalogue["channels"] = json!(crate::dcs_physics::catalogue());
+    crate::game_channels::catalogue("dcs", &mut fixture.game.catalogue);
+    let ports = crate::profile_resource_ports::integration(&fixture.game.catalogue).unwrap();
+    let speed = "channel:flight.airspeed.true";
+    source(
+        &mut fixture.plan,
+        "dcs",
+        ports.iter().find(|port| port.id == speed).unwrap(),
+    );
+    let mut bios_only = fixture.plan.sources[0].clone();
+    bios_only.endpoint.node_id = "bios-only".into();
+    fixture.plan.sources.push(bios_only);
+    let mut source = fixture.sources();
+    authorize(&mut source);
+    let Some(Reader::Dcs {
+        physics_outputs, ..
+    }) = &source.reader
+    else {
+        panic!()
+    };
+    let outputs = physics_outputs.clone();
+    let mut physics = crate::dcs_physics::Snapshot {
+        epoch: 1,
+        session: Some("mission-1".into()),
+        aircraft: Some("A-10C".into()),
+        plane_id: Some(1),
+        model_time: Some(10.0),
+        sequence: Some(1),
+        fresh: true,
+        status: "live".into(),
+        age_ms: Some(0),
+        values: BTreeMap::from([("flight.airspeed.true".into(), json!(7))]),
+        malformed_frames: 0,
+        error: None,
+    };
+    let poll = |source: &mut GameSources, counter, physics: &crate::dcs_physics::Snapshot| {
+        let mut bios = ExportSnapshot {
+            epoch: 1,
+            aircraft: Some("A-10C".into()),
+            mission_active: true,
+            fresh: true,
+            age_ms: Some(0),
+            counter: Some(counter),
+            malformed_frames: 0,
+            values: BTreeMap::from([
+                (native_key("game", "channel:MASTER_CAUTION:0"), json!(1)),
+                (
+                    native_key("bios-only", "channel:MASTER_CAUTION:0"),
+                    json!(1),
+                ),
+            ]),
+        };
+        source.physics = Some(merge_dcs_physics(&mut bios, &outputs, Some(physics)));
+        source.frames(bios, 20_000)
+    };
+    assert!(!poll(&mut source, 1, &physics).fresh);
+    let baseline = poll(&mut source, 2, &physics);
+    assert_eq!(baseline.frames.len(), 2);
+    let generation = source.sources["game"].generation;
+    let bios_generation = source.sources["bios-only"].generation;
+    assert!(source.can_command());
+    assert!(poll(&mut source, 2, &physics).frames.is_empty());
+
+    physics.sequence = Some(2);
+    physics
+        .values
+        .insert("flight.airspeed.true".into(), json!(8));
+    let update = poll(&mut source, 2, &physics);
+    assert_eq!(update.frames.len(), 1);
+    assert_eq!(update.frames[0].source, "game");
+    assert_eq!(update.frames[0].reason, Reason::Change);
+    assert_eq!(
+        update.frames[0]
+            .changes
+            .iter()
+            .find(|change| change.port_id == speed)
+            .unwrap()
+            .sample,
+        SignalSample::scalar(PortValue::Number(8.0))
+    );
+
+    physics.fresh = false;
+    physics.status = "paused".into();
+    let paused = poll(&mut source, 2, &physics);
+    assert_eq!(paused.frames.len(), 1);
+    assert_eq!(
+        paused.frames[0]
+            .changes
+            .iter()
+            .find(|change| change.port_id == speed)
+            .unwrap()
+            .sample,
+        SignalSample::Stale
+    );
+    assert_eq!(
+        paused.frames[0]
+            .changes
+            .iter()
+            .find(|change| change.port_id == "channel:MASTER_CAUTION:0")
+            .unwrap()
+            .sample,
+        SignalSample::scalar(PortValue::Number(1.0))
+    );
+    assert!(
+        source.can_command(),
+        "Physics withdrawal must not grant or revoke BIOS command authority"
+    );
+    physics.fresh = true;
+    physics.status = "live".into();
+    physics.sequence = Some(3);
+    let resumed = poll(&mut source, 2, &physics);
+    assert_eq!(resumed.frames[0].reason, Reason::Baseline);
+    assert_eq!(source.sources["game"].generation, generation + 1);
+    assert_eq!(source.sources["bios-only"].generation, bios_generation);
+
+    physics.epoch = 2;
+    physics.session = Some("mission-2".into());
+    physics.sequence = Some(1);
+    let respawn = poll(&mut source, 2, &physics);
+    assert_eq!(respawn.frames[0].reason, Reason::Baseline);
+    assert_eq!(source.sources["game"].generation, generation + 2);
+    assert_eq!(source.sources["bios-only"].generation, bios_generation);
+
+    physics.sequence = Some(2);
+    physics.values.clear();
+    let missing = poll(&mut source, 2, &physics);
+    assert_eq!(
+        missing.frames[0]
+            .changes
+            .iter()
+            .find(|change| change.port_id == speed)
+            .unwrap()
+            .sample,
+        SignalSample::Unknown
+    );
+}
+
+#[test]
 fn dcs_uses_actual_catalogue_decoder_and_never_promotes_first_or_frozen_counter() {
     let fixture = Dcs::new();
     let mut source = fixture.sources();
@@ -272,24 +417,47 @@ fn dcs_uses_actual_catalogue_decoder_and_never_promotes_first_or_frozen_counter(
 #[test]
 fn dcs_delivery_keeps_base_and_aircraft_resources_separate_and_excludes_other_modules() {
     let mut fixture = Dcs::new();
-    fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios/CommonData-altitude.json"), fixture.folder.path().join("CommonData.json")).unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/dcs-bios/CommonData-altitude.json"),
+        fixture.folder.path().join("CommonData.json"),
+    )
+    .unwrap();
     let aliases_path = fixture.folder.path().join("AircraftAliases.json");
-    let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
-    aliases["A-10C"].as_array_mut().unwrap().push(json!("CommonData"));
+    let mut aliases =
+        crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+    aliases["A-10C"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("CommonData"));
     fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
-    fixture.game.catalogue = crate::dcs_profile::resource_catalogue(&json!({"cataloguePath":fixture.folder.path(),"aircraftModule":"A-10C"})).unwrap();
-    let base_port = crate::profile_resource_ports::integration(&fixture.game.catalogue).unwrap().into_iter()
-        .find(|port| port.id == "channel:common:CommonData:ALT_MSL_FT:0").unwrap();
+    fixture.game.catalogue = crate::dcs_profile::resource_catalogue(
+        &json!({"cataloguePath":fixture.folder.path(),"aircraftModule":"A-10C"}),
+    )
+    .unwrap();
+    let base_port = crate::profile_resource_ports::integration(&fixture.game.catalogue)
+        .unwrap()
+        .into_iter()
+        .find(|port| port.id == "channel:common:CommonData:ALT_MSL_FT:0")
+        .unwrap();
     let module_attributes = BTreeMap::from([
         ("gameId".into(), "dcs".into()),
         ("aircraftModule".into(), "A-10C".into()),
-        ("catalogueRevision".into(), fixture.game.proof.catalogue_revision.clone()),
+        (
+            "catalogueRevision".into(),
+            fixture.game.proof.catalogue_revision.clone(),
+        ),
     ]);
     fixture.plan.sources[0].route.as_mut().unwrap().attributes = module_attributes.clone();
     fixture.plan.sinks[0].route.as_mut().unwrap().attributes = module_attributes;
     let mut other = fixture.plan.sources[0].clone();
     other.endpoint.node_id = "other-aircraft".into();
-    other.route.as_mut().unwrap().attributes.insert("aircraftModule".into(), "F-16C_50".into());
+    other
+        .route
+        .as_mut()
+        .unwrap()
+        .attributes
+        .insert("aircraftModule".into(), "F-16C_50".into());
     fixture.plan.sources.push(other);
     source(&mut fixture.plan, "dcs", &base_port);
     let base = fixture.plan.sources.last_mut().unwrap();
@@ -310,17 +478,31 @@ fn dcs_delivery_keeps_base_and_aircraft_resources_separate_and_excludes_other_mo
     batch.validate().unwrap();
     assert_eq!(batch.scope, "profile-game:dcs");
     assert_eq!(batch.observations.len(), 2);
-    let base = batch.observations.iter().find(|item| item.key == "dcs").unwrap();
+    let base = batch
+        .observations
+        .iter()
+        .find(|item| item.key == "dcs")
+        .unwrap();
     assert_eq!(base.attributes["aircraftModule"], "CommonData");
     assert_eq!(base.attributes["catalogueRevision"], base_revision);
     assert_eq!(base.ports.as_ref().unwrap().ports, vec![base_port]);
     assert!(!base.route.as_ref().unwrap().writable);
     assert_eq!(base.route.as_ref().unwrap().id, "profile-game:dcs");
-    let aircraft = batch.observations.iter().find(|item| item.key == "dcs:A-10C").unwrap();
-    assert_eq!(aircraft.attributes["catalogueRevision"], fixture.game.proof.catalogue_revision);
+    let aircraft = batch
+        .observations
+        .iter()
+        .find(|item| item.key == "dcs:A-10C")
+        .unwrap();
+    assert_eq!(
+        aircraft.attributes["catalogueRevision"],
+        fixture.game.proof.catalogue_revision
+    );
     assert_eq!(aircraft.ports.as_ref().unwrap().ports.len(), 2);
     assert!(aircraft.route.as_ref().unwrap().writable);
-    assert_eq!(aircraft.route.as_ref().unwrap().id, "profile-game:dcs:A-10C");
+    assert_eq!(
+        aircraft.route.as_ref().unwrap().id,
+        "profile-game:dcs:A-10C"
+    );
 }
 #[test]
 fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frames() {
@@ -480,51 +662,91 @@ struct ProcessFixture {
     process: Mutex<Option<crate::game_discovery::ProcessIdentity>>,
 }
 struct AcrProcessFixture {
-    game:Value,
-    process:crate::game_discovery::ProcessIdentity,
+    game: Value,
+    process: crate::game_discovery::ProcessIdentity,
 }
 impl crate::game_discovery::Platform for AcrProcessFixture {
-    fn integration_setup_supported(&self)->bool{true}
-    fn catalogue(&self,_:&BTreeMap<String,String>)->Vec<Value>{vec![self.game.clone()]}
-    fn validate(&self,_:&str,_:&str)->Result<(),String>{Ok(())}
-    fn launch(&self,_:&Value)->Result<crate::game_discovery::ProcessIdentity,String>{Err("No launch expected".into())}
-    fn find(&self,_:&Value)->Result<Option<crate::game_discovery::ProcessIdentity>,String>{Ok(Some(self.process.clone()))}
-    fn alive(&self,process:&crate::game_discovery::ProcessIdentity)->Result<bool,String>{Ok(process==&self.process)}
+    fn integration_setup_supported(&self) -> bool {
+        true
+    }
+    fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+        vec![self.game.clone()]
+    }
+    fn validate(&self, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn launch(&self, _: &Value) -> Result<crate::game_discovery::ProcessIdentity, String> {
+        Err("No launch expected".into())
+    }
+    fn find(&self, _: &Value) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
+        Ok(Some(self.process.clone()))
+    }
+    fn alive(&self, process: &crate::game_discovery::ProcessIdentity) -> Result<bool, String> {
+        Ok(process == &self.process)
+    }
 }
 #[test]
 fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_fenced() {
-    for separator in ['\\','/'] {
-        let folder=crate::test_directory();
-        let executable=folder.path().join("acr.exe");
-        fs::write(&executable,b"Authored executable identity fixture, never launched").unwrap();
-        let fingerprint=crate::acr_setup::fingerprint(&executable).unwrap();
-        let paths=crate::games::Paths::in_directory(folder.path());
+    for separator in ['\\', '/'] {
+        let folder = crate::test_directory();
+        let executable = folder.path().join("acr.exe");
+        fs::write(
+            &executable,
+            b"Authored executable identity fixture, never launched",
+        )
+        .unwrap();
+        let fingerprint = crate::acr_setup::fingerprint(&executable).unwrap();
+        let paths = crate::games::Paths::in_directory(folder.path());
         fs::write(&paths.provider_setup,serde_json::to_vec(&json!({"schemaVersion":1,"games":{"assetto-corsa-rally":{
             "connection":{"source":"shared-memory","freshnessMs":1500},"configuredFingerprint":fingerprint,"verifiedFingerprint":fingerprint
         }}})).unwrap()).unwrap();
-        let full_path=executable.to_string_lossy().replace(['\\','/'],&separator.to_string());
-        let platform=Arc::new(AcrProcessFixture {
-            game:json!({"id":"assetto-corsa-rally","provider":"assetto-corsa-rally","installed":true,"executable":executable,"launchSupported":true,"processMonitoringSupported":true}),
-            process:crate::game_discovery::ProcessIdentity {pid:42,path:full_path.clone(),epoch:10},
+        let full_path = executable
+            .to_string_lossy()
+            .replace(['\\', '/'], &separator.to_string());
+        let platform = Arc::new(AcrProcessFixture {
+            game: json!({"id":"assetto-corsa-rally","provider":"assetto-corsa-rally","installed":true,"executable":executable,"launchSupported":true,"processMonitoringSupported":true}),
+            process: crate::game_discovery::ProcessIdentity {
+                pid: 42,
+                path: full_path.clone(),
+                epoch: 10,
+            },
         });
-        let games=GamesRuntime::new(Arc::new(|request|panic!("Acquisition must not mutate game configuration: {request}")),paths,platform);
-        let game=games.prepare_profile_game_context("assetto-corsa-rally").unwrap().unwrap();
-        assert_eq!(game.proof.process.path,full_path);
-        let descriptors=crate::profile_resource_ports::integration(&game.catalogue).unwrap();
-        let mut plan=empty_plan();source(&mut plan,"assetto-corsa-rally",&descriptors[0]);
-        let mut reader=GameSources::prepare(&plan,Some(game.clone())).unwrap();
-        let mut calls=vec![];
-        reader.acquire_with_acr(&games,|pid,image|{
-            calls.push((pid,image.to_owned()));
-            Ok(Box::new(crate::game_telemetry::FixtureSource::new()))
-        }).unwrap();
-        assert_eq!(calls,vec![(42,"acr.exe".to_owned())]);
-        assert_eq!(reader.game.as_ref().unwrap().proof.process.path,full_path,"Only the transport's basename argument is shortened");
+        let games = GamesRuntime::new(
+            Arc::new(|request| panic!("Acquisition must not mutate game configuration: {request}")),
+            paths,
+            platform,
+        );
+        let game = games
+            .prepare_profile_game_context("assetto-corsa-rally")
+            .unwrap()
+            .unwrap();
+        assert_eq!(game.proof.process.path, full_path);
+        let descriptors = crate::profile_resource_ports::integration(&game.catalogue).unwrap();
+        let mut plan = empty_plan();
+        source(&mut plan, "assetto-corsa-rally", &descriptors[0]);
+        let mut reader = GameSources::prepare(&plan, Some(game.clone())).unwrap();
+        let mut calls = vec![];
+        reader
+            .acquire_with_acr(&games, |pid, image| {
+                calls.push((pid, image.to_owned()));
+                Ok(Box::new(crate::game_telemetry::FixtureSource::new()))
+            })
+            .unwrap();
+        assert_eq!(calls, vec![(42, "acr.exe".to_owned())]);
+        assert_eq!(
+            reader.game.as_ref().unwrap().proof.process.path,
+            full_path,
+            "Only the transport's basename argument is shortened"
+        );
         reader.stop();
-        let mut forged=game;
-        forged.proof.process.path=format!("different-directory{separator}acr.exe");
-        let mut changed=GameSources::prepare(&plan,Some(forged)).unwrap();
-        assert!(changed.acquire_with_acr(&games,|_,_|panic!("A changed full process path must fail before opening the reader")).is_err());
+        let mut forged = game;
+        forged.proof.process.path = format!("different-directory{separator}acr.exe");
+        let mut changed = GameSources::prepare(&plan, Some(forged)).unwrap();
+        assert!(changed
+            .acquire_with_acr(&games, |_, _| panic!(
+                "A changed full process path must fail before opening the reader"
+            ))
+            .is_err());
         games.shutdown();
     }
 }
@@ -552,27 +774,36 @@ impl crate::game_discovery::Platform for ProcessFixture {
 }
 #[test]
 fn replacement_reader_requires_fresh_native_context_and_advances_source_identity() {
-    let fixture=Dcs::new();
-    let mut old=fixture.sources();
-    feed(&mut old,1,false,0);
-    let prior=feed(&mut old,2,true,10_000);
+    let fixture = Dcs::new();
+    let mut old = fixture.sources();
+    feed(&mut old, 1, false, 0);
+    let prior = feed(&mut old, 2, true, 10_000);
     assert!(prior.fresh);
-    let disconnected=old.lose(20_000,"Game closed".into());
-    assert!(old.needs_context()&&!old.can_command());
-    assert!(!old.accepts_replacement(&fixture.game),"The same retired proof cannot rearm a reader");
-    let mut next_game=fixture.game.clone();
-    next_game.proof.session=uuid::Uuid::new_v4().to_string();
-    next_game.proof.process.epoch+=1;
+    let disconnected = old.lose(20_000, "Game closed".into());
+    assert!(old.needs_context() && !old.can_command());
+    assert!(
+        !old.accepts_replacement(&fixture.game),
+        "The same retired proof cannot rearm a reader"
+    );
+    let mut next_game = fixture.game.clone();
+    next_game.proof.session = uuid::Uuid::new_v4().to_string();
+    next_game.proof.process.epoch += 1;
     assert!(old.accepts_replacement(&next_game));
-    let mut replacement=GameSources::prepare(&fixture.plan,Some(next_game)).unwrap();
+    let mut replacement = GameSources::prepare(&fixture.plan, Some(next_game)).unwrap();
     replacement.inherit_source_counters(&old);
-    assert!(!feed(&mut replacement,1,true,30_000).fresh,"A single old counter cannot authorize resumed commands");
-    let baseline=feed(&mut replacement,2,false,40_000);
+    assert!(
+        !feed(&mut replacement, 1, true, 30_000).fresh,
+        "A single old counter cannot authorize resumed commands"
+    );
+    let baseline = feed(&mut replacement, 2, false, 40_000);
     assert!(baseline.fresh);
-    assert_eq!(baseline.frames[0].reason,Reason::Baseline);
-    assert!(baseline.frames[0].generation>prior.frames[0].generation);
-    assert!(baseline.frames[0].sequence>disconnected.frames[0].sequence);
-    assert!(!replacement.can_command(),"Telemetry alone cannot mint applied command authority");
+    assert_eq!(baseline.frames[0].reason, Reason::Baseline);
+    assert!(baseline.frames[0].generation > prior.frames[0].generation);
+    assert!(baseline.frames[0].sequence > disconnected.frames[0].sequence);
+    assert!(
+        !replacement.can_command(),
+        "Telemetry alone cannot mint applied command authority"
+    );
 }
 #[test]
 fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline() {
@@ -619,7 +850,7 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
         "A fixture process must not pass the native source's real image/process gate."
     );
     assert!(reader.admit(&games).is_err());
-    assert!(!reader.baseline(&games, ||0).fresh);
+    assert!(!reader.baseline(&games, || 0).fresh);
     assert!(reader.delivery_batch().is_none());
     games
         .set_profile_context_owner(Some(ProfileOwner {
@@ -631,22 +862,22 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
         }))
         .unwrap();
     reader.admit(&games).unwrap();
-    assert!(!reader.poll(&games, ||1).fresh);
+    assert!(!reader.poll(&games, || 1).fresh);
     assert!(reader.delivery_batch().is_none());
     assert!(reader
         .invoke(&games, &effect(&Dcs::new().command, 1))
         .is_err());
     *platform.process.lock().unwrap() = None;
-    let lost = reader.poll(&games, ||2);
+    let lost = reader.poll(&games, || 2);
     assert!(lost.context_lost);
     assert_eq!(lost.frames[0].reason, Reason::Disconnect);
     assert!(!lost.diagnostics.is_empty());
-    assert!(reader.poll(&games, ||3).context_lost);
+    assert!(reader.poll(&games, || 3).context_lost);
     assert!(reader.acquire(&games).is_err());
     let mut dormant = GameSources::prepare(&plan, None).unwrap();
     dormant.acquire(&games).unwrap();
     dormant.admit(&games).unwrap();
-    assert!(dormant.poll(&games, ||4).frames.is_empty());
+    assert!(dormant.poll(&games, || 4).frames.is_empty());
     assert!(!dormant.requires_baseline());
     games.shutdown();
     assert!(!folder.path().join("integration.json").exists());
@@ -664,59 +895,119 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     }
     impl GuardClock {
         fn identity() -> crate::game_discovery::ProcessIdentity {
-            crate::game_discovery::ProcessIdentity { pid: 42, path: "/fixture/DCS.exe".into(), epoch: 10 }
+            crate::game_discovery::ProcessIdentity {
+                pid: 42,
+                path: "/fixture/DCS.exe".into(),
+                epoch: 10,
+            }
         }
         fn checked(&self, find: bool) {
             // Ignore independent observers; only this poll's synchronous native
             // proof validation may advance its deterministic acquisition clock.
             if self.armed.load(Ordering::SeqCst) && std::thread::current().id() == self.thread {
                 self.process_checks.fetch_add(1, Ordering::SeqCst);
-                if find { self.clock.fetch_add(self.validation_cost.load(Ordering::SeqCst), Ordering::SeqCst); }
+                if find {
+                    self.clock.fetch_add(
+                        self.validation_cost.load(Ordering::SeqCst),
+                        Ordering::SeqCst,
+                    );
+                }
             }
         }
     }
     impl crate::game_discovery::Platform for GuardClock {
-        fn integration_setup_supported(&self) -> bool { true }
+        fn integration_setup_supported(&self) -> bool {
+            true
+        }
         fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
-            vec![json!({"id":"dcs","provider":"dcs-bios","installed":true,"executable":"/fixture/DCS.exe","launchSupported":true,"processMonitoringSupported":true})]
+            vec![
+                json!({"id":"dcs","provider":"dcs-bios","installed":true,"executable":"/fixture/DCS.exe","launchSupported":true,"processMonitoringSupported":true}),
+            ]
         }
         fn validate(&self, _: &str, path: &str) -> Result<(), String> {
-            if path == Self::identity().path { Ok(()) } else { Err("Wrong executable".into()) }
+            if path == Self::identity().path {
+                Ok(())
+            } else {
+                Err("Wrong executable".into())
+            }
         }
-        fn launch(&self, _: &Value) -> Result<crate::game_discovery::ProcessIdentity, String> { Err("No launch expected".into()) }
-        fn find(&self, _: &Value) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
-            self.checked(true); Ok(Some(Self::identity()))
+        fn launch(&self, _: &Value) -> Result<crate::game_discovery::ProcessIdentity, String> {
+            Err("No launch expected".into())
+        }
+        fn find(
+            &self,
+            _: &Value,
+        ) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
+            self.checked(true);
+            Ok(Some(Self::identity()))
         }
         fn alive(&self, identity: &crate::game_discovery::ProcessIdentity) -> Result<bool, String> {
-            self.checked(false); Ok(identity == &Self::identity())
+            self.checked(false);
+            Ok(identity == &Self::identity())
         }
     }
     let folder = crate::test_directory();
     let target = folder.path().join("DCS");
     fs::create_dir(&target).unwrap();
     crate::dcs_setup::fixture_module(&target);
-    fs::write(target.join("Scripts/Export.lua"), b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n").unwrap();
+    fs::write(
+        target.join("Scripts/Export.lua"),
+        b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n",
+    )
+    .unwrap();
+    crate::dcs_setup::fixture_exports(&target);
     let catalogue = target.join("Scripts/DCS-BIOS/doc/json");
-    fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/dcs-bios/CommonData-altitude.json"), catalogue.join("CommonData.json")).unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/dcs-bios/CommonData-altitude.json"),
+        catalogue.join("CommonData.json"),
+    )
+    .unwrap();
     let aliases_path = catalogue.join("AircraftAliases.json");
-    let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
-    aliases["A-10C"].as_array_mut().unwrap().push(json!("CommonData"));
+    let mut aliases =
+        crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
+    aliases["A-10C"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("CommonData"));
     fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
     let paths = crate::games::Paths::in_directory(folder.path());
     let mut connection = crate::game_integration_setup::dcs_connection(&catalogue);
     connection["freshnessMs"] = json!(100);
     fs::write(&paths.provider_setup, serde_json::to_vec(&json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":connection,"aircraftModule":"A-10C"}}})).unwrap()).unwrap();
-    let platform = Arc::new(GuardClock { thread: std::thread::current().id(), armed: AtomicBool::new(false), clock: AtomicU64::new(0), validation_cost: AtomicU64::new(2_000_000), process_checks: AtomicUsize::new(0) });
-    let games = GamesRuntime::new(Arc::new(|request| panic!("Acquisition guards must not submit output: {request}")), paths, platform.clone());
+    let platform = Arc::new(GuardClock {
+        thread: std::thread::current().id(),
+        armed: AtomicBool::new(false),
+        clock: AtomicU64::new(0),
+        validation_cost: AtomicU64::new(2_000_000),
+        process_checks: AtomicUsize::new(0),
+    });
+    let games = GamesRuntime::new(
+        Arc::new(|request| panic!("Acquisition guards must not submit output: {request}")),
+        paths,
+        platform.clone(),
+    );
     let game = games.prepare_profile_game_context("dcs").unwrap().unwrap();
     let descriptors = crate::profile_resource_ports::integration(&game.catalogue).unwrap();
     let mut plan = empty_plan();
-    source(&mut plan, "dcs", descriptors.iter().find(|p| p.id == "channel:common:CommonData:ALT_MSL_FT:0").unwrap());
+    source(
+        &mut plan,
+        "dcs",
+        descriptors
+            .iter()
+            .find(|p| p.id == "channel:common:CommonData:ALT_MSL_FT:0")
+            .unwrap(),
+    );
     let mut reader = GameSources::prepare(&plan, Some(game)).unwrap();
     // Keep the real reader/decoder while isolating test datagrams from the
     // passive observer's socket. Process proof validation remains authoritative;
     // this test transport cannot acquire admitted simulator command authority.
-    let Some(Reader::Dcs { network, transport, .. }) = &mut reader.reader else { panic!() };
+    let Some(Reader::Dcs {
+        network, transport, ..
+    }) = &mut reader.reader
+    else {
+        panic!()
+    };
     network.listen_address = std::net::Ipv4Addr::LOCALHOST;
     network.listen_port = 0;
     network.multicast_group = None;
@@ -726,7 +1017,11 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
     platform.armed.store(true, Ordering::SeqCst);
     let clock = || {
-        assert_eq!(platform.process_checks.swap(0, Ordering::SeqCst), 2, "Sample the clock after this poll validates both process identity and liveness");
+        assert_eq!(
+            platform.process_checks.swap(0, Ordering::SeqCst),
+            2,
+            "Sample the clock after this poll validates both process identity and liveness"
+        );
         platform.clock.load(Ordering::SeqCst)
     };
     sender.send_to(&bytes(1, true), address).unwrap();
@@ -735,7 +1030,10 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     platform.validation_cost.store(0, Ordering::SeqCst);
     let deadline = Instant::now() + Duration::from_secs(1);
     while reader.witness.is_none() {
-        assert!(Instant::now() < deadline, "The first isolated UDP counter was not received");
+        assert!(
+            Instant::now() < deadline,
+            "The first isolated UDP counter was not received"
+        );
         assert!(!reader.poll_baseline(&games, clock).fresh);
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -745,49 +1043,80 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     platform.validation_cost.store(0, Ordering::SeqCst);
     let deadline = Instant::now() + Duration::from_secs(1);
     while !baseline.fresh {
-        assert!(Instant::now() < deadline, "The advancing isolated UDP counter was not received: {:?}", baseline.diagnostics);
+        assert!(
+            Instant::now() < deadline,
+            "The advancing isolated UDP counter was not received: {:?}",
+            baseline.diagnostics
+        );
         baseline = reader.poll_baseline(&games, clock);
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert_eq!(baseline.frames[0].captured_us.0, 2_010_000, "New bytes must not inherit the clock from before slow native validation");
+    assert_eq!(
+        baseline.frames[0].captured_us.0, 2_010_000,
+        "New bytes must not inherit the clock from before slow native validation"
+    );
     platform.validation_cost.store(101_000, Ordering::SeqCst);
-    assert!(!reader.poll(&games, clock).fresh, "Advancing the clock cannot extend a silent decoder's lease");
+    assert!(
+        !reader.poll(&games, clock).fresh,
+        "Advancing the clock cannot extend a silent decoder's lease"
+    );
     platform.validation_cost.store(10_000, Ordering::SeqCst);
     sender.send_to(&bytes(2, true), address).unwrap();
-    assert!(!reader.poll_baseline(&games, clock).fresh, "A frozen old counter cannot become a new baseline");
+    assert!(
+        !reader.poll_baseline(&games, clock).fresh,
+        "A frozen old counter cannot become a new baseline"
+    );
 
     let selected = catalogue.join("CommonData.json");
     let original = fs::read(&selected).unwrap();
     let original_modified = fs::metadata(&selected).unwrap().modified().unwrap();
-    let mut changed = original.clone(); changed.push(b'\n');
+    let mut changed = original.clone();
+    changed.push(b'\n');
     fs::write(&selected, changed).unwrap();
     let lost = reader.baseline(&games, || {
         // Restoring in the callback would hide the changed file if the clock
         // were sampled before the forced catalogue guard.
         fs::write(&selected, &original).unwrap();
-        fs::File::options().write(true).open(&selected).unwrap().set_modified(original_modified).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&selected)
+            .unwrap()
+            .set_modified(original_modified)
+            .unwrap();
         platform.clock.load(Ordering::SeqCst)
     });
     assert!(lost.context_lost && !lost.fresh);
-    assert!(lost.diagnostics.iter().any(|error| error.contains("catalogue changed")));
+    assert!(lost
+        .diagnostics
+        .iter()
+        .any(|error| error.contains("catalogue changed")));
     assert!(reader.reader.is_none());
     games.shutdown();
 }
 
 #[test]
 fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_channels() {
-    use crate::game_telemetry::{Game, FixtureSource, RawSample, SourceIdentity};
+    use crate::game_telemetry::{FixtureSource, Game, RawSample, SourceIdentity};
     for game in [Game::Corsa, Game::Competizione, Game::Evo] {
         let id = game.id();
-        let prepared = prepared(id, json!({"source":"shared-memory","freshnessMs":100}), crate::game_telemetry::catalogue_for_game(id));
+        let prepared = prepared(
+            id,
+            json!({"source":"shared-memory","freshnessMs":100}),
+            crate::game_telemetry::catalogue_for_game(id),
+        );
         let descriptors = crate::profile_resource_ports::integration(&prepared.catalogue).unwrap();
         let mut plan = empty_plan();
-        for port in descriptors { source(&mut plan, id, &port); }
+        for port in descriptors {
+            source(&mut plan, id, &port);
+        }
         let mut acquired = GameSources::prepare(&plan, Some(prepared)).unwrap();
         acquired.acquired = true;
         let mut queue = FixtureSource::new_for_game(game);
         let mut sample = RawSample {
-            source: SourceIdentity { id: game.source_id(42), epoch: 1 },
+            source: SourceIdentity {
+                id: game.source_id(42),
+                epoch: 1,
+            },
             physics: include_bytes!("../../tests/fixtures/acr/live.physics.bin").to_vec(),
             graphics: include_bytes!("../../tests/fixtures/acr/live.graphics.bin").to_vec(),
             statics: include_bytes!("../../tests/fixtures/acr/live.static.bin").to_vec(),
@@ -806,7 +1135,9 @@ fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_
             sample.physics[..4].copy_from_slice(&packet.to_le_bytes());
             queue.push(sample.clone()).unwrap();
         }
-        let Some(Reader::Acr { source, .. }) = &mut acquired.reader else { panic!() };
+        let Some(Reader::Acr { source, .. }) = &mut acquired.reader else {
+            panic!()
+        };
         *source = Some(Box::new(queue));
         for now in [0, 10_000] {
             let snapshot = acquired.read(now, false).unwrap().unwrap();
@@ -815,12 +1146,25 @@ fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_
         let snapshot = acquired.read(20_000, false).unwrap().unwrap();
         let poll = acquired.frames(snapshot, 20_000);
         assert!(poll.fresh, "{id}");
-        assert_eq!(poll.frames[0].changes.iter().find(|change| change.port_id == "channel:rpm").unwrap().sample,
-            SignalSample::scalar(PortValue::Number(6300.0)));
+        assert_eq!(
+            poll.frames[0]
+                .changes
+                .iter()
+                .find(|change| change.port_id == "channel:rpm")
+                .unwrap()
+                .sample,
+            SignalSample::scalar(PortValue::Number(6300.0))
+        );
         let delivery = acquired.delivery_batch().unwrap();
         assert_eq!(delivery.scope, format!("profile-game:{id}"));
         assert_eq!(delivery.observations[0].key, id);
-        assert!(delivery.observations[0].route.as_ref().unwrap().baseline_ready);
+        assert!(
+            delivery.observations[0]
+                .route
+                .as_ref()
+                .unwrap()
+                .baseline_ready
+        );
         assert!(!delivery.observations[0].route.as_ref().unwrap().writable);
         let snapshot = acquired.read(121_000, false).unwrap().unwrap();
         assert!(!acquired.frames(snapshot, 121_000).fresh);
@@ -1172,7 +1516,7 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
                 process: Mutex::new(None),
             }),
         );
-        let lost = reader.poll(&games, ||3000);
+        let lost = reader.poll(&games, || 3000);
         assert!(lost.context_lost && !lost.fresh, "{changed}");
         assert!(
             lost.diagnostics
@@ -1198,14 +1542,21 @@ fn activation_backlog_requires_new_identity_and_counter_progress_without_replayi
     let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
     let listen = reserve.local_addr().unwrap().port();
     drop(reserve);
-    let Some(Reader::Dcs { network, transport, .. }) = &mut source.reader else { panic!() };
+    let Some(Reader::Dcs {
+        network, transport, ..
+    }) = &mut source.reader
+    else {
+        panic!()
+    };
     network.listen_port = listen;
     *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
     feed(&mut source, 1, true, 0);
     assert!(feed(&mut source, 2, true, 10_000).fresh);
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
     for counter in 3..83 {
-        sender.send_to(&bytes(counter, true), ("127.0.0.1", listen)).unwrap();
+        sender
+            .send_to(&bytes(counter, true), ("127.0.0.1", listen))
+            .unwrap();
     }
     assert!(source.read(30_000, true).unwrap().is_none());
     assert!(!source.fresh);
@@ -1215,18 +1566,25 @@ fn activation_backlog_requires_new_identity_and_counter_progress_without_replayi
     assert!(empty.aircraft.is_none());
     assert!(empty.values.is_empty());
     for (counter, now) in [(100, 40_000), (101, 50_000)] {
-        sender.send_to(&bytes(counter, false), ("127.0.0.1", listen)).unwrap();
+        sender
+            .send_to(&bytes(counter, false), ("127.0.0.1", listen))
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(1);
         let snapshot = loop {
             let snapshot = source.read(now, true).unwrap().unwrap();
-            if snapshot.counter == Some(counter as u16) { break snapshot; }
+            if snapshot.counter == Some(counter as u16) {
+                break snapshot;
+            }
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         };
         let sample = source.frames(snapshot, now);
         assert_eq!(sample.fresh, counter == 101);
         if sample.fresh {
-            assert_eq!(sample.frames[0].changes[0].sample, SignalSample::scalar(PortValue::Number(0.0)));
+            assert_eq!(
+                sample.frames[0].changes[0].sample,
+                SignalSample::scalar(PortValue::Number(0.0))
+            );
         }
     }
 }

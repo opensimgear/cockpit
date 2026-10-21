@@ -1,6 +1,7 @@
 //! Pinned DCS-Skunkworks installation. No game installation files or Lua execute here.
 //! A write-ahead journal owns only matching bytes; recovery preserves external edits.
 mod aircraft;
+mod physics;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -1001,6 +1002,38 @@ pub(crate) fn inspect_for_installation(
                 .push(json!(error));
         }
     }
+    let export = target.join("Scripts/Export.lua");
+    let current = if export.exists() {
+        read(&export, MAX_EXPORT)?
+    } else {
+        Vec::new()
+    };
+    match physics::plan(target, &current) {
+        Ok(plan) => {
+            let ready = plan.before.as_ref() == Some(&plan.after) && current == plan.export;
+            state["physicsExportsReady"] = json!(ready);
+            state["physicsChannelCount"] = json!(crate::dcs_physics::catalogue().len());
+            state["physicsCatalogueRevision"] =
+                json!(hash(crate::dcs_physics::CHANNELS.as_bytes()));
+            state["physicsExportRevision"] = json!(hash(&plan.after));
+            state["physicsPort"] = json!(crate::dcs_physics::PORT);
+            if !ready {
+                state["ready"] = json!(false);
+                state["diagnostics"].as_array_mut().unwrap().push(json!(
+                    "The managed DCS ownship physics export needs setup or repair."
+                ));
+            }
+        }
+        Err(error) => {
+            state["ready"] = json!(false);
+            state["repairable"] = json!(false);
+            state["physicsExportsReady"] = json!(false);
+            state["diagnostics"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(error));
+        }
+    }
     Ok(state)
 }
 
@@ -1180,7 +1213,12 @@ fn read_receipt(path: &Path) -> Result<Value, String> {
     {
         return Err("The DCS setup recovery journal is invalid.".into());
     }
-    for key in ["aircraftBefore", "aircraftAfter"] {
+    for key in [
+        "aircraftBefore",
+        "aircraftAfter",
+        "physicsBefore",
+        "physicsAfter",
+    ] {
         if let Some(digest) = value.get(key) {
             if !digest.is_null()
                 && !digest
@@ -1260,11 +1298,22 @@ fn removal_preflight(work: &Path, value: &Value) -> Result<(), String> {
             "aircraftAfter",
             "DCSAircraft.lua.before",
         ),
+        (
+            physics::RELATIVE,
+            "physicsBefore",
+            "physicsAfter",
+            "DCSPhysics.lua.before",
+        ),
     ] {
         if value.get(before).is_none() {
             continue;
         }
         let path = target.join("Scripts").join(relative);
+        let max = if relative == "Export.lua" {
+            MAX_EXPORT
+        } else {
+            MAX_FILE
+        };
         let mut parent = Some(path.as_path());
         while let Some(current) = parent {
             if current == target {
@@ -1274,7 +1323,7 @@ fn removal_preflight(work: &Path, value: &Value) -> Result<(), String> {
             parent = current.parent();
         }
         let current = if path.exists() {
-            Some(hash(&read(&path, MAX_EXPORT)?))
+            Some(hash(&read(&path, max)?))
         } else {
             None
         };
@@ -1284,7 +1333,7 @@ fn removal_preflight(work: &Path, value: &Value) -> Result<(), String> {
             return Err(format!("{} changed after setup. Integration removal preserved its contents; restore the matching setup version before removing integration.", path.display()));
         }
         if let Some(expected) = value[before].as_str() {
-            if hash(&read(&backup.join(backup_name), MAX_EXPORT)?) != expected {
+            if hash(&read(&backup.join(backup_name), max)?) != expected {
                 return Err("A DCS integration backup failed its integrity check. Existing files were preserved.".into());
             }
         }
@@ -1416,6 +1465,7 @@ fn restore(work: &Path, value: &Value) -> Result<Value, String> {
         }
     }
     aircraft::restore(&target, &work.join(id), value, &mut conflicts)?;
+    physics::restore(&target, &work.join(id), value, &mut conflicts)?;
     if value["installModule"] == true && scripts.join("DCS-BIOS").exists() {
         let ownership = scripts.join("DCS-BIOS/.osg-cockpit-install.json");
         if ownership.exists()
@@ -1516,9 +1566,14 @@ fn install_guarded_for_installation(
         None
     };
     let aircraft = aircraft::plan(&target, installation)?;
-    let after = aircraft.export.clone();
+    let physics = physics::plan(&target, &aircraft.export)?;
+    let after = physics.export.clone();
     let install_module = state["modulePresent"] != true;
-    if !install_module && before.as_ref() == Some(&after) && aircraft.before == aircraft.after {
+    if !install_module
+        && before.as_ref() == Some(&after)
+        && aircraft.before == aircraft.after
+        && physics.before.as_ref() == Some(&physics.after)
+    {
         progress("DCS-BIOS already configured", 100);
         return Ok(state);
     }
@@ -1535,6 +1590,9 @@ fn install_guarded_for_installation(
     }
     if let Some(bytes) = &aircraft.before {
         write_new(&backup.join("DCSAircraft.lua.before"), bytes)?;
+    }
+    if let Some(bytes) = &physics.before {
+        write_new(&backup.join("DCSPhysics.lua.before"), bytes)?;
     }
     let mut files = files;
     if install_module {
@@ -1554,6 +1612,9 @@ fn install_guarded_for_installation(
     value["aircraftBefore"] = json!(aircraft.before.as_ref().map(|b| hash(b)));
     value["aircraftAfter"] = json!(aircraft.after.as_ref().map(|b| hash(b)));
     value["createdAircraftDir"] = json!(!scripts.join("OpenSimGear").exists());
+    value["physicsBefore"] = json!(physics.before.as_ref().map(|b| hash(b)));
+    value["physicsAfter"] = json!(hash(&physics.after));
+    value["createdPhysicsDir"] = json!(!scripts.join("OpenSimGear").exists());
     save_journal(work, &value)?;
     let result: Result<Value, String> = (|| {
         cancelled(check)?;
@@ -1595,6 +1656,11 @@ fn install_guarded_for_installation(
         if aircraft.before != aircraft.after {
             write_boundary()?;
             aircraft::apply(&target, &aircraft)?;
+        }
+        if physics.before.as_ref() != Some(&physics.after) {
+            cancelled(check)?;
+            write_boundary()?;
+            physics::apply(&target, &physics)?;
         }
         let current = if export.exists() {
             Some(read(&export, MAX_EXPORT)?)
@@ -1750,6 +1816,21 @@ pub(crate) fn fixture_module(target: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();
     }
+}
+/// Complete only deliberately ready fixture exports. Module-only fixtures keep
+/// their missing-loader/install/removal test semantics.
+#[cfg(test)]
+pub(crate) fn fixture_exports(target: &Path) {
+    let path = target.join("Scripts/Export.lua");
+    let before = if path.exists() {
+        fs::read(&path).unwrap()
+    } else {
+        Vec::new()
+    };
+    let base = with_loader(&before).unwrap();
+    let plan = physics::plan(target, &base).unwrap();
+    physics::apply(target, &plan).unwrap();
+    fs::write(path, plan.export).unwrap();
 }
 
 // Test-only convenience retains the same guarded production install path.

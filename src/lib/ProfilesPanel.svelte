@@ -219,7 +219,6 @@
           <button class="icon-button" aria-label="Redo" title={historyStatus.redoLabel?`Redo ${historyStatus.redoLabel}`:'Redo'} disabled={workspace.busy||workspace.readOnly||libraryBusy||!historyStatus.canRedo} onclick={()=>historyStep('redo')}><Icon name="redo" size={18}/></button>
         </div>
         <label class="game-context" title="Saved with the profile. Selecting a context adds its integration and makes this profile available for that game.">Game context<select aria-label="Game context" value={selectedGame} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#each supportedGames as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label>
-        <button class="secondary-button" onclick={()=>debugOpen=true}><Icon name="bug" size={14}/>Debug</button>
         <button class="secondary-button" aria-label="Export saved profile" title="Export saved profile" disabled={workspace.busy||libraryBusy||!savedEditor} onclick={()=>savedEditor&&libraryTools?.askExport(savedEditor)}><Icon name="download" size={14}/>Export</button>
         {#if editor.baseRevision===null}<button class="text-button" disabled={workspace.busy} onclick={cancel}>Cancel creation</button>{/if}
         <button class="primary-button" disabled={workspace.busy||workspace.readOnly||!dirty||!!error} onclick={()=>save()}><Icon name="save" size={14}/> {workspace.busy?'Saving…':'Save profile'}</button>

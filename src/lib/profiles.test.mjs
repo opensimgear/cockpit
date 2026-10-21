@@ -100,6 +100,8 @@ test('imports are bounded UTF-8 JSON and reject legacy/local assignments at ever
   assert.throws(() => exportProfileDocument({ ...blank(), sourceId: 'private' }));
 });
 
+test('floating telemetry schemas preserve finite ranges and integer precision remains bounded',()=>{assert.equal(profileScalarValid({type:'number',min:-3.4028234663852886e38,max:3.4028234663852886e38,unit:'N'}),true);assert.equal(profileScalarValid({type:'integer',min:0,max:Number.MAX_SAFE_INTEGER+1,unit:null}),false);});
+
 test('full scalar contracts reject unknown fields and preserve byte, unit, enum and fallback constraints', () => {
   const valid = [
     {type:'boolean'}, {type:'rgb'},
@@ -114,7 +116,7 @@ test('full scalar contracts reject unknown fields and preserve byte, unit, enum 
     assert.equal(profileDocumentError({...withResource(),resources:[{...resource(),ports:[p]}]}),'');
     assert.equal(profileScalarValid({...valid[i],privateField:true}),false);
   }
-  for (const schema of [null,{type:'unknown'},{type:'text',maxBytes:0,encoding:'utf8'},{type:'text',maxBytes:4097,encoding:'ascii'},{type:'text',maxBytes:2,encoding:'ansi'},{type:'integer',min:0.5,max:2,unit:null},{type:'number',min:2,max:1,unit:null},{type:'number',min:0,max:Infinity,unit:null},{type:'number',min:0,max:Number.MAX_SAFE_INTEGER+1,unit:null},{type:'number',min:0,max:1,unit:''},{type:'enum',values:[]},{type:'enum',values:['a','a']},{type:'enum',values:['']},{type:'enum',values:Array(65).fill('a')}]) assert.equal(profileScalarValid(schema),false);
+  for (const schema of [null,{type:'unknown'},{type:'text',maxBytes:0,encoding:'utf8'},{type:'text',maxBytes:4097,encoding:'ascii'},{type:'text',maxBytes:2,encoding:'ansi'},{type:'integer',min:0.5,max:2,unit:null},{type:'number',min:2,max:1,unit:null},{type:'number',min:0,max:Infinity,unit:null},{type:'number',min:0,max:1,unit:''},{type:'enum',values:[]},{type:'enum',values:['a','a']},{type:'enum',values:['']},{type:'enum',values:Array(65).fill('a')}]) assert.equal(profileScalarValid(schema),false);
   for (let i=0;i<valid.length;i++) assert.equal(profileScalarAccepts(valid[i],{}),false);
   assert.equal(profileScalarAccepts({type:'text',maxBytes:3,encoding:'utf8'},'éé'),false);
   assert.equal(profileScalarAccepts({type:'text',maxBytes:4,encoding:'ascii'},'é'),false);

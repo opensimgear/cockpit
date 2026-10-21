@@ -10,6 +10,11 @@ fn digest(value: &Value) -> String {
         Sha256::digest(serde_json::to_vec(value).expect("JSON value"))
     )
 }
+fn sdk_stamp(id: &str, record: &Value) -> Value {
+    if !id.starts_with("x-plane-") { return Value::Null; }
+    let path = record["executable"].as_str().map(Path::new).and_then(Path::parent).map(|root|root.join("Resources/plugins/DataRefs.txt"));
+    path.and_then(|path|fs::metadata(path).ok()).map(|metadata|json!([metadata.len(),metadata.modified().ok().and_then(|at|at.duration_since(std::time::UNIX_EPOCH).ok()).map(|duration|duration.as_nanos().to_string())])).unwrap_or(Value::Null)
+}
 fn catalogue_metadata(cache: &CatalogueCache, id: &str, vehicle: Option<&str>, setup: &str) -> Option<Value> {
     let selected = if let ("dcs", Some(vehicle)) = (id, vehicle) {
         cache.iter().filter(|(key,_)|key.starts_with("dcs:")).find_map(|(_,(_,revision,result))| {
@@ -93,6 +98,7 @@ impl GameIntegrationSetup {
             "game-provider-setup-v1",
             id,
             record,
+            if id == "dcs" { Some(crate::dcs_physics::revision()) } else { None },
             self.inner.settings_error
         ]));
         (record, revision)
@@ -239,6 +245,7 @@ impl GameIntegrationSetup {
             "game-provider-setup-v1",
             id,
             saved["games"][id],
+            if id == "dcs" { Some(crate::dcs_physics::revision()) } else { None },
             self.inner.settings_error
         ]));
         if request["expectedSetupRevision"].as_str() != Some(revision.as_str()) {
@@ -305,7 +312,10 @@ impl GameIntegrationSetup {
         let key = module.as_ref().map(|module|format!("dcs:{module}")).unwrap_or_else(||id.into());
         let cached = {
             let cache = self.inner.catalogues.lock().unwrap_or_else(|p|p.into_inner());
-            cache.get(&key).filter(|(at,known,_)|known == &revision && at.elapsed() < Duration::from_secs(2)).map(|(_,_,result)|result.clone())
+            cache.get(&key).filter(|(at,known,result)|known == &revision && if id.starts_with("x-plane-") {
+                result.as_ref().is_ok_and(|value|value["sdkSourceStamp"]==sdk_stamp(id,&record)) || at.elapsed()<Duration::from_secs(2)
+            } else if id.starts_with("assetto-corsa") { result.is_ok() || at.elapsed()<Duration::from_secs(2) }
+            else { at.elapsed()<Duration::from_secs(2) }).map(|(_,_,result)|result.clone())
         };
         if let Some(cached) = cached {
             return cached.map(|value|value.as_ref().clone());
@@ -320,6 +330,7 @@ impl GameIntegrationSetup {
                     let mut query = record["connection"].clone();
                     query["aircraftModule"] = json!(module.as_ref().unwrap());
                     let mut value = crate::dcs_profile::resource_catalogue(&query)?;
+                    value["channels"] = json!(crate::dcs_physics::catalogue());
                     if let Some(vehicle) = vehicle {
                         value["vehicleId"] = json!(module.as_ref().unwrap());
                         value["vehicleAliases"] = json!(crate::dcs_profile::aircraft_aliases(Path::new(query["cataloguePath"].as_str().unwrap()), module.as_ref().unwrap())?);
@@ -327,9 +338,15 @@ impl GameIntegrationSetup {
                     }
                     value
                 }
-                "x-plane-11" | "x-plane-12" => crate::xplane::catalogue(),
+                "x-plane-11" | "x-plane-12" => match record["executable"].as_str() {
+                    Some(executable) if Path::new(executable).is_file() => crate::xplane::catalogue_for_installation(Path::new(executable))?,
+                    Some(_) => { let mut value=crate::xplane::catalogue(); value["catalogueWarning"]=json!("The selected installation is unavailable. Only legacy channel definitions can be shown until it is accessible."); value },
+                    None => crate::xplane::catalogue(),
+                },
                 _ => crate::game_telemetry::catalogue_for_game(id),
             };
+            crate::game_channels::catalogue(id,&mut value);
+            if id.starts_with("x-plane-") { value["sdkSourceStamp"]=sdk_stamp(id,&record); }
             value["catalogueRevision"] =
                 json!(digest(&json!(["game-provider-catalogue-v1", id, value])));
             value["providerSetupRevision"] = json!(revision);
@@ -356,6 +373,33 @@ fn reject_game_install_folder_for_settings(target: &Path, game: &Value) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Read-only installed SDK benchmark; set OSG_XPLANE_TEST_EXECUTABLE."]
+    fn installed_xplane_provider_catalogue_benchmark() {
+        let executable = std::env::var("OSG_XPLANE_TEST_EXECUTABLE").expect("Choose installed X-Plane executable");
+        let scratch = Scratch::new();
+        let setup = GameIntegrationSetup::new(scratch.0.join("setup.json"), false);
+        let game = json!({"id":"x-plane-12","installed":true,"executable":executable});
+        setup.save_provider_settings(&json!({"command":"game_integration_settings_save","expectedSetupRevision":setup.provider_setup_revision("x-plane-12"),"connection":crate::xplane::defaults(12)}), &game).unwrap();
+        let start = Instant::now();
+        let metadata = setup.integration_catalogue_metadata_for_vehicle("x-plane-12",None).unwrap();
+        println!("XP cold metadata: {:?}; {}",start.elapsed(),metadata["catalogueRevision"]);
+        let start = Instant::now();
+        for _ in 0..10 { setup.integration_catalogue_metadata_for_vehicle("x-plane-12",None).unwrap(); }
+        println!("XP 10 warm metadata: {:?}",start.elapsed());
+        let start = Instant::now();
+        let full = setup.resource_integration_catalogue_for_vehicle("x-plane-12",None).unwrap();
+        println!("XP warm full catalogue: {:?}; {} channels",start.elapsed(),full["channels"].as_array().unwrap().len());
+        drop(full);
+        setup.inner.catalogues.lock().unwrap().clear();
+        let start = Instant::now();
+        std::thread::scope(|scope| {
+            let first = scope.spawn(||setup.resource_integration_catalogue_for_vehicle("x-plane-12",None).unwrap()["channels"].as_array().unwrap().len());
+            let second = scope.spawn(||setup.resource_integration_catalogue_for_vehicle("x-plane-12",None).unwrap()["channels"].as_array().unwrap().len());
+            assert_eq!(first.join().unwrap(),second.join().unwrap());
+        });
+        println!("XP 2 concurrent cold catalogues: {:?}",start.elapsed());
+    }
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {
@@ -536,7 +580,8 @@ mod tests {
             let catalogue = setup.resource_integration_catalogue(id).unwrap();
             assert_eq!(catalogue["provider"], id);
             assert_eq!(catalogue["commands"], json!([]));
-            assert_eq!(catalogue["channels"].as_array().unwrap().len(), 5);
+            assert!(catalogue["channels"].as_array().unwrap().len() > 5);
+            for id in ["rpm","speed_kmh","gear","max_rpm","rev_ratio","engine.rpm"] { assert!(catalogue["channels"].as_array().unwrap().iter().any(|channel|channel["id"]==id)); }
             assert_eq!(setup.provider_connection_snapshot(id).unwrap().0, connection);
             let mut unsupported = connection;
             unsupported["commandPort"] = json!(7778);

@@ -13,6 +13,15 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
+test('passive telemetry bypasses game setup and keeps profile Stop responsive',async()=>{
+ const pending=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='game_scan')await pending.promise;return{ok:true,state};}});
+ const scan=api.gatewayRequest({command:'game_scan'});await tick();
+ await api.gatewayRequest({command:'game_telemetry_inspect',gameId:'assetto-corsa',offset:0,limit:64});
+ await api.gatewayRequest({command:'profile_stop'});
+ assert.deepEqual(api.calls.map(call=>call.args.request.command),['game_scan','game_telemetry_inspect','profile_stop']);
+ pending.resolve();await scan;
+});
+
 function transport({ desktop = true, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
   const calls = [];
   const exported = {};

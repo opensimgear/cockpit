@@ -742,6 +742,7 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         crate::dcs_setup::fixture_module(&target);
         std::fs::write(target.join("Scripts/Export.lua"), b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n").unwrap();
+        crate::dcs_setup::fixture_exports(&target);
         let catalogue_path = target.join("Scripts/DCS-BIOS/doc/json");
         std::fs::copy(catalogue_path.join("A-10C.json"), catalogue_path.join("F-16C_50.json")).unwrap();
         let aliases_path = catalogue_path.join("AircraftAliases.json");

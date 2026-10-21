@@ -43,6 +43,24 @@ pub(super) fn game_metadata_valid(item: &Observation, key: &str) -> bool {
             .is_some_and(|p| p.complete && p.validate().is_ok())
 }
 
+/// Created only when a changed native metadata batch is admitted. Keeping the
+/// observation private and immutable ties its fully validated port index to the
+/// exact provider fingerprint, setup and catalogue for every later read.
+pub(super) struct GameMetadata {
+    observation: Observation,
+    fingerprint: String,
+    contracts: BTreeMap<String, String>,
+}
+impl GameMetadata {
+    pub(super) fn capture(item: Observation, fingerprint: String) -> Option<Arc<Self>> {
+        if !game_metadata_valid(&item, &item.key) { return None; }
+        let contracts = item.ports.as_ref()?.ports.iter()
+            .map(|port| Ok((port.id.clone(), port.contract_hash()?)))
+            .collect::<Result<_, String>>().ok()?;
+        Some(Arc::new(Self { observation: item, fingerprint, contracts }))
+    }
+}
+
 #[cfg(test)]
 fn validate_game_delivery(
     batch: &ProviderBatch,
@@ -52,12 +70,15 @@ fn validate_game_delivery(
     if !batch.complete || batch.observations.len()!=1 {
         return Err("Fresh game delivery requires one complete native game observation and current verified metadata.".into());
     }
-    validate_game_item(batch,&batch.observations[0],metadata)
+    let metadata = GameMetadata::capture(metadata.clone(), "test-native-capture".into())
+        .ok_or("Game delivery requires valid current native metadata.")?;
+    validate_game_item(batch,&batch.observations[0],&metadata)
 }
-fn validate_game_item(batch:&ProviderBatch,item:&Observation,metadata:&Observation)->Result<(),String>{
+fn validate_game_item(batch:&ProviderBatch,item:&Observation,admitted:&GameMetadata)->Result<(),String>{
+    let metadata = &admitted.observation;
     let key=metadata.key.as_str();
     let game=catalogue_game(key).ok_or("Unknown game catalogue scope.")?;
-    if !game_metadata_valid(metadata,key) || batch.scope!=format!("profile-game:{game}") {
+    if admitted.fingerprint.is_empty() || batch.scope!=format!("profile-game:{game}") {
         return Err("Game delivery requires current verified metadata for its exact native module.".into());
     }
     if item.key != key
@@ -103,13 +124,10 @@ fn validate_game_item(batch:&ProviderBatch,item:&Observation,metadata:&Observati
         .as_ref()
         .filter(|p| p.complete)
         .ok_or("Game delivery needs its exact complete selected-port catalogue.")?;
-    let current = &metadata.ports.as_ref().unwrap().ports;
     for port in &ports.ports {
-        let native = current
-            .iter()
-            .find(|p| p.id == port.id)
+        let native = admitted.contracts.get(&port.id)
             .ok_or("Game delivery contains a port absent from the current native catalogue.")?;
-        if native.contract_hash()? != port.contract_hash()? {
+        if *native != port.contract_hash()? {
             return Err(
                 "Game delivery port contract changed; reconcile its local assignment.".into(),
             );
@@ -117,7 +135,15 @@ fn validate_game_item(batch:&ProviderBatch,item:&Observation,metadata:&Observati
     }
     Ok(())
 }
+#[cfg(test)]
 pub(super) fn validate_game_catalogues(batch:&ProviderBatch,metadata:&BTreeMap<String,Observation>)->Result<(),String>{
+    let metadata = metadata.iter().map(|(key,item)| {
+        GameMetadata::capture(item.clone(), "test-native-capture".into()).map(|item|(key.clone(),item))
+            .ok_or("Game delivery requires valid current native metadata.")
+    }).collect::<Result<BTreeMap<_,_>,_>>()?;
+    validate_admitted_game_catalogues(batch,&metadata)
+}
+pub(super) fn validate_admitted_game_catalogues(batch:&ProviderBatch,metadata:&BTreeMap<String,Arc<GameMetadata>>)->Result<(),String>{
     batch.validate()?;
     let game=batch.scope.strip_prefix("profile-game:").filter(|game|matches!(*game,"dcs"|"assetto-corsa"|"assetto-corsa-competizione"|"assetto-corsa-evo"|"assetto-corsa-rally"|"x-plane-11"|"x-plane-12")).ok_or("Unknown native game delivery scope.")?;
     if !batch.complete || batch.observations.is_empty() || batch.observations.len()>if game=="dcs"{2}else{1} {
@@ -191,7 +217,7 @@ impl Runtime {
             .strip_prefix("profile-game:")
             .ok_or("Game delivery needs its dedicated native scope.")?
             .to_owned();
-        let validation = validate_game_catalogues(&batch,&state.game_metadata);
+        let validation = validate_admitted_game_catalogues(&batch,&state.game_metadata);
         if let Err(error) = validation {
             if state
                 .game_deliveries
@@ -203,14 +229,14 @@ impl Runtime {
                     &batch.scope,
                     "The acquired game reader lost validated sample metadata.",
                 );
-                Self::persist_locked(&mut state);
+                state.pending_save = true;
             }
             return Err(error);
         }
         state.registry.reconcile(batch.clone())?;
         state.game_command_withdrawals.retain(|(id, reader), _| id != &game || reader == &batch.session);
         state.game_deliveries.insert(game, batch);
-        Self::persist_locked(&mut state);
+        state.pending_save = true;
         Ok(())
     }
     /// An outgoing run cannot revoke the incoming run's independently acquired reader.
@@ -235,7 +261,7 @@ impl Runtime {
             state
                 .registry
                 .provider_failed(&old.scope, "The native profile game reader stopped.");
-            Self::persist_locked(&mut state);
+            state.pending_save = true;
         }
         Ok(())
     }
@@ -253,6 +279,7 @@ impl Runtime {
             return Err("Repair retained inventory before acquiring native delivery.".into());
         }
         let mut plan = prepared.clone();
+        let mut validated_games = BTreeSet::new();
         for source in &mut plan.sources {
             if source.readiness != PlanReadiness::Ready {
                 continue;
@@ -289,11 +316,13 @@ impl Runtime {
                     .game_deliveries
                     .get(catalogue_game(game).ok_or("Unknown prepared native game catalogue.")?)
                     .ok_or("Acquire an advancing native game sample before its baseline.")?;
-                validate_game_catalogues(delivery,&state.game_metadata)?;
+                if validated_games.insert(delivery.scope.as_str()) {
+                    validate_admitted_game_catalogues(delivery,&state.game_metadata)?;
+                }
                 if !delivery.observations.iter().any(|item|item.key==game) {return Err("The acquired reader does not publish the prepared aircraft catalogue.".into());}
                 if current.scope != delivery.scope
                     || token.provider_session != delivery.session
-                    || metadata.route.as_ref() != Some(&expected.route)
+                    || metadata.observation.route.as_ref() != Some(&expected.route)
                     || expected.key != game
                 {
                     return Err("The native game reader does not match the prepared game setup and catalogue.".into());
@@ -473,3 +502,155 @@ impl Runtime {
 #[cfg(test)]
 #[path = "profile_resources_game_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use osg_profiles::{resources::{EvidenceKind, IdentityEvidence}, resources_ports::{PortContract, PortDescriptor, PortUpdate, ScalarSchema}, Direction};
+    use std::sync::mpsc;
+
+    fn metadata(name: &str) -> Observation {
+        let game = "assetto-corsa";
+        Observation {
+            key: game.into(), name: name.into(), resource_type: ResourceType::GameIntegration,
+            evidence: vec![IdentityEvidence { kind: EvidenceKind::GameScope, value: game.into() }],
+            attributes: BTreeMap::from([
+                ("gameId".into(), game.into()), ("processVerified".into(), "true".into()),
+                ("gameContextStatus".into(), "ready".into()), ("providerSetupRevision".into(), "setup".into()),
+                ("catalogueRevision".into(), "catalogue".into()),
+            ]), diagnostics: vec![],
+            route: Some(Route { id: format!("game:{game}"), transport: Transport::Integration,
+                provider_generation: "metadata".into(), attributes: BTreeMap::new(), baseline_ready: false, writable: false, priority: 0 }),
+            ports: Some(PortUpdate::complete(vec![PortDescriptor {
+                id: "channel:rpm".into(), name: "RPM".into(), direction: Direction::Output,
+                contract: PortContract::State { schema: ScalarSchema::Integer { min: 0, max: 30000, unit: Some("rpm".into()) }, freshness_ms: 500, fallback: None },
+            }]).unwrap()),
+        }
+    }
+    fn adopt_metadata(runtime: &Runtime, revision: u64, name: &str) {
+        Runtime::adopt(&runtime.state, vec![("game:assetto-corsa".into(), Ok(batch("game:assetto-corsa", "metadata", revision, vec![metadata(name)])))]);
+    }
+    fn delivery() -> ProviderBatch {
+        let mut item = metadata("Current native reader");
+        item.attributes.insert("gameReaderSession".into(), "reader".into());
+        item.attributes.insert("gamePreparationSession".into(), "preparation".into());
+        item.route = Some(Route { id: "profile-game:assetto-corsa".into(), transport: Transport::Integration,
+            provider_generation: "reader:1".into(), attributes: item.attributes.clone(), baseline_ready: true, writable: false, priority: 100 });
+        batch("profile-game:assetto-corsa", "reader", 1, vec![item])
+    }
+
+    #[test]
+    fn blocked_persistence_never_blocks_native_delivery_or_cached_capture_and_retries_raced_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(Runtime::new(Some(directory.path().into()), Arc::new(|_| panic!("No discovery during cached native work")), false));
+        adopt_metadata(&runtime, 1, "Installed catalogue");
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let writer = runtime.clone();
+        let writer = thread::spawn(move || Runtime::persist_with(&writer.state, &writer.persistence_gate, |store, saved| {
+            entered_tx.send(()).unwrap(); release_rx.recv_timeout(Duration::from_secs(5)).unwrap(); store.save(saved)
+        }));
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let native = runtime.clone();
+        let publisher = thread::spawn(move || {
+            let result = (|| {
+                native.publish_profile_game_delivery(delivery())?;
+                native.validate_profile_game_delivery("assetto-corsa", "reader")?;
+                native.snapshot_for_compile(vec![])?;
+                native.withdraw_profile_game_delivery("assetto-corsa", "reader")?;
+                Ok::<_, String>(())
+            })();
+            finished_tx.send(result).unwrap();
+        });
+        let completed = finished_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        writer.join().unwrap(); publisher.join().unwrap();
+        completed.expect("Native delivery and cached reads waited for metadata persistence").unwrap();
+        assert!(runtime.state.lock().unwrap().pending_save, "A mutation after the writer snapshot must remain dirty");
+        Runtime::persist(&runtime.state, &runtime.persistence_gate);
+        let state = runtime.state.lock().unwrap();
+        assert!(!state.pending_save);
+        let restored = Registry::restore(Store::new(directory.path().into()).load().unwrap().unwrap()).unwrap();
+        assert_eq!(restored.saved_fingerprint().unwrap(), state.registry.saved_fingerprint().unwrap());
+    }
+
+    #[test]
+    fn queued_metadata_writers_snapshot_after_the_writer_gate_and_never_restore_older_catalogues() {
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(Runtime::new(Some(directory.path().into()), Arc::new(|_| vec![]), false));
+        adopt_metadata(&runtime, 1, "Before repair");
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first = runtime.clone();
+        let first = thread::spawn(move || Runtime::persist_with(&first.state, &first.persistence_gate, |store, saved| {
+            entered_tx.send(()).unwrap(); release_rx.recv_timeout(Duration::from_secs(5)).unwrap(); store.save(saved)
+        }));
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        adopt_metadata(&runtime, 2, "After repair");
+        let second = runtime.clone();
+        let second = thread::spawn(move || Runtime::persist(&second.state, &second.persistence_gate));
+        release_tx.send(()).unwrap();
+        first.join().unwrap(); second.join().unwrap();
+        assert!(!runtime.state.lock().unwrap().pending_save);
+        let restored = Registry::restore(Store::new(directory.path().into()).load().unwrap().unwrap()).unwrap();
+        assert_eq!(restored.list(0, 1).unwrap().resources[0].name, "After repair");
+    }
+
+    #[test]
+    fn unchanged_catalogue_fingerprint_never_bypasses_an_invalid_provider_revision() {
+        let runtime = Runtime::new(None, Arc::new(|_| vec![]), false);
+        adopt_metadata(&runtime, 1, "Installed catalogue");
+        runtime.publish_profile_game_delivery(delivery()).unwrap();
+        adopt_metadata(&runtime, 0, "Installed catalogue");
+        assert!(runtime.validate_profile_game_delivery("assetto-corsa", "reader").is_err());
+    }
+
+    #[test]
+    fn large_catalogue_validation_is_admitted_once_and_repeated_binding_checks_only_selected_contracts() {
+        use osg_profiles::{compiler_models::SourcePlan, resources::PortExpectation, store::LocalAssignment, Endpoint};
+        let runtime = Runtime::new(None, Arc::new(|_| panic!("Binding cannot rediscover")), false);
+        let mut item = metadata("Large native SDK");
+        let rpm = item.ports.as_ref().unwrap().ports[0].clone();
+        let mut ports = item.ports.take().unwrap().ports;
+        for index in 0..32768 {
+            let mut port = rpm.clone(); port.id = format!("channel:axis-{index}"); ports.push(port);
+        }
+        item.ports = Some(PortUpdate::complete(ports).unwrap());
+        Runtime::adopt(&runtime.state, vec![("game:assetto-corsa".into(), Ok(batch("game:assetto-corsa", "metadata", 1, vec![item.clone()])))]);
+        let (resource, admitted) = {
+            let state = runtime.state.lock().unwrap();
+            (state.registry.list(0, 1).unwrap().resources[0].id.clone(), state.game_metadata["assetto-corsa"].clone())
+        };
+        assert_eq!(admitted.contracts.len(), 32769);
+        let (_, pins) = runtime.snapshot_for_preparation(vec![LocalAssignment {
+            resource_id: "game".into(), source_id: resource.clone(), ports: vec![PortExpectation {
+                profile_port_id: "rpm".into(), observed_port_id: rpm.id.clone(), expected_contract_hash: rpm.contract_hash().unwrap(),
+            }],
+        }]).unwrap();
+        let pin = pins[0].clone();
+        let prepared = ExecutionPlan {
+            requirements: Default::default(), program: osg_mapping::program::Program { sources: vec![], nodes: vec![], sinks: vec![], controllers: vec![] },
+            topological_order: vec![], trace: vec![], sources: (0..8).map(|index| SourcePlan {
+                endpoint: Endpoint { node_id: format!("source-{index}"), port_id: "rpm".into() }, inventory_resource_id: Some(resource.clone()),
+                observed_port_id: Some(rpm.id.clone()), contract: rpm.contract.clone(), token: None, route: Some(pin.resolved().route.clone()), preparation: Some(pin.clone()), readiness: PlanReadiness::Ready,
+            }).collect(), sinks: vec![], branches: vec![], controllers: vec![], visibility: vec![], runtime_overrides: vec![], companion_assignments: vec![], budgets: Default::default(),
+        };
+        runtime.publish_profile_game_delivery(delivery()).unwrap();
+        let started = std::time::Instant::now();
+        for _ in 0..64 {
+            let bound = runtime.bind_delivery_reads(&prepared).unwrap();
+            assert!(bound.sources.iter().all(|source| source.token.as_ref().is_some_and(|token| token.provider_session == "reader")));
+        }
+        assert!(started.elapsed() < Duration::from_secs(3), "Repeated selected-port binding rescanned the complete SDK catalogue: {:?}", started.elapsed());
+        assert!(Arc::ptr_eq(&admitted, &runtime.state.lock().unwrap().game_metadata["assetto-corsa"]));
+        // A changed exact fingerprint must replace the proof even if a provider
+        // incorrectly reuses its old human-facing setup/catalogue revision.
+        if let PortContract::State { schema: ScalarSchema::Integer { max, .. }, .. } = &mut item.ports.as_mut().unwrap().ports[0].contract { *max = 20000; }
+        item.ports = Some(PortUpdate::complete(item.ports.take().unwrap().ports).unwrap());
+        Runtime::adopt(&runtime.state, vec![("game:assetto-corsa".into(), Ok(batch("game:assetto-corsa", "metadata", 2, vec![item])))]);
+        assert!(!Arc::ptr_eq(&admitted, &runtime.state.lock().unwrap().game_metadata["assetto-corsa"]));
+        assert!(runtime.bind_delivery_reads(&prepared).is_err());
+        assert!(runtime.validate_profile_game_delivery("assetto-corsa", "reader").is_err());
+    }
+}

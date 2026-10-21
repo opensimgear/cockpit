@@ -83,6 +83,8 @@ mod cleanup;
 mod context_runtime;
 #[path = "game_dcs_catalogues.rs"]
 mod dcs_catalogues;
+#[path = "game_telemetry_api.rs"]
+mod telemetry_api;
 #[path = "profile_game_launch.rs"]
 pub(crate) mod launch;
 pub(crate) use context_runtime::PreparedGame;

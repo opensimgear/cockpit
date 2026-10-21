@@ -225,6 +225,7 @@ impl DcsLive {
         )
         .unwrap();
         let catalogue = user.join("Scripts/DCS-BIOS/doc/json");
+        crate::dcs_setup::fixture_exports(&user);
         // Actual full release documents, not a made-up unitful altitude port.
         // The labelled runtime/process/wire remain fixtures; no Lua executes.
         use sha2::{Digest, Sha256};

@@ -18,6 +18,7 @@ use std::{
 
 pub(crate) type Collect =
     Arc<dyn Fn(u64) -> Vec<(String, Result<ProviderBatch, String>)> + Send + Sync>;
+type PreparedBatches = Vec<(String, Result<(ProviderBatch, String), String>)>;
 /// Native Hub-verified desired metadata. Never accepted from an IPC request.
 #[derive(Clone)]
 pub(crate) struct CompanionCatalogue {
@@ -36,7 +37,7 @@ struct State {
     read_only: bool,
     fingerprints: BTreeMap<String, String>,
     pending_save: bool,
-    game_metadata: BTreeMap<String, Observation>,
+    game_metadata: BTreeMap<String, Arc<game_delivery::GameMetadata>>,
     game_deliveries: BTreeMap<String, ProviderBatch>,
     game_command_withdrawals: BTreeMap<(String, String), BTreeSet<String>>,
 }
@@ -49,6 +50,9 @@ pub(crate) struct Runtime {
     /// Serializes discovery revisions without excluding live delivery adoption.
     collector_gate: Arc<Mutex<()>>,
     capture_gate: Arc<Mutex<()>>,
+    /// Only metadata writers wait here. Native reads and delivery publication
+    /// never wait for serialization, filesystem writes or durable replacement.
+    persistence_gate: Arc<Mutex<()>>,
 }
 impl Runtime {
     /// Return the independently registered read-only authoring catalogue. This
@@ -401,8 +405,9 @@ impl Runtime {
                 true,
             ),
         };
+        let saved = registry.saved_fingerprint().expect("inventory metadata fingerprint");
         let state = Arc::new(Mutex::new(State {
-            saved: serde_json::to_string(&registry.saved()).unwrap(),
+            saved,
             registry,
             store,
             diagnostics,
@@ -417,6 +422,7 @@ impl Runtime {
         let local_revision = Arc::new(AtomicU64::new(0));
         let collector_gate = Arc::new(Mutex::new(()));
         let capture_gate = Arc::new(Mutex::new(()));
+        let persistence_gate = Arc::new(Mutex::new(()));
         let worker = if native {
             let state = state.clone();
             let stopped = stop.clone();
@@ -424,6 +430,7 @@ impl Runtime {
             let revisions = local_revision.clone();
             let collectors = collector_gate.clone();
             let gate = capture_gate.clone();
+            let persistence = persistence_gate.clone();
             Some(
                 thread::Builder::new()
                     .name("profile-resource-inventory".into())
@@ -436,15 +443,16 @@ impl Runtime {
                                     break;
                                 }
                                 let revision = revisions.fetch_add(1, Ordering::AcqRel) + 1;
-                                let batches = collect(revision);
+                                let batches = Self::prepare_batches(collect(revision));
                                 // Discovery may block; the live reader must keep
                                 // publishing and renewing while it is in flight.
                                 let _capture = gate.lock().unwrap_or_else(|p| p.into_inner());
                                 if stopped.load(Ordering::Acquire) {
                                     break;
                                 }
-                                Self::adopt(&state, batches);
+                                Self::adopt_prepared(&state, batches);
                             }
+                            Self::persist(&state, &persistence);
                             for _ in 0..20 {
                                 if stopped.load(Ordering::Acquire) {
                                     break;
@@ -466,6 +474,7 @@ impl Runtime {
             local_revision,
             collector_gate,
             capture_gate,
+            persistence_gate,
         }
     }
     /// Explicit native coordinator refresh. Cached capture/validation and native
@@ -482,37 +491,55 @@ impl Runtime {
             return Err("Resource inventory has stopped.".into());
         }
         let revision = self.local_revision.fetch_add(1, Ordering::AcqRel) + 1;
-        let batches = (self.collect)(revision);
-        let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
-        if self.stop.load(Ordering::Acquire) {
-            return Err("Resource inventory has stopped.".into());
+        let batches = Self::prepare_batches((self.collect)(revision));
+        {
+            let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
+            if self.stop.load(Ordering::Acquire) {
+                return Err("Resource inventory has stopped.".into());
+            }
+            Self::adopt_prepared(&self.state, batches);
         }
-        Self::adopt(&self.state, batches);
+        drop(_collector);
+        // Explicit coordinator operations acknowledge their persistence attempt,
+        // while live delivery remains independent of slow storage.
+        Self::persist(&self.state, &self.persistence_gate);
         Ok(())
     }
-    fn adopt(state: &Mutex<State>, batches: Vec<(String, Result<ProviderBatch, String>)>) {
-        let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut changed = false;
-        for (scope, batch) in batches {
-            let metadata = batch.as_ref().ok().and_then(|batch| {
-                scope
-                    .strip_prefix("game:")
-                    .map(|id| (id.to_owned(), batch.clone()))
-            });
-            let result = batch.and_then(|batch| {
+    fn prepare_batches(batches: Vec<(String, Result<ProviderBatch, String>)>) -> PreparedBatches {
+        // Full installed SDK catalogues can contain tens of thousands of ports.
+        // Hash immutable provider batches outside the live delivery/read lock.
+        batches.into_iter().map(|(scope,batch)| {
+            let captured = batch.and_then(|batch| {
                 if batch.scope != scope {
                     return Err("Provider scope does not match its envelope.".into());
                 }
-                use sha2::{Digest, Sha256};
-                let fingerprint = format!(
-                    "{:x}",
-                    Sha256::digest(
-                        serde_json::to_vec(&(&batch.session, batch.complete, &batch.observations))
-                            .map_err(|e| e.to_string())?
-                    )
-                );
-                if state.fingerprints.get(&scope) == Some(&fingerprint) {
-                    return Ok(());
+                if batch.revision == 0 {
+                    return Err("Invalid resource provider revision.".into());
+                }
+                use sha2::{Digest,Sha256};
+                let fingerprint = format!("{:x}",Sha256::digest(serde_json::to_vec(&(&batch.session,batch.complete,&batch.observations)).map_err(|e|e.to_string())?));
+                Ok((batch,fingerprint))
+            });
+            (scope,captured)
+        }).collect()
+    }
+    #[cfg(test)]
+    fn adopt(state: &Mutex<State>, batches: Vec<(String, Result<ProviderBatch, String>)>) {
+        Self::adopt_prepared(state, Self::prepare_batches(batches));
+    }
+    fn adopt_prepared(state: &Mutex<State>, batches: PreparedBatches) {
+        let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut changed = false;
+        for (scope, batch) in batches {
+            if batch.as_ref().is_ok_and(|(_,fingerprint)|state.fingerprints.get(&scope)==Some(fingerprint)) { continue; }
+            let metadata = batch.as_ref().ok().and_then(|batch| {
+                scope
+                    .strip_prefix("game:")
+                    .map(|id| (id.to_owned(), batch.0.clone(), batch.1.clone()))
+            });
+            let result = batch.and_then(|(batch,fingerprint)| {
+                if batch.scope != scope {
+                    return Err("Provider scope does not match its envelope.".into());
                 }
                 state.registry.reconcile(batch)?;
                 state.fingerprints.insert(scope.clone(), fingerprint);
@@ -521,11 +548,12 @@ impl Runtime {
             });
             if scope.starts_with("game:") {
                 let game = scope.trim_start_matches("game:");
-                let item = metadata.filter(|_| result.is_ok()).and_then(|(_, batch)| {
+                let item = metadata.filter(|_| result.is_ok()).and_then(|(_, batch, fingerprint)| {
                     batch
                         .observations
                         .into_iter()
-                        .find(|item| item.key == game && game_metadata_valid(item, game))
+                        .find(|item| item.key == game)
+                        .and_then(|item| game_delivery::GameMetadata::capture(item, fingerprint))
                 });
                 if let Some(item) = item {
                     state.game_metadata.insert(game.into(), item);
@@ -533,7 +561,7 @@ impl Runtime {
                     state.game_metadata.remove(game);
                 }
                 let owner=game.split(':').next().unwrap_or(game);
-                if state.game_deliveries.get(owner).is_some_and(|batch| validate_game_catalogues(batch,&state.game_metadata).is_err()) {
+                if state.game_deliveries.get(owner).is_some_and(|batch| validate_admitted_game_catalogues(batch,&state.game_metadata).is_err()) {
                     let overlay = state.game_deliveries.remove(owner).unwrap();
                     state.registry.provider_failed(&overlay.scope, "Game process, setup or catalogue changed; acquire a fresh native baseline.");
                     state.fingerprints.remove(&overlay.scope);
@@ -546,25 +574,45 @@ impl Runtime {
                 changed = true;
             }
         }
-        if !changed && !state.pending_save {
-            return;
-        }
-        Self::persist_locked(&mut state);
+        state.pending_save |= changed;
     }
-    fn persist_locked(state: &mut State) {
-        let saved =
-            serde_json::to_string(&state.registry.saved()).expect("inventory metadata JSON");
-        if saved != state.saved && !state.read_only {
-            if let Some(store) = &state.store {
-                if let Err(error) = store.save(&state.registry.saved()) {
-                    state.diagnostics = vec![format!("Cannot retain resource metadata: {error}")];
-                    state.pending_save = true;
-                    return;
-                }
+    fn persist(state: &Mutex<State>, gate: &Mutex<()>) {
+        Self::persist_with(state, gate, |store, saved| store.save(saved));
+    }
+    fn persist_with(
+        state: &Mutex<State>,
+        gate: &Mutex<()>,
+        save: impl FnOnce(&Store, &osg_profiles::resources::SavedRegistry) -> Result<(), String>,
+    ) {
+        // Acquire the writer gate before taking the snapshot: a delayed writer
+        // must never overwrite a newer writer's successful persisted metadata.
+        let _writer = gate.lock().unwrap_or_else(|p| p.into_inner());
+        let (registry, store, retained, session, revision) = {
+            let state = state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.read_only || !state.pending_save { return; }
+            (state.registry.clone(), state.store.clone(), state.saved.clone(),
+                state.registry.session().to_owned(), state.registry.revision())
+        };
+        // Registry entries share immutable, already validated catalogue data.
+        // Cloning their persisted envelope and all I/O happens outside both
+        // inventory locks, including the potentially large catalogue encoding.
+        let result = registry.saved_fingerprint().and_then(|fingerprint| {
+            if fingerprint != retained {
+                if let Some(store) = &store { save(store, &registry.saved())?; }
             }
-            state.saved = saved;
-            state.pending_save = false;
-            state.diagnostics.clear();
+            Ok(fingerprint)
+        });
+        let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
+        match result {
+            Ok(fingerprint) => {
+                state.saved = fingerprint;
+                state.pending_save = state.registry.session() != session || state.registry.revision() != revision;
+                state.diagnostics.clear();
+            }
+            Err(error) => {
+                state.diagnostics = vec![format!("Cannot retain resource metadata: {error}")];
+                state.pending_save = true;
+            }
         }
     }
     pub(crate) fn request(&self, request: &Value) -> Result<Value, String> {
@@ -609,7 +657,7 @@ impl Runtime {
             serde_json::from_value::<Access>(request["access"].clone())
                 .map_err(|_| "Choose read, write or invoke access.".to_owned())
         };
-        let offset = page_number(request, "offset", 0, 40_000)?;
+        let offset = page_number(request, "offset", 0, 262_144)?;
         let limit = page_number(request, "limit", 32, 128)?;
         let mut result = match command {
             "profile_resources_list" => {
@@ -672,6 +720,7 @@ impl Runtime {
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
+        Self::persist(&self.state, &self.persistence_gate);
     }
 }
 impl Drop for Runtime {
@@ -715,7 +764,7 @@ pub(crate) fn attributes<const N: usize>(fields: [(&str, String); N]) -> BTreeMa
 
 #[path = "profile_resources_game.rs"]
 mod game_delivery;
-use game_delivery::{game_metadata_valid, validate_game_catalogues};
+use game_delivery::validate_admitted_game_catalogues;
 
 #[cfg(test)]
 #[path = "profile_resources_tests.rs"]

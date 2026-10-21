@@ -39,6 +39,62 @@ struct SourceState {
     epoch: u64,
     counter: Option<u16>,
     available: bool,
+    physics_witness: Option<PhysicsWitness>,
+    physics_epoch: Option<(Option<String>, u64)>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PhysicsWitness {
+    session: Option<String>,
+    epoch: u64,
+    sequence: Option<u32>,
+    fresh: bool,
+}
+struct PhysicsMerge {
+    witness: PhysicsWitness,
+    keys: BTreeSet<String>,
+    stale: BTreeSet<String>,
+}
+/// A complete ownship frame is independent of the BIOS counter. Missing or
+/// unqualified frames withdraw the family; a missing component of a qualified
+/// frame stays Unknown without discarding its valid neighbours.
+fn merge_dcs_physics(
+    snapshot: &mut ExportSnapshot,
+    outputs: &[Value],
+    physics: Option<&crate::dcs_physics::Snapshot>,
+) -> PhysicsMerge {
+    let fresh = snapshot.fresh
+        && physics.is_some_and(|value| value.fresh && value.aircraft == snapshot.aircraft);
+    let witness = PhysicsWitness {
+        session: physics.and_then(|value| value.session.clone()),
+        epoch: physics.map_or(0, |value| value.epoch),
+        sequence: physics.and_then(|value| value.sequence),
+        fresh,
+    };
+    let keys = outputs
+        .iter()
+        .filter_map(|row| row["id"].as_str().map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    for key in &keys {
+        snapshot.values.remove(key);
+    }
+    if fresh {
+        let values = crate::game_channels::values("dcs", &physics.unwrap().values);
+        for output in outputs {
+            if let (Some(id), Some(value)) = (
+                output["id"].as_str(),
+                output["channel"]
+                    .as_str()
+                    .and_then(|channel| values.get(channel)),
+            ) {
+                snapshot.values.insert(id.into(), value.clone());
+            }
+        }
+    }
+    PhysicsMerge {
+        witness,
+        stale: if fresh { BTreeSet::new() } else { keys.clone() },
+        keys,
+    }
 }
 struct CommandPort {
     descriptor: PortDescriptor,
@@ -55,10 +111,12 @@ enum Reader {
         transport: Option<crate::dcs_bios::Transport>,
         decoder: crate::dcs_profile::ExportSession,
         catalogue_guard: crate::dcs_profile::DcsCatalogueGuard,
+        physics_outputs: Vec<Value>,
     },
     Xplane {
         connection: Value,
         outputs: Vec<Value>,
+        canonical_outputs: Vec<Value>,
         source: Option<crate::xplane::Source>,
     },
     Acr {
@@ -85,6 +143,7 @@ pub(crate) struct GameSources {
     reader_session: String,
     acquired: bool,
     published: Option<(u64, bool, bool)>,
+    physics: Option<PhysicsMerge>,
 }
 #[derive(Default)]
 pub(crate) struct GamePoll {
@@ -105,8 +164,12 @@ fn game_route(route: Option<&Route>, game: &str) -> bool {
 }
 fn compatible_game_route(route: Option<&Route>, game: &PreparedGame) -> bool {
     game_route(route, &game.proof.game_id)
-        && (game.proof.game_id != "dcs" || route.and_then(|route| route.attributes.get("aircraftModule"))
-            .is_none_or(|module| module == "CommonData" || Some(module) == game.aircraft_module.as_ref()))
+        && (game.proof.game_id != "dcs"
+            || route
+                .and_then(|route| route.attributes.get("aircraftModule"))
+                .is_none_or(|module| {
+                    module == "CommonData" || Some(module) == game.aircraft_module.as_ref()
+                }))
 }
 fn scalar(value: &Value) -> Option<PortValue> {
     if let Some(value) = value.as_bool() {
@@ -128,21 +191,31 @@ fn semantic_contract(mut contract: PortContract) -> PortContract {
     contract
 }
 impl GameSources {
-    pub(crate) fn needs_context(&self) -> bool { self.game.is_none() || self.lost }
-    pub(crate) fn preparation_session(&self)->Option<&str>{self.game.as_ref().map(|game|game.proof.session.as_str())}
+    pub(crate) fn needs_context(&self) -> bool {
+        self.game.is_none() || self.lost
+    }
+    pub(crate) fn preparation_session(&self) -> Option<&str> {
+        self.game.as_ref().map(|game| game.proof.session.as_str())
+    }
     pub(crate) fn accepts_replacement(&self, game: &PreparedGame) -> bool {
-        self.game.as_ref().is_none_or(|old| old.proof.session != game.proof.session)
+        self.game
+            .as_ref()
+            .is_none_or(|old| old.proof.session != game.proof.session)
     }
     pub(crate) fn inherit_source_counters(&mut self, previous: &Self) {
         for (id, source) in &mut self.sources {
-            if let Some(old)=previous.sources.get(id) {
-                source.generation=old.generation.saturating_add(1);
-                source.sequence=old.sequence;
+            if let Some(old) = previous.sources.get(id) {
+                source.generation = old.generation.saturating_add(1);
+                source.sequence = old.sequence;
             }
         }
     }
-    pub(crate) fn can_command(&self) -> bool { !self.lost && self.fresh && self.context.is_some() }
-    pub(crate) fn has_delivery_publication(&self)->bool{self.revision>0}
+    pub(crate) fn can_command(&self) -> bool {
+        !self.lost && self.fresh && self.context.is_some()
+    }
+    pub(crate) fn has_delivery_publication(&self) -> bool {
+        self.revision > 0
+    }
     pub(crate) fn prepare(
         plan: &ExecutionPlan,
         game: Option<PreparedGame>,
@@ -165,6 +238,7 @@ impl GameSources {
             reader_session: uuid::Uuid::new_v4().to_string(),
             acquired: false,
             published: None,
+            physics: None,
         };
         let Some(game) = &result.game else {
             return Ok(result);
@@ -175,17 +249,38 @@ impl GameSources {
             .collect::<BTreeMap<_, _>>();
         let mut rows = vec![];
         let mut delivery_catalogues: BTreeMap<String, DeliveryCatalogue> = BTreeMap::new();
-        let mut capture_port = |route: Option<&Route>, native: &str, descriptor: &PortDescriptor| -> Result<(), String> {
-            let module = (game.proof.game_id == "dcs").then(|| route.and_then(|route| route.attributes.get("aircraftModule")).cloned()).flatten();
-            let key = module.as_ref().filter(|module| module.as_str() != "CommonData")
-                .map(|module| format!("dcs:{module}")).unwrap_or_else(|| game.proof.game_id.clone());
-            let revision = route.and_then(|route| route.attributes.get("catalogueRevision")).cloned()
+        let mut capture_port = |route: Option<&Route>,
+                                native: &str,
+                                descriptor: &PortDescriptor|
+         -> Result<(), String> {
+            let module = (game.proof.game_id == "dcs")
+                .then(|| {
+                    route
+                        .and_then(|route| route.attributes.get("aircraftModule"))
+                        .cloned()
+                })
+                .flatten();
+            let key = module
+                .as_ref()
+                .filter(|module| module.as_str() != "CommonData")
+                .map(|module| format!("dcs:{module}"))
+                .unwrap_or_else(|| game.proof.game_id.clone());
+            let revision = route
+                .and_then(|route| route.attributes.get("catalogueRevision"))
+                .cloned()
                 .unwrap_or_else(|| game.proof.catalogue_revision.clone());
-            let captured = delivery_catalogues.entry(key).or_insert_with(|| DeliveryCatalogue {
-                aircraft_module: module.clone(), revision: revision.clone(), ports: BTreeMap::new(),
-            });
+            let captured = delivery_catalogues
+                .entry(key)
+                .or_insert_with(|| DeliveryCatalogue {
+                    aircraft_module: module.clone(),
+                    revision: revision.clone(),
+                    ports: BTreeMap::new(),
+                });
             if captured.revision != revision || captured.aircraft_module != module {
-                return Err("The captured game resource combines different native aircraft catalogues.".into());
+                return Err(
+                    "The captured game resource combines different native aircraft catalogues."
+                        .into(),
+                );
             }
             captured.ports.insert(native.into(), descriptor.clone());
             Ok(())
@@ -208,14 +303,24 @@ impl GameSources {
             }
             let key = native_key(&source.endpoint.node_id, &source.endpoint.port_id);
             if game.proof.game_id == "dcs" {
-                let (channel, index) = native
+                let channel = native
                     .strip_prefix("channel:")
-                    .and_then(|value| value.rsplit_once(':'))
                     .ok_or("Invalid captured DCS channel.")?;
-                let index = index
-                    .parse::<usize>()
-                    .map_err(|_| "Invalid captured DCS output index.")?;
-                rows.push(json!({"id":key,"channel":channel,"output":index}));
+                if game.catalogue["channels"]
+                    .as_array()
+                    .is_some_and(|channels| channels.iter().any(|row| row["id"] == channel))
+                {
+                    rows.push(json!({"id":key,"channel":channel,"physics":true}));
+                } else {
+                    let (channel, index) = native
+                        .strip_prefix("channel:")
+                        .and_then(|value| value.rsplit_once(':'))
+                        .ok_or("Invalid captured DCS channel.")?;
+                    let index = index
+                        .parse::<usize>()
+                        .map_err(|_| "Invalid captured DCS output index.")?;
+                    rows.push(json!({"id":key,"channel":channel,"output":index}));
+                }
             } else {
                 let channel = native
                     .strip_prefix("channel:")
@@ -287,7 +392,11 @@ impl GameSources {
                     crate::dcs_profile::guarded_telemetry_sources(
                         path,
                         module,
-                        &rows,
+                        &rows
+                            .iter()
+                            .filter(|row| row["physics"] != true)
+                            .cloned()
+                            .collect::<Vec<_>>(),
                         game.catalogue["sourceRevision"]
                             .as_str()
                             .ok_or("The DCS source catalogue has no captured native revision.")?,
@@ -303,6 +412,10 @@ impl GameSources {
                     transport: None,
                     decoder,
                     catalogue_guard,
+                    physics_outputs: rows
+                        .into_iter()
+                        .filter(|row| row["physics"] == true)
+                        .collect(),
                 }
             }
             "x-plane-11" | "x-plane-12" => {
@@ -310,18 +423,25 @@ impl GameSources {
                 connection["processIdentity"] = game.proof.process.value();
                 Reader::Xplane {
                     connection,
-                    outputs: rows,
+                    outputs: crate::game_channels::source_rows(&game.proof.game_id, &rows),
+                    canonical_outputs: rows,
                     source: None,
                 }
             }
-            "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo" | "assetto-corsa-rally" => {
+            "assetto-corsa"
+            | "assetto-corsa-competizione"
+            | "assetto-corsa-evo"
+            | "assetto-corsa-rally" => {
                 let freshness = game.connection["freshnessMs"]
                     .as_u64()
                     .ok_or("Missing telemetry freshness policy.")?;
                 Reader::Acr {
                     outputs: rows,
                     source: None,
-                    decoder: crate::game_telemetry::Session::new_for_game(freshness, crate::game_telemetry::Game::from_id(&game.proof.game_id)?)?,
+                    decoder: crate::game_telemetry::Session::new_for_game(
+                        freshness,
+                        crate::game_telemetry::Game::from_id(&game.proof.game_id)?,
+                    )?,
                 }
             }
             _ => return Err("Unsupported native game provider.".into()),
@@ -329,14 +449,21 @@ impl GameSources {
         Ok(result)
     }
     pub(crate) fn acquire(&mut self, games: &GamesRuntime) -> Result<(), String> {
-        let game = self.game.as_ref().and_then(|game| crate::game_telemetry::Game::from_id(&game.proof.game_id).ok())
+        let game = self
+            .game
+            .as_ref()
+            .and_then(|game| crate::game_telemetry::Game::from_id(&game.proof.game_id).ok())
             .unwrap_or(crate::game_telemetry::Game::Rally);
-        self.acquire_with_acr(games, |pid,image|crate::acr_windows::WindowsSource::new_for_game(pid,image,game)
-            .map(|source|Box::new(source) as Box<dyn crate::game_telemetry::Source>))
+        self.acquire_with_acr(games, |pid, image| {
+            crate::acr_windows::WindowsSource::new_for_game(pid, image, game)
+                .map(|source| Box::new(source) as Box<dyn crate::game_telemetry::Source>)
+        })
     }
-    fn acquire_with_acr(&mut self, games:&GamesRuntime,
-        mut open_acr:impl FnMut(u32,&str)->Result<Box<dyn crate::game_telemetry::Source>,String>,
-    )->Result<(),String>{
+    fn acquire_with_acr(
+        &mut self,
+        games: &GamesRuntime,
+        mut open_acr: impl FnMut(u32, &str) -> Result<Box<dyn crate::game_telemetry::Source>, String>,
+    ) -> Result<(), String> {
         self.validate_catalogue(true)?;
         let Some(game) = &self.game else {
             return Ok(());
@@ -360,11 +487,12 @@ impl GameSources {
                 connection,
                 outputs,
                 source,
+                ..
             }) => *source = Some(crate::xplane::Source::new(connection, outputs.clone())?),
             Some(Reader::Acr { source, .. }) => {
-                let path=&game.proof.process.path;
-                let image=path.rsplit(['\\','/']).next().unwrap_or(path);
-                *source=Some(open_acr(game.proof.process.pid,image)?);
+                let path = &game.proof.process.path;
+                let image = path.rsplit(['\\', '/']).next().unwrap_or(path);
+                *source = Some(open_acr(game.proof.process.pid, image)?);
             }
             None => {}
         }
@@ -430,14 +558,36 @@ impl GameSources {
         let now_us = clock();
         let snapshot = self.read(now_us, baseline);
         match snapshot {
-            Ok(Some(snapshot)) => self.frames(snapshot, now_us),
+            Ok(Some(mut snapshot)) => {
+                if let (
+                    Some(game),
+                    Some(Reader::Dcs {
+                        physics_outputs, ..
+                    }),
+                ) = (&self.game, &self.reader)
+                {
+                    if !physics_outputs.is_empty() {
+                        let physics = games.dcs_physics_snapshot(&game.proof.process);
+                        self.physics = Some(merge_dcs_physics(
+                            &mut snapshot,
+                            physics_outputs,
+                            physics.as_ref(),
+                        ));
+                    }
+                }
+                self.frames(snapshot, now_us)
+            }
             Ok(None) => GamePoll::default(),
             Err(error) => self.lose(now_us, error),
         }
     }
     /// Drain native acquisition into one current baseline immediately before
     /// arming. Pre-Start transitions never acquire event/one-shot authority.
-    pub(crate) fn baseline(&mut self, games: &GamesRuntime, clock: impl FnOnce() -> u64) -> GamePoll {
+    pub(crate) fn baseline(
+        &mut self,
+        games: &GamesRuntime,
+        clock: impl FnOnce() -> u64,
+    ) -> GamePoll {
         if let Err(error) = self.validate_catalogue(true) {
             return self.lose(clock(), error);
         }
@@ -448,7 +598,11 @@ impl GameSources {
     }
     /// One bounded pre-arm read. The host owns waiting, cancellation and output
     /// heartbeats, including after discarding a queued pre-activation backlog.
-    pub(crate) fn poll_baseline(&mut self, games: &GamesRuntime, clock: impl FnOnce() -> u64) -> GamePoll {
+    pub(crate) fn poll_baseline(
+        &mut self,
+        games: &GamesRuntime,
+        clock: impl FnOnce() -> u64,
+    ) -> GamePoll {
         self.poll_with_policy(games, clock, true)
     }
     pub(crate) fn requires_baseline(&self) -> bool {
@@ -497,8 +651,19 @@ impl GameSources {
             }
             Some(Reader::Xplane {
                 source: Some(source),
+                canonical_outputs,
                 ..
-            }) => Ok(Some(source.poll(Instant::now()).0)),
+            }) => {
+                let mut snapshot = source.poll(Instant::now()).0;
+                if let Some(game) = &self.game {
+                    crate::game_channels::project_rows(
+                        &game.proof.game_id,
+                        canonical_outputs,
+                        &mut snapshot.values,
+                    );
+                }
+                Ok(Some(snapshot))
+            }
             Some(Reader::Acr {
                 source: Some(source),
                 decoder,
@@ -560,10 +725,29 @@ impl GameSources {
             ..Default::default()
         };
         for (resource, state) in &mut self.sources {
-            let baseline = snapshot.fresh && (!state.available || state.epoch != snapshot.epoch);
+            let physics = self.physics.as_ref().filter(|physics| {
+                state
+                    .ports
+                    .iter()
+                    .any(|port| physics.keys.contains(&port.native))
+            });
+            let physics_update = physics
+                .is_some_and(|physics| state.physics_witness.as_ref() != Some(&physics.witness));
+            let physics_baseline = physics.is_some_and(|physics| {
+                physics.witness.fresh
+                    && (state
+                        .physics_witness
+                        .as_ref()
+                        .is_none_or(|previous| !previous.fresh)
+                        || state.physics_epoch.as_ref()
+                            != Some(&(physics.witness.session.clone(), physics.witness.epoch)))
+            });
+            let baseline = snapshot.fresh
+                && (!state.available || state.epoch != snapshot.epoch || physics_baseline);
             let update = baseline
                 || state.available != snapshot.fresh
-                || snapshot.fresh && state.counter != snapshot.counter;
+                || snapshot.fresh && state.counter != snapshot.counter
+                || physics_update;
             if !update {
                 continue;
             }
@@ -574,7 +758,14 @@ impl GameSources {
             state.sequence = state.sequence.saturating_add(1);
             state.available = snapshot.fresh;
             state.counter = snapshot.counter;
-            let changes=state.ports.iter().map(|port|Change {port_id:port.logical.clone(),sample:if !snapshot.fresh {SignalSample::Stale} else {snapshot.values.get(&port.native).and_then(scalar).map(SignalSample::scalar).filter(|sample|matches!(sample,SignalSample::Known(value)if osg_mapping::engine::typed::accepts(&port.contract,value))).unwrap_or(SignalSample::Unknown)}}).collect();
+            if let Some(physics) = physics {
+                state.physics_witness = Some(physics.witness.clone());
+                if physics.witness.fresh {
+                    state.physics_epoch =
+                        Some((physics.witness.session.clone(), physics.witness.epoch));
+                }
+            }
+            let changes=state.ports.iter().map(|port|Change {port_id:port.logical.clone(),sample:if !snapshot.fresh||physics.is_some_and(|physics|physics.stale.contains(&port.native)) {SignalSample::Stale} else {snapshot.values.get(&port.native).and_then(scalar).map(SignalSample::scalar).filter(|sample|matches!(sample,SignalSample::Known(value)if osg_mapping::engine::typed::accepts(&port.contract,value))).unwrap_or(SignalSample::Unknown)}}).collect();
             result.frames.push(Frame {
                 source: resource.clone(),
                 generation: Counter(state.generation),
@@ -641,37 +832,44 @@ impl GameSources {
             ("gamePreparationSession".into(), game.proof.session.clone()),
             ("gameReaderSession".into(), self.reader_session.clone()),
         ]);
-        let observations = self.delivery_catalogues.iter().map(|(key, catalogue)| {
-            let mut attributes = attributes.clone();
-            attributes.insert("catalogueRevision".into(), catalogue.revision.clone());
-            if let Some(module) = &catalogue.aircraft_module {
-                attributes.insert("aircraftModule".into(), module.clone());
-            }
-            if let Some(vehicle) = &game.proof.vehicle_id {
-                attributes.insert("vehicleId".into(), vehicle.clone());
-            }
-            Some(Observation {
-                key: key.clone(),
-                name: id.clone(),
-                resource_type: ResourceType::GameIntegration,
-                evidence: vec![IdentityEvidence {
-                    kind: EvidenceKind::GameScope,
-                    value: key.clone(),
-                }],
-                attributes: attributes.clone(),
-                diagnostics: vec![],
-                route: Some(Route {
-                    id: format!("profile-game:{key}"),
-                    transport: Transport::Integration,
-                    provider_generation: format!("{}:{}", self.reader_session, self.epoch),
-                    attributes,
-                    baseline_ready: self.fresh,
-                    writable: writable && catalogue.aircraft_module.as_deref() != Some("CommonData"),
-                    priority: 100,
-                }),
-                ports: Some(PortUpdate::complete(catalogue.ports.values().cloned().collect()).ok()?),
+        let observations = self
+            .delivery_catalogues
+            .iter()
+            .map(|(key, catalogue)| {
+                let mut attributes = attributes.clone();
+                attributes.insert("catalogueRevision".into(), catalogue.revision.clone());
+                if let Some(module) = &catalogue.aircraft_module {
+                    attributes.insert("aircraftModule".into(), module.clone());
+                }
+                if let Some(vehicle) = &game.proof.vehicle_id {
+                    attributes.insert("vehicleId".into(), vehicle.clone());
+                }
+                Some(Observation {
+                    key: key.clone(),
+                    name: id.clone(),
+                    resource_type: ResourceType::GameIntegration,
+                    evidence: vec![IdentityEvidence {
+                        kind: EvidenceKind::GameScope,
+                        value: key.clone(),
+                    }],
+                    attributes: attributes.clone(),
+                    diagnostics: vec![],
+                    route: Some(Route {
+                        id: format!("profile-game:{key}"),
+                        transport: Transport::Integration,
+                        provider_generation: format!("{}:{}", self.reader_session, self.epoch),
+                        attributes,
+                        baseline_ready: self.fresh,
+                        writable: writable
+                            && catalogue.aircraft_module.as_deref() != Some("CommonData"),
+                        priority: 100,
+                    }),
+                    ports: Some(
+                        PortUpdate::complete(catalogue.ports.values().cloned().collect()).ok()?,
+                    ),
+                })
             })
-        }).collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>()?;
         let batch = ProviderBatch {
             scope: format!("profile-game:{id}"),
             session: self.reader_session.clone(),

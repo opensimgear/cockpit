@@ -45,7 +45,7 @@ fn corrupt_unknown_runtime_and_oversize_envelopes_are_not_loaded() {
         .unwrap()
         .set_len(MAX_INVENTORY_BYTES as u64 + 1)
         .unwrap();
-    assert!(store.load().unwrap_err().contains("32 MiB"));
+    assert!(store.load().unwrap_err().contains("128 MiB"));
     assert!(store
         .save(&SavedRegistry {
             schema_version: 2,

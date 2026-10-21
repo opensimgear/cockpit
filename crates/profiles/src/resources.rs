@@ -8,12 +8,13 @@ use crate::store::LocalAssignment;
 use crate::{PortValue, Resource};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 #[path = "resources_companion.rs"]
 mod companion;
 
 pub const MAX_RESOURCES: usize = 2048;
-pub const MAX_CACHED_PORTS: usize = 40_000;
+pub const MAX_CACHED_PORTS: usize = 262_144;
 pub const MAX_OBSERVATIONS: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,6 +347,84 @@ struct Entry {
     saved: SavedResource,
     live: BTreeMap<(String, String), Live>,
     generation: u64,
+    // A registry transaction shares this immutable projection with its clone.
+    // Only changed entries discard it; reading a page never walks or hashes an
+    // entire simulator catalogue again.
+    observed: OnceLock<Result<Arc<Vec<ObservedPort>>, String>>,
+    validated_saved: OnceLock<Result<Arc<ValidatedSaved>, String>>,
+    sighting_validation: BTreeMap<(String, String), Arc<OnceLock<Result<Arc<ValidatedSighting>, String>>>>,
+}
+#[derive(Debug)]
+struct ValidatedSighting {
+    hash: String,
+    serialized_bytes: usize,
+    contract_hashes: Vec<String>,
+}
+#[derive(Debug)]
+struct ValidatedSaved {
+    hash: String,
+    serialized_bytes: usize,
+    port_count: usize,
+}
+impl Entry {
+    fn new(saved: SavedResource) -> Self {
+        let sighting_validation = saved.sightings.iter().map(|sighting|
+            ((sighting.scope.clone(),sighting.key.clone()),Arc::new(OnceLock::new()))).collect();
+        Self {saved,live:BTreeMap::new(),generation:0,observed:OnceLock::new(),validated_saved:OnceLock::new(),sighting_validation}
+    }
+    fn invalidate_observed(&mut self) {
+        self.observed.take();
+    }
+    fn invalidate_saved(&mut self) {
+        self.invalidate_observed();
+        self.validated_saved.take();
+    }
+    fn validated_saved(&self) -> Result<Arc<ValidatedSaved>, String> {
+        self.validated_saved.get_or_init(|| {
+            canonical_uuid(&self.saved.id)?;
+            text(&self.saved.name,320)?;
+            if self.saved.sightings.is_empty() || self.saved.sightings.len()>64 {
+                return Err("Invalid resource identity or sighting count.".into());
+            }
+            let mut physical=BTreeSet::new();
+            let mut sightings=Vec::new();
+            let mut port_count=0usize;
+            let mut serialized_bytes=0usize;
+            for sighting in &self.saved.sightings {
+                let validated=self.validated_sighting(sighting)?;
+                physical.extend(verified(&sighting.evidence));
+                sightings.push(validated.hash.clone());
+                port_count=port_count.saturating_add(validated.contract_hashes.len());
+                serialized_bytes=serialized_bytes.saturating_add(validated.serialized_bytes);
+            }
+            if physical.len()>1 {return Err("Conflicting verified physical identity evidence.".into());}
+            // An empty sightings array contributes its brackets already. Add the
+            // exact cached element bytes and the separating commas only.
+            let mut limit = InventoryLimit { written: 0 };
+            serde_json::to_writer(&mut limit, &SavedResource {id:self.saved.id.clone(),name:self.saved.name.clone(),resource_type:self.saved.resource_type,sightings:vec![]})
+                .map_err(|_| "Resource inventory exceeds its 128 MiB serialized envelope.".to_owned())?;
+            serialized_bytes=serialized_bytes.saturating_add(limit.written).saturating_add(self.saved.sightings.len().saturating_sub(1));
+            Ok(Arc::new(ValidatedSaved {
+                hash: digest(&(&self.saved.id,&self.saved.name,self.saved.resource_type,sightings))?,
+                serialized_bytes,
+                port_count,
+            }))
+        }).clone()
+    }
+    fn validated_sighting(&self, sighting: &SavedSighting) -> Result<Arc<ValidatedSighting>,String> {
+        // Kind/evidence compatibility is cheap and must follow a promotion or
+        // identity merge even when this exact sighting did not change.
+        validate_sighting_metadata(sighting,self.saved.resource_type)?;
+        let cache=self.sighting_validation.get(&(sighting.scope.clone(),sighting.key.clone()))
+            .ok_or("Missing immutable resource sighting validation.")?;
+        cache.get_or_init(|| {
+            validate_sighting(sighting,self.saved.resource_type)?;
+            let mut limit=InventoryLimit {written:0};
+            serde_json::to_writer(&mut limit,sighting).map_err(|_|"Resource inventory exceeds its 128 MiB serialized envelope.".to_owned())?;
+            let contract_hashes=sighting.catalogue.as_ref().map(|catalogue|catalogue.ports.iter().map(PortDescriptor::contract_hash).collect::<Result<Vec<_>,_>>()).transpose()?.unwrap_or_default();
+            Ok(Arc::new(ValidatedSighting {hash:digest(sighting)?,serialized_bytes:limit.written,contract_hashes}))
+        }).clone()
+    }
 }
 #[derive(Clone, Debug)]
 struct Scope {
@@ -357,7 +436,7 @@ struct Scope {
 pub struct Registry {
     session: String,
     revision: u64,
-    entries: BTreeMap<String, Entry>,
+    entries: BTreeMap<String, Arc<Entry>>,
     redirects: BTreeMap<String, String>,
     scopes: BTreeMap<String, Scope>,
     failures: BTreeMap<String, String>,
@@ -412,11 +491,7 @@ impl Registry {
             .map(|saved| {
                 (
                     saved.id.clone(),
-                    Entry {
-                        saved,
-                        live: BTreeMap::new(),
-                        generation: 0,
-                    },
+                    Arc::new(Entry::new(saved)),
                 )
             })
             .collect();
@@ -428,6 +503,60 @@ impl Registry {
             resources: self.entries.values().map(|e| e.saved.clone()).collect(),
             redirects: self.redirects.clone(),
         }
+    }
+    /// Cached persisted metadata identity, independent of live routes and tokens.
+    pub fn saved_fingerprint(&self) -> Result<String, String> {
+        self.saved_signature()
+    }
+    fn saved_signature(&self) -> Result<String, String> {
+        let resources = self.entries.iter().map(|(id, entry)|
+            Ok((id.as_str(), entry.validated_saved()?.hash.clone())))
+            .collect::<Result<Vec<_>, String>>()?;
+        digest(&(resources, &self.redirects))
+    }
+    /// Entries are immutable behind Arc until a transaction changes them. Their
+    /// complete persisted bytes and catalogue contracts were already validated;
+    /// only the small cross-entry identity/envelope checks run again here.
+    fn validate_saved(&self) -> Result<(), String> {
+        if self.entries.len() > MAX_RESOURCES || self.redirects.len() > MAX_RESOURCES {
+            return Err("Unsupported or oversized resource inventory envelope.".into());
+        }
+        let mut aliases = BTreeSet::new();
+        let mut proofs = BTreeMap::new();
+        let mut count = 0usize;
+        let mut bytes = serde_json::to_vec(&SavedRegistry {
+            schema_version: 1, resources: vec![], redirects: self.redirects.clone(),
+        }).map_err(|error| error.to_string())?.len();
+        bytes = bytes.saturating_add(self.entries.len().saturating_sub(1));
+        for (id, entry) in &self.entries {
+            let validated = entry.validated_saved()?;
+            if id != &entry.saved.id { return Err("Invalid resource identity or sighting count.".into()); }
+            count = count.saturating_add(validated.port_count);
+            bytes = bytes.saturating_add(validated.serialized_bytes);
+            let mut physical = BTreeSet::new();
+            for sighting in &entry.saved.sightings {
+                if !aliases.insert((&sighting.scope, &sighting.key)) {
+                    return Err("A provider identity aliases several persistent resources.".into());
+                }
+                physical.extend(verified(&sighting.evidence));
+            }
+            for proof in physical {
+                if proofs.insert(proof, id).is_some() {
+                    return Err("Verified physical identity is duplicated instead of correlated.".into());
+                }
+            }
+        }
+        if count > MAX_CACHED_PORTS { return Err("Resource inventory exceeds 262144 cached ports.".into()); }
+        if bytes > crate::resources_store::MAX_INVENTORY_BYTES {
+            return Err("Resource inventory exceeds its 128 MiB serialized envelope.".into());
+        }
+        for (alias, target) in &self.redirects {
+            canonical_uuid(alias)?;
+            if self.entries.contains_key(alias) || !self.entries.contains_key(target) {
+                return Err("Invalid resource redirect; cycles and dangling aliases are rejected.".into());
+            }
+        }
+        Ok(())
     }
     pub fn reconcile(&mut self, batch: ProviderBatch) -> Result<ReconcileReport, String> {
         batch.validate()?;
@@ -445,7 +574,7 @@ impl Registry {
             .iter()
             .map(|(id, e)| Ok((id.clone(), fingerprint(e)?)))
             .collect::<Result<BTreeMap<_, _>, String>>()?;
-        let before_saved = digest(&self.saved())?;
+        let before_saved = self.saved_signature()?;
         let prior_live = self
             .entries
             .values()
@@ -470,13 +599,18 @@ impl Registry {
         }
         if batch.complete || session_changed {
             for entry in next.entries.values_mut() {
+                if !entry.live.keys().any(|(scope,_)| scope == &batch.scope) { continue; }
+                let entry = Arc::make_mut(entry);
+                let before = entry.live.len();
                 entry.live.retain(|(scope, _), _| scope != &batch.scope);
+                if before != entry.live.len() { entry.invalidate_observed(); }
             }
         }
         next.failures.remove(&batch.scope);
         for observation in &batch.observations {
             let id = next.locate(&batch.scope, observation)?;
-            let entry = next.entries.get_mut(&id).unwrap();
+            let entry = Arc::make_mut(next.entries.get_mut(&id).unwrap());
+            entry.invalidate_saved();
             entry.saved.name = observation.name.clone();
             if observation.resource_type == ResourceType::OsgModule {
                 entry.saved.resource_type = ResourceType::OsgModule;
@@ -502,6 +636,7 @@ impl Registry {
                 diagnostics: observation.diagnostics.clone(),
                 catalogue,
             };
+            entry.sighting_validation.insert((batch.scope.clone(),observation.key.clone()),Arc::new(OnceLock::new()));
             if let Some(index) = index {
                 entry.saved.sightings[index] = sighting;
             } else {
@@ -547,7 +682,12 @@ impl Registry {
                     ResourceType::GameIntegration => false,
                 };
                 if authoritative {
-                    entry.saved.sightings.retain(|sighting| sighting.scope != batch.scope || keys.contains(sighting.key.as_str()));
+                    if entry.saved.sightings.iter().any(|sighting| sighting.scope == batch.scope && !keys.contains(sighting.key.as_str())) {
+                        let entry = Arc::make_mut(entry);
+                        entry.invalidate_saved();
+                        entry.saved.sightings.retain(|sighting| sighting.scope != batch.scope || keys.contains(sighting.key.as_str()));
+                        entry.sighting_validation.retain(|(scope,key),_|scope!=&batch.scope || keys.contains(key.as_str()));
+                    }
                 }
                 let retained = !entry.saved.sightings.is_empty();
                 if !retained { changed.push(id.clone()); }
@@ -563,9 +703,10 @@ impl Registry {
                 retired,
             },
         );
-        next.saved().validate()?;
+        next.validate_saved()?;
         for (id, entry) in &mut next.entries {
             if before.get(id) != Some(&fingerprint(entry)?) {
+                let entry = Arc::make_mut(entry);
                 entry.generation = entry
                     .generation
                     .checked_add(1)
@@ -574,7 +715,7 @@ impl Registry {
             }
         }
         if !changed.is_empty()
-            || before_saved != digest(&next.saved())?
+            || before_saved != next.saved_signature()?
             || self.failures != next.failures
         {
             next.revision = next
@@ -601,9 +742,12 @@ impl Registry {
         self.failures.insert(scope.to_owned(), message);
         let mut changed = false;
         for entry in self.entries.values_mut() {
+            if !entry.live.keys().any(|(s,_)| s == scope) { continue; }
+            let entry = Arc::make_mut(entry);
             let before = entry.live.len();
             entry.live.retain(|(s, _), _| s != scope);
             if before != entry.live.len() {
+                entry.invalidate_observed();
                 entry.generation = entry.generation.saturating_add(1);
                 changed = true;
             }
@@ -652,7 +796,7 @@ impl Registry {
             evidence,
             total: ports.len(),
             offset,
-            ports: ports.into_iter().skip(offset).take(limit).collect(),
+            ports: ports.iter().skip(offset).take(limit).cloned().collect(),
         })
     }
     /// Native capture projection. Enumerate/hash the catalogue once rather than
@@ -667,29 +811,21 @@ impl Registry {
         }
         let entry = self.entry(id)?;
         let ports = observed_ports(entry)?;
-        let mut by_id = BTreeMap::<&str, Vec<&ObservedPort>>::new();
-        for port in &ports {
-            by_id.entry(&port.descriptor.id).or_default().push(port);
-        }
         let mut selected = BTreeMap::new();
         for expected in expectations {
-            let Some(variants) = by_id.get(expected.observed_port_id.as_str()) else {
-                continue;
-            };
+            let variants = port_variants(&ports, &expected.observed_port_id);
             // Prefer the current exact variant, then a changed current variant
             // so the compiler reports a changed contract rather than silence.
             let port = variants
                 .iter()
-                .copied()
                 .find(|port| port.current && port.contract_hash == expected.expected_contract_hash)
-                .or_else(|| variants.iter().copied().find(|port| port.current))
+                .or_else(|| variants.iter().find(|port| port.current))
                 .or_else(|| {
                     variants
                         .iter()
-                        .copied()
                         .find(|port| port.contract_hash == expected.expected_contract_hash)
                 })
-                .or_else(|| variants.first().copied());
+                .or_else(|| variants.first());
             if let Some(port) = port {
                 selected.insert(
                     (port.descriptor.id.clone(), port.contract_hash.clone()),
@@ -957,10 +1093,8 @@ impl Registry {
                         );
                         continue;
                     }
-                    let port = ports.iter().find(|p| {
-                        p.descriptor.id == expected.observed_port_id
-                            && p.contract_hash == expected.expected_contract_hash
-                    });
+                    let port = port_variants(&ports, &expected.observed_port_id).iter()
+                        .find(|p| p.contract_hash == expected.expected_contract_hash);
                     match port {
                         None=>issue("portContractChanged",Some(&expected.profile_port_id),"The assigned port is missing or its advertised contract changed; reconcile this binding."),
                         Some(port) if !crate::resources_ports::graph_compatible(&port.descriptor, logical_port.unwrap())=>issue("unrepresentablePortContract",Some(&expected.profile_port_id),"The portable port cannot represent this exact contract; structured actions and constrained text require an explicit later schema/processor."),
@@ -1000,6 +1134,7 @@ impl Registry {
         let canonical = self.redirects.get(id).map(String::as_str).unwrap_or(id);
         self.entries
             .get(canonical)
+            .map(Arc::as_ref)
             .ok_or_else(|| "Unknown persistent resource identity.".into())
     }
     fn locate(&mut self, scope: &str, observation: &Observation) -> Result<String, String> {
@@ -1058,22 +1193,20 @@ impl Registry {
             let id = uuid::Uuid::new_v4().to_string();
             self.entries.insert(
                 id.clone(),
-                Entry {
-                    saved: SavedResource {
+                Arc::new(Entry::new(SavedResource {
                         id: id.clone(),
                         name: observation.name.clone(),
                         resource_type: observation.resource_type,
                         sightings: vec![],
-                    },
-                    live: BTreeMap::new(),
-                    generation: 0,
-                },
+                    })),
             );
             id
         };
         for other in candidates.iter().filter(|other| *other != &id) {
             let removed = self.entries.remove(other).unwrap();
-            let entry = self.entries.get_mut(&id).unwrap();
+            let removed = Arc::try_unwrap(removed).unwrap_or_else(|entry| (*entry).clone());
+            let entry = Arc::make_mut(self.entries.get_mut(&id).unwrap());
+            entry.invalidate_saved();
             if !compatible_kind(entry.saved.resource_type, removed.saved.resource_type) {
                 return Err("Verified identity proof conflicts with resource kinds.".into());
             }
@@ -1081,6 +1214,7 @@ impl Registry {
                 entry.saved.resource_type = ResourceType::OsgModule;
             }
             entry.saved.sightings.extend(removed.saved.sightings);
+            entry.sighting_validation.extend(removed.sighting_validation);
             entry.live.extend(removed.live);
             entry.generation = entry.generation.max(removed.generation);
             for target in self.redirects.values_mut() {
@@ -1318,7 +1452,7 @@ impl SavedRegistry {
         // buffer. Structural limits alone permit large enum/action catalogues.
         let mut limit = InventoryLimit { written: 0 };
         serde_json::to_writer(&mut limit, self)
-            .map_err(|_| "Resource inventory exceeds its 32 MiB serialized envelope.".to_owned())?;
+            .map_err(|_| "Resource inventory exceeds its 128 MiB serialized envelope.".to_owned())?;
         if self.schema_version != 1
             || self.resources.len() > MAX_RESOURCES
             || self.redirects.len() > MAX_RESOURCES
@@ -1361,7 +1495,7 @@ impl SavedRegistry {
             }
         }
         if count > MAX_CACHED_PORTS {
-            return Err("Resource inventory exceeds 40000 cached ports.".into());
+            return Err("Resource inventory exceeds 262144 cached ports.".into());
         }
         for (alias, target) in &self.redirects {
             canonical_uuid(alias)?;
@@ -1407,6 +1541,21 @@ fn metadata(values: &BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 fn validate_sighting(sighting: &SavedSighting, kind: ResourceType) -> Result<(), String> {
+    validate_sighting_metadata(sighting,kind)?;
+    if let Some(catalogue) = &sighting.catalogue {
+        text(&catalogue.revision, 128)?;
+        validate_ports(&catalogue.ports)?;
+        if catalogue.total as usize > MAX_CATALOGUE_PORTS
+            || catalogue.ports.len() > catalogue.total as usize
+            || (catalogue.complete && catalogue.ports.len() != catalogue.total as usize)
+            || catalogue.hash != crate::resources_ports::catalogue_hash(&catalogue.ports)?
+        {
+            return Err("Corrupt resource port catalogue or fingerprint.".into());
+        }
+    }
+    Ok(())
+}
+fn validate_sighting_metadata(sighting: &SavedSighting, kind: ResourceType) -> Result<(), String> {
     text(&sighting.scope, 256)?;
     text(&sighting.key, 512)?;
     metadata(&sighting.attributes)?;
@@ -1433,17 +1582,6 @@ fn validate_sighting(sighting: &SavedSighting, kind: ResourceType) -> Result<(),
     }
     for message in &sighting.diagnostics {
         text(message, 2048)?;
-    }
-    if let Some(catalogue) = &sighting.catalogue {
-        text(&catalogue.revision, 128)?;
-        validate_ports(&catalogue.ports)?;
-        if catalogue.total as usize > MAX_CATALOGUE_PORTS
-            || catalogue.ports.len() > catalogue.total as usize
-            || (catalogue.complete && catalogue.ports.len() != catalogue.total as usize)
-            || catalogue.hash != crate::resources_ports::catalogue_hash(&catalogue.ports)?
-        {
-            return Err("Corrupt resource port catalogue or fingerprint.".into());
-        }
     }
     Ok(())
 }
@@ -1526,12 +1664,24 @@ fn fingerprint(entry: &Entry) -> Result<String, String> {
         .collect::<Vec<_>>();
     digest(&(routes, capability_revision(entry)?))
 }
-fn observed_ports(entry: &Entry) -> Result<Vec<ObservedPort>, String> {
+fn observed_ports(entry: &Entry) -> Result<Arc<Vec<ObservedPort>>, String> {
+    entry.observed.get_or_init(|| derive_observed_ports(entry).map(Arc::new)).clone()
+}
+// Variants are ordered by (native port identity, exact contract hash), so
+// selected capture/assignment lookup is logarithmic without rebuilding an
+// index or cloning unrelated descriptors on each request.
+fn port_variants<'a>(ports: &'a [ObservedPort], id: &str) -> &'a [ObservedPort] {
+    let start = ports.partition_point(|port| port.descriptor.id.as_str() < id);
+    let end = ports[start..].partition_point(|port| port.descriptor.id == id) + start;
+    &ports[start..end]
+}
+fn derive_observed_ports(entry: &Entry) -> Result<Vec<ObservedPort>, String> {
     let mut ports: BTreeMap<(String, String), ObservedPort> = BTreeMap::new();
     for sighting in &entry.saved.sightings {
         if let Some(catalogue) = &sighting.catalogue {
-            for descriptor in &catalogue.ports {
-                let hash = descriptor.contract_hash()?;
+            let validated=entry.validated_sighting(sighting)?;
+            for (descriptor,hash) in catalogue.ports.iter().zip(&validated.contract_hashes) {
+                let hash=hash.clone();
                 let port = ports
                     .entry((descriptor.id.clone(), hash.clone()))
                     .or_insert_with(|| ObservedPort {
@@ -1617,3 +1767,114 @@ mod tests;
 #[cfg(test)]
 #[path = "resources_preparation_tests.rs"]
 mod preparation_tests;
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use crate::resources_ports::{ScalarSchema, PortContract};
+
+    #[test]
+    fn small_delivery_reuses_large_sighting_validation_and_preserves_exact_metadata_fences() {
+        let mut registry = Registry::new();
+        let mut metadata = batch("game:x-plane-12",1,63_607);
+        metadata.observations[0].evidence[0].value="x-plane-12".into();
+        let start=std::time::Instant::now();
+        registry.reconcile(metadata).unwrap();
+        println!("Large initial reconcile {:?}",start.elapsed());
+        let id=registry.list(0,1).unwrap().resources[0].id.clone();
+        registry.saved_fingerprint().unwrap();
+        let key=("game:x-plane-12".into(),"game:x-plane-12".into());
+        let cached=registry.entries[&id].sighting_validation[&key].clone();
+        let hash=registry.entries[&id].saved.sightings[0].catalogue.as_ref().unwrap().ports[0].contract_hash().unwrap();
+        let preparation=registry.prepare_game_metadata_port(&id,"channel:00000",&hash,Access::Read,"x-plane-12").unwrap();
+        let mut delivery=batch("profile-game:x-plane-12",1,15);
+        delivery.observations[0].evidence[0].value="x-plane-12".into();
+        let start=std::time::Instant::now();
+        registry.reconcile(delivery.clone()).unwrap();
+        println!("Small selected delivery reconcile {:?}",start.elapsed());
+        assert!(Arc::ptr_eq(&cached,&registry.entries[&id].sighting_validation[&key]));
+        assert_eq!(registry.validate_preparation(&preparation).unwrap().scope,"game:x-plane-12");
+        assert_eq!(registry.entries[&id].validated_saved().unwrap().serialized_bytes,serde_json::to_vec(&registry.entries[&id].saved).unwrap().len());
+        let start=std::time::Instant::now();
+        registry.inspect(&id,0,15).unwrap();
+        println!("First observed delivery projection {:?}",start.elapsed());
+        delivery.revision=2;
+        let start=std::time::Instant::now();
+        registry.reconcile(delivery).unwrap();
+        println!("Repeated selected delivery reconcile {:?}",start.elapsed());
+        assert!(Arc::ptr_eq(&cached,&registry.entries[&id].sighting_validation[&key]));
+        assert_eq!(registry.validate_preparation(&preparation).unwrap().scope,"game:x-plane-12");
+        let restored=Registry::restore(registry.saved()).unwrap();
+        assert_eq!(restored.saved_fingerprint().unwrap(),registry.saved_fingerprint().unwrap());
+    }
+
+    fn batch(scope: &str, revision: u64, count: usize) -> ProviderBatch {
+        let ports = (0..count).map(|index| PortDescriptor {
+            id: format!("channel:{index:05}"), name: format!("Native channel {index}"),
+            direction: crate::Direction::Output,
+            contract: PortContract::State { schema: ScalarSchema::Number { min:-10.,max:10.,unit:None }, freshness_ms:1500, fallback:None },
+        }).collect();
+        ProviderBatch { scope:scope.into(),session:"cache-provider".into(),revision,complete:true,observations:vec![Observation {
+            key:scope.into(),name:scope.into(),resource_type:ResourceType::GameIntegration,
+            evidence:vec![IdentityEvidence {kind:EvidenceKind::GameScope,value:scope.into()}],attributes:BTreeMap::new(),diagnostics:vec![],
+            route:Some(Route {id:format!("route:{scope}"),transport:Transport::Integration,provider_generation:"1".into(),attributes:BTreeMap::new(),baseline_ready:true,writable:false,priority:0}),
+            ports:Some(PortUpdate::complete(ports).unwrap()),
+        }] }
+    }
+    #[test]
+    fn large_catalogue_pages_and_unrelated_transactions_share_immutable_projections() {
+        let mut registry = Registry::new();
+        registry.reconcile(batch("large-sdk",1,65_536)).unwrap();
+        let id = registry.list(0,1).unwrap().resources[0].id.clone();
+        let entry = registry.entries[&id].clone();
+        let captured = observed_ports(&entry).unwrap();
+        let validated = entry.validated_saved().unwrap();
+        let token = registry.token(&id,"channel:65535",Access::Read).unwrap();
+        for page in 0..100 {
+            let offset = page * 128;
+            let details = registry.inspect(&id,offset,128).unwrap();
+            assert_eq!(details.total,65_536);
+            assert_eq!(details.ports.len(),128);
+            assert_eq!(details.ports[0].descriptor.id,format!("channel:{offset:05}"));
+            assert_eq!(registry.list(0,1).unwrap().resources[0].cached_port_count,65_536);
+        }
+        let selected = registry.inspect_selected(&id,&[PortExpectation {
+            profile_port_id:"selected".into(),observed_port_id:"channel:65535".into(),expected_contract_hash:captured.last().unwrap().contract_hash.clone(),
+        }]).unwrap();
+        assert_eq!(selected.ports.len(),1);
+        assert!(Arc::ptr_eq(&captured,&observed_ports(registry.entry(&id).unwrap()).unwrap()));
+        registry.reconcile(batch("unrelated",1,1)).unwrap();
+        assert!(Arc::ptr_eq(&entry,&registry.entries[&id]));
+        assert!(Arc::ptr_eq(&validated,&registry.entry(&id).unwrap().validated_saved().unwrap()));
+        assert!(Arc::ptr_eq(&captured,&observed_ports(registry.entry(&id).unwrap()).unwrap()));
+        registry.validate_token(&token,"channel:65535",Access::Read).unwrap();
+        registry.provider_failed("unrelated","Offline fixture");
+        assert!(Arc::ptr_eq(&entry,&registry.entries[&id]));
+        registry.provider_failed("large-sdk","SDK fixture disconnected");
+        let offline = observed_ports(registry.entry(&id).unwrap()).unwrap();
+        assert!(!Arc::ptr_eq(&captured,&offline));
+        assert!(offline.iter().all(|port| !port.current && port.route_ids.is_empty()));
+        assert!(registry.validate_token(&token,"channel:65535",Access::Read).is_err());
+    }
+    #[test]
+    fn cache_never_accepts_a_same_revision_changed_contract_or_changes_failed_transaction() {
+        let mut registry = Registry::new();
+        let original = batch("sdk",1,2);
+        registry.reconcile(original.clone()).unwrap();
+        let id = registry.list(0,1).unwrap().resources[0].id.clone();
+        let before = registry.entries[&id].clone();
+        let cached = observed_ports(&before).unwrap();
+        let revision = registry.revision();
+        let mut changed = original;
+        changed.revision = 2;
+        changed.observations[0].ports.as_mut().unwrap().ports[0].name = "Changed native label".into();
+        // The semantic contract itself must also be checked; labels alone are
+        // intentionally outside its exact contract fingerprint.
+        if let PortContract::State {freshness_ms,..} = &mut changed.observations[0].ports.as_mut().unwrap().ports[0].contract { *freshness_ms=2000; }
+        assert!(registry.reconcile(changed).is_err());
+        assert_eq!(registry.revision(),revision);
+        assert!(Arc::ptr_eq(&before,&registry.entries[&id]));
+        assert!(Arc::ptr_eq(&cached,&observed_ports(registry.entry(&id).unwrap()).unwrap()));
+        registry.saved().validate().unwrap();
+    }
+}

@@ -1,8 +1,10 @@
 //! Read existing Assetto named pages without creating or writing game mappings.
 //! Shared names are not a game identity; the caller explicitly selects a PID.
+use crate::game_telemetry::{validate_for_game, Game, RawSample, Source, SourceIdentity, PHYSICS_SIZE};
+#[cfg(test)]
 use crate::game_telemetry::{
-    parse, parse_for_game, Game, RawSample, Source, SourceIdentity, GRAPHICS_SIZE,
-    PHYSICS_CURRENT_MAX_RPM_OFFSET, PHYSICS_EXTENDED_SIZE, PHYSICS_SIZE, STATIC_SIZE,
+    parse, parse_for_game,
+    PHYSICS_CURRENT_MAX_RPM_OFFSET, PHYSICS_EXTENDED_SIZE, STATIC_SIZE,
     EVO_CAR_MODEL_OFFSET, EVO_GRAPHICS_SIZE,
 };
 
@@ -70,16 +72,11 @@ fn consistent_copy_for_game(
     for _ in 0..3 {
         let first = copy()?;
         let second = copy()?;
-        parse_for_game(&first, game)?;
-        parse_for_game(&second, game)?;
-        if first.physics[..PHYSICS_SIZE] == second.physics[..PHYSICS_SIZE]
-            && (!matches!(game, Game::Rally | Game::Evo)
-                || first.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE)
-                    == second.physics.get(PHYSICS_CURRENT_MAX_RPM_OFFSET..PHYSICS_EXTENDED_SIZE))
-            && first.graphics[..GRAPHICS_SIZE] == second.graphics[..GRAPHICS_SIZE]
-            && (game != Game::Evo || first.graphics[EVO_CAR_MODEL_OFFSET..EVO_GRAPHICS_SIZE]
-                == second.graphics[EVO_CAR_MODEL_OFFSET..EVO_GRAPHICS_SIZE])
-            && first.statics[..game.page_lengths().2] == second.statics[..game.page_lengths().2]
+        validate_for_game(&first, game)?;
+        validate_for_game(&second, game)?;
+        if first.physics == second.physics
+            && first.graphics == second.graphics
+            && first.statics == second.statics
         {
             return Ok(second);
         }
@@ -247,17 +244,21 @@ mod platform {
     }
     impl Pages {
         fn open(game: Game) -> Result<Self, String> {
-            let (physics_size, graphics_size, static_size) = game.page_lengths();
+            let (physics_size, graphics_size, static_size) = game.full_page_lengths();
+            let (physics_prefix, graphics_prefix, static_prefix) = game.page_lengths();
             let prefix = game.mapping_prefix();
             let physics_name = format!("{prefix}_physics");
             Ok(Self {
-                // Older producers can expose only the original prefix. ACR's
-                // current RPM limit lives later in physics; acquire it when the
-                // existing mapping supports the extended read.
+                // Acquire documented complete pages where present. A producer
+                // with only a known prefix keeps legacy channels; absent tail
+                // fields remain Unknown instead of being padded with zeroes.
                 physics: Mapping::open(&physics_name, physics_size)
+                    .or_else(|_| Mapping::open(&physics_name, physics_prefix))
                     .or_else(|error| if game == Game::Rally { Mapping::open(&physics_name, PHYSICS_SIZE) } else { Err(error) })?,
-                graphics: Mapping::open(&format!("{prefix}_graphics"), graphics_size)?,
-                statics: Mapping::open(&format!("{prefix}_static"), static_size)?,
+                graphics: Mapping::open(&format!("{prefix}_graphics"), graphics_size)
+                    .or_else(|_| Mapping::open(&format!("{prefix}_graphics"), graphics_prefix))?,
+                statics: Mapping::open(&format!("{prefix}_static"), static_size)
+                    .or_else(|_| Mapping::open(&format!("{prefix}_static"), static_prefix))?,
             })
         }
         fn copy(&self, page: Page) -> Vec<u8> {
@@ -346,7 +347,7 @@ mod platform {
             }
             match self.read() {
                 Ok(sample) => {
-                    let packet = parse_for_game(&sample, self.game)?.packet_id;
+                    let packet = u32::from_le_bytes(sample.physics[..4].try_into().unwrap());
                     if counter_reset(self.last_packet, packet) {
                         // A stage/game reset can replace named mapping objects.
                         // Release our views before acquiring the next baseline.
@@ -441,6 +442,35 @@ mod tests {
         assert_eq!(copies, 6);
         assert_eq!(sample.statics.len(), STATIC_SIZE + 3);
     }
+    #[test]
+    fn expanded_physics_and_graphics_fields_participate_in_stable_snapshot_checks() {
+        for target in [Page::Physics, Page::Graphics] {
+            let mut target_reads = 0;
+            let result = consistent_copy_for_game(identity(), Game::Competizione, &mut |page| {
+                let mut data = bytes(page);
+                if matches!((target,page),(Page::Physics,Page::Physics)|(Page::Graphics,Page::Graphics)) {
+                    target_reads += 1;
+                    let offset = if matches!(page,Page::Physics) {44} else {1400};
+                    data.resize(offset+4,0);
+                    data[offset..offset+4].copy_from_slice(&(if target_reads==1 {1.0f32}else{2.0}).to_le_bytes());
+                }
+                Ok(data)
+            }).unwrap();
+            assert_eq!(target_reads,4,"Changed expanded fields must retry even with unchanged packet IDs");
+            assert_eq!(result.source,identity());
+        }
+        let mut reads=0;
+        assert!(consistent_copy_for_game(identity(),Game::Competizione,&mut |page| {
+            let mut data=bytes(page);
+            if matches!(page,Page::Physics) {
+                reads+=1;data.resize(48,0);
+                data[44..48].copy_from_slice(&(reads as f32).to_le_bytes());
+            }
+            Ok(data)
+        }).is_err());
+        assert_eq!(reads,6,"Persistent expanded-field tearing must fail with bounded work");
+    }
+
     #[test]
     fn a_torn_read_retries_and_unstable_or_missing_pages_fail_with_bounded_work() {
         let mut physics_reads = 0;

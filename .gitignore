@@ -39,3 +39,4 @@ src-tauri/resources/firmware/*/manifest.json
 /tests/controller-mapping-m0/*.exe
 /.local-archive/
 /.tmp/
+/.test-tmp/

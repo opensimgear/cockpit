@@ -769,5 +769,5 @@ fn serialized_envelope_limit_is_enforced_without_an_unbounded_output_buffer() {
         resource_type: ResourceType::HostController,
         sightings: vec![],
     });
-    assert!(saved.validate().unwrap_err().contains("32 MiB"));
+    assert!(saved.validate().unwrap_err().contains("128 MiB"));
 }

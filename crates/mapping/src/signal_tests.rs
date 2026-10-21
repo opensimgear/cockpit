@@ -1,6 +1,15 @@
 use super::*;
 use serde_json::{json, Value};
 
+#[test]
+fn floating_telemetry_ranges_are_finite_without_integer_precision_restrictions() {
+    let schema = ScalarSchema::Number { min: -(f32::MAX as f64), max: f32::MAX as f64, unit: None };
+    assert!(schema.validate().is_ok());
+    assert!(schema.accepts(&PortValue::Number(1e20)));
+    assert!(!schema.accepts(&PortValue::Number(f64::INFINITY)));
+    assert!(ScalarSchema::Integer { min:0,max:MAX_SAFE_INTEGER as i64+1,unit:None }.validate().is_err());
+}
+
 fn action(parameters: Vec<ActionParameter>) -> PortDescriptor {
     PortDescriptor {
         id: "display.set".into(),
@@ -457,7 +466,7 @@ fn bounded_pages_and_exact_contracts_never_admit_oversized_or_malformed_metadata
         },
         ScalarSchema::Number {
             min: 0.0,
-            max: MAX_SAFE_INTEGER as f64 + 1.0,
+            max: f64::INFINITY,
             unit: None,
         },
         ScalarSchema::Number {

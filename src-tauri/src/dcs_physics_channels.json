@@ -1,0 +1,1550 @@
+{
+  "schemaVersion": 1,
+  "reference": "DCSWorld/Scripts/Export.lua, installed Eagle Dynamics ownship API reference; no target/world-object APIs.",
+  "channels": [
+    {
+      "id": "flight.airspeed.true",
+      "label": "True airspeed",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetTrueAirSpeed",
+      "nativeField": "LoGetTrueAirSpeed()",
+      "getter": "LoGetTrueAirSpeed",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.airspeed.indicated",
+      "label": "Indicated airspeed",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetIndicatedAirSpeed",
+      "nativeField": "LoGetIndicatedAirSpeed()",
+      "getter": "LoGetIndicatedAirSpeed",
+      "path": [],
+      "description": "Native units are not specified in the installed DCS Export.lua reference."
+    },
+    {
+      "id": "flight.altitude.msl",
+      "label": "Altitude above sea level",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetAltitudeAboveSeaLevel",
+      "nativeField": "LoGetAltitudeAboveSeaLevel()",
+      "getter": "LoGetAltitudeAboveSeaLevel",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.altitude.agl",
+      "label": "Altitude above ground",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetAltitudeAboveGroundLevel",
+      "nativeField": "LoGetAltitudeAboveGroundLevel()",
+      "getter": "LoGetAltitudeAboveGroundLevel",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.altitude.radar",
+      "label": "Radar altitude",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetRadarAltimeter",
+      "nativeField": "LoGetRadarAltimeter()",
+      "getter": "LoGetRadarAltimeter",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.altitude.surface",
+      "label": "Height above surface and objects",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetHeightWithObjects",
+      "nativeField": "LoGetHeightWithObjects()",
+      "getter": "LoGetHeightWithObjects",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.angleOfAttack",
+      "label": "Angle of attack",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetAngleOfAttack",
+      "nativeField": "LoGetAngleOfAttack()",
+      "getter": "LoGetAngleOfAttack",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.sideSlip",
+      "label": "Sideslip angle",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetAngleOfSideSlip",
+      "nativeField": "LoGetAngleOfSideSlip()",
+      "getter": "LoGetAngleOfSideSlip",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.verticalSpeed",
+      "label": "Vertical velocity",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetVerticalVelocity",
+      "nativeField": "LoGetVerticalVelocity()",
+      "getter": "LoGetVerticalVelocity",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.mach",
+      "label": "Mach number",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetMachNumber",
+      "nativeField": "LoGetMachNumber()",
+      "getter": "LoGetMachNumber",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.shake",
+      "label": "Shake amplitude",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetShakeAmplitude",
+      "nativeField": "LoGetShakeAmplitude()",
+      "getter": "LoGetShakeAmplitude",
+      "path": [],
+      "description": "Native units are not specified in the installed DCS Export.lua reference."
+    },
+    {
+      "id": "flight.acceleration.x",
+      "label": "Acceleration · native x",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "g",
+      "nativeId": "LoGetAccelerationUnits.x",
+      "nativeField": "LoGetAccelerationUnits().x",
+      "getter": "LoGetAccelerationUnits",
+      "path": [
+        "x"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.acceleration.y",
+      "label": "Acceleration · native y",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "g",
+      "nativeId": "LoGetAccelerationUnits.y",
+      "nativeField": "LoGetAccelerationUnits().y",
+      "getter": "LoGetAccelerationUnits",
+      "path": [
+        "y"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.acceleration.z",
+      "label": "Acceleration · native z",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "g",
+      "nativeId": "LoGetAccelerationUnits.z",
+      "nativeField": "LoGetAccelerationUnits().z",
+      "getter": "LoGetAccelerationUnits",
+      "path": [
+        "z"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.velocity.world.x",
+      "label": "World velocity · native x",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetVectorVelocity.x",
+      "nativeField": "LoGetVectorVelocity().x",
+      "getter": "LoGetVectorVelocity",
+      "path": [
+        "x"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.velocity.world.y",
+      "label": "World velocity · native y",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetVectorVelocity.y",
+      "nativeField": "LoGetVectorVelocity().y",
+      "getter": "LoGetVectorVelocity",
+      "path": [
+        "y"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.velocity.world.z",
+      "label": "World velocity · native z",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetVectorVelocity.z",
+      "nativeField": "LoGetVectorVelocity().z",
+      "getter": "LoGetVectorVelocity",
+      "path": [
+        "z"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.angularVelocity.x",
+      "label": "Angular velocity · native x",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "rad/s",
+      "nativeId": "LoGetAngularVelocity.x",
+      "nativeField": "LoGetAngularVelocity().x",
+      "getter": "LoGetAngularVelocity",
+      "path": [
+        "x"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.angularVelocity.y",
+      "label": "Angular velocity · native y",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "rad/s",
+      "nativeId": "LoGetAngularVelocity.y",
+      "nativeField": "LoGetAngularVelocity().y",
+      "getter": "LoGetAngularVelocity",
+      "path": [
+        "y"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.angularVelocity.z",
+      "label": "Angular velocity · native z",
+      "category": "motion",
+      "group": "motion",
+      "type": "number",
+      "unit": "rad/s",
+      "nativeId": "LoGetAngularVelocity.z",
+      "nativeField": "LoGetAngularVelocity().z",
+      "getter": "LoGetAngularVelocity",
+      "path": [
+        "z"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.wind.world.x",
+      "label": "World wind velocity · native x",
+      "category": "environment",
+      "group": "environment",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetVectorWindVelocity.x",
+      "nativeField": "LoGetVectorWindVelocity().x",
+      "getter": "LoGetVectorWindVelocity",
+      "path": [
+        "x"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.wind.world.y",
+      "label": "World wind velocity · native y",
+      "category": "environment",
+      "group": "environment",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetVectorWindVelocity.y",
+      "nativeField": "LoGetVectorWindVelocity().y",
+      "getter": "LoGetVectorWindVelocity",
+      "path": [
+        "y"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.wind.world.z",
+      "label": "World wind velocity · native z",
+      "category": "environment",
+      "group": "environment",
+      "type": "number",
+      "unit": "m/s",
+      "nativeId": "LoGetVectorWindVelocity.z",
+      "nativeField": "LoGetVectorWindVelocity().z",
+      "getter": "LoGetVectorWindVelocity",
+      "path": [
+        "z"
+      ],
+      "description": "Native DCS axes; no vehicle-axis sign or direction is inferred."
+    },
+    {
+      "id": "flight.attitude.pitch",
+      "label": "ADI pitch",
+      "category": "attitude",
+      "group": "attitude",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetADIPitchBankYaw",
+      "nativeField": "LoGetADIPitchBankYaw() return 1",
+      "getter": "LoGetADIPitchBankYaw",
+      "path": [],
+      "description": "DCS documented ADI return order: pitch, bank, yaw.",
+      "returnIndex": 1
+    },
+    {
+      "id": "flight.attitude.bank",
+      "label": "ADI bank",
+      "category": "attitude",
+      "group": "attitude",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetADIPitchBankYaw",
+      "nativeField": "LoGetADIPitchBankYaw() return 2",
+      "getter": "LoGetADIPitchBankYaw",
+      "path": [],
+      "description": "DCS documented ADI return order: pitch, bank, yaw.",
+      "returnIndex": 2
+    },
+    {
+      "id": "flight.attitude.yaw",
+      "label": "ADI yaw",
+      "category": "attitude",
+      "group": "attitude",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetADIPitchBankYaw",
+      "nativeField": "LoGetADIPitchBankYaw() return 3",
+      "getter": "LoGetADIPitchBankYaw",
+      "path": [],
+      "description": "DCS documented ADI return order: pitch, bank, yaw.",
+      "returnIndex": 3
+    },
+    {
+      "id": "flight.attitude.magneticYaw",
+      "label": "Magnetic yaw",
+      "category": "attitude",
+      "group": "attitude",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetMagneticYaw",
+      "nativeField": "LoGetMagneticYaw()",
+      "getter": "LoGetMagneticYaw",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.environment.pressure",
+      "label": "Basic atmospheric pressure",
+      "category": "environment",
+      "group": "environment",
+      "type": "number",
+      "unit": "mmHg",
+      "nativeId": "LoGetBasicAtmospherePressure",
+      "nativeField": "LoGetBasicAtmospherePressure()",
+      "getter": "LoGetBasicAtmospherePressure",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.engine.left.speedPercent",
+      "label": "Engine speed · left",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "%",
+      "nativeId": "LoGetEngineInfo.RPM.left",
+      "nativeField": "LoGetEngineInfo().RPM.left",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "RPM",
+        "left"
+      ],
+      "description": "DCS RPM.left/right is a percentage, not absolute revolutions per minute."
+    },
+    {
+      "id": "flight.engine.right.speedPercent",
+      "label": "Engine speed · right",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "%",
+      "nativeId": "LoGetEngineInfo.RPM.right",
+      "nativeField": "LoGetEngineInfo().RPM.right",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "RPM",
+        "right"
+      ],
+      "description": "DCS RPM.left/right is a percentage, not absolute revolutions per minute."
+    },
+    {
+      "id": "flight.engine.left.temperature",
+      "label": "Engine temperature · left",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "°C",
+      "nativeId": "LoGetEngineInfo.Temperature.left",
+      "nativeField": "LoGetEngineInfo().Temperature.left",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "Temperature",
+        "left"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.engine.right.temperature",
+      "label": "Engine temperature · right",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "°C",
+      "nativeId": "LoGetEngineInfo.Temperature.right",
+      "nativeField": "LoGetEngineInfo().Temperature.right",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "Temperature",
+        "right"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.engine.left.hydraulicPressure",
+      "label": "Hydraulic pressure · left",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "kg/cm²",
+      "nativeId": "LoGetEngineInfo.HydraulicPressure.left",
+      "nativeField": "LoGetEngineInfo().HydraulicPressure.left",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "HydraulicPressure",
+        "left"
+      ],
+      "description": "Native SDK unit is kg per square centimeter; no force conversion is inferred."
+    },
+    {
+      "id": "flight.engine.right.hydraulicPressure",
+      "label": "Hydraulic pressure · right",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "kg/cm²",
+      "nativeId": "LoGetEngineInfo.HydraulicPressure.right",
+      "nativeField": "LoGetEngineInfo().HydraulicPressure.right",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "HydraulicPressure",
+        "right"
+      ],
+      "description": "Native SDK unit is kg per square centimeter; no force conversion is inferred."
+    },
+    {
+      "id": "flight.engine.left.fuelConsumption",
+      "label": "Fuel consumption · left",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "kg/s",
+      "nativeId": "LoGetEngineInfo.FuelConsumption.left",
+      "nativeField": "LoGetEngineInfo().FuelConsumption.left",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "FuelConsumption",
+        "left"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.engine.right.fuelConsumption",
+      "label": "Fuel consumption · right",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "kg/s",
+      "nativeId": "LoGetEngineInfo.FuelConsumption.right",
+      "nativeField": "LoGetEngineInfo().FuelConsumption.right",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "FuelConsumption",
+        "right"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.fuel.internal",
+      "label": "Internal fuel mass",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "kg",
+      "nativeId": "LoGetEngineInfo.fuel_internal",
+      "nativeField": "LoGetEngineInfo().fuel_internal",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "fuel_internal"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.fuel.external",
+      "label": "External fuel mass",
+      "category": "engine",
+      "group": "engine",
+      "type": "number",
+      "unit": "kg",
+      "nativeId": "LoGetEngineInfo.fuel_external",
+      "nativeField": "LoGetEngineInfo().fuel_external",
+      "getter": "LoGetEngineInfo",
+      "path": [
+        "fuel_external"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.position.lat",
+      "label": "Latitude",
+      "category": "position",
+      "group": "position",
+      "type": "number",
+      "unit": "deg",
+      "nativeId": "LoGetSelfData.LatLongAlt.Lat",
+      "nativeField": "LoGetSelfData().LatLongAlt.Lat",
+      "getter": "LoGetSelfData",
+      "path": [
+        "LatLongAlt",
+        "Lat"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.position.long",
+      "label": "Longitude",
+      "category": "position",
+      "group": "position",
+      "type": "number",
+      "unit": "deg",
+      "nativeId": "LoGetSelfData.LatLongAlt.Long",
+      "nativeField": "LoGetSelfData().LatLongAlt.Long",
+      "getter": "LoGetSelfData",
+      "path": [
+        "LatLongAlt",
+        "Long"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.position.alt",
+      "label": "Geographic altitude",
+      "category": "position",
+      "group": "position",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetSelfData.LatLongAlt.Alt",
+      "nativeField": "LoGetSelfData().LatLongAlt.Alt",
+      "getter": "LoGetSelfData",
+      "path": [
+        "LatLongAlt",
+        "Alt"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.position.world.x",
+      "label": "World position · native x",
+      "category": "position",
+      "group": "position",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetSelfData.Position.x",
+      "nativeField": "LoGetSelfData().Position.x",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Position",
+        "x"
+      ],
+      "description": "Native DCS internal world coordinates."
+    },
+    {
+      "id": "flight.position.world.y",
+      "label": "World position · native y",
+      "category": "position",
+      "group": "position",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetSelfData.Position.y",
+      "nativeField": "LoGetSelfData().Position.y",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Position",
+        "y"
+      ],
+      "description": "Native DCS internal world coordinates."
+    },
+    {
+      "id": "flight.position.world.z",
+      "label": "World position · native z",
+      "category": "position",
+      "group": "position",
+      "type": "number",
+      "unit": "m",
+      "nativeId": "LoGetSelfData.Position.z",
+      "nativeField": "LoGetSelfData().Position.z",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Position",
+        "z"
+      ],
+      "description": "Native DCS internal world coordinates."
+    },
+    {
+      "id": "flight.ownship.heading",
+      "label": "Ownship heading",
+      "category": "attitude",
+      "group": "attitude",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetSelfData.Heading",
+      "nativeField": "LoGetSelfData().Heading",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Heading"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.pitch",
+      "label": "Ownship pitch",
+      "category": "attitude",
+      "group": "attitude",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetSelfData.Pitch",
+      "nativeField": "LoGetSelfData().Pitch",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Pitch"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.bank",
+      "label": "Ownship bank",
+      "category": "attitude",
+      "group": "attitude",
+      "type": "number",
+      "unit": "rad",
+      "nativeId": "LoGetSelfData.Bank",
+      "nativeField": "LoGetSelfData().Bank",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Bank"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.name",
+      "label": "Aircraft type",
+      "category": "identity",
+      "group": "identity",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Name",
+      "nativeField": "LoGetSelfData().Name",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Name"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.unitName",
+      "label": "Ownship unit name",
+      "category": "identity",
+      "group": "identity",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetSelfData.UnitName",
+      "nativeField": "LoGetSelfData().UnitName",
+      "getter": "LoGetSelfData",
+      "path": [
+        "UnitName"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.groupName",
+      "label": "Ownship group name",
+      "category": "identity",
+      "group": "identity",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetSelfData.GroupName",
+      "nativeField": "LoGetSelfData().GroupName",
+      "getter": "LoGetSelfData",
+      "path": [
+        "GroupName"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.country",
+      "label": "Ownship country ID",
+      "category": "identity",
+      "group": "identity",
+      "type": "integer",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Country",
+      "nativeField": "LoGetSelfData().Country",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Country"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.coalition",
+      "label": "Ownship coalition",
+      "category": "identity",
+      "group": "identity",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Coalition",
+      "nativeField": "LoGetSelfData().Coalition",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Coalition"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.coalitionID",
+      "label": "Ownship coalition ID",
+      "category": "identity",
+      "group": "identity",
+      "type": "integer",
+      "unit": null,
+      "nativeId": "LoGetSelfData.CoalitionID",
+      "nativeField": "LoGetSelfData().CoalitionID",
+      "getter": "LoGetSelfData",
+      "path": [
+        "CoalitionID"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.RadarActive",
+      "label": "Ownship RadarActive",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.RadarActive",
+      "nativeField": "LoGetSelfData().Flags.RadarActive",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "RadarActive"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.Human",
+      "label": "Ownship Human",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.Human",
+      "nativeField": "LoGetSelfData().Flags.Human",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "Human"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.Jamming",
+      "label": "Ownship Jamming",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.Jamming",
+      "nativeField": "LoGetSelfData().Flags.Jamming",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "Jamming"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.IRJamming",
+      "label": "Ownship IRJamming",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.IRJamming",
+      "nativeField": "LoGetSelfData().Flags.IRJamming",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "IRJamming"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.Born",
+      "label": "Ownship Born",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.Born",
+      "nativeField": "LoGetSelfData().Flags.Born",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "Born"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.AI_ON",
+      "label": "Ownship AI_ON",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.AI_ON",
+      "nativeField": "LoGetSelfData().Flags.AI_ON",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "AI_ON"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.Invisible",
+      "label": "Ownship Invisible",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.Invisible",
+      "nativeField": "LoGetSelfData().Flags.Invisible",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "Invisible"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.flags.Static",
+      "label": "Ownship Static",
+      "category": "identity",
+      "group": "identity",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetSelfData.Flags.Static",
+      "nativeField": "LoGetSelfData().Flags.Static",
+      "getter": "LoGetSelfData",
+      "path": [
+        "Flags",
+        "Static"
+      ],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.planeId",
+      "label": "Player aircraft ID",
+      "category": "identity",
+      "group": "identity",
+      "type": "integer",
+      "unit": null,
+      "nativeId": "LoGetPlayerPlaneId",
+      "nativeField": "LoGetPlayerPlaneId()",
+      "getter": "LoGetPlayerPlaneId",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.unitId",
+      "label": "Player unit ID",
+      "category": "identity",
+      "group": "identity",
+      "type": "integer",
+      "unit": null,
+      "nativeId": "LoGetPlayerUnitId",
+      "nativeField": "LoGetPlayerUnitId()",
+      "getter": "LoGetPlayerUnitId",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.inAir",
+      "label": "Ownship in air",
+      "category": "session",
+      "group": "session",
+      "type": "boolean",
+      "unit": null,
+      "nativeId": "LoGetInAir",
+      "nativeField": "LoGetInAir()",
+      "getter": "LoGetInAir",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.ownship.pilotName",
+      "label": "Pilot name",
+      "category": "identity",
+      "group": "identity",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetPilotName",
+      "nativeField": "LoGetPilotName()",
+      "getter": "LoGetPilotName",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.session.modelTime",
+      "label": "Model time",
+      "category": "session",
+      "group": "session",
+      "type": "number",
+      "unit": "s",
+      "nativeId": "LoGetModelTime",
+      "nativeField": "LoGetModelTime()",
+      "getter": "LoGetModelTime",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.session.missionStartTime",
+      "label": "Mission start model time",
+      "category": "session",
+      "group": "session",
+      "type": "number",
+      "unit": "s",
+      "nativeId": "LoGetMissionStartTime",
+      "nativeField": "LoGetMissionStartTime()",
+      "getter": "LoGetMissionStartTime",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.mechanics.gear.value",
+      "label": "gear native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.gear.value",
+      "nativeField": "LoGetMechInfo().gear.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "gear",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.gear.status",
+      "label": "gear native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.gear.status",
+      "nativeField": "LoGetMechInfo().gear.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "gear",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.flaps.value",
+      "label": "flaps native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.flaps.value",
+      "nativeField": "LoGetMechInfo().flaps.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "flaps",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.flaps.status",
+      "label": "flaps native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.flaps.status",
+      "nativeField": "LoGetMechInfo().flaps.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "flaps",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.speedbrakes.value",
+      "label": "speedbrakes native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.speedbrakes.value",
+      "nativeField": "LoGetMechInfo().speedbrakes.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "speedbrakes",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.speedbrakes.status",
+      "label": "speedbrakes native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.speedbrakes.status",
+      "nativeField": "LoGetMechInfo().speedbrakes.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "speedbrakes",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.refuelingboom.value",
+      "label": "refuelingboom native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.refuelingboom.value",
+      "nativeField": "LoGetMechInfo().refuelingboom.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "refuelingboom",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.refuelingboom.status",
+      "label": "refuelingboom native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.refuelingboom.status",
+      "nativeField": "LoGetMechInfo().refuelingboom.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "refuelingboom",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.airintake.value",
+      "label": "airintake native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.airintake.value",
+      "nativeField": "LoGetMechInfo().airintake.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "airintake",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.airintake.status",
+      "label": "airintake native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.airintake.status",
+      "nativeField": "LoGetMechInfo().airintake.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "airintake",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.noseflap.value",
+      "label": "noseflap native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.noseflap.value",
+      "nativeField": "LoGetMechInfo().noseflap.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "noseflap",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.noseflap.status",
+      "label": "noseflap native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.noseflap.status",
+      "nativeField": "LoGetMechInfo().noseflap.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "noseflap",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.parachute.value",
+      "label": "parachute native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.parachute.value",
+      "nativeField": "LoGetMechInfo().parachute.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "parachute",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.parachute.status",
+      "label": "parachute native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.parachute.status",
+      "nativeField": "LoGetMechInfo().parachute.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "parachute",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.wheelbrakes.value",
+      "label": "wheelbrakes native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.wheelbrakes.value",
+      "nativeField": "LoGetMechInfo().wheelbrakes.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "wheelbrakes",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.wheelbrakes.status",
+      "label": "wheelbrakes native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.wheelbrakes.status",
+      "nativeField": "LoGetMechInfo().wheelbrakes.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "wheelbrakes",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.hook.value",
+      "label": "hook native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.hook.value",
+      "nativeField": "LoGetMechInfo().hook.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "hook",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.hook.status",
+      "label": "hook native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.hook.status",
+      "nativeField": "LoGetMechInfo().hook.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "hook",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.wing.value",
+      "label": "wing native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.wing.value",
+      "nativeField": "LoGetMechInfo().wing.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "wing",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.wing.status",
+      "label": "wing native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.wing.status",
+      "nativeField": "LoGetMechInfo().wing.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "wing",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.canopy.value",
+      "label": "canopy native position",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.canopy.value",
+      "nativeField": "LoGetMechInfo().canopy.value",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "canopy",
+        "value"
+      ],
+      "description": "Native SDK does not declare the unit or range of this value."
+    },
+    {
+      "id": "flight.mechanics.canopy.status",
+      "label": "canopy native status",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "string",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.canopy.status",
+      "nativeField": "LoGetMechInfo().canopy.status",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "canopy",
+        "status"
+      ],
+      "description": "Native status as text; the SDK does not define a common enum or boolean meaning.",
+      "asText": true
+    },
+    {
+      "id": "flight.mechanics.gear.left.rod",
+      "label": "left gear rod",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.gear.main.left.rod",
+      "nativeField": "LoGetMechInfo().gear.main.left.rod",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "gear",
+        "main",
+        "left",
+        "rod"
+      ],
+      "description": "Native SDK does not declare the rod unit or range."
+    },
+    {
+      "id": "flight.mechanics.gear.right.rod",
+      "label": "right gear rod",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.gear.main.right.rod",
+      "nativeField": "LoGetMechInfo().gear.main.right.rod",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "gear",
+        "main",
+        "right",
+        "rod"
+      ],
+      "description": "Native SDK does not declare the rod unit or range."
+    },
+    {
+      "id": "flight.mechanics.gear.nose.rod",
+      "label": "nose gear rod",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": null,
+      "nativeId": "LoGetMechInfo.gear.main.nose.rod",
+      "nativeField": "LoGetMechInfo().gear.main.nose.rod",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "gear",
+        "main",
+        "nose",
+        "rod"
+      ],
+      "description": "Native SDK does not declare the rod unit or range."
+    },
+    {
+      "id": "flight.mechanics.elevator.left",
+      "label": "elevator · left",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetMechInfo.controlsurfaces.elevator.left",
+      "nativeField": "LoGetMechInfo().controlsurfaces.elevator.left",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "controlsurfaces",
+        "elevator",
+        "left"
+      ],
+      "description": "DCS native control surface relative value (-1 to 1); native spelling retained."
+    },
+    {
+      "id": "flight.mechanics.elevator.right",
+      "label": "elevator · right",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetMechInfo.controlsurfaces.elevator.right",
+      "nativeField": "LoGetMechInfo().controlsurfaces.elevator.right",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "controlsurfaces",
+        "elevator",
+        "right"
+      ],
+      "description": "DCS native control surface relative value (-1 to 1); native spelling retained."
+    },
+    {
+      "id": "flight.mechanics.eleron.left",
+      "label": "eleron · left",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetMechInfo.controlsurfaces.eleron.left",
+      "nativeField": "LoGetMechInfo().controlsurfaces.eleron.left",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "controlsurfaces",
+        "eleron",
+        "left"
+      ],
+      "description": "DCS native control surface relative value (-1 to 1); native spelling retained."
+    },
+    {
+      "id": "flight.mechanics.eleron.right",
+      "label": "eleron · right",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetMechInfo.controlsurfaces.eleron.right",
+      "nativeField": "LoGetMechInfo().controlsurfaces.eleron.right",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "controlsurfaces",
+        "eleron",
+        "right"
+      ],
+      "description": "DCS native control surface relative value (-1 to 1); native spelling retained."
+    },
+    {
+      "id": "flight.mechanics.rudder.left",
+      "label": "rudder · left",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetMechInfo.controlsurfaces.rudder.left",
+      "nativeField": "LoGetMechInfo().controlsurfaces.rudder.left",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "controlsurfaces",
+        "rudder",
+        "left"
+      ],
+      "description": "DCS native control surface relative value (-1 to 1); native spelling retained."
+    },
+    {
+      "id": "flight.mechanics.rudder.right",
+      "label": "rudder · right",
+      "category": "mechanics",
+      "group": "mechanics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetMechInfo.controlsurfaces.rudder.right",
+      "nativeField": "LoGetMechInfo().controlsurfaces.rudder.right",
+      "getter": "LoGetMechInfo",
+      "path": [
+        "controlsurfaces",
+        "rudder",
+        "right"
+      ],
+      "description": "DCS native control surface relative value (-1 to 1); native spelling retained."
+    },
+    {
+      "id": "flight.glideDeviation",
+      "label": "glide Deviation",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetGlideDeviation",
+      "nativeField": "LoGetGlideDeviation()",
+      "getter": "LoGetGlideDeviation",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.sideDeviation",
+      "label": "side Deviation",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetSideDeviation",
+      "nativeField": "LoGetSideDeviation()",
+      "getter": "LoGetSideDeviation",
+      "path": [],
+      "description": ""
+    },
+    {
+      "id": "flight.slipBall",
+      "label": "slip Ball",
+      "category": "physics",
+      "group": "physics",
+      "type": "number",
+      "unit": "ratio",
+      "nativeId": "LoGetSlipBallPosition",
+      "nativeField": "LoGetSlipBallPosition()",
+      "getter": "LoGetSlipBallPosition",
+      "path": [],
+      "description": ""
+    }
+  ]
+}

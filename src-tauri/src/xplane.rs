@@ -2,14 +2,18 @@
 use crate::dcs_profile::ExportSnapshot;
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     net::{Ipv4Addr, SocketAddrV4, UdpSocket},
     time::{Duration, Instant},
 };
 
 pub(crate) const PROVIDER: &str = "x-plane";
+#[path = "xplane_datarefs.rs"]
+mod datarefs;
 const PATH_BYTES: usize = 128;
-const MAX_PACKET: usize = 4096;
+// 1024 selected components plus the fixed identity guards fit in one bounded
+// response even when the simulator coalesces them into a single UDP datagram.
+const MAX_PACKET: usize = 16 * 1024;
 const UNSUBSCRIBED: &str = "Unsubscribed X-Plane dataref index.";
 
 struct Channel {
@@ -167,7 +171,27 @@ const GUARDS: &[&str] = &[
 ];
 
 pub(crate) fn catalogue() -> Value {
-    json!({"provider":PROVIDER,"revision":1,"commands":[],"channels":CHANNELS.iter().map(|c| json!({"id":c.id,"label":c.label,"type":c.kind,"unit":c.unit,"minimum":c.min,"maximum":c.max,"dataref":c.dataref})).collect::<Vec<_>>()})
+    json!({"provider":PROVIDER,"revision":2,"commands":[],"channels":legacy_channels().iter().map(datarefs::Channel::value).collect::<Vec<_>>()})
+}
+fn legacy_channels() -> Vec<datarefs::Channel> {
+    CHANNELS.iter().map(|c| datarefs::Channel {
+        id:c.id.into(), label:c.label.into(), dataref:c.dataref.into(), unit:c.unit.into(), kind:c.kind.into(),
+        minimum:Some(c.min), maximum:Some(c.max), integer:false,
+        metadata:json!({"nativeField":c.dataref,"group":c.dataref.rsplit_once('/').map(|(group,_)|group).unwrap_or("sim"),"supported":true,"readOnly":true,"legacyAlias":true,"source":"https://developer.x-plane.com/sdk/XPLMDataAccess/"})
+    }).collect()
+}
+/// Complete numeric metadata comes from the selected installation; no UDP
+/// subscription is created while browsing its catalogue.
+pub(crate) fn catalogue_for_installation(executable: &std::path::Path) -> Result<Value, String> {
+    let native = datarefs::load(executable)?;
+    let available = native.iter().filter(|c| c.metadata["supported"] == true)
+        .map(|c| c.dataref.as_str()).collect::<BTreeSet<_>>();
+    let mut channels = legacy_channels();
+    for channel in &mut channels {
+        channel.metadata["supported"] = json!(available.contains(channel.dataref.as_str()));
+    }
+    channels.extend(native);
+    Ok(json!({"provider":PROVIDER,"revision":2,"commands":[],"channels":channels.iter().map(datarefs::Channel::value).collect::<Vec<_>>(),"catalogueSource":"Resources/plugins/DataRefs.txt","transport":"RREF","transportPrecision":"All RREF responses are IEEE-754 float32, including integer and double datarefs."}))
 }
 pub(crate) fn defaults(version: u64) -> Value {
     json!({"source":"rref","host":"127.0.0.1","port":49000,"listenPort":0,"updateHz":10,"freshnessMs":1500,"version":version})
@@ -203,11 +227,14 @@ pub(crate) fn validate_connection(v: &Value) -> Result<(), String> {
 }
 
 fn subscriptions() -> Vec<String> {
+    subscriptions_for(&legacy_channels())
+}
+fn subscriptions_for(channels: &[datarefs::Channel]) -> Vec<String> {
     GUARDS
         .iter()
         .map(|s| s.to_string())
         .chain((0..PATH_BYTES).map(|i| format!("sim/aircraft/view/acf_relative_path[{i}]")))
-        .chain(CHANNELS.iter().map(|c| c.dataref.to_string()))
+        .chain(channels.iter().map(|c| c.dataref.clone()))
         .collect()
 }
 fn request(index: i32, hz: i32, path: &str) -> Vec<u8> {
@@ -246,6 +273,7 @@ fn decode(bytes: &[u8], base: i32, count: usize) -> Result<Vec<(usize, f64)>, St
 }
 
 struct Session {
+    channels: Vec<datarefs::Channel>,
     values: BTreeMap<usize, (f64, Instant)>,
     freshness: Duration,
     version: u64,
@@ -260,6 +288,7 @@ struct Session {
 impl Session {
     fn new(v: &Value) -> Self {
         Self {
+            channels: legacy_channels(),
             values: BTreeMap::new(),
             freshness: Duration::from_millis(v["freshnessMs"].as_u64().unwrap()),
             version: v["version"].as_u64().unwrap(),
@@ -360,17 +389,21 @@ impl Session {
         let offset = GUARDS.len() + PATH_BYTES;
         let mut channels = serde_json::Map::new();
         let mut ready = BTreeMap::new();
-        for (i, c) in CHANNELS.iter().enumerate() {
+        for (i, c) in self.channels.iter().enumerate() {
             let engines = self
                 .get(4, now)
                 .filter(|n| n.fract() == 0. && (0. ..=8.).contains(n));
-            let engine_available = match c.id {
+            let engine_available = match c.id.as_str() {
                 "engine_1_rpm" => engines.is_some_and(|n| n >= 1.),
                 "engine_2_rpm" => engines.is_some_and(|n| n >= 2.),
-                _ => true,
+                _ => c.dataref.strip_prefix("sim/cockpit2/engine/indicators/engine_speed_rpm[")
+                    .and_then(|tail| tail.strip_suffix(']')).and_then(|index| index.parse::<usize>().ok())
+                    .is_none_or(|index| engines.is_some_and(|engines| index < engines as usize)),
             };
             let n = self.get(offset + i, now).filter(|n| {
-                *n >= c.min && *n <= c.max && (c.kind != "boolean" || *n == 0. || *n == 1.)
+                c.minimum.is_none_or(|min| *n >= min) && c.maximum.is_none_or(|max| *n <= max)
+                    && (c.kind != "boolean" || *n == 0. || *n == 1.)
+                    && (!c.integer || n.fract() == 0.)
             });
             let value = n.filter(|_| fresh && engine_available).map(|n| {
                 if c.kind == "boolean" {
@@ -383,7 +416,7 @@ impl Session {
                 ready.insert(c.id.to_owned(), v.clone());
             }
             channels.insert(
-                c.id.into(),
+                c.id.clone(),
                 json!({"status":if value.is_some(){"ready"}else{"unavailable"},"value":value}),
             );
         }
@@ -428,6 +461,11 @@ pub(crate) struct Source {
     session: Session,
     monitor: Box<dyn FnMut() -> Result<(), String> + Send>,
     outputs: Vec<Value>,
+    catalogue: BTreeMap<String, datarefs::Channel>,
+    inspection: Vec<String>,
+    pending_subscriptions: VecDeque<Vec<u8>>,
+    last_subscription_batch: Instant,
+    initializing_subscriptions: bool,
 }
 impl Source {
     pub(crate) fn new(connection: &Value, outputs: Vec<Value>) -> Result<Self, String> {
@@ -452,17 +490,22 @@ impl Source {
                 return Err(format!("Required X-Plane session dataref is unavailable: {path}. Repair the simulator installation."));
             }
         }
-        let paths = subscriptions();
-        let supported = paths
-            .iter()
-            .map(|p| available.contains(p.split('[').next().unwrap()))
-            .collect();
+        let mut channels = legacy_channels();
+        for channel in &mut channels {
+            channel.metadata["supported"] = json!(available.contains(channel.dataref.split('[').next().unwrap()));
+        }
+        channels.extend(datarefs::load(std::path::Path::new(&identity.path))?);
+        let catalogue = channels.into_iter().map(|c| (c.id.clone(), c)).collect();
+        let selected = Self::selected(&catalogue, &outputs, &[])?;
+        let supported = vec![true; GUARDS.len() + PATH_BYTES + selected.len()];
         let mut last_check = Instant::now();
         let mut monitor_error: Option<String> = None;
-        Self::connect(
+        Self::connect_selected(
             connection,
             outputs,
             supported,
+            catalogue,
+            selected,
             Box::new(move || {
                 if let Some(error) = &monitor_error {
                     return Err(error.clone());
@@ -491,21 +534,69 @@ impl Source {
         supported: Vec<bool>,
         monitor: Box<dyn FnMut() -> Result<(), String> + Send>,
     ) -> Result<Self, String> {
+        let channels = legacy_channels();
+        let catalogue = channels.iter().map(|c| (c.id.clone(), c.clone())).collect();
+        Self::connect_selected(connection, outputs, supported, catalogue, channels, monitor)
+    }
+    fn connect_selected(
+        connection: &Value,
+        outputs: Vec<Value>,
+        supported: Vec<bool>,
+        catalogue: BTreeMap<String, datarefs::Channel>,
+        channels: Vec<datarefs::Channel>,
+        monitor: Box<dyn FnMut() -> Result<(), String> + Send>,
+    ) -> Result<Self, String> {
         validate_connection(connection)?;
         let socket = Self::socket(connection)?;
         let mut source = Self {
             socket,
             connection: connection.clone(),
-            paths: subscriptions(),
+            paths: subscriptions_for(&channels),
             supported,
             base: Self::base(),
             subscribed: Instant::now(),
             session: Session::new(connection),
             monitor,
             outputs,
+            catalogue,
+            inspection: vec![],
+            pending_subscriptions: VecDeque::new(),
+            last_subscription_batch: Instant::now() - Duration::from_millis(100),
+            initializing_subscriptions: true,
         };
+        source.session.channels = channels;
         source.subscribe(connection["updateHz"].as_i64().unwrap() as i32)?;
         Ok(source)
+    }
+    fn selected(catalogue: &BTreeMap<String, datarefs::Channel>, outputs: &[Value], inspection: &[String]) -> Result<Vec<datarefs::Channel>, String> {
+        let mut selected = BTreeSet::new();
+        for output in outputs {
+            selected.insert(output["channel"].as_str().ok_or("Choose a numeric X-Plane source channel.")?.to_owned());
+        }
+        selected.extend(inspection.iter().cloned());
+        if selected.len() > 1024 { return Err("Select at most 1024 X-Plane dataref components per reader.".into()); }
+        selected.into_iter().map(|id| catalogue.get(&id)
+            .filter(|c| c.metadata["supported"] == true).cloned()
+            .ok_or_else(|| format!("Selected X-Plane dataref is unavailable in this installation: {id}."))).collect()
+    }
+    /// Retain profile subscriptions and add only the currently visible passive
+    /// inspection page. Rotating indexes prevents late old-page replies from
+    /// becoming values in the new page or aircraft epoch.
+    pub(crate) fn set_inspection_channels(&mut self, ids: &[String]) -> Result<(), String> {
+        if ids.len() > 512 { return Err("Inspect at most 512 X-Plane components per page.".into()); }
+        let mut inspection = ids.to_vec();
+        inspection.sort(); inspection.dedup();
+        if inspection == self.inspection { return Ok(()); }
+        let channels = Self::selected(&self.catalogue, &self.outputs, &inspection)?;
+        self.subscribe(0)?;
+        self.paths = subscriptions_for(&channels);
+        self.supported = vec![true; self.paths.len()];
+        self.base = Self::base();
+        self.session.reset("X-Plane inspection selection changed; awaiting fresh datarefs.");
+        self.session.channels = channels;
+        self.inspection = inspection;
+        self.initializing_subscriptions = true;
+        self.subscribe(self.connection["updateHz"].as_i64().unwrap() as i32)
     }
     fn base() -> i32 {
         (uuid::Uuid::new_v4().as_u128() % 1_000_000_000) as i32 + 1
@@ -525,22 +616,42 @@ impl Source {
         Ok(socket)
     }
     fn subscribe(&mut self, hz: i32) -> Result<(), String> {
+        if hz == 0 {
+            // A pending old positive request must never resurrect a page that
+            // was replaced before its subscription batch reached the simulator.
+            self.pending_subscriptions.retain(|request| request[5..9] == [0;4]);
+        }
+        if self.pending_subscriptions.len() + self.paths.len() > 8192 {
+            return Err("X-Plane subscription changes exceeded the bounded request queue.".into());
+        }
         for (i, path) in self
             .paths
             .iter()
             .enumerate()
             .filter(|(i, _)| self.supported[*i])
         {
-            self.socket
-                .send(&request(self.base + i as i32, hz, path))
-                .map_err(|e| format!("Cannot subscribe to X-Plane UDP datarefs: {e}"))?;
+            self.pending_subscriptions.push_back(request(self.base + i as i32, hz, path));
         }
         self.subscribed = Instant::now();
+        self.flush_subscriptions(Instant::now())
+    }
+    fn flush_subscriptions(&mut self, now: Instant) -> Result<(), String> {
+        if now.saturating_duration_since(self.last_subscription_batch) < Duration::from_millis(100) { return Ok(()); }
+        // The simulator's own network documentation recommends at most 100
+        // requests per 100 ms. Work is advanced by the regular poll loop.
+        for _ in 0..100 {
+            let Some(bytes) = self.pending_subscriptions.front() else { break; };
+            self.socket.send(bytes).map_err(|e| format!("Cannot subscribe to X-Plane UDP datarefs: {e}"))?;
+            self.pending_subscriptions.pop_front();
+        }
+        self.last_subscription_batch = now;
+        if self.pending_subscriptions.is_empty() { self.initializing_subscriptions = false; }
         Ok(())
     }
     pub(crate) fn poll(&mut self, now: Instant) -> (ExportSnapshot, Value) {
         let result = (|| -> Result<(), String> {
             (self.monitor)()?;
+            self.flush_subscriptions(now)?;
             if now.saturating_duration_since(self.subscribed) >= Duration::from_secs(2) {
                 self.subscribe(self.connection["updateHz"].as_i64().unwrap() as i32)?;
                 self.subscribed = now;
@@ -575,7 +686,24 @@ impl Source {
         if let Err(error) = &result {
             self.session.reset(error);
         }
-        let (snapshot, mut status, rotate) = self.session.snapshot(now, &self.outputs);
+        let (mut snapshot, mut status, rotate) = self.session.snapshot(now, &self.outputs);
+        if self.initializing_subscriptions {
+            snapshot.fresh = false;
+            snapshot.mission_active = false;
+            snapshot.values.clear();
+            status["fresh"] = json!(false);
+            status["status"] = json!("Subscribing to selected X-Plane datarefs in bounded batches.");
+            for channel in status["channels"].as_object_mut().into_iter().flat_map(|channels| channels.values_mut()) {
+                channel["status"] = json!("unavailable"); channel["value"] = Value::Null;
+            }
+        }
+        if snapshot.fresh {
+            for id in &self.inspection {
+                if status["channels"][id]["status"] == "ready" {
+                    snapshot.values.insert(id.clone(), status["channels"][id]["value"].clone());
+                }
+            }
+        }
         let failed = result.is_err();
         if let Err(error) = result {
             status["status"] = json!(error);
@@ -583,6 +711,7 @@ impl Source {
         if rotate || failed {
             let _ = self.subscribe(0);
             self.base = Self::base();
+            self.initializing_subscriptions = true;
             let _ = self.subscribe(self.connection["updateHz"].as_i64().unwrap() as i32);
             self.subscribed = now;
         }
@@ -592,6 +721,12 @@ impl Source {
 impl Drop for Source {
     fn drop(&mut self) {
         let _ = self.subscribe(0);
+        // Do not block shutdown waiting for future poll ticks. Flush remaining
+        // cancellations in bounded batches using the documented pacing.
+        while !self.pending_subscriptions.is_empty() {
+            std::thread::sleep(Duration::from_millis(100));
+            if self.flush_subscriptions(Instant::now()).is_err() { break; }
+        }
     }
 }
 

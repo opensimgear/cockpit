@@ -30,7 +30,7 @@ export async function profileDiscoverResource(inventory: Pick<ProfileInventoryCl
   const ports: DeepReadonly<ObservedResourcePort>[] = [];
   let page = first;
   for (;;) {
-    if (page.resource.id !== sourceId || page.offset !== ports.length || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > 40000 || ports.length + page.ports.length > page.total || ports.length < page.total && !page.ports.length) throw new Error('Malformed resource detail page. Refresh its inputs and outputs.');
+    if (page.resource.id !== sourceId || page.offset !== ports.length || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > 262144 || ports.length + page.ports.length > page.total || ports.length < page.total && !page.ports.length) throw new Error('Malformed resource detail page. Refresh its inputs and outputs.');
     if (page.session !== first.session || page.revision !== first.revision || page.total !== first.total || page.resource.generation !== first.resource.generation || page.resource.capabilityRevision !== first.resource.capabilityRevision) throw new Error('Resource capabilities or route changed while discovering inputs and outputs. Refresh the component.');
     ports.push(...page.ports);
     if (ports.length === first.total) break;

@@ -4,7 +4,8 @@ use crate::resources::SavedRegistry;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
-pub const MAX_INVENTORY_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_INVENTORY_BYTES: usize = 128 * 1024 * 1024;
+#[derive(Clone)]
 pub struct Store {
     root: PathBuf,
 }
@@ -26,7 +27,7 @@ impl Store {
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
         if bytes.len() > MAX_INVENTORY_BYTES {
-            return Err("Resource inventory exceeds 32 MiB.".into());
+            return Err("Resource inventory exceeds 128 MiB.".into());
         }
         let saved: SavedRegistry = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Cannot parse resource inventory: {e}"))?;
@@ -49,7 +50,7 @@ impl Store {
         saved.validate()?;
         let bytes = serde_json::to_vec(saved).map_err(|e| e.to_string())?;
         if bytes.len() > MAX_INVENTORY_BYTES {
-            return Err("Resource inventory exceeds 32 MiB.".into());
+            return Err("Resource inventory exceeds 128 MiB.".into());
         }
         self.check_path(true)?;
         let mut temporary =

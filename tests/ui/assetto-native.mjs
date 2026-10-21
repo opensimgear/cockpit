@@ -99,8 +99,11 @@ test('seven game artworks and three native Assetto dialects work in the running 
       evidence.games.push({gameId,setup:game.integrationSetup,vehicle:live.currentVehicle});
       const resources=(await native({command:'profile_resources_list',offset:0,limit:128})).profileResources.resources;
       const resource=resources.find(r=>r.attributes.gameId===gameId);assert.ok(resource,`${name} profile integration resource missing.`);
-      const ports=(await native({command:'profile_resources_inspect',resourceId:resource.id,offset:0,limit:128})).profileResources.ports;
-      assert.equal(ports.length,5);assert.ok(ports.every(p=>p.descriptor.direction==='output'));
+      const allPorts=[];let total=1;
+      while(allPorts.length<total){const result=(await native({command:'profile_resources_inspect',resourceId:resource.id,offset:allPorts.length,limit:128})).profileResources;total=result.total;assert.ok(result.ports.length||allPorts.length===total);allPorts.push(...result.ports);}
+      const legacy=new Set(['channel:gear','channel:max_rpm','channel:rev_ratio','channel:rpm','channel:speed_kmh']);
+      const ports=allPorts.filter(port=>legacy.has(port.descriptor.id));
+      assert.ok(allPorts.length>5);assert.equal(ports.length,5);assert.ok(allPorts.every(p=>p.descriptor.direction==='output'));
       assert.deepEqual(ports.map(p=>p.descriptor.id).sort(),['channel:gear','channel:max_rpm','channel:rev_ratio','channel:rpm','channel:speed_kmh']);
       const document=(await native({command:'profile_create',name:`Native ${name} ${Date.now()}`})).profiles.document;
       profile={id:document.id,revision:document.revision};

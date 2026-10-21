@@ -139,7 +139,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
         "companion_status" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
-        | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_integration_settings_save"
+        | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_telemetry_inspect" | "game_integration_settings_save"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
     Some(command)
@@ -155,7 +155,7 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
             |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
@@ -565,6 +565,18 @@ impl GatewayManager {
         if matches!(command,"profile_activation_status"|"profile_activation_cancel"|"profile_activation_current") {
             return self.profile_activation_request(&request);
         }
+        // Passive game inspection cannot delay profile takeover or emergency
+        // cleanup while a large installed SDK catalogue is being paged.
+        if command == "game_telemetry_inspect" {
+            if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.",None); }
+            if request.to_string().len()>65_536 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
+                return self.error("Invalid telemetry inspection client or request.",None);
+            }
+            return match self.games.inspect_telemetry(&request) {
+                Ok(telemetry)=>json!({"ok":true,"state":{"gameTelemetry":telemetry}}),
+                Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
+            };
+        }
         // System observation is independent of profile ownership, recovery,
         // learning and game admission. It only opens read-only native handles.
         if command == "system_inventory" {
@@ -675,7 +687,7 @@ impl GatewayManager {
         // Coordinator callbacks address adapters directly after admission.
         if request["command"]
             .as_str()
-            .is_some_and(|c| c.starts_with("game_") && c != "game_get_state")
+            .is_some_and(|c| c.starts_with("game_") && !matches!(c,"game_get_state"|"game_telemetry_inspect"))
         {
             let _admission = self
                 .game_admission
@@ -916,6 +928,12 @@ impl GatewayManager {
                 Err(error) => {
                     json!({"ok":false,"error":error.chars().take(256).collect::<String>()})
                 }
+            };
+        }
+        if command == "game_telemetry_inspect" {
+            return match self.games.inspect_telemetry(&request) {
+                Ok(telemetry) => json!({"ok":true,"state":{"gameTelemetry":telemetry}}),
+                Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
             };
         }
         if command.starts_with("game_") {
@@ -1701,7 +1719,7 @@ mod tests {
         for command in ["module_usb_claim","module_usb_config_apply","module_usb_actions_invoke","action_invoke_owned","config_stage","controller_update","companion_assign","profile_reset"] {
             let blocked=request(&manager,command,None,json!({}));
             assert_eq!(blocked["ok"],false,"{command}");
-            assert!(blocked["error"].as_str().unwrap().contains("unified profile session"),"{command}: {blocked}");
+            assert!(blocked["error"].as_str().unwrap().contains("Deactivate or recover"),"{command}: {blocked}");
         }
         assert_eq!(request(&manager,"controller_list",None,json!({}))["ok"],true);
         assert_eq!(request(&manager,"mapping_status",None,json!({}))["ok"],false);
@@ -1976,6 +1994,20 @@ mod tests {
         drop(admission);
         manager.shutdown();
         assert_eq!(request(&manager, "system_inventory", None, json!({}))["ok"], false);
+    }
+    #[test]
+    fn game_telemetry_inspection_bypasses_admission_and_never_changes_native_control_epoch() {
+        let (manager,provider)=setup();
+        let profile=manager.profile_admission.write().unwrap();
+        let game=manager.game_admission.write().unwrap();
+        let epoch=manager.profile_admission_epoch.load(Ordering::Acquire);
+        let response=request(&manager,"game_telemetry_inspect",None,json!({"gameId":"assetto-corsa-evo","search":"engine.rpm","limit":8}));
+        assert_eq!(response["ok"],true,"{response}");
+        assert_eq!(response["state"]["gameTelemetry"]["games"].as_array().unwrap().len(),7);
+        assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+        assert!(provider.adapters.lock().unwrap().is_empty());
+        assert_eq!(manager.request(json!({"command":"game_telemetry_inspect"}))["ok"],false);
+        drop(game);drop(profile);manager.shutdown();
     }
     #[test]
     fn controller_status_is_independent_of_gateway_inventory_and_rejects_invalid_edits() {

@@ -2,6 +2,8 @@
 //! decoding and freshness are separate; fixture input uses the production parser.
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
+#[path = "assetto_schema.rs"]
+mod schema;
 
 pub(crate) const PROVIDER: &str = "assetto-corsa-rally";
 pub(crate) const MAX_PAGE: usize = 4096;
@@ -48,6 +50,9 @@ impl Game {
             _ => (PHYSICS_SIZE, GRAPHICS_SIZE, STATIC_SIZE),
         }
     }
+    pub fn full_page_lengths(self) -> (usize, usize, usize) {
+        schema::page_lengths(self)
+    }
 }
 
 pub(crate) fn catalogue() -> Value {
@@ -56,13 +61,22 @@ pub(crate) fn catalogue() -> Value {
 pub(crate) fn catalogue_for_game(game_id: &str) -> Value {
     let game = match Game::from_id(game_id) { Ok(game) => game, Err(_) => return Value::Null };
     let channel = |id, label, kind, unit, minimum, maximum, derived| json!({"id":id,"label":label,"type":kind,"unit":unit,"minimum":minimum,"maximum":maximum,"derived":derived});
-    json!({"provider":game.id(),"revision":1,"commands":[],"channels":[
+    let mut catalogue = json!({"provider":game.id(),"revision":2,"commands":[],"channels":[
         channel("rpm","Engine RPM","integer","rpm",0,100000,false),
         channel("speed_kmh","Speed","number","km/h",0,2000,false),
         channel("gear","Gear (-1 reverse, 0 neutral)","integer","",-1,31,true),
         channel("max_rpm","Maximum RPM","integer","rpm",1,100000,false),
         channel("rev_ratio","RPM / maximum RPM","number","ratio",0,100000,true)
-    ]})
+    ]});
+    for channel in catalogue["channels"].as_array_mut().unwrap() {
+        channel["group"] = json!("summary");
+        channel["category"] = json!("summary");
+        channel["sourceGame"] = json!(game.id());
+        channel["qualification"] = json!("legacy-compatible");
+    }
+    catalogue["channels"].as_array_mut().unwrap().extend(schema::catalogue(game));
+    crate::game_channels::catalogue(game.id(), &mut catalogue);
+    catalogue
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -268,7 +282,7 @@ impl Snapshot {
         if !self.fresh {
             return BTreeMap::new();
         }
-        self.channels
+        let values = self.channels
             .iter()
             .filter_map(|(id, channel)| {
                 channel
@@ -277,7 +291,8 @@ impl Snapshot {
                     .filter(|_| channel.status == ChannelStatus::Ready)
                     .map(|value| (id.clone(), value.clone()))
             })
-            .collect()
+            .collect();
+        crate::game_channels::values(self.game.id(), &values)
     }
     pub fn value(&self) -> Value {
         let channels: BTreeMap<_, _> = self
@@ -331,6 +346,16 @@ pub(crate) fn parse(sample: &RawSample) -> Result<Reading, String> {
     parse_for_game(sample, Game::Rally)
 }
 pub(crate) fn parse_for_game(sample: &RawSample, game: Game) -> Result<Reading, String> {
+    let mut reading = parse_prefix(sample, game)?;
+    schema::decode(sample, game, &reading.context, &mut reading.channels);
+    Ok(reading)
+}
+/// Acquisition validates only required context and legacy fields between copies;
+/// expanded decoding happens once after the stable raw snapshot is selected.
+pub(crate) fn validate_for_game(sample: &RawSample, game: Game) -> Result<(), String> {
+    parse_prefix(sample, game).map(|_| ())
+}
+fn parse_prefix(sample: &RawSample, game: Game) -> Result<Reading, String> {
     let (_, graphics_size, static_size) = game.page_lengths();
     for (name, page, minimum) in [
         ("physics", &sample.physics, PHYSICS_SIZE),
@@ -593,12 +618,11 @@ impl Session {
             && self
                 .last_seen
                 .is_some_and(|last| now_ms >= last && now_ms - last <= self.freshness_ms);
-        let channels = CHANNELS
-            .iter()
+        let channels = CHANNELS.iter().copied().chain(schema::ids(self.game))
             .map(|id| {
                 let channel = if fresh {
                     self.channels
-                        .get(*id)
+                        .get(id)
                         .cloned()
                         .unwrap_or_else(|| Channel::unknown("No current channel value."))
                 } else {
@@ -787,7 +811,7 @@ mod tests {
         assert_eq!(reading.context.car_model, "research-rally");
         let catalogue = catalogue();
         assert!(catalogue["commands"].as_array().unwrap().is_empty());
-        assert_eq!(catalogue["channels"].as_array().unwrap().len(), 5);
+        assert_eq!(catalogue["channels"].as_array().unwrap()[..5].iter().map(|row|row["id"].as_str().unwrap()).collect::<Vec<_>>(), CHANNELS);
         let mut s = sample();
         s.physics = include_bytes!("../../tests/fixtures/acr/reverse.physics.bin").to_vec();
         assert_eq!(parse(&s).unwrap().channels["gear"].value, Some(json!(-1)));
@@ -957,7 +981,7 @@ mod tests {
         advance(&mut s, 11);
         let fresh = session.feed(&s, 2);
         assert!(fresh.fresh);
-        assert_eq!(fresh.values().len(), 5);
+        assert!(CHANNELS.iter().all(|id|fresh.values().contains_key(*id)));
         let epoch = fresh.epoch;
         assert!(!session.tick(103).fresh);
         let stale_epoch = session.snapshot(103).epoch;

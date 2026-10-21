@@ -79,6 +79,30 @@ fn fresh_runtime_ignores_old_profile_store_and_never_seeds_authoring_state() {
     assert!(!directory.path().join("game-installations-v1.json").exists());
 }
 #[test]
+fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
+    let directory = crate::test_directory();
+    let platform = Arc::new(FakePlatform::default());
+    let runtime = GamesRuntime::new(no_io(),Paths::in_directory(directory.path()),platform.clone());
+    let before = runtime.status();
+    let report = runtime.inspect_telemetry(&json!({"command":"game_telemetry_inspect","gameId":"assetto-corsa-evo","search":"engine.rpm","limit":16})).unwrap();
+    assert_eq!(report["schemaVersion"],1);
+    assert_eq!(report["games"].as_array().unwrap().len(),7);
+    let evo = report["games"].as_array().unwrap().iter().find(|game|game["id"] == "assetto-corsa-evo").unwrap();
+    assert_eq!(evo["total"],1);
+    assert_eq!(evo["channels"][0]["id"],"engine.rpm");
+    assert_eq!(evo["channels"][0]["unit"],"rpm");
+    assert_eq!(evo["channels"][0]["status"],"unknown");
+    assert_eq!(evo["channels"][0]["value"],Value::Null);
+    assert_eq!(runtime.status()["cleanup"],before["cleanup"]);
+    assert_eq!(platform.calls.load(Ordering::Acquire),0);
+    for extra in [json!({"limit":0}),json!({"limit":129}),json!({"offset":65537}),json!({"gameId":"unknown"}),json!({"search":"a".repeat(201)}),json!({"activate":true})] {
+        let mut request = json!({"command":"game_telemetry_inspect"});
+        request.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        assert!(runtime.inspect_telemetry(&request).is_err(),"{request}");
+    }
+    runtime.shutdown();
+}
+#[test]
 fn manual_installations_save_restart_remove_and_corruption_is_preserved() {
     let directory = crate::test_directory();
     let paths = Paths::in_directory(directory.path());

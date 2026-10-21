@@ -115,7 +115,7 @@ fn inventory_retains_distinct_gateway_modules_and_closed_game_ports_without_effe
         .iter()
         .filter(|r| r.resource_type == ResourceType::GameIntegration)
         .collect::<Vec<_>>();
-    assert_eq!(integrations.len(), 4);
+    assert_eq!(integrations.len(), 7);
     assert!(integrations
         .iter()
         .filter(|r| r.attributes["provider"] != "dcs-bios")
