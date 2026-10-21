@@ -41,6 +41,11 @@ async function showGraph(page, name, expectedNodes, expectedEdges) {
   await page.evaluate(name => {
     [...document.querySelectorAll('[aria-label="Saved profiles"] button')].find(button => button.getAttribute('aria-label') === `Edit ${name}`).click();
   }, name);
+  await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Toggle detailed graph"]')), 'The real profile canvas did not load');
+  await page.evaluate(() => {
+    const toggle = document.querySelector('[aria-label="Toggle detailed graph"]');
+    if (toggle?.getAttribute('aria-pressed') === 'false') toggle.click();
+  });
   await until(() => page.evaluate(ids => {
     const graph = document.querySelector('[aria-label="Profile resource graph"]');
     const seen = [...(graph?.querySelectorAll('[data-node-id]') ?? [])].map(node => node.getAttribute('data-node-id'));

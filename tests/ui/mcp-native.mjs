@@ -136,6 +136,20 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     await ok(freshConnection, 'profile_save_prepared', saveArgs); // same credential across reconnect
     assert.equal((await ok(writer, 'profile_get', { id: prepared.profileId })).document.revision, saved.document.revision);
     const changedPayload = await call(writer, 'profile_save_prepared', { ...saveArgs, draftId: randomUUID() }); assert.equal(changedPayload.error.code, 'operation_conflict');
+    const lostDraft = await ok(writer, 'profile_prepare_changes', { name: `MCP lost response ${Date.now()}`, expectedRevision: null });
+    profiles.add(lostDraft.profileId);
+    const lostArgs = mutation({ draftId: lostDraft.draftId });
+    const unreadReply = await modern('tools/call', { name: 'profile_save_prepared', arguments: lostArgs }, { Authorization: `Bearer ${write.token}` });
+    assert.equal(unreadReply.status, 200);
+    await unreadReply.body.cancel(); // deliberately lose the committed save result
+    await writer.close();
+    writer = await connect(endpoint, write.token); clients.push(writer); await writer.listTools();
+    const reconciled = await ok(writer, 'operation_status', { operationId: lostArgs.operationId });
+    assert.equal(reconciled.state, 'completed'); assert.equal(reconciled.result.ok, true);
+    const recoveredProfile = await ok(writer, 'profile_get', { id: lostDraft.profileId });
+    await ok(writer, 'profile_save_prepared', lostArgs);
+    assert.equal((await ok(writer, 'profile_get', { id: lostDraft.profileId })).document.revision, recoveredProfile.document.revision);
+    evidence.lostReply = { unreadSaveReplyDiscarded: true, reconnected: true, originalOperationRecovered: true, exactReplayDidNotDuplicate: true };
     const stale = await ok(writer, 'profile_prepare_changes', { profileId: prepared.profileId, expectedRevision: saved.document.revision, edits: [{ kind: 'set_name', name: `${name} AI pending` }] });
     await page.native({ command: 'profile_rename', id: prepared.profileId, expectedRevision: saved.document.revision, name: `${name} UI edit` });
     const staleSave = await call(writer, 'profile_save_prepared', mutation({ draftId: stale.draftId })); assert.equal(staleSave.ok, false); assert.equal(staleSave.error.code, 'revision_conflict');
