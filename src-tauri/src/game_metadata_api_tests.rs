@@ -88,6 +88,54 @@ fn added(runtime: &GamesRuntime) -> String {
 }
 
 #[test]
+fn categories_persist_rename_clear_and_preserve_game_identity() {
+    let (runtime, _directory) = fixture();
+    let category = "11111111-1111-4111-8111-111111111111";
+    runtime.request(&json!({"command":"game_categories_save","categories":{category:"Racing"},"expectedCategories":{}})).unwrap();
+    runtime.request(&json!({"command":"game_category_save","gameId":"dcs","categoryId":category})).unwrap();
+    runtime.request(&json!({"command":"game_custom_save","name":"My game","executable":null,"categoryId":category})).unwrap();
+    let id = added(&runtime);
+    runtime.request(&json!({"command":"game_custom_save","gameId":id,"name":"Renamed game","executable":null})).unwrap();
+    runtime.request(&json!({"command":"game_categories_save","categories":{category:"Driving"},"expectedCategories":{category:"Racing"}})).unwrap();
+    let persisted = runtime.inner.installations.load().unwrap().unwrap();
+    assert_eq!(persisted.categories[category], "Driving");
+    assert_eq!(persisted.game_categories[&id], category);
+    assert_eq!(persisted.game_categories["dcs"], category);
+    assert_eq!(persisted.custom_games[&id].name, "Renamed game");
+    assert_eq!(runtime.status()["catalogue"].as_array().unwrap().iter().find(|game| game["id"] == id).unwrap()["categoryId"], category);
+    runtime.request(&json!({"command":"game_custom_remove","gameId":id})).unwrap();
+    assert!(!saved(&runtime).game_categories.contains_key(&id));
+    runtime.request(&json!({"command":"game_categories_save","categories":{},"expectedCategories":{category:"Driving"}})).unwrap();
+    assert!(saved(&runtime).game_categories.is_empty());
+    assert!(runtime.status()["catalogue"].as_array().unwrap().iter().all(|game| game["categoryId"].is_null()));
+}
+
+#[test]
+fn invalid_or_stale_categories_leave_assignments_and_persistence_unchanged() {
+    let (runtime, _directory) = fixture();
+    let category = "11111111-1111-4111-8111-111111111111";
+    runtime.request(&json!({"command":"game_categories_save","categories":{category:"Racing"},"expectedCategories":{}})).unwrap();
+    runtime.request(&json!({"command":"game_category_save","gameId":"dcs","categoryId":category})).unwrap();
+    let before = saved(&runtime);
+    for request in [
+        json!({"command":"game_categories_save","categories":{},"expectedCategories":{}}),
+        json!({"command":"game_categories_save","categories":{category:""},"expectedCategories":{category:"Racing"}}),
+        json!({"command":"game_categories_save","categories":{category:"A".repeat(49)},"expectedCategories":{category:"Racing"}}),
+        json!({"command":"game_categories_save","categories":{category:"Racing","22222222-2222-4222-8222-222222222222":"racing"},"expectedCategories":{category:"Racing"}}),
+        json!({"command":"game_category_save","gameId":"dcs","categoryId":"missing"}),
+        json!({"command":"game_category_save","gameId":"unknown","categoryId":category}),
+        json!({"command":"game_category_save","gameId":"dcs","categoryId":category,"processSession":"forged"}),
+        json!({"command":"game_custom_save","name":"Invalid category","executable":null,"categoryId":"missing"}),
+    ] {
+        assert!(runtime.request(&request).is_err(), "{request}");
+        assert_eq!(saved(&runtime), before);
+        assert_eq!(runtime.inner.installations.load().unwrap().unwrap(), before);
+    }
+    runtime.request(&json!({"command":"game_category_save","gameId":"dcs","categoryId":null})).unwrap();
+    assert!(!saved(&runtime).game_categories.contains_key("dcs"));
+}
+
+#[test]
 fn staged_metadata_rejects_stale_cross_runtime_and_busy_commits_without_losing_newer_settings() {
     let (runtime, directory) = fixture();
     let first = executable(directory.path(), "Staged.exe");

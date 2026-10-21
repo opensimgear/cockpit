@@ -140,7 +140,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_telemetry_inspect" | "game_integration_settings_save"
-        | "game_library_scan" | "game_background_save" | "game_custom_save" | "game_custom_remove" | "game_library_import"
+        | "game_categories_save" | "game_category_save" | "game_library_scan" | "game_background_save" | "game_custom_save" | "game_custom_remove" | "game_library_import"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
     Some(command)
@@ -625,7 +625,7 @@ impl GatewayManager {
         if matches!(command, "game_get_state" | "game_library_scan") {
             return self.request_inner(request);
         }
-        if matches!(command, "game_custom_save" | "game_custom_remove" | "game_background_save" | "game_library_import") {
+        if matches!(command, "game_categories_save" | "game_category_save" | "game_custom_save" | "game_custom_remove" | "game_background_save" | "game_library_import") {
             return self.game_metadata_request(&request);
         }
         // Passive game inspection cannot delay profile takeover or emergency

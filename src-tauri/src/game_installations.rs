@@ -87,6 +87,10 @@ impl LibrarySource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Settings {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "distinct_map")]
+    pub categories: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "distinct_map")]
+    pub game_categories: BTreeMap<String, String>,
     #[serde(deserialize_with = "distinct_installations")]
     pub manual_installations: BTreeMap<String, String>,
     #[serde(
@@ -112,6 +116,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             schema_version: 1,
+            categories: BTreeMap::new(),
+            game_categories: BTreeMap::new(),
             manual_installations: BTreeMap::new(),
             custom_games: BTreeMap::new(),
             backgrounds: BTreeMap::new(),
@@ -174,6 +180,20 @@ pub(crate) fn executable(path: &str) -> bool {
 }
 impl Settings {
     pub(crate) fn validate(&self) -> Result<(), String> {
+        let mut names = std::collections::BTreeSet::new();
+        if self.categories.len() > 64 || self.categories.iter().any(|(id, name)| {
+            !uuid::Uuid::parse_str(id).is_ok_and(|parsed| parsed.to_string() == *id)
+                || name.is_empty() || name.trim() != name || name.chars().count() > 48
+                || name.chars().any(char::is_control) || !names.insert(name.to_lowercase())
+        }) {
+            return Err("Use at most 64 categories with distinct names between 1 and 48 characters.".into());
+        }
+        if self.game_categories.len() > MAX_GAMES || self.game_categories.iter().any(|(id, category)| {
+            (!GAMES.contains(&id.as_str()) && !self.custom_games.contains_key(id))
+                || !self.categories.contains_key(category)
+        }) {
+            return Err("Choose an existing game and category.".into());
+        }
         if self.schema_version != 1
             || self.manual_installations.len() > GAMES.len()
             || self

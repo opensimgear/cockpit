@@ -12,6 +12,8 @@
   import GameCustomDialog from './GameCustomDialog.svelte';
   import GameLibraryDialog from './GameLibraryDialog.svelte';
   import GameBackgroundSettings from './GameBackgroundSettings.svelte';
+  import GameCategoriesDialog from './GameCategoriesDialog.svelte';
+  import {filterGamesByCategory} from './games';
   import {gameHasIntegration,isCustomGameId,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameExecutableName,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameCleanupLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
   let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),onNavigate}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
@@ -23,10 +25,13 @@
   let showAll=$state(false),pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
   let providerBusy=$state(false),customDialog=$state<'add'|'edit'|null>(null),libraryDialog=$state(false),removeDialog=$state(false);
   let recoveryDialog:HTMLDialogElement|undefined;
+  let categoriesDialog=$state(false),categoryFilter=$state('');
   function attachRecoveryDialog(node:HTMLDialogElement){recoveryDialog=node;return()=>{recoveryDialog=undefined;};}
   const receivedStatus=$derived(status??response);
   const gameState:GamesState=$derived(receivedStatus??{catalogue:supportedGames});
-  const games=$derived(visibleGames(gameState.catalogue,showAll));
+  const categories=$derived(gameState.categories??{});
+  const games=$derived(filterGamesByCategory(visibleGames(gameState.catalogue,showAll),categoryFilter));
+  $effect(()=>{if(categoryFilter&&categoryFilter!=='uncategorized'&&!categories[categoryFilter])categoryFilter='';});
   const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
   const selectedArt=$derived(selected?resolveGameArtwork(selected):null);
   const selectedExecutablePath=$derived(gameDisplayPath(selected?.executable??selected?.manualPath));
@@ -45,7 +50,7 @@
     const passive=command.command==='game_get_state';
     if(!passive){pending=true;notice='';}
     try{const result=await request(command);if(result){response=result;updateGameCatalogue(result.catalogue);if(!passive)notice=result.error??'';}else if(!passive)notice='The request did not complete. Check the connection and try again.';return result;}
-    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);if(['game_custom_save','game_background_save','game_library_scan','game_library_import'].includes(command.command))throw error;return false;}
+    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);if(['game_categories_save','game_custom_save','game_background_save','game_library_scan','game_library_import'].includes(command.command))throw error;return false;}
     finally{if(!passive)pending=false;}
   }
   async function saveSettings(command:GameRequest):Promise<GamesState>{
@@ -57,6 +62,8 @@
   function initializeGame(game:Game){initializedGameId=game.id;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??game.manualPath??'';notice='';}
   function chooseGame(game:Game){initializeGame(game);onNavigate?.(game.id);}
   function gameSaved(result:GamesState){customDialog=null;libraryDialog=false;response=result;updateGameCatalogue(result.catalogue);const game=result.catalogue.find(item=>item.id===result.addedGameId)??result.catalogue.find(item=>item.id===selectedGameId);if(game)chooseGame(game);}
+  function categoriesSaved(result:GamesState){categoriesDialog=false;response=result;updateGameCatalogue(result.catalogue);}
+  async function saveCategory(game:Game,input:HTMLSelectElement){const result=await send({command:'game_category_save',gameId:game.id,categoryId:input.value||null});if(!result||result.error)input.value=game.categoryId??'';}
   async function removeGame(){if(!selected||locked)return;const result=await send({command:'game_custom_remove',gameId:selected.id});if(result&&!result.error){removeDialog=false;allGames();}}
   function showDialog(node:HTMLDialogElement){node.showModal();return()=>node.close();}
   function allGames(){selectedGameId='';notice='';onNavigate?.('');}
@@ -101,13 +108,14 @@
     <button class="text-button back-link" onclick={allGames}><Icon name="back" size={14} /> All games</button>
     <div class="game-details-heading">
       <div class={['game-detail-mark', { racing: selectedArt!.category !== 'Flight' }]}><Icon name={selectedArt!.category === 'Flight' ? 'command' : selectedArt!.category === 'Custom' ? 'gamepad' : 'wheel'} size={32} /></div>
-      <div><p class="game-kicker">{selectedArt!.category==='Custom'?'CUSTOM GAME':`${selectedArt!.category} simulation`}</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selectedArt!.telemetryLabel}</p></div>
+      <div><p class="game-kicker">{selected.categoryId?categories[selected.categoryId]:selectedArt!.category==='Custom'?'Game':`${selectedArt!.category} simulation`}</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selectedArt!.telemetryLabel}</p></div>
       <div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}>
-        {#snippet actions()}{#if isCustomGameId(selected.id)}<button class="secondary-button" disabled={locked} onclick={()=>customDialog='edit'}>Edit game</button><button class="secondary-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/if}{/snippet}
+        {#snippet actions()}{#if isCustomGameId(selected.id)}<span class="custom-badge">Custom</span><button class="secondary-button" disabled={locked} onclick={()=>customDialog='edit'}>Edit game</button><button class="secondary-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/if}{/snippet}
       </GameProfileLaunch>{/key}</div>
     </div>
 
     <div class="game-content">
+        <section class="panel category-panel"><label class="editor-label">Category<select aria-label="Game category" disabled={locked} value={selected.categoryId??''} onchange={event=>void saveCategory(selected,event.currentTarget)}><option value="">Uncategorized</option>{#each Object.entries(categories) as [id,title] (id)}<option value={id}>{title}</option>{/each}</select></label><button class="secondary-button" disabled={locked} onclick={()=>categoriesDialog=true}>Manage categories</button></section>
         <section class="panel installation-panel"><div class="sidebar-title"><Icon name="search" size={18} /><h3>Installation</h3></div><div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><Icon name={selected.installed ? 'check' : 'info'} size={14} />{selected.installed ? 'Found on this computer' : 'Not found'}</span>{#if !isCustomGameId(selected.id)}<button class="secondary-button" disabled={locked} onclick={discoverInstallation}><Icon name="search" size={14} />Discover automatically</button>{/if}</div>
           {#if selected.provider === 'x-plane' && selected.installations?.length}
             <label class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><select aria-label="Detected X-Plane installations" bind:value={executablePath} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.executable)}<option value={install.executable}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
@@ -170,7 +178,8 @@
     </div>
   {:else}
     <div class="page-heading games-toolbar"><div><div class="eyebrow">YOUR GAMES</div><h1>Games</h1><p>{gameState.catalogue.filter(game => game.installed).length} found · {gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated</p></div><div class="toolbar-controls"><button class="primary-button" disabled={locked} onclick={()=>customDialog='add'}><Icon name="plus" size={14}/>Add game</button><button class="secondary-button" disabled={locked} onclick={()=>libraryDialog=true}><Icon name="gamepad" size={14}/>Import from library</button><button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={13} /> Rescan</button><label class="supported-switch"><input type="checkbox" role="switch" bind:checked={showAll} /><span class="switch-track" aria-hidden="true"></span> Show all supported</label></div></div>
-    {#if receivedStatus&&!games.length}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31} /></div><h2>No games found</h2><p>Add a custom game, import from a local game library, or show supported games to choose their locations.</p><div><button class="primary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan games</button><button class="secondary-button" onclick={() => { showAll = true; }}>Show supported games</button></div></div>{/if}
+    <div class="category-filter"><label>Category<select aria-label="Filter games by category" bind:value={categoryFilter}><option value="">All categories</option><option value="uncategorized">Uncategorized</option>{#each Object.entries(categories) as [id,title] (id)}<option value={id}>{title}</option>{/each}</select></label><button class="secondary-button" disabled={locked} onclick={()=>categoriesDialog=true}>Manage categories</button></div>
+    {#if receivedStatus&&!games.length}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31} /></div><h2>{categoryFilter?'No games in this category':'No games found'}</h2><p>{categoryFilter?'Choose another category or show all games.':'Add a custom game, import from a local game library, or show supported games to choose their locations.'}</p><div>{#if categoryFilter}<button class="secondary-button" onclick={()=>categoryFilter=''}>Clear category filter</button>{:else}<button class="primary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan games</button><button class="secondary-button" onclick={() => { showAll = true; }}>Show supported games</button>{/if}</div></div>{/if}
     <div class="game-grid">
       {#each games as game (game.id)}
         {@const liveLabel=gameIntegrationLiveLabel(game)}
@@ -178,7 +187,7 @@
         {@const art=resolveGameArtwork(game)}
         <article class={['game-tile', { unavailable: !game.installed }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
-            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{/if}<div class="art-shade"></div><span class="art-category">{art.category}</span>
+            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{/if}<div class="art-shade"></div>{#if game.categoryId}<span class="art-category">{categories[game.categoryId]}</span>{:else if !isCustomGameId(game.id)}<span class="art-category">{art.category}</span>{/if}{#if isCustomGameId(game.id)}<span class="art-category custom-art-badge">Custom</span>{/if}
               <div class={['game-wordmark', { 'long-wordmark': art.wordmark === 'ASSETTO CORSA' }]}>{art.wordmark}<span>{art.edition}</span></div>
             </div>
             <div class="tile-copy">
@@ -198,7 +207,8 @@
   {/if}
 </section>
 
-{#if customDialog}<GameCustomDialog game={customDialog==='edit'?selected:undefined} request={send} close={()=>customDialog=null} saved={gameSaved}/>{/if}
+{#if customDialog}<GameCustomDialog game={customDialog==='edit'?selected:undefined} {categories} request={send} close={()=>customDialog=null} saved={gameSaved}/>{/if}
+{#if categoriesDialog}<GameCategoriesDialog {categories} request={send} close={()=>categoriesDialog=false} saved={categoriesSaved}/>{/if}
 {#if libraryDialog}<GameLibraryDialog request={send} close={()=>libraryDialog=false} imported={gameSaved}/>{/if}
 {#if removeDialog&&selected}<dialog class="launch-review" aria-labelledby="remove-game-title" oncancel={event=>{event.preventDefault();if(!pending)removeDialog=false;}} {@attach showDialog}><h2 id="remove-game-title">Remove {selected.name}?</h2><p class="review-description">Remove this game and its custom background from Cockpit. Your saved profiles stay available; profiles using this game will show an unavailable context until you select another game.</p>{#if notice}<p role="alert">{notice}</p>{/if}<div class="review-actions"><button class="secondary-button" disabled={pending} onclick={()=>removeDialog=false}>Cancel</button><button class="primary-button" disabled={locked} onclick={removeGame}>Remove game</button></div></dialog>{/if}
 
@@ -212,6 +222,8 @@
 </dialog>
 
 <style>
+  .custom-badge{align-self:center;padding:5px 9px;border:1px solid var(--line);border-radius:4px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+  .category-panel{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;padding:20px;margin-bottom:20px}.category-panel .editor-label{flex:1;min-width:180px;margin:0}.category-filter{display:flex;align-items:flex-end;gap:12px;margin-bottom:24px;flex-wrap:wrap}.category-filter label{display:grid;gap:8px;min-width:220px;font-size:12px;color:var(--soft)}.category-filter select,.category-panel select{font-size:12px;min-height:38px}.category-panel button{flex-shrink:0}.art-category.custom-art-badge{left:auto;right:16px}
   .custom-game-context{padding:20px}.custom-game-context p{color:var(--muted);font-size:12px;line-height:1.7}.editor-label>input{padding:10px;background:var(--input-bg);border:1px solid var(--line);color:var(--text);border-radius:5px;min-width:0;width:100%;box-sizing:border-box}
   .game-content {min-width:0;font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   .game-content .field-help {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);overflow-wrap:anywhere;}
@@ -254,7 +266,7 @@
   .game-art { aspect-ratio: 16 / 9; background: linear-gradient(135deg,var(--accent-bg),var(--surface-raised)); position: relative; overflow: hidden; }
   .game-art-image { width:100%;height:100%;object-fit:cover;display:block; }
   .art-shade { position:absolute;inset:0;background:linear-gradient(180deg,#07101980 0%,transparent 40%,#07101945 62%,#071019e8 100%); }
-  .art-category { position:absolute;top:14px;left:16px;padding:5px 8px;border:1px solid #ffffff30;border-radius:4px;background:#071019a6;font-size:8px;text-transform:uppercase;letter-spacing:1.5px;color:#f1f5f9; }
+  .art-category { max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;position:absolute;top:14px;left:16px;padding:5px 8px;border:1px solid #ffffff30;border-radius:4px;background:#071019a6;font-size:8px;text-transform:uppercase;letter-spacing:1.5px;color:#f1f5f9; }
   .game-wordmark { position:absolute;bottom:17px;left:20px;right:16px;font-size:32px;line-height:1;font-weight:750;letter-spacing:3px;color:#fff;text-shadow:0 2px 8px #0008; }
   .game-wordmark.long-wordmark {font-size:23px;letter-spacing:1.2px;}
   .game-wordmark span { display:block;font-size:10px;letter-spacing:5px;font-weight:600;margin-top:7px; }

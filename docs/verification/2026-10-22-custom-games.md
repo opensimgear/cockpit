@@ -155,3 +155,27 @@ A 16-thread native library run was stopped after 1081 of 1095 tests reported
 results because it exhausted host responsiveness alongside another checkout's
 test process. Three deadline-sensitive failures passed when rerun individually
 with one thread. This interrupted run is not reported as a passing full suite.
+
+## Category and badge follow-up
+
+Custom badges now appear on the right of game tiles and alongside the detail
+page actions. Each built-in or custom game can have one optional category;
+Add/Edit also includes category selection. Manage categories supports bounded,
+distinct names, stable IDs, rename, deletion and Cancel. Renaming retains game
+assignments; deletion makes affected games uncategorized. The games list filters
+by All categories, Uncategorized or a configured category. Storage uses the
+existing atomic native registry; stale category-list edits are rejected.
+
+The rebuilt running native dev Cockpit passed `game-categories-native.mjs`:
+category creation and duplicate rejection, Add/details assignment, built-in
+assignment, right-hand badge positions, filtering, rename/reload durability,
+delete/unassignment/filter reset and Cancel, with no page errors. Test-created
+entries and category changes were cleaned up. Evidence is retained locally in
+`.research/game-categories-native/`.
+
+The 6 metadata and 8 installation tests passed, including category persistence,
+rename/clear/remove, stale edits, invalid references/names and unchanged saved
+state after rejection. Frontend checks report no errors or warnings; both
+production builds pass. Game/runtime helper coverage passes at 95.47% lines,
+94.50% branches and 92.00% functions. These follow-up checks are separate from
+the earlier source-stamped native coverage run recorded above.

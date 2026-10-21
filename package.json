@@ -92,6 +92,7 @@
     "profiles:vehicles:native": "node --test tests/ui/profile-vehicles-native.mjs",
     "profiles:vehicles:switch:native": "node --test tests/ui/profile-vehicle-switch-native.mjs",
     "profiles:dcs:aircraft:native": "node --test tests/ui/dcs-aircraft-catalogues-native.mjs",
+    "games:categories:native": "node --test tests/ui/game-categories-native.mjs",
     "games:custom:native": "node --test tests/ui/custom-games-native.mjs",
     "games:steam:native": "node --test tests/ui/custom-games-steam-native.mjs",
     "games:persistence:native": "node --test tests/ui/custom-games-persistence-native.mjs"

@@ -150,8 +150,31 @@ impl GamesRuntime {
         let mut library = None;
         let command = request["command"].as_str().unwrap_or("");
         match command {
+            "game_categories_save" => {
+                fields(request, &["categories", "expectedCategories"])?;
+                if request["expectedCategories"] != json!(captured.categories) {
+                    return Err("Categories changed elsewhere. Close this dialog and try again.".into());
+                }
+                next.categories = serde_json::from_value(request["categories"].clone())
+                    .map_err(|_| "Choose a valid category list.")?;
+                // Renaming preserves IDs; deleting a category leaves games uncategorized.
+                next.game_categories.retain(|_, category| next.categories.contains_key(category));
+            }
+            "game_category_save" => {
+                fields(request, &["gameId", "categoryId"])?;
+                let id = request["gameId"].as_str()
+                    .filter(|id| catalogue.iter().any(|game| game["id"] == *id))
+                    .ok_or("Choose an existing game.")?;
+                match request.get("categoryId") {
+                    Some(Value::Null) => { next.game_categories.remove(id); }
+                    Some(Value::String(category)) if next.categories.contains_key(category) => {
+                        next.game_categories.insert(id.into(), category.clone());
+                    }
+                    _ => return Err("Choose an existing category or Uncategorized.".into()),
+                }
+            }
             "game_custom_save" => {
-                fields(request, &["gameId", "name", "executable"])?;
+                fields(request, &["gameId", "name", "executable", "categoryId"])?;
                 let id = match request.get("gameId") {
                     None => format!("custom-{}", uuid::Uuid::new_v4()),
                     Some(Value::String(id))
@@ -184,6 +207,15 @@ impl GamesRuntime {
                         default_background: previous.and_then(|game| game.default_background),
                     },
                 );
+                if let Some(category) = request.get("categoryId") {
+                    match category {
+                        Value::Null => { next.game_categories.remove(&id); }
+                        Value::String(category) if next.categories.contains_key(category) => {
+                            next.game_categories.insert(id.clone(), category.clone());
+                        }
+                        _ => return Err("Choose an existing category or Uncategorized.".into()),
+                    }
+                }
                 added = Some(id);
             }
             "game_custom_remove" => {
@@ -196,6 +228,7 @@ impl GamesRuntime {
                 }
                 next.backgrounds.remove(id);
                 next.default_backgrounds.remove(id);
+                next.game_categories.remove(id);
             }
             "game_background_save" => {
                 fields(request, &["gameId", "path", "positionX", "positionY"])?;

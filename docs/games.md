@@ -33,6 +33,18 @@ reassigned. Deactivate the affected profile before changing its registration;
 registration edits also wait for an in-flight activation or launch to finish.
 An unavailable game never turns scoped output into global output.
 
+## Categories
+
+Use **Manage categories** in the games list or a game's details to add, rename
+or delete categories. Assign one category in any game's details, or when adding
+or editing a custom game. **Filter games by category** shows all games, a chosen
+category or only uncategorized games, alongside the installed/supported filter.
+
+Category names and assignments are saved locally. Renaming keeps assignments;
+deleting a category leaves its games uncategorized. Cancelling the category
+manager leaves the saved list unchanged. Custom games retain a separate
+**Custom** badge on the right of their tile and details actions.
+
 ## Tile backgrounds
 
 Every game's details includes **Tile background**. Browse to a PNG, JPEG or WebP

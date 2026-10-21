@@ -267,6 +267,7 @@ pub(crate) fn merged_catalogue(
             "processExecutables":executable.iter().cloned().collect::<Vec<_>>(),"defaultBackground":record.default_background}));
     }
     for game in &mut games {
+        game["categoryId"] = json!(game["id"].as_str().and_then(|id| settings.game_categories.get(id)));
         if let Some(background) = game["id"]
             .as_str()
             .and_then(|id| settings.backgrounds.get(id))

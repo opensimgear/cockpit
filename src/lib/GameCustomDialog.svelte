@@ -2,11 +2,12 @@
   import { untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import { pickGameExecutable } from './gateway';
-  import { customGameError, type Game, type GameRequest, type GamesState } from './games';
-  let { game, request, close, saved }: { game?: Game; request: (value: GameRequest) => Promise<GamesState | false>; close: () => void; saved: (value: GamesState) => void } = $props();
+  import { customGameError, type Game, type GameCategories, type GameRequest, type GamesState } from './games';
+  let { game, categories={}, request, close, saved }: { game?: Game; categories?:GameCategories; request: (value: GameRequest) => Promise<GamesState | false>; close: () => void; saved: (value: GamesState) => void } = $props();
   const editingGame = untrack(() => game);
   let name = $state(editingGame?.name ?? ''), executable = $state(editingGame?.executable ?? editingGame?.manualPath ?? '');
   let nameEdited = $state(!!editingGame);
+  let categoryId = $state(editingGame?.categoryId ?? '');
   let pending = $state(false), error = $state('');
   const validation = $derived(customGameError(name, executable));
   function show(node: HTMLDialogElement) { node.showModal(); return () => node.close(); }
@@ -21,7 +22,7 @@
     if (pending || validation) return;
     pending = true; error = '';
     try {
-      const result = await request({ command: 'game_custom_save', ...(editingGame ? { gameId: editingGame.id } : {}), name: name.trim(), executable: executable.trim() || null });
+      const result = await request({ command: 'game_custom_save', ...(editingGame ? { gameId: editingGame.id } : {}), name: name.trim(), executable: executable.trim() || null, categoryId:categoryId||null });
       if (!result || result.error) throw new Error(result && result.error || 'The game was not saved. Try again.');
       saved(result);
     } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
@@ -36,6 +37,7 @@
     <label>Game executable<div class="path-row"><input aria-label="Custom game executable" bind:value={executable} oninput={event=>inferName(event.currentTarget.value)} placeholder="C:\Games\My game\game.exe" disabled={pending}/><button type="button" class="secondary-button" onclick={browse} disabled={pending}><Icon name="folder" size={14}/>Browse</button></div></label>
     <p class="help">Choose the game process used for bindings. You can add it without a path and choose the executable later.</p>
     <label>Game name<input aria-label="Custom game name" bind:value={name} oninput={()=>nameEdited=true} maxlength="80" disabled={pending} placeholder="My game"/></label>
+    <label>Category<select aria-label="Custom game category" bind:value={categoryId} disabled={pending}><option value="">Uncategorized</option>{#each Object.entries(categories) as [id,title] (id)}<option value={id}>{title}</option>{/each}</select></label>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions"><button type="button" class="secondary-button" onclick={close} disabled={pending}>Cancel</button><button class="primary-button" title={validation||undefined} disabled={pending||!!validation}>{pending ? 'Saving…' : editingGame ? 'Save game' : 'Add game'}</button></div>
   </form>

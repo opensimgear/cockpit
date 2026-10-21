@@ -246,7 +246,7 @@ impl GamesRuntime {
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"manualInstallations":settings.saved.manual_installations,"libraryCandidates":settings.library_candidates,"libraryDiagnostics":settings.library_diagnostics,"addedGameId":settings.added_game_id,"cleanup":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":settings.error})
+        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"categories":settings.saved.categories,"manualInstallations":settings.saved.manual_installations,"libraryCandidates":settings.library_candidates,"libraryDiagnostics":settings.library_diagnostics,"addedGameId":settings.added_game_id,"cleanup":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":settings.error})
     }
     pub(crate) fn active(&self) -> bool {
         self.inner.busy.load(Ordering::Acquire)
@@ -318,7 +318,7 @@ impl GamesRuntime {
             Some(
                 "game_custom_save"
                     | "game_custom_remove"
-                    | "game_background_save"
+                    | "game_categories_save" | "game_category_save" | "game_background_save"
                     | "game_library_scan"
                     | "game_library_import"
             )
@@ -352,7 +352,7 @@ impl GamesRuntime {
             command,
             "game_custom_save"
                 | "game_custom_remove"
-                | "game_background_save"
+                | "game_categories_save" | "game_category_save" | "game_background_save"
                 | "game_library_scan"
                 | "game_library_import"
         ) {

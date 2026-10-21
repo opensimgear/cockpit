@@ -78,3 +78,13 @@ test('cleanup labels cannot represent running profiles, process launches or appl
  for(const [phase,label]of [['idle','Nothing to restore'],['restoring','Restoring previous owned setup'],['recovery-needed','Recovery needed'],['failed','Cleanup failed']])assert.equal(gameCleanupLabel({phase}),label);
  assert.equal(gameCleanupLabel({phase:'running'}),undefined);assert.equal(gameCleanupLabel({phase:'launching'}),undefined);
 });
+
+test('category filtering includes built-in and custom games and distinguishes uncategorized',()=>{
+  const id='custom-11111111-1111-4111-8111-111111111111',catalogue=[{id,name:'Custom',categoryId:'racing'},games.supportedGames[0],{...games.supportedGames[1],categoryId:'racing'}];
+  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'')).map(game=>game.id),catalogue.map(game=>game.id));
+  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'racing')).map(game=>game.id),[id,'assetto-corsa-rally']);
+  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'uncategorized')).map(game=>game.id),['dcs']);
+  assert.equal(games.filterGamesByCategory(catalogue,'deleted').length,0);
+  for(const categories of [{},{a:'Racing',b:'Flight simulation'}])assert.equal(games.categoryError(categories),'');
+  for(const categories of [{a:''},{a:'Racing',b:' racing '},{a:'x'.repeat(49)},{a:'Bad\nname'},Object.fromEntries(Array.from({length:65},(_,i)=>[i,`Category ${i}`]))])assert.ok(games.categoryError(categories));
+});
