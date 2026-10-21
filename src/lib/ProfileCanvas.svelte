@@ -43,8 +43,8 @@
   const inspectorContentId = $props.id();
   let search = $state('');
   let pendingOverviewDrop=$state<{component:ProfilePaletteComponent;position:CanvasPoint}|null>(null);
-  let laneViewport:CanvasViewport|null=null;
-  let overview=$state(true),overviewBundleId=$state(''),showTransforms=$state(false),activeTransform=$state('');
+  const overview=true;
+  let overviewBundleId=$state(''),showTransforms=$state(false),activeTransform=$state('');
   let searchInput: HTMLInputElement;
   let view = $state<CanvasViewport>({ ...untrack(() => document.editor.viewport) });
   let dragged = $state<{id:string;position:CanvasPoint}|null>(null);
@@ -131,9 +131,22 @@
   onDestroy(() => { portEpoch++;layoutEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
   function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
   function fit() { bundlePicker=null;fitView(); }
-  function closeLanes(){if(laneViewport){view=laneViewport;laneViewport=null;}pendingOverviewDrop=null;overviewBundleId='';showTransforms=false;activeTransform='';}
-  async function setOverview(value:boolean,id?:string){layoutEpoch++;layoutBusy=false;closeConnectionPanel?.();selectConnection?.('');selectedId='';closeLanes();restoreSelectionView();overview=value;await tick();fitView();if(id){if(allNodes.some(node=>node.id===id))choose(id);else chooseConnection(id);}}
-  function openOverview(id:string){pendingOverviewDrop=null;clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';laneViewport??={...view};overviewBundleId=id;void tick().then(()=>{fitView();stage?.parentElement?.parentElement?.querySelector('.signal-lanes')?.scrollIntoView({block:'nearest'});});}
+  function closeLanes(){pendingOverviewDrop=null;overviewBundleId='';showTransforms=false;activeTransform='';}
+  function openOverview(id:string){
+    if(overviewBundleId===id){closeLanes();return;}
+    pendingOverviewDrop=null;clearConnectionClick();selectionView=null;focusedSelectionId='';
+    closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';overviewBundleId=id;
+  }
+  function slideLanes(_node:HTMLElement){return {duration:window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:180,css:(t:number)=>`transform:translateY(${(1-t)*100}%)`};}
+  function trimArrowShaft(element:SVGPathElement,settings:{path:string;head:number}){
+    function update({path,head}:typeof settings){
+      // Actions may update before Svelte writes d during a drag or Undo.
+      // Measure the new geometry, otherwise the old length leaves a gap mid-wire.
+      element.setAttribute('d',path);
+      const length=element.getTotalLength();element.style.strokeDasharray=`${Math.max(0,length-head*.55)} ${head}`;
+    }
+    update(settings);return{update};
+  }
   function zoom(factor:number,at?:CanvasPoint) { bundlePicker=null;view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2}); }
   async function layout() {
     if(readOnly||layoutBusy||drag||segmentDrag||wire)return;
@@ -391,19 +404,16 @@
 <section class="profile-graph" aria-label="Profile resource graph">
   <div class="canvas-toolbar">
     <div class="canvas-search"><Icon name="search" size={14}/><input aria-label="Search profile blocks" placeholder="Find a block, type or transport…" bind:this={searchInput} bind:value={search} onkeydown={event=>{if(event.key==='Enter')focusMatch();}}/>{#if search}<button class="search-clear" type="button" aria-label="Clear block search" title="Clear block search" onclick={()=>{search='';searchInput.focus();}}><Icon name="close" size={14}/></button>{/if}</div>
-    <button class="text-button" onclick={focusMatch} disabled={!matches.length}>{overview?'Find block':search?`${matches.length} matches`:`${nodes.length} blocks`}</button>
-    <button class="text-button" aria-label="Toggle detailed graph" aria-pressed={!overview} onclick={()=>setOverview(!overview)}>{overview?'Detailed graph':'Overview'}</button>
-    {#if overview}<button class="text-button" aria-pressed={showTransforms} onclick={()=>{closeConnectionPanel?.();selectedId='';overviewBundleId='';showTransforms=!showTransforms;activeTransform='';}}>Transforms</button>{/if}
     {#if selectedEdge&&document.editor.wireRoutes?.some(route=>route.bindingId===selectedEdgeId)}<button class="text-button" disabled={readOnly} onclick={()=>resetWireRoute(selectedEdgeId)}>Reset bends</button>{/if}
     <div class="canvas-view-controls">
       <button class="canvas-icon-button" type="button" aria-label="Fit all" title="Fit all" onclick={fit}><Icon name="fit" size={16}/></button>
       <button class="canvas-icon-button" type="button" aria-label="Auto-layout" title={layoutBusy?'Arranging with ELK…':'Auto-layout with ELK Layered'} aria-busy={layoutBusy} disabled={readOnly||layoutBusy} onclick={layout}><Icon name="layout" size={16}/></button>
-      <div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button>{#if !overview}<output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output>{/if}<button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div>
+      <div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button><output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output><button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div>
     </div>
   </div>
   {#if layoutBusy}<p class="canvas-help" role="status">Arranging blocks and connections…</p>{/if}
-  <p class="canvas-help" id="profile-canvas-help">{#if overview}Drag between blocks to connect. Thicker arrows carry more signals; click an arrow to edit its transform chains below. Drop a transform on an arrow to insert it. Use Detailed graph for individual ports and branches.{:else}Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. Double-click a wire to add a draggable reroute point; select a point and press Delete to remove it. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.{/if}</p>
-  <div class="canvas-layout" class:lanes-open={overview&&!!overviewBundle}>
+  <p class="canvas-help" id="profile-canvas-help">{#if overview}Drag between blocks to connect. Thicker arrows carry more signals; click an arrow to edit its transform chains. Drop a transform on an arrow to insert it. Click the selected arrow again, press Escape, or click the canvas to dismiss.{:else}Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. Double-click a wire to add a draggable reroute point; select a point and press Delete to remove it. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.{/if}</p>
+  <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
     <div class="canvas-stage" data-view={overview?'overview':'detailed'} class:node-dragging={!!dragged||!!groupPreview} class:wire-blocked={!!wireRejectedReason||segmentBlocked} class:segment-dragging={!!segmentDrag} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={scheduleMove} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
       {#if layoutError}<p class="canvas-layout-error port-error" role="alert">{layoutError}</p>{/if}
@@ -422,7 +432,7 @@
           </div>
         {/each}
         <svg class="signal-edges" width="1" height="1" aria-label="Saved signal routes">
-          <defs><marker id="profile-signal-arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" viewBox="0 0 8 8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Q1,4 0,0 Z" /></marker><marker id="profile-overview-arrow" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="18" viewBox="0 0 16 18" refX="16" refY="9" orient="auto"><path d="M0,0 L16,9 L0,18 Q4,9 0,0 Z"/></marker></defs>
+          <defs><marker id="profile-signal-arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" viewBox="0 0 8 8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Q1,4 0,0 Z" /></marker></defs>
           {#snippet renderWireBundle(bundle:DiagramWireBundle)}
             {@const route=bundle.route}
             {@const binding=route.binding}
@@ -431,7 +441,10 @@
             {#if overview}
               {@const projected=overviewById.get(binding.id)!}
               {@const width=signalBundleWidth(projected.lanes.length,maximumRoutes)}
-              <path class="signal-edge overview-edge" data-binding-id={binding.id} data-route-count={projected.lanes.length} data-arrow-style={wireStyle} class:selected={overviewBundleId===binding.id} class:drop-target={paletteConnectionId===binding.id} style={`stroke-width:${width}px`} marker-end="url(#profile-overview-arrow)" d={route.path}><title>{nodesById.get(binding.from.nodeId)?.name} → {nodesById.get(binding.to.nodeId)?.name}</title></path>
+              {@const head=Math.max(10,width*2.4)}
+              {@const markerId=`${inspectorContentId}-arrow-${overviewBundles.indexOf(projected)}`}
+              <defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth={head} markerHeight={head} viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path class:selected={overviewBundleId===binding.id} d="M0,0 L10,5 L0,10 Z"/></marker></defs>
+              <path class="signal-edge overview-edge" data-binding-id={binding.id} data-route-count={projected.lanes.length} data-arrow-style={wireStyle} class:selected={overviewBundleId===binding.id} class:drop-target={paletteConnectionId===binding.id} style={`stroke-width:${width}px`} use:trimArrowShaft={{path:route.path,head}} marker-end={`url(#${markerId})`} d={route.path}><title>{nodesById.get(binding.from.nodeId)?.name} → {nodesById.get(binding.to.nodeId)?.name}</title></path>
               <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Inspect signals from ${nodesById.get(binding.from.nodeId)?.name} to ${nodesById.get(binding.to.nodeId)?.name}`} aria-pressed={overviewBundleId===binding.id} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={()=>openOverview(binding.id)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openOverview(binding.id);}}}/>
             {:else}
             <path class="signal-edge" class:bundled={grouped} class:orthogonal={wireStyle==='orthogonal'} data-binding-id={binding.id} data-binding-ids={JSON.stringify(bundle.members.map(route=>route.binding.id))} data-bundle-count={bundle.members.length} data-bundle-id={grouped?bundle.id:undefined} data-arrow-style={wireStyle} class:selected={selectedEdgeId===binding.id} class:drop-target={paletteConnectionId===binding.id} class:highlighted={bundle.members.some(route=>highlightedEdges.includes(route.binding.id))} class:problem={bundle.members.some(route=>route.customBlocked||diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(route.binding.id)))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{grouped?`${bundle.members.length} connections: ${nodesById.get(binding.from.nodeId)?.name??binding.from.nodeId} → ${nodesById.get(binding.to.nodeId)?.name??binding.to.nodeId}`:`${portName(binding.from.nodeId,binding.from.portId,'output')} → ${portName(binding.to.nodeId,binding.to.portId,'input')}`}</title></path>
@@ -464,7 +477,7 @@
             {/if}
             {/if}
           {/snippet}
-          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id!==selectedEdgeId) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id!==(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
           {#each sharedTrunks as trunk (trunk.id)}
             <path class="signal-trunk" data-trunk-id={trunk.id} data-trunk-direction={trunk.direction} data-trunk-endpoint={JSON.stringify(trunk.endpoint)} data-binding-ids={JSON.stringify(trunk.members.map(route=>route.binding.id))} data-arrow-style={wireStyle} class:highlighted={trunk.members.some(route=>highlightedEdges.includes(route.binding.id))} class:drop-target={paletteConnectionId===trunk.route.binding.id} d={trunk.route.path}><title>{trunk.members.length} connections share this {trunk.direction==='output'?'output':'input'} trunk</title></path>
             <path class="signal-trunk-hit" data-trunk-id={trunk.id} data-bundle-id={trunk.id} data-connection-id={trunk.route.binding.id} d={trunk.route.path} role="button" tabindex="0" aria-label={`Choose from ${trunk.members.length} connections sharing this ${trunk.direction==='output'?'output':'input'}`} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={event=>openBundle(event,trunk)} ondblclick={event=>openBundle(event,trunk)} onkeydown={event=>bundleKey(event,trunk)}><title>Choose a signal on this shared trunk</title></path>
@@ -479,7 +492,7 @@
               <title>{trunk.members.length} connections · Click to choose a signal</title><rect x="-17" y="-10" width="34" height="20" rx="10"/><text text-anchor="middle" dominant-baseline="central">×{trunk.members.length}</text>
             </g>
           {/each}
-          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id===selectedEdgeId) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id===(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
           {#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={diagramPendingPath(canvasNodeAnchor(from,pending.direction,pending.portId),pending.end,pending.direction,wireStyle,cornerRadius)}><title>Choose the other block, then select compatible ports</title></path>{#if wireRejectedReason}<text class="wire-drop-error" x={pending.end.x+12} y={pending.end.y-12}>{wireRejectedReason}</text>{/if}{/if}{/if}
         </svg>
         {#each renderedNodes as node (node.id)}
@@ -544,16 +557,19 @@
         </div>
     </aside>
     {/if}
-  </div>
   {#if overview&&(overviewBundle||showTransforms)}
-    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes insertionPending={!!pendingOverviewDrop} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} details={id=>setOverview(false,id)} {transformSettings} insert={id=>{if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,id,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    <div class="canvas-lanes-panel" transition:slideLanes>
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes insertionPending={!!pendingOverviewDrop} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} insert={id=>{if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,id,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    </div>
   {/if}
+  </div>
   {#if !overview}<div class="graph-result-summary"><span>{visibleDocument.resources.length} resource blocks</span><span>{visibleDocument.bindings.length} signal routes</span><span>{visibleDocument.processingNodes.length} transformations</span><span>{controllerEffects.virtual} requested virtual controllers</span><span>{visibleDocument.desktopOutputs?.length??0} desktop endpoint</span><span>{controllerEffects.hidden} hide-while-active requests</span></div>
   <section class="controller-effect-summary" aria-label="Draft controller effects"><strong>Draft controller effects</strong><p>Publication choices: <span>{controllerEffects.enabled} enable while active</span> · <span>{controllerEffects.disabled} disable while active</span> · <span>{controllerEffects.configured} keep configured</span>.</p><p>{controllerEffects.hidden} hide-while-active requests · {controllerEffects.virtual} requested virtual controllers.</p><small>Draft requests. Activation checks device support and ownership; Save applies changes when this profile is active.</small></section>{/if}
 </section>
 
 <style>
-  .canvas-layout.lanes-open .canvas-stage{height:38vh;min-height:320px;max-height:440px}
+  .signal-edge.overview-edge.selected{stroke:var(--text);filter:drop-shadow(0 0 4px var(--accent));}.signal-edges marker path.selected{fill:var(--text);}
+  .canvas-lanes-panel{position:absolute;inset:auto 0 0;z-index:6;max-height:65%;overflow:auto;overscroll-behavior:contain;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -10px 24px #0002;}
   .signal-trunk{pointer-events:none;fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.signal-trunk.highlighted{stroke:#e0bd7e;stroke-width:4}.signal-trunk.drop-target{stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent))}.signal-trunk-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer;outline:none!important}.signal-trunk-hit:hover,.signal-trunk-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none!important}
   .connection-trunk-badge{pointer-events:all;cursor:pointer;outline:none}.connection-trunk-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-trunk-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-trunk-badge:hover rect,.connection-trunk-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}
   .signal-edge.bundled{stroke-width:2.5}.connection-bundle-badge{pointer-events:all;cursor:pointer;outline:none}.connection-bundle-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-bundle-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-bundle-badge:hover rect,.connection-bundle-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}

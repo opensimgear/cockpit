@@ -24,7 +24,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('overview=$state(true)', 'overview=$state(false)');
+canvasSource = canvasSource.replace('const overview=true', 'const overview=false');
 canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,addWireHandle,beginHandle,handleKeyboard,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,syncSelectionFocus,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},setInspector(value){inspectorPanel=value;},setSelection(value){selectedId=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,selectionView,focusedSelectionId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const lanesCode=transpile(compile(await readFile(new URL('./ProfileSignalLanes.svelte',import.meta.url),'utf8'),{filename:'ProfileSignalLanes.svelte',generate:'server'}).js.code);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
