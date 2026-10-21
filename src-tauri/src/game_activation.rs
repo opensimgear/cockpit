@@ -54,6 +54,13 @@ fn process(
 ) -> Result<(GameIdentity, Option<ProcessIdentity>), String> {
     let identity = identity(platform, game)?;
     let process = platform.find(game)?;
+    checked_process(platform, identity, process)
+}
+fn checked_process(
+    platform: &dyn Platform,
+    identity: GameIdentity,
+    process: Option<ProcessIdentity>,
+) -> Result<(GameIdentity, Option<ProcessIdentity>), String> {
     if let Some(process) = &process {
         ProcessIdentity::parse(&process.value())?;
         if !platform.alive(process)? {
@@ -64,26 +71,48 @@ fn process(
 }
 impl Observer {
     pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
-        // Native catalogue bounds follow the supported games; reject duplicates rather than
-        // allowing a second observation in one scan to satisfy debounce.
+        // Capture one process inventory for the whole registered catalogue.
+        // Reject duplicates before discovery so one cycle cannot satisfy the
+        // consecutive-observation requirement for the same registration.
         let mut seen = BTreeSet::new();
-        let scans = games
+        let mut duplicates = BTreeSet::new();
+        for game in games.iter().take(osg_profiles::activation::MAX_GAMES + 1) {
+            let id = game["id"].as_str().unwrap_or("").to_owned();
+            if !seen.insert(id.clone()) { duplicates.insert(id); }
+        }
+        let identities = games
             .iter()
-            .take(osg_profiles::activation::MAX_RULES + 1)
+            .take(osg_profiles::activation::MAX_GAMES + 1)
             .map(|game| {
                 let id = game["id"].as_str().unwrap_or("").to_owned();
-                let result = if !seen.insert(id.clone()) || games.len() > osg_profiles::activation::MAX_RULES {
+                let result = if duplicates.contains(&id) || games.len() > osg_profiles::activation::MAX_GAMES {
                     Err("The native game catalogue is ambiguous or exceeds its bound.".into())
                 } else if game["installed"] == false && game["processMonitoringSupported"] == true {
                     // Supported catalogue entries need not all be installed.
                     // Their absence is not a failed Windows process scan.
                     Ok(None)
                 } else {
-                    process(platform, game).map(Some)
+                    identity(platform, game).map(Some)
                 };
                 (id, result)
             })
             .collect::<Vec<_>>();
+        let monitored = games.iter().zip(&identities)
+            .filter(|(_, (_, identity))| matches!(identity, Ok(Some(_))))
+            .map(|(game, _)| game.clone()).collect::<Vec<_>>();
+        let observations = platform.find_many(&monitored);
+        let complete = observations.len() == monitored.len();
+        let mut observations = observations.into_iter();
+        let scans = identities.into_iter().map(|(id, result)| {
+            let result = result.and_then(|identity| match identity {
+                None => Ok(None),
+                Some(identity) if complete => observations.next()
+                    .ok_or_else(|| "The native process inventory is incomplete.".to_owned())?
+                    .and_then(|process| checked_process(platform, identity, process)).map(Some),
+                Some(_) => Err("The native process inventory is incomplete.".into()),
+            });
+            (id, result)
+        }).collect::<Vec<_>>();
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         state.entries.retain(|id, _| seen.contains(id));
         for (id, result) in scans {

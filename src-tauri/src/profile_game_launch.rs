@@ -190,13 +190,8 @@ impl GamesRuntime {
         candidate: &Candidate,
         selected_game: Option<&str>,
     ) -> Result<PreparedLaunch, String> {
-        if selected_game.is_some_and(|id| {
-            !matches!(
-                id,
-                "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
-            )
-        }) {
-            return Err("Choose a supported native selected context.".into());
+        if let Some(id) = selected_game {
+            self.registered_profile_game(id)?;
         }
         if !candidate.launch_preparation || candidate.game_id.is_some() || candidate.read_only || candidate.admission_epoch.is_none()
         {

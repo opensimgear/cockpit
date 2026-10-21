@@ -11,15 +11,16 @@ import { loadModules } from './test-module-loader.mjs';
 const modules = await loadModules(['./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-provider-settings','./game-settings-navigation']);
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
-async function component(name) {
-  if (componentModules.has(name)) return componentModules.get(name);
+async function component(name, hook) {
+  if (!hook && componentModules.has(name)) return componentModules.get(name);
   const filename = new URL(name, import.meta.url);
-  const { js } = compile(await readFile(filename,'utf8'), {filename:filename.pathname,generate:'server'});
+  const source = await readFile(filename,'utf8');
+  const { js } = compile(hook ? hook.source(source) : source, {filename:filename.pathname,generate:'server'});
   const dependencies = new Map();
   for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g)) dependencies.set(match[1],{default:await component(match[1])});
   const exports = {};
   const code = ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  vm.runInNewContext(code,{exports,TextEncoder,require(name){
+  vm.runInNewContext(code,{exports,TextEncoder,captureGameRequests:hook?.receive,require(name){
     if(name==='svelte/internal/server')return server;
     if(name==='svelte')return svelte;
     if(dependencies.has(name))return dependencies.get(name);
@@ -28,13 +29,56 @@ async function component(name) {
     if(name==='./notifications')return {notify:noRequest};
     throw new Error(`Unexpected component dependency ${name}`);
   }},{filename:filename.pathname});
-  componentModules.set(name,exports.default);return exports.default;
+  if (!hook) componentModules.set(name,exports.default);return exports.default;
 }
 const GamesPanel = await component('./GamesPanel.svelte');
 const { supportedGames } = modules.get('./games');
 const { defaultProviderConnection } = modules.get('./game-provider-settings');
 const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup:{state:'setup-required',message:'Configure this provider',providerSetupRevision:`sha256:${'1'.repeat(64)}`,userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}},integrationContext:{status:'waiting-profile',message:'An active matching profile is required',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
 const state = g => ({catalogue:[g],cleanup:{phase:'idle'}});
+
+test('game metadata dialogs receive the original actionable native failure while ordinary panel requests retain inline errors',async()=>{
+  let handlers;const failure=new Error('Deactivate this game context before changing its executable.');
+  const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({send});</script>'),receive:value=>handlers=value});
+  render(Panel,{props:{status:state(game('dcs')),busy:false,request:async()=>{throw failure;}}}).body;
+  for(const command of ['game_custom_save','game_background_save','game_library_scan','game_library_import'])await assert.rejects(()=>handlers.send({command}),error=>error===failure);
+  assert.equal(await handlers.send({command:'game_get_state'}),false);
+});
+
+test('custom Installation edits preserve the registration identity and name and surface path failures inline',async()=>{
+  let handlers,reject=false;const calls=[],id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Relocated custom game',provider:null,custom:true,installed:false,executable:null,manualPath:'C:\\Old\\Game.exe',launchSupported:false};
+  const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({saveExecutable,get notice(){return notice;}});</script>'),receive:value=>handlers=value});
+  render(Panel,{props:{status:state(g),selectedGameId:id,busy:false,request:async value=>{calls.push(JSON.parse(JSON.stringify(value)));if(reject)throw new Error('Choose an existing absolute game executable (.exe).');return state({...g,executable:value.executable,installed:true});}}}).body;
+  await handlers.saveExecutable(g,'C:\\New\\Game.exe');assert.deepEqual(calls[0],{command:'game_custom_save',gameId:id,name:g.name,executable:'C:\\New\\Game.exe'});
+  reject=true;await handlers.saveExecutable(g,'C:\\Missing\\Game.exe');assert.match(handlers.notice,/Choose an existing absolute game executable/);
+  reject=false;await handlers.saveExecutable(supportedGames[0],'C:\\Games\\DCS.exe');assert.deepEqual(calls[2],{command:'game_installation',gameId:'dcs',executable:'C:\\Games\\DCS.exe'});
+});
+
+test('successful custom and builtin installation saves adopt the exact canonical native path',async()=>{
+  let handlers;const prefix=String.fromCharCode(92,92,63,92),path='C:\\Games\\Moved.exe';
+  const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({saveExecutable,get executablePath(){return executablePath;}});</script>'),receive:value=>handlers=value});
+  for(const g of [{id:'custom-11111111-1111-4111-8111-111111111111',name:'Custom game',provider:null,custom:true,installed:false,launchSupported:false},game('dcs')]){
+    render(Panel,{props:{status:state(g),selectedGameId:g.id,busy:false,request:async()=>state({...g,executable:prefix+path,manualPath:prefix+path,installed:true})}}).body;
+    await handlers.saveExecutable(g,path);assert.equal(handlers.executablePath,prefix+path);
+  }
+});
+
+test('custom games expose matching profiles, metadata and background editing without telemetry setup or vehicle controls',()=>{
+  const id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Custom game',provider:null,custom:true,installed:false,launchSupported:false};
+  const html=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,request:noRequest}}).body;
+  for(const label of ['Edit game','Remove','Matching profiles','Tile background','Reset to default','Bindings and profile activation','Game executable path'])assert.ok(html.includes(label),label);
+  for(const absent of ['Integration setup','Install integration','Native telemetry not verified','Current aircraft','Current car'])assert.ok(!html.includes(absent),absent);
+  const list=render(GamesPanel,{props:{status:state(g),busy:false,request:noRequest}}).body;
+  for(const label of ['Add game','Import from library','Custom game','Choose executable'])assert.ok(list.includes(label),label);
+});
+
+test('missing custom executables retain their saved path in details and relocation dialogs',async()=>{
+  const id='custom-11111111-1111-4111-8111-111111111111',manualPath='C:\\OldGames\\MissingGame.exe',g={id,name:'Moved game',provider:null,custom:true,installed:false,executable:null,manualPath,launchSupported:false};
+  const details=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,request:noRequest}}).body;
+  assert.ok(details.includes(manualPath));assert.ok(details.includes('The saved executable could not be found. Choose its new location.'));
+  const Dialog=await component('./GameCustomDialog.svelte'),dialog=render(Dialog,{props:{game:g,request:noRequest,close:noRequest,saved:noRequest}}).body;
+  assert.ok(dialog.includes(`value="${manualPath}"`));assert.ok(dialog.includes('Edit game'));
+});
 
 test('DCS game details group native locations and autosaved network settings without aircraft or manual save controls',()=>{
   const g=game('dcs');g.integrationSetup.recoveryNeeded=true;g.integrationSetup.activeAircraftModule='F-86F Sabre';

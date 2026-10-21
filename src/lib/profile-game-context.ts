@@ -1,4 +1,4 @@
-import {supportedGames,type GameId} from './games';
+import {isGameId,isRegisteredGameId,getGameCatalogue,gameHasIntegration,gameName,type GameId} from './games';
 import {canvasNodes} from './profile-canvas';
 import {graphAssignResource,graphRemoveNode,type ProfileGraphDraft} from './profile-graph';
 import {profileDocumentError,profileDocumentAssignmentsError,type DeepReadonly,type ProfileDocument} from './profiles';
@@ -6,9 +6,9 @@ import type {ObservedResourcePort,ResourceSummary} from './profile-inventory';
 import {profileChangeVehicleTab,profileRemoveVehicleTab,profileTabNodeIds} from './profile-vehicle-tabs';
 
 export function profileGameContext(document:Pick<DeepReadonly<ProfileDocument>,'eligibility'>):GameId|'' {
-  return supportedGames.find(game=>game.id===document.eligibility.gameIds[0])?.id??'';
+  const id=document.eligibility.gameIds[0];return isGameId(id)?id:'';
 }
-export function profileGameName(id:string):string{return supportedGames.find(game=>game.id===id)?.name??id;}
+export function profileGameName(id:string):string{return gameName(id);}
 
 /** Aircraft aliases identify one installed DCS-BIOS module; Base always uses CommonData. */
 export function profileDcsResourceMatchesVehicle(source:DeepReadonly<ResourceSummary>,vehicleId:string):boolean {
@@ -31,11 +31,12 @@ export function profileGameTabInventory(document:DeepReadonly<ProfileDocument>,i
 
 /** The saved context and its integration block change together in one Undo edit. */
 export function profileSetGameContext(value:DeepReadonly<ProfileGraphDraft>,gameId:GameId|'',inventory:readonly DeepReadonly<ResourceSummary>[]):ProfileGraphDraft {
-  if(gameId&&!supportedGames.some(game=>game.id===gameId))throw Error('Choose a supported game context or None.');
+  if(gameId&&!isRegisteredGameId(gameId))throw Error('Choose a supported game context or None.');
   let next=JSON.parse(JSON.stringify(value)) as ProfileGraphDraft;
   if(profileGameContext(value.document)!==gameId)for(const tab of [...(next.document.vehicleTabs??[])])next=profileRemoveVehicleTab(next.document,next.assignments,tab.id);
   const before=canvasNodes(next.document,next.assignments,inventory),baseIds=profileTabNodeIds(next.document),games=next.document.resources.filter(resource=>resource.kind==='game'&&baseIds.has(resource.id));
-  const keep=gameId?games.find(resource=>{
+  const integrated=gameId&&gameHasIntegration(getGameCatalogue().find(game=>game.id===gameId));
+  const keep=integrated?games.find(resource=>{
     const assignment=value.assignments.find(assignment=>assignment.resourceId===resource.id),observed=inventory.find(resource=>resource.id===assignment?.sourceId);
     return observed?.attributes.gameId===gameId||profileGameContext(value.document)===gameId&&games.length===1&&!observed;
   }):undefined;
@@ -43,7 +44,7 @@ export function profileSetGameContext(value:DeepReadonly<ProfileGraphDraft>,game
   const oldGroup=value.document.editor.groups?.find(group=>games[0]&&group.members.includes(games[0].id))?.id;
   for(const resource of games)if(resource.id!==keep?.id)next=graphRemoveNode(next,resource.id);
   next.document.eligibility.gameIds=gameId?[gameId]:[];
-  if(gameId){
+  if(integrated){
     let resource=next.document.resources.find(resource=>resource.id===keep?.id);
     if(!resource){
       if(next.document.resources.length>=64)throw Error('Remove a component before selecting a game context; a profile supports 64 resources.');
@@ -84,7 +85,7 @@ export function profileAddVehicleIntegration(value:DeepReadonly<ProfileGraphDraf
 
 /** Empty context blocks can acquire their exact native integration when inventory arrives. */
 export function profileGameContextNeedsSync(value:DeepReadonly<ProfileGraphDraft>,inventory:readonly DeepReadonly<ResourceSummary>[]):boolean {
-  const id=profileGameContext(value.document);if(!id)return false;
+  const id=profileGameContext(value.document);if(!id||!gameHasIntegration(getGameCatalogue().find(game=>game.id===id)))return false;
   const base=profileTabNodeIds(value.document);
   if(!value.document.resources.some(resource=>resource.kind==='game'&&base.has(resource.id)))return true;
   return value.document.resources.some(resource=>{if(resource.kind!=='game'||resource.ports.length)return false;const source=profileGameIntegrationSource(value.document,resource.id,inventory),assignment=value.assignments.find(assignment=>assignment.resourceId===resource.id);return !!source&&!assignment?.ports.length&&assignment?.sourceId!==source.id;});

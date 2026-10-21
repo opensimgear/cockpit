@@ -15,7 +15,15 @@ use std::{
 };
 type CleanupIo = Arc<dyn Fn(Value) -> Value + Send + Sync>;
 const CLIENT: &str = "cockpit-game-session-coordinator";
-const GAMES: [&str; 7] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12", "assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"];
+const GAMES: [&str; 7] = [
+    "dcs",
+    "assetto-corsa-rally",
+    "x-plane-11",
+    "x-plane-12",
+    "assetto-corsa",
+    "assetto-corsa-competizione",
+    "assetto-corsa-evo",
+];
 fn known(value: &Value, keys: &[&str]) -> bool {
     value
         .as_object()
@@ -50,6 +58,9 @@ struct Settings {
     catalogue: Vec<Value>,
     journal: Option<Value>,
     error: Option<String>,
+    library_candidates: Vec<crate::game_library::Candidate>,
+    library_diagnostics: Vec<String>,
+    added_game_id: Option<String>,
 }
 struct Inner {
     panel: CleanupIo,
@@ -83,15 +94,20 @@ mod cleanup;
 mod context_runtime;
 #[path = "game_dcs_catalogues.rs"]
 mod dcs_catalogues;
-#[path = "game_telemetry_api.rs"]
-mod telemetry_api;
 #[path = "profile_game_launch.rs"]
 pub(crate) mod launch;
+#[path = "game_metadata_api.rs"]
+mod metadata_api;
+pub(crate) use metadata_api::PreparedMetadata;
+#[path = "game_telemetry_api.rs"]
+mod telemetry_api;
 pub(crate) use context_runtime::PreparedGame;
 
 impl GamesRuntime {
     pub(crate) fn new(panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>) -> Self {
-        let vehicles = crate::game_vehicles::Tracker::new(paths.installations.with_file_name("game-vehicles-v1.json"));
+        let vehicles = crate::game_vehicles::Tracker::new(
+            paths.installations.with_file_name("game-vehicles-v1.json"),
+        );
         let installations = crate::game_installations::Store::new(paths.installations);
         let (saved, metadata_error) = match installations.load() {
             Ok(saved) => (saved.unwrap_or_default(), None),
@@ -113,7 +129,7 @@ impl GamesRuntime {
             }
             None => json!({"phase":"idle","error":null}),
         };
-        let catalogue = platform.catalogue(&saved.manual_installations);
+        let catalogue = crate::game_discovery::merged_catalogue(platform.as_ref(), &saved);
         let runtime = Self {
             inner: Arc::new(Inner {
                 panel,
@@ -135,6 +151,9 @@ impl GamesRuntime {
                     catalogue,
                     journal,
                     error,
+                    library_candidates: vec![],
+                    library_diagnostics: vec![],
+                    added_game_id: None,
                 }),
                 state: Mutex::new(state),
                 busy: AtomicBool::new(false),
@@ -158,11 +177,20 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner())
             .catalogue
             .clone();
-        self.inner.setup.decorate(&mut catalogue);
+        for game in catalogue.iter_mut().filter(|game| game["custom"] != true) {
+            self.inner.setup.decorate(std::slice::from_mut(game));
+        }
         self.decorate_game_contexts(&mut catalogue);
         {
-            let vehicles = self.inner.vehicles.lock().unwrap_or_else(|p|p.into_inner());
+            let vehicles = self
+                .inner
+                .vehicles
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             for game in &mut catalogue {
+                if game["custom"] == true {
+                    continue;
+                }
                 vehicles.decorate(game);
                 self.inner.setup.decorate_installed_cars(game);
             }
@@ -173,15 +201,24 @@ impl GamesRuntime {
                 .activation
                 .view(game["id"].as_str().unwrap_or(""));
         }
+        crate::game_artwork::decorate(self.inner.installations.root(), &mut catalogue);
         catalogue
     }
     pub(crate) fn current_vehicle_id(&self, game_id: &str) -> Option<String> {
-        self.inner.vehicles.lock().unwrap_or_else(|p|p.into_inner()).current(game_id)
+        self.inner
+            .vehicles
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .current(game_id)
             .and_then(|vehicle| vehicle["id"].as_str().map(str::to_owned))
     }
     #[cfg(test)]
     pub(crate) fn set_test_vehicle(&self, game_id: &str, vehicle_id: Option<&str>) {
-        self.inner.vehicles.lock().unwrap_or_else(|p|p.into_inner()).set_test_vehicle(game_id, vehicle_id);
+        self.inner
+            .vehicles
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .set_test_vehicle(game_id, vehicle_id);
     }
     pub(crate) fn status(&self) -> Value {
         let catalogue = self.resource_catalogue();
@@ -209,7 +246,7 @@ impl GamesRuntime {
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"manualInstallations":settings.saved.manual_installations,"cleanup":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":settings.error})
+        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"manualInstallations":settings.saved.manual_installations,"libraryCandidates":settings.library_candidates,"libraryDiagnostics":settings.library_diagnostics,"addedGameId":settings.added_game_id,"cleanup":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":settings.error})
     }
     pub(crate) fn active(&self) -> bool {
         self.inner.busy.load(Ordering::Acquire)
@@ -276,7 +313,22 @@ impl GamesRuntime {
         Err("Retained game cleanup owns its existing hardware evidence. Finish cleanup before independent writes.".into())
     }
     pub(crate) fn request(&self, request: &Value) -> Result<(), String> {
-        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        if matches!(
+            request["command"].as_str(),
+            Some(
+                "game_custom_save"
+                    | "game_custom_remove"
+                    | "game_background_save"
+                    | "game_library_scan"
+                    | "game_library_import"
+            )
+        ) {
+            return self.metadata_request(request);
+        }
+        // Passive status validates its envelope below but must not wait behind
+        // metadata publication or artwork collection.
+        let _admission = (request["command"] != "game_get_state")
+            .then(|| self.admission.lock().unwrap_or_else(|p| p.into_inner()));
         if self.inner.closed.load(Ordering::Acquire) {
             return Err("The game metadata runtime has closed.".into());
         }
@@ -295,6 +347,16 @@ impl GamesRuntime {
             || matches!(command, "game_launch" | "game_activate" | "game_deactivate")
         {
             return Err("This independent game profile/activation API is retired. Use a unified profile and profile_game_launch.".into());
+        }
+        if matches!(
+            command,
+            "game_custom_save"
+                | "game_custom_remove"
+                | "game_background_save"
+                | "game_library_scan"
+                | "game_library_import"
+        ) {
+            return self.metadata_request(request);
         }
         if command.starts_with("game_integration_") {
             if command != "game_integration_cancel" {
@@ -357,11 +419,18 @@ impl GamesRuntime {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if command == "game_scan" {
-            settings.catalogue = self
-                .inner
-                .platform
-                .catalogue(&settings.saved.manual_installations);
-            self.inner.setup.refresh(&settings.catalogue);
+            settings.catalogue = crate::game_discovery::merged_catalogue(
+                self.inner.platform.as_ref(),
+                &settings.saved,
+            );
+            self.inner.setup.refresh(
+                &settings
+                    .catalogue
+                    .iter()
+                    .filter(|game| game["custom"] != true)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
             return Ok(());
         }
         if let Some(error) = &settings.metadata_error {
@@ -377,6 +446,7 @@ impl GamesRuntime {
             }
             Some(Value::String(executable)) => {
                 self.inner.platform.validate(id, executable)?;
+                metadata_api::unique_executable(&settings.catalogue, id, Some(executable))?;
                 next.manual_installations
                     .insert(id.into(), executable.clone());
             }
@@ -389,8 +459,16 @@ impl GamesRuntime {
         }
         next.validate()?;
         self.inner.installations.save(&next)?;
-        settings.catalogue = self.inner.platform.catalogue(&next.manual_installations);
-        self.inner.setup.refresh(&settings.catalogue);
+        settings.catalogue =
+            crate::game_discovery::merged_catalogue(self.inner.platform.as_ref(), &next);
+        self.inner.setup.refresh(
+            &settings
+                .catalogue
+                .iter()
+                .filter(|game| game["custom"] != true)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         settings.saved = next;
         settings.error = None;
         drop(settings);

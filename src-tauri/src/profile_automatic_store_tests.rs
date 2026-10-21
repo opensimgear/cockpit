@@ -97,3 +97,21 @@ fn remembered_context_choices_round_trip_and_older_settings_load_without_them() 
         assert!(store.save(&invalid).is_err());
     }
 }
+
+#[test]
+fn custom_rules_and_choices_survive_without_a_current_machine_registration() {
+    let directory = crate::test_directory();
+    let store = Store::new(Some(directory.path().join("automatic.json")));
+    let mut saved = settings();
+    saved.rules = (1..=osg_profiles::activation::MAX_RULES).map(|index| {
+        let mut rule = settings().rules.remove(0);
+        rule.identity.game_id = format!("custom-{}", uuid::Uuid::from_u128(index as u128));
+        rule.identity.executable = format!("C:\\Games\\Library {index}\\Game.exe");
+        saved.preferred_profiles.insert(rule.identity.game_id.clone(), rule.profile_id.clone());
+        rule
+    }).collect();
+    store.save(&saved).unwrap();
+    assert_eq!(store.load().unwrap(), Some(saved.clone()));
+    saved.preferred_profiles.insert(format!("custom-{}", uuid::Uuid::new_v4()), DEFAULT_PROFILE_ID.into());
+    assert!(store.save(&saved).is_err(), "remembered choices remain bounded");
+}

@@ -1,8 +1,9 @@
-import type { GameId } from './games';
+import type { Game, BuiltinGameId } from './games';
 
-type GameArtwork = {
+export type GameArtwork = {
   image: string;
-  category: 'Flight' | 'Racing' | 'Rally';
+  category: 'Flight' | 'Racing' | 'Rally' | 'Custom';
+  positionX?: number; positionY?: number;
   wordmark: string;
   edition: string;
   description: string;
@@ -10,7 +11,7 @@ type GameArtwork = {
 };
 
 /** Bundled publisher screenshots; provenance is in public/game-art/sources.json. */
-export const gameArtwork: Record<GameId, GameArtwork> = {
+export const gameArtwork: Record<BuiltinGameId, GameArtwork> = {
   dcs: {
     image: '/game-art/dcs.jpg', category: 'Flight', wordmark: 'DCS', edition: 'WORLD',
     description: 'Aircraft controls · DCS-BIOS feedback', telemetryLabel: 'DCS-BIOS',
@@ -40,3 +41,11 @@ export const gameArtwork: Record<GameId, GameArtwork> = {
     description: 'Flight telemetry · Indicators & displays', telemetryLabel: 'X-Plane RREF telemetry',
   },
 };
+
+/** User art overrides both discovered art and the bundled screenshots. */
+export function resolveGameArtwork(game: Game): GameArtwork {
+  const bundled = gameArtwork[game.id as BuiltinGameId];
+  const base: GameArtwork = bundled ?? { image: '', category: 'Custom', wordmark: game.name, edition: '', description: 'Keyboard and mouse bindings · Profile activation', telemetryLabel: 'Bindings and profile activation' };
+  const background = game.background ?? game.defaultBackground;
+  return { ...base, image: background?.image ?? base.image, positionX: background?.positionX ?? 50, positionY: background?.positionY ?? 50 };
+}

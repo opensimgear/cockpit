@@ -10,6 +10,14 @@ const report=(overrides={})=>({schemaVersion:1,games:[game(overrides)]});
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
+test('context-only games cannot enter provider telemetry reports or selections',async()=>{
+  const id='custom-11111111-1111-4111-8111-111111111111';
+  const client=new GameTelemetryClient(async()=>report({id}));
+  await assert.rejects(()=>client.inspect({offset:0,limit:64}),/invalid or incomplete/);
+  const controller=new GameTelemetryController({inspect(){throw new Error('No telemetry request expected');}});
+  assert.throws(()=>controller.configure({gameId:id,offset:0,limit:64}),/bounded game telemetry/);
+});
+
 test('telemetry captures preserve canonical IDs, native context and zero without mutating the reply',async()=>{
   const calls=[],reply=report(),client=new GameTelemetryClient(async request=>{calls.push(plain(request));return reply;});
   const result=await client.inspect({gameId:'assetto-corsa',offset:0,limit:64,group:'physics',search:'speed'});

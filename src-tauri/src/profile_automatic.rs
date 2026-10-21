@@ -445,13 +445,8 @@ impl GatewayManager {
             "profile_game_rule_save" => {
                 let game = request["gameId"]
                     .as_str()
-                    .filter(|game| {
-                        matches!(
-                            *game,
-                            "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
-                        )
-                    })
-                    .ok_or("Choose a supported game rule.")?;
+                    .filter(|game| osg_profiles::activation::valid_game_id(game))
+                    .ok_or("Choose a valid game rule.")?;
                 let id = request["profileId"]
                     .as_str()
                     .ok_or("Choose a saved unified profile.")?;

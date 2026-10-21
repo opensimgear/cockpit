@@ -8,6 +8,19 @@ const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,g
 const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
+test('native custom registry keeps selectable membership distinct from persistent IDs and survives missing executables',()=>{
+ const id='custom-11111111-1111-4111-8111-111111111111',custom={id,name:'A custom game',provider:null,installed:false,launchSupported:false};
+ const seen=[];const stop=games.gameCatalogue.subscribe(value=>seen.push(value.length));
+ assert.equal(games.isGameId(id),true);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId('custom-invalid'),false);
+ games.updateGameCatalogue([...supportedGames,custom]);assert.equal(games.getGameCatalogue().length,8);assert.equal(games.isRegisteredGameId(id),true);
+ assert.equal(games.gameName(id),'A custom game');assert.equal(games.gameName('missing'),'missing');assert.equal(games.gameHasIntegration(custom),false);
+ assert.equal(gameExecutableName(id),'game executable');assert.equal(visibleGames([custom],false).length,1);assert.equal(gameIntegrationLabel(custom),'Bindings and profile activation');
+ assert.deepEqual(plain(games.gameInstallationRequest(custom,'C:\\Games\\Moved.exe')),{command:'game_custom_save',gameId:id,name:'A custom game',executable:'C:\\Games\\Moved.exe'});
+ assert.deepEqual(plain(games.gameInstallationRequest(supportedGames[0],null)),{command:'game_installation',gameId:'dcs',executable:null});
+ assert.equal(games.customGameError('Game','C:\\Games\\game.exe'),'');assert.equal(games.customGameError('Game',''),'');assert.ok(games.customGameError('',''));assert.ok(games.customGameError('Game','relative.exe'));assert.ok(games.customGameError('Game','C:\\game\n.exe'));
+ games.updateGameCatalogue(supportedGames);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId(id),true);assert.equal(games.gameName(id),'A custom game');assert.deepEqual(seen,[7,8,7]);stop();
+});
+
 test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{
  assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12','assetto-corsa','assetto-corsa-competizione','assetto-corsa-evo']);
  const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,1);assert.equal(visibleGames(catalogue,true).length,7);assert.equal(supportedGames[0].installed,false);

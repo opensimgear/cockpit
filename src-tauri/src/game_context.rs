@@ -116,7 +116,7 @@ impl Broker {
                 || owner
                     .game_id
                     .as_deref()
-                    .is_some_and(|game| !supported(game))
+                    .is_some_and(|game| !osg_profiles::activation::valid_game_id(game))
         }) {
             return Err("Invalid applied profile game owner.".into());
         }
@@ -586,5 +586,19 @@ mod tests {
         assert_eq!(broker.view("dcs")["processVerified"], false);
         observe(&mut broker, "dcs", observed()).unwrap();
         assert!(broker.validate(&token).is_err());
+    }
+    #[test]
+    fn custom_context_owner_never_grants_integration_preparation_or_tokens() {
+        let custom = "custom-01234567-89ab-4cde-8fab-0123456789ab";
+        let mut broker = Broker::default();
+        observe(&mut broker, "dcs", observed()).unwrap();
+        broker.set_owner(Some(owner(Some(custom)))).unwrap();
+        assert!(broker.token("dcs").is_err());
+        assert!(broker.token(custom).is_err());
+        assert!(broker.preparation(custom).is_err());
+        assert!(observe(&mut broker, custom, observed()).is_err(), "even provider-shaped evidence cannot give a custom game integration authority");
+        broker.set_owner(Some(owner(Some("dcs")))).unwrap();
+        assert!(broker.token("dcs").is_ok());
+        assert!(broker.set_owner(Some(owner(Some("custom-forged")))).is_err());
     }
 }

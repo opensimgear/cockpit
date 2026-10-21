@@ -1,4 +1,6 @@
 mod game_installations;
+mod game_artwork;
+mod game_library;
 mod retained_game_companions;
 mod config_paths;
 mod acr_setup;
@@ -81,13 +83,30 @@ use serde_json::Value;
 use std::sync::Arc;
 use tauri::Manager;
 
-fn local_document(url: &tauri::Url) -> bool {
+fn local_document(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
     (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
         || (url.scheme() == "http" && url.host_str() == Some("tauri.localhost"))
         || (cfg!(debug_assertions)
             && url.scheme() == "http"
             && url.host_str() == Some("127.0.0.1")
-            && url.port() == Some(1420))
+            && dev_url.is_some_and(|configured| configured.scheme() == "http"
+                && configured.host_str() == Some("127.0.0.1")
+                && configured.origin() == url.origin()))
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    #[test]
+    fn development_navigation_uses_only_the_configured_loopback_origin() {
+        let configured = tauri::Url::parse("http://127.0.0.1:1421").unwrap();
+        assert!(local_document(&tauri::Url::parse("http://127.0.0.1:1421/?test=1").unwrap(), Some(&configured)));
+        for other in ["http://127.0.0.1:1420/", "http://localhost:1421/", "https://example.com/", "http://127.0.0.1.evil.test:1421/"] {
+            assert!(!local_document(&tauri::Url::parse(other).unwrap(), Some(&configured)));
+        }
+        assert!(!local_document(&configured, None));
+        assert!(local_document(&tauri::Url::parse("tauri://localhost/").unwrap(), None));
+    }
 }
 
 struct NativeGateway(Arc<gateways::GatewayManager>);
@@ -99,13 +118,17 @@ async fn pick_game_executable(
     current_path: Option<String>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let (title, executable) = game_discovery::executable_picker(&game_id)?;
+    let (title, executable) = if game_id.is_empty() || game_id.starts_with("custom-") {
+        ("Choose game executable".to_owned(), "")
+    } else {
+        game_discovery::executable_picker(&game_id)?
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let mut picker = app
             .dialog()
             .file()
             .set_title(title)
-            .add_filter(executable, &["exe"])
+            .add_filter("Game executable", &["exe"])
             .set_file_name(executable);
         if let Some(parent) = current_path
             .as_deref()
@@ -127,6 +150,19 @@ async fn pick_game_executable(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn pick_game_image(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().set_title("Choose game tile background")
+            .add_filter("Game background image", &["png", "jpg", "jpeg", "webp"])
+            .blocking_pick_file().map(|file| {
+                let path = file.into_path().map_err(|error| error.to_string())?;
+                path.to_str().map(str::to_owned).ok_or_else(|| "The image path is not valid text.".to_owned())
+            }).transpose()
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[derive(serde::Deserialize)]
@@ -267,7 +303,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("local-navigation")
-                .on_navigation(|_, url| local_document(url))
+                .on_navigation(|webview, url| local_document(url, webview.app_handle().config().build.dev_url.as_ref()))
                 .build(),
         )
         .setup(|app| {
@@ -294,6 +330,7 @@ pub fn run() {
             open_vjoy,
             optional_dependency_install,
             pick_game_executable,
+            pick_game_image,
             pick_game_integration_folder,
             desktop::desktop_preferences,
             desktop::set_tray_preferences,

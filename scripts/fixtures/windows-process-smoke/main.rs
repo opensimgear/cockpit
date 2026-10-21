@@ -3,6 +3,13 @@
 mod game_activation;
 #[path = "../../../src-tauri/src/game_discovery.rs"]
 mod game_discovery;
+// Compile the real registry/artwork types used by discovery. The process smoke
+// neither imports artwork nor writes application configuration; these modules
+// keep this standalone fixture aligned with the production discovery contract.
+#[path = "../../../src-tauri/src/game_installations.rs"]
+mod game_installations;
+#[path = "../../../src-tauri/src/game_artwork.rs"]
+mod game_artwork;
 #[path = "../../../src-tauri/src/xplane_installation.rs"]
 mod xplane_installation;
 use game_discovery::{NativePlatform, Platform, ProcessIdentity};

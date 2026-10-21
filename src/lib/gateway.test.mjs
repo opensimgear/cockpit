@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import {loadModules} from './test-module-loader.mjs';
+const gameMetadata=(await loadModules(['./games'])).get('./games');
 
 const source = await readFile(new URL('./gateway.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -36,6 +38,7 @@ function transport({ desktop = true, result = { ok: true, state }, invokeResults
           return invokeResults ? invokeResults(command, args.request) : result;
         },
       };
+      if (name === './games') return gameMetadata;
       if (name === '@tauri-apps/plugin-opener') return { openUrl: async url => { calls.push({ kind: 'open', url }); } };
       throw new Error(`Unexpected import: ${name}`);
     },
@@ -339,6 +342,22 @@ test('native integration folder selection forwards the location kind without cha
   assert.deepEqual(cancelled.calls[0].args,{kind:'catalogue',currentPath:null});
   const browser=transport({desktop:false});await assert.rejects(browser.pickGameIntegrationFolder('saved-games'),/desktop app/);assert.equal(browser.calls.length,0);
   const failed=transport({invokeError:new Error('Picker failed')});await assert.rejects(failed.pickGameIntegrationFolder('catalogue'),/Picker failed/);
+});
+
+test('generic executable and tile image pickers forward only their local selection context',async()=>{
+  const path=String.raw`C:\Games\game.exe`,image=String.raw`C:\Pictures\tile.png`,id='custom-11111111-1111-4111-8111-111111111111';
+  const api=transport({invokeResults:command=>command==='pick_game_image'?image:path});
+  assert.equal(await api.pickGameExecutable('',path),path);assert.equal(await api.pickGameExecutable(id),path);assert.equal(await api.pickGameImage(image),image);
+  assert.deepEqual(api.calls.map(call=>[call.command,call.args]),[['pick_game_executable',{gameId:'',currentPath:path}],['pick_game_executable',{gameId:id,currentPath:null}],['pick_game_image',{currentPath:image}]]);
+  const cancelled=transport({invokeResults:()=>null});assert.equal(await cancelled.pickGameImage(),null);
+  const browser=transport({desktop:false});await assert.rejects(browser.pickGameImage(),/image path/);assert.equal(browser.calls.length,0);
+});
+
+test('native game catalogue replies update selectable custom games without enabling unsupported providers',async()=>{
+  const id='custom-11111111-1111-4111-8111-111111111111',custom={id,name:'Custom game',provider:null,installed:false,launchSupported:false};
+  const api=transport({result:{ok:true,state:{games:{catalogue:[...gameMetadata.supportedGames,custom]}}}});
+  await api.gatewayRequest({command:'game_get_state'});assert.equal(gameMetadata.isRegisteredGameId(id),true);assert.equal(gameMetadata.gameHasIntegration(custom),false);
+  gameMetadata.updateGameCatalogue(gameMetadata.supportedGames);
 });
 
 test('discovery is one aggregate request and never changes or disconnects either connection', async () => {

@@ -3279,6 +3279,8 @@ dependencies = [
 name = "osg-cockpit"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "image",
  "osg-companion-serial",
  "osg-companion-service",
  "osg-controller-input",

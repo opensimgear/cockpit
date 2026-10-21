@@ -3,6 +3,17 @@
 use super::*;
 use osg_profiles::activation::{GameIdentity, VerifiedGame};
 impl GamesRuntime {
+    /// Membership for current native selections is distinct from the syntax
+    /// checks used to read persisted profiles and removed-game recovery state.
+    pub(crate) fn registered_profile_game(&self, game_id: &str) -> Result<Value, String> {
+        self.inner.guard_installation_metadata()?;
+        if !osg_profiles::activation::valid_game_id(game_id) {
+            return Err("Choose a valid native game identity.".into());
+        }
+        self.inner.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.iter()
+            .find(|game| game["id"] == game_id).cloned()
+            .ok_or_else(|| "The selected game is no longer registered on this computer.".into())
+    }
     fn process_monitoring_supported(&self) -> bool {
         self.inner
             .settings
@@ -67,17 +78,7 @@ impl GamesRuntime {
         &self,
         game_id: &str,
     ) -> Result<GameIdentity, String> {
-        self.inner.guard_installation_metadata()?;
-        let game = self
-            .inner
-            .settings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .catalogue
-            .iter()
-            .find(|game| game["id"] == game_id)
-            .cloned()
-            .ok_or("Choose a current native game installation.")?;
+        let game = self.registered_profile_game(game_id)?;
         crate::game_activation::identity(self.inner.platform.as_ref(), &game)
     }
     pub(crate) fn validate_profile_activation(

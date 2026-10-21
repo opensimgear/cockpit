@@ -61,6 +61,7 @@
     alert: ['m12 3 10 18H2zM12 9v5M12 17v.1'],
     mobile: ['M7 2h10v20H7zM11 18h2'],
     monitor: ['M3 3h18v14H3zM8 21h8M12 17v4'],
+    image: ['M3 3h18v18H3zM3 17l5-6 4 4 3-3 6 7', 'M9 8h.01'],
   };
 </script>
 

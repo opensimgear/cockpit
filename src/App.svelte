@@ -22,7 +22,7 @@
   import ManualActions from './lib/ManualActions.svelte';
   import GamesPanel from './lib/GamesPanel.svelte';
   import OverviewPanel from './lib/OverviewPanel.svelte';
-  import { supportedGames, type GameId, type GamesState, type GameRequest } from './lib/games';
+  import { supportedGames, isGameId, type GameId, type GamesState, type GameRequest } from './lib/games';
   import { OPEN_GAME_SETTINGS_EVENT, RETURN_FROM_GAME_SETTINGS_EVENT, gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings, type GameSettingsVisit } from './lib/game-settings-navigation';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
@@ -156,7 +156,7 @@
   }
   function recordRoute(replace=false) { if(!applyingHistory)navigationHistory?.record(captureRoute(),replace); }
   function routeUrl(route:CockpitRoute) {
-    const gameId=supportedGames.find(game=>game.id===route.gameId)?.id;
+    const gameId=isGameId(route.gameId)?route.gameId:undefined;
     return `${window.location.pathname}${window.location.search}${route.view==='games'&&gameId?gameSettingsHref(gameId):''}`;
   }
   async function restoreRoute(route:CockpitRoute):Promise<CockpitRoute|false> {
@@ -172,7 +172,7 @@
     try {
       const returning=settingsVisit?.origin;
       settingsVisit=settingsOrigin?.visit??null;activeSettingsKey=settingsOrigin?route.settingsKey!:'';
-      view=route.view;selectedGameId=supportedGames.find(game=>game.id===route.gameId)?.id??'';
+      view=route.view;selectedGameId=isGameId(route.gameId)?route.gameId:'';
       selectedCompanionId=route.companion?.kind==='companion'?route.companion.id:'';
       if(view==='profiles')profilesMounted=true;
       if(view==='companions')companionsMounted=true;

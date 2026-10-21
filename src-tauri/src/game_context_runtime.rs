@@ -13,9 +13,7 @@ impl GamesRuntime {
     /// Foreground desktop output needs exact process identity independently of
     /// optional simulator telemetry setup and catalogue qualification.
     pub(crate) fn desktop_process(&self, id: &str) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
-        self.inner.guard_installation_metadata()?;
-        let game = self.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).catalogue.iter()
-            .find(|game| game["id"] == id).cloned().ok_or("Choose a known native game installation.")?;
+        let game = self.registered_profile_game(id)?;
         let process = self.inner.platform.find(&game)?;
         match process {
             Some(process) if self.inner.platform.alive(&process)? => Ok(Some(process)),
@@ -26,7 +24,12 @@ impl GamesRuntime {
         &self,
         id: &str,
     ) -> Result<Option<PreparedGame>, String> {
-        self.inner.guard_installation_metadata()?;
+        self.registered_profile_game(id)?;
+        // A context-only game is a valid profile owner and desktop scope, but
+        // never acquires simulator preparation or provider command authority.
+        if !osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id) {
+            return Ok(None);
+        }
         self.inner.refresh_game_contexts(true);
         let Some(proof) = self
             .inner
@@ -193,6 +196,12 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner());
         for game in games {
             let id = game["id"].as_str().unwrap_or("").to_owned();
+            if !osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id.as_str()) {
+                if let Some(game) = game.as_object_mut() {
+                    game.remove("integrationContext");
+                }
+                continue;
+            }
             if id == "dcs" {
                 let active_module = self.current_vehicle_id(&id).and_then(|vehicle| {
                     self.inner.setup.integration_catalogue_metadata_for_vehicle(&id, Some(&vehicle)).ok()
@@ -256,7 +265,9 @@ impl GamesRuntime {
 impl Inner {
     fn poll_vehicle_telemetry(&self) {
         let games = if self.guard_installation_metadata().is_ok() {
-            self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone()
+            self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.iter()
+                .filter(|game| game["id"].as_str().is_some_and(|id| osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id)))
+                .cloned().collect()
         } else {
             vec![]
         };
@@ -288,7 +299,10 @@ impl Inner {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .catalogue
-            .clone();
+            .iter()
+            .filter(|game| game["id"].as_str().is_some_and(|id| osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id)))
+            .cloned()
+            .collect::<Vec<_>>();
         let mut checked = self
             .context_setup_check
             .lock()

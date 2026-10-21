@@ -65,7 +65,7 @@
     "profile-automatic-controller:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-automatic-controller.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-automatic-controller.test.mjs",
     "e2e": "python3 tests/e2e/run.py",
     "debug:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/debug-inputs.test.mjs",
-    "games:coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/games.test.mjs src/lib/runtime-config.test.mjs",
+    "games:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/games.ts --test-coverage-include=src/lib/runtime-config.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/games.test.mjs src/lib/runtime-config.test.mjs && node --test src/lib/custom-games.test.mjs",
     "companion:release-check": "python scripts/companion-release-check.py",
     "browser:build": "vite build --config apps/browser-companion/vite.config.ts",
     "browser:check": "svelte-check --tsconfig apps/browser-companion/tsconfig.json",
@@ -91,7 +91,10 @@
     "profile-vehicles:test": "node --test src/lib/profile-vehicle-tabs.test.mjs src/lib/profile-vehicle-conflicts.test.mjs src/lib/profile-palette.test.mjs src/lib/profile-game-context.test.mjs",
     "profiles:vehicles:native": "node --test tests/ui/profile-vehicles-native.mjs",
     "profiles:vehicles:switch:native": "node --test tests/ui/profile-vehicle-switch-native.mjs",
-    "profiles:dcs:aircraft:native": "node --test tests/ui/dcs-aircraft-catalogues-native.mjs"
+    "profiles:dcs:aircraft:native": "node --test tests/ui/dcs-aircraft-catalogues-native.mjs",
+    "games:custom:native": "node --test tests/ui/custom-games-native.mjs",
+    "games:steam:native": "node --test tests/ui/custom-games-steam-native.mjs",
+    "games:persistence:native": "node --test tests/ui/custom-games-persistence-native.mjs"
   },
   "dependencies": {
     "@opensimgear/companion-contracts": "workspace:*",

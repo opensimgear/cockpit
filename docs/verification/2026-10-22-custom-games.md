@@ -1,0 +1,139 @@
+# Custom games and game artwork (#128)
+
+Implementation was exercised in an isolated, running Windows native dev Cockpit
+from `feat/custom-games-128`. Its Vite origin was `127.0.0.1:1421`, with a separate
+application identifier and configuration directory. The existing main-checkout
+Cockpit was left running. The native acceptance tests use real gateway IPC and
+application persistence; no catalogue, process-watcher or IPC response is mocked.
+
+## Observed native workflow
+
+`tests/ui/custom-games-native.mjs` uses private owned GUI executables with the
+same basename in two different directories. It verifies executable/name entry,
+context-only game details, custom profile context save without a simulator
+resource, manual Apply while closed, active-registration guards, exact-path
+process observation, external Automatic selection, process exit, Cockpit launch,
+and removal preserving saved profile references while rejecting a new missing
+registration activation.
+
+The native UI also selects built-in/custom artwork, saves focal positioning,
+deletes the original image and reloads the application, then resets the override.
+Actual installed Steam metadata is previewed and two selected entries imported;
+reimport reuses the same registrations. The recorded imports were ARC Raiders
+and Arma Reforger. The latter supplied cached Steam artwork. Those two import
+observations alone do not establish successful game startup or gameplay.
+
+The expanded final run passed in 91.8 seconds with no page errors. It also
+verified Add/Cancel, rename and relocation preserving saved profile references,
+missing-path edit rejection, invalid-image preservation, and shared-image
+collection when built-in/custom overrides are reset. The executable-name
+inference race found during initial testing was fixed and checked through ten
+repeated form edits plus keyboard/name-first entry in the actual app.
+Evidence and screenshots are retained locally under
+`.research/custom-games-native/`.
+
+`tests/ui/custom-games-steam-native.mjs` also passed against the running native
+app in 40.0 seconds using the installed **CarX Drift Racing Online** (635260) and
+**DiRT Rally 2.0** (690790). Both were launched through Steam, observed at their
+selected exact runtime executable and activated with their matching saved
+profile. Cleanup stopped only the newly observed PID/path/creation identities
+owned by the test. Evidence is
+`.research/custom-games-native/steam-final-context-guard-evidence.json`.
+Hardware-first launch retains its immutable hardware owner's `gameId=null`;
+the completed candidate and native child owner supply the game context. A blank
+profile validates context/launch ownership, without claiming input delivery.
+The actual active-context removal guard also rejected changes to each running
+game, demonstrating that the context survives beyond the launch response label.
+
+`tests/ui/custom-games-persistence-native.mjs` prepared a custom registration,
+managed background/focal position and saved profile, then verified them after a
+native restart from PID 63596 to PID 28876 with different creation epochs.
+It relocated the executable through the actual **Use this path** control,
+preserved the ID/artwork/profile eligibility, and removed the referenced game
+through its confirmation dialog. The profile retained its unavailable reference.
+Both phases passed; evidence is `restart-evidence.json` in the same directory.
+An additional actual UI check verifies that the accepted path adopts native
+canonicalization and hides **Use this path** after saving; its private
+registration was removed. Evidence is `.research/custom-path-canonical-ui/`.
+
+## Process and policy evidence
+
+The standalone Windows process smoke uses the production discovery/activation
+modules and private owned helpers. It verifies exact executable/PID/creation
+identity, ambiguity, process exit/replacement, freshness and X-Plane's separate
+exclusivity guard. Source hashes and executed binary hashes are recorded in
+`.research/custom-games-128-process-smoke-final-20261022/`. This fixture is separate
+from the actual Cockpit workflow and from installed-game observations.
+
+Portable profile unit tests passed (137 tests). The unchanged 71% profile coverage
+gate passed for all 16 modules; activation policy measured 100%, and the lowest
+module measured 90.91%. Native focused tests cover custom-ID save/reapply,
+Automatic/Manual ownership, launch admission/rollback, inspection/topology,
+missing-registration recovery readability and absence of provider authority.
+The larger-catalogue regression observes 256 registrations with one batched
+process inventory per cycle and checks debounce, relocation, replacement and
+removal revocation.
+
+Frontend game-helper coverage exceeded the unchanged 71% thresholds. The
+provider/navigation checks and affected frontend regressions passed. Native
+bridge tests passed (11 tests), including bounded game catalogues containing
+managed thumbnails and rejection beyond the dedicated response limit.
+
+`pnpm check` reported no errors or warnings in Cockpit and the browser companion;
+`pnpm ui:build` built both. The final game/runtime helper coverage was 95.30%
+lines, 94.09% branches and 91.11% functions. The focused native instrumented run
+passed 107 tests with unchanged source stamps; changed module line coverage was:
+
+| Module | Coverage |
+| --- | ---: |
+| Game installations | 94.14% |
+| Process discovery | 82.99% |
+| Managed artwork | 86.44% |
+| Library discovery | 89.20% |
+| Metadata transactions | 97.08% |
+
+Evidence is `.research/custom-games-native-coverage/`. The unchanged native
+integration runner now also gates the three new production modules at 71%.
+The focused suite includes 256-game batched observation, per-game process
+inspection-error isolation, stale/busy transaction rejection, artwork staging
+leases and Stop completing while metadata discovery is deliberately blocked.
+Passive game status also bypasses metadata/profile admission without changing
+control epochs; two held-lock regressions verify responsiveness and retain
+invalid-client, oversized/unknown request and closed-runtime rejection.
+
+## Launcher feasibility
+
+The local Steam scan found 36 installed manifests across the available library.
+Known redistributables are classified as tools; other manifest-only entries
+remain explicit review candidates. Suggestions are not runtime identity proof.
+The local Epic entries were Unreal Engine/Fab/Quixel and were excluded. Epic game
+manifest discovery is fixture-tested; a real Epic game was unavailable here.
+The [launcher matrix](../launcher-discovery.md) records the evidence and bounded
+follow-ups for GOG, EA, Ubisoft and Battle.net.
+
+Liftoff's Steam launch reached Steam's `ShowInterstitials` state and waited for
+a user response. Cockpit's startup deadline expired without replaying launch or
+granting game identity. This is retained as a failed startup observation, rather
+than a successful game validation.
+
+## Limits and existing failures
+
+Hardware validation is deferred at the user's request and tracked in
+[qualification #135](https://github.com/opensimgear/cockpit/issues/135).
+No assembled USB/CAN rig,
+physical controller input, controller hiding, virtual device output or gameplay
+delivery is qualified by this feature run. The existing qualified backend gates
+remain in force. Non-Windows native launch/process monitoring is not newly
+qualified. Simulator regression fixtures are distinct from live DCS, Assetto and
+X-Plane gameplay.
+
+The portable `complete_rig` integration fixture fails at its existing
+`Unknown persistent resource identity` assertion after deleting an entry from an
+authoritative resource snapshot. An untouched archive of baseline `c144301`
+reproduced the same failure before compilation. That unrelated fixture remains
+unchanged.
+
+A 16-thread native library run was stopped after 1081 of 1095 tests reported
+results because it exhausted host responsiveness alongside another checkout's
+test process. Three deadline-sensitive failures passed when rerun individually
+with one thread. This interrupted run is not reported as a passing full suite.

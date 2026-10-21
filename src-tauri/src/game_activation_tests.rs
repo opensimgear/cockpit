@@ -271,3 +271,60 @@ fn actual_games_runtime_detects_external_start_and_exit_without_ui_or_provider_s
     }
     runtime.shutdown();
 }
+
+#[test]
+fn large_custom_catalogue_uses_one_batch_and_relocation_removal_revoke_old_process_authority() {
+    struct Batched {
+        processes: Mutex<BTreeMap<String, ProcessIdentity>>,
+        batches: AtomicUsize,
+    }
+    impl Platform for Batched {
+        fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> { vec![] }
+        fn validate(&self, id: &str, path: &str) -> Result<(), String> {
+            GameIdentity { game_id: id.into(), executable: path.into() }.validate()
+        }
+        fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> { panic!("observation cannot launch") }
+        fn find(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
+            Ok(self.processes.lock().unwrap().get(game["id"].as_str().unwrap())
+                .filter(|process| game["executable"].as_str().is_some_and(|path|path.eq_ignore_ascii_case(&process.path))).cloned())
+        }
+        fn find_many(&self, games: &[Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
+            self.batches.fetch_add(1, Ordering::Relaxed);
+            games.iter().map(|game|self.find(game)).collect()
+        }
+        fn alive(&self, process: &ProcessIdentity) -> Result<bool, String> {
+            Ok(self.processes.lock().unwrap().values().any(|candidate|candidate == process))
+        }
+    }
+    let platform = Batched { processes: Mutex::new(BTreeMap::new()), batches: AtomicUsize::new(0) };
+    let mut games = (1..=osg_profiles::activation::MAX_GAMES).map(|index| {
+        let id = format!("custom-{}", uuid::Uuid::from_u128(index as u128));
+        let process = ProcessIdentity { pid: index as u32, epoch: 10, path: format!("C:\\Games\\{index}\\Game.exe") };
+        platform.processes.lock().unwrap().insert(id.clone(), process.clone());
+        json!({"id":id,"installed":true,"custom":true,"provider":null,"processMonitoringSupported":true,"executable":process.path})
+    }).collect::<Vec<_>>();
+    let observer = Observer::default();
+    observer.observe(&platform, &games);
+    assert!(observer.snapshot().unwrap().is_empty());
+    observer.observe(&platform, &games);
+    assert_eq!(platform.batches.load(Ordering::Relaxed), 2);
+    assert_eq!(observer.snapshot().unwrap().len(), osg_profiles::activation::MAX_GAMES);
+    let first = games[0]["id"].as_str().unwrap().to_owned();
+    let original = observer.snapshot().unwrap().into_iter().find(|game|game.identity.game_id == first).unwrap();
+    games[0]["executable"] = json!("C:\\Moved\\Game.exe");
+    assert!(observer.validate(&platform, &games[0], &original).is_err());
+    observer.observe(&platform, &games);
+    assert_eq!(observer.snapshot().unwrap().len(), osg_profiles::activation::MAX_GAMES - 1);
+    let replacement = ProcessIdentity { pid: 700, epoch: 20, path: "C:\\Moved\\Game.exe".into() };
+    platform.processes.lock().unwrap().insert(first.clone(), replacement);
+    observer.observe(&platform, &games);
+    assert_eq!(observer.view(&first)["status"], "settling");
+    observer.observe(&platform, &games);
+    let current = observer.snapshot().unwrap().into_iter().find(|game|game.identity.game_id == first).unwrap();
+    assert_ne!(current.process_session, original.process_session);
+    games.remove(0);
+    observer.observe(&platform, &games);
+    assert_eq!(observer.view(&first)["status"], "waiting");
+    assert!(observer.snapshot().unwrap().iter().all(|game|game.identity.game_id != first));
+    assert_eq!(platform.batches.load(Ordering::Relaxed), 6);
+}

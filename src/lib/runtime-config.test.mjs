@@ -1,11 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
-import ts from 'typescript';
-const source=await readFile(new URL('./runtime-config.ts',import.meta.url),'utf8');
-const exported={};
-vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exported,TextEncoder});
+import {loadModules} from './test-module-loader.mjs';
+const exported=(await loadModules(['./runtime-config'])).get('./runtime-config');
 const {configurationError,resizeMappings}=exported;
 const config=()=>({name:'Rig é',expanderMask:1,buttons:[[24,1,0]],axes:[[1,49,10,4000,32768,1,1000]],hats:[[0,1,2,3]],encoders:[[4,5]],selectors:[[6,7]]});
 test('complete independent controls and calibrated axes validate',()=>assert.equal(configurationError(config()),''));
