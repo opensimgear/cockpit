@@ -179,3 +179,35 @@ state after rejection. Frontend checks report no errors or warnings; both
 production builds pass. Game/runtime helper coverage passes at 95.47% lines,
 94.50% branches and 92.00% functions. These follow-up checks are separate from
 the earlier source-stamped native coverage run recorded above.
+
+## URL images and crop popup follow-up
+
+Tile backgrounds accept disk paths/native browsing or HTTP(S) URLs. Loading
+produces a transient bounded JPEG preview; only Save background publishes the
+image and crop together. Cancel leaves the existing override unchanged. Remote
+loads use bounded reads, timeouts and redirects, validate each redirect scheme,
+and apply the same format/decode limits as disk sources. Sources are not stored
+as live remote image URLs.
+
+The popup shows the complete source with a movable/resizable 16:9 tile frame,
+Zoom, Fit image, keyboard controls and a live tile preview. Geometry clamps the
+frame to the image at every size. The saved normalized crop is validated for
+bounds and tile aspect ratio; rendering retains the image's aspect ratio. The
+full managed image remains available for later repositioning without repeated
+JPEG encoding. Legacy position metadata remains readable.
+
+Final running native acceptance (`game-background-native.mjs`, isolated WebView
+CDP 9223) passes in 6.36 seconds, with no page errors: portrait disk image,
+pointer move/resize against image edges, URL download/redirect, landscape crop,
+keyboard/zoom, Cancel, invalid-image preservation, source deletion, offline URL
+reload, undistorted list tile and built-in image positioning/reset. Local evidence
+and screenshots are in `.research/game-background-native/`. Temporary games and
+test changes were cleaned up.
+
+Native artwork tests pass 7/7; metadata and installation regressions pass 15/15.
+Crop geometry helper coverage is 100% lines, branches and functions, including
+portrait, landscape, square and extreme-aspect bounds. Frontend checks report
+no errors or warnings, game/provider/launch suites pass, and both production
+builds pass with the existing import/chunk-size notices. The final native review
+build also succeeds. These checks supersede the initial build-space failure and
+stale development/debugging sessions encountered during this follow-up.

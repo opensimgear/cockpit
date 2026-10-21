@@ -47,13 +47,22 @@ manager leaves the saved list unchanged. Custom games retain a separate
 
 ## Tile backgrounds
 
-Every game's details includes **Tile background**. Browse to a PNG, JPEG or WebP
-image (or paste its path), then choose **Use image**. Adjust horizontal/vertical
-position in the preview and choose **Save position**. **Reset to default** returns
-to bundled artwork, imported client artwork or a neutral title background.
+Every game's details includes **Tile background**. Choose **From disk** to browse
+to a PNG, JPEG or WebP image (or paste its path), or **From URL** to enter an HTTP
+or HTTPS image URL. **Use image** opens a preview without replacing the saved
+background. **Position image** reopens the editor for existing or bundled art.
+
+The popup shows the complete image and a frame matching the tile's 16:9 shape.
+Drag the frame to move it, drag its corner to resize, or use **Zoom**. Arrow keys
+also move/resize the focused control; Shift uses larger steps. The image keeps
+its aspect ratio and the entire frame stays within its bounds. **Fit image**
+restores the largest crop that fits. **Save background** commits the image and
+crop together; **Cancel** leaves the current background unchanged.
+**Reset to default** returns to bundled artwork, imported client artwork or a
+neutral title background.
 
 Cockpit copies a bounded thumbnail into its application storage. Moving the
-original source file cannot break the saved background. Rescans, library imports,
+original source file or changing the source URL cannot break the saved background. Rescans, library imports,
 renames and executable relocation preserve overrides. Invalid images leave the
 previous background intact. Sources are limited to 16 MiB and 8192 pixels per
 dimension; managed thumbnails are at most 12 KiB. Profile export contains neither

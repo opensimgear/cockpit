@@ -622,6 +622,19 @@ impl GatewayManager {
         }
         // Passive state and client-library discovery retain request validation
         // without holding profile/game admission during metadata reads.
+        if command == "game_background_preview" {
+            if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.",None); }
+            if request.to_string().len()>65_536 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80))
+                || request.as_object().is_none_or(|object| object.keys().any(|key| !["command", "clientId", "path", "url"].contains(&key.as_str())))
+                || request.get("path").is_some_and(|value| !value.is_string())
+                || request.get("url").is_some_and(|value| !value.is_string()) {
+                return self.error("Invalid background image preview request.",None);
+            }
+            return match crate::game_artwork::preview(request["path"].as_str(), request["url"].as_str()) {
+                Ok(image) => { let mut games = self.games.status(); games["backgroundPreview"] = json!({"image":image}); json!({"ok":true,"state":{"games":games}}) }
+                Err(error) => self.error(&error,None),
+            };
+        }
         if matches!(command, "game_get_state" | "game_library_scan") {
             return self.request_inner(request);
         }

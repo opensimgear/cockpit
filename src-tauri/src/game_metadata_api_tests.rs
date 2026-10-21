@@ -88,6 +88,27 @@ fn added(runtime: &GamesRuntime) -> String {
 }
 
 #[test]
+fn preview_crop_save_is_durable_and_rejected_edits_keep_the_previous_background() {
+    let (runtime, directory) = fixture();
+    let source = artwork(directory.path());
+    let data = crate::game_artwork::preview(Some(source.to_str().unwrap()),None).unwrap();
+    let crop = json!({"x":0.0,"y":0.125,"width":1.0,"height":0.75});
+    runtime.request(&json!({"command":"game_background_save","gameId":"dcs","imageData":data,"crop":crop})).unwrap();
+    let before = saved(&runtime);
+    assert_eq!(serde_json::to_value(before.backgrounds["dcs"].crop).unwrap(),crop);
+    assert_eq!(runtime.inner.installations.load().unwrap().unwrap(),before);
+    for request in [
+        json!({"command":"game_background_save","gameId":"dcs","imageData":data,"crop":{"x":0.5,"y":0.125,"width":1.0,"height":0.75}}),
+        json!({"command":"game_background_save","gameId":"dcs","imageData":data,"crop":crop,"path":source}),
+        json!({"command":"game_background_save","gameId":"dcs","crop":crop}),
+        json!({"command":"game_background_save","gameId":"dcs","imageData":"invalid","crop":crop}),
+    ] { assert!(runtime.request(&request).is_err());assert_eq!(saved(&runtime),before); }
+    runtime.request(&json!({"command":"game_background_save","gameId":"dcs","positionX":20})).unwrap();
+    assert!(saved(&runtime).backgrounds["dcs"].crop.is_none());
+    assert_eq!(saved(&runtime).backgrounds["dcs"].position_x,20.0);
+}
+
+#[test]
 fn categories_persist_rename_clear_and_preserve_game_identity() {
     let (runtime, _directory) = fixture();
     let category = "11111111-1111-4111-8111-111111111111";

@@ -1,9 +1,10 @@
-import type { Game, BuiltinGameId } from './games';
+import type { Game, BuiltinGameId, GameCrop } from './games';
 
 export type GameArtwork = {
   image: string;
   category: 'Flight' | 'Racing' | 'Rally' | 'Custom';
   positionX?: number; positionY?: number;
+  crop?: GameCrop;
   wordmark: string;
   edition: string;
   description: string;
@@ -47,5 +48,5 @@ export function resolveGameArtwork(game: Game): GameArtwork {
   const bundled = gameArtwork[game.id as BuiltinGameId];
   const base: GameArtwork = bundled ?? { image: '', category: 'Custom', wordmark: game.name, edition: '', description: 'Keyboard and mouse bindings · Profile activation', telemetryLabel: 'Bindings and profile activation' };
   const background = game.background ?? game.defaultBackground;
-  return { ...base, image: background?.image ?? base.image, positionX: background?.positionX ?? 50, positionY: background?.positionY ?? 50 };
+  return { ...base, image: background?.image ?? base.image, positionX: background?.positionX ?? 50, positionY: background?.positionY ?? 50, crop:background?.crop };
 }

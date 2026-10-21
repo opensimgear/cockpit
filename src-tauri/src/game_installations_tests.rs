@@ -209,7 +209,7 @@ fn dynamic_game_registry_round_trips_and_preserves_legacy_overrides() {
         crate::game_artwork::Background {
             image: format!("artwork:{}.jpg", "a".repeat(64)),
             position_x: 20.0,
-            position_y: 75.0,
+            position_y: 75.0, crop: None,
         },
     );
     store.save(&value).unwrap();
@@ -234,7 +234,7 @@ fn registry_rejects_duplicate_records_missing_background_owners_and_excess_games
         crate::game_artwork::Background {
             image: format!("artwork:{}.jpg", "a".repeat(64)),
             position_x: 50.0,
-            position_y: 50.0,
+            position_y: 50.0, crop: None,
         },
     );
     assert!(value.validate().is_err());

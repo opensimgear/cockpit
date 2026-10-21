@@ -16,16 +16,39 @@ const SOURCE_LIMIT: usize = 16 * 1024 * 1024;
 const THUMBNAIL_LIMIT: usize = 12 * 1024;
 const MAX_ASSETS: usize = 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Crop {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+impl Crop {
+    fn validate(&self) -> Result<(), String> {
+        if ![self.x, self.y, self.width, self.height].iter().all(|value| value.is_finite())
+            || self.x < 0.0 || self.y < 0.0 || self.width <= 0.0 || self.height <= 0.0
+            || self.x + self.width > 1.0 + 1e-9 || self.y + self.height > 1.0 + 1e-9
+        {
+            return Err("Keep the entire tile crop inside the image bounds.".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Background {
     pub image: String,
     pub position_x: f64,
     pub position_y: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<Crop>,
 }
 impl Background {
     pub(crate) fn validate(&self) -> Result<(), String> {
         asset_name(&self.image)?;
+        if let Some(crop) = self.crop { crop.validate()?; }
         if !self.position_x.is_finite()
             || !self.position_y.is_finite()
             || !(0.0..=100.0).contains(&self.position_x)
@@ -159,12 +182,7 @@ impl Drop for Staging {
         }
     }
 }
-pub(crate) fn import(
-    root: &Path,
-    path: &str,
-    position_x: f64,
-    position_y: f64,
-) -> Result<Background, String> {
+fn local_bytes(path: &str) -> Result<Vec<u8>, String> {
     let source = Path::new(path);
     if !source.is_absolute() || path.len() > 4096 || path.chars().any(char::is_control) {
         return Err("Choose an absolute image file path.".into());
@@ -185,12 +203,82 @@ pub(crate) fn import(
     if original.len() > SOURCE_LIMIT {
         return Err("Background images must be no larger than 16 MiB.".into());
     }
-    let bytes = thumbnail(&original)?;
+    Ok(original)
+}
+
+fn remote_bytes(url: &str) -> Result<Vec<u8>, String> {
+    if url.len() > 4096 || url.chars().any(char::is_control) { return Err("Enter a bounded image URL without control characters.".into()); }
+    let mut url = tauri::Url::parse(url).map_err(|_| "Enter a complete HTTP or HTTPS image URL.")?;
+    let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(15))
+        .timeout_connect(std::time::Duration::from_secs(4)).redirects(0).build();
+    for redirects in 0..=3 {
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
+            || !url.username().is_empty() || url.password().is_some() || url.as_str().len() > 4096 {
+            return Err("Use an HTTP or HTTPS image URL without embedded credentials.".into());
+        }
+        let response = match agent.get(url.as_str()).set("Accept", "image/png,image/jpeg,image/webp").call() {
+            Ok(response) | Err(ureq::Error::Status(300..=399, response)) => response,
+            Err(error) => return Err(format!("Cannot download background image: {error}")),
+        };
+        if (300..400).contains(&response.status()) {
+            if redirects == 3 { return Err("The image URL redirects too many times.".into()); }
+            url = url.join(response.header("Location").ok_or("The image URL returned an invalid redirect.")?)
+                .map_err(|_| "The image URL returned an invalid redirect.")?;
+            continue;
+        }
+        if response.header("Content-Length").and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|size| size > SOURCE_LIMIT as u64) {
+            return Err("Background images must be no larger than 16 MiB.".into());
+        }
+        let mut bytes = Vec::new();
+        response.into_reader().take(SOURCE_LIMIT as u64 + 1).read_to_end(&mut bytes)
+            .map_err(|error| format!("Cannot download background image: {error}"))?;
+        if bytes.len() > SOURCE_LIMIT { return Err("Background images must be no larger than 16 MiB.".into()); }
+        return Ok(bytes);
+    }
+    unreachable!()
+}
+
+/// Preview is transient: cancelling the editor never publishes artwork.
+pub(crate) fn preview(path: Option<&str>, url: Option<&str>) -> Result<String, String> {
+    let source = match (path, url) {
+        (Some(path), None) => local_bytes(path)?,
+        (None, Some(url)) => remote_bytes(url)?,
+        _ => return Err("Choose one image source: a disk path or a URL.".into()),
+    };
+    Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(thumbnail(&source)?)))
+}
+
+fn preview_bytes(data: &str) -> Result<Vec<u8>, String> {
+    let encoded = data.strip_prefix("data:image/jpeg;base64,").ok_or("The background preview is invalid. Load the image again.")?;
+    if encoded.len() > THUMBNAIL_LIMIT * 4 / 3 + 4 { return Err("The background preview exceeds its size bound.".into()); }
+    let bytes = STANDARD.decode(encoded).map_err(|_| "The background preview is invalid.")?;
+    if bytes.len() > THUMBNAIL_LIMIT { return Err("The background preview exceeds its size bound.".into()); }
+    let (width,height) = image::ImageReader::with_format(Cursor::new(&bytes), image::ImageFormat::Jpeg)
+        .into_dimensions().map_err(|_| "The background preview is not a JPEG image.")?;
+    if width == 0 || height == 0 || width > 640 || height > 640 { return Err("The background preview exceeds its dimension bound.".into()); }
+    Ok(bytes)
+}
+
+pub(crate) fn import_preview(root: &Path, data: &str, crop: Crop) -> Result<Background, String> {
+    crop.validate()?;
+    let bytes = preview_bytes(data)?;
+    let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).map_err(|error| error.to_string())?;
+    let ratio = crop.width * image.width() as f64 / (crop.height * image.height() as f64);
+    if (ratio - 16.0 / 9.0).abs() > 0.001 { return Err("The crop must preserve the tile's 16:9 aspect ratio.".into()); }
+    store_thumbnail(root, bytes, 50.0, 50.0, Some(crop))
+}
+
+pub(crate) fn import(root: &Path, path: &str, position_x: f64, position_y: f64) -> Result<Background, String> {
+    store_thumbnail(root, thumbnail(&local_bytes(path)?)?, position_x, position_y, None)
+}
+fn store_thumbnail(root: &Path, bytes: Vec<u8>, position_x: f64, position_y: f64, crop: Option<Crop>) -> Result<Background, String> {
     let hash = format!("{:x}", Sha256::digest(&bytes));
     let background = Background {
         image: format!("artwork:{hash}.jpg"),
         position_x,
         position_y,
+        crop,
     };
     background.validate()?;
     let directory = storage(root)?;
@@ -304,6 +392,48 @@ pub(crate) fn retain<'a>(root: &Path, references: impl Iterator<Item = &'a Backg
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transient_previews_and_crops_preserve_bounds_shape_and_exact_managed_bytes() {
+        let directory = crate::test_directory();
+        let source = sample(directory.path());
+        let data = preview(Some(source.to_str().unwrap()),None).unwrap();
+        assert!(!directory.path().join("game-artwork").exists());
+        let decoded = image::load_from_memory(&preview_bytes(&data).unwrap()).unwrap();
+        let crop = Crop{x:0.0,y:0.1,width:1.0,height:decoded.width() as f64/decoded.height() as f64/(16.0/9.0)};
+        let background = import_preview(directory.path(),&data,crop).unwrap();
+        assert_eq!(background.crop,Some(crop));
+        assert_eq!(resolved(directory.path(),&background.image).unwrap(),data);
+        for invalid in [Crop{x:0.1,..crop},Crop{height:1.0,..crop},Crop{x:f64::NAN,..crop},Crop{width:0.0,..crop}] {
+            assert!(import_preview(directory.path(),&data,invalid).is_err());
+        }
+        assert!(import_preview(directory.path(),"data:image/jpeg;base64,AAAA",crop).is_err());
+        assert!(preview(Some(source.to_str().unwrap()),Some("https://example.com/image.jpg")).is_err());
+        assert!(preview(None,Some("file:///C:/secret.jpg")).is_err());
+        assert!(preview(None,Some("https://user:secret@example.com/image.jpg")).is_err());
+    }
+    #[test]
+    fn image_urls_follow_bounded_http_redirects_and_reject_large_or_non_image_responses() {
+        use std::net::TcpListener;
+        let directory = crate::test_directory();
+        let source = sample(directory.path());
+        let bytes = fs::read(source).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut image_response = format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",bytes.len()).into_bytes();
+            image_response.extend(bytes);
+            let responses = [b"HTTP/1.1 302 Found\r\nLocation: /image\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),image_response,
+                format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",SOURCE_LIMIT+1).into_bytes(),
+                b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntext".to_vec(),
+                b"HTTP/1.1 302 Found\r\nLocation: file:///C:/secret.jpg\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()];
+            for response in responses { let (mut stream,_) = listener.accept().unwrap(); stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap(); let mut request=[0;4096];let _=stream.read(&mut request);stream.write_all(&response).unwrap(); }
+        });
+        assert!(preview(None,Some(&format!("http://{address}/redirect"))).unwrap().starts_with("data:image/jpeg;base64,"));
+        assert!(preview(None,Some(&format!("http://{address}/large"))).unwrap_err().contains("16 MiB"));
+        assert!(preview(None,Some(&format!("http://{address}/text"))).is_err());
+        assert!(preview(None,Some(&format!("http://{address}/file-redirect"))).is_err());
+        server.join().unwrap();
+    }
     fn sample(root: &Path) -> PathBuf {
         let source = root.join("source.png");
         image::RgbImage::from_pixel(110, 80, image::Rgb([35, 70, 120]))

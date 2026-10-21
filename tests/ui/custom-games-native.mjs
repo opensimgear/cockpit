@@ -53,11 +53,10 @@ test('custom games, backgrounds and installed library imports use the actual nat
     for(const target of [{id:gameId,name},{id:'dcs',name:'DCS World'}]){
       if(target.id!==gameId){await uiGames();const show=page.getByRole('switch',{name:'Show all supported',exact:true});if(await show.isVisible())await show.check();await page.getByRole('button',{name:/Open DCS World details/}).click();}
       const backgrounds=page.getByRole('region',{name:'Tile background',exact:true});await backgrounds.getByLabel('Tile background image path',{exact:true}).fill(source);await backgrounds.getByRole('button',{name:'Use image',exact:true}).click();
+      const cropDialog=page.getByRole('dialog',{name:'Position tile background',exact:true});await expect(cropDialog).toBeVisible();await cropDialog.getByRole('button',{name:'Save background',exact:true}).click();await expect(cropDialog).toHaveCount(0);
       await expect.poll(async()=>!!(await games()).catalogue.find(game=>game.id===target.id)?.background).toBe(true);
-      const position=backgrounds.getByLabel('Background horizontal position',{exact:true});
-      const changedPosition=Number(await position.inputValue())===25?40:25;
-      await position.fill(String(changedPosition));await backgrounds.getByRole('button',{name:'Save position',exact:true}).click();
-      await expect.poll(async()=>(await games()).catalogue.find(game=>game.id===target.id)?.background?.positionX).toBe(changedPosition);
+      await backgrounds.getByRole('button',{name:'Position image',exact:true}).click();await cropDialog.getByLabel('Background crop zoom',{exact:true}).focus();await cropDialog.getByLabel('Background crop zoom',{exact:true}).press('End');await cropDialog.getByRole('button',{name:'Save background',exact:true}).click();await expect(cropDialog).toHaveCount(0);
+      assert.ok((await games()).catalogue.find(game=>game.id===target.id)?.background?.crop.width<1);
     }
     await unlink(source);await page.reload();assert.ok((await games()).catalogue.find(game=>game.id===gameId).background.image.startsWith('data:image/jpeg;base64,'));
     evidence.checks.push('Built-in/custom backgrounds, crop persistence, source removal and reload.');

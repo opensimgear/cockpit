@@ -1,7 +1,8 @@
 export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane';
 export type BuiltinGameId = 'dcs' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane-11' | 'x-plane-12';
 export type GameId = BuiltinGameId | `custom-${string}`;
-export type GameBackground = { image: string; positionX: number; positionY: number };
+export type GameCrop = {x:number;y:number;width:number;height:number};
+export type GameBackground = { crop?: GameCrop; image: string; positionX: number; positionY: number };
 export type GameCategories = Record<string, string>;
 export function categoryError(categories: GameCategories): string {
   const names = Object.values(categories).map(name => name.trim().toLowerCase());
@@ -34,10 +35,10 @@ export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car';
 export type Game = { id: GameId; name: string; categoryId?: string | null; provider?: GameProvider | null; custom?: boolean; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
 export type GameCleanup = { phase: 'idle' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; retiredProfileId?: string | null; error?: string | null; steps?: string[]; recoveryArchive?: string | null };
 export type DetectedGame = { gameId: GameId; name: string };
-export type GamesState = { categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; libraryCandidates?: GameLibraryCandidate[]; libraryDiagnostics?: string[]; addedGameId?: GameId; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };
-export type GameCommandName = 'game_categories_save' | 'game_category_save' | 'game_custom_save' | 'game_custom_remove' | 'game_background_save' | 'game_library_scan' | 'game_library_import' | 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
+export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; libraryCandidates?: GameLibraryCandidate[]; libraryDiagnostics?: string[]; addedGameId?: GameId; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };
+export type GameCommandName = 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_custom_save' | 'game_custom_remove' | 'game_background_save' | 'game_library_scan' | 'game_library_import' | 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; name?: string; path?: string | null; positionX?: number; positionY?: number; candidateId?: string; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
+export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; name?: string; path?: string | null; positionX?: number; positionY?: number; candidateId?: string; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export const supportedGames: Game[] = [
   { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },

@@ -14,6 +14,7 @@
   import GameBackgroundSettings from './GameBackgroundSettings.svelte';
   import GameCategoriesDialog from './GameCategoriesDialog.svelte';
   import {filterGamesByCategory} from './games';
+  import {cropImageStyle} from './game-background-crop';
   import {gameHasIntegration,isCustomGameId,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameExecutableName,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameCleanupLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
   let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),onNavigate}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
@@ -50,7 +51,7 @@
     const passive=command.command==='game_get_state';
     if(!passive){pending=true;notice='';}
     try{const result=await request(command);if(result){response=result;updateGameCatalogue(result.catalogue);if(!passive)notice=result.error??'';}else if(!passive)notice='The request did not complete. Check the connection and try again.';return result;}
-    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);if(['game_categories_save','game_custom_save','game_background_save','game_library_scan','game_library_import'].includes(command.command))throw error;return false;}
+    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);if(['game_background_preview','game_categories_save','game_custom_save','game_background_save','game_library_scan','game_library_import'].includes(command.command))throw error;return false;}
     finally{if(!passive)pending=false;}
   }
   async function saveSettings(command:GameRequest):Promise<GamesState>{
@@ -187,7 +188,7 @@
         {@const art=resolveGameArtwork(game)}
         <article class={['game-tile', { unavailable: !game.installed }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
-            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{/if}<div class="art-shade"></div>{#if game.categoryId}<span class="art-category">{categories[game.categoryId]}</span>{:else if !isCustomGameId(game.id)}<span class="art-category">{art.category}</span>{/if}{#if isCustomGameId(game.id)}<span class="art-category custom-art-badge">Custom</span>{/if}
+            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{/if}<div class="art-shade"></div>{#if game.categoryId}<span class="art-category">{categories[game.categoryId]}</span>{:else if !isCustomGameId(game.id)}<span class="art-category">{art.category}</span>{/if}{#if isCustomGameId(game.id)}<span class="art-category custom-art-badge">Custom</span>{/if}
               <div class={['game-wordmark', { 'long-wordmark': art.wordmark === 'ASSETTO CORSA' }]}>{art.wordmark}<span>{art.edition}</span></div>
             </div>
             <div class="tile-copy">

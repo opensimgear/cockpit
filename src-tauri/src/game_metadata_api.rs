@@ -231,12 +231,21 @@ impl GamesRuntime {
                 next.game_categories.remove(id);
             }
             "game_background_save" => {
-                fields(request, &["gameId", "path", "positionX", "positionY"])?;
+                fields(request, &["gameId", "path", "positionX", "positionY", "imageData", "crop"])?;
                 let id = request["gameId"]
                     .as_str()
                     .filter(|id| catalogue.iter().any(|game| game["id"] == *id))
                     .ok_or("Choose an existing game background.")?;
-                if request.get("path") == Some(&Value::Null) {
+                if let Some(data) = request.get("imageData") {
+                    if request.get("path").is_some() || request.get("positionX").is_some() || request.get("positionY").is_some() {
+                        return Err("Choose a preview crop or a legacy image position, not both.".into());
+                    }
+                    let crop = serde_json::from_value(request["crop"].clone()).map_err(|_| "Choose a valid tile crop.")?;
+                    let background = crate::game_artwork::import_preview(self.inner.installations.root(), data.as_str().ok_or("Load a valid image preview.")?, crop)?;
+                    next.backgrounds.insert(id.into(), background);
+                } else if request.get("crop").is_some() {
+                    return Err("Load the image preview before saving its crop.".into());
+                } else if request.get("path") == Some(&Value::Null) {
                     next.backgrounds.remove(id);
                 } else {
                     let existing = next
@@ -260,7 +269,7 @@ impl GamesRuntime {
                     )?;
                     let background=match request.get("path") {
                         Some(Value::String(path))=>crate::game_artwork::import(self.inner.installations.root(),path,x,y)?,
-                        None=>{let mut background=existing.cloned().ok_or("Choose a background image before setting its crop.")?;background.position_x=x;background.position_y=y;background},
+                        None=>{let mut background=existing.cloned().ok_or("Choose a background image before setting its crop.")?;background.position_x=x;background.position_y=y;background.crop=None;background},
                         _=>return Err("Choose a local image path, omit it to adjust crop, or reset with null.".into()),
                     };
                     next.backgrounds.insert(id.into(), background);
