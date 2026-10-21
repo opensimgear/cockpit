@@ -13,9 +13,9 @@ GameGlass reference; no external artwork or Star Citizen provider is included.
 | Story | Required software delivery | Status |
 | --- | --- | --- |
 | W0 #113 | Strict versioned definitions, instances, layers, properties, ports, states, identity, capability contracts and LVGL feasibility | In progress |
-| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Pending |
-| W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Pending |
-| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Pending |
+| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Renderer implemented; qualification pending |
+| W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Drawing feasibility implemented; integration pending |
+| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Authoring implemented; device workflow pending |
 | W4 #117 | Original control/instrument catalog, library bundles, publishing/reconciliation, example panel and runtime updates | Pending |
 | W5 #118 | Running native dev Cockpit acceptance, automated/native/build checks, documentation and software parity evidence | Pending |
 
@@ -88,3 +88,25 @@ file is a tracker, not evidence that unchecked work exists.
   publication admission and reloads both panel and library. Local screenshots
   and evidence: `.research/widgets-native-ui/1792622346932/`. This proves native
   authoring/preview and persistence, not ESP32 or Android-device qualification.
+- Extended native authoring acceptance also verifies state-specific text,
+  resetting overrides, edited hit-area geometry and restored hit areas. The
+  inspector now exposes selector options/fallback, feedback port ranges, numeric
+  display precision, property bounds, artwork imports and layer alignment.
+  Native evidence: `.research/widgets-native-ui/1792622887004/`; desktop/browser
+  Svelte checks pass with zero diagnostics.
+- LVGL 9.4.0 is pinned by commit and archive digest. Its synchronous adapter
+  writes partial RGB565 strips through the existing board interface and fences
+  presentation outside session/input ownership. Native sanitizers render eight
+  state appearances from the actual shared catalog source. This feasibility
+  harness deliberately uses a built-in font and pre-resolved state fixtures:
+  portable font metrics, device-side state execution, compiled content store,
+  authenticated USB/WSS delivery and main-loop adoption are still required.
+  The generic firmware still calls the existing raster main loop at this point.
+- `python3 apps/companion-esp32/test/lvgl.py` passes with upstream LVGL itself
+  instrumented by address/undefined-behavior sanitizers. Adapter coverage is
+  100% lines, 71.64% branches and 100% functions. Checks include scaled ARGB
+  images (RGB565 corner quantization tolerance of one channel step), clipping,
+  unknown/stale/pressed/active appearances, bounded 8-row writes, injected write
+  and present failures, and full-redraw recovery. The eight PNGs and coverage
+  report are retained in `.research/lvgl-native/` and configured as CI artifacts.
+  MCU cross-build results for the new component remain pending.

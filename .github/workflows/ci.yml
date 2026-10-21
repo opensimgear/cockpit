@@ -65,6 +65,8 @@ jobs:
         run: |
           pnpm companion:check
           pnpm companion:test
+          node scripts/widget-publication-fixtures.mjs --check
+          node scripts/widget-lvgl-fixtures.mjs --check
       - name: Component release tooling and companion release-readiness validation
         run: |
           python3 -m unittest discover -s scripts -p 'test_*release*.py' -v

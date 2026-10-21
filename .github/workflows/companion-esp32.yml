@@ -26,12 +26,16 @@ jobs:
         run: python3 apps/companion-esp32/test/waveshare.py
       - name: Native firmware sanitizers, coverage and preview
         run: python3 apps/companion-esp32/test/run.py
+      - name: Locked LVGL shared-source states, partial buffers, failure recovery and coverage
+        run: python3 apps/companion-esp32/test/lvgl.py
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-portable-evidence
           path: |
             .research/esp32-native/coverage.json
             .research/esp32-native/preview.png
+            .research/lvgl-native/coverage.json
+            .research/lvgl-native/*.png
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json
             .research/esp32-network/*-test.log

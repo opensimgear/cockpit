@@ -1,0 +1,3583 @@
+{
+  "formatVersion": 1,
+  "width": 800,
+  "height": 480,
+  "frames": [
+    {
+      "state": "normal",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.65,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    },
+    {
+      "state": "pressed",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 0.65,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#27505c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 3,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    },
+    {
+      "state": "active",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": true
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": true
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": true
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 0.65,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 4,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    },
+    {
+      "state": "warning",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 0.65,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#ff765e",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    },
+    {
+      "state": "disabled",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0.5,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "50.0 %",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.35,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    },
+    {
+      "state": "unknown",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "—",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "—",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "—",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.55,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    },
+    {
+      "state": "stale",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STALE",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STALE",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STALE",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.45,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    },
+    {
+      "state": "disconnected",
+      "nodes": [
+        {
+          "id": "widget-0/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-0/label",
+          "kind": "text",
+          "area": [
+            34,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "ENGINE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-0/status",
+          "kind": "indicator",
+          "area": [
+            99,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-1/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-1/label",
+          "kind": "text",
+          "area": [
+            226,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "POWER",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-1/status",
+          "kind": "indicator",
+          "area": [
+            291,
+            117,
+            18,
+            13
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-2/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-2/label",
+          "kind": "text",
+          "area": [
+            418,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "MODE",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            12,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-3/label",
+          "kind": "text",
+          "area": [
+            610,
+            56,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "STATUS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-3/status",
+          "kind": "indicator",
+          "area": [
+            610,
+            23,
+            21,
+            19
+          ],
+          "fill": "#63dfd0",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "active": false
+        },
+        {
+          "id": "widget-4/bezel",
+          "kind": "rectangle",
+          "area": [
+            20,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-4/label",
+          "kind": "text",
+          "area": [
+            34,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-4/value",
+          "kind": "text",
+          "area": [
+            34,
+            219,
+            148,
+            54
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "—",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-5/label",
+          "kind": "text",
+          "area": [
+            226,
+            176,
+            148,
+            34
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-5/value",
+          "kind": "text",
+          "area": [
+            226,
+            213,
+            148,
+            40
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "—",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-5/gauge",
+          "kind": "gauge",
+          "area": [
+            226,
+            266,
+            148,
+            16
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 2,
+          "opacity": 1,
+          "fraction": 0,
+          "orientation": "horizontal"
+        },
+        {
+          "id": "widget-6/bezel",
+          "kind": "rectangle",
+          "area": [
+            404,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-6/gauge",
+          "kind": "gauge",
+          "area": [
+            425,
+            179,
+            134,
+            102
+          ],
+          "fill": "#63dfd0",
+          "stroke": "#30434d",
+          "strokeWidth": 8,
+          "opacity": 1,
+          "fraction": 0,
+          "orientation": "radial"
+        },
+        {
+          "id": "widget-6/label",
+          "kind": "text",
+          "area": [
+            430,
+            257,
+            123,
+            22
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "LEVEL",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-6/value",
+          "kind": "text",
+          "area": [
+            439,
+            219,
+            106,
+            30
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "—",
+          "align": "center",
+          "font": "mono",
+          "fontSize": 36
+        },
+        {
+          "id": "widget-7/bezel",
+          "kind": "rectangle",
+          "area": [
+            596,
+            166,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-7/label",
+          "kind": "text",
+          "area": [
+            610,
+            172,
+            148,
+            27
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "SYSTEMS",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        },
+        {
+          "id": "widget-8/line",
+          "kind": "line",
+          "area": [
+            24,
+            385,
+            169,
+            3
+          ],
+          "fill": null,
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 1
+        },
+        {
+          "id": "widget-9/bezel",
+          "kind": "rectangle",
+          "area": [
+            212,
+            319,
+            176,
+            134
+          ],
+          "fill": "#10212c",
+          "stroke": "#63dfd0",
+          "strokeWidth": 2,
+          "opacity": 0.3,
+          "radius": 10
+        },
+        {
+          "id": "widget-9/label",
+          "kind": "text",
+          "area": [
+            226,
+            364,
+            148,
+            46
+          ],
+          "fill": "#e2f4f3",
+          "stroke": null,
+          "strokeWidth": 0,
+          "opacity": 1,
+          "text": "NEXT",
+          "align": "center",
+          "font": "sans",
+          "fontSize": 22
+        }
+      ]
+    }
+  ]
+}
