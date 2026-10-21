@@ -6,6 +6,7 @@ import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./profile-editor','./profile-diagram','./profile-canvas']);
 const {profileAutoLayout,PROFILE_BLOCK_WIDTH:width,PROFILE_BLOCK_HEIGHT:height}=modules.get('./profile-editor');
 const {diagramRoutes,createDiagramRouter,diagramPortAnchor,diagramPendingPath,diagramSmoothPath,diagramOrthogonalPath,diagramSegmentLine,diagramRouteQuality}=modules.get('./profile-diagram');
+const {diagramAutomaticCorners,diagramSimpleRoute}=modules.get('./profile-diagram-lanes');
 const edge=(from,to,id=`${from}-${to}`)=>({id,from:{nodeId:from,portId:'out'},to:{nodeId:to,portId:'in'}});
 const placed=positions=>positions.map(({nodeId,...position})=>({id:nodeId,position}));
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -31,6 +32,19 @@ function roundedSamples(path){
 }
 function assertClearSamples(nodes,path){
   for(const point of roundedSamples(path))for(const {id,position:p,width:nodeWidth=100,height:nodeHeight=100}of nodes)assert.ok(!(point.x>p.x+1e-7&&point.x<p.x+nodeWidth-1e-7&&point.y>p.y+1e-7&&point.y<p.y+nodeHeight-1e-7),`Rounded arc crosses block ${id} at ${JSON.stringify(point)}`);
+}
+function assertNoSelfCrossings(points,label){
+  const distinct=points.filter((point,index)=>!index||Math.hypot(point.x-points[index-1].x,point.y-points[index-1].y)>1e-7);
+  for(let i=1;i<distinct.length;i++)for(let j=1;j<i-1;j++){
+    const a=distinct[j-1],b=distinct[j],c=distinct[i-1],d=distinct[i],rx=b.x-a.x,ry=b.y-a.y,sx=d.x-c.x,sy=d.y-c.y,qx=c.x-a.x,qy=c.y-a.y,denominator=rx*sy-ry*sx;
+    if(Math.abs(denominator)<1e-8){
+      if(Math.abs(qx*ry-qy*rx)>1e-6)continue;
+      const length=Math.hypot(rx,ry),from=(qx*rx+qy*ry)/length,to=from+(sx*rx+sy*ry)/length,overlap=Math.min(length,Math.max(from,to))-Math.max(0,Math.min(from,to));
+      assert.ok(overlap<1e-6,`${label} retraces its own rendered path`);continue;
+    }
+    const t=(qx*sy-qy*sx)/denominator,u=(qx*ry-qy*rx)/denominator;
+    assert.ok(!(t>=-1e-7&&t<=1+1e-7&&u>=-1e-7&&u<=1+1e-7),`${label} crosses or touches its own rendered path`);
+  }
 }
 function verifyRoutes(nodes,bindings){
   const routes=diagramRoutes(nodes,bindings,width,height);
@@ -145,9 +159,8 @@ test('saved and pending wires use fully smooth Beziers with horizontal port tang
   assert.ok(curves[0].first.x>curves[0].start.x);assert.ok(curves.at(-1).second.x<curves.at(-1).end.x);
   const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:600,y:320}}];
   const route=diagramRoutes(nodes,[edge('source','target')],width,height)[0],routedCurves=cubics(route.path);
-  assert.equal(routedCurves.length,route.points.length-2,'Smooth curves flow through channel stations instead of interpolating sharp orthogonal corners');
+  assert.equal(routedCurves.length,1,'An unobstructed connection uses one horizontal-tangent cubic');
   assert.equal(routedCurves[0].first.y,route.points[0].y);assert.equal(routedCurves.at(-1).second.y,route.points.at(-1).y);
-  for(let index=0;index<routedCurves.length-1;index++)assert.deepEqual(plain(routedCurves[index].end),{x:(route.points[index+1].x+route.points[index+2].x)/2,y:(route.points[index+1].y+route.points[index+2].y)/2});
 });
 
 test('segmented arrows round perpendicular lanes with the configured circular radius',()=>{
@@ -371,4 +384,80 @@ test('reconnecting a signal invalidates fans at both previous and new physical a
   assert.deepEqual(plain(updated[0].points[0]),plain(updated[1].points[0]));
   assert.deepEqual(plain(updated[0].points.at(-1)),plain(updated[1].points.at(-1)));
   assert.notEqual(updated[0].path,updated[1].path);
+});
+
+test('automatic cleanup erases retracing and self-crossing loops without changing authored geometry',()=>{
+  const retrace=[{x:0,y:0},{x:20,y:0},{x:20,y:60},{x:20,y:20},{x:80,y:20}],before=JSON.stringify(retrace);
+  assert.deepEqual(plain(diagramAutomaticCorners(retrace)),[{x:0,y:0},{x:20,y:0},{x:20,y:20},{x:80,y:20}]);
+  const loop=[{x:0,y:0},{x:80,y:0},{x:80,y:80},{x:20,y:80},{x:20,y:-20},{x:120,y:-20}];
+  assert.deepEqual(plain(diagramAutomaticCorners(loop)),[{x:0,y:0},{x:20,y:0},{x:20,y:-20},{x:120,y:-20}]);
+  assert.equal(diagramSimpleRoute(retrace),false);assert.equal(diagramSimpleRoute(loop),false);
+  assert.equal(diagramSimpleRoute(diagramAutomaticCorners(loop)),true);assert.equal(JSON.stringify(retrace),before);
+  const manual=cubics(diagramSmoothPath(retrace,retrace)),turn=manual.findIndex(curve=>curve.end.x===20&&curve.end.y===60);
+  assert.ok(turn>=0);assert.deepEqual(plain(manual[turn].second),{x:20,y:60});assert.deepEqual(plain(manual[turn+1].first),{x:20,y:60},'An authored reversal has a stationary cusp instead of an arbitrary rightward loop');
+});
+
+test('Feature Lab fan approaches never retrace themselves or double back near the auxiliary input',async()=>{
+  const {nodes,bindings}=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/feature-lab-geometry.json',import.meta.url),'utf8'));
+  for(const style of ['smooth','orthogonal']){
+    const routes=diagramRoutes(nodes,bindings,width,height,{style});assert.equal(routes.length,73);
+    for(const route of routes){
+      assert.ok(diagramSimpleRoute(route.points),`${route.binding.id} contains an automatic retrace or self-crossing`);
+      const points=style==='smooth'?cubics(route.path).flatMap(curve=>Array.from({length:33},(_,index)=>sample(curve,index/32))):roundedSamples(route.path);
+      assertNoSelfCrossings(points,`${style} ${route.binding.id}`);
+      if(route.binding.to.nodeId!=='virtual-aux')continue;
+      const end=route.points.at(-1),lastOutside=points.findLastIndex(point=>point.x<end.x-300),terminal=points.slice(lastOutside+1);
+      for(let index=1;index<terminal.length;index++){
+        assert.ok(terminal[index].x>=terminal[index-1].x-1e-6,`${style} ${route.binding.id} reverses horizontally in its merge`);
+        assert.ok(Math.abs(terminal[index].y-end.y)<=Math.abs(terminal[index-1].y-end.y)+1e-6,`${style} ${route.binding.id} moves away from the input height before merging`);
+      }
+    }
+  }
+});
+
+test('nearby sources fan into a common input without forced overshoot in either direction',()=>{
+  const nodes=[{id:'upper',position:{x:0,y:0}},{id:'lower',position:{x:0,y:350}},{id:'target',position:{x:500,y:180}}],bindings=[edge('upper','target','upper-a'),edge('upper','target','upper-b'),edge('lower','target','lower-a'),edge('lower','target','lower-b')];
+  for(const style of ['smooth','orthogonal'])for(const placed of [nodes,nodes.map(node=>({...node,position:{x:-node.position.x-(node.width??width),y:node.position.y}}))]){
+    const routes=diagramRoutes(placed,bindings,width,height,{style});assert.equal(routes.length,4);
+    for(const route of routes){
+      assert.ok(diagramSimpleRoute(route.points));
+      const points=style==='smooth'?cubics(route.path).flatMap(curve=>Array.from({length:33},(_,index)=>sample(curve,index/32))):roundedSamples(route.path);
+      assertNoSelfCrossings(points,`${style} ${route.binding.id}`);
+    }
+  }
+});
+
+test('unobstructed smooth routes use one cubic and cornered routes use the minimum links',()=>{
+  const binding=edge('source','target');
+  for(const targetY of [0,300]){
+    const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:600,y:targetY}}];
+    const smooth=diagramRoutes(nodes,[binding],100,100,{style:'smooth'})[0];
+    assert.equal(cubics(smooth.path).length,1,'A clear connection needs one cubic, including a direct horizontal link');
+    for(const cornerRadius of [0,24,64]){
+      const orthogonal=diagramRoutes(nodes,[binding],100,100,{style:'orthogonal',cornerRadius})[0];
+      assert.equal(orthogonal.points.length-1,targetY?3:1,'Horizontal port tangents require only H-V-H when endpoint heights differ');
+      assertClearSamples(nodes,orthogonal.path);
+    }
+  }
+});
+
+test('one centered obstacle adds only the necessary smooth station or orthogonal detour',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}},{id:'obstacle',position:{x:430,y:0}}],binding=edge('source','target');
+  const smooth=diagramRoutes(nodes,[binding],100,100,{style:'smooth'})[0],curves=cubics(smooth.path);
+  assert.equal(curves.length,2,'One intermediate station bypasses the obstacle; fitting every guide corner would create four cubics');
+  for(const curve of curves)for(let step=0;step<=100;step++){
+    const point=sample(curve,step/100);assert.ok(!(point.x>430&&point.x<530&&point.y>0&&point.y<100));
+  }
+  assertNoSelfCrossings(curves.flatMap(curve=>Array.from({length:33},(_,index)=>sample(curve,index/32))),'Two-piece obstacle detour');
+  for(const cornerRadius of [0,24,64]){
+    const orthogonal=diagramRoutes(nodes,[binding],100,100,{style:'orthogonal',cornerRadius})[0];
+    assert.equal(orthogonal.points.length-1,5,'Equal-height ports need exactly H-V-H-V-H around the centered obstacle');assertClearSamples(nodes,orthogonal.path);
+  }
+});
+
+test('parallel equal-height ports retain exactly the extra cubic needed for separation',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}}],bindings=[edge('source','target','first'),edge('source','target','second')];
+  const routes=diagramRoutes(nodes,bindings,100,100,{style:'smooth'});
+  assert.equal(new Set(routes.map(route=>route.path)).size,2);
+  for(const route of routes){assert.equal(cubics(route.path).length,2,'A second cubic retains a distinct intermediate lane with common horizontal port tangents');assertNoSelfCrossings(cubics(route.path).flatMap(curve=>Array.from({length:33},(_,index)=>sample(curve,index/32))),route.binding.id);}
 });

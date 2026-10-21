@@ -71,6 +71,87 @@ function qualityInBrowser(paths) {
   } finally { svg.remove(); }
 }
 
+// Inspect individual rendered paths as well as crossings between different
+// wires. A terminal fan can otherwise improve global scores while introducing
+// a tiny loop or reversing over its own final lead.
+function fanInInBrowser(bindingIds) {
+  const routes = [], spacing = .5, clearance = 20;
+  const bounds = [...document.querySelectorAll('.canvas-stage .resource-block')].map(node => ({
+    id: node.dataset.nodeId, left: parseFloat(node.style.left), top: parseFloat(node.style.top),
+    right: parseFloat(node.style.left) + parseFloat(getComputedStyle(node).width),
+    bottom: parseFloat(node.style.top) + parseFloat(getComputedStyle(node).height),
+  }));
+  for (const id of bindingIds) {
+    const path = [...document.querySelectorAll('.canvas-stage .signal-edge')].find(path => path.dataset.bindingId === id);
+    if (!path) throw new Error(`Missing fan-in route ${id}`);
+    const length = path.getTotalLength(), end = path.getPointAtLength(length), count = Math.max(1, Math.ceil(length / spacing));
+    // Sample the complete route. A long excursion must not disappear merely
+    // because its final lead is short or it leaves and re-enters the close-up.
+    const points = Array.from({ length: count + 1 }, (_, index) => { const distance = length * index / count, point = path.getPointAtLength(distance); return { x: point.x, y: point.y, distance }; });
+    const segments = points.slice(1).map((b, index) => ({ a: points[index], b, index }));
+    const cells = new Map(), tested = new Set(), intersections = [], retraces = [];
+    const region = { left: end.x - 360, right: end.x + 20, top: end.y - 260, bottom: end.y + 260 };
+    const nearPort = point => point.x >= region.left && point.x <= region.right && point.y >= region.top && point.y <= region.bottom;
+    const nearPortRanges = [];
+    for (const segment of segments) {
+      if (!nearPort(segment.a) && !nearPort(segment.b)) continue;
+      const range = nearPortRanges.at(-1);
+      if (range && Math.abs(range.end - segment.a.distance) < 1e-6) range.end = segment.b.distance;
+      else nearPortRanges.push({ start: segment.a.distance, end: segment.b.distance });
+      for (let x = Math.floor(Math.min(segment.a.x, segment.b.x) / 16); x <= Math.floor(Math.max(segment.a.x, segment.b.x) / 16); x++) {
+        for (let y = Math.floor(Math.min(segment.a.y, segment.b.y) / 16); y <= Math.floor(Math.max(segment.a.y, segment.b.y) / 16); y++) {
+          const key = `${x},${y}`; if (!cells.has(key)) cells.set(key, []); cells.get(key).push(segment);
+        }
+      }
+    }
+    for (const cell of cells.values()) for (let i = 0; i < cell.length; i++) for (let j = i + 1; j < cell.length; j++) {
+      const a = cell[i], b = cell[j];
+      if (Math.abs(a.index - b.index) <= 2) continue;
+      const key = [a.index, b.index].sort((a, b) => a - b).join('/'); if (tested.has(key)) continue; tested.add(key);
+      const rx = a.b.x - a.a.x, ry = a.b.y - a.a.y, sx = b.b.x - b.a.x, sy = b.b.y - b.a.y;
+      const rl = Math.hypot(rx, ry), sl = Math.hypot(sx, sy); if (rl < 1e-6 || sl < 1e-6) continue;
+      const qx = b.a.x - a.a.x, qy = b.a.y - a.a.y, denominator = rx * sy - ry * sx;
+      if (Math.abs(denominator) / (rl * sl) < 1e-5) {
+        if (Math.abs(qx * ry - qy * rx) / rl > .02) continue;
+        const from = (qx * rx + qy * ry) / rl, to = from + (sx * rx + sy * ry) / rl;
+        const overlap = Math.max(0, Math.min(rl, Math.max(from, to)) - Math.max(0, Math.min(from, to)));
+        if (overlap > .02 && retraces.length < 12) retraces.push({ x: a.a.x, y: a.a.y, overlap, opposite: rx * sx + ry * sy < 0 });
+        continue;
+      }
+      const t = (qx * sy - qy * sx) / denominator, u = (qx * ry - qy * rx) / denominator;
+      if (t < -1e-5 || t > 1 + 1e-5 || u < -1e-5 || u > 1 + 1e-5) continue;
+      const point = { x: a.a.x + t * rx, y: a.a.y + t * ry };
+      if (!intersections.some(prior => Math.hypot(prior.x - point.x, prior.y - point.y) < .5)) intersections.push(point);
+    }
+    // This terminal rectangle is empty by construction: its left edge is 20px
+    // beyond every nearby block's right edge. Feature Lab's physical gap is
+    // 208px, leaving a 188px clear strip. Once a wire first enters it, neither
+    // an obstacle nor its endpoint requires it to double back or leave again.
+    const obstacles = bounds.filter(box => box.left < end.x - 1e-6 && box.bottom + clearance > region.top && box.top - clearance < region.bottom);
+    const nearestRight = Math.max(end.x - 360, ...obstacles.map(box => Math.min(end.x, box.right)));
+    const strip = { left: nearestRight + clearance, right: end.x + .01, top: region.top, bottom: region.bottom,
+      physicalGap: end.x - nearestRight, clearance,
+      limitingBlocks: obstacles.filter(box => Math.abs(box.right - nearestRight) < 1e-6).map(box => box.id) };
+    if (strip.right - strip.left < 10) throw new Error(`${id}: no obstacle-free terminal strip is available for inspection`);
+    const inStrip = point => point.x >= strip.left && point.x <= strip.right && point.y >= strip.top && point.y <= strip.bottom;
+    const firstEntry = points.findIndex(inStrip);
+    if (firstEntry < 0) throw new Error(`${id}: the rendered route never reaches its terminal strip`);
+    const terminal = points.slice(firstEntry);
+    const terminalWindow = length - terminal[0].distance;
+    let reverseXDistance = 0, awayYDistance = 0, excursions = 0;
+    for (let index = 1; index < terminal.length; index++) {
+      reverseXDistance += Math.max(0, terminal[index - 1].x - terminal[index].x);
+      awayYDistance += Math.max(0, Math.abs(terminal[index].y - end.y) - Math.abs(terminal[index - 1].y - end.y));
+      if (!inStrip(terminal[index])) excursions++;
+    }
+    routes.push({ id, length, samples: points.length, inspectionWindow: length, completeRouteSampled: true,
+      region, nearPortRanges, nearPortLength: nearPortRanges.reduce((sum, range) => sum + range.end - range.start, 0),
+      terminalStrip: strip, firstEntryDistance: terminal[0].distance, terminalSamples: terminal.length, terminalWindow, excursions, intersections, retraces,
+      reverseXDistance, awayYDistance, endpoint: { x: end.x, y: end.y } });
+  }
+  return { spacing, routes };
+}
+
 async function until(operation, message, timeout = 20000) {
   const end = Date.now() + timeout; let last;
   while (Date.now() < end) {
@@ -87,14 +168,16 @@ async function connectNative() {
     endpoint = (await response.json()).find(target => target.type === 'page' && !target.url.includes('profile-activation-window') && /127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(target.url))?.webSocketDebuggerUrl;
   }
   assert.ok(endpoint, 'The running native dev Cockpit must expose its WebView CDP page.');
-  const socket = new WebSocket(endpoint), pending = new Map(); let sequence = 0;
+  const socket = new WebSocket(endpoint), pending = new Map(), errors = []; let sequence = 0;
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Native page connection timed out')), 8000);
     socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
     socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Native page connection failed')); }, { once: true });
   });
   socket.addEventListener('message', event => {
-    const reply = JSON.parse(event.data), operation = pending.get(reply.id); if (!operation) return;
+    const reply = JSON.parse(event.data);
+    if(reply.method === 'Runtime.exceptionThrown') errors.push(reply.params.exceptionDetails);
+    const operation = pending.get(reply.id); if (!operation) return;
     clearTimeout(operation.timer); pending.delete(reply.id);
     reply.error ? operation.reject(new Error(reply.error.message)) : operation.resolve(reply.result);
   });
@@ -104,7 +187,7 @@ async function connectNative() {
     pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params }));
   });
   return {
-    send,
+    send, errors,
     async evaluate(fn, ...args) {
       const reply = await send('Runtime.evaluate', { expression: `(${fn.toString()})(...${JSON.stringify(args)})`, awaitPromise: true, returnByValue: true });
       if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text);
@@ -198,6 +281,49 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
   const mouse = (type, point, extra = {}) => native.send('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, ...extra });
   const endDrag = async point => {
     await mouse('mouseReleased', point, { button: 'left', buttons: 0, clickCount: 1 }); pointerDown = false;
+  };
+  const inspectFanIn = async (style, bindings) => {
+    const ids = bindings.filter(binding => binding.to.nodeId === 'virtual-aux').map(binding => binding.id);
+    assert.ok(ids.length > 8, 'Feature Lab must exercise a dense virtual-aux fan-in');
+    await click('Fit all');
+    const wheelAction = await native.evaluate(async () => {
+      const { canvasNavigation } = await import('/src/lib/canvas-navigation.ts'); let current;
+      const unsubscribe = canvasNavigation.subscribe(value => { current = value; }); unsubscribe(); return current.wheelAction;
+    });
+    const position = () => native.evaluate(() => {
+      const stage = document.querySelector('.canvas-stage'), bounds = stage.getBoundingClientRect();
+      const node = [...stage.querySelectorAll('.resource-block')].find(node => node.dataset.nodeId === 'virtual-aux'), handle = node.querySelector('[data-connection-target] .port-dot'), dot = handle.getBoundingClientRect();
+      const zoom = new DOMMatrix(getComputedStyle(document.querySelector('.canvas-world')).transform).a;
+      return { x: dot.left + dot.width / 2, y: dot.top + dot.height / 2, zoom,
+        desired: { x: bounds.left + bounds.width * .7, y: bounds.top + bounds.height * .5 },
+        stage: { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom }, viewport: { width: innerWidth, height: innerHeight } };
+    });
+    let at = await position();
+    await mouse('mouseWheel', at.desired, { deltaX: at.x - at.desired.x, deltaY: at.y - at.desired.y, modifiers: wheelAction === 'zoom' ? 2 : 0 });
+    await native.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(true))));
+    for (let index = 0; index < 40 && (at = await position()).zoom < 1.2; index++) {
+      await mouse('mouseWheel', { x: at.x, y: at.y }, { deltaX: 0, deltaY: -40, modifiers: wheelAction === 'zoom' ? 0 : 2 });
+      await native.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(true))));
+    }
+    at = await position(); assert.ok(at.zoom >= 1.2, 'Fan-in inspection uses at least 120% physical canvas zoom');
+    assert.ok(at.x > at.stage.left && at.x < Math.min(at.stage.right, at.viewport.width) && at.y > at.stage.top && at.y < Math.min(at.stage.bottom, at.viewport.height), 'The real input port must be visible for close-up inspection');
+    const x = Math.max(at.stage.left, at.x - 540), y = Math.max(at.stage.top, at.y - 240);
+    const clip = { x, y, width: Math.min(720, at.stage.right - x, at.viewport.width - x), height: Math.min(480, at.stage.bottom - y, at.viewport.height - y), scale: 1 };
+    const shot = await native.send('Page.captureScreenshot', { format: 'png', clip });
+    await writeFile(resolve(artifacts, `${style}-virtual-aux-fanin.png`), Buffer.from(shot.data, 'base64'));
+    const result = await native.evaluate(fanInInBrowser, ids);
+    await writeFile(resolve(artifacts, `${style}-virtual-aux-fanin.json`), JSON.stringify({ position: at, clip, ...result }, null, 2));
+    assert.equal((await state()).edges, 73, 'Close-up keeps all routes visible');
+    assert.equal((await state()).saveDisabled, true, 'Close-up pan and zoom never edit the profile');
+    for (const route of result.routes) {
+      assert.equal(route.excursions, 0, `${style} ${route.id} must stay in the obstacle-free input corridor after entering it`);
+      assert.deepEqual(route.intersections, [], `${style} ${route.id} must not cross itself near the virtual-aux input`);
+      assert.deepEqual(route.retraces, [], `${style} ${route.id} must not retrace its own path near the virtual-aux input`);
+      assert.ok(route.reverseXDistance < .5, `${style} ${route.id} must approach the input monotonically: ${route.reverseXDistance.toFixed(2)}px horizontal reversal`);
+      assert.ok(route.awayYDistance < .5, `${style} ${route.id} must merge towards the input without a vertical hairpin: ${route.awayYDistance.toFixed(2)}px away from the port`);
+    }
+    await click('Fit all');
+    return { zoom: at.zoom, routeCount: ids.length, screenshot: `${style}-virtual-aux-fanin.png`, ...result };
   };
   const drag = async style => {
     await click('Fit all');
@@ -339,6 +465,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     return { bindingId: target.id, inserted, moved: movement, persisted: savedRoute.handles[0], reopened, deleteKeepsConnection: true, resetSaved: true };
   };
   try {
+    await native.send('Runtime.enable');
     await native.send('Page.reload', { ignoreCache: true });
     await until(() => native.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke === 'function'), 'Native gateway unavailable');
     await native.send('Page.bringToFront');
@@ -363,6 +490,13 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       assert.equal((await state()).saveDisabled, true, 'Fit and zoom remain view-only');
       assert.equal((await state()).undoDisabled, true, 'Canvas navigation does not enter graph undo history');
       const geometry = await pathGeometry();
+      const segments = geometry.paths.map(path => ({ id: path.id,
+        cubics: (path.d.match(/C/g) ?? []).length,
+        corners: (path.d.match(/A/g) ?? []).length }));
+      const segmentCounts = { cubicPieces: segments.reduce((sum, route) => sum + route.cubics, 0),
+        singleCubicRoutes: segments.filter(route => route.cubics === 1).length,
+        roundedCorners: segments.reduce((sum, route) => sum + route.corners, 0) };
+      await writeFile(resolve(artifacts, `${style}-segments.json`), JSON.stringify(segments, null, 2));
       await writeFile(resolve(artifacts, `${style}-geometry.json`), JSON.stringify(geometry, null, 2));
       assert.equal(geometry.paths.length, 73); assert.deepEqual(geometry.collisions, [], `${style} rendered SVG paths must avoid blocks`);
       for (const path of geometry.paths) {
@@ -381,16 +515,22 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       const quality = await native.evaluate(qualityInBrowser, geometry.paths);
       const beforeQuality = baselineRoutes?.[style] ? await native.evaluate(qualityInBrowser, baselineRoutes[style]) : null;
       await writeFile(resolve(artifacts, `${style}-quality.json`), JSON.stringify({ before: beforeQuality, after: quality }, null, 2));
+      const fanIn = await inspectFanIn(style, baseBindings);
       if (beforeQuality) for (const metric of ['crossingCount', 'crossingPairs', 'overlapLength']) {
         assert.ok(quality[metric] <= beforeQuality[metric], `${style} rendered ${metric} must not regress: ${quality[metric]} vs baseline ${beforeQuality[metric]}`);
       }
       const interaction = await drag(style), handles = await reroute(style);
-      checks.push({ style, paths: geometry.paths.length, sampledPoints: geometry.sampledPoints, totalLength: geometry.totalLength, quality, beforeQuality, interaction, handles });
+      checks.push({ style, paths: geometry.paths.length, sampledPoints: geometry.sampledPoints, totalLength: geometry.totalLength, segmentCounts, quality, beforeQuality, fanIn, interaction, handles });
       console.log(`${style}: 73 clear routes; drag p95 ${interaction.p95.toFixed(1)}ms; drop ${interaction.dropMs.toFixed(1)}ms`);
       console.log(`${style} readability: ${JSON.stringify({ before: beforeQuality, after: quality })}`);
     }
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, sourceProfileName: original.document.name, checks }, null, 2));
     console.log(`Native routing evidence: ${artifacts}`);
+  } catch(error) {
+    await capture('failure.png').catch(()=>{});
+    const body=await native.evaluate(()=>document.body.innerText.slice(0,12000)).catch(()=>null);
+    await writeFile(resolve(artifacts,'failure.json'),JSON.stringify({error:error.message,body,errors:native.errors},null,2));
+    throw error;
   } finally {
     if (pointerDown) await endDrag({ x: 10, y: 10 }).catch(() => {});
     await native.evaluate(() => { const data = window.__routingAcceptance; if (data) { data.running = false; data.observer?.disconnect(); } }).catch(() => {});

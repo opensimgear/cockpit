@@ -1,6 +1,7 @@
 import type { DeepReadonly, ProfileBinding, ProfileWireRoute, ProfileWireStyle } from './profiles';
 import { profileAnchorWireRoute, profileWireCorners } from './profile-wire-layout';
-import { refineDiagramLanes } from './profile-diagram-lanes';
+import { diagramAutomaticCorners, diagramSimpleRoute, refineDiagramLanes } from './profile-diagram-lanes';
+import { simplifyDiagramRoute } from './profile-diagram-simplify';
 export { diagramRouteQuality } from './profile-diagram-lanes';
 
 type Edge = DeepReadonly<Pick<ProfileBinding, 'from' | 'to'>>;
@@ -66,7 +67,7 @@ function smoothCurves(points:readonly DiagramPoint[],maximumHandle=Infinity,pres
     return [point,...interior];
   });
   if(points.length<2)return [];
-  const unit=(x:number,y:number)=>{const length=Math.hypot(x,y);return length?{x:x/length,y:y/length}:{x:1,y:0};};
+  const unit=(x:number,y:number)=>{const length=Math.hypot(x,y);return length?{x:x/length,y:y/length}:{x:0,y:0};};
   const tangents=points.map((point,index)=>{
     if(!index||index===points.length-1)return {x:1,y:0};
     const previous=points[index-1],next=points[index+1],incoming=unit(point.x-previous.x,point.y-previous.y),outgoing=unit(next.x-point.x,next.y-point.y);
@@ -83,14 +84,81 @@ function cubicPath(curves:readonly Cubic[],start?:DiagramPoint){
   if(!curves.length)return start?`M${start.x},${start.y}`:'';
   return `M${curves[0].start.x},${curves[0].start.y}`+curves.map(({first,second,end})=>` C${first.x},${first.y} ${second.x},${second.y} ${end.x},${end.y}`).join('');
 }
-function flowingCurves(points:readonly DiagramPoint[]):Cubic[]{
-  points=profileWireCorners(points);
+function midpointCurves(points:readonly DiagramPoint[]):Cubic[]{
   if(points.length<3)return smoothCurves(points);
   const middle=(a:DiagramPoint,b:DiagramPoint)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
   return points.slice(1,-1).map((corner,index)=>{
     const start=index?middle(points[index],corner):points[0],end=index===points.length-3?points.at(-1)!:middle(corner,points[index+2]);
     return {start,first:{x:start.x+(corner.x-start.x)*2/3,y:start.y+(corner.y-start.y)*2/3},second:{x:end.x+(corner.x-end.x)*2/3,y:end.y+(corner.y-end.y)*2/3},end};
   });
+}
+function flowingCurves(points:readonly DiagramPoint[],boxes:readonly Box[]=[]):Cubic[]{
+  const corners=diagramAutomaticCorners(points),curves=midpointCurves(corners);
+  if(!boxes.length)return curves;
+  const tight=new Set<number>();
+  for(let index=0;index<curves.length;index++)if(boxes.some(box=>cubicCrossesBox(curves[index],box)))tight.add(index+1);
+  if(!tight.size)return curves;
+  // Extra stations tighten only blocked bends. Every curve remains inside the
+  // convex hull of its adjacent channel stations; it cannot overshoot a merge
+  // height or invent the backwards bubbles of corner-interpolating tangents.
+  const stations=corners.flatMap((point,index)=>{
+    if(!tight.has(index)||!index||index===corners.length-1)return [point];
+    const before=corners[index-1],after=corners[index+1],incoming=Math.hypot(point.x-before.x,point.y-before.y),outgoing=Math.hypot(after.x-point.x,after.y-point.y);
+    const near=(neighbor:DiagramPoint,length:number)=>({x:point.x+(neighbor.x-point.x)*Math.min(18,length/3)/length,y:point.y+(neighbor.y-point.y)*Math.min(18,length/3)/length});
+    return [near(before,incoming),point,near(after,outgoing)];
+  });
+  return midpointCurves(stations);
+}
+function simpleCurves(curves:readonly Cubic[]):boolean {
+  const points:DiagramPoint[]=[];
+  for(const {start:a,first:b,second:c,end:d}of curves)for(let step=0;step<=16;step++){
+    const t=step/16,s=1-t,point={x:s*s*s*a.x+3*s*s*t*b.x+3*s*t*t*c.x+t*t*t*d.x,y:s*s*s*a.y+3*s*s*t*b.y+3*s*t*t*c.y+t*t*t*d.y};
+    if(!points.length||Math.hypot(point.x-points.at(-1)!.x,point.y-points.at(-1)!.y)>1e-7)points.push(point);
+  }
+  for(let index=1;index<points.length;index++)for(let other=1;other<index-1;other++){
+    const a=points[other-1],b=points[other],c=points[index-1],d=points[index];
+    if(Math.max(a.x,b.x)<Math.min(c.x,d.x)||Math.max(c.x,d.x)<Math.min(a.x,b.x)||Math.max(a.y,b.y)<Math.min(c.y,d.y)||Math.max(c.y,d.y)<Math.min(a.y,b.y))continue;
+    const rx=b.x-a.x,ry=b.y-a.y,sx=d.x-c.x,sy=d.y-c.y,qx=c.x-a.x,qy=c.y-a.y,denominator=rx*sy-ry*sx;
+    if(Math.abs(denominator)<1e-8){
+      if(Math.abs(qx*ry-qy*rx)>1e-6)continue;
+      const length=Math.hypot(rx,ry),from=(qx*rx+qy*ry)/length,to=from+(sx*rx+sy*ry)/length;
+      if(Math.min(length,Math.max(from,to))-Math.max(0,Math.min(from,to))>1e-6)return false;
+    }else{
+      const t=(qx*sy-qy*sx)/denominator,u=(qx*ry-qy*rx)/denominator;
+      if(t>=-1e-7&&t<=1+1e-7&&u>=-1e-7&&u<=1+1e-7)return false;
+    }
+  }
+  return true;
+}
+/** Merge consecutive fitted pieces while keeping their end controls unchanged.
+ * Retained controls preserve exact tangent continuity at every surviving join. */
+function fewestCurves(curves:readonly Cubic[],boxes:readonly Box[],separate=false):Cubic[]{
+  if(curves.length<2)return [...curves];
+  const first=curves[0].start,last=curves.at(-1)!.end,dx=last.x-first.x,dy=last.y-first.y;
+  let protectedJoin=-1;
+  if(separate){
+    let best=-Infinity;
+    for(let index=0;index<curves.length-1;index++){
+      const point=curves[index].end,score=Math.abs(dx*(point.y-first.y)-dy*(point.x-first.x))-Math.hypot(point.x-(first.x+last.x)/2,point.y-(first.y+last.y)/2)*1e-6;
+      if(score>best){best=score;protectedJoin=index;}
+    }
+  }
+  const monotone=(curve:Cubic,axis:'x'|'y')=>{
+    const values=[curve.start[axis],curve.first[axis],curve.second[axis],curve.end[axis]],sign=Math.sign(values[3]-values[0]);
+    return !!sign&&values.slice(1).every((value,index)=>(value-values[index])*sign>=-1e-8);
+  };
+  const count=Array(curves.length+1).fill(Infinity),length=Array(curves.length+1).fill(Infinity),previous:({index:number;curve:Cubic}|undefined)[]=Array(curves.length+1);
+  count[0]=0;length[0]=0;
+  for(let start=0;start<curves.length;start++)if(Number.isFinite(count[start]))for(let end=curves.length-1;end>=start;end--){
+    if(protectedJoin>=start&&protectedJoin<end)continue;
+    const curve={start:curves[start].start,first:curves[start].first,second:curves[end].second,end:curves[end].end};
+    if(end>start&&(!monotone(curve,'x')&&!monotone(curve,'y')||boxes.some(box=>cubicCrossesBox(curve,box))))continue;
+    const cost=length[start]+Math.hypot(curve.first.x-curve.start.x,curve.first.y-curve.start.y)+Math.hypot(curve.second.x-curve.first.x,curve.second.y-curve.first.y)+Math.hypot(curve.end.x-curve.second.x,curve.end.y-curve.second.y);
+    if(count[start]+1<count[end+1]||count[start]+1===count[end+1]&&cost<length[end+1]){count[end+1]=count[start]+1;length[end+1]=cost;previous[end+1]={index:start,curve};}
+  }
+  const result:Cubic[]=[];let index=curves.length;
+  while(index){const entry=previous[index];if(!entry)return [...curves];result.push(entry.curve);index=entry.index;}
+  result.reverse();return simpleCurves(result)?result:[...curves];
 }
 /** Cheap previews share the flowing fit. Authored knots remain interpolated. */
 export function diagramSmoothPath(points:readonly DiagramPoint[],preserved:readonly DiagramPoint[]=[]) {
@@ -232,17 +300,34 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
     const cornerRadius=options.style==='orthogonal'?clearCornerRadius(points,requestedRadius,blockBoxes):requestedRadius;
     if(options.style==='orthogonal')return {path:diagramOrthogonalPath(points,cornerRadius),cornerRadius};
     const safe=(curves:Cubic[])=>!curves.some(curve=>blockBoxes.some(box=>cubicCrossesBox(curve,box)));
-    // The router's clear channels guide a continuously curved detour. Constrain
-    // the control polygon to the assigned lane instead of replacing it with a
-    // direct shortcut that silently loses spacing between nearby connections.
+    // Prefer one clear cubic. Obstacle detours keep only the fitted pieces
+    // they need, while shared physical attachments retain a separation station
+    // and authored paths continue to interpolate their explicit handles.
     const handles=manual?savedHandles.get(binding.id)??[]:[];
-    if(!manual){const flowing=flowingCurves(points);if(safe(flowing))return {path:cubicPath(flowing),cornerRadius};}
+    if(!manual&&anchorPairSizes.get(binding.id)===1){
+      const start=points[0],end=points.at(-1)!,dx=end.x-start.x,dy=end.y-start.y;
+      const reach=Math.max(1,Math.min(240,Math.abs(dx)*.5));
+      // A single horizontal-tangent cubic is the smallest useful smooth path.
+      // Multiple signals at the exact same attachments keep their separate
+      // channel stations: one cubic cannot separate equal-height endpoints.
+      const reaches=dx>0?[[reach,reach],[dx*.8,dx*.1],[dx*.1,dx*.8],[dx*.25,dx*.25]]:[[Math.max(48,reach),Math.max(48,reach)]];
+      const channelLength=points.slice(1).reduce((sum,point,index)=>sum+Math.hypot(point.x-points[index].x,point.y-points[index].y),0);
+      if(dx>0||dy)for(const [firstReach,lastReach]of reaches){
+        const curve={start,first:{x:start.x+firstReach,y:start.y},second:{x:end.x-lastReach,y:end.y},end};
+        const length=Math.hypot(curve.first.x-start.x,curve.first.y-start.y)+Math.hypot(curve.second.x-curve.first.x,curve.second.y-curve.first.y)+Math.hypot(end.x-curve.second.x,end.y-curve.second.y);
+        if(length<=channelLength*1.5&&safe([curve]))return {path:cubicPath([curve]),cornerRadius};
+      }
+    }
+    if(!manual){const flowing=flowingCurves(points,blockBoxes);if(safe(flowing))return {path:cubicPath(fewestCurves(flowing,blockBoxes,(anchorPairSizes.get(binding.id)??0)>1)),cornerRadius};}
     let curves=smoothCurves(points,18,handles);
     for(const limit of [9,4.5,1,.1]){if(safe(curves))break;curves=smoothCurves(points,limit,handles);}
     return {path:cubicPath(curves),cornerRadius};
   }
   const anchors=new Map<string,{start:DiagramPoint;end:DiagramPoint}>();
   for(const binding of valid){const from=byId.get(binding.from.nodeId)!,to=byId.get(binding.to.nodeId)!;anchors.set(binding.id,{start:from.outputAnchors?.[binding.from.portId]??diagramPortAnchor(from.position,'output',from.width??width,from.height??height),end:to.inputAnchors?.[binding.to.portId]??diagramPortAnchor(to.position,'input',to.width??width,to.height??height)});}
+  const anchorPairs=new Map<string,string[]>(),anchorPairSizes=new Map<string,number>();
+  for(const [id,{start,end}]of anchors){const key=`${start.x},${start.y}:${end.x},${end.y}`,group=anchorPairs.get(key)??[];group.push(id);anchorPairs.set(key,group);}
+  for(const group of anchorPairs.values())for(const id of group)anchorPairSizes.set(id,group.length);
   const fan=new Map<string,{departure:DiagramPoint[];arrival:DiagramPoint[]}>();
   const endpointGroups=new Map<string,DeepReadonly<ProfileBinding>[]>();
   for(const binding of valid)for(const direction of ['start','end'] as const){const point=anchors.get(binding.id)![direction],key=`${direction}:${point.x}:${point.y}`,group=endpointGroups.get(key)??[];group.push(binding);endpointGroups.set(key,group);}
@@ -411,11 +496,57 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
     // Overlapping manually placed blocks can enclose a port completely. Never draw
     // an invented direct line through those blocks when there is no visible route.
     if(!channel.length)return[];
-    const corners=profileWireCorners(points);
+    const corners=diagramAutomaticCorners(points);
     reserve(corners);
     return[{binding,points:corners,path:'',cornerRadius:requestedRadius,manual:false,customBlocked}];
   });
-  const clearRoute=(route:DiagramRoute,points:DiagramPoint[])=>points.slice(1).every((point,index)=>{
+  const clearAutomaticRoute=(route:DiagramRoute,points:DiagramPoint[])=>{
+    const {start,end}=anchors.get(route.binding.id)!;
+    return points.length>=2&&points[0].x===start.x&&points[0].y===start.y&&points.at(-1)!.x===end.x&&points.at(-1)!.y===end.y&&points[1].y===start.y&&points[1].x>start.x&&points.at(-2)!.y===end.y&&points.at(-2)!.x<end.x&&diagramSimpleRoute(points)&&points.slice(1).every((point,index)=>manualBoxes.every((box,nodeIndex)=>((index===0&&nodes[nodeIndex].id===route.binding.from.nodeId)||(index===points.length-2&&nodes[nodeIndex].id===route.binding.to.nodeId))||!crosses(points[index],point,box)));
+  };
+  // Obstacle routing can bring a wire to the port from the opposite side of
+  // its original source-based fan assignment. Finish from the actual approach
+  // row, rather than overshooting to an artificial fan gate and doubling back.
+  // Mirror the same operation for departure fans so both ends remain simple.
+  const oriented=(points:readonly DiagramPoint[],outgoing:boolean)=>outgoing?[...points].reverse().map(point=>({x:-point.x,y:point.y})):points.map(point=>({...point}));
+  const approach=(points:readonly DiagramPoint[])=>{
+    const result:{index:number;y:number}[]=[],end=points.at(-1)!;
+    for(let index=0;index<points.length-2;index++){const a=points[index],b=points[index+1];if(a.y===b.y&&b.x-a.x>=laneSpacing*2&&b.x>=end.x-300)result.push({index,y:a.y});}
+    return result;
+  };
+  const terminalCandidate=(points:readonly DiagramPoint[],entry:{index:number;y:number},column:number,outgoing:boolean)=>{
+    const before=points[entry.index],end=points.at(-1)!;
+    if(column<before.x||column>=end.x)return null;
+    return oriented(diagramAutomaticCorners([...points.slice(0,entry.index+1),{x:column,y:entry.y},{x:column,y:end.y},end]),outgoing);
+  };
+  for(const [key,group]of endpointGroups){
+    if(group.length<2)continue;
+    const outgoing=key.startsWith('start:'),entries=group.flatMap(binding=>{
+      const index=routed.findIndex(route=>route.binding.id===binding.id);if(index<0)return[];
+      const route=routed[index],points=oriented(route.points,outgoing),end=points.at(-1)!;
+      // Start at the first clear approach entering the terminal region. The
+      // last horizontal leg may itself be the top of an unwanted hairpin.
+      const entry=approach(points).find(entry=>[points.at(-2)!.x,end.x-clearance,end.x-clearance-60].some(column=>{
+        const candidate=terminalCandidate(points,entry,column,outgoing);return candidate&&clearAutomaticRoute(route,candidate);
+      }));
+      return entry?[{routeIndex:index,route,points,...entry}]:[];
+    });
+    if(!entries.length)continue;
+    const end=entries[0].points.at(-1)!;
+    const upper=entries.filter(entry=>entry.y<end.y).sort((a,b)=>a.y-b.y||a.route.binding.id.localeCompare(b.route.binding.id));
+    const lower=entries.filter(entry=>entry.y>=end.y).sort((a,b)=>b.y-a.y||a.route.binding.id.localeCompare(b.route.binding.id));
+    for(const side of [upper,lower])for(let rank=0;rank<side.length;rank++){
+      const entry=side[rank];if(entry.route.manual||retainedById.has(entry.route.binding.id))continue;
+      const oldColumn=entry.points.at(-2)!.x;
+      for(const column of [end.x-clearance-Math.min(120,rank*12),oldColumn,end.x-clearance]){
+        const candidate=terminalCandidate(entry.points,entry,column,outgoing);
+        if(!candidate||!clearAutomaticRoute(entry.route,candidate))continue;
+        if(routed.some((peer,index)=>index!==entry.routeIndex&&peer.binding.from.nodeId===entry.route.binding.from.nodeId&&peer.binding.to.nodeId===entry.route.binding.to.nodeId&&pathKey(peer.points)===pathKey(candidate)))continue;
+        routed[entry.routeIndex]={...entry.route,points:candidate};break;
+      }
+    }
+  }
+  const clearRoute=(route:DiagramRoute,points:DiagramPoint[])=>diagramSimpleRoute(points)&&points.slice(1).every((point,index)=>{
     const previous=points[index];if(previous.x===point.x&&previous.y===point.y||previous.x!==point.x&&previous.y!==point.y)return false;
     // Keep the direction of every lane, including its short port leads. A
     // nudge cannot create a reversal or hide a newly introduced self-loop.
@@ -428,7 +559,16 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
   const refined=refineDiagramLanes(routed.map(route=>retainedById.has(route.binding.id)?{...route,manual:true}:route),clearRoute);
   const byBinding=new Map(refined.map(route=>{
     const previous=retainedById.get(route.binding.id);if(previous)return[route.binding.id,{...previous,binding:route.binding}];
-    return[route.binding.id,{...route,...pathFor(route.points,route.binding,route.manual)}];
+    let points=route.points;
+    if(options.style==='orthogonal'&&!route.manual&&points.length>4){
+      const {start,end}=anchors.get(route.binding.id)!;
+      const sourceFan=(endpointGroups.get(`start:${start.x}:${start.y}`)?.length??0)>1,targetFan=(endpointGroups.get(`end:${end.x}:${end.y}`)?.length??0)>1;
+      const protectedPoints=[...(sourceFan?points.slice(1,3):[]),...(targetFan?points.slice(-3,-1):[])];
+      points=simplifyDiagramRoute(points,candidate=>clearAutomaticRoute(route,candidate)&&protectedPoints.every(point=>candidate.slice(1).some((b,index)=>{
+        const a=candidate[index];return (a.x===b.x&&Math.abs(point.x-a.x)<1e-7&&point.y>=Math.min(a.y,b.y)-1e-7&&point.y<=Math.max(a.y,b.y)+1e-7)||(a.y===b.y&&Math.abs(point.y-a.y)<1e-7&&point.x>=Math.min(a.x,b.x)-1e-7&&point.x<=Math.max(a.x,b.x)+1e-7);
+      })));
+    }
+    return[route.binding.id,{...route,points,...pathFor(points,route.binding,route.manual)}];
   }));
   return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
 }

@@ -49,6 +49,45 @@ test('moving both cards by the group delta carries all existing bends without ch
   assert.equal(preview[0].manual,true);assert.equal(preview[0].customBlocked,false);assert.deepEqual(plain(routes),before);
 });
 
+test('a group drag translates the committed cubic fit exactly instead of fitting its guide again',()=>{
+  const nodes=[node('a',0,0),node('b',400,200)],points=[{x:100,y:80},{x:250,y:80},{x:250,y:280},{x:400,y:280}];
+  const paths=[
+    ['M100,80 C166.5,80 309.25,280 400,280','M155,70 C221.5,70 364.25,270 455,270'],
+    ['M100,80 C120,80 120,120 160,120 C200,120 200,280 400,280','M155,70 C175,70 175,110 215,110 C255,110 255,270 455,270']
+  ];
+  for(const [path,expected]of paths){
+    const routes=frozen([{...route('ab','a','b',points),path,manual:false}]),before=plain(routes);
+    const moved=nodes.map(row=>({...row,position:{x:row.position.x+55,y:row.position.y-10}}));
+    const preview=canvasPreviewRoutes(routes,moved,100,100,'smooth');
+    assert.equal(preview[0].path,expected,'Both direct and detoured fits keep their exact shape and cubic count');
+    assert.deepEqual(plain(preview[0].points),points.map(point=>({x:point.x+55,y:point.y-10})));
+    assert.deepEqual(plain(routes),before);
+  }
+});
+
+test('a single endpoint drag reattaches a committed one-cubic fit without adding bends',()=>{
+  const nodes=[node('a',0,0),node('b',400,200)],points=[{x:100,y:80},{x:250,y:80},{x:250,y:280},{x:400,y:280}];
+  const routes=frozen([{...route('ab','a','b',points),path:'M100,80 C166.5,80 309.25,280 400,280',manual:false}]);
+  const source=canvasPreviewRoutes(routes,nodes.map(row=>row.id==='a'?{...row,position:{x:25,y:35}}:row),100,100,'smooth');
+  assert.equal(source[0].path,'M125,115 C191.5,115 309.25,280 400,280');
+  const target=canvasPreviewRoutes(routes,nodes.map(row=>row.id==='b'?{...row,position:{x:360,y:220}}:row),100,100,'smooth');
+  assert.equal(target[0].path,'M100,80 C166.5,80 269.25,300 360,300');
+});
+
+test('dragging either endpoint keeps assigned parallel smooth lanes distinct',()=>{
+  const nodes=[node('a',0,0),node('b',500,0)];
+  const routes=frozen([-60,-20,20,60].map((offset,index)=>{
+    const points=[{x:100,y:80},{x:120,y:80},{x:120,y:80+offset},{x:480,y:80+offset},{x:480,y:80},{x:500,y:80}];
+    return {...route(`ab-${index}`,'a','b',points),manual:false,path:diagramSmoothPath(points)};
+  }));
+  for(const id of ['a','b']){
+    const moved=nodes.map(row=>row.id===id?{...row,position:{x:row.position.x+10,y:row.position.y+15}}:row);
+    const preview=canvasPreviewRoutes(routes,moved,100,100,'smooth');
+    assert.equal(new Set(preview.map(wire=>wire.path)).size,routes.length,'Distinct lanes must not collapse into a shared endpoint curve during drag');
+    for(const wire of preview){assertOrthogonal(wire.points);assert.doesNotMatch(wire.path,/NaN|Infinity/);}
+  }
+});
+
 test('backward and same-height edges retain outward leads and rounded, finite nonempty segments',()=>{
   const routes=[route('ab','a','b',[{x:100,y:80},{x:400,y:80}])];
   for(const targetY of [0,80,-80]){

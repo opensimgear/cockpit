@@ -2,6 +2,50 @@
 type Point={x:number;y:number};
 type LaneRoute={binding:{id:string};points:Point[];manual:boolean};
 type Segment={route:number;index:number;a:Point;b:Point;horizontal:boolean};
+const same=(a:Point,b:Point)=>a.x===b.x&&a.y===b.y;
+function intersection(a:Point,b:Point,c:Point,d:Point):Point|null {
+  const ah=a.y===b.y,ch=c.y===d.y;
+  if(ah===ch){
+    if((ah?a.y:a.x)!==(ch?c.y:c.x))return null;
+    const a0=ah?a.x:a.y,a1=ah?b.x:b.y,c0=ah?c.x:c.y,c1=ah?d.x:d.y;
+    if(Math.max(Math.min(a0,a1),Math.min(c0,c1))>Math.min(Math.max(a0,a1),Math.max(c0,c1)))return null;
+    const at=Math.max(Math.min(a0,a1),Math.min(Math.max(a0,a1),c1));
+    return ah?{x:at,y:a.y}:{x:a.x,y:at};
+  }
+  const horizontal=ah?[a,b]:[c,d],vertical=ah?[c,d]:[a,b],point={x:vertical[0].x,y:horizontal[0].y};
+  return point.x>=Math.min(horizontal[0].x,horizontal[1].x)&&point.x<=Math.max(horizontal[0].x,horizontal[1].x)&&point.y>=Math.min(vertical[0].y,vertical[1].y)&&point.y<=Math.max(vertical[0].y,vertical[1].y)?point:null;
+}
+/** Loop erasure only follows existing segments, so it cannot introduce a block
+ * crossing. Authored paths deliberately never pass through this cleanup. */
+export function diagramAutomaticCorners(points:readonly Point[]):Point[]{
+  let result:Point[]=[];
+  for(const point of points){
+    if(result.length&&same(result.at(-1)!,point))continue;
+    result.push({...point});
+    while(result.length>=3){const[a,b,c]=result.slice(-3);if(a.x===b.x&&b.x===c.x||a.y===b.y&&b.y===c.y)result.splice(result.length-2,1);else break;}
+  }
+  for(let attempt=0;attempt<points.length;attempt++){
+    let erased=false;
+    outer:for(let end=3;end<result.length;end++)for(let start=0;start<end-2;start++){
+      const point=intersection(result[start],result[start+1],result[end-1],result[end]);
+      if(!point)continue;
+      const suffix=result.slice(end),prefix=result.slice(0,start+1);
+      result=diagramAutomaticCorners([...prefix,point,...suffix]);erased=true;break outer;
+    }
+    if(!erased)break;
+  }
+  return result;
+}
+/** Routes must not retrace or cross themselves, even when that would reduce
+ * crossings with other wires. Shape validity takes priority over routing cost. */
+export function diagramSimpleRoute(points:readonly Point[]):boolean {
+  for(let i=1;i<points.length;i++){
+    const a=points[i-1],b=points[i];if(same(a,b)||a.x!==b.x&&a.y!==b.y)return false;
+    if(i>1){const before=points[i-2];if((a.x-before.x)*(b.x-a.x)+(a.y-before.y)*(b.y-a.y)<0)return false;}
+    for(let j=1;j<i-1;j++)if(intersection(points[j-1],points[j],a,b))return false;
+  }
+  return true;
+}
 const segments=(routes:readonly LaneRoute[]):Segment[]=>routes.flatMap((route,index)=>route.points.slice(1).map((b,i)=>({route:index,index:i,a:route.points[i],b,horizontal:b.y===route.points[i].y})));
 function interaction(a:Segment,b:Segment){
   if(a.route===b.route)return {crossings:0,overlap:0};
@@ -70,7 +114,11 @@ export function refineDiagramLanes<T extends LaneRoute>(routes:T[],clear:(route:
     if(group)group.push(segment);else groups.push([segment]);
   }
   let nudges=0;
-  for(const group of groups.filter(group=>group.length>1)){
+  // Spend the bounded refinement budget on long shared trunks before short
+  // port leads. Otherwise early bend columns exhaust the budget while several
+  // long signals remain drawn directly on top of each other.
+  const extent=(group:Segment[])=>group.reduce((sum,segment)=>sum+Math.abs(segment.a.x-segment.b.x)+Math.abs(segment.a.y-segment.b.y),0);
+  for(const group of groups.filter(group=>group.length>1).sort((a,b)=>extent(b)-extent(a))){
     const localOrder=(segment:Segment)=>{
       const points=routes[segment.route].points,axis=segment.horizontal?'y':'x';
       return (points[Math.max(0,segment.index-1)][axis]+points[Math.min(points.length-1,segment.index+2)][axis])/2;

@@ -44,7 +44,7 @@
     "game-telemetry:test": "node --test src/lib/game-telemetry.test.mjs src/lib/game-telemetry-ui.test.mjs",
     "game-telemetry:native:ui": "node --test tests/ui/game-telemetry-native.mjs",
     "profile-editor:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-editor.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-editor.test.mjs",
-    "profile-canvas:test": "node --test src/lib/canvas-navigation.test.mjs src/lib/settings-panel-ui.test.mjs src/lib/profile-canvas-render.test.mjs src/lib/canvas-styling.test.mjs src/lib/profile-canvas.test.mjs src/lib/profile-diagram.test.mjs src/lib/profile-wire-layout.test.mjs src/lib/profile-input-availability.test.mjs",
+    "profile-canvas:test": "node --test src/lib/canvas-navigation.test.mjs src/lib/settings-panel-ui.test.mjs src/lib/profile-canvas-render.test.mjs src/lib/canvas-styling.test.mjs src/lib/profile-canvas.test.mjs src/lib/profile-diagram.test.mjs src/lib/profile-diagram-simplify.test.mjs src/lib/profile-wire-layout.test.mjs src/lib/profile-input-availability.test.mjs",
     "profile-canvas:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-canvas.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-canvas.test.mjs",
     "profile-port-browser:test": "node --test src/lib/profile-port-browser.test.mjs",
     "profile-port-browser:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-port-browser.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-port-browser.test.mjs",

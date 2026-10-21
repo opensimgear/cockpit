@@ -15,6 +15,21 @@ export function canvasRouteNodes(nodes:readonly CanvasNode[]):DiagramNode[] {
 }
 
 const equal=(a:DiagramPoint,b:DiagramPoint)=>a.x===b.x&&a.y===b.y;
+function previewCubicPath(path:string,startDelta:DiagramPoint,endDelta:DiagramPoint):string|null {
+  const number=/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi;
+  if(!/^MC+$/.test(path.replace(number,'').replace(/[,\s]/g,'')))return null;
+  const coordinates=path.match(number)?.map(Number)??[];
+  if(coordinates.length<8||(coordinates.length-2)%6)return null;
+  if(equal(startDelta,endDelta)){
+    let index=0;
+    return path.replace(number,value=>String(Number(value)+(index++%2?startDelta.y:startDelta.x)));
+  }
+  if(coordinates.length!==8)return null;
+  // A direct cubic needs only its endpoints and their two horizontal tangents
+  // reattached. Keep the committed fit while the full router waits for drop.
+  const next=coordinates.map((value,index)=>value+(index<4?(index%2?startDelta.y:startDelta.x):(index%2?endDelta.y:endDelta.x)));
+  return `M${next[0]},${next[1]} C${next[2]},${next[3]} ${next[4]},${next[5]} ${next[6]},${next[7]}`;
+}
 function horizontalLeads(points:readonly DiagramPoint[],start:DiagramPoint,end:DiagramPoint) {
   return points.length>=2&&equal(points[0],start)&&equal(points.at(-1)!,end)&&
     points[1].y===start.y&&points[1].x>start.x&&points.at(-2)!.y===end.y&&points.at(-2)!.x<end.x&&
@@ -49,9 +64,10 @@ export function canvasPreviewRoutes(routes:CanvasRoutes,nodes:readonly DiagramNo
     if(equal(route.points[0],start)&&equal(route.points.at(-1)!,end))return route;
     changed=true;
     const points=previewCorners(route.points,start,end),radius=Math.min(route.cornerRadius,cornerRadius);
+    const startDelta={x:start.x-route.points[0].x,y:start.y-route.points[0].y},endDelta={x:end.x-route.points.at(-1)!.x,y:end.y-route.points.at(-1)!.y};
     // Carry the assigned corridor through the cheap preview too. A direct
     // endpoint curve would collapse separate lanes for the duration of a drag.
-    return {...route,points,path:style==='smooth'?diagramSmoothPath(points,route.manual?points:[]):diagramOrthogonalPath(points,radius)};
+    return {...route,points,path:style==='smooth'?(previewCubicPath(route.path,startDelta,endDelta)??diagramSmoothPath(points,route.manual?points:[])):diagramOrthogonalPath(points,radius)};
   });
   return changed?preview:routes;
 }
