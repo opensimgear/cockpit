@@ -192,8 +192,11 @@ impl Staged {
             let resource = snapshot
                 .resources
                 .iter()
-                .find(|r| r.summary.id == pin.source_id)
-                .ok_or(INVALID)?;
+                .find(|r| r.summary.id == pin.source_id);
+            // An absent peripheral has no publication authority to acquire.
+            // Reconnection goes through a fresh journaled profile preparation.
+            let Some(resource) = resource else { continue; };
+            if resource.summary.availability == osg_profiles::resources::Availability::Offline { continue; }
             let metadata:Value=serde_json::from_str(resource.summary.attributes.get("controllerPublicationOverride").ok_or("This resource has no advertised nonpersistent publication lease. Direct USB, Pico and older CAN firmware remain unsupported; no persistent device setting was changed.")?).map_err(|_|INVALID)?;
             let routes = resource
                 .summary

@@ -195,6 +195,7 @@ impl Visibility {
             if intent.mode == VisibilityMode::Visible {
                 continue;
             }
+            if intent.readiness == PlanReadiness::Unavailable { continue; }
             if intent.readiness != PlanReadiness::Ready
                 || !snapshot.backend.visibility_available
                 || !snapshot.backend.visibility_qualified

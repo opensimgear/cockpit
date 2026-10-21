@@ -114,7 +114,11 @@ impl Tracker {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
         let entry=entries.get_mut(id).ok_or("This activation is no longer available. Check the active profile.")?;
         if !entry.pending() { return Ok(()); }
-        if !entry.cancellable {return Err(if entry.origin=="vehicle-switch" {"Vehicle switching cannot be cancelled here. Deactivate the profile to stop it."}else{"Output cleanup must finish before another profile operation."}.into());}
+        if !entry.cancellable {return Err(match entry.origin.as_str() {
+            "vehicle-switch"=>"Vehicle switching cannot be cancelled here. Deactivate the profile to stop it.",
+            "peripheral-reconnect"=>"Peripheral reconnection cannot be cancelled here. Deactivate the profile to stop it.",
+            _=>"Output cleanup must finish before another profile operation.",
+        }.into());}
         if entry.cancel_requested { return Ok(()); }
         if epoch.compare_exchange(entry.epoch,entry.epoch.wrapping_add(1),Ordering::AcqRel,Ordering::Acquire).is_err() {
             return Err("This activation has finished or been replaced. Check the active profile.".into());
@@ -166,6 +170,17 @@ impl GatewayManager {
         self.capture_profile_activation_id(&id,&candidate.document,&candidate.assignments);
         Ok(id)
     }
+    pub(super) fn start_peripheral_profile_reconnect(&self,candidate:&crate::profile_session::Candidate)->Result<String,String> {
+        let id=uuid::Uuid::new_v4().to_string();
+        let epoch=candidate.admission_epoch.ok_or("Peripheral reconnection requires native admission.")?;
+        self.profile_activations.begin_with(&id,&candidate.document.id,||epoch,|entry| {
+            entry.origin="peripheral-reconnect".into();entry.cancellable=false;
+            entry.profile_name=candidate.document.name.clone();
+            entry.step="preparing-peripherals".into();entry.message="Reconnecting available profile devices…".into();
+        })?;
+        self.capture_profile_activation_id(&id,&candidate.document,&candidate.assignments);
+        Ok(id)
+    }
     pub(super) fn note_profile_activation(&self,epoch:u64,step:&str,message:&str) {self.profile_activations.note(epoch,step,message);}
     pub(super) fn rebind_profile_activation_epoch(&self,id:&str,old:u64,new:u64)->Result<(),String> {self.profile_activations.rebind(id,old,new)}
     pub(super) fn begin_profile_activation(&self,request:&Value)->Result<u64,String> {
@@ -211,6 +226,7 @@ impl GatewayManager {
         entry.message=if succeeded&&entry.origin=="deactivation" {"Profile deactivated.".into()}
             else if succeeded&&entry.origin=="recovery" {"Outputs recovered.".into()}
             else if succeeded&&entry.origin=="vehicle-switch" {format!("{} settings applied.",entry.vehicle_name.as_deref().unwrap_or("Vehicle"))}
+            else if succeeded&&entry.origin=="peripheral-reconnect" {"Available profile devices reconnected.".into()}
             else if succeeded&&entry.cancel_requested {"The profile became active before cancellation could take effect.".into()}
             else if succeeded {"Profile activated.".into()}
             else if entry.cancel_requested {match entry.outcome {

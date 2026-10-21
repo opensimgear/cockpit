@@ -7,7 +7,7 @@ import type { ResourceRoute, ResourceToken } from './profile-inventory';
 export const COMPILATION_SCHEMA_VERSION = 1;
 export const COMPILATION_SECTIONS = ['diagnostics', 'nodes', 'order', 'sources', 'sinks', 'branches', 'controllers', 'visibility'] as const;
 export type CompilationSection = typeof COMPILATION_SECTIONS[number];
-export type PlanReadiness = 'ready' | 'blocked' | 'dormant' | 'invalid';
+export type PlanReadiness = 'ready' | 'unavailable' | 'blocked' | 'dormant' | 'invalid';
 export type CompileDiagnostic = { code: string; severity: 'error' | 'warning' | 'info'; message: string;
   location: { resourceId: string | null; portId: string | null; nodeId: string | null; edgeIds: string[] } };
 export type PlanBudgets = { usedSources: number; virtualTargets: number; sourcePorts: number; processingNodes: number;
@@ -44,7 +44,7 @@ const text = (value: unknown, max = 4096): value is string => typeof value === '
 const whole = (value: unknown, max: number): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= max;
 const hash = (value: unknown): value is string => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
 const optionalHash = (value: unknown) => value === null || hash(value);
-const readiness = (value: unknown): value is PlanReadiness => ['ready', 'blocked', 'dormant', 'invalid'].includes(String(value));
+const readiness = (value: unknown): value is PlanReadiness => ['ready', 'unavailable', 'blocked', 'dormant', 'invalid'].includes(String(value));
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const names = (value: unknown, limit: number) => Array.isArray(value) && value.length <= limit && value.every(item => text(item, 256));
 const nullableText = (value: unknown) => value === null || text(value, 256);

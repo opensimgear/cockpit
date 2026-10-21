@@ -86,6 +86,9 @@ impl Default for BackendCapabilities {
 #[serde(rename_all = "kebab-case")]
 pub enum PlanReadiness {
     Ready,
+    /// An assigned physical peripheral is absent. Retain the portable branch,
+    /// but acquire no delivery or output authority until it returns.
+    Unavailable,
     Blocked,
     Dormant,
     Invalid,

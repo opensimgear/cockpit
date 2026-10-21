@@ -48,6 +48,7 @@ struct NativePreparation {
     publication: crate::profile_session_overrides::Staged,
     dcs_hid: dcs_hid::Guard,
     desktop_scope: Option<osg_desktop_output::Scope>,
+    unavailable_peripherals: BTreeMap<String, String>,
 }
 struct NativeRun {
     owner: RunOwner,
@@ -91,6 +92,8 @@ struct NativeRun {
     publication: crate::profile_session_overrides::Overrides,
     dcs_hid: dcs_hid::Guard,
     acquisition_plan: Option<ExecutionPlan>,
+    admission_degradation: Vec<String>,
+    unavailable_peripherals: BTreeMap<String, String>,
 }
 struct NativeGameResume {
     game: crate::profile_session_games::GameSources,
@@ -118,6 +121,26 @@ fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
 }
 impl NativeProfileHost {
+    fn unavailable_peripherals(snapshot: &osg_profiles::compiler_models::CompileSnapshot, document: &osg_profiles::ProfileDocument) -> BTreeMap<String, String> {
+        document.resources.iter().filter(|resource| matches!(resource.kind, osg_profiles::ResourceKind::Device | osg_profiles::ResourceKind::Companion))
+            .filter_map(|resource| {
+                let assignment = snapshot.assignments.iter().find(|assignment| assignment.resource_id == resource.id)?;
+                let absent = snapshot.resources.iter().find(|captured| captured.summary.id == assignment.source_id)
+                    .is_none_or(|captured| captured.summary.availability == osg_profiles::resources::Availability::Offline);
+                absent.then(|| (resource.id.clone(), assignment.source_id.clone()))
+            }).collect()
+    }
+    fn unavailable_plan_diagnostics(plan: &ExecutionPlan) -> Vec<String> {
+        let mut messages = plan.branches.iter()
+            .filter(|branch| branch.readiness == PlanReadiness::Unavailable || !branch.required && branch.readiness == PlanReadiness::Blocked)
+            .map(|branch| format!("{}:{} is unavailable; this branch is inactive.", branch.sink.node_id, branch.sink.port_id))
+            .collect::<Vec<_>>();
+        messages.extend(plan.sources.iter().filter(|source| source.readiness == PlanReadiness::Unavailable)
+            .map(|source| format!("{}:{} is offline; its input is inactive.", source.endpoint.node_id, source.endpoint.port_id)));
+        messages.extend(plan.visibility.iter().filter(|intent| intent.readiness == PlanReadiness::Unavailable)
+            .map(|intent| format!("{} is offline; its visibility setting is inactive.", intent.resource_id)));
+        dcs_hid::unique_diagnostics(messages)
+    }
     fn waiting_for_vehicle(document:&osg_profiles::ProfileDocument,vehicle_id:Option<&str>)->bool {
         !document.vehicle_tabs.is_empty() && vehicle_id.is_none()
     }
@@ -484,6 +507,8 @@ impl NativeProfileHost {
                 // by native admission until their concrete owners are installed.
                 continue;
             };
+            if state.delivery.as_ref().is_some_and(|plan| plan.branches.iter().any(|branch|
+                branch.sink == sink.endpoint && branch.readiness == PlanReadiness::Unavailable)) { continue; }
             if !matches!(effect.sample, osg_mapping::program::SignalSample::Known(_)) {
                 continue;
             }
@@ -509,6 +534,9 @@ impl NativeProfileHost {
                     dcs_hid::append_diagnostics(&mut diagnostics,dcs_hid::refresh(state,resources,panels));
                     if state.dcs_hid.blocked(&effect.endpoint){return Ok(());}
                 }
+                if state.delivery.as_ref().is_some_and(|plan| plan.branches.iter().any(|branch|
+                    branch.sink.node_id == effect.endpoint.node_id && branch.sink.port_id == effect.endpoint.port_id
+                        && branch.readiness == PlanReadiness::Unavailable)) { return Ok(()); }
                 let sink = state.delivery.as_ref().and_then(|plan| plan.sinks.iter().find(|sink|
                     sink.endpoint.node_id == effect.endpoint.node_id && sink.endpoint.port_id == effect.endpoint.port_id))
                     .filter(|sink| sink.adapter == SinkAdapter::SimulatorCommand && sink.readiness == PlanReadiness::Ready)
@@ -714,17 +742,13 @@ impl NativeProfileHost {
             .filter(|branch| branch.readiness == PlanReadiness::Dormant)
             .map(|branch| format!("{}:{}", branch.sink.node_id, branch.sink.port_id))
             .collect();
-        admission.optional_unavailable = plan
-            .branches
-            .iter()
-            .filter(|branch| !branch.required && branch.readiness == PlanReadiness::Blocked)
-            .map(|branch| {
-                format!(
-                    "{}:{} is unavailable.",
-                    branch.sink.node_id, branch.sink.port_id
-                )
-            })
-            .collect();
+        let unavailable_peripherals = Self::unavailable_peripherals(&snapshot, &candidate.document);
+        admission.optional_unavailable = Self::unavailable_plan_diagnostics(&plan);
+        admission.optional_unavailable.extend(unavailable_peripherals.keys().map(|id| {
+            let name = candidate.document.resources.iter().find(|resource| &resource.id == id).map_or(id.as_str(), |resource| resource.name.as_str());
+            format!("{name} is offline; its settings and peripheral controls are inactive.")
+        }));
+        admission.optional_unavailable = dcs_hid::unique_diagnostics(admission.optional_unavailable);
         let prepared = Prepared {
             plan,
             admission,
@@ -773,7 +797,7 @@ impl NativeProfileHost {
         crate::profile_session::Stage::new(source_candidate, NativePreparation {
             document:candidate.document.clone(),assignments:candidate.assignments.clone(),vehicle_selection,
             prepared, report, backend: snapshot.backend, bindings, output_handoff, scripts, game, game_preparation,
-            companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope,
+            companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope, unavailable_peripherals,
         })
     }
 }
@@ -825,7 +849,7 @@ impl Host for NativeProfileHost {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
         Self::emit_progress(self.progress.as_ref(), admission_epoch, "preparing-resources", "Preparing profile resources");
-        let NativePreparation {document, assignments, vehicle_selection, mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope} = candidate.stage.as_ref()
+        let NativePreparation {document, assignments, vehicle_selection, mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope, unavailable_peripherals} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
@@ -843,6 +867,7 @@ impl Host for NativeProfileHost {
             companions, companion_catalogues, companion_retry: None, companion_initial_operations:BTreeMap::new(), visibility,
             actions,
             publication, dcs_hid, acquisition_plan: None,
+            admission_degradation: prepared.admission.optional_unavailable.clone(), unavailable_peripherals,
         });
         self.validate_prepared(&prepared, owner)?;
         Ok(prepared)
@@ -1322,6 +1347,7 @@ impl Host for NativeProfileHost {
             .poll(controllers.as_ref(), |token| {
                 Self::validate_token(&resources, token)
             })?;
+        degraded.extend(state.admission_degradation.iter().cloned());
         // Native context loss reaches the reducer before timers/scripts can
         // emit effects, withdrawing only branches that depend on that game.
         let game = Self::game_poll(&resources, &games, state, || controllers.stream_page("", 0).captured_us)?;
@@ -1387,6 +1413,35 @@ impl Host for NativeProfileHost {
         let selection=Self::selected_vehicle_tab(&self.games,&state.source_document,game_id);
         (selection!=state.vehicle_selection || state.vehicle_paused).then(||selection.unwrap_or_else(||"base".into()))
     }
+    fn peripheral_change(&self, owner: &RunOwner) -> Option<String> {
+        let state = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner)?;
+        if state.unavailable_peripherals.is_empty() || state.vehicle_paused { return None; }
+        let assignments = state.assignments.iter().filter(|assignment| state.unavailable_peripherals.contains_key(&assignment.resource_id)).cloned().collect::<Vec<_>>();
+        let (snapshot, preparations) = self.resources.snapshot_for_preparation(assignments).ok()?;
+        if snapshot.read_only { return None; }
+        let mut returned = vec![];
+        for assignment in &snapshot.assignments {
+            if state.unavailable_peripherals.get(&assignment.resource_id) != Some(&assignment.source_id) { continue; }
+            let Some(resource) = snapshot.resources.iter().find(|resource| resource.summary.id == assignment.source_id
+                && resource.summary.availability == osg_profiles::resources::Availability::Online
+                && matches!(resource.summary.resource_type, osg_profiles::resources::ResourceType::HostController | osg_profiles::resources::ResourceType::OsgModule | osg_profiles::resources::ResourceType::Companion)) else { continue; };
+            let companion = resource.summary.resource_type == osg_profiles::resources::ResourceType::Companion;
+            if assignment.ports.iter().any(|expected| {
+                !resource.ports.iter().any(|port| port.descriptor.id == expected.observed_port_id
+                    && port.contract_hash == expected.expected_contract_hash && (port.current || companion))
+                    || !companion && !preparations.iter().any(|pin| pin.resolved().resource_id == assignment.source_id
+                        && pin.resolved().port.id == expected.observed_port_id
+                        && pin.resolved().port.contract_hash().ok().as_ref() == Some(&expected.expected_contract_hash))
+            }) { continue; }
+            returned.push(json!([assignment.resource_id,assignment.source_id,resource.summary.generation,resource.summary.capability_revision,
+                resource.summary.connections.iter().map(|connection|(&connection.route.id,&connection.route.provider_generation)).collect::<Vec<_>>(),assignment.ports]));
+        }
+        if returned.is_empty() { return None; }
+        // Only stable identity/capability/route generations participate. Fresh
+        // pin nonces and global discovery revisions never trigger a takeover.
+        use sha2::{Digest, Sha256};
+        Some(format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(&returned).ok()?)))
+    }
     fn vehicle_switch_failed(&mut self,owner:&RunOwner,message:&str) {
         if let Some(state)=self.prepared.get_mut(&key(owner)){state.vehicle_error=Some(message.into());}
     }
@@ -1415,6 +1470,9 @@ mod output_handoff_tests;
 #[cfg(test)]
 #[path = "profile_session_progress_tests.rs"]
 mod progress_tests;
+#[cfg(test)]
+#[path = "profile_session_offline_tests.rs"]
+mod offline_tests;
 
 #[cfg(test)]
 mod vehicle_provider_tests {

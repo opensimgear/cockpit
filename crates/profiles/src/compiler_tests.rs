@@ -7,6 +7,8 @@ use osg_mapping::program::{Rounding, SignalSample, SignalValue};
 
 #[path = "compiler_hid_policy_tests.rs"]
 mod hid_policy_tests;
+#[path = "compiler_offline_tests.rs"]
+mod offline_tests;
 
 fn mixed() -> ProfileDocument {
     ProfileDocument::parse(include_bytes!(
@@ -1006,7 +1008,7 @@ fn assignment_and_connection_readiness_failures_keep_a_blocked_traceable_plan() 
         };
         let report = compile(&document, &captured);
         assert!(report.plan.is_some(), "{variant}: {:?}", report.diagnostics);
-        assert_eq!(report.readiness, PlanReadiness::Blocked, "{variant}");
+        assert_eq!(report.readiness, if matches!(variant, 1 | 4) { PlanReadiness::Ready } else { PlanReadiness::Blocked }, "{variant}");
         assert!(
             has(&report, expected_code),
             "{variant}: {:?}",

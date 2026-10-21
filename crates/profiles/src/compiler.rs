@@ -507,11 +507,18 @@ fn compile_mode(
         .iter()
         .map(|intent| {
             let resource = capture::captured(&intent.resource_id, snapshot);
+            let assignment = snapshot.assignments.iter().find(|assignment| assignment.resource_id == intent.resource_id);
+            let physical_offline = document.resources.iter().any(|logical| logical.id == intent.resource_id && logical.kind == ResourceKind::Device)
+                && assignment.is_some()
+                && resource.is_none_or(|resource| matches!(resource.summary.resource_type, crate::resources::ResourceType::HostController | crate::resources::ResourceType::OsgModule)
+                    && resource.summary.availability == crate::resources::Availability::Offline);
             VisibilitySummary {
                 resource_id: intent.resource_id.clone(),
-                inventory_resource_id: resource.map(|resource| resource.summary.id.clone()),
+                inventory_resource_id: resource.map(|resource| resource.summary.id.clone()).or_else(|| assignment.map(|assignment| assignment.source_id.clone())),
                 mode: intent.mode,
-                readiness: if intent.mode == crate::VisibilityMode::Visible
+                readiness: if intent.mode == crate::VisibilityMode::HiddenWhileActive && physical_offline {
+                    PlanReadiness::Unavailable
+                } else if intent.mode == crate::VisibilityMode::Visible
                     || (snapshot.backend.visibility_available
                         && snapshot.backend.visibility_qualified
                         && resource.is_some_and(|r| {
@@ -531,6 +538,11 @@ fn compile_mode(
     {
         report.diagnostics.push(CompileDiagnostic { code: "visibilityBackendNotReady".into(), severity: DiagnosticSeverity::Warning,
             message: "Hiding requires a current physical resource and an available, qualified visibility backend; this preview did not change device visibility.".into(),
+            location: resource_location(&intent.resource_id) });
+    }
+    for intent in visibility.iter().filter(|intent| intent.readiness == PlanReadiness::Unavailable) {
+        report.diagnostics.push(CompileDiagnostic { code: "visibilityResourceUnavailable".into(), severity: DiagnosticSeverity::Warning,
+            message: "The assigned physical controller is absent; its visibility intent remains inactive until the controller returns. No hiding authority was acquired.".into(),
             location: resource_location(&intent.resource_id) });
     }
     if snapshot.read_only {
@@ -995,6 +1007,8 @@ fn branches(
             PlanReadiness::Dormant
         } else if states.contains(&PlanReadiness::Blocked) {
             PlanReadiness::Blocked
+        } else if states.contains(&PlanReadiness::Unavailable) {
+            PlanReadiness::Unavailable
         } else {
             PlanReadiness::Ready
         };

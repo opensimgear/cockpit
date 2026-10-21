@@ -81,6 +81,9 @@ pub(super) fn apply(
             .iter()
             .find(|branch| branch.sink == sink.endpoint)
             .unwrap();
+        // An absent input branch cannot issue simulator commands and acquires
+        // no HID publication lease. Recheck publication if that input returns.
+        if branch.readiness == PlanReadiness::Unavailable { continue; }
         for endpoint in &branch.source_ports {
             let Some(resource) = capture::captured(&endpoint.node_id, snapshot)
                 .filter(|r| r.summary.resource_type == ResourceType::OsgModule)

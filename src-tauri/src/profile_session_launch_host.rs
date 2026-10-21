@@ -72,12 +72,7 @@ fn prepared_report(report: &CompilationReport) -> Result<Prepared, String> {
         .filter(|b| b.readiness == PlanReadiness::Dormant)
         .map(|b| format!("{}:{}", b.sink.node_id, b.sink.port_id))
         .collect();
-    admission.optional_unavailable = plan
-        .branches
-        .iter()
-        .filter(|b| !b.required && b.readiness == PlanReadiness::Blocked)
-        .map(|b| format!("{}:{} is unavailable.", b.sink.node_id, b.sink.port_id))
-        .collect();
+    admission.optional_unavailable = NativeProfileHost::unavailable_plan_diagnostics(&plan);
     Ok(Prepared {
         plan,
         admission,
@@ -384,6 +379,7 @@ impl NativeProfileHost {
         visibility::active(&mut state.visibility)?;
         publication::active(state)?;
         let mut degraded = action::held(state)?;
+        degraded.extend(state.admission_degradation.iter().cloned());
         if let Some(output) = state.output.as_mut() {
             output.keep_alive()?;
         }

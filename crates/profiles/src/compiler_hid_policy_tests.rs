@@ -45,6 +45,21 @@ fn set_status(snapshot: &mut CompileSnapshot, status: &str) {
         hid_policy::evidence(route, status),
     );
 }
+
+#[test]
+fn an_absent_command_input_acquires_no_hid_publication_lease_until_it_returns() {
+    let (document, mut snapshot) = fixture();
+    set_status(&mut snapshot, "published");
+    assert_eq!(compile(&document, &snapshot).readiness, PlanReadiness::Blocked);
+    let resource = module(&mut snapshot);
+    resource.summary.availability = Availability::Offline;
+    resource.summary.connections.clear(); resource.tokens.clear();
+    for port in &mut resource.ports { port.current = false; port.route_ids.clear(); }
+    let report = compile(&document, &snapshot);
+    assert_eq!(report.readiness, PlanReadiness::Ready, "{:?}", report.diagnostics);
+    assert!(!has(&report, "dcsHidPublicationRequired"));
+    assert!(valid(report).branches.iter().any(|branch| branch.sink.node_id == "dcs" && branch.readiness == PlanReadiness::Unavailable));
+}
 fn capable(snapshot: &mut CompileSnapshot) {
     let r = module(snapshot);
     let id = "4f534744123456789012345678901234";

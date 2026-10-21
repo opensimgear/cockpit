@@ -459,6 +459,28 @@ fn optional_unsupported_is_reported_required_unsupported_and_aliases_block_befor
         .is_err()
     );
 }
+
+#[test]
+fn required_offline_physical_sink_does_not_claim_and_an_independent_online_sink_starts() {
+    let _serial = SERIAL.lock().unwrap();
+    let mut plan = plan(2, false);
+    plan.sinks[0].readiness = PlanReadiness::Unavailable;
+    plan.branches[0].readiness = PlanReadiness::Unavailable;
+    let owner = owner();
+    let probe = Arc::new(Probe::default());
+    let mut selected = vec![];
+    let mut actions = PanelActions::prepare_with(&plan, &owner, |sink| {
+        selected.push(sink.endpoint.node_id.clone());
+        Ok(Box::new(Fake { key: sink.endpoint.node_id.clone(), probe: probe.clone() }))
+    }).unwrap();
+    assert_eq!(selected, vec!["panel-1"]);
+    assert_eq!(actions.optional_unavailable().len(), 1);
+    assert_eq!(actions.capture_receipts().len(), 1, "Absent output creates no cleanup claim or receipt");
+    live(&mut actions, &plan);
+    assert_eq!(probe.count("claim"), 1);
+    stopped(&mut actions);
+    assert_eq!(probe.count("release"), 1);
+}
 #[test]
 fn native_worker_budget_is_shared_until_outgoing_owner_has_released_and_cleanup_only_recovery_cannot_claim(
 ) {

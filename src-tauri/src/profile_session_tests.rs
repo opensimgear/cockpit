@@ -13,6 +13,7 @@ struct Probe {
     hidden: bool,
     health: Health,
     reject_admission: bool,
+    returned_peripheral: Option<String>,
 }
 struct Fake(Arc<Mutex<Probe>>);
 fn checkpoint(probe: &mut Probe, name: String) -> Result<(), String> {
@@ -116,6 +117,10 @@ impl Host for Fake {
         checkpoint(&mut probe, "health".into())?;
         Ok(probe.health.clone())
     }
+    fn peripheral_change(&self,owner:&RunOwner)->Option<String> {
+        let probe=self.0.lock().unwrap();
+        (probe.owner.as_ref()==Some(owner)).then(||probe.returned_peripheral.clone()).flatten()
+    }
     fn discard_preparation(&mut self, owner: &RunOwner) {
         let mut probe=self.0.lock().unwrap();
         probe.calls.push("discard".into());
@@ -156,6 +161,25 @@ fn startup_is_zero_effect_and_default_needs_no_optional_backend() {
     assert!(!runtime.validates(&owner));
     assert_eq!(probe.lock().unwrap().value, 42);
     assert!(!probe.lock().unwrap().hidden);
+}
+#[test]
+fn returned_peripherals_reuse_the_captured_source_and_cannot_revive_a_stopped_or_replaced_owner() {
+    let (mut runtime,probe)=coordinator(None);
+    let mut original=candidate();original.document.name="Captured peripheral profile".into();
+    runtime.apply(original.clone()).unwrap();let owner=runtime.status().owner.clone().unwrap();
+    assert!(runtime.peripheral_change().is_none());
+    probe.lock().unwrap().health.degraded=vec!["Peripheral is offline.".into()];runtime.poll().unwrap();
+    assert_eq!(runtime.status().state,State::Degraded);
+    probe.lock().unwrap().returned_peripheral=Some("exact-device-generation-2".into());
+    assert_eq!(runtime.peripheral_change(),Some((owner.clone(),"exact-device-generation-2".into())));
+    let captured=runtime.peripheral_candidate(&owner,23).unwrap();
+    assert_eq!(captured.document,original.document);assert_eq!(serde_json::to_value(captured.assignments).unwrap(),serde_json::to_value(original.assignments.clone()).unwrap());
+    assert_eq!(captured.admission_epoch,Some(23));assert!(captured.stage.is_none());
+    original.document.name="A later saved source".into();original.document.revision+=1;
+    runtime.apply(original).unwrap();assert!(runtime.peripheral_candidate(&owner,24).is_err());
+    let next=runtime.status().owner.clone().unwrap();assert_ne!(next,owner);
+    assert_eq!(runtime.peripheral_change(),Some((next.clone(),"exact-device-generation-2".into())));
+    runtime.stop().unwrap();assert!(runtime.peripheral_change().is_none());assert!(runtime.peripheral_candidate(&next,25).is_err());
 }
 #[test]
 fn prepare_capture_and_initial_journal_failures_preserve_previous_run() {

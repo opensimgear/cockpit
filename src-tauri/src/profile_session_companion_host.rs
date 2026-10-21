@@ -70,6 +70,11 @@ pub(super) fn prepare_catalogues(
     let mut bindings = vec![];
     let mut selected = BTreeSet::new();
     for desired in &candidate.document.companion_assignments {
+        let publication = hub.publication_summaries().into_iter().find(|publication| publication["publicationHash"] == desired.publication_hash)
+            .ok_or("The desired immutable companion panel is not retained; publish it before applying this profile.")?;
+        if desired.panel_id.as_ref().is_some_and(|panel_id| publication["uiId"] != *panel_id) {
+            return Err("The selected companion panel identity does not match its saved view. Select the panel again before activating this profile.".into());
+        }
         let assignment = snapshot
             .assignments
             .iter()
@@ -78,11 +83,17 @@ pub(super) fn prepare_catalogues(
         let resource = snapshot
             .resources
             .iter()
-            .find(|r| {
-                r.summary.id == assignment.source_id
-                    && r.summary.resource_type == osg_profiles::resources::ResourceType::Companion
-            })
-            .ok_or("The selected native companion is unavailable.")?;
+            .find(|r| r.summary.id == assignment.source_id);
+        let Some(resource) = resource else { continue; };
+        if resource.summary.resource_type != osg_profiles::resources::ResourceType::Companion {
+            return Err("The selected native resource is not a companion.".into());
+        }
+        if resource.summary.availability == osg_profiles::resources::Availability::Offline {
+            // No assignment receipt, delivery subscription or panel load is
+            // created for an absent peer. Its retained graph stays unavailable
+            // and a matching reconnect receives a fresh fenced preparation.
+            continue;
+        }
         let instances = resource
             .summary
             .connections

@@ -14,7 +14,7 @@
   const native = $derived(profileState.stale ? null : profileState.status);
   const snapshot = $derived(native?.appliedSnapshot);
   const appliedName = $derived(snapshot ? profiles.find(profile => profile.id === snapshot.profileId)?.name ?? (snapshot.profileId === DEFAULT_PROFILE_ID ? 'Default' : snapshot.profileId) : null);
-  const stateLabels = { stopped: 'No profile active', running: 'Active', degraded: 'Active with unavailable branches', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Activating profile', 'awaiting-game': 'Waiting for the verified game' };
+  const stateLabels = { stopped: 'No profile active', running: 'Active', degraded: 'Degraded · available branches active', faulted: 'Faulted', 'recovery-needed': 'Recovery needed', transitioning: 'Activating profile', 'awaiting-game': 'Waiting for the verified game' };
   const profileLabel = $derived(!native ? profileState.statusError ? 'Native status unavailable' : 'Checking profile…' : native.state === 'stopped' ? 'No profile active' : appliedName ?? stateLabels[native.state]);
   const selectedContext = $derived(native?.owner?.gameId ? games?.catalogue.find(game => game.id === native.owner!.gameId) : undefined);
   const contextLabel = $derived(!native ? 'Context status unavailable' : !native.owner ? 'No applied game context' : !native.owner.gameId ? 'Hardware-only profile' : selectedContext ? gameContextLabel(selectedContext) : 'Waiting for native game context');

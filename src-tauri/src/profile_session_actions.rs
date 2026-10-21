@@ -186,6 +186,10 @@ impl PanelActions {
                 .iter()
                 .find(|b| b.sink == sink.endpoint)
                 .ok_or("Physical action sink has no exact compiled branch.")?;
+            if sink.readiness == PlanReadiness::Unavailable || branch.readiness == PlanReadiness::Unavailable {
+                unavailable.push(format!("{} is offline; its physical output is inactive.", sink.endpoint.node_id));
+                continue;
+            }
             let mut make = || {
                 if sink.adapter != SinkAdapter::PhysicalAction
                     || sink.readiness != PlanReadiness::Ready
@@ -372,7 +376,7 @@ impl PanelActions {
                 .ok_or("The late physical output branch changed; prepare a fresh Apply.")?;
             if branch.readiness == PlanReadiness::Ready {
                 indices.push(i);
-            } else if branch.readiness != PlanReadiness::Dormant && branch.required {
+            } else if !matches!(branch.readiness, PlanReadiness::Dormant | PlanReadiness::Unavailable) && branch.required {
                 return Err("The anticipated required physical output is unavailable; prepare a fresh Apply.".into());
             }
         }

@@ -422,6 +422,24 @@ fn visible_intent_is_io_free_and_does_not_unhide_external_policy() {
     assert_eq!(*io.driver.lock().unwrap(), before);
     assert!(io.calls.lock().unwrap().is_empty());
 }
+
+#[test]
+fn offline_required_hiding_is_inactive_without_changing_any_external_policy() {
+    let io = Fake::new();
+    let before = io.driver.lock().unwrap().clone();
+    let mut snapshot = snapshot();
+    snapshot.resources[0].summary.availability = Availability::Offline;
+    snapshot.resources[0].summary.connections.clear();
+    snapshot.backend.visibility_available = false;
+    snapshot.backend.visibility_qualified = false;
+    let mut plan = plan(&snapshot);
+    plan.visibility[0].readiness = PlanReadiness::Unavailable;
+    let mut adapter = Visibility::prepare(&plan, &snapshot, &owner(), io.clone()).unwrap();
+    assert!(adapter.is_empty() && adapter.receipts().unwrap().is_empty());
+    assert_eq!(adapter.start().unwrap(), Progress::Restored);
+    assert_eq!(*io.driver.lock().unwrap(), before);
+    assert!(io.calls.lock().unwrap().is_empty());
+}
 #[test]
 fn captured_flags_cannot_bypass_native_visibility_enablement() {
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));

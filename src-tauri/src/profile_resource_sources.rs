@@ -53,6 +53,7 @@ struct Sources {
     native: bool,
     usb: Arc<crate::module_usb_fleet::Fleet>,
     can_scopes: BTreeSet<String>,
+    can_retained: BTreeMap<String, Vec<Observation>>,
     refreshing: Arc<Mutex<BTreeSet<String>>>,
     catalogues: BTreeMap<String, (Instant, String, Result<GameCatalogue, String>)>,
 }
@@ -77,6 +78,7 @@ pub(crate) fn collector(
         native,
         usb,
         can_scopes: BTreeSet::new(),
+        can_retained: BTreeMap::new(),
         refreshing: Arc::new(Mutex::new(BTreeSet::new())),
         catalogues: BTreeMap::new(),
     });
@@ -236,13 +238,16 @@ impl Sources {
         for (id, state) in &gateways {
             let scope = format!("gateway:{id}");
             self.can_scopes.insert(scope.clone());
-            let observed = if state["connected"] == true { self.can_observations(id, state, &verified) }
-                else { Err("Gateway is disconnected; remembered module inventory is retained.".into()) };
+            let observed = match state["connected"].as_bool() {
+                Some(true) => self.can_observations(id, state, &verified).map(|items| {
+                    self.can_retained.insert(scope.clone(), items.clone());
+                    batch(&scope, &self.session, revision, items)
+                }),
+                Some(false) => Ok(self.disconnected_can_batch(&scope, revision)),
+                None => Err("Gateway connection state is unavailable; remembered module inventory is retained.".into()),
+            };
             self.refresh_can_capabilities(id, state);
-            batches.push((
-                scope.clone(),
-                observed.map(|items| batch(&scope, &self.session, revision, items)),
-            ));
+            batches.push((scope, observed));
         }
         for scope in &self.can_scopes {
             if !gateways
@@ -251,7 +256,7 @@ impl Sources {
             {
                 batches.push((
                     scope.clone(),
-                    Err("Gateway is unavailable; remembered module inventory is retained.".into()),
+                    Ok(self.disconnected_can_batch(scope, revision)),
                 ));
             }
         }
@@ -611,6 +616,20 @@ impl Sources {
                 priority: 0,
             });
         Ok(item)
+    }
+    fn disconnected_can_batch(&self, scope: &str, revision: u64) -> ProviderBatch {
+        let items = self.can_retained.get(scope).into_iter().flatten().cloned().map(|mut item| {
+            item.route = None;
+            item.ports = None;
+            item.diagnostics.push("Gateway is disconnected; this module's settings and controls are inactive.".into());
+            item
+        }).collect();
+        let mut observed = batch(scope, &self.session, revision, items);
+        // Absence revokes the last successful native routes while retaining
+        // their identity and port contracts. It never removes remembered
+        // modules, including resources restored before this collector started.
+        observed.complete = false;
+        observed
     }
     fn can_observations(
         &self,

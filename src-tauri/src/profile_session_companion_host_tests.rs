@@ -268,6 +268,10 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
     assert!(prepare_catalogues(&hub,&captured,&candidate).is_ok());
     captured.resources[0].summary.connections.clear();
     assert!(prepare_catalogues(&hub, &captured, &candidate).is_err());
+    captured.resources[0].summary.availability = Availability::Offline;
+    let (catalogues, bindings) = prepare_catalogues(&hub, &captured, &candidate).unwrap();
+    assert!(catalogues.is_empty() && bindings.is_empty(), "An absent screen must not load a panel or create an assignment owner");
+    assert_eq!(hub.assignment_snapshot(&["instance".into()]).unwrap(), before);
     candidate.document.companion_assignments[0].publication_hash =
         format!("sha256:{}", "f".repeat(64));
     assert!(prepare_catalogues(&hub, &captured, &candidate).is_err());

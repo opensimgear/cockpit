@@ -175,7 +175,14 @@ pub(super) fn resolve(
         return result;
     };
     result.inventory_id = Some(assignment.source_id.clone());
+    let expected = assignment.ports.iter().find(|p| p.profile_port_id == port.id);
     let Some(resource) = captured(&logical.id, snapshot) else {
+        if matches!(logical.kind, ResourceKind::Device | ResourceKind::Companion) {
+            if let Some(expected) = expected {
+                result.observed_id = Some(expected.observed_port_id.clone());
+                result.readiness = PlanReadiness::Unavailable;
+            }
+        }
         warn(
             "resourceMissing",
             "The assigned persistent resource is missing from captured inventory.",
@@ -197,11 +204,7 @@ pub(super) fn resolve(
         );
         return result;
     }
-    let Some(expected) = assignment
-        .ports
-        .iter()
-        .find(|p| p.profile_port_id == port.id)
-    else {
+    let Some(expected) = expected else {
         warn(
             "portUnassigned",
             "Assign this exact logical port to an observed port and contract hash.",
@@ -230,7 +233,12 @@ pub(super) fn resolve(
         );
         return result;
     }
-    let mut readiness = PlanReadiness::Ready;
+    // Only an explicitly offline physical peripheral with a retained, matching
+    // exact contract is skippable. Unavailable backends and stale online ports
+    // retain their normal readiness gates.
+    let physical_offline = matches!(logical.kind, ResourceKind::Device | ResourceKind::Companion)
+        && resource.summary.availability == Availability::Offline;
+    let mut readiness = if physical_offline { PlanReadiness::Unavailable } else { PlanReadiness::Ready };
     if logical.kind == ResourceKind::Game {
         let context = snapshot.game_context.as_ref();
         let matching = context
@@ -250,7 +258,7 @@ pub(super) fn resolve(
     }
     if resource.summary.availability != Availability::Online || (!observed.current && prospective.is_none()) {
         warn("resourceUnavailable", "This exact port is offline, unavailable or awaiting current-route capability verification.");
-        if readiness != PlanReadiness::Dormant {
+        if readiness != PlanReadiness::Dormant && !physical_offline {
             readiness = PlanReadiness::Blocked;
         }
     }
@@ -283,9 +291,11 @@ pub(super) fn resolve(
                 .then(left.resolved().route.id.cmp(&right.resolved().route.id))
         });
         if selected.len() == 1 {
-            result.preparation = Some(selected[0].clone());
-            result.route = Some(selected[0].resolved().route.clone());
-        } else {
+            if readiness != PlanReadiness::Unavailable {
+                result.preparation = Some(selected[0].clone());
+                result.route = Some(selected[0].resolved().route.clone());
+            }
+        } else if selected.len() > 1 || readiness != PlanReadiness::Unavailable {
             warn("routeNotPrepared","This exact port lacks one current unambiguous native acquisition pin; setup, identity, capabilities and route conflicts must be resolved before takeover.");
             if readiness != PlanReadiness::Dormant {
                 readiness = PlanReadiness::Blocked;
@@ -333,9 +343,11 @@ pub(super) fn resolve(
             readiness = PlanReadiness::Blocked;
         }
     } else if let Some((token, route)) = tokens.first() {
-        result.token = Some((*token).clone());
-        result.route = Some((*route).clone());
-    } else {
+        if readiness != PlanReadiness::Unavailable {
+            result.token = Some((*token).clone());
+            result.route = Some((*route).clone());
+        }
+    } else if readiness != PlanReadiness::Unavailable {
         warn("routeNotReady", "No exact current route token has the required baseline or output capability; no ownership was acquired.");
         if readiness != PlanReadiness::Dormant {
             readiness = PlanReadiness::Blocked;

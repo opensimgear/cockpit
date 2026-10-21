@@ -22,6 +22,23 @@ const token = () => ({ inventorySession: 'inventory', resourceId: 'native-wheel'
   routeId: route().id, providerSession: 'provider', providerGeneration: '3', portId: 'button:0', contractHash: hash, access: 'read' });
 const source = () => ({ endpoint: endpoint(), inventoryResourceId: 'native-wheel', observedPortId: 'button:0', contract: contract(), token: token(), route: route(), readiness: 'ready' });
 
+test('required offline peripheral branches remain inspectable without captured authority', async () => {
+  for (const [section, value] of Object.entries({
+    sources: {...source(), token: null, route: null, readiness: 'unavailable'},
+    branches: {sink: endpoint(), sourcePorts: [endpoint()], processingNodes: [], edgeIds: ['edge'], required: true, readiness: 'unavailable'},
+    visibility: {resourceId: 'wheel', inventoryResourceId: 'native-wheel', mode: 'hidden-while-active', readiness: 'unavailable'},
+  })) {
+    const preview = summary(); preview.readiness = 'ready'; preview.sectionTotals[section] = 1;
+    const client = new ProfileCompilerClient(async request => request.command === 'profile_compile' ? preview : page(preview, section, [value]));
+    const compiled = await client.compile(document);
+    const result = await client.inspect(compiled, section);
+    assert.equal(result.items[0].readiness, 'unavailable');
+    if (section === 'sources') { assert.equal(result.items[0].token, null); assert.equal(result.items[0].route, null); }
+    value.readiness = 'offline-ish';
+    await assert.rejects(client.inspect(compiled, section), /compiler page/);
+  }
+});
+
 test('the native-produced summary fixture is accepted with its exact hash format', async () => {
   const native = JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/compilation-summary.json', import.meta.url), 'utf8'));
   assert.deepEqual(await new ProfileCompilerClient(async () => native).compile(document), native);

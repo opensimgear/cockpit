@@ -21,6 +21,7 @@ struct State {
     target: Option<Target>,
     last_attempt: Option<Target>,
     last_vehicle_attempt: Option<(crate::profile_session::RunOwner,String,std::time::Instant)>,
+    last_peripheral_attempt: Option<(crate::profile_session::RunOwner,String,std::time::Instant)>,
 }
 
 pub(super) struct Runtime {
@@ -60,6 +61,7 @@ impl Runtime {
                 target: None,
                 last_attempt: None,
                 last_vehicle_attempt: None,
+                last_peripheral_attempt: None,
             }),
             emergency: AtomicBool::new(false),
             pending_controls: AtomicUsize::new(0),
@@ -203,6 +205,50 @@ impl Runtime {
 }
 
 impl GatewayManager {
+    /// Only peripherals captured as absent may request a native rebind. The
+    /// running source stays immutable; fresh ownership and baselines use the
+    /// same staged handoff as Apply and vehicle changes.
+    fn poll_peripheral_profile(&self) {
+        if self.closed.load(Ordering::Acquire)||self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return;}
+        let changed=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).peripheral_change();
+        let Some((owner,fingerprint))=changed else{return;};
+        {
+            let state=self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner());
+            if state.last_peripheral_attempt.as_ref().is_some_and(|(previous,change,at)|previous==&owner&&change==&fingerprint&&at.elapsed()<std::time::Duration::from_secs(5)){return;}
+        }
+        let previous=self.profile_pending.fetch_add(1,Ordering::AcqRel);
+        let _pending=PendingProfileApply(&self.profile_pending);
+        if previous!=0{return;}
+        let captured=(|| {
+            let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+            if self.closed.load(Ordering::Acquire)||self.profile_pending.load(Ordering::Acquire)!=1||self.profile_automatic.pending(){return Err("Peripheral reconnection was cancelled by a newer native control.".to_owned());}
+            let coordinator=self.profile_session.lock().unwrap_or_else(|p|p.into_inner());
+            if coordinator.peripheral_change()!=Some((owner.clone(),fingerprint.clone())){return Err("Peripheral readiness changed before reconnection.".into());}
+            let epoch=self.profile_admission_epoch.load(Ordering::Acquire);
+            coordinator.peripheral_candidate(&owner,epoch)
+        })();
+        let Ok(candidate)=captured else{return;};
+        let epoch=candidate.admission_epoch.unwrap();
+        let activation_id=self.start_peripheral_profile_reconnect(&candidate).ok();
+        self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner()).last_peripheral_attempt=Some((owner.clone(),fingerprint.clone(),std::time::Instant::now()));
+        let result=crate::profile_session::apply_staged_admitted_checked(
+            &self.profile_session,candidate,|candidate|self.prepare_profile_at(candidate,epoch),
+            |_| {
+                let admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
+                let game=self.game_admission.read().unwrap_or_else(|p|p.into_inner());
+                if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=epoch||self.profile_automatic.pending(){return Err("Peripheral reconnection was cancelled by a newer native control.".to_owned());}
+                self.guard_retired_recovery()?;
+                if self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).peripheral_change()!=Some((owner.clone(),fingerprint.clone())){return Err("Peripheral readiness changed during preparation; no stale device was activated.".into());}
+                self.note_profile_activation(epoch,"reconnecting-peripherals","Applying fresh device baselines and reconnecting available profile devices…");
+                Ok((admission,game))
+            },
+            ||{self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);},Some(&Some(owner.clone())));
+        if let Some(id)=activation_id {
+            self.finish_profile_activation(&id,&match result {
+                Ok(())=>json!({"ok":true}),Err(error)=>json!({"ok":false,"error":error}),
+            });
+        }
+    }
     /// Vehicle selection follows the running profile in both Manual and
     /// Automatic mode. Reuse the same guarded, one-use handoff as a saved edit.
     fn poll_vehicle_profile(&self) {
@@ -696,6 +742,7 @@ impl GatewayManager {
                         break;
                     };
                     manager.poll_vehicle_profile();
+                    manager.poll_peripheral_profile();
                     manager.poll_automatic();
                     drop(manager);
                     for _ in 0..5 {
