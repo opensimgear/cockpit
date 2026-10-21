@@ -3,20 +3,21 @@ const modules=await loadModules(['./profile-runtime','./profile-desktop-runtime'
 const graph=modules.get('./profile-graph'),processing=modules.get('./profile-processing'),plain=value=>JSON.parse(JSON.stringify(value));
 const {PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT}=modules.get('./profile-editor');
 const noRequest=()=>{throw new Error('SSR/authoring must not issue an effect or native request.');};
+const defaultElkLayout=async(nodes,bindings)=>({positions:modules.get('./profile-editor').profileAutoLayout(nodes.map(node=>node.id),bindings),wireRoutes:[]});
 const bool={type:'boolean'},integer=(min=0,max=32767)=>({type:'integer',min,max,unit:null}),state=(schema=bool)=>({delivery:'state',schema,freshnessMs:1000,fallback:null}),event=()=>({delivery:'event',schema:bool});
 const port=(id,direction='output',contract=state())=>({id,name:id,direction,contract}),action=(semantics='setter',parameters=[{id:'value',name:'Value',schema:bool}])=>({delivery:'action',parameters,semantics,endpoint:'fixture-endpoint',readable:true,display:null,ownership:null});
 const resource=(id,ports=[],kind='device')=>({id,name:id,kind,required:false,ports});
 const draft=()=>({document:{schemaVersion:2,id:'11111111-1111-4111-8111-111111111111',name:'Authoring',revision:1,eligibility:{gameIds:[]},resources:[resource('third-party-a',[port('button')]),resource('third-party-b',[port('button')]),resource('can-one',[port('button'),port('event','output',event())]),resource('can-two',[port('button')]),resource('physical-usb',[port('led','input',action())]),resource('dcs',[port('command','input',action('one-shot',[])),port('altitude','output',state({type:'number',min:0,max:100000,unit:'ft'}))],'game'),resource('companion',[port('indicator','input',action())],'companion')],bindings:[],processingNodes:[],virtualOutputs:[],visibility:[],overrides:[],companionAssignments:[],editor:{positions:[],viewport:{x:0,y:0,zoom:1}}},assignments:[]});
 async function components(hooks={}){
   const cache=new Map();async function component(name){if(cache.has(name))return cache.get(name);const filename=new URL(name,import.meta.url);let source=await readFile(filename,'utf8');
-    if(name==='./ProfileCanvas.svelte'&&hooks.captureCanvas)source=source.replace('</script>',`captureCanvas({connectionKey,layout,begin,beginGroup,move,finish,lostPointer,groupKeyboard,addGroup,renameGroup,deleteGroup,focusGroup,togglePorts,overPalette,leavePalette,dropPalette,clearPalettePreview,keyboard,setStage(value){stage=value;},setView(value){view=value;},get state(){return{layoutError,palettePreview,view,selectedId,groupPreview,groupBlocked};}});</script>`);
+    if(name==='./ProfileCanvas.svelte'&&hooks.captureCanvas)source=source.replace('</script>',`captureCanvas({connectionKey,layout,begin,beginGroup,move,finish,lostPointer,groupKeyboard,addGroup,renameGroup,deleteGroup,focusGroup,togglePorts,overPalette,leavePalette,dropPalette,clearPalettePreview,keyboard,setStage(value){stage=value;},setView(value){view=value;},setDocument(value){document=value;},setVehicleTab(value){activeVehicleTabId=value;},get state(){return{layoutError,layoutBusy,palettePreview,view,selectedId,groupPreview,groupBlocked};}});</script>`);
     if(name==='./ProfileProcessingEditor.svelte'&&hooks.captureProcessing)source=source.replace('</script>',`captureProcessing({field,save,get draft(){return draft;}});</script>`);
     // Seed visible state for SSR; browser checks cover opening, typing and selecting.
     if(name==='./ProfilePortCombobox.svelte'&&hooks.portComboboxOpen){const original=source;source=source.replace(/open\s*=\s*\$state\(false\)/,'open=$state(true)');assert.notEqual(source,original,'The combobox open-state seed must match the production component.');}
     if(name==='./ProfilePortCombobox.svelte'&&hooks.portComboboxScroll)source=source.replace('scrollTop=$state(0)',`scrollTop=$state(label==='Find an output'?${hooks.portComboboxScroll}:0)`);
     if(name==='./ProfileRoutingEditor.svelte'&&hooks.capture){source=source.replace('  const nodes=$derived',`  const seeded=seedRouting();fromNode=seeded.fromNode??fromNode;fromPort=seeded.fromPort??fromPort;toNode=seeded.toNode??toNode;toPort=seeded.toPort??toPort;preset=seeded.preset??preset;assignmentSource=seeded.assignmentSource??assignmentSource;assignmentPage=seeded.assignmentPage??assignmentPage;selectedMappings=seeded.selectedMappings??selectedMappings;connectionRoute=seeded.connectionRoute??connectionRoute;pendingConnection=seeded.pendingConnection??pendingConnection;routeOpen=seeded.routeOpen??routeOpen;discoveries=seeded.discoveries??discoveries;sourceSearch=seeded.sourceSearch??sourceSearch;targetSearch=seeded.targetSearch??targetSearch;editingRoute=seeded.editingRoute??editingRoute;highlighted=seeded.highlighted??highlighted;message=seeded.message??message;selectedEdgeId=seeded.selectedEdgeId??selectedEdgeId;autoCommitArmed=seeded.autoCommitArmed??autoCommitArmed;advancedOpen=seeded.advancedOpen??advancedOpen;\n  const nodes=$derived`);source=source.replace('</script>',`captureRouting({refreshDiscoveries,source,destination,connectBlocks,connect,choosePort,autoConnect,reconnectConnection,selectConnection,disconnectConnection,addTransformation,dropOnConnection,configureDraft,editRoute,closeRoute,selectPort,addVirtual,addDesktop,openConnection,openPendingConnection,insertTransformation,processingInsertion,setPreset(value){preset=value;},actionPack,updateProcessing,quickFactor,updateVirtual,publicationPolicy,removeNode,chooseMapping,assignResource,browseAssignment,get state(){return{discoveries,message,routeOpen,fromNode,fromPort,toNode,toPort,sourceSearch,targetSearch,editingRoute,highlighted,preset,selectedId,assignmentPage,assignmentError,connectionRoute,pendingConnection,connectionChoices,discoveredChoices,sourcePorts,targetPorts,connectionError,selectedEdgeId,autoCommitArmed,pickerAnchor,sourceOptions,targetOptions,connectionPlan};}});</script>`);}
     if(name==='./ProfileDebugView.svelte'&&hooks.captureDebug){source=source.replace('  const draft=$derived',`  const seeded=seedRouting();section=seeded.section??section;preview=seeded.preview??preview;signature=seeded.signature??signature;environment=seeded.environment??environment;diagnostics=seeded.diagnostics??diagnostics;\n  const draft=$derived`);source=source.replace('</script>',`captureDebug({compile,page,read,get state(){return{preview,current,diagnostics,offset,busy,error};}});</script>`);}
-    const{js}=compile(source,{filename:filename.pathname,generate:'server'}),dependencies=new Map();for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,seedRouting:()=>hooks.seed??{},captureRouting:value=>hooks.capture?.(value),captureDebug:value=>hooks.captureDebug?.(value),captureCanvas:value=>hooks.captureCanvas?.(value),captureProcessing:value=>hooks.captureProcessing?.(value),require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return hooks.destroyers?{...svelte,onDestroy(callback){hooks.destroyers.push(callback);}}:svelte;if(dependencies.has(name))return dependencies.get(name);const key=name.replace(/\.ts$/,'');if(modules.has(key))return modules.get(key);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected UI dependency ${name}`);}},{filename:filename.pathname});cache.set(name,exports.default);return exports.default;}
+    const{js}=compile(source,{filename:filename.pathname,generate:'server'}),dependencies=new Map();for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,seedRouting:()=>hooks.seed??{},captureRouting:value=>hooks.capture?.(value),captureDebug:value=>hooks.captureDebug?.(value),captureCanvas:value=>hooks.captureCanvas?.(value),captureProcessing:value=>hooks.captureProcessing?.(value),require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return hooks.destroyers?{...svelte,onDestroy(callback){hooks.destroyers.push(callback);}}:svelte;if(dependencies.has(name))return dependencies.get(name);const key=name.replace(/\.ts$/,'');if(modules.has(key))return modules.get(key);if(name==='./profile-elk-runtime')return{layoutProfileWithElk:hooks.elkLayout??defaultElkLayout};if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected UI dependency ${name}`);}},{filename:filename.pathname});cache.set(name,exports.default);return exports.default;}
   return component;
 }
 const component=await components();const Routing=await component('./ProfileRoutingEditor.svelte'),Processing=await component('./ProfileProcessingEditor.svelte'),Virtual=await component('./ProfileVirtualEditor.svelte');
@@ -45,7 +46,7 @@ test('vehicle canvas and exact route menus expose only the selected tab while Ba
 test('auto layout of one vehicle preserves every hidden node position and never moves it into Base groups',async()=>{
  const value=draft();value.document.eligibility.gameIds=['dcs'];value.document.vehicleTabs=[{id:'a',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'F-16C',nodeIds:['third-party-a']}];
  value.document.editor.positions=value.document.resources.map((node,index)=>({nodeId:node.id,x:600+index*320,y:50}));value.document.editor.groups=[{id:'base-group',name:'Base controls',members:['can-one'],bounds:{x:1200,y:0,width:440,height:360}}];
- const before=plain(value.document),h=await canvasHarness(value.document,{activeVehicleTabId:'a',selectedId:''});stageFor(h);h.handlers.layout();assert.equal(h.edits.length,1);
+ const before=plain(value.document),h=await canvasHarness(value.document,{activeVehicleTabId:'a',selectedId:''});stageFor(h);await h.handlers.layout();assert.equal(h.edits.length,1);
  const next=h.edits[0].next;for(const position of before.editor.positions.filter(position=>position.nodeId!=='third-party-a'))assert.deepEqual(next.editor.positions.find(row=>row.nodeId===position.nodeId),position);assert.deepEqual(next.editor.groups,before.editor.groups);assert.deepEqual(next.vehicleTabs,before.vehicleTabs);assert.deepEqual(next.editor.viewport,before.editor.viewport);assert.equal(h.handlers.addGroup('Hidden group'),undefined);
 });
 // These invoke the real Svelte handlers inside an SSR closure. They do not simulate DOM pointer capture.
@@ -62,8 +63,8 @@ test('actual publication policy control saves exact intent, warns about reconnec
  const offline={...source,availability:'offline',attributes:{}};h=await harness(value,{}, {...props,inventory:[offline]});assert.ok(h.body.includes('saved policy is retained'));assert.deepEqual(value.document.overrides,[{resourceId:'can-one',enabled:false}]);h.handlers.publicationPolicy({...node(),observation:offline},'enabled');assert.equal(h.edits.length,1);h=await harness(value,{}, {...props,readOnly:true});h.handlers.publicationPolicy(node(),'configured');assert.equal(h.edits.length,0);assert.ok(!renderRouting(value,{selectedId:'dcs'}).includes('Controller publication policy'));
 });
 
-async function canvasHarness(document,props={}){
- let handlers;const component=await components({captureCanvas:value=>handlers=value}),Canvas=await component('./ProfileCanvas.svelte'),edits=[];
+async function canvasHarness(document,props={},hooks={}){
+ let handlers;const component=await components({...hooks,captureCanvas:value=>handlers=value}),Canvas=await component('./ProfileCanvas.svelte'),edits=[];
  const body=render(Canvas,{props:{document:plain(document),assignments:[],inventory:[],inventoryClient:{inspect:noRequest},selectedId:'can-one',change:(next,label)=>edits.push({next:plain(next),label}),...props}}).body;
  return{handlers,edits,body};
 }
@@ -98,9 +99,57 @@ test('group gestures preview frame and member movement, reject overlapping relea
 
 test('auto layout keeps fixed frames and reconciles every moved component membership in one edit',async()=>{
  const document=draft().document;document.editor.positions=[{nodeId:'can-one',x:50,y:60}];document.editor.groups=[{id:'controls',name:'Controls',members:['can-one'],bounds:{x:0,y:0,width:440,height:360}}];
- const h=await canvasHarness(document);stageFor(h);h.handlers.layout();assert.equal(h.edits.length,1);assert.equal(h.edits[0].label,'Auto-layout');const next=h.edits[0].next;
+ const h=await canvasHarness(document);stageFor(h);await h.handlers.layout();assert.equal(h.edits.length,1);assert.equal(h.edits[0].label,'Auto-layout');const next=h.edits[0].next;
  assert.deepEqual(next.editor.groups[0].bounds,document.editor.groups[0].bounds);const {canvasGroupAt,canvasNodes}=modules.get('./profile-canvas');for(const node of canvasNodes(next,[],[])){const expected=canvasGroupAt(next,{x:node.position.x+PROFILE_BLOCK_WIDTH/2,y:node.position.y+PROFILE_BLOCK_HEIGHT/2});assert.equal(next.editor.groups.find(g=>g.members.includes(node.id))?.id??null,expected);}
  assert.deepEqual(next.bindings,document.bindings);assert.deepEqual(document.editor.groups[0].members,['can-one']);
+});
+
+test('ELK positions and automatic corridors replace the visible layout in one atomic edit',async()=>{
+ const document=draft().document;document.resources.find(node=>node.id==='can-two').ports.push(port('receive','input'));
+ document.bindings=[{id:'route-1',from:{nodeId:'can-one',portId:'button'},to:{nodeId:'can-two',portId:'receive'}}];
+ document.editor.wireRoutes=[{bindingId:'route-1',points:[{x:0,y:0},{x:100,y:0}]}];
+ const before=plain(document),calls=[],positions=document.resources.map((node,index)=>({nodeId:node.id,x:48+index*420,y:64}));
+ const wireRoutes=[{bindingId:'route-1',points:[{x:1176,y:232},{x:1308,y:232}],automatic:true}];
+ const h=await canvasHarness(document,{}, {elkLayout:async(...args)=>{calls.push(plain(args));return{positions,wireRoutes};}});stageFor(h);
+ const pending=h.handlers.layout();assert.equal(h.handlers.state.layoutBusy,true);assert.deepEqual(h.edits,[]);
+ await pending;assert.equal(calls.length,1);assert.equal(calls[0][0].length,document.resources.length);assert.deepEqual(calls[0][1],document.bindings);
+ assert.equal(h.edits.length,1);assert.equal(h.edits[0].label,'Auto-layout');assert.deepEqual(h.edits[0].next.editor.positions,positions);assert.deepEqual(h.edits[0].next.editor.wireRoutes,wireRoutes);
+ assert.deepEqual(h.edits[0].next.bindings,before.bindings);assert.deepEqual(h.edits[0].next.resources,before.resources);assert.deepEqual(h.edits[0].next.editor.viewport,before.editor.viewport);
+ assert.equal(h.handlers.state.layoutBusy,false);assert.equal(h.handlers.state.layoutError,'');assert.deepEqual(document,before);
+});
+
+test('ELK layout coalesces pending requests and read-only canvases never start the engine',async()=>{
+ const document=draft().document;let resolveLayout,calls=0;
+ const result=await defaultElkLayout(document.resources.map(node=>({id:node.id})),[]),pendingResult=new Promise(resolve=>resolveLayout=resolve);
+ const elkLayout=async()=>{calls++;return pendingResult;},h=await canvasHarness(document,{}, {elkLayout});stageFor(h);
+ const pending=h.handlers.layout();assert.equal(h.handlers.state.layoutBusy,true);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);
+ await h.handlers.layout();assert.equal(calls,1);assert.deepEqual(h.edits,[]);
+ resolveLayout(result);await pending;assert.equal(h.edits.length,1);assert.equal(h.handlers.state.layoutBusy,false);
+ const locked=await canvasHarness(document,{readOnly:true},{elkLayout});await locked.handlers.layout();assert.equal(calls,1);assert.deepEqual(locked.edits,[]);assert.equal(locked.handlers.state.layoutBusy,false);
+});
+
+test('ELK worker failure leaves the graph untouched and permits a clean retry',async()=>{
+ const document=draft().document,before=plain(document);let calls=0;
+ const h=await canvasHarness(document,{}, {elkLayout:async(...args)=>{if(++calls===1)throw Error('ELK worker stopped');return defaultElkLayout(...args);}});stageFor(h);
+ await h.handlers.layout();assert.deepEqual(h.edits,[]);assert.deepEqual(document,before);assert.equal(h.handlers.state.layoutBusy,false);assert.match(h.handlers.state.layoutError,/ELK worker stopped/);
+ await h.handlers.layout();assert.equal(calls,2);assert.equal(h.edits.length,1);assert.equal(h.handlers.state.layoutError,'');assert.equal(h.handlers.state.layoutBusy,false);
+});
+
+test('pending ELK results are discarded after document edits, vehicle tab changes or unmount',async()=>{
+ for(const reason of ['document','tab','unmount']){
+   const document=draft().document;document.vehicleTabs=[{id:'aircraft',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'F/A-18C',nodeIds:[]}];
+   const destroyers=[];let resolveLayout;
+   const result=await defaultElkLayout(document.resources.map(node=>({id:node.id})),[]),pendingResult=new Promise(resolve=>resolveLayout=resolve);
+   const h=await canvasHarness(document,{}, {destroyers,elkLayout:async()=>pendingResult});stageFor(h);
+   const pending=h.handlers.layout();await new Promise(resolve=>setImmediate(resolve));assert.equal(h.handlers.state.layoutBusy,true);
+   if(reason==='document')h.handlers.setDocument({...plain(document),name:'Changed during layout'});
+   else if(reason==='tab')h.handlers.setVehicleTab('aircraft');
+   else destroyers.forEach(destroy=>destroy());
+   resolveLayout(result);await pending;assert.deepEqual(h.edits,[],reason);
+   if(reason==='document')assert.match(h.handlers.state.layoutError,/graph changed/i);
+   else assert.equal(h.handlers.state.layoutError,'',reason);
+ }
 });
 
 test('selected companion uses its profile-owned immutable panel picker rather than the currently installed generic catalogue',()=>{

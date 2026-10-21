@@ -71,16 +71,25 @@ export function diagramRouteQuality(routes:readonly LaneRoute[]){
 /** Shift coordinated groups together before a short, targeted crossing pass.
  * Only interior lanes move; physical port leads and authored paths are fixed.
  */
-export function refineDiagramLanes<T extends LaneRoute>(routes:T[],clear:(route:T,points:Point[])=>boolean,spacing=12):T[]{
+export function refineDiagramLanes<T extends LaneRoute>(routes:T[],clear:(route:T,points:Point[])=>boolean,spacing=12,preferParallel:(route:T)=>boolean=()=>false):T[]{
   let all=segments(routes);
-  const pairCost=(a:Point,b:Point,horizontal:boolean,peer:Segment)=>{
-    if(horizontal===peer.horizontal){
-      if((horizontal?a.y:a.x)!==(horizontal?peer.a.y:peer.a.x))return 0;
-      const a0=horizontal?a.x:a.y,a1=horizontal?b.x:b.y,b0=horizontal?peer.a.x:peer.a.y,b1=horizontal?peer.b.x:peer.b.y;
-      return Math.max(0,Math.min(Math.max(a0,a1),Math.max(b0,b1))-Math.max(Math.min(a0,a1),Math.min(b0,b1)))*3;
+  const parallelPriority=routes.map(preferParallel);
+  const endpointPairs=routes.map(route=>`${route.points[0].x},${route.points[0].y}>${route.points.at(-1)!.x},${route.points.at(-1)!.y}`);
+  type CostLane={route:number;horizontal:boolean;coordinate:number;low:number;high:number};
+  const costLane=(segment:Segment):CostLane=>{
+    const a=segment.horizontal?segment.a.x:segment.a.y,b=segment.horizontal?segment.b.x:segment.b.y;
+    return {route:segment.route,horizontal:segment.horizontal,coordinate:segment.horizontal?segment.a.y:segment.a.x,low:Math.min(a,b),high:Math.max(a,b)};
+  };
+  let costLanes=all.map(costLane);
+  const pairCost=(lane:CostLane,peer:CostLane)=>{
+    if(lane.horizontal===peer.horizontal){
+      if(lane.coordinate!==peer.coordinate)return 0;
+      // Imported parallel corridors may need to trade a few crossings for
+      // selectable tracks. Existing coordinated fans keep their original cost.
+      const overlapWeight=(parallelPriority[lane.route]||parallelPriority[peer.route])&&endpointPairs[lane.route]===endpointPairs[peer.route]?12:3;
+      return Math.max(0,Math.min(lane.high,peer.high)-Math.max(lane.low,peer.low))*overlapWeight;
     }
-    const x=horizontal?peer.a.x:a.x,y=horizontal?a.y:peer.a.y,left=horizontal?Math.min(a.x,b.x):Math.min(peer.a.x,peer.b.x),right=horizontal?Math.max(a.x,b.x):Math.max(peer.a.x,peer.b.x),top=horizontal?Math.min(peer.a.y,peer.b.y):Math.min(a.y,b.y),bottom=horizontal?Math.max(peer.a.y,peer.b.y):Math.max(a.y,b.y);
-    return x>left&&x<right&&y>top&&y<bottom?3200:0;
+    return peer.coordinate>lane.low&&peer.coordinate<lane.high&&lane.coordinate>peer.low&&lane.coordinate<peer.high?3200:0;
   };
   const cost=(routeIndex:number,points:Point[],index:number)=>{
     let value=0;
@@ -88,8 +97,9 @@ export function refineDiagramLanes<T extends LaneRoute>(routes:T[],clear:(route:
     // route interactions cancel, so evaluating the entire path is unnecessary.
     for(let i=Math.max(1,index);i<=Math.min(points.length-1,index+2);i++){
       const a=points[i-1],b=points[i],horizontal=a.y===b.y;
+      const lane=costLane({route:routeIndex,index:i-1,a,b,horizontal});
       value+=(Math.abs(a.x-b.x)+Math.abs(a.y-b.y))*.025;
-      for(const peer of all)if(peer.route!==routeIndex)value+=pairCost(a,b,horizontal,peer);
+      for(const peer of costLanes)if(peer.route!==routeIndex)value+=pairCost(lane,peer);
     }
     return value;
   };
@@ -138,12 +148,12 @@ export function refineDiagramLanes<T extends LaneRoute>(routes:T[],clear:(route:
         const score=cost(segment.route,candidate,segment.index);
         if(score<bestCost-1e-6){best=candidate;bestCost=score;}
       }
-      if(best!==route.points){routes[segment.route]={...route,points:best};all=segments(routes);}
+      if(best!==route.points){routes[segment.route]={...route,points:best};all=segments(routes);costLanes=all.map(costLane);}
     }
   }
   // Rip up only the most crossed lanes. A fixed budget bounds release-time
   // work even on profiles with hundreds of signals; drag previews do no search.
-  const congested=all.filter(segment=>!routes[segment.route].manual&&segment.index>0&&segment.index<routes[segment.route].points.length-2).map(segment=>({segment,score:all.reduce((sum,peer)=>sum+(segment.route===peer.route?0:pairCost(segment.a,segment.b,segment.horizontal,peer)),0)})).filter(entry=>entry.score>0).sort((a,b)=>b.score-a.score||routes[a.segment.route].binding.id.localeCompare(routes[b.segment.route].binding.id)).slice(0,16);
+  const congested=all.filter(segment=>!routes[segment.route].manual&&segment.index>0&&segment.index<routes[segment.route].points.length-2).map(segment=>{const lane=costLane(segment);return {segment,score:costLanes.reduce((sum,peer)=>sum+(segment.route===peer.route?0:pairCost(lane,peer)),0)};}).filter(entry=>entry.score>0).sort((a,b)=>b.score-a.score||routes[a.segment.route].binding.id.localeCompare(routes[b.segment.route].binding.id)).slice(0,16);
   for(const {segment}of congested){
     const route=routes[segment.route],coordinate=segment.horizontal?route.points[segment.index].y:route.points[segment.index].x;
     let best=route.points,bestCost=cost(segment.route,best,segment.index);
@@ -153,7 +163,95 @@ export function refineDiagramLanes<T extends LaneRoute>(routes:T[],clear:(route:
       const score=cost(segment.route,candidate,segment.index);
       if(score<bestCost-1e-6){best=candidate;bestCost=score;}
     }
-    if(best!==route.points){routes[segment.route]={...route,points:best};all=segments(routes);}
+    if(best!==route.points){routes[segment.route]={...route,points:best};all=segments(routes);costLanes=all.map(costLane);}
+  }
+  return routes;
+}
+
+/** Final parallel-signal separation after ordinary congestion refinement.
+ * Keep one stable trunk and move only interior lanes; full-path validation may
+ * permit a lane to pass the port's height without permitting a loop or block
+ * crossing. Authored and retained routes are fixed obstacles for this pass. */
+export function separateDiagramParallels<T extends LaneRoute>(routes:T[],clear:(route:T,points:Point[])=>boolean,spacing=12,groupKey?:(route:T)=>string):T[]{
+  const groups=new Map<string,number[]>();
+  for(let index=0;index<routes.length;index++){
+    const points=routes[index].points;if(points.length<2)continue;
+    const start=points[0],end=points.at(-1)!,key=groupKey?groupKey(routes[index]):`${start.x},${start.y}>${end.x},${end.y}`,group=groups.get(key)??[];
+    group.push(index);groups.set(key,group);
+  }
+  const parallelGroups=[...groups.values()].filter(group=>group.length>1);
+  if(!parallelGroups.length)return routes;
+  const length=(segment:Segment)=>Math.abs(segment.a.x-segment.b.x)+Math.abs(segment.a.y-segment.b.y);
+  const routeSegments=(routeIndex:number,interior=true):Segment[]=>{
+    const points=routes[routeIndex].points,result:Segment[]=[];
+    for(let index=interior?1:0;index<points.length-(interior?2:1);index++){
+      const a=points[index],b=points[index+1],segment={route:routeIndex,index,a,b,horizontal:a.y===b.y};
+      result.push(segment);
+    }
+    return result;
+  };
+  const coordinate=(segment:Segment)=>segment.horizontal?segment.a.y:segment.a.x;
+  const overlap=(a:Segment,b:Segment)=>{
+    if(a.horizontal!==b.horizontal)return 0;
+    const a0=a.horizontal?a.a.x:a.a.y,a1=a.horizontal?a.b.x:a.b.y,b0=b.horizontal?b.a.x:b.a.y,b1=b.horizontal?b.b.x:b.b.y;
+    return Math.max(0,Math.min(Math.max(a0,a1),Math.max(b0,b1))-Math.max(Math.min(a0,a1),Math.min(b0,b1)));
+  };
+  const pathKey=(points:Point[])=>{
+    const corners:Point[]=[];
+    for(const point of points){
+      if(corners.length&&same(corners.at(-1)!,point))continue;
+      corners.push(point);
+      while(corners.length>=3){const[a,b,c]=corners.slice(-3);if(a.x===b.x&&b.x===c.x||a.y===b.y&&b.y===c.y)corners.splice(corners.length-2,1);else break;}
+    }
+    return corners.map(point=>`${point.x},${point.y}`).join(':');
+  };
+  const pathKeys=routes.map(route=>pathKey(route.points));
+  let all=segments(routes),checks=0,attempts=0;
+  for(const group of parallelGroups){
+    group.sort((a,b)=>Number(routes[b].manual)-Number(routes[a].manual)||routes[a].binding.id.localeCompare(routes[b].binding.id));
+    // A fixed manual/direct route already supplies the base. Otherwise retain
+    // the first automatic route so identical input always produces stable lanes.
+    const fixed=group.some(index=>routes[index].manual||!routeSegments(index).length),base=fixed?-1:group[0];
+    for(const routeIndex of group){
+      if(routes[routeIndex].manual||routeIndex===base)continue;
+      // Peers can have their longest legs at opposite ends of a detour. Compare
+      // all substantial interior legs, then repair the longest congested leg;
+      // comparing only each peer's primary leg can miss parallel exit columns.
+      const peerLanes=group.filter(index=>index!==routeIndex).flatMap(index=>{
+        const interior=routeSegments(index);return (interior.length?interior:routeSegments(index,false)).filter(segment=>length(segment)>spacing*2);
+      });
+      const lane=routeSegments(routeIndex).filter(segment=>length(segment)>spacing*2&&peerLanes.some(peer=>overlap(segment,peer)>spacing&&Math.abs(coordinate(segment)-coordinate(peer))<spacing)).sort((a,b)=>length(b)-length(a)||a.index-b.index)[0];
+      if(!lane)continue;
+      if(attempts++>=64||checks>=256)return routes;
+      const route=routes[routeIndex],current=coordinate(lane),peers=peerLanes.map(peer=>({coordinate:coordinate(peer),overlap:overlap(lane,peer)})).filter(peer=>peer.overlap>spacing);
+      const deficit=(value:number)=>peers.reduce((sum,peer)=>sum+peer.overlap*Math.max(0,spacing-Math.abs(value-peer.coordinate)),0);
+      const originalDeficit=deficit(current);if(originalDeficit<1e-6)continue;
+      const coordinates=new Set<number>();
+      for(let step=1;step<=Math.min(8,Math.max(2,group.length));step++)for(const sign of [-1,1])coordinates.add(current+sign*spacing*step);
+      const peerCoordinates=[...new Set(peers.map(peer=>peer.coordinate))].sort((a,b)=>Math.abs(a-current)-Math.abs(b-current)||a-b);
+      for(const value of peerCoordinates.slice(0,12))for(const sign of [-1,1])coordinates.add(value+sign*spacing);
+      if(peerCoordinates.length){coordinates.add(Math.min(...peerCoordinates)-spacing);coordinates.add(Math.max(...peerCoordinates)+spacing);}
+      const interactionCost=(points:Point[])=>{
+        let value=0;
+        for(let index=Math.max(1,lane.index);index<=Math.min(points.length-1,lane.index+2);index++){
+          const a=points[index-1],b=points[index],candidate={route:routeIndex,index:index-1,a,b,horizontal:a.y===b.y};
+          for(const peer of all)if(peer.route!==routeIndex){const score=interaction(candidate,peer);value+=score.crossings*3200+score.overlap*3;}
+        }
+        return value;
+      };
+      const candidates=[...coordinates].map(value=>{
+        const points=route.points.map(point=>({...point}));
+        if(lane.horizontal){points[lane.index].y=value;points[lane.index+1].y=value;}
+        else{points[lane.index].x=value;points[lane.index+1].x=value;}
+        return {points,deficit:deficit(value),distance:Math.abs(value-current),value,cost:undefined as number|undefined};
+      }).filter(candidate=>candidate.deficit<originalDeficit-1e-6).sort((a,b)=>a.deficit-b.deficit||a.distance-b.distance||((a.cost??=interactionCost(a.points))-(b.cost??=interactionCost(b.points)))||a.value-b.value);
+      for(const candidate of candidates.slice(0,12)){
+        if(checks++>=256)return routes;
+        if(!clear(route,candidate.points))continue;
+        const key=pathKey(candidate.points);if(pathKeys.some((peer,index)=>index!==routeIndex&&peer===key))continue;
+        routes[routeIndex]={...route,points:candidate.points};pathKeys[routeIndex]=key;all=segments(routes);break;
+      }
+    }
   }
   return routes;
 }

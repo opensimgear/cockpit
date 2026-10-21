@@ -4,7 +4,7 @@
   import type { DeepReadonly, ProfileDocument, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
-  import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH, profileAutoLayout } from './profile-editor';
+  import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH } from './profile-editor';
   import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
   import { createDiagramRouter, diagramPendingPath, diagramRoutes, diagramSegmentLine } from './profile-diagram';
   import {canvasRouteNodes,canvasPreviewRoutes}from'./profile-canvas-render';
@@ -51,7 +51,7 @@
   let connectionClickTimer:ReturnType<typeof setTimeout>|undefined;
   let palettePreview=$state<CanvasPoint|null>(null);
   let page = $state<DeepReadonly<ResourceDetails>|null>(null), portsBusy = $state(false), portError = $state('');
-  let layoutError=$state('');
+  let layoutError=$state(''),layoutBusy=$state(false),layoutEpoch=0;
   let groupPreview=$state<ProfileDocument|null>(null),groupBlocked=$state(false);
   const portCategories:readonly ProfilePortGroup[]=['outputs','inputs','actions'];
   type CanvasDrag = { id?: string; group?: {id:string;mode:'move'|'resize';frame:CanvasGroup;source:DeepReadonly<ProfileDocument>}; origin: CanvasPoint; start: CanvasPoint; viewport: CanvasViewport; pointer: number; moved: boolean };
@@ -91,7 +91,7 @@
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
-  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;selectionView=null;focusedSelectionId='';clearPendingMove();clearConnectionClick();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
+  $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;layoutEpoch++;layoutBusy=false;selectionView=null;focusedSelectionId='';clearPendingMove();clearConnectionClick();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
   $effect(()=>{void focusSelectionId;void inspectorPanel;void drag;void wire;void segmentDrag;void connectionOpen;if(mounted)untrack(syncSelectionFocus);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(() => {
@@ -100,22 +100,37 @@
     if (resourceId) void loadPorts('open',resourceId);
   });
   onMount(() => { if (fitOnMount) fitView();mounted=true; });
-  onDestroy(() => { portEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
+  onDestroy(() => { portEpoch++;layoutEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
   function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
   function fit() { fitView(); }
   function zoom(factor:number,at?:CanvasPoint) { view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2}); }
-  function layout() {
-    editLayout(()=>scopedCanvasEdit(document,source=>{
+  async function layout() {
+    if(readOnly||layoutBusy||drag||segmentDrag||wire)return;
+    const sourceDocument=document,tab=activeVehicleTabId,epoch=++layoutEpoch;
+    const layoutNodes=canvasRouteNodes(committedNodes),bindings=committedDocument.bindings;
+    layoutBusy=true;layoutError='';
+    try{
+      const {layoutProfileWithElk}=await import('./profile-elk-runtime');
+      const result=await layoutProfileWithElk(layoutNodes,bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT);
+      if(epoch!==layoutEpoch||tab!==activeVehicleTabId||readOnly)return;
+      if(document!==sourceDocument||drag||segmentDrag||wire){layoutError='The graph changed while arranging it. Run Auto-layout again.';return;}
+      selectionView=null;focusedSelectionId='';
+      selectedId='';selectConnection?.('');closeConnectionPanel?.();
+      editLayout(()=>scopedCanvasEdit(sourceDocument,source=>{
       // Freeze old frames before positions change, then reconcile every membership in the same edit.
       let next=nodes.length?canvasMoveIntoGroup(source,nodes[0].id,nodes[0].position):JSON.parse(JSON.stringify(source)) as ProfileDocument;
-      const visibleIds=new Set(nodes.map(node=>node.id)),positions=profileAutoLayout([...visibleIds],visibleDocument.bindings);
-      const visibleBindings=new Set(visibleDocument.bindings.map(binding=>binding.id));if(next.editor.wireRoutes){next.editor.wireRoutes=next.editor.wireRoutes.filter(route=>!visibleBindings.has(route.bindingId));if(!next.editor.wireRoutes.length)delete next.editor.wireRoutes;}
+      const visibleIds=new Set(layoutNodes.map(node=>node.id)),positions=result.positions;
+      const visibleBindings=new Set(bindings.map(binding=>binding.id));
+      next.editor.wireRoutes=[...(next.editor.wireRoutes??[]).filter(route=>!visibleBindings.has(route.bindingId)),...result.wireRoutes];
+      if(!next.editor.wireRoutes.length)delete next.editor.wireRoutes;
       next.editor.positions=[...next.editor.positions.filter(position=>!visibleIds.has(position.nodeId)),...positions];
       for(const position of positions)next=canvasMoveIntoGroup(next,position.nodeId,position);
       const nextVisible=profileTabDocument(next,activeVehicleTabId),nextNodes=canvasNodes(nextVisible,assignments,inventory),nextFrames=canvasGroups(nextVisible,nextNodes);
       view=canvasFit([...nextNodes,...nextFrames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])],stage?.clientWidth||900,stage?.clientHeight||600);
       return next;
-    }),'Auto-layout');
+      }),'Auto-layout');
+    }catch(error){if(epoch===layoutEpoch&&tab===activeVehicleTabId)layoutError=error instanceof Error?error.message:String(error);}
+    finally{if(epoch===layoutEpoch)layoutBusy=false;}
   }
   function choose(id:string) { clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
   function chooseConnection(id:string) {stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView())void tick().then(()=>{if(!selectedId)selectConnection?.(id);});else selectConnection(id);}else editConnection?.(id);}
@@ -332,10 +347,11 @@
     {#if selectedEdge&&document.editor.wireRoutes?.some(route=>route.bindingId===selectedEdgeId)}<button class="text-button" disabled={readOnly} onclick={()=>resetWireRoute(selectedEdgeId)}>Reset bends</button>{/if}
     <div class="canvas-view-controls">
       <button class="canvas-icon-button" type="button" aria-label="Fit all" title="Fit all" onclick={fit}><Icon name="fit" size={16}/></button>
-      <button class="canvas-icon-button" type="button" aria-label="Auto-layout" title="Auto-layout" disabled={readOnly} onclick={layout}><Icon name="layout" size={16}/></button>
+      <button class="canvas-icon-button" type="button" aria-label="Auto-layout" title={layoutBusy?'Arranging with ELK…':'Auto-layout with ELK Layered'} aria-busy={layoutBusy} disabled={readOnly||layoutBusy} onclick={layout}><Icon name="layout" size={16}/></button>
       <div class="zoom-controls"><button aria-label="Zoom out" onclick={()=>zoom(1/1.2)}>−</button><output aria-label="Canvas zoom">{Math.round(view.zoom*100)}%</output><button aria-label="Zoom in" onclick={()=>zoom(1.2)}>+</button></div>
     </div>
   </div>
+  {#if layoutBusy}<p class="canvas-help" role="status">Arranging blocks and connections…</p>{/if}
   <p class="canvas-help" id="profile-canvas-help">Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. Double-click a wire to add a draggable reroute point; select a point and press Delete to remove it. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.</p>
   <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->

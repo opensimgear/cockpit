@@ -131,6 +131,12 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     await mouse('mouseMoved',at);await mouse('mousePressed',at,{button:'left',buttons:1,clickCount:1});await mouse('mouseReleased',at,{button:'left',buttons:0,clickCount:1});
     await until(()=>native.evaluate(`document.querySelectorAll('.connection-endpoint[data-reconnect-binding="${bindingId}"]').length===2`),'Selecting a wire did not reveal its endpoint handles');
   };
+  const autoLayout = async () => {
+    await click('Auto-layout');
+    await until(() => native.evaluate(`document.querySelector('button[aria-label="Auto-layout"]')?.getAttribute('aria-busy')==='false'`), 'ELK Auto-layout did not finish');
+    assert.equal(await native.evaluate(`document.querySelector('.canvas-layout-error')?.textContent.trim()??''`), '', 'ELK layout must apply before the next gesture');
+    await click('Fit all');
+  };
   const settingsTab = async label => {
     await until(async()=>{if(await clickIfPresent(label,'[role="tablist"][aria-label="Settings sections"]'))return true;await clickIfPresent('Settings','.sidebar-bottom');return false;},`UI action unavailable: ${label}`);
     await until(()=>native.evaluate(`[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')].some(tab=>tab.textContent.trim()===${JSON.stringify(label)}&&tab.getAttribute('aria-selected')==='true')`),`${label} Settings tab did not open`);
@@ -182,6 +188,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
   const dropTransformation=(preset,bindingId)=>dropPaletteComponent(`.component-palette [data-processing-preset="${preset}"]`,bindingId);
   native.on('Input.dragIntercepted', event => { intercepted = event; });
   try {
+    await until(() => native.evaluate('document.readyState === "complete" && typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit must finish its initial page before reload');
     await native.send('Page.reload', { ignoreCache: true });
     await until(() => native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit IPC did not finish starting');
     beforeCanvasStyling=await native.evaluate(`localStorage.getItem('osg-canvas-styling')`);
@@ -244,7 +251,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     await native.send('Input.dispatchDragEvent', { type: 'drop', ...drop, data }); dragging = false;
     await until(async () => { const state = await snapshot(); return state.nodes.length === 2 && state.nodes.some(node => node.outputs === outputs.length && node.inputs === inputs.length) ? state : null; }, 'Dropped controller did not automatically discover all its inputs and outputs');
     assert.ok(outputs.length > 32, 'This acceptance should exercise the actual multipage controller catalogue.');
-    await click('Auto-layout'); await click('Fit all');
+    await autoLayout();
     const baseline = await save(), resourceId = baseline.assignments.find(assignment => assignment.sourceId === resource.id).resourceId, virtual = baseline.document.virtualOutputs[0];
     assert.deepEqual(baseline.document.resources.find(node => node.id === resourceId).ports, []);
     assert.deepEqual(baseline.assignments.find(assignment => assignment.resourceId === resourceId).ports, []);
@@ -336,7 +343,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
       assert.equal(companionState.document.companionAssignments.find(assignment=>assignment.resourceId===companionNodeId).publicationHash,panel.publicationHash);
       const expectedOutputs = ports.filter(port => port.descriptor.direction === 'output').length, expectedInputs = ports.filter(port => port.descriptor.direction === 'input').length;
       await until(async () => (await snapshot()).nodes.some(node => node.id === companionNodeId && node.outputs === expectedOutputs && node.inputs === expectedInputs), 'Selecting the companion panel did not automatically discover its exact retained ports');
-      await mouse('mouseMoved', { x: 10, y: 10 }); await click('Auto-layout'); await click('Fit all'); companionState = await save();
+      await mouse('mouseMoved', { x: 10, y: 10 }); await autoLayout(); companionState = await save();
       assert.deepEqual(companionState.document.resources.find(node => node.id === companionNodeId).ports, []);
       assert.equal(companionState.document.companionAssignments.find(assignment => assignment.resourceId === companionNodeId).publicationHash, panel.publicationHash);
       await dragWire(`[data-connection-source="${companionNodeId}"]`, `[data-connection-target="${virtual.id}"]`);
@@ -392,14 +399,14 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     const draftTransform=await save(),multiply=draftTransform.document.processingNodes.find(node=>node.operation.kind==='scale');assert.ok(multiply.draft);assert.equal(multiply.operation.factor,10);
     const draftCompilation=(await request({command:'profile_compile',document:draftTransform.document,assignments:draftTransform.assignments})).profileCompilation;assert.ok(draftCompilation.diagnostics.some(diagnostic=>diagnostic.code==='unresolvedTransformation'&&diagnostic.location.nodeId===multiply.id));assert.notEqual(draftCompilation.readiness,'ready');
     await click('← Back to Profiles');await click(`Edit ${name}`);await until(()=>native.evaluate(`document.querySelectorAll('.resource-block.processing').length===2`),'Reopen did not retain the independent Multiply draft');const draftReopened=await saved();assert.deepEqual(draftReopened.document.processingNodes.find(node=>node.id===multiply.id),multiply);
-    await clickIfPresent('Close component settings','.canvas-inspector');await click('Auto-layout');await click('Fit all');
+    await clickIfPresent('Close component settings','.canvas-inspector');await autoLayout();
     await dragWire(`[data-connection-source="${resourceId}"]`,`[data-connection-target="${multiply.id}"][data-connection-port="${multiply.inputs[0].id}"]`);assert.equal((await snapshot()).panel.input,multiply.inputs[0].id,'Dragging onto a named transform input preselects its exact port.');await choosePort('Find an output',`@observed:${JSON.stringify([numeric.descriptor.id,numeric.contractHash])}`);
     await until(async()=>!(await snapshot()).panel&&(await snapshot()).edges===edgeCount+3,'Selecting the numeric source did not infer the sole transformation input and auto-connect');
     const resolved=await save(),typedMultiply=resolved.document.processingNodes.find(node=>node.id===multiply.id);assert.ok(!typedMultiply.draft);assert.equal(typedMultiply.operation.factor,10);assert.deepEqual(typedMultiply.inputs[0].contract,numeric.descriptor.contract);const multiplyGeometry=await transformGeometry({...typedMultiply,bindings:resolved.document.bindings});await capture('multiply-with-inferred-input.png');
     checks.push('A standalone Multiply node stores factor10 before wiring; selecting a real numeric output infers its sole input type/unit/range and connects it in one action');
     await dropTransformation('gate');await until(()=>native.evaluate(`document.querySelectorAll('.resource-block.processing').length===3`),'Dropping Gate did not add its independent named inputs');
     const gateDraft=await save(),gate=gateDraft.document.processingNodes.find(node=>node.operation.kind==='gate');assert.ok(gate?.draft);assert.equal(gate.inputs.length,2);
-    await clickIfPresent('Close component settings','.canvas-inspector');await click('Auto-layout');await click('Fit all');
+    await clickIfPresent('Close component settings','.canvas-inspector');await autoLayout();
     await dragWire(`[data-connection-source="${resourceId}"]`,`[data-connection-target="${gate.id}"][data-connection-port="value"]`);assert.equal((await snapshot()).panel.input,'value');await choosePort('Find an output',pin[0].profilePortId);await until(async()=>!(await snapshot()).panel,'The exact Gate value input did not resolve and connect');
     await dragWire(`[data-connection-source="${resourceId}"]`,`[data-connection-target="${gate.id}"][data-connection-port="gate"]`);assert.equal((await snapshot()).panel.input,'gate');await choosePort('Find an output',pin[0].profilePortId);await until(async()=>!(await snapshot()).panel,'The exact Gate control input did not connect');
     const gated=await save(),typedGate=gated.document.processingNodes.find(node=>node.id===gate.id),gateGeometry=await transformGeometry({...typedGate,bindings:gated.document.bindings});assert.ok(!typedGate.draft);assert.equal(gated.document.bindings.filter(binding=>binding.to.nodeId===gate.id).length,2);assert.equal(new Set(gateGeometry.edges.filter(edge=>edge.binding.to.nodeId===gate.id).map(edge=>edge.end.y)).size,2,'Different named inputs need separate border anchor centers.');await capture('gate-multiple-named-inputs.png');
@@ -448,6 +455,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, realPaletteDrag: true, realConnectionMouseDrags: true, profileId, resource: { id: resource.id, name: resource.name, total: observed.length, outputs: outputs.length, inputs: inputs.length }, chosenPort: boolean.descriptor.id, companion: companionEvidence,geometry,insertedGeometry,multiplyGeometry,gateGeometry,draftCompilation,multiply:typedMultiply,arrowGeometry:{roundedRoute,squareRoute,smallRadiusRoute,beforeRoute,movedVertical,movedHorizontal,smooth,focusedOutline},wireRoutes:routed.document.editor.wireRoutes,checks }, null, 2) + '\n');
   } catch (error) {
     await capture('failure.png').catch(() => {});
+    if(profileId)await writeFile(resolve(artifacts,'failure-profile.json'),JSON.stringify(await saved(),null,2)).catch(()=>{});
     await writeFile(resolve(artifacts, 'failure-routing.json'),JSON.stringify(await native.evaluate(`(()=>{const stage=document.querySelector('.canvas-stage')?.getBoundingClientRect();return{stage:stage?.toJSON(),paths:[...document.querySelectorAll('.signal-edge-hit')].map(path=>{const length=path.getTotalLength(),matrix=path.getScreenCTM();return{id:path.dataset.connectionId,d:path.getAttribute('d'),points:Array.from({length:21},(_,index)=>{const p=path.getPointAtLength(length*index/20),screen=new DOMPoint(p.x,p.y).matrixTransform(matrix),hit=document.elementFromPoint(screen.x,screen.y);return{x:screen.x,y:screen.y,hit:hit?.tagName,classes:hit?.getAttribute('class'),binding:hit?.closest('[data-connection-id]')?.getAttribute('data-connection-id')};})};})};})()`),null,2)).catch(()=>{});
     await writeFile(resolve(artifacts, 'failure.json'), JSON.stringify({ profileId, checks, error: redact(error.message), state: await snapshot().catch(() => null) }, null, 2) + '\n'); throw error;
   } finally {

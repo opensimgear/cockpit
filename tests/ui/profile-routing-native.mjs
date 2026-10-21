@@ -152,6 +152,37 @@ function fanInInBrowser(bindingIds) {
   return { spacing, routes };
 }
 
+// A compact layout can deliberately share port leads. Each signal still needs
+// a centerline outside its neighbors' 18px pointer-hit strokes somewhere else.
+function selectableWiresInBrowser() {
+  const cellSize = 32, radius = 9.5, cells = new Map(), routes = [];
+  const key = point => `${Math.floor(point.x / cellSize)},${Math.floor(point.y / cellSize)}`;
+  for (const path of document.querySelectorAll('.canvas-stage .signal-edge')) {
+    const id = path.dataset.bindingId, length = path.getTotalLength(), count = Math.max(1, Math.ceil(length / 4));
+    const points = Array.from({ length: count + 1 }, (_, index) => { const point = path.getPointAtLength(length * index / count); return { x: point.x, y: point.y }; });
+    routes.push({ id, path, length });
+    for (let index = 1; index < points.length; index++) {
+      const a = points[index - 1], b = points[index], segment = { id, a, b };
+      for (let x = Math.floor((Math.min(a.x, b.x) - radius) / cellSize); x <= Math.floor((Math.max(a.x, b.x) + radius) / cellSize); x++) {
+        for (let y = Math.floor((Math.min(a.y, b.y) - radius) / cellSize); y <= Math.floor((Math.max(a.y, b.y) + radius) / cellSize); y++) {
+          const cell = `${x},${y}`; if (!cells.has(cell)) cells.set(cell, []); cells.get(cell).push(segment);
+        }
+      }
+    }
+  }
+  const distance = (point, a, b) => { const dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(point.x - a.x - t * dx, point.y - a.y - t * dy); };
+  const regions = [], unselectable = [];
+  for (const route of routes) {
+    let region;
+    for (let at = 28; at < route.length - 28; at += 4) {
+      const point = route.path.getPointAtLength(at), peers = (cells.get(key(point)) ?? []).filter(segment => segment.id !== route.id);
+      if (peers.every(segment => distance(point, segment.a, segment.b) > radius)) { region = { id: route.id, x: point.x, y: point.y }; break; }
+    }
+    if (region) regions.push(region); else unselectable.push(route.id);
+  }
+  return { hitRadius: radius, sampleSpacing: 4, regions, unselectable };
+}
+
 async function until(operation, message, timeout = 20000) {
   const end = Date.now() + timeout; let last;
   while (Date.now() < end) {
@@ -477,8 +508,47 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     }, original.document);
     assert.equal(baseBindings.length, 73, 'Acceptance uses the real 73-route Feature Lab Base tab');
     const document = { ...original.document, id: profileId, name, revision: 1 };
+    // A saved demo may already have been arranged with ELK. Reproduce the
+    // recorded starting geometry only in this disposable acceptance copy.
+    if (process.env.OSG_ROUTING_START_GEOMETRY_PATH) {
+      const starting = JSON.parse((await readFile(process.env.OSG_ROUTING_START_GEOMETRY_PATH, 'utf8')).replace(/^\uFEFF/, ''));
+      const endpoints = bindings => bindings.map(({id,from,to}) => ({id,from,to})).sort((a,b) => a.id.localeCompare(b.id));
+      assert.deepEqual(endpoints(starting.bindings), endpoints(baseBindings), 'Recorded starting geometry must match every actual Base connection');
+      const ids = new Set(starting.nodes.map(node => node.id)), bindingIds = new Set(baseBindings.map(binding => binding.id));
+      assert.equal(ids.size, 42);
+      document.editor = { ...document.editor,
+        positions: [...document.editor.positions.filter(position => !ids.has(position.nodeId)), ...starting.nodes.map(node => ({nodeId:node.id,...node.position}))],
+        wireRoutes: document.editor.wireRoutes?.filter(route => !bindingIds.has(route.bindingId)) };
+      if (!document.editor.wireRoutes?.length) delete document.editor.wireRoutes;
+    }
     await request({ command: 'profile_editor_save', document, assignments: original.assignments, expectedRevision: null }); created = true;
     await native.send('Page.reload', { ignoreCache: true }); await open();
+    let elkLayout;
+    if (process.env.OSG_ROUTING_AUTO_LAYOUT === 'elk') {
+      const before = await pathGeometry(), started = performance.now();
+      await click('Auto-layout');
+      await until(async () => (await state()).saveDisabled === false && await native.evaluate(() => document.querySelector('button[aria-label="Auto-layout"]')?.getAttribute('aria-busy') === 'false'), 'ELK did not finish its layout');
+      const arranged = await pathGeometry(), layoutMs = performance.now() - started;
+      assert.equal(arranged.paths.length, 73); assert.equal(arranged.nodes.length, 42);
+      assert.deepEqual(arranged.collisions, [], 'ELK rendering must avoid all blocks');
+      const coordinates = geometry => geometry.nodes.map(node => ({ id: node.id, x: node.x, y: node.y }));
+      assert.notDeepEqual(coordinates(arranged), coordinates(before), 'ELK changes the actual block arrangement');
+      await click('Undo', '.editor-save-actions'); await until(async () => (await state()).saveDisabled, 'One Undo must restore the original layout');
+      assert.deepEqual(coordinates(await pathGeometry()), coordinates(before), 'Undo restores every block in one step');
+      await click('Redo', '.editor-save-actions'); await until(async () => !(await state()).saveDisabled, 'Redo must restore the ELK layout');
+      assert.deepEqual(coordinates(await pathGeometry()), coordinates(arranged), 'Redo restores the complete ELK arrangement');
+      await click('Save profile'); await until(async () => (await state()).saveDisabled, 'Save ELK layout');
+      const saved = (await request({ command: 'profile_assignments_get', id: profileId })).profiles.document;
+      const generated = saved.editor.wireRoutes?.filter(route => route.automatic) ?? [];
+      assert.equal(generated.length, 73, 'Native persistence retains every generated ELK corridor');
+      const visibleIds = new Set(arranged.nodes.map(node => node.id));
+      assert.deepEqual(saved.editor.positions.filter(position => !visibleIds.has(position.nodeId)), original.document.editor.positions.filter(position => !visibleIds.has(position.nodeId)), 'ELK leaves hidden vehicle tabs unchanged');
+      assert.deepEqual(saved.bindings, original.document.bindings, 'Layout never changes the signal graph');
+      await click('← Back to Profiles'); await open();
+      assert.deepEqual(coordinates(await pathGeometry()), coordinates(arranged), 'Native reopen retains the ELK arrangement');
+      elkLayout = { layoutMs, nodes: arranged.nodes.length, routes: generated.length, atomicUndoRedo: true, nativeSaveReopen: true, hiddenTabsPreserved: true };
+      console.log(`ELK: 42 blocks / 73 routes; arrange ${layoutMs.toFixed(1)}ms; native save/reopen and atomic Undo/Redo pass`);
+    }
     const baseline = process.env.OSG_ROUTING_BASELINE_PATH
       ? JSON.parse((await readFile(process.env.OSG_ROUTING_BASELINE_PATH, 'utf8')).replace(/^\uFEFF/, '')) : null;
     const baselineRoutes = baseline?.result?.value?.styles ?? baseline?.styles;
@@ -513,18 +583,23 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       }
       await capture(`${style}.png`);
       const quality = await native.evaluate(qualityInBrowser, geometry.paths);
+      const selection = await native.evaluate(selectableWiresInBrowser);
+      await writeFile(resolve(artifacts, `${style}-selection.json`), JSON.stringify(selection, null, 2));
+      if (elkLayout) assert.deepEqual(selection.unselectable, [], `${style} every ELK wire needs an individually selectable region`);
       const beforeQuality = baselineRoutes?.[style] ? await native.evaluate(qualityInBrowser, baselineRoutes[style]) : null;
       await writeFile(resolve(artifacts, `${style}-quality.json`), JSON.stringify({ before: beforeQuality, after: quality }, null, 2));
       const fanIn = await inspectFanIn(style, baseBindings);
-      if (beforeQuality) for (const metric of ['crossingCount', 'crossingPairs', 'overlapLength']) {
+      // ELK changes node placement and may bundle common port leads. Keep that
+      // overlap measurement explicit, while gating actual selectability above.
+      if (beforeQuality) for (const metric of (elkLayout ? ['crossingCount', 'crossingPairs', 'totalLength'] : ['crossingCount', 'crossingPairs', 'overlapLength'])) {
         assert.ok(quality[metric] <= beforeQuality[metric], `${style} rendered ${metric} must not regress: ${quality[metric]} vs baseline ${beforeQuality[metric]}`);
       }
       const interaction = await drag(style), handles = await reroute(style);
-      checks.push({ style, paths: geometry.paths.length, sampledPoints: geometry.sampledPoints, totalLength: geometry.totalLength, segmentCounts, quality, beforeQuality, fanIn, interaction, handles });
+      checks.push({ style, paths: geometry.paths.length, sampledPoints: geometry.sampledPoints, totalLength: geometry.totalLength, segmentCounts, quality, beforeQuality, selection, fanIn, interaction, handles });
       console.log(`${style}: 73 clear routes; drag p95 ${interaction.p95.toFixed(1)}ms; drop ${interaction.dropMs.toFixed(1)}ms`);
       console.log(`${style} readability: ${JSON.stringify({ before: beforeQuality, after: quality })}`);
     }
-    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, sourceProfileName: original.document.name, checks }, null, 2));
+    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, sourceProfileName: original.document.name, elkLayout, checks }, null, 2));
     console.log(`Native routing evidence: ${artifacts}`);
   } catch(error) {
     await capture('failure.png').catch(()=>{});

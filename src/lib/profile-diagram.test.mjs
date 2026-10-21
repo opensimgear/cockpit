@@ -225,13 +225,16 @@ test('Feature Lab geometry preserves every route and block clearance in both sty
 test('a moved block burying ports does not search every lane in the dense graph',async()=>{
   const {nodes,bindings,wireRoutes}=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/feature-lab-moved-geometry.json',import.meta.url),'utf8'));
   const started=performance.now();
-  for(const style of ['smooth','orthogonal']){
-    const routes=diagramRoutes(nodes,bindings,width,height,{style,wireRoutes});
+  const results=['smooth','orthogonal'].map(style=>({style,routes:diagramRoutes(nodes,bindings,width,height,{style,wireRoutes})}));
+  const routingMs=performance.now()-started;
+  // Measure the router itself; SVG sampling and assertion overhead below are
+  // correctness checks rather than endpoint-search work.
+  for(const {style,routes}of results){
     assert.equal(routes.length,71);
     assert.deepEqual(bindings.filter(binding=>!routes.some(route=>route.binding.id===binding.id)).map(binding=>binding.id),['route-2','route-80'],'Only the two buried ports remain unrouted');
     if(style==='orthogonal')for(const route of routes)assertClearSamples(nodes,route.path);
   }
-  assert.ok(performance.now()-started<1500,'An impossible endpoint must not trigger repeated whole-grid searches');
+  assert.ok(routingMs<1500,'An impossible endpoint must not trigger repeated whole-grid searches');
 });
 
 test('endpoint rejection preserves a valid lane exactly on an obstacle boundary',()=>{
@@ -425,6 +428,53 @@ test('nearby sources fan into a common input without forced overshoot in either 
       assertNoSelfCrossings(points,`${style} ${route.binding.id}`);
     }
   }
+});
+
+test('generated ELK corridors remain automatic and use both minimal arrow styles',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:320}}],binding=edge('source','target');
+  const points=[{x:width,y:height-20},{x:600,y:height-20},{x:600,y:320+height-20},{x:900,y:320+height-20}];
+  for(const style of ['smooth','orthogonal']){
+    const route=diagramRoutes(nodes,[binding],width,height,{style,wireRoutes:[{bindingId:binding.id,points,automatic:true}]})[0];
+    assert.equal(route.manual,false);assert.equal(route.customBlocked,false);assert.deepEqual(plain(route.points),points);
+    if(style==='smooth')assert.equal(cubics(route.path).length,1);
+    else assert.equal(route.path,diagramOrthogonalPath(points,24));
+  }
+});
+
+test('a newly obstructed generated corridor repairs itself and returns when clear',()=>{
+  const binding=edge('source','target'),nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}},{id:'obstacle',position:{x:500,y:400},width:100,height:100}],router=createDiagramRouter();
+  const points=[{x:width,y:height-20},{x:900,y:height-20}],wireRoutes=[{bindingId:binding.id,points,automatic:true}];
+  const initial=router(nodes,[binding],width,height,{wireRoutes})[0];assert.equal(initial.manual,false);
+  const moved=nodes.map(node=>node.id==='obstacle'?{...node,position:{x:500,y:120}}:node);
+  const blocked=router(moved,[binding],width,height,{wireRoutes})[0];
+  assert.equal(blocked.manual,false);assert.equal(blocked.customBlocked,true);assert.notEqual(blocked.path,initial.path);
+  for(const curve of cubics(blocked.path))for(let step=0;step<=100;step++){
+    const point=sample(curve,step/100);assert.ok(!(point.x>500&&point.x<600&&point.y>120&&point.y<220));
+  }
+  const clear=router(nodes,[binding],width,height,{wireRoutes})[0];
+  assert.equal(clear.manual,false);assert.equal(clear.customBlocked,false);assert.deepEqual(plain(clear.points),points);
+});
+
+test('identical generated parallel corridors fall back to distinct coordinated fans',()=>{
+  const nodes=[{id:'source',position:{x:0,y:0}},{id:'target',position:{x:900,y:0}}],bindings=[edge('source','target','first'),edge('source','target','second')];
+  const points=[{x:width,y:height-20},{x:900,y:height-20}],wireRoutes=bindings.map(binding=>({bindingId:binding.id,points,automatic:true}));
+  for(const style of ['smooth','orthogonal']){
+    const routes=diagramRoutes(nodes,bindings,width,height,{style,wireRoutes});
+    assert.equal(routes.length,2);assert.notEqual(routes[0].path,routes[1].path);
+    assert.ok(routes.every(route=>!route.manual&&diagramSimpleRoute(route.points)));
+  }
+});
+
+test('clear ELK corridors can separate their fan lanes inside the legacy router margin',()=>{
+  const nodes=[{id:'upper',position:{x:0,y:0},width:100,height:100},{id:'lower',position:{x:0,y:200},width:100,height:100},{id:'target',position:{x:600,y:100},width:100,height:100},{id:'obstacle',position:{x:300,y:0},width:100,height:100}];
+  const bindings=[edge('upper','target','first'),edge('lower','target','second')];
+  // ELK's clear guide passes 12px below the obstacle. Its unchanged leg must
+  // not prevent distinct terminal lanes merely because the old router uses20px.
+  const wireRoutes=[{bindingId:'first',automatic:true,points:[{x:100,y:80},{x:120,y:80},{x:120,y:112},{x:560,y:112},{x:560,y:180},{x:600,y:180}]},{bindingId:'second',automatic:true,points:[{x:100,y:280},{x:140,y:280},{x:140,y:112},{x:560,y:112},{x:560,y:180},{x:600,y:180}]}];
+  const routes=diagramRoutes(nodes,bindings,100,100,{style:'orthogonal',wireRoutes});
+  assert.equal(routes.length,2);assert.ok(routes.every(route=>!route.manual&&!route.customBlocked));
+  assert.notEqual(routes[0].points.at(-2).x,routes[1].points.at(-2).x,'Valid automatic corridors receive distinct fan lanes');
+  for(const route of routes)assertClearSamples(nodes,route.path);
 });
 
 test('unobstructed smooth routes use one cubic and cornered routes use the minimum links',()=>{

@@ -59,7 +59,7 @@ export type ProfileVirtualOutput = { id: string; name: string; required: boolean
 export type ProfileEditorGroupBounds = { x: number; y: number; width: number; height: number };
 export type ProfileEditorGroup = { id: string; name: string; members: string[]; bounds?: ProfileEditorGroupBounds };
 export type ProfileWireStyle = 'smooth' | 'orthogonal';
-export type ProfileWireRoute = { bindingId: string; points: { x: number; y: number }[]; handles?: { x: number; y: number }[] };
+export type ProfileWireRoute = { bindingId: string; points: { x: number; y: number }[]; handles?: { x: number; y: number }[]; automatic?: boolean };
 export type ProfilePortGroup = 'outputs' | 'inputs' | 'actions';
 export type ProfileVehicleTab = { id: string; gameId: string; vehicleId: string; vehicleName: string; nodeIds: string[] };
 export type ProfileDocument = {
@@ -262,12 +262,13 @@ export function profileDocumentError(value: unknown): string {
   const wireRoutes = Object.hasOwn(value.editor,'wireRoutes') ? value.editor.wireRoutes : [];
   const bindingIds = new Set((value.bindings as ProfileBinding[]).map(binding=>binding.id));
   const validWireRoute=(row:unknown)=>{
-    if(!object(row)||Object.keys(row).some(key=>!['bindingId','points','handles'].includes(key))||!identifier(row.bindingId)||!bindingIds.has(row.bindingId)||!list(row.points,128)||row.points.length<2||!row.points.every(point=>exact(point,['x','y'])&&coordinate(point.x)&&coordinate(point.y)))return false;
+    if(!object(row)||Object.keys(row).some(key=>!['bindingId','points','handles','automatic'].includes(key))||Object.hasOwn(row,'automatic')&&typeof row.automatic!=='boolean'||!identifier(row.bindingId)||!bindingIds.has(row.bindingId)||!list(row.points,128)||row.points.length<2||!row.points.every(point=>exact(point,['x','y'])&&coordinate(point.x)&&coordinate(point.y)))return false;
     const points=row.points as {x:number;y:number}[];
     if(!points.every((point,index)=>!index||(point.x===points[index-1].x)!==(point.y===points[index-1].y)))return false;
     if(!Object.hasOwn(row,'handles'))return true;
     if(!list(row.handles,32)||!row.handles.every(handle=>exact(handle,['x','y'])&&coordinate(handle.x)&&coordinate(handle.y)))return false;
     const handles=row.handles as {x:number;y:number}[];
+    if(row.automatic&&handles.length)return false;
     return new Set(handles.map(handle=>`${handle.x}/${handle.y}`)).size===handles.length&&handles.every(handle=>points.some((a,index)=>{const b=points[index+1];return !!b&&(a.x===b.x?handle.x===a.x&&handle.y>=Math.min(a.y,b.y)&&handle.y<=Math.max(a.y,b.y):handle.y===a.y&&handle.x>=Math.min(a.x,b.x)&&handle.x<=Math.max(a.x,b.x));}));
   };
   if (!list(wireRoutes,512) || !wireRoutes.every(validWireRoute) || new Set(wireRoutes.map(row=>(row as ProfileWireRoute).bindingId)).size!==wireRoutes.length) return 'Use unique bounded orthogonal paths and reroute points for existing connections.';

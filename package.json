@@ -44,7 +44,7 @@
     "game-telemetry:test": "node --test src/lib/game-telemetry.test.mjs src/lib/game-telemetry-ui.test.mjs",
     "game-telemetry:native:ui": "node --test tests/ui/game-telemetry-native.mjs",
     "profile-editor:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-editor.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-editor.test.mjs",
-    "profile-canvas:test": "node --test src/lib/canvas-navigation.test.mjs src/lib/settings-panel-ui.test.mjs src/lib/profile-canvas-render.test.mjs src/lib/canvas-styling.test.mjs src/lib/profile-canvas.test.mjs src/lib/profile-diagram.test.mjs src/lib/profile-diagram-simplify.test.mjs src/lib/profile-wire-layout.test.mjs src/lib/profile-input-availability.test.mjs",
+    "profile-canvas:test": "node --test --test-concurrency=1 src/lib/canvas-navigation.test.mjs src/lib/settings-panel-ui.test.mjs src/lib/profile-canvas-render.test.mjs src/lib/canvas-styling.test.mjs src/lib/profile-canvas.test.mjs src/lib/profile-diagram.test.mjs src/lib/profile-diagram-lanes.test.mjs src/lib/profile-diagram-simplify.test.mjs src/lib/profile-elk-layout.test.mjs src/lib/profile-wire-layout.test.mjs src/lib/profile-input-availability.test.mjs",
     "profile-canvas:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-canvas.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-canvas.test.mjs",
     "profile-port-browser:test": "node --test src/lib/profile-port-browser.test.mjs",
     "profile-port-browser:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-port-browser.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-port-browser.test.mjs",
@@ -92,12 +92,13 @@
     "profiles:dcs:aircraft:native": "node --test tests/ui/dcs-aircraft-catalogues-native.mjs"
   },
   "dependencies": {
+    "@opensimgear/companion-contracts": "workspace:*",
+    "@opensimgear/companion-designer": "workspace:*",
+    "@opensimgear/companion-ui": "workspace:*",
     "@tauri-apps/api": "^2.12.3",
     "@tauri-apps/plugin-opener": "^2.7.1",
-    "svelte": "^5.55.4",
-    "@opensimgear/companion-contracts": "workspace:*",
-    "@opensimgear/companion-ui": "workspace:*",
-    "@opensimgear/companion-designer": "workspace:*"
+    "elkjs": "^0.12.0",
+    "svelte": "^5.55.4"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.1",

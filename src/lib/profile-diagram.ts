@@ -1,6 +1,6 @@
 import type { DeepReadonly, ProfileBinding, ProfileWireRoute, ProfileWireStyle } from './profiles';
 import { profileAnchorWireRoute, profileWireCorners } from './profile-wire-layout';
-import { diagramAutomaticCorners, diagramSimpleRoute, refineDiagramLanes } from './profile-diagram-lanes';
+import { diagramAutomaticCorners, diagramSimpleRoute, refineDiagramLanes, separateDiagramParallels } from './profile-diagram-lanes';
 import { simplifyDiagramRoute } from './profile-diagram-simplify';
 export { diagramRouteQuality } from './profile-diagram-lanes';
 
@@ -289,6 +289,7 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
   const clearance=crowded?20:expanded,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
   const saved=new Map(options.wireRoutes?.map(route=>[route.bindingId,route.points])??[]);
   const savedHandles=new Map(options.wireRoutes?.map(route=>[route.bindingId,('handles' in route?route.handles:[]) as readonly DiagramPoint[]])??[]);
+  const generated=new Set(options.wireRoutes?.filter(route=>route.automatic).map(route=>route.bindingId)??[]),automaticGuides=new Set<string>();
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+(node.width??width)+clearance,top:node.position.y-clearance,bottom:node.position.y+(node.height??height)+clearance}));
   const manualBoxes=nodes.map(node=>({left:node.position.x-20,right:node.position.x+(node.width??width)+20,top:node.position.y-20,bottom:node.position.y+(node.height??height)+20}));
   const blockBoxes=nodes.map(node=>({left:node.position.x,right:node.position.x+(node.width??width),top:node.position.y,bottom:node.position.y+(node.height??height)}));
@@ -354,6 +355,11 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
   const horizontal=new Map<number,Interval[]>(),vertical=new Map<number,Interval[]>();
   const reservedPaths=new Set<string>();
   const pathKey=(points:readonly DiagramPoint[])=>points.map(point=>`${point.x},${point.y}`).join(':');
+  // ELK can share a whole corridor between parallel edges on one physical port.
+  // Replan those peers as a coordinated fan so each remains selectable.
+  const generatedPaths=new Map<string,string[]>(),duplicateGenerated=new Set<string>();
+  for(const [id,points]of saved)if(generated.has(id)){const key=pathKey(points),group=generatedPaths.get(key)??[];group.push(id);generatedPaths.set(key,group);}
+  for(const group of generatedPaths.values())if(group.length>1)for(const id of group)duplicateGenerated.add(id);
   function overlap(a:DiagramPoint,b:DiagramPoint){
     const upright=a.x===b.x,track=(upright?vertical:horizontal).get(upright?a.x:a.y)??[];
     const start=Math.min(upright?a.y:a.x,upright?b.y:b.x),end=Math.max(upright?a.y:a.x,upright?b.y:b.x);
@@ -467,12 +473,13 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
   const routed=[...valid].sort((a,b)=>Number(saved.has(b.id))-Number(saved.has(a.id))||span(a)-span(b)||a.id.localeCompare(b.id)).flatMap(binding=>{
     const {start,end}=anchors.get(binding.id)!;
     const previous=retainedById.get(binding.id);if(previous)return [{...previous,binding}];
-    const custom=saved.get(binding.id),authored=custom?profileAnchorWireRoute(custom,start,end,savedHandles.get(binding.id)):[];
+    const custom=duplicateGenerated.has(binding.id)?undefined:saved.get(binding.id),automatic=generated.has(binding.id),authored=custom?profileAnchorWireRoute(custom,start,end,savedHandles.get(binding.id)):[];
     // Manual bends are retained while their channels are clear. A newly moved
     // block may cover a lane; use the safe automatic route until it clears.
     const horizontalLeads=authored.length>=2&&authored[1].y===start.y&&authored[1].x>start.x&&authored.at(-2)!.y===end.y&&authored.at(-2)!.x<end.x;
-    const customBlocked=!!custom&&(!horizontalLeads||authored.some((point,index)=>index>0&&manualBoxes.some((box,nodeIndex)=>!(index===1&&nodes[nodeIndex].id===binding.from.nodeId)&&!(index===authored.length-1&&nodes[nodeIndex].id===binding.to.nodeId)&&crosses(authored[index-1],point,box))));
-    if(authored.length&&!customBlocked){reserve(authored);return[{binding,points:authored,path:'',cornerRadius:requestedRadius,manual:true,customBlocked:false}];}
+    const guideBoxes=automatic?blockBoxes:manualBoxes;
+    const customBlocked=!!custom&&(!horizontalLeads||automatic&&!diagramSimpleRoute(authored)||authored.some((point,index)=>index>0&&guideBoxes.some((box,nodeIndex)=>!(index===1&&nodes[nodeIndex].id===binding.from.nodeId)&&!(index===authored.length-1&&nodes[nodeIndex].id===binding.to.nodeId)&&crosses(authored[index-1],point,box))));
+    if(authored.length&&!customBlocked){if(automatic)automaticGuides.add(binding.id);reserve(authored);return[{binding,points:authored,path:'',cornerRadius:requestedRadius,manual:!automatic,customBlocked:false}];}
     const {departure,arrival}=fan.get(binding.id)!;
     const exit=departure.at(-1)!,entry=arrival[0];
     // Moving one block can bury a port's departure or arrival in another
@@ -502,7 +509,8 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
   });
   const clearAutomaticRoute=(route:DiagramRoute,points:DiagramPoint[])=>{
     const {start,end}=anchors.get(route.binding.id)!;
-    return points.length>=2&&points[0].x===start.x&&points[0].y===start.y&&points.at(-1)!.x===end.x&&points.at(-1)!.y===end.y&&points[1].y===start.y&&points[1].x>start.x&&points.at(-2)!.y===end.y&&points.at(-2)!.x<end.x&&diagramSimpleRoute(points)&&points.slice(1).every((point,index)=>manualBoxes.every((box,nodeIndex)=>((index===0&&nodes[nodeIndex].id===route.binding.from.nodeId)||(index===points.length-2&&nodes[nodeIndex].id===route.binding.to.nodeId))||!crosses(points[index],point,box)));
+    const candidateBoxes=automaticGuides.has(route.binding.id)?blockBoxes:manualBoxes;
+    return points.length>=2&&points[0].x===start.x&&points[0].y===start.y&&points.at(-1)!.x===end.x&&points.at(-1)!.y===end.y&&points[1].y===start.y&&points[1].x>start.x&&points.at(-2)!.y===end.y&&points.at(-2)!.x<end.x&&diagramSimpleRoute(points)&&points.slice(1).every((point,index)=>candidateBoxes.every((box,nodeIndex)=>((index===0&&nodes[nodeIndex].id===route.binding.from.nodeId)||(index===points.length-2&&nodes[nodeIndex].id===route.binding.to.nodeId))||!crosses(points[index],point,box)));
   };
   // Obstacle routing can bring a wire to the port from the opposite side of
   // its original source-based fan assignment. Finish from the actual approach
@@ -552,15 +560,30 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
     // nudge cannot create a reversal or hide a newly introduced self-loop.
     const originalA=route.points[index],originalB=route.points[index+1];
     if(Math.sign(point.x-previous.x)!==Math.sign(originalB.x-originalA.x)||Math.sign(point.y-previous.y)!==Math.sign(originalB.y-originalA.y))return false;
-    return manualBoxes.every((box,nodeIndex)=>((index===0&&nodes[nodeIndex].id===route.binding.from.nodeId)||(index===points.length-2&&nodes[nodeIndex].id===route.binding.to.nodeId))||!crosses(previous,point,box));
+    const candidateBoxes=automaticGuides.has(route.binding.id)?blockBoxes:manualBoxes;
+    return candidateBoxes.every((box,nodeIndex)=>((index===0&&nodes[nodeIndex].id===route.binding.from.nodeId)||(index===points.length-2&&nodes[nodeIndex].id===route.binding.to.nodeId))||!crosses(previous,point,box));
   });
   // Retained geometry is immutable during incremental repair. Its lanes still
   // participate in congestion costs, but only affected routes may be refined.
-  const refined=refineDiagramLanes(routed.map(route=>retainedById.has(route.binding.id)?{...route,manual:true}:route),clearRoute);
+  // Ordinary same-port fans are already coordinated above. Reserve the final
+  // separation pass for ELK corridors and peers using different named ports;
+  // rerunning it on established same-port fans can increase unrelated overlap.
+  const pairKey=(binding:DiagramRoute['binding'])=>JSON.stringify([binding.from.nodeId,binding.to.nodeId]);
+  const parallelPairs=new Map<string,{anchors:Set<string>;automatic:boolean}>();
+  for(const route of routed){
+    const key=pairKey(route.binding),pair=parallelPairs.get(key)??{anchors:new Set<string>(),automatic:false};
+    const {start,end}=anchors.get(route.binding.id)!;
+    pair.anchors.add(`${start.x},${start.y}>${end.x},${end.y}`);pair.automatic ||= generated.has(route.binding.id);parallelPairs.set(key,pair);
+  }
+  const refined=separateDiagramParallels(refineDiagramLanes(routed.map(route=>retainedById.has(route.binding.id)?{...route,manual:true}:route),clearRoute,12,route=>generated.has(route.binding.id)),clearAutomaticRoute,12,route=>{
+    const key=pairKey(route.binding),pair=parallelPairs.get(key)!;
+    return pair.automatic||pair.anchors.size>1?key:JSON.stringify([route.binding.id]);
+  });
   const byBinding=new Map(refined.map(route=>{
     const previous=retainedById.get(route.binding.id);if(previous)return[route.binding.id,{...previous,binding:route.binding}];
     let points=route.points;
-    if(options.style==='orthogonal'&&!route.manual&&points.length>4){
+    const manual=route.manual&&!automaticGuides.has(route.binding.id);
+    if(options.style==='orthogonal'&&!manual&&!automaticGuides.has(route.binding.id)&&points.length>4){
       const {start,end}=anchors.get(route.binding.id)!;
       const sourceFan=(endpointGroups.get(`start:${start.x}:${start.y}`)?.length??0)>1,targetFan=(endpointGroups.get(`end:${end.x}:${end.y}`)?.length??0)>1;
       const protectedPoints=[...(sourceFan?points.slice(1,3):[]),...(targetFan?points.slice(-3,-1):[])];
@@ -568,7 +591,7 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
         const a=candidate[index];return (a.x===b.x&&Math.abs(point.x-a.x)<1e-7&&point.y>=Math.min(a.y,b.y)-1e-7&&point.y<=Math.max(a.y,b.y)+1e-7)||(a.y===b.y&&Math.abs(point.y-a.y)<1e-7&&point.x>=Math.min(a.x,b.x)-1e-7&&point.x<=Math.max(a.x,b.x)+1e-7);
       })));
     }
-    return[route.binding.id,{...route,points,...pathFor(points,route.binding,route.manual)}];
+    return[route.binding.id,{...route,manual,points,...pathFor(points,route.binding,manual)}];
   }));
   return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
 }

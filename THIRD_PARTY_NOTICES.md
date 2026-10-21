@@ -9,6 +9,9 @@ upstream library data or other separately licensed portions.
 - Rust dependencies are recorded in `src-tauri/Cargo.lock` and the package
   manifests under `src-tauri/` and `crates/`.
 - JavaScript dependencies are recorded in `package.json` and `pnpm-lock.yaml`.
+- Canvas Auto-layout uses unmodified elkjs 0.12.0 (Eclipse Public License 2.0),
+  from https://github.com/kieler/elkjs. Its complete license is distributed in
+  `public/licenses/elkjs/LICENSE.md` with the frontend assets.
 - External simulator integrations and tools are described in
   `docs/simulator-integrations.md`, `integration-profiles/` and
   `simulation/dcs-bios/README.md`. References to a project or its interface do

@@ -133,7 +133,7 @@ fn arrow_style_and_authored_paths_roundtrip_without_changing_execution_identity(
     changed.editor.arrow_style=Some(EditorArrowStyle::Orthogonal);
     changed.editor.wire_routes=vec![EditorWireRoute{binding_id:changed.bindings[0].id.clone(),points:vec![
         EditorWirePoint{x:100.0,y:80.0},EditorWirePoint{x:250.0,y:80.0},EditorWirePoint{x:250.0,y:380.0},EditorWirePoint{x:500.0,y:380.0},
-    ],handles:vec![EditorWirePoint{x:250.0,y:200.0}]}];
+    ],automatic:false,handles:vec![EditorWirePoint{x:250.0,y:200.0}]}];
     assert_eq!(changed.semantic_hash().unwrap(),original.semantic_hash().unwrap());
     assert_eq!(ProfileDocument::parse(&changed.export().unwrap()).unwrap(),changed);
     let mut value=serde_json::to_value(&changed).unwrap();
@@ -162,11 +162,37 @@ fn arrow_style_and_authored_paths_roundtrip_without_changing_execution_identity(
 }
 
 #[test]
+fn automatic_corridors_preserve_generated_status_without_changing_execution_identity() {
+    let original=document();
+    let mut value=serde_json::to_value(&original).unwrap();
+    value["editor"]["wireRoutes"]=json!([{"bindingId":original.bindings[0].id,"points":[{"x":100,"y":80},{"x":250,"y":80},{"x":250,"y":380},{"x":500,"y":380}]}]);
+    let authored=ProfileDocument::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(!authored.editor.wire_routes[0].automatic);
+    assert!(serde_json::to_value(&authored).unwrap()["editor"]["wireRoutes"][0].get("automatic").is_none());
+    value["editor"]["wireRoutes"][0]["automatic"]=json!(false);
+    assert_eq!(ProfileDocument::parse(&serde_json::to_vec(&value).unwrap()).unwrap(),authored);
+    value["editor"]["wireRoutes"][0]["automatic"]=json!(true);
+    let generated=ProfileDocument::parse(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(generated.editor.wire_routes[0].automatic);
+    assert_eq!(ProfileDocument::parse(&generated.export().unwrap()).unwrap(),generated);
+    assert_eq!(generated.semantic_hash().unwrap(),original.semantic_hash().unwrap());
+    for automatic in [Value::Null,json!("true"),json!(1),json!({}),json!([])] {
+        let mut changed=value.clone();changed["editor"]["wireRoutes"][0]["automatic"]=automatic;rejected(&changed);
+        assert!(ProfileDocument::parse_draft(&serde_json::to_vec(&changed).unwrap()).is_err());
+    }
+    value["editor"]["wireRoutes"][0]["handles"]=json!([]);
+    assert!(ProfileDocument::parse(&serde_json::to_vec(&value).unwrap()).is_ok());
+    value["editor"]["wireRoutes"][0]["handles"]=json!([{"x":250,"y":200}]);rejected(&value);
+    value["editor"]["wireRoutes"][0]["automatic"]=json!(false);
+    assert!(ProfileDocument::parse(&serde_json::to_vec(&value).unwrap()).is_ok());
+}
+
+#[test]
 fn saved_wire_layout_preserves_exact_metadata_across_service_restart() {
     let directory=tempfile::tempdir().unwrap();
     let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));
     let mut graph=decorated();graph.editor.arrow_style=Some(EditorArrowStyle::Smooth);
-    graph.editor.wire_routes=vec![EditorWireRoute{binding_id:graph.bindings[0].id.clone(),points:vec![EditorWirePoint{x:0.0,y:0.0},EditorWirePoint{x:100.0,y:0.0}],handles:vec![EditorWirePoint{x:50.0,y:0.0}]}];
+    graph.editor.wire_routes=vec![EditorWireRoute{binding_id:graph.bindings[0].id.clone(),points:vec![EditorWirePoint{x:0.0,y:0.0},EditorWirePoint{x:100.0,y:0.0}],automatic:false,handles:vec![EditorWirePoint{x:50.0,y:0.0}]},EditorWireRoute{binding_id:graph.bindings[1].id.clone(),points:vec![EditorWirePoint{x:0.0,y:100.0},EditorWirePoint{x:100.0,y:100.0}],automatic:true,handles:vec![]}];
     let saved=service.request(&json!({"command":"profile_editor_save","document":graph,"assignments":[],"expectedRevision":null})).unwrap();
     drop(service);
     let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));

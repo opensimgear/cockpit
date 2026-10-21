@@ -5,7 +5,7 @@ const modules=await loadModules(['./profile-wire-layout','./profile-diagram','./
 const {profileMoveWireSegment:move,profileAnchorWireRoute:anchor,profileSetWireStyle:setStyle,profileSetWireRoute:setRoute}=modules.get('./profile-wire-layout');
 const {profileInsertWireHandle:insertHandle,profileMoveWireHandle:moveHandle,profileRemoveWireHandle:removeHandle,profileWireHandleOnRoute:handleOnRoute,profileReshapeWireSegment:reshapeSegment}=modules.get('./profile-wire-layout');
 const {diagramRoutes,diagramPendingPath}=modules.get('./profile-diagram');
-const {profileDocumentError}=modules.get('./profiles');
+const {profileDocumentError,parseProfileDocument,exportProfileDocument}=modules.get('./profiles');
 const graph=modules.get('./profile-graph');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const points=[{x:100,y:80},{x:250,y:80},{x:250,y:380},{x:500,y:380}];
@@ -59,6 +59,18 @@ test('wire layout edits are immutable, validated and cleaned up with routes or e
   assert.equal(graph.graphConnect(changed,binding.from,binding.to,binding.id).document.editor.wireRoutes.length,1);
   assert.throws(()=>setRoute(original,'missing',points),/existing/);assert.throws(()=>setStyle(original,'curvy'),/smooth or orthogonal/);
 });
+test('automatic corridors roundtrip as metadata and become authored when reshaped',()=>{
+  const original=draft();original.document.editor.wireRoutes=[{bindingId:binding.id,points:plain(points),automatic:true}];
+  assert.equal(profileDocumentError(original.document),'');
+  assert.deepEqual(plain(parseProfileDocument(exportProfileDocument(original.document))),original.document);
+  assert.equal(profileDocumentError({...original.document,editor:{...original.document.editor,wireRoutes:[{...original.document.editor.wireRoutes[0],handles:[]}]}}),'');
+  assert.equal(profileDocumentError({...original.document,editor:{...original.document.editor,wireRoutes:[{...original.document.editor.wireRoutes[0],automatic:false,handles:[{x:250,y:200}]}]}}),'');
+  for(const edited of [setRoute(original,binding.id,points),reshapeSegment(original,binding.id,points,1,{x:300,y:0}),insertHandle(original,binding.id,points,{x:255,y:200})]){
+    assert.equal(edited.document.editor.wireRoutes[0].automatic,undefined);
+    assert.equal(profileDocumentError(edited.document),'');
+  }
+  assert.equal(original.document.editor.wireRoutes[0].automatic,true);
+});
 test('portable wire metadata rejects unknown routes, duplicates, diagonal, empty and unbounded points',()=>{
   const valid=setRoute(setStyle(draft(),'orthogonal'),binding.id,points).document;
   for(const editor of [
@@ -69,6 +81,8 @@ test('portable wire metadata rejects unknown routes, duplicates, diagonal, empty
     {wireRoutes:[{bindingId:binding.id,points:[{x:0,y:0},{x:1_000_001,y:0}]}]},
     {wireRoutes:[{bindingId:binding.id,points:Array.from({length:129},(_,x)=>({x,y:0}))}]},
     {wireRoutes:[{bindingId:binding.id,points,extra:true}]},
+    ...[null,'true',1,{},[]].map(automatic=>({wireRoutes:[{bindingId:binding.id,points,automatic}]})),
+    {wireRoutes:[{bindingId:binding.id,points,automatic:true,handles:[{x:250,y:200}]}]},
     {wireRoutes:[{bindingId:binding.id,points,handles:null}]},
     {wireRoutes:[{bindingId:binding.id,points,handles:[{x:200,y:200}]}]},
     {wireRoutes:[{bindingId:binding.id,points,handles:[{x:250,y:200},{x:250,y:200}]}]},

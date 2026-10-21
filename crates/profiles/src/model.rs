@@ -363,9 +363,12 @@ fn editor_arrow_style<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Resu
 pub struct EditorWireRoute {
     pub binding_id: String,
     pub points: Vec<EditorWirePoint>,
+    #[serde(default, skip_serializing_if = "editor_route_is_authored")]
+    pub automatic: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub handles: Vec<EditorWirePoint>,
 }
+fn editor_route_is_authored(automatic: &bool) -> bool { !automatic }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EditorWirePoint { pub x:f64, pub y:f64 }
