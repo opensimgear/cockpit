@@ -2,7 +2,7 @@ export interface ActivationWindowProgress {
   operationId: string;
   profileName: string;
   title: string;
-  phase: 'preparing' | 'activating' | 'cancelling' | 'launching' | 'deactivating' | 'recovering';
+  phase: 'preparing' | 'activating' | 'cancelling' | 'launching' | 'deactivating' | 'recovering' | 'switching';
   message: string;
   details: string[];
   canCancel: boolean;
@@ -15,7 +15,7 @@ export interface ActivationWindowSnapshot {
 
 /** Cleanup must finish even if a late close or cancellation intent is queued. */
 export const profileProgressCanCancel = (progress: Pick<ActivationWindowProgress, 'phase' | 'canCancel'>): boolean =>
-  progress.canCancel && !['deactivating', 'recovering', 'cancelling', 'launching'].includes(progress.phase);
+  progress.canCancel && !['deactivating', 'recovering', 'cancelling', 'launching', 'switching'].includes(progress.phase);
 
 type NativeInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 type CancelCallback = () => void | Promise<unknown>;

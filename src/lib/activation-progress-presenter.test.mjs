@@ -9,6 +9,27 @@ test('only current companion work supplies asset byte status; later mappings/hid
  for(const [step,message] of [['configuring-mappings','Configuring mappings'],['hiding-peripherals','Hiding peripherals'],['launching','Launching DCS World…']]){Object.assign(value,{step,message,phase:step==='launching'?'launching':'activating'});const payload=activationWindowProgress(value);assert.equal(payload.message,message);assert.equal(payload.phase,value.phase);}
  Object.assign(value,{phase:'cancelling',message:'Restoring safe outputs',step:'companion-baseline',cancelRequested:true});assert.equal(activationWindowProgress(value).message,'Restoring safe outputs');assert.equal(activationWindowProgress(value).canCancel,false);
 });
+
+test('vehicle switching preserves its aircraft context and disables Cancel through real preparation and completion',()=>{
+ for(const phase of ['preparing','activating','succeeded','failed']){
+  const payload=activationWindowProgress({...progress(),origin:'vehicle-switch',vehicleName:'AH-6J',phase});
+  assert.equal(payload.title,'Switching vehicle settings');assert.equal(payload.phase,'switching');
+  assert.equal(payload.profileName,'Rig · AH-6J');assert.equal(payload.canCancel,false);
+ }
+ const payload=activationWindowProgress({...progress(),origin:'vehicle-switch',profileName:'🚁'.repeat(100),vehicleName:'飛'.repeat(200)});
+ assert.ok(new TextEncoder().encode(payload.profileName).length<=240);
+ assert.match(payload.profileName,/🚁 · 飛/);assert.ok(!payload.profileName.includes('\uFFFD'));
+});
+
+test('a short vehicle confirmation cannot cancel or close a newer manual activation',async()=>{
+ const calls=[],callbacks=[];
+ const presenter=new ActivationProgressPresenter({async show(payload,cancel){calls.push(['show',payload.operationId,payload.phase]);callbacks.push(cancel);return true;},async update(){return true;},async close(id){calls.push(['close',id]);},dispose(){}},async id=>{calls.push(['cancel',id]);return true;});
+ await presenter.sync({...progress('switch'),origin:'vehicle-switch',vehicleName:'Hornet',phase:'succeeded',canCancel:false});
+ assert.equal(await callbacks[0](),false);
+ await presenter.sync(progress('manual'));assert.equal(await callbacks[0](),false);assert.equal(await callbacks[1](),true);
+ assert.deepEqual(calls.filter(call=>call[0]==='close'),[['close','switch']]);
+ assert.deepEqual(calls.filter(call=>call[0]==='cancel'),[['cancel','manual']]);presenter.dispose();
+});
 test('one application owner preserves the same native window through game launch and fences a stale Cancel',async()=>{
  const calls=[],callbacks=[];const window={async show(payload,cancel){calls.push(['show',payload.operationId,payload.message]);callbacks.push(cancel);return true;},async update(payload){calls.push(['update',payload.operationId,payload.message]);return true;},async close(id){calls.push(['close',id]);},dispose(){calls.push(['dispose']);}};
  const presenter=new ActivationProgressPresenter(window,async id=>{calls.push(['cancel',id]);return true;});

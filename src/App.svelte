@@ -23,6 +23,7 @@
   import GamesPanel from './lib/GamesPanel.svelte';
   import OverviewPanel from './lib/OverviewPanel.svelte';
   import DesktopPreferences from './lib/DesktopPreferences.svelte';
+  import ProgressNotificationSettings from './lib/ProgressNotificationSettings.svelte';
   import { supportedGames, type GameId, type GamesState, type GameRequest } from './lib/games';
   import { OPEN_GAME_SETTINGS_EVENT, RETURN_FROM_GAME_SETTINGS_EVENT, gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings, type GameSettingsVisit } from './lib/game-settings-navigation';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
@@ -545,6 +546,7 @@
             </div>
           </section>
           <DesktopPreferences />
+          <ProgressNotificationSettings />
           <OutputSettings />
           <CompanionListenerSettings />
         {:else if view === 'profiles'}

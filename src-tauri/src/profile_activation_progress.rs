@@ -1,4 +1,4 @@
-//! Volatile operation identities for manual activation. Progress never acquires
+//! Volatile operation identities for native profile controls. Progress never acquires
 //! the profile admission or coordinator locks; cancellation revokes only the
 //! exact captured epoch and cannot deactivate a subsequently admitted owner.
 use super::*;
@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 
 const RETAIN: Duration = Duration::from_secs(600);
 const MAX_RETAINED: usize = 16;
+// Automatic switches can finish between the application's 150 ms polls. Keep
+// the newest switch result visible briefly so the native notification is seen.
+const VEHICLE_SWITCH_CONFIRMATION: Duration = Duration::from_millis(1200);
 
 fn operation_id(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| id.hyphenated().to_string() == value)
@@ -36,6 +39,7 @@ struct Activation {
     step: String,
     origin: String,
     profile_name: String,
+    vehicle_name: Option<String>,
     steps: Vec<Value>,
     cancellable: bool,
 }
@@ -44,7 +48,7 @@ impl Activation {
     fn view(&self, epoch: u64, companions: Vec<Value>) -> Value {
         json!({"activationId":self.id,"profileId":self.profile,"phase":self.phase,
             "cancelRequested":self.cancel_requested,"canCancel":self.cancellable&&self.pending()&&!self.cancel_requested&&self.epoch==epoch,
-            "message":self.message,"step":self.step,"steps":self.steps,"origin":self.origin,"profileName":self.profile_name,
+            "message":self.message,"step":self.step,"steps":self.steps,"origin":self.origin,"profileName":self.profile_name,"vehicleName":self.vehicle_name,
             "error":self.error,"outcome":self.outcome,"companions":companions})
     }
 }
@@ -53,6 +57,9 @@ impl Activation {
 pub(super) struct Tracker { entries: Mutex<BTreeMap<String, Activation>> }
 impl Tracker {
     fn begin(&self, id: &str, profile: &str, begin_epoch: impl FnOnce() -> u64) -> Result<u64,String> {
+        self.begin_with(id,profile,begin_epoch,|_|{})
+    }
+    fn begin_with(&self,id:&str,profile:&str,begin_epoch:impl FnOnce()->u64,configure:impl FnOnce(&mut Activation))->Result<u64,String> {
         if !operation_id(id) || !operation_id(profile) { return Err("Activation requires a fresh operation identity and saved profile.".into()); }
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
         entries.retain(|_,entry|entry.completed.is_none_or(|at|at.elapsed()<RETAIN));
@@ -63,10 +70,21 @@ impl Tracker {
             else { return Err("Wait for pending profile activations to finish before starting another.".into()); }
         }
         let epoch=begin_epoch();
-        entries.insert(id.into(),Activation {id:id.into(),profile:profile.into(),epoch,phase:"preparing",cancel_requested:false,
+        let mut activation=Activation {id:id.into(),profile:profile.into(),epoch,phase:"preparing",cancel_requested:false,
             message:"Checking devices and preparing the profile…".into(),error:None,outcome:None,previous_owner:None,companions:vec![],completed:None,
-            started:Instant::now(),step:"preparing".into(),origin:"manual".into(),profile_name:profile.into(),steps:vec![],cancellable:true});
+            started:Instant::now(),step:"preparing".into(),origin:"manual".into(),profile_name:profile.into(),vehicle_name:None,steps:vec![],cancellable:true};
+        configure(&mut activation);entries.insert(id.into(),activation);
         Ok(epoch)
+    }
+    fn current(&self) -> Option<String> {
+        // Admission epoch also fences a stale switch tracker inserted after a
+        // newer manual control. Consider the newest operation before visibility
+        // so an older switch cannot reappear after newer work finishes.
+        self.entries.lock().unwrap_or_else(|p|p.into_inner()).values()
+            .max_by_key(|entry|(entry.epoch,entry.started))
+            .filter(|entry|entry.pending() || entry.origin=="vehicle-switch"
+                && entry.completed.is_some_and(|at|at.elapsed()<VEHICLE_SWITCH_CONFIRMATION))
+            .map(|entry|entry.id.clone())
     }
     pub(super) fn activating(&self,id:&str) {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
@@ -96,7 +114,7 @@ impl Tracker {
         let mut entries=self.entries.lock().unwrap_or_else(|p|p.into_inner());
         let entry=entries.get_mut(id).ok_or("This activation is no longer available. Check the active profile.")?;
         if !entry.pending() { return Ok(()); }
-        if !entry.cancellable {return Err("Output cleanup must finish before another profile operation.".into());}
+        if !entry.cancellable {return Err(if entry.origin=="vehicle-switch" {"Vehicle switching cannot be cancelled here. Deactivate the profile to stop it."}else{"Output cleanup must finish before another profile operation."}.into());}
         if entry.cancel_requested { return Ok(()); }
         if epoch.compare_exchange(entry.epoch,entry.epoch.wrapping_add(1),Ordering::AcqRel,Ordering::Acquire).is_err() {
             return Err("This activation has finished or been replaced. Check the active profile.".into());
@@ -133,6 +151,19 @@ impl GatewayManager {
         if let Some(entry)=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).get_mut(&id) {
             entry.origin=origin.into();entry.profile_name=name;
         }
+        Ok(id)
+    }
+    pub(super) fn start_vehicle_profile_switch(&self,candidate:&crate::profile_session::Candidate,selection:&str)->Result<String,String> {
+        let id=uuid::Uuid::new_v4().to_string();
+        let epoch=candidate.admission_epoch.ok_or("Vehicle switching requires native admission.")?;
+        let vehicle=candidate.document.vehicle_tabs.iter().find(|tab|tab.id==selection)
+            .map(|tab|tab.vehicle_name.as_str()).unwrap_or("Base");
+        self.profile_activations.begin_with(&id,&candidate.document.id,||epoch,|entry| {
+            entry.origin="vehicle-switch".into();entry.cancellable=false;
+            entry.profile_name=candidate.document.name.clone();entry.vehicle_name=Some(vehicle.into());
+            entry.step="preparing-vehicle".into();entry.message=format!("Preparing {vehicle} settings…");
+        })?;
+        self.capture_profile_activation_id(&id,&candidate.document,&candidate.assignments);
         Ok(id)
     }
     pub(super) fn note_profile_activation(&self,epoch:u64,step:&str,message:&str) {self.profile_activations.note(epoch,step,message);}
@@ -179,6 +210,7 @@ impl GatewayManager {
             else {response["error"].as_str().map(|error|error.chars().take(512).collect())};
         entry.message=if succeeded&&entry.origin=="deactivation" {"Profile deactivated.".into()}
             else if succeeded&&entry.origin=="recovery" {"Outputs recovered.".into()}
+            else if succeeded&&entry.origin=="vehicle-switch" {format!("{} settings applied.",entry.vehicle_name.as_deref().unwrap_or("Vehicle"))}
             else if succeeded&&entry.cancel_requested {"The profile became active before cancellation could take effect.".into()}
             else if succeeded {"Profile activated.".into()}
             else if entry.cancel_requested {match entry.outcome {
@@ -209,7 +241,7 @@ impl GatewayManager {
                 return Err("Invalid Cockpit activation progress request.".into());
             }
             if request["command"]=="profile_activation_current" {
-                let current=self.profile_activations.entries.lock().unwrap_or_else(|p|p.into_inner()).values().filter(|entry|entry.pending()).max_by_key(|entry|entry.started).map(|entry|entry.id.clone());
+                let current=self.profile_activations.current();
                 return current.map(|id|self.profile_activation_view(&id)).unwrap_or(Ok(Value::Null));
             }
             let id=request["activationId"].as_str().filter(|id|operation_id(id)).ok_or("Choose an exact activation operation.")?;

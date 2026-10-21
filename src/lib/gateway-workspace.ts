@@ -155,12 +155,12 @@ export class GatewayWorkspace {
     }
   }
 
-  private async poll(entry: Entry): Promise<void> {
+  private async poll(entry: Entry, background = true): Promise<void> {
     if (entry.autoConnectPaused) return;
     if (!entry.state?.connected) {
       if (!entry.present || this.now() < entry.retryAt) return;
       entry.busy = true; this.changed();
-      try { await this.send(entry, { command: 'connect', backend: entry.port.backend, port: entry.port.path }); }
+      try { await this.send(entry, { command: 'connect', backend: entry.port.backend, port: entry.port.path, ...(background ? { background: true } : {}) }); }
       finally { entry.busy = entry.actions > 0; this.changed(); }
     } else await this.send(entry, { command: 'status' });
     const state = entry.state;
@@ -170,7 +170,7 @@ export class GatewayWorkspace {
     if (state.backend === 'pico' && !supportsDeviceContracts(state) && !claimed && !state.running && !state.needsReconnect &&
         !entry.autoStartFailed && state.modules.some(module => module.online && module.registered)) {
       entry.busy = true; this.changed();
-      try { await this.send(entry, { command: 'start' }); }
+      try { await this.send(entry, { command: 'start', ...(background ? { background: true } : {}) }); }
       catch (error) { entry.autoStartFailed = true; throw error; }
       finally { entry.busy = entry.actions > 0; this.changed(); }
     }
@@ -192,7 +192,7 @@ export class GatewayWorkspace {
     if (!entry) return;
     entry.autoConnectPaused = false;
     entry.retryAt = 0; entry.failures = 0; entry.autoStartFailed = false;
-    await this.schedule(entry, () => this.poll(entry), true);
+    await this.schedule(entry, () => this.poll(entry, false), true);
   }
 
   async disconnect(gatewayId: string): Promise<void> {

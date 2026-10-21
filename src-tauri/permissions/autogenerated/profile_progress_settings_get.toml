@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-profile-progress-settings-get"
+description = "Enables the profile_progress_settings_get command without any pre-configured scope."
+commands.allow = ["profile_progress_settings_get"]
+
+[[permission]]
+identifier = "deny-profile-progress-settings-get"
+description = "Denies the profile_progress_settings_get command without any pre-configured scope."
+commands.deny = ["profile_progress_settings_get"]

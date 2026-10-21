@@ -50,6 +50,15 @@ test('desktop routes the complete explicitly scoped request through one native m
   ]);
 });
 
+test('automatic control admission metadata reaches native and browser transports while explicit requests remain foreground', async () => {
+  const requests = [{ command: 'connect', gatewayId: first, backend: 'stm32', port: 'gateway', background: true }, { command: 'start', gatewayId: first, background: true }, { command: 'connect', gatewayId: first, backend: 'stm32', port: 'gateway' }];
+  for (const desktop of [true, false]) {
+    const api = transport({ desktop });
+    for (const request of requests) await api.gatewayRequest(request);
+    assert.deepEqual(api.calls.map(call => desktop ? call.args.request : JSON.parse(call.options.body)), requests.map(request => ({ ...request, clientId: 'test-client-uuid' })));
+  }
+});
+
 test('activation progress and Cancel bypass blocked profile library reads and use independent native queues',async()=>{
  const blocked=deferred(),progress=deferred();const api=transport({invokeResults:async(_command,request)=>request.command==='profile_list'?blocked.promise:request.command==='profile_activation_current'?progress.promise:{ok:true,state}});
  const library=api.gatewayRequest({command:'profile_list'});await tick();const current=api.gatewayRequest({command:'profile_activation_current'});await tick();

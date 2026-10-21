@@ -29,6 +29,7 @@ mod module_usb_fleet;
 mod module_configuration_routes;
 mod profile_resources;
 mod profile_activation_window;
+mod profile_system_notification;
 mod profile_compilation;
 mod profile_desktop_preview;
 mod profile_input_learning;
@@ -266,6 +267,8 @@ pub fn run() {
             profile_activation_window::profile_activation_window_state,
             profile_activation_window::profile_activation_window_cancel,
             profile_activation_window::profile_activation_window_close,
+            profile_activation_window::profile_progress_settings_get,
+            profile_activation_window::profile_progress_settings_save,
             open_companion_browser,
             export_companion_certificate,
             optional_dependencies,
@@ -295,6 +298,7 @@ pub fn run() {
             event,
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
+            handle.state::<profile_activation_window::ActivationWindowState>().shutdown();
             handle.state::<NativeGateway>().0.shutdown();
         }
     });

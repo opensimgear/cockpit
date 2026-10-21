@@ -11,6 +11,8 @@
     "allow-profile-activation-window-update",
     "allow-profile-activation-window-state",
     "allow-profile-activation-window-close",
+    "allow-profile-progress-settings-get",
+    "allow-profile-progress-settings-save",
     "allow-open-companion-browser",
     "allow-export-companion-certificate",
     "allow-optional-dependencies",

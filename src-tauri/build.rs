@@ -49,6 +49,8 @@ fn main() {
             "profile_activation_window_state",
             "profile_activation_window_cancel",
             "profile_activation_window_close",
+            "profile_progress_settings_get",
+            "profile_progress_settings_save",
             "open_companion_browser",
             "export_companion_certificate",
             "optional_dependencies",

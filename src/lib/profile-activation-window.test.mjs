@@ -194,8 +194,8 @@ test('automatic activation continues to game launch in its existing native windo
   assert.equal(h.calls.at(-1).operationId, 'automatic-operation');
 });
 
-test('cleanup phases pass through to the compact native window and reject queued cancellation', async () => {
-  for (const phase of ['deactivating','recovering']) {
+test('cleanup and switching phases pass through to the compact native window and reject queued cancellation', async () => {
+  for (const phase of ['deactivating','recovering','switching']) {
     const h = harness(); let cancelled = 0;
     const cleanup = { ...progress('cleanup'), phase, canCancel: true, message: 'Unhiding peripherals' };
     await h.adapter.show(cleanup, () => { cancelled++; });

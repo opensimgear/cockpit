@@ -226,6 +226,9 @@ impl GatewayManager {
         })();
         if let Ok(candidate)=capture {
             let epoch=candidate.admission_epoch.unwrap();
+            // Display the immutable running profile variant, even if its saved
+            // source has since been edited. Progress must not block a handoff.
+            let activation_id=self.start_vehicle_profile_switch(&candidate,&selection).ok();
             self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner()).last_vehicle_attempt=Some((owner.clone(),selection,std::time::Instant::now()));
             let result=crate::profile_session::apply_staged_admitted_checked(
                 &self.profile_session,candidate,|candidate|self.prepare_profile_at(candidate,epoch),
@@ -234,11 +237,17 @@ impl GatewayManager {
                     let game=self.game_admission.read().unwrap_or_else(|p|p.into_inner());
                     if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=epoch||self.profile_automatic.pending(){return Err("Vehicle profile preparation was cancelled by a newer native control.".to_owned());}
                     self.guard_retired_recovery()?;
+                    self.note_profile_activation(epoch,"switching-vehicle","Applying the current vehicle settings and retaining Base settings…");
                     Ok((admission,game))
                 },
                 ||{self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);},Some(&Some(owner.clone())));
-            if let Err(error)=result {
-                self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).vehicle_switch_failed(&owner,&error);
+            if let Err(error)=&result {
+                self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).vehicle_switch_failed(&owner,error);
+            }
+            if let Some(id)=activation_id {
+                self.finish_profile_activation(&id,&match result {
+                    Ok(())=>json!({"ok":true}),Err(error)=>json!({"ok":false,"error":error}),
+                });
             }
         }
     }

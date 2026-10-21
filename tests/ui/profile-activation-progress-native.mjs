@@ -33,7 +33,7 @@ test('real native progress covers physical activation, exact cancellation, recov
   const companionId=process.env.OSG_ACTIVATION_COMPANION_ID??'40efcae8-07ab-4422-a69a-80d08029a700';
   const evidence={actualNativeCockpit:true,physicalCompanion:true,checks:[],activation:[]};
   const checkpoint=async stage=>{evidence.stage=stage;await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(stage);};
-  let original,fixture,profileId,probeId,child,originalMode,activationId;
+  let original,fixture,profileId,probeId,child,originalMode,activationId,originalProgressSettings;
   const request=async(command,payload={})=>{const value={command,clientId:'profile-activation-progress-native',...(command.startsWith('companion_')?{companion:payload}:payload)};const reply=await native.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify(value)}})`);assert.equal(reply.ok,true,reply.error??command);return reply.state;};
   const profileStatus=async()=>(await request('profile_status')).profiles.profileSession;
   const companions=async()=>(await request('companion_status')).companions;
@@ -86,7 +86,7 @@ test('real native progress covers physical activation, exact cancellation, recov
       observation.events=await native.evaluate('window.__profileCleanupEvidence.events');
       assert.ok(observation.events.some(event=>event.type==='finish'&&event.activationId===operationId&&!event.error),`Actual ${phase} did not finish its exact cleanup request.`);
       assert.ok(observation.snapshots.length,`The native ${phase} window did not render live cleanup status.`);
-      for(const snapshot of observation.snapshots){assert.equal(snapshot.state.progress.operationId,operationId);assert.equal(snapshot.state.progress.canCancel,false);assert.equal(snapshot.buttons,0);assert.deepEqual(snapshot.children,['P']);assert.equal(snapshot.headings,0);assert.equal(snapshot.overflow,false);assert.ok(snapshot.width>=580&&snapshot.width<=620);assert.ok(snapshot.height>=60&&snapshot.height<=90);assert.ok(snapshot.text);}
+      for(const snapshot of observation.snapshots){assert.equal(snapshot.state.progress.operationId,operationId);assert.equal(snapshot.state.progress.canCancel,false);assert.equal(snapshot.buttons,0);assert.equal(snapshot.headings,2);assert.equal(snapshot.overflow,false);assert.ok(snapshot.width>=400&&snapshot.width<=440);assert.ok(snapshot.height>=90&&snapshot.height<=110);assert.ok(snapshot.text);}
       return observation;
     }finally{
       finished=true;await collect;surface?.close();
@@ -94,6 +94,8 @@ test('real native progress covers physical activation, exact cancellation, recov
     }
   };
   try{
+    originalProgressSettings=await native.evaluate(`window.__TAURI_INTERNALS__.invoke('profile_progress_settings_get')`);
+    await native.evaluate(`window.__TAURI_INTERNALS__.invoke('profile_progress_settings_save',{settings:${JSON.stringify({...originalProgressSettings,delivery:'window'})}})`);
     const initial=await profileStatus();assert.equal(initial.owner,null,'Run acceptance with no active profile.');assert.equal(initial.fault,null);
     const before=await companions();original=instance(before);assert.ok(original,'The physical companion must have its ordinary panel assigned first.');
     assert.ok(peer(before)?.operation,'This acceptance requires cache-aware companion firmware.');await ready(original.publicationHash);
@@ -133,7 +135,7 @@ test('real native progress covers physical activation, exact cancellation, recov
     const snapshot=await child.evaluate(`window.__TAURI_INTERNALS__.invoke('profile_activation_window_state')`);
     assert.ok(snapshot?.progress?.operationId);assert.equal(snapshot.progress.profileName,profileName);evidence.window=snapshot;
     const compact=await child.evaluate(`(()=>{const main=document.querySelector('main'),status=main.querySelector('[role="status"]'),button=main.querySelector('button'),text=status.getBoundingClientRect(),action=button.getBoundingClientRect();return{width:innerWidth,height:innerHeight,children:[...main.children].map(element=>element.tagName),buttons:main.querySelectorAll('button').length,label:button.textContent.trim(),headings:main.querySelectorAll('h1,h2,h3,.profile-name,.activation-heading,.progress-track,footer').length,overflow:document.documentElement.scrollWidth>innerWidth||document.documentElement.scrollHeight>innerHeight,status:{left:text.left,right:text.right,top:text.top,bottom:text.bottom},button:{left:action.left,right:action.right,top:action.top,bottom:action.bottom}};})()`);
-    assert.ok(compact.width>=580&&compact.width<=620,`Expected compact 600px progress width; got ${compact.width}`);assert.ok(compact.height>=60&&compact.height<=90,`Expected compact 76px progress height; got ${compact.height}`);assert.deepEqual(compact.children,['P','BUTTON']);assert.equal(compact.buttons,1);assert.equal(compact.label,'Cancel');assert.equal(compact.headings,0);assert.equal(compact.overflow,false);assert.ok(compact.status.right<compact.button.left);assert.ok(compact.button.right<=compact.width&&compact.button.top>=0&&compact.button.bottom<=compact.height);assert.ok(compact.status.top>=0&&compact.status.bottom<=compact.height);evidence.compactWindow=compact;
+    assert.ok(compact.width>=400&&compact.width<=440,`Expected compact 420px progress width; got ${compact.width}`);assert.ok(compact.height>=90&&compact.height<=110,`Expected compact 96px progress height; got ${compact.height}`);assert.equal(compact.buttons,1);assert.equal(compact.label,'Cancel');assert.equal(compact.headings,2);assert.equal(compact.overflow,false);assert.ok(compact.status.right<compact.button.left);assert.ok(compact.button.right<=compact.width&&compact.button.top>=0&&compact.button.bottom<=compact.height);assert.ok(compact.status.top>=0&&compact.status.bottom<=compact.height);evidence.compactWindow=compact;
     activationId=snapshot.progress.operationId;
     const pending=(await request('profile_activation_status',{activationId})).profileActivation;
     assert.equal(pending.activationId,activationId);assert.equal(pending.profileId,profileId);assert.ok(['preparing','activating'].includes(pending.phase));evidence.pending=pending;
@@ -175,7 +177,7 @@ test('real native progress covers physical activation, exact cancellation, recov
     await screenshot('activation-success.png');evidence.deactivationProgress=await cleanupProgress(`Deactivate ${profileName}`,'deactivating');await until(async()=>(await profileStatus()).owner===null,'Deactivate did not release the profile');await ready(original.publicationHash);
     evidence.checks.push('An explicit retry activates the physical panel, closes native progress on success and Deactivate restores the original panel');
     assert.ok(evidence.recoveryProgress,'Cold-download cancellation must exercise the actual Recover progress path.');
-    evidence.checks.push('Actual Deactivate and Recover each open the same compact native window with status text only and no button, report recorded cleanup steps, close the exact operation and restore the ordinary physical panel');
+    evidence.checks.push('Actual Deactivate and Recover each open a compact native notification with current status and no Cancel button, report recorded cleanup steps, close the exact operation and restore the ordinary physical panel');
   }catch(error){evidence.error=error.message;await checkpoint(`Acceptance failed: ${error.message}`);await screenshot('failure.png').catch(()=>{});if(child)await screenshot('failure-window.png',child).catch(()=>{});throw error;}
   finally{
     try{
@@ -188,6 +190,7 @@ test('real native progress covers physical activation, exact cancellation, recov
       if(probeId)await deleteProfile(probeId);if(profileId)await deleteProfile(profileId);
       if(fixture)await request('companion_prune',{hashes:[],panelIds:[fixture.panelId]});
       if(originalMode&&originalMode!=='manual')await request('profile_selection_mode',{mode:originalMode});
+      if(originalProgressSettings)await native.evaluate(`window.__TAURI_INTERNALS__.invoke('profile_progress_settings_save',{settings:${JSON.stringify(originalProgressSettings)}})`);
       evidence.finalStatus=await profileStatus();assert.equal(evidence.finalStatus.owner,null);assert.equal(evidence.finalStatus.fault,null);
     }catch(error){evidence.cleanupError=error.message;throw error;}
     finally{await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');child?.close();native.close();}

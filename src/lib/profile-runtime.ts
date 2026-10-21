@@ -14,7 +14,7 @@ export type NativeProfileStatus = {
 export type NativeProfileActivation = {
   activationId:string;profileId:string;
   phase:'preparing'|'activating'|'launching'|'deactivating'|'recovering'|'cancelling'|'succeeded'|'cancelled'|'failed';
-  step?:string;steps?:{step:string;message:string}[];origin?:string;profileName?:string;
+  step?:string;steps?:{step:string;message:string}[];origin?:string;profileName?:string;vehicleName?:string|null;
   cancelRequested:boolean;canCancel:boolean;message:string;
   companions:{instanceId:string;publicationHash:string;name:string;operation?:CompanionOperation|null}[];
   outcome:null|'previous-active'|'active'|'inactive'|'recovery-needed';error:string|null;
@@ -38,6 +38,7 @@ export function nativeProfileActivation(value:unknown,activationId:string):DeepR
   if(!object(value)||value.activationId!==activationId||!uuid(value.activationId)||!uuid(value.profileId)
     ||typeof value.phase!=='string'||!['preparing','activating','launching','deactivating','recovering','cancelling','succeeded','cancelled','failed'].includes(value.phase)
     ||typeof value.cancelRequested!=='boolean'||typeof value.canCancel!=='boolean'||!text(value.message)
+    ||!(value.vehicleName===undefined||value.vehicleName===null||text(value.vehicleName))
     ||!(value.outcome===null||typeof value.outcome==='string'&&['previous-active','active','inactive','recovery-needed'].includes(value.outcome))
     ||!(value.error===null||text(value.error))||!Array.isArray(value.companions)||value.companions.length>8
     ||!value.companions.every(item=>object(item)&&text(item.instanceId)&&item.instanceId.length<=128&&text(item.name)&&item.name.length<=1024

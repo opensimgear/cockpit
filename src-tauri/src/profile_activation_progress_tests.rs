@@ -5,6 +5,50 @@ const NEXT:&str="22222222-2222-4222-8222-222222222222";
 const PROFILE:&str="33333333-3333-4333-8333-333333333333";
 
 #[test]
+fn quick_vehicle_completion_is_visible_but_never_resurrected_after_a_newer_operation() {
+    let tracker=Tracker::default();tracker.begin(OP,PROFILE,||7).unwrap();
+    {
+        let mut entries=tracker.entries.lock().unwrap();let entry=entries.get_mut(OP).unwrap();
+        entry.origin="vehicle-switch".into();entry.cancellable=false;entry.phase="succeeded";entry.completed=Some(Instant::now());
+    }
+    assert_eq!(tracker.current().as_deref(),Some(OP));
+    {
+        tracker.entries.lock().unwrap().get_mut(OP).unwrap().completed=Some(Instant::now()-VEHICLE_SWITCH_CONFIRMATION);
+    }
+    assert!(tracker.current().is_none(),"A completed switch must eventually dismiss");
+    tracker.entries.lock().unwrap().get_mut(OP).unwrap().completed=Some(Instant::now());
+    tracker.begin(NEXT,PROFILE,||8).unwrap();assert_eq!(tracker.current().as_deref(),Some(NEXT));
+    {
+        let mut entries=tracker.entries.lock().unwrap();let entry=entries.get_mut(NEXT).unwrap();
+        entry.phase="succeeded";entry.completed=Some(Instant::now());
+    }
+    assert!(tracker.current().is_none(),"An older switch must not reappear after newer manual work");
+}
+
+#[test]
+fn noncancellable_switch_never_revokes_the_native_control_epoch() {
+    let tracker=Tracker::default();let epoch=AtomicU64::new(7);
+    tracker.begin(OP,PROFILE,||7).unwrap();
+    tracker.entries.lock().unwrap().get_mut(OP).unwrap().cancellable=false;
+    assert!(tracker.cancel(OP,&epoch).is_err());assert_eq!(epoch.load(Ordering::Acquire),7);
+    assert_eq!(tracker.entries.lock().unwrap()[OP].view(7,vec![])["canCancel"],false);
+}
+
+#[test]
+fn a_late_old_epoch_switch_cannot_mask_or_reopen_after_newer_manual_progress() {
+    let tracker=Tracker::default();tracker.begin(NEXT,PROFILE,||8).unwrap();
+    tracker.begin_with(OP,PROFILE,||7,|entry|{entry.origin="vehicle-switch".into();entry.cancellable=false;}).unwrap();
+    assert_eq!(tracker.current().as_deref(),Some(NEXT));
+    {
+        let mut entries=tracker.entries.lock().unwrap();let entry=entries.get_mut(NEXT).unwrap();
+        entry.phase="succeeded";entry.completed=Some(Instant::now());
+    }
+    assert!(tracker.current().is_none());
+    tracker.entries.lock().unwrap().get_mut(OP).unwrap().completed=Some(Instant::now());
+    assert!(tracker.current().is_none());
+}
+
+#[test]
 fn actual_steps_follow_exact_epoch_and_rebind_without_replaying_after_cancel() {
     let tracker=Tracker::default();let epoch=AtomicU64::new(7);
     tracker.begin(OP,PROFILE,||7).unwrap();

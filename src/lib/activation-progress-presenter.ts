@@ -2,6 +2,12 @@ import type { DeepReadonly } from './profiles';
 import type { NativeProfileActivation } from './profile-runtime';
 import { profileProgressCanCancel, type ActivationWindowProgress } from './profile-activation-window';
 
+function boundedLabel(value:string):string {
+  const encoder=new TextEncoder();let bytes=0,result='';
+  for(const character of value){const size=encoder.encode(character).length;if(bytes+size>118)break;bytes+=size;result+=character;}
+  return result;
+}
+
 /** The current native operation decides the copy. A completed companion download
  * must never obscure a later visibility, mappings or game-launch operation. */
 export function activationWindowProgress(progress:DeepReadonly<NativeProfileActivation>):ActivationWindowProgress {
@@ -17,8 +23,9 @@ export function activationWindowProgress(progress:DeepReadonly<NativeProfileActi
     });
     if(messages.length)message=messages.join('; ');
   }
-  const phase=progress.phase==='deactivating'?'deactivating':progress.phase==='recovering'?'recovering':progress.phase==='launching'?'launching':progress.phase==='cancelling'?'cancelling':progress.phase==='preparing'?'preparing':'activating';
-  return {operationId:progress.activationId,profileName:progress.profileName??progress.profileId,title:phase==='deactivating'?'Profile deactivation':phase==='recovering'?'Output recovery':'Profile activation',phase,message,details:[],canCancel:profileProgressCanCancel({phase,canCancel:progress.canCancel&&!progress.cancelRequested})};
+  const phase=progress.origin==='vehicle-switch'?'switching':progress.phase==='deactivating'?'deactivating':progress.phase==='recovering'?'recovering':progress.phase==='launching'?'launching':progress.phase==='cancelling'?'cancelling':progress.phase==='preparing'?'preparing':'activating';
+  const profileName=progress.profileName??progress.profileId;
+  return {operationId:progress.activationId,profileName:progress.origin==='vehicle-switch'&&progress.vehicleName?`${boundedLabel(profileName)} · ${boundedLabel(progress.vehicleName)}`:profileName,title:phase==='switching'?'Switching vehicle settings':phase==='deactivating'?'Profile deactivation':phase==='recovering'?'Output recovery':'Profile activation',phase,message,details:[],canCancel:profileProgressCanCancel({phase,canCancel:progress.canCancel&&!progress.cancelRequested})};
 }
 
 type WindowAdapter={show:(progress:ActivationWindowProgress,cancel:()=>Promise<boolean>)=>Promise<boolean>;update:(progress:ActivationWindowProgress)=>Promise<boolean>;close:(id:string)=>Promise<void>;dispose:()=>void};

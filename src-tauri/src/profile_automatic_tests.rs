@@ -247,7 +247,7 @@ fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
     // Saving without applying must not substitute a newer source into a
     // vehicle switch of the existing admitted run.
     let mut stored=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
-    let stored_revision=stored["revision"].clone();stored["vehicleTabs"].as_array_mut().unwrap().pop();
+    let stored_revision=stored["revision"].clone();stored["name"]=json!("Unapplied saved edit");stored["vehicleTabs"].as_array_mut().unwrap().pop();
     ok(manager,"profile_save",json!({"document":stored,"expectedRevision":stored_revision}));
     manager.games.set_test_vehicle("dcs",Some("F-16C_50"));
     manager.profile_session.lock().unwrap().poll().unwrap();
@@ -256,11 +256,19 @@ fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
     assert!(viper.generation>hornet.generation);assert_eq!(viper.profile_id,id);
     assert_eq!(viper.profile_revision,hornet.profile_revision);
     assert_eq!(active_nodes(&viper),["base-constant","viper-constant"]);
+    let switched=request(manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
+    assert_eq!(switched["origin"],"vehicle-switch");assert_eq!(switched["phase"],"succeeded");
+    assert_eq!(switched["profileName"],"Vehicle variants");assert_eq!(switched["vehicleName"],"Viper");
+    assert_eq!(switched["message"],"Viper settings applied.");assert_eq!(switched["canCancel"],false);
+    assert!(switched["steps"].as_array().unwrap().iter().any(|step|step["step"]=="switching-vehicle"));
     for _ in 0..3 {manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(viper.clone()));}
     manager.games.set_test_vehicle("dcs",None);
     manager.profile_session.lock().unwrap().poll().unwrap();manager.poll_vehicle_profile();
     let base=owner(manager).expect("Unknown vehicle keeps the Base profile active");assert!(base.generation>viper.generation);
     assert_eq!(active_nodes(&base),["base-constant"]);
+    let base_progress=request(manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
+    assert_eq!(base_progress["vehicleName"],"Base");assert_eq!(base_progress["phase"],"succeeded");
+    assert_ne!(base_progress["activationId"],switched["activationId"],"Each automatic handoff needs a fresh operation identity");
     manager.games.set_test_vehicle("dcs",Some("unconfigured-aircraft"));manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()));
     assert_eq!(manager.profile_automatic.config().0.mode,SelectionMode::Manual);
     ok(manager,"profile_stop",json!({}));manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.poll_vehicle_profile();assert!(owner(manager).is_none());
@@ -280,12 +288,53 @@ fn vehicle_switch_failure_is_visible_and_retries_after_backoff_without_replaying
     manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.profile_session.lock().unwrap().poll().unwrap();
     manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()));
     assert!(manager.profile_session.lock().unwrap().status().degradation.iter().any(|message|message.contains("Injected temporary")));
+    let failed=request(manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
+    assert_eq!(failed["origin"],"vehicle-switch");assert_eq!(failed["phase"],"failed");assert_eq!(failed["outcome"],"previous-active");
+    assert!(failed["error"].as_str().unwrap().contains("Injected temporary"));
     manager.profile_prepare=prepare;
     manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(base.clone()),"The immediate poll must honor retry backoff");
     manager.profile_automatic.state.lock().unwrap().last_vehicle_attempt.as_mut().unwrap().2=Instant::now()-Duration::from_secs(6);
     manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));manager.poll_vehicle_profile();
     assert!(owner(manager).unwrap().generation>base.generation);
+    let retried=request(manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
+    assert_eq!(retried["phase"],"succeeded");assert_ne!(retried["activationId"],failed["activationId"]);
     ok(manager,"profile_stop",json!({}));
+}
+
+#[test]
+fn vehicle_progress_is_visible_during_preparation_and_stop_fences_its_completion() {
+    let mut fixture=Fixture::with_vehicle_catalogues();fixture.process("dcs",1);fixture.wait_game("dcs");
+    let id=create(&fixture.manager,"Tracked aircraft");
+    let mut document=ok(&fixture.manager,"profile_get",json!({"id":id}))["document"].clone();
+    let revision=document["revision"].clone();document["eligibility"]["gameIds"]=json!(["dcs"]);
+    document["vehicleTabs"]=json!([{"id":"hornet","gameId":"dcs","vehicleId":"FA-18C_hornet","vehicleName":"Hornet","nodeIds":[]}]);
+    let revision=ok(&fixture.manager,"profile_save",json!({"document":document,"expectedRevision":revision}))["document"]["revision"].clone();
+    fixture.manager.games.set_test_vehicle("dcs",None);
+    ok(&fixture.manager,"profile_apply",json!({"id":id,"expectedRevision":revision,"gameId":"dcs"}));
+    fixture.manager.games.set_test_vehicle("dcs",Some("FA-18C_hornet"));
+    fixture.manager.profile_session.lock().unwrap().poll().unwrap();
+    let (entered,observed)=std::sync::mpsc::channel();let (release,released)=std::sync::mpsc::channel();
+    let released=Mutex::new(released);let prepare=fixture.manager.profile_prepare.clone();
+    fixture.manager.profile_prepare=Arc::new(move |candidate| {
+        let staged=prepare(candidate)?;entered.send(()).map_err(|_|"Vehicle progress observer closed.".to_owned())?;
+        released.lock().unwrap().recv_timeout(Duration::from_secs(5)).map_err(|_|"Vehicle preparation gate was not released.".to_owned())?;
+        Ok(staged)
+    });
+    let manager=Arc::new(fixture.manager);let applying=manager.clone();
+    let worker=std::thread::spawn(move ||applying.poll_vehicle_profile());
+    observed.recv_timeout(Duration::from_secs(5)).expect("Vehicle preparation did not enter its native gate");
+    let progress=request(&manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
+    assert_eq!(progress["origin"],"vehicle-switch");assert_eq!(progress["phase"],"preparing");
+    assert_eq!(progress["profileName"],"Tracked aircraft");assert_eq!(progress["vehicleName"],"Hornet");assert_eq!(progress["canCancel"],false);
+    let activation=progress["activationId"].as_str().unwrap();let epoch=manager.profile_admission_epoch.load(Ordering::Acquire);
+    assert_eq!(request(&manager,"profile_activation_cancel",json!({"activationId":activation}))["ok"],false);
+    assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch,"A notification cannot cancel automatic vehicle selection");
+    ok(&manager,"profile_stop",json!({}));release.send(()).unwrap();worker.join().unwrap();
+    let completed=request(&manager,"profile_activation_status",json!({"activationId":activation}))["state"]["profileActivation"].clone();
+    assert_eq!(completed["phase"],"failed");assert_eq!(completed["outcome"],"inactive");
+    assert!(completed["error"].as_str().unwrap().contains("newer native control"));assert!(owner(&manager).is_none());
+    assert!(request(&manager,"profile_activation_current",json!({}))["state"]["profileActivation"].is_null(),"The retired switch must not reopen after newer deactivation");
+    manager.shutdown();
 }
 
 #[test]

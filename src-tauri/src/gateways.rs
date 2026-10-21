@@ -580,6 +580,13 @@ impl GatewayManager {
         if command.starts_with("mapping_") || command.starts_with("dcs_") || command.starts_with("integration_") || command.starts_with("game_profile_") || matches!(command, "companion_feedback_routes" | "companion_game_capture" | "game_activate" | "game_launch" | "game_deactivate" | "controller_visibility_apply" | "controller_visibility_launch") {
             return self.error("Independent configuration and starts are retired. Use the unified applied profile graph; provider settings belong in game details. Retained ownership has explicit cleanup controls.", None);
         }
+        // Discovery retries are lower priority than an already pending profile,
+        // including its initial off-lock preparation before any owner exists.
+        // Explicit gateway controls retain the normal cancellation semantics.
+        if request["background"]==true && matches!(command,"connect"|"start")
+            && self.profile_pending.load(Ordering::Acquire)!=0 {
+            return self.error("Automatic gateway connection is waiting for pending profile activation to finish.",request["gatewayId"].as_str());
+        }
         // Background gateway reconnects can request an independent write while
         // an applied profile owns the device. Reject that forbidden operation
         // before it invalidates an unrelated Save or vehicle preparation. The
@@ -713,6 +720,9 @@ impl GatewayManager {
         let Some(command) = request["command"].as_str().map(str::to_owned) else {
             return self.error("Missing gateway command.", None);
         };
+        if matches!(command.as_str(),"connect"|"start") {
+            request.as_object_mut().unwrap().remove("background");
+        }
         if command.starts_with("mapping_") || command=="companion_feedback_routes" {
             return json!({"ok":false,"error":"Independent mapping authoring, starts and companion feedback routes are retired. Use unified Profiles; retained ownership cleanup remains explicit."});
         }
@@ -1497,6 +1507,49 @@ mod tests {
         assert!(status["state"]["profiles"]["session"]["appliedSnapshot"].is_null());
         assert_eq!(request(&manager, "profile_apply", None, json!({"id":document["id"]}))["ok"], false);
         assert!(provider.adapters.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn background_gateway_retries_yield_to_initial_preparation_but_explicit_connect_can_cancel_it() {
+        for background in [true,false] {
+            let (mut manager,provider)=setup();
+            let prepare=manager.profile_prepare.clone();
+            let (entered,saw_entered)=mpsc::channel();let (release,released)=mpsc::channel();
+            let released=Mutex::new(released);
+            Arc::get_mut(&mut manager).unwrap().profile_prepare=Arc::new(move|candidate| {
+                let staged=prepare(candidate)?;entered.send(()).unwrap();
+                released.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();Ok(staged)
+            });
+            let applying=manager.clone();
+            let apply=std::thread::spawn(move||request(&applying,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1})));
+            saw_entered.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(manager.profile_session.lock().unwrap().status().owner.is_none(),"The initial profile has no owner during read-only staging");
+            let epoch=manager.profile_admission_epoch.load(Ordering::Acquire);
+            if background {
+                for command in ["connect","start"] {
+                    let rejected=request(&manager,command,Some(FIRST),json!({"background":true}));
+                    assert_eq!(rejected["ok"],false,"{command}: {rejected}");
+                    assert!(rejected["error"].as_str().unwrap().contains("waiting for pending profile"));
+                    assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
+                    assert!(provider.adapters.lock().unwrap().is_empty(),"A deferred retry must not reach a device worker");
+                }
+            } else {
+                let connected=request(&manager,"connect",Some(FIRST),json!({"background":false}));
+                assert_eq!(connected["ok"],true,"{connected}");
+                assert!(manager.profile_admission_epoch.load(Ordering::Acquire)>epoch,"Explicit Connect retains last-control-wins authority");
+            }
+            release.send(()).unwrap();let completed=apply.join().unwrap();
+            assert_eq!(completed["ok"],background,"{completed}");
+            if background {
+                assert!(manager.profile_session.lock().unwrap().status().owner.is_some());
+                assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
+                assert_eq!(request(&manager,"connect",Some(FIRST),json!({"background":true}))["ok"],true,"Idle discovery retries retain their normal behavior");
+            } else {
+                assert!(completed["error"].as_str().unwrap().contains("cancelled"));
+                assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
+            }
+            let adapters=provider.adapters.lock().unwrap();assert_eq!(adapters.len(),1);
+            assert!(adapters[0].calls.lock().unwrap().iter().all(|call|call.get("background").is_none()),"Retry priority metadata belongs to the manager, not firmware");
+        }
     }
     #[test]
     fn slow_profile_preflight_keeps_status_and_stop_responsive_without_late_rearm() {

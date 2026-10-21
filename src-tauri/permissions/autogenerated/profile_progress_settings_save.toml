@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-profile-progress-settings-save"
+description = "Enables the profile_progress_settings_save command without any pre-configured scope."
+commands.allow = ["profile_progress_settings_save"]
+
+[[permission]]
+identifier = "deny-profile-progress-settings-save"
+description = "Denies the profile_progress_settings_save command without any pre-configured scope."
+commands.deny = ["profile_progress_settings_save"]

@@ -68,6 +68,40 @@ test('explicit disconnect suspends automatic reconnect for only that gateway unt
   await f.workspace.retry(first); assert.equal(f.entry(first).autoConnectPaused,false); assert.equal(f.entry(first).state.connected,true);
 });
 
+test('automatic connect and legacy start yield to profile preparation while explicit retry stays foreground', async () => {
+  const f = fixture(), port = { path: '/dev/cu.usbmodemDebug', serialNumber: 'OSG-PICO-0123456789ABCDEF', backend: 'pico', vendorId: 'cafe', productId: '4010' };
+  const id = gatewayIdentity(port);
+  f.ports = [port]; f.states.set(id, state(port));
+  await f.workspace.refresh();
+  assert.deepEqual(f.calls.filter(call => ['connect', 'start'].includes(call.command)).map(call => [call.command, call.background]), [['connect', true], ['start', true]]);
+  f.calls.length = 0;
+  await f.workspace.refresh();
+  assert.ok(f.calls.some(call => call.command === 'status'));
+  assert.ok(f.calls.every(call => call.background === undefined), 'Read-only polling does not need control admission metadata.');
+  await f.workspace.disconnect(id); f.calls.length = 0;
+  await f.workspace.retry(id);
+  assert.deepEqual(f.calls.filter(call => ['connect', 'start'].includes(call.command)).map(call => [call.command, call.background]), [['connect', undefined], ['start', undefined]]);
+  await f.workspace.request(id, { command: 'connect', backend: 'pico', port: port.path });
+  assert.equal(f.calls.at(-1).background, undefined, 'An explicit Connect request remains foreground.');
+});
+
+test('profile preparation can defer automatic connection without preventing a later explicit retry', async () => {
+  const f = fixture(); f.ports = [firstPort];
+  f.intercept = request => {
+    if (request.command === 'connect' && request.background) throw new Error('Profile activation is preparing; automatic connection will retry.');
+  };
+  await f.workspace.refresh();
+  assert.equal(f.entry(first).state, null);
+  assert.match(f.entry(first).error, /Profile activation is preparing/);
+  await f.workspace.refresh();
+  assert.equal(f.calls.filter(call => call.command === 'connect').length, 1, 'Deferred automatic connections respect normal retry backoff.');
+  await f.workspace.retry(first);
+  assert.equal(f.entry(first).state.connected, true);
+  assert.equal(f.entry(first).error, '');
+  assert.equal(f.calls.at(-1).command, 'connect');
+  assert.equal(f.calls.at(-1).background, undefined);
+});
+
 test('background test readbacks remain gateway-ordered without blocking the setup UI with busy state', async () => {
   const f = fixture(); await f.workspace.refresh();
   const waiting = deferred();
