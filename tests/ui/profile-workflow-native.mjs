@@ -44,7 +44,8 @@ test('native cockpit saves with notifications and confirms exclusive profile act
   async function healthyList(){
     await expect(runtime).not.toBeVisible();
     await expect(pageActions.getByRole('switch',{name:'Automatic profile selection',exact:true})).toBeVisible();
-    await expect(pageActions.getByRole('button',{name:'Debug',exact:true}).locator('svg')).toHaveCount(1);
+    await expect(pageActions.getByRole('button',{name:'Debug',exact:true})).toHaveCount(0);
+    await expect(navigation.getByRole('button',{name:'Debug',exact:true}).locator('svg')).toHaveCount(1);
   }
   async function activeList(value){
     await healthyList();
@@ -162,15 +163,18 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(page.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
     await expect(page.getByRole('button',{name:'Clear pause',exact:true})).toHaveCount(0);
     assert.ok(!/\brevision\b/i.test(await page.locator('main').innerText()),'Normal profile editing must not expose revision numbers.');
-    await page.getByRole('button',{name:'Debug',exact:true}).click();
+    await navigation.getByRole('button',{name:'Debug',exact:true}).click();
     const debug=page.getByRole('region',{name:'Profile debug'});await expect(debug).toBeVisible();
+    await debug.getByRole('tab',{name:'Runtime & recovery',exact:true}).click();
     await expect(debug.getByRole('button',{name:'Deactivate current profile',exact:true})).toBeEnabled();
     await expect(debug.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
+    await debug.getByRole('tab',{name:'Profile inspection',exact:true}).click();
+    await debug.getByRole('combobox',{name:'Debug profile',exact:true}).selectOption(first.id);
     await debug.getByRole('button',{name:'Inspect draft preflight',exact:true}).click();
     await expect(debug.getByText('Readiness:',{exact:false})).toBeVisible();
     await expect(debug.getByRole('region',{name:'Applied profile port inspection'})).toBeVisible();
     await debug.screenshot({path:resolve(artifacts,'profile-debug.png')});
-    await debug.getByRole('button',{name:'← Back to profile',exact:true}).click();
+    await navigation.getByRole('button',{name:'Profiles',exact:true}).click();
     await expect(page.getByRole('heading',{name:updated,exact:true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Native graph preflight'})).toHaveCount(0);
     await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
@@ -208,7 +212,8 @@ test('native cockpit saves with notifications and confirms exclusive profile act
       'Switching to the empty profile must release the former desktop output session.');
     await noSelectedBadge();
     await page.screenshot({path:resolve(artifacts,'profile-switch.png'),fullPage:true});
-    await page.getByRole('button',{name:'Debug',exact:true}).click();
+    await navigation.getByRole('button',{name:'Debug',exact:true}).click();
+    await debug.getByRole('tab',{name:'Runtime & recovery',exact:true}).click();
     await expect(debug.getByRole('button',{name:'Pause',exact:true})).toHaveCount(0);
     await debug.getByRole('button',{name:'Deactivate current profile',exact:true}).click();
     await expect.poll(async()=>(await status()).owner).toBeNull();
