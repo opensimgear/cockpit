@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import Icon from './Icon.svelte';
 
   type PortOption = { value: string; label: string; description?: string; searchText?: string };
   let {
@@ -126,7 +127,7 @@
       oninput={input}
       onkeydown={keydown}
     />
-    <span class:expanded={open} class="chevron" aria-hidden="true">⌄</span>
+    <span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span>
   </div>
   {#if open && !disabled}
     <div class="port-dropdown">
@@ -163,11 +164,10 @@
   label { color: var(--muted); font-size: 10px; }
   .input-wrap { position: relative; min-width: 0; }
   input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 29px 9px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--text); font: inherit; font-size: 11px; text-overflow: ellipsis; }
-  input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  input:focus, input:focus-visible { outline: none; outline-offset: 0; border-color: var(--accent); }
   input:disabled { opacity: .55; cursor: not-allowed; }
   input::placeholder { color: var(--muted); }
-  .chevron { position: absolute; right: 11px; top: 50%; transform: translateY(-62%); color: var(--muted); pointer-events: none; font-size: 16px; line-height: 1; }
-  .chevron.expanded { transform: translateY(-30%) rotate(180deg); }
+  .chevron { position: absolute; right: 8px; top: 50%; display: flex; transform: translateY(-50%) rotate(90deg); color: var(--text); pointer-events: none; }
   .port-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 8px 22px #0004; overflow: hidden; }
   .port-options { max-height: min(280px, 35vh); overflow-y: auto; overscroll-behavior: contain; }
   .port-options button { display: grid; gap: 3px; box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); color: var(--text); background: var(--surface); text-align: left; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
