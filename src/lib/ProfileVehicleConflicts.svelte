@@ -19,14 +19,13 @@
   }
 </script>
 
-{#if active}
-  <section class="vehicle-conflicts" class:has-conflicts={previewState.diagnostics.length>0} aria-label="Vehicle configuration conflicts" aria-busy={previewState.status==='pending'||previewState.status==='checking'}>
-    <div class="conflict-heading"><strong>{scope} conflicts</strong><span role="status">{#if previewState.status==='pending'||previewState.status==='checking'}Checking conflicts…{:else if previewState.status==='error'}Conflict check unavailable{:else if previewState.status==='ready'}{previewState.diagnostics.length?`${previewState.diagnostics.length} ${previewState.diagnostics.length===1?'conflict':'conflicts'} found`:'No conflicts found'}{:else}Waiting to check conflicts…{/if}</span></div>
-    {#if previewState.status==='error'}<p class="conflict-error" role="alert">{previewState.error}</p>{/if}
-    {#if previewState.diagnostics.length}<ul>{#each previewState.diagnostics as diagnostic,index (`${diagnostic.code}/${index}`)}{@const endpoint=location(diagnostic.location.nodeId,diagnostic.location.resourceId,diagnostic.location.portId)}<li><p>{diagnostic.message}</p>{#if endpoint}<small>{endpoint}</small>{/if}</li>{/each}</ul>{/if}
+{#if active&&previewState.diagnostics.length>0}
+  <section class="vehicle-conflicts" aria-label="Vehicle configuration conflicts">
+    <div class="conflict-heading"><strong>{scope} conflicts</strong><span role="status">{previewState.diagnostics.length} {previewState.diagnostics.length===1?'conflict':'conflicts'} found</span></div>
+    <ul>{#each previewState.diagnostics as diagnostic,index (`${diagnostic.code}/${index}`)}{@const endpoint=location(diagnostic.location.nodeId,diagnostic.location.resourceId,diagnostic.location.portId)}<li><p>{diagnostic.message}</p>{#if endpoint}<small>{endpoint}</small>{/if}</li>{/each}</ul>
   </section>
 {/if}
 
 <style>
-  .vehicle-conflicts{margin:0 0 12px;padding:12px 14px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:10px;color:var(--muted)}.conflict-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.conflict-heading strong{font-weight:500;color:var(--soft)}.has-conflicts{border-color:#ad875440}.has-conflicts .conflict-heading span,.conflict-error{color:#d3a078}.vehicle-conflicts ul{margin:12px 0 0;padding-left:18px;display:grid;gap:9px}.vehicle-conflicts p{margin:0;line-height:1.7}.vehicle-conflicts small{font-size:9px;color:var(--soft)}.conflict-error{margin-top:10px!important}
+  .vehicle-conflicts{margin:0 0 12px;padding:12px 14px;border:1px solid #ad875440;border-radius:6px;background:var(--surface);font-size:10px;color:var(--muted)}.conflict-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.conflict-heading strong{font-weight:500;color:var(--soft)}.conflict-heading span{color:#d3a078}.vehicle-conflicts ul{margin:12px 0 0;padding-left:18px;display:grid;gap:9px}.vehicle-conflicts p{margin:0;line-height:1.7}.vehicle-conflicts small{font-size:9px;color:var(--soft)}
 </style>

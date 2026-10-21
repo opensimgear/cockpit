@@ -62,7 +62,7 @@ test('compiler and paging errors produce a clear unavailable result and can refr
  h.controller.update(value.document,value.assignments,'missing');assert.match(h.controller.state.error,/existing vehicle/);
 });
 
-test('vehicle conflict panel renders scoped results, clean checks and failures without native calls during render',async()=>{
+test('vehicle conflict panel renders only actual scoped conflicts without native calls during render',async()=>{
  const source=await readFile(new URL('./ProfileVehicleConflicts.svelte',import.meta.url),'utf8');
  const {js}=compile(source,{filename:'ProfileVehicleConflicts.svelte',generate:'server'}),exports={},value=fixture();
  let current={status:'ready',diagnostics:[diagnostic('duplicatePhysicalSource','Same physical controller is assigned twice')],error:''};
@@ -70,6 +70,10 @@ test('vehicle conflict panel renders scoped results, clean checks and failures w
  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name==='./profile-vehicle-conflicts')return{ProfileVehicleConflictController:Preview};throw Error(name);}});
  const compiler={compile(){throw Error('Rendering cannot compile.');},inspect(){throw Error('Rendering cannot inspect.');}},props={...value,activeVehicleTabId:'a',compiler};
  let body=render(exports.default,{props}).body;assert.ok(body.includes('Base + F/A-18C conflicts'));assert.ok(body.includes('Same physical controller is assigned twice'));assert.ok(body.includes('base · button'));assert.ok(!body.includes('viper'));
- current={status:'ready',diagnostics:[],error:''};body=render(exports.default,{props}).body;assert.ok(body.includes('No conflicts found'));
- current={status:'error',diagnostics:[],error:'Native service disconnected'};body=render(exports.default,{props}).body;assert.ok(body.includes('Conflict check unavailable'));assert.ok(body.includes('Native service disconnected'));assert.ok(!render(exports.default,{props:{...props,active:false}}).body.includes('Vehicle configuration conflicts'));
+ assert.ok(body.includes('1 conflict found'));assert.ok(!render(exports.default,{props:{...props,active:false}}).body.includes('Vehicle configuration conflicts'));
+ for(const status of ['idle','pending','checking','ready','error']){
+  current={status,diagnostics:[],error:status==='error'?'Native service disconnected':''};body=render(exports.default,{props}).body;
+  assert.ok(!body.includes('Vehicle configuration conflicts'),`${status} without conflicts must leave no section.`);
+  assert.ok(!body.includes('conflict-heading'));assert.ok(!body.includes('Native service disconnected'));
+ }
 });
