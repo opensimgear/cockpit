@@ -36,6 +36,8 @@ jobs:
         run: |
           node scripts/widget-source-fixtures.mjs --check
           python3 apps/companion-esp32/test/widget_source.py
+          node scripts/widget-state-fixtures.mjs --check
+          python3 apps/companion-esp32/test/widget_state.py
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-portable-evidence
@@ -50,6 +52,8 @@ jobs:
             .research/esp32-render-package-native/package-test.log
             .research/esp32-widget-source-native/coverage.json
             .research/esp32-widget-source-native/widget-source-test.log
+            .research/esp32-widget-state-native/coverage.json
+            .research/esp32-widget-state-native/widget-state-test.log
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json
             .research/esp32-network/*-test.log

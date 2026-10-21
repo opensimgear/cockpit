@@ -161,6 +161,11 @@ The actual dev Cockpit authoring/persistence check passes again with evidence at
 `.research/widgets-native-ui/1792625493148/`. Font commit `0ae2fdb` now passes
 all six ESP32 jobs, including both physical-board cross-builds, in
 [CI run 39692895632](https://github.com/opensimgear/cockpit/actions/runs/39692895632).
+Pure device state/enable-gate/indicator/gauge projection also passes 1,274
+comparisons with the browser/Android shared model. ASan/UBSan and clock-boundary
+checks pass, with 100% line/function and 88.97% branch coverage. These functions
+do not own input or replace session admission; live sample mapping remains to be
+connected.
 
 W2 allows bounded runtime construction from the portable source. Extend the
 existing authenticated canonical-document delivery and immutable candidate
