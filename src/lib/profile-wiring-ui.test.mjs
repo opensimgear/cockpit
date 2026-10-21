@@ -24,7 +24,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'utf8');
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({beginWire,wireClick,move,finish,keyboard,lostPointer,choose,blockPorts,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,selectedId,suppressWireClick};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,wireClick,move,finish,keyboard,lostPointer,choose,blockPorts,setStage(value){stage=value;},setView(value){view=value;},get state(){return{wire,drag,view,selectedId,suppressWireClick};}});</script>`);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
@@ -134,18 +134,33 @@ test('pointer cancellation, Escape and lost capture never open the connection ch
   assert.equal(h.handlers.state.wire, null);assert.equal(h.captured.size, 0);
 });
 
-test('clicks and empty-canvas releases open the matching side once and retain keyboard access', () => {
+test('handle clicks retain keyboard access while empty-canvas clicks and moved wire releases cancel the chooser', () => {
   for (const direction of ['output', 'input']) {
-    for (const moved of [false, true]) {
-      const h = harness(), origin = direction === 'output' ? 'source' : 'target', callback = direction === 'output' ? 'from' : 'to';
-      h.handlers.beginWire(pointer(), origin, direction);if (moved) h.handlers.move(pointer(300, 100));
-      h.handlers.finish(pointer(300, 100));h.handlers.wireClick(click(), origin, direction);
-      assert.deepEqual(h.calls, [[callback, origin]]);
-      h.handlers.wireClick(click(0), origin, direction);
-      assert.deepEqual(h.calls, [[callback, origin], [callback, origin]], 'Keyboard activation remains available after a wire gesture.');
-      h.handlers.choose('empty');assert.deepEqual(h.calls.at(-1), ['close']);assert.equal(h.handlers.state.selectedId, 'empty');
-    }
+    const origin = direction === 'output' ? 'source' : 'target', callback = direction === 'output' ? 'from' : 'to', h = harness();
+    h.handlers.beginWire(pointer(), origin, direction);h.handlers.finish(pointer());h.handlers.wireClick(click(), origin, direction);
+    assert.deepEqual(h.calls, [[callback, origin]]);
+    h.handlers.wireClick(click(0), origin, direction);
+    assert.deepEqual(h.calls, [[callback, origin], [callback, origin]], 'Keyboard activation remains available after a wire gesture.');
+    h.handlers.choose('empty');assert.deepEqual(h.calls.at(-1), ['close']);assert.equal(h.handlers.state.selectedId, 'empty');
+
+    const cancelled = harness({ selectedId: origin, connectionOpen: true });
+    cancelled.handlers.beginWire(pointer(), origin, direction);cancelled.handlers.move(pointer(300, 100));cancelled.handlers.finish(pointer(300, 100));
+    cancelled.handlers.wireClick(click(), origin, direction);
+    assert.deepEqual(cancelled.calls, [['close']], 'A moved wire dropped on the background cancels instead of opening a single-ended chooser.');
+    assert.equal(cancelled.handlers.state.selectedId, '');assert.equal(cancelled.handlers.state.wire, null);assert.equal(cancelled.captured.size, 0);
+    assert.deepEqual(cancelled.edits, []);assert.deepEqual(cancelled.document, cancelled.before);
   }
+  const h = harness({ selectedId: 'source', connectionOpen: true });
+  h.handlers.begin(pointer(300, 100, { target: element() }));h.handlers.finish(pointer(300, 100));
+  assert.deepEqual(h.calls, [['close']]);assert.equal(h.handlers.state.selectedId, '');assert.equal(h.handlers.state.drag, null);assert.equal(h.captured.size, 0);
+  assert.deepEqual(h.edits, []);assert.deepEqual(h.document, h.before, 'Dismissing the chooser does not edit the profile.');
+
+  const pan = harness({ selectedId: 'source', connectionOpen: true });
+  pan.handlers.begin(pointer(300, 100, { target: element() }));pan.handlers.move(pointer(350, 120));pan.handlers.finish(pointer(350, 120));
+  assert.deepEqual(plain(pan.handlers.state.view), { x: 50, y: 20, zoom: 1 });assert.equal(pan.captured.size, 0);
+  assert.deepEqual(pan.calls, [], 'Background panning does not dismiss the chooser.');
+  assert.equal(pan.edits.length, 1, 'Background panning still persists its viewport.');
+  assert.deepEqual(plain(pan.edits[0][0].bindings), pan.before.bindings);assert.deepEqual(plain(pan.edits[0][0].resources), pan.before.resources);
 });
 
 test('blocks show discovered input and output counts while loading/error handles and read-only state remain clear', () => {

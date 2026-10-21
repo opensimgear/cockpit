@@ -171,11 +171,12 @@
         const target=handle?.disabled?undefined:pending.direction==='output'?handle?.dataset.connectionTarget:handle?.dataset.connectionSource;
         selectedId=pending.nodeId;
         if(target&&target!==pending.nodeId){if(pending.direction==='output')connectBlocks?.(pending.nodeId,target);else connectBlocks?.(target,pending.nodeId);}
-        else if(!pending.moved||(element&&stage.contains(element)&&!element.closest('[data-node-id],.canvas-inspector,.canvas-connection-panel'))){if(pending.direction==='output')connectionFrom?.(pending.nodeId);else connectionTo?.(pending.nodeId);}
+        else if(!pending.moved){if(pending.direction==='output')connectionFrom?.(pending.nodeId);else connectionTo?.(pending.nodeId);}
+        else if(element&&stage.contains(element)&&!element.closest('[data-node-id],.canvas-inspector,.canvas-connection-panel')){closeConnectionPanel?.();selectedId='';}
       }
       if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);return;
     }
-    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else selectedId='';}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
+    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeConnectionPanel?.();selectedId='';}}else if(!drag.id)persist();}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
   }
   function wheel(event:WheelEvent) { event.preventDefault();if(event.ctrlKey||event.metaKey){const rect=stage.getBoundingClientRect();zoom(event.deltaY<0?1.1:1/1.1,{x:event.clientX-rect.left,y:event.clientY-rect.top});}else{view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});persist();} }
   function keyboard(event:KeyboardEvent) {

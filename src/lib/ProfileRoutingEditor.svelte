@@ -90,7 +90,7 @@
   function source(id:string){fromNode=id;fromPort='';toNode='';toPort='';editingRoute='';routeOpen=true;message='';focusRoute();}
   function destination(id:string){fromNode='';fromPort='';toNode=id;toPort='';editingRoute='';routeOpen=true;message='';focusRoute();}
   function connectBlocks(from:string,to:string){fromNode=from;toNode=to;fromPort='';toPort='';editingRoute='';routeOpen=true;message='';focusRoute();}
-  function closeRoute(){if(!routeOpen)return;routeOpen=false;selectedId='';void tick().then(()=>routingElement?.querySelector<HTMLElement>('[aria-label="Profile canvas"]')?.focus());}
+  function closeRoute(){if(!routeOpen)return;routeOpen=false;fromNode='';fromPort='';toNode='';toPort='';sourceSearch='';targetSearch='';editingRoute='';connectionRoute='';pendingConnection=false;highlighted=[];message='';selectedId='';preset='identity';void tick().then(()=>routingElement?.querySelector<HTMLElement>('[aria-label="Profile canvas"]')?.focus());}
   function routeKeyboard(event:KeyboardEvent){if(routeOpen&&event.key==='Escape'&&!connectionBinding){event.preventDefault();event.stopPropagation();closeRoute();}}
   function selectedEndpoints(){const from=sourcePorts.find(port=>port.key===fromPort),to=targetPorts.find(port=>port.key===toPort);if(!from||!to)throw new Error('Select an output and an input.');return[{nodeId:fromNode,port:from},{nodeId:toNode,port:to}] as const;}
   function prepareConnection(){const[from,to]=selectedEndpoints();return profilePrepareDiscoveredPorts(graph,from,to);}

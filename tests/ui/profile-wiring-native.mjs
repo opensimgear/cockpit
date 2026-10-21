@@ -79,6 +79,7 @@ test('native dropped blocks discover every port and wire in either drag directio
   const stageVisible = async () => { await native.evaluate(`document.querySelector('.canvas-stage').scrollIntoView({block:'start'});window.scrollBy(0,-150)`); await sleep(150); return snapshot(); };
   const mouse = (type, location, extra = {}) => native.send('Input.dispatchMouseEvent', { type, ...location, ...extra });
   const center = selector => until(() => native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});if(!element||element.disabled)return null;const r=element.getBoundingClientRect(),x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);if(!r.width||!r.height||r.left<0||r.top<0||r.right>innerWidth||r.bottom>innerHeight||!element.contains(document.elementFromPoint(x,y)))return null;return{x,y};})()`), `Visible mouse target unavailable: ${selector}`);
+  const background = () => until(() => native.evaluate(`(()=>{const stage=document.querySelector('.canvas-stage'),r=stage.getBoundingClientRect();for(const fy of [.15,.3,.8,.6])for(const fx of [.1,.5,.85]){const x=Math.round(r.left+r.width*fx),y=Math.round(r.top+r.height*fy),hit=document.elementFromPoint(x,y);if(x>0&&y>0&&x<innerWidth&&y<innerHeight&&hit&&stage.contains(hit)&&!hit.closest('[data-node-id],.signal-edge-hit,.canvas-inspector,.canvas-connection-panel,button,input,select'))return{x,y};}return null;})()`), 'Visible blank canvas is unavailable');
   const dragWire = async (source, target) => {
     await stageVisible(); const from = await center(source), to = await center(target);
     await mouse('mouseMoved', from); await mouse('mousePressed', from, { button: 'left', buttons: 1, clickCount: 1 });
@@ -103,6 +104,7 @@ test('native dropped blocks discover every port and wire in either drag directio
   const capture = async filename => { const result = await native.send('Page.captureScreenshot', { format: 'png' }); await writeFile(resolve(artifacts, filename), Buffer.from(result.data, 'base64')); };
   native.on('Input.dragIntercepted', event => { intercepted = event; });
   try {
+    await native.send('Page.reload', { ignoreCache: true });
     await until(() => native.evaluate('typeof window.__TAURI_INTERNALS__?.invoke === "function"'), 'Native cockpit IPC did not finish starting');
     assert.equal(await native.evaluate('document.visibilityState'), 'visible');
     await native.send('Input.cancelDragging'); await mouse('mouseReleased', { x: 10, y: 10 }, { button: 'left', buttons: 0 });
@@ -161,11 +163,22 @@ test('native dropped blocks discover every port and wire in either drag directio
     assert.equal(await native.evaluate(`document.querySelectorAll('.canvas-connection-panel select[aria-label="Exact source output"],.canvas-connection-panel select[aria-label="Exact destination input / action"]').length`), 0, 'Port search and selection share one combobox per direction.');
     assert.equal(await native.evaluate(`!!document.querySelector('.canvas-connection-panel button')&&[...document.querySelectorAll('.canvas-connection-panel button')].some(button=>button.textContent.trim()==='Use this exact port')`), false);
     await capture('output-to-input-side-panel.png');
-    await click('Cancel', '.canvas-connection-panel');
-    await until(async () => !(await snapshot()).panel, 'Cancelling did not close the side panel');
+    const cancelPoint = await background();
+    await mouse('mouseMoved', cancelPoint); await mouse('mousePressed', cancelPoint, { button: 'left', buttons: 1, clickCount: 1 }); await mouse('mouseReleased', cancelPoint, { button: 'left', buttons: 0, clickCount: 1 });
+    await until(async () => !(await snapshot()).panel, 'Clicking blank canvas did not cancel the connection panel');
+    assert.equal(await native.evaluate(`document.querySelectorAll('.pending-wire,.resource-block.selected').length`), 0);
     assert.equal((await snapshot()).edges, 0); assert.equal(await saveDisabled(), true);
     assert.deepEqual((await saved()).document, baseline.document); assert.deepEqual((await saved()).assignments, baseline.assignments);
-    checks.push('Output-to-input mouse drag opens an on-canvas side panel with discovered choices; Cancel leaves the saved profile and undo history clean');
+    checks.push('Output-to-input mouse drag opens an on-canvas side panel; clicking blank canvas cancels it without changing the graph or undo history');
+
+    await stageVisible();
+    const wireStart = await center(`[data-connection-source="${resourceId}"]`), wireEnd = await background();
+    await mouse('mouseMoved', wireStart); await mouse('mousePressed', wireStart, { button: 'left', buttons: 1, clickCount: 1 });
+    for (const fraction of [.2,.5,.8,1]) await mouse('mouseMoved', point(wireStart.x+(wireEnd.x-wireStart.x)*fraction,wireStart.y+(wireEnd.y-wireStart.y)*fraction), { button: 'left', buttons: 1 });
+    await mouse('mouseReleased', wireEnd, { button: 'left', buttons: 0, clickCount: 1 });
+    assert.equal((await snapshot()).panel, null); assert.equal(await saveDisabled(), true);
+    assert.equal(await native.evaluate(`document.querySelectorAll('.pending-wire,.resource-block.selected').length`), 0);
+    checks.push('Releasing an unfinished wire on blank canvas cancels the operation and leaves no pending selection or graph edit');
 
     state = await dragWire(`[data-connection-target="${virtual.id}"]`, `[data-connection-source="${resourceId}"]`);
     assert.equal(state.panel.source, resourceId); assert.equal(state.panel.target, virtual.id);
