@@ -26,7 +26,7 @@ block or vehicle tabs. Keyboard/mouse **Context scoped** output follows the
 verified foreground game; focus or process loss releases its contributions.
 Manual profile mode and automatic matching/conflict behavior are unchanged.
 
-Use **Edit game** to rename an entry or move its executable. Its identity and
+Use **Edit** to rename an entry or move its executable. Its identity and
 saved profile references stay stable. **Remove** unregisters a custom game and
 keeps referencing profiles readable as unavailable, so their context can be
 reassigned. Deactivate the affected profile before changing its registration;

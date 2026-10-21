@@ -110,7 +110,7 @@
       <div class={['game-detail-mark', { racing: selectedArt!.category !== 'Flight' }]}><Icon name={selectedArt!.category === 'Flight' ? 'command' : selectedArt!.category === 'Custom' ? 'gamepad' : 'wheel'} size={32} /></div>
       <div><p class="game-kicker">{selected.categoryId?categories[selected.categoryId]:selectedArt!.category==='Custom'?'Game':`${selectedArt!.category} simulation`}</p><h2>{selected.name}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selectedArt!.telemetryLabel}</p></div>
       <div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}>
-        {#snippet actions()}{#if isCustomGameId(selected.id)}<span class="custom-badge">Custom</span><button class="secondary-button" disabled={locked} onclick={()=>customDialog='edit'}>Edit game</button><button class="secondary-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/if}{/snippet}
+        {#snippet actions()}{#if isCustomGameId(selected.id)}<span class="custom-badge">Custom</span><button class="secondary-button" disabled={locked} onclick={()=>customDialog='edit'}><Icon name="pencil" size={14}/>Edit</button><button class="secondary-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/if}{/snippet}
       </GameProfileLaunch>{/key}</div>
     </div>
 

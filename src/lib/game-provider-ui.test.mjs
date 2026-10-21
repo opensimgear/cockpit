@@ -66,7 +66,7 @@ test('successful custom and builtin installation saves adopt the exact canonical
 test('custom games expose matching profiles, metadata and background editing without telemetry setup or vehicle controls',()=>{
   const id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Custom game',provider:null,custom:true,installed:false,launchSupported:false};
   const html=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,request:noRequest}}).body;
-  for(const label of ['Edit game','Remove','Matching profiles','Tile background','Reset to default','Bindings and profile activation','Game executable path'])assert.ok(html.includes(label),label);
+  for(const label of ['Edit','Remove','Matching profiles','Tile background','Reset to default','Bindings and profile activation','Game executable path'])assert.ok(html.includes(label),label);
   for(const absent of ['Integration setup','Install integration','Native telemetry not verified','Current aircraft','Current car'])assert.ok(!html.includes(absent),absent);
   const list=render(GamesPanel,{props:{status:state(g),busy:false,request:noRequest}}).body;
   for(const label of ['Add game','Import from library','Custom game','Choose executable'])assert.ok(list.includes(label),label);

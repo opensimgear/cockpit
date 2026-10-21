@@ -80,7 +80,7 @@ test('custom games, backgrounds and installed library imports use the actual nat
     assert.deepEqual(document.eligibility.gameIds,[gameId]);assert.equal(document.resources.filter(resource=>resource.kind==='game').length,0);
     for(const [newName,path] of [[`${name} renamed`,fixtureB],[name,fixtureA]]){
       await uiDetails((await games()).catalogue.find(game=>game.id===gameId).name);
-      await page.getByRole('button',{name:'Edit game',exact:true}).click();
+      await page.getByRole('button',{name:'Edit',exact:true}).click();
       const edit=page.getByRole('dialog',{name:'Edit game',exact:true});await edit.getByLabel('Custom game name',{exact:true}).fill(newName);await edit.getByLabel('Custom game executable',{exact:true}).fill(path);await edit.getByRole('button',{name:'Save game',exact:true}).click();
       await expect(edit).toHaveCount(0);await expect(page.getByRole('heading',{name:newName,exact:true})).toBeVisible();
       assert.equal((await games()).catalogue.find(game=>game.name===newName)?.id,gameId);
