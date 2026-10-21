@@ -308,7 +308,7 @@ test('profile editor keeps one global history group with Save and game context a
  assert.ok(actions>=0&&actions<history&&history<runtimePosition);assert.ok(history<body.indexOf('Save profile'));assert.ok(history<body.indexOf('aria-label="Search profile blocks"'));assert.deepEqual(h.calls.map(call=>call[0]),['get']);
 });
 
-test('vehicle selectors and their own remove controls occupy physical tabs immediately above the content region',async()=>{
+test('vehicle tab buttons keep removal inside the tab and the selected vehicle picker starts the content',async()=>{
  const h=await vehicleWorkspace(),before=plain(h.store.state.editor),calls=plain(h.calls);
  for(const activeId of ['', 'cup']){
   const body=await vehicleWorkspaceHtml(h,{activeId}),group=body.match(/<div\b[^>]*aria-label="Profile vehicle tabs"[^>]*>/)?.[0];assert.ok(group);assert.match(group,/role="group"/);assert.doesNotMatch(body,/role="(?:tablist|tab|tabpanel)"/);
@@ -316,30 +316,33 @@ test('vehicle selectors and their own remove controls occupy physical tabs immed
   const tabs=physicalVehicleTabs(body);assert.equal(tabs.length,2);
   for(const [index,tab]of h.store.state.editor.document.vehicleTabs.entries()){
    const physical=tabs.find(item=>item.content.includes(`data-vehicle-tab-id="${tab.id}"`));assert.ok(physical,tab.id);
-   const select=physical.content.match(/<select\b([^>]*)>([^]*?)<\/select>/);assert.ok(select);assert.ok(select[1].includes(`aria-label="Vehicle for ${tab.vehicleName} tab"`));assert.match(select[1],new RegExp(`data-tab-index="${index+1}"`));assert.match(select[1],new RegExp(`data-active="${activeId===tab.id}"`));assert.doesNotMatch(select[1],/\brole=|tabindex="-1"|\bdisabled(?:[\s=>]|$)/);assert.match(select[2],new RegExp(`<option\\b[^>]*value="${tab.vehicleId}"[^>]*selected`));
-   const remove=physical.content.match(/<button\b[^>]*class="[^"]*\bremove-vehicle-tab\b[^"]*"[^>]*>/)?.[0];assert.ok(remove);assert.ok(remove.includes(`aria-label="Remove ${tab.vehicleName} tab"`));assert.ok(physical.content.indexOf('</select>')<physical.content.indexOf(remove));
+   const button=physical.content.match(/<button\b([^>]*\bdata-vehicle-tab-id[^>]*)>([^]*?)<\/button>/);assert.ok(button);assert.ok(button[1].includes(`aria-label="${tab.vehicleName}"`));assert.match(button[1],new RegExp(`data-tab-index="${index+1}"`));assert.match(button[1],new RegExp(`aria-pressed="${activeId===tab.id}"`));assert.doesNotMatch(button[1],/\brole=|tabindex="-1"|\bdisabled(?:[\s=>]|$)/);assert.equal(button[2],tab.vehicleName);assert.doesNotMatch(physical.content,/<select\b/);
+   const remove=physical.content.match(/<button\b[^>]*class="[^"]*\bremove-vehicle-tab\b[^"]*"[^>]*>/)?.[0];assert.ok(remove);assert.ok(remove.includes(`aria-label="Remove ${tab.vehicleName} tab"`));assert.ok(physical.content.indexOf('</button>')<physical.content.indexOf(remove));
   }
   const region=body.match(/<div\b[^>]*id="profile-vehicle-canvas"[^>]*>/)?.[0];assert.ok(region);assert.match(region,/role="region"/);assert.ok(region.includes(`aria-label="${activeId?'Cup car':'Base'}"`));assert.ok(body.indexOf('aria-label="Profile vehicle tabs"')<body.indexOf(region));
   assert.match(body,/<button\b[^>]*aria-label="Add vehicle tab"[^>]*>[^]*?<\/button>\s*<\/div>\s*<div\b[^>]*id="profile-vehicle-canvas"/);
-  const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';assert.doesNotMatch(context,/<select\b/);assert.ok(!body.includes('aria-label="Tab vehicle"'));
+  assert.match(body.slice(body.indexOf(region)+region.length),/^\s*<div\b[^>]*class="vehicle-settings[^>]*>\s*<div\b[^>]*class="vehicle-context/);
+  const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';
+  if(activeId){assert.match(context,/<select\b[^>]*aria-label="Tab vehicle"[^>]*data-vehicle-tab-id="cup"/);assert.match(context,/<option\b[^>]*value="cup_model"[^>]*selected/);assert.doesNotMatch(context,/value="roadster_model"/);}else{assert.doesNotMatch(context,/<select\b/);assert.ok(context.includes('Base applies to every vehicle.'));}
  }
  assert.deepEqual(plain(h.store.state.editor),before);assert.deepEqual(h.calls,calls);
 });
 
-test('the new vehicle picker stays in its physical tab while the content region explains the empty canvas',async()=>{
- const h=await vehicleWorkspace(),body=await vehicleWorkspaceHtml(h,{activeId:'cup',adding:true}),tabs=physicalVehicleTabs(body),newTab=tabs.find(tab=>tab.content.includes('aria-label="Tab vehicle"'));
- assert.ok(newTab);assert.equal(tabs.length,3);assert.match(newTab.content,/<select\b[^>]*aria-label="Tab vehicle"[^>]*>/);assert.doesNotMatch(newTab.content,/<button\b[^>]*aria-label="Remove /);
- assert.ok(body.indexOf('aria-label="Tab vehicle"')<body.indexOf('id="profile-vehicle-canvas"'));assert.match(body,/<div\b[^>]*id="profile-vehicle-canvas"[^>]*role="region"[^>]*aria-label="New vehicle"/);assert.ok(body.includes('Choose a vehicle to start configuring its canvas.'));
- const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';assert.doesNotMatch(context,/<select\b/);assert.deepEqual(h.calls,[['get',uid(20)]]);
+test('a new vehicle tab puts its picker in the first content row above the empty canvas',async()=>{
+ const h=await vehicleWorkspace(),body=await vehicleWorkspaceHtml(h,{activeId:'cup',adding:true}),tabs=physicalVehicleTabs(body),newTab=tabs.find(tab=>tab.content.includes('New vehicle'));
+ assert.ok(newTab);assert.equal(tabs.length,3);assert.doesNotMatch(newTab.content,/<select\b/);assert.match(newTab.content,/<button\b[^>]*aria-label="Cancel new vehicle tab"/);assert.doesNotMatch(newTab.content,/<button\b[^>]*aria-label="Remove /);
+ assert.ok(body.indexOf('aria-label="Tab vehicle"')>body.indexOf('id="profile-vehicle-canvas"'));assert.match(body,/<div\b[^>]*id="profile-vehicle-canvas"[^>]*role="region"[^>]*aria-label="New vehicle"/);assert.ok(body.includes('Choose a vehicle to start configuring its canvas.'));
+ const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';assert.match(context,/<select\b[^>]*aria-label="Tab vehicle"/);assert.doesNotMatch(context,/value="(?:roadster_model|cup_model)"/);assert.deepEqual(h.calls,[['get',uid(20)]]);
 });
 
-test('read-only vehicle tabs keep native selectors focusable for browsing while disabling edits and removal',async()=>{
+test('read-only vehicle tabs allow browsing while the content selector and removal are disabled',async()=>{
  const h=await vehicleWorkspace({readOnly:true}),before=plain(h.store.state.editor),body=await vehicleWorkspaceHtml(h,{activeId:'roadster'});
  const tabs=physicalVehicleTabs(body);assert.equal(tabs.length,2);
  for(const tab of tabs){
-  const select=tab.content.match(/<select\b([^>]*)>([^]*?)<\/select>/);assert.ok(select);assert.doesNotMatch(select[1],/\bdisabled(?:[\s=>]|$)|tabindex="-1"|\brole=/);
-  const own=select[2].match(/<option\b[^>]*selected[^>]*>/)?.[0];assert.ok(own);assert.doesNotMatch(own,/\bdisabled(?:[\s=>]|$)/);assert.match(select[2],/<option\b[^>]*value="__custom"[^>]*disabled/);assert.match(tab.content,/<button\b[^>]*aria-label="Remove [^"]+ tab"[^>]*disabled/);
+  const button=tab.content.match(/<button\b([^>]*\bdata-vehicle-tab-id[^>]*)>/);assert.ok(button);assert.doesNotMatch(button[1],/\bdisabled(?:[\s=>]|$)|tabindex="-1"|\brole=/);
+  assert.doesNotMatch(tab.content,/<select\b/);assert.match(tab.content,/<button\b[^>]*aria-label="Remove [^"]+ tab"[^>]*disabled/);
  }
+ assert.match(body,/<select\b[^>]*aria-label="Tab vehicle"[^>]*disabled/);
  assert.match(body,/<button\b[^>]*aria-label="Add vehicle tab"[^>]*disabled/);
  const adding=await vehicleWorkspaceHtml(h,{adding:true});assert.match(adding,/<select\b[^>]*aria-label="Tab vehicle"[^>]*disabled/);assert.deepEqual(plain(h.store.state.editor),before);assert.deepEqual(h.calls,[['get',uid(20)]]);
 });
