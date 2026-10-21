@@ -21,6 +21,30 @@ executable path for a custom installation, or clear the override to return to
 automatic discovery. Finding an executable does not establish telemetry readiness.
 DCS World, Assetto Corsa Rally, X-Plane 11 and X-Plane 12 have separate catalogue identities.
 
+## Vehicle discovery
+
+Game details show the current aircraft or car from fresh native telemetry. Vehicle
+observation runs while the configured game is running, including before a profile
+is applied. DCS reads the DCS-BIOS aircraft name, ACR reads the shared-memory car
+model, and X-Plane reads the aircraft's relative `.acf` path through RREF. Process
+exit, stale telemetry, connection failure and a changed game session clear the
+current vehicle. Merely selecting an aircraft catalogue in settings does not
+claim that aircraft is loaded.
+
+The DCS vehicle list comes from the installed DCS-BIOS aliases. X-Plane scans the
+selected installation's Aircraft folder, including add-on aircraft. ACR's packed
+game assets do not provide a supported car catalogue, so Cockpit remembers exact
+car models observed in live stages. Load a car once to make it selectable later,
+or enter its exact native ID in the profile tab. Discovered vehicle names persist
+locally; a saved discovery never restores a vehicle as currently loaded. Assetto
+Corsa Rally already supplies native telemetry, so an original Assetto Corsa
+fallback integration is unnecessary.
+
+Vehicle lists refresh in the background at most every 30 seconds, or when the
+installation or provider settings change. DCS telemetry subscribers share one
+UDP receiver with separate bounded queues, so vehicle observation also works
+with unicast exports while a profile is running.
+
 ## Integration setup and readiness
 
 Game details and tiles report integration setup independently from installation

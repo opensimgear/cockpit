@@ -2,11 +2,12 @@
 //! Addresses come from the installed catalogue, never from board or aircraft names.
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet, VecDeque},
     fs::{self, OpenOptions},
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 const COMMAND: &str = "UFC_MASTER_CAUTION";
@@ -983,8 +984,17 @@ impl Session {
     }
 }
 
+struct ExportReceiver {
+    socket: UdpSocket,
+    subscribers: BTreeMap<u64, Result<VecDeque<Vec<u8>>, String>>,
+    next: u64,
+}
+type ExportReceivers = Mutex<BTreeMap<String, Weak<Mutex<ExportReceiver>>>>;
+static EXPORT_RECEIVERS: OnceLock<ExportReceivers> = OnceLock::new();
+
 pub struct Transport {
-    receiver: UdpSocket,
+    receiver: Arc<Mutex<ExportReceiver>>,
+    subscriber: u64,
     sender: UdpSocket,
     command: SocketAddrV4,
     export_source: Network,
@@ -994,24 +1004,60 @@ impl Transport {
         Self::open_network(&config.network())
     }
     pub(crate) fn open_network(config: &Network) -> Result<Self, String> {
-        let receiver = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::DGRAM,
-            Some(socket2::Protocol::UDP),
-        )
-        .map_err(|e| e.to_string())?;
-        receiver
-            .set_reuse_address(true)
-            .map_err(|e| e.to_string())?;
-        receiver
-            .bind(&SocketAddrV4::new(config.listen_address, config.listen_port).into())
-            .map_err(|e| format!("Cannot listen for DCS-BIOS export: {e}"))?;
-        if let Some(group) = config.multicast_group {
+        // Vehicle introspection and applied profiles consume the same export.
+        // One socket fans out complete datagrams, including for unicast, where
+        // two SO_REUSEADDR sockets would otherwise steal each other's frames.
+        let key = if config.listen_port == 0 {
+            // Port zero explicitly requests a new ephemeral receiver.
+            format!("{}:{}", config.value(), uuid::Uuid::new_v4())
+        } else {
+            config.value().to_string()
+        };
+        let mut receivers = EXPORT_RECEIVERS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        receivers.retain(|_, receiver| receiver.strong_count() > 0);
+        let receiver = if let Some(receiver) = receivers.get(&key).and_then(Weak::upgrade) {
             receiver
-                .join_multicast_v4(&group, &config.multicast_interface)
-                .map_err(|e| format!("Cannot join DCS-BIOS multicast: {e}"))?;
-        }
-        receiver.set_nonblocking(true).map_err(|e| e.to_string())?;
+        } else {
+            let receiver = socket2::Socket::new(
+                socket2::Domain::IPV4,
+                socket2::Type::DGRAM,
+                Some(socket2::Protocol::UDP),
+            )
+            .map_err(|e| e.to_string())?;
+            receiver
+                .set_reuse_address(true)
+                .map_err(|e| e.to_string())?;
+            receiver
+                .bind(&SocketAddrV4::new(config.listen_address, config.listen_port).into())
+                .map_err(|e| format!("Cannot listen for DCS-BIOS export: {e}"))?;
+            if let Some(group) = config.multicast_group {
+                receiver
+                    .join_multicast_v4(&group, &config.multicast_interface)
+                    .map_err(|e| format!("Cannot join DCS-BIOS multicast: {e}"))?;
+            }
+            receiver.set_nonblocking(true).map_err(|e| e.to_string())?;
+            let receiver = Arc::new(Mutex::new(ExportReceiver {
+                socket: receiver.into(),
+                subscribers: BTreeMap::new(),
+                next: 0,
+            }));
+            receivers.insert(key, Arc::downgrade(&receiver));
+            receiver
+        };
+        drop(receivers);
+        let subscriber = {
+            let mut receiver = receiver.lock().unwrap_or_else(|p| p.into_inner());
+            receiver.next = receiver
+                .next
+                .checked_add(1)
+                .ok_or("DCS export subscriber counter exhausted.")?;
+            let subscriber = receiver.next;
+            receiver.subscribers.insert(subscriber, Ok(VecDeque::new()));
+            subscriber
+        };
         let sender = UdpSocket::bind(SocketAddrV4::new(
             if config.command_host.is_loopback() {
                 Ipv4Addr::LOCALHOST
@@ -1022,22 +1068,56 @@ impl Transport {
         ))
         .map_err(|e| e.to_string())?;
         Ok(Self {
-            receiver: receiver.into(),
+            receiver,
+            subscriber,
             sender,
             command: SocketAddrV4::new(config.command_host, config.command_port),
             export_source: config.clone(),
         })
     }
     pub fn local_addr(&self) -> Result<SocketAddr, String> {
-        self.receiver.local_addr().map_err(|e| e.to_string())
+        self.receiver
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .socket
+            .local_addr()
+            .map_err(|e| e.to_string())
     }
     pub fn receive(&self) -> Result<Option<Vec<u8>>, String> {
+        let mut receiver = self.receiver.lock().unwrap_or_else(|p| p.into_inner());
+        let queue = receiver
+            .subscribers
+            .get_mut(&self.subscriber)
+            .ok_or("DCS export subscriber closed.")?;
+        match queue {
+            Err(error) => return Err(error.clone()),
+            Ok(queue) => {
+                if let Some(bytes) = queue.pop_front() {
+                    return Ok(Some(bytes));
+                }
+            }
+        }
         let mut data = vec![0u8; 65536];
-        match self.receiver.recv_from(&mut data) {
+        match receiver.socket.recv_from(&mut data) {
             Ok((count, source))
                 if self.export_source.accepts_export_source(source.ip()) && count > 0 =>
             {
                 data.truncate(count);
+                for (subscriber, queue) in &mut receiver.subscribers {
+                    if *subscriber == self.subscriber {
+                        continue;
+                    }
+                    if let Ok(pending) = queue {
+                        if pending.len() >= 256 {
+                            *queue = Err(
+                                "DCS export subscriber queue overflowed; acquire a fresh baseline."
+                                    .into(),
+                            );
+                        } else {
+                            pending.push_back(data.clone());
+                        }
+                    }
+                }
                 Ok(Some(data))
             }
             Ok(_) => Ok(None),
@@ -1079,6 +1159,15 @@ impl Transport {
             return Err("DCS-BIOS command send was incomplete and will not be retried.".into());
         }
         Ok(())
+    }
+}
+impl Drop for Transport {
+    fn drop(&mut self) {
+        self.receiver
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .subscribers
+            .remove(&self.subscriber);
     }
 }
 

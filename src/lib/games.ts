@@ -16,7 +16,9 @@ export type GameIntegrationContext = {
   message: string; processVerified: boolean; contextSession: string | null;
   providerSetupRevision: string | null; catalogueRevision: string | null;
 };
-export type Game = { id: GameId; name: string; provider: GameProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext };
+export type GameVehicle = { id: string; name: string };
+export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car'; vehicles: GameVehicle[]; message?: string };
+export type Game = { id: GameId; name: string; provider: GameProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
 export type GameCleanup = { phase: 'idle' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; retiredProfileId?: string | null; error?: string | null; steps?: string[]; recoveryArchive?: string | null };
 export type DetectedGame = { gameId: GameId; name: string };
 export type GamesState = { detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };

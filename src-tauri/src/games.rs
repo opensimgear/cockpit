@@ -58,6 +58,7 @@ struct Inner {
     journal_path: PathBuf,
     setup: crate::game_integration_setup::GameIntegrationSetup,
     contexts: Mutex<crate::game_context::Broker>,
+    vehicles: Mutex<crate::game_vehicles::Tracker>,
     context_setup_check: Mutex<Option<Instant>>,
     activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
@@ -85,6 +86,7 @@ pub(crate) use context_runtime::PreparedGame;
 
 impl GamesRuntime {
     pub(crate) fn new(panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>) -> Self {
+        let vehicles = crate::game_vehicles::Tracker::new(paths.installations.with_file_name("game-vehicles-v1.json"));
         let installations = crate::game_installations::Store::new(paths.installations);
         let (saved, metadata_error) = match installations.load() {
             Ok(saved) => (saved.unwrap_or_default(), None),
@@ -118,6 +120,7 @@ impl GamesRuntime {
                 installations,
                 journal_path: paths.recovery,
                 contexts: Mutex::new(Default::default()),
+                vehicles: Mutex::new(vehicles),
                 context_setup_check: Mutex::new(None),
                 activation: Default::default(),
                 settings: Mutex::new(Settings {
@@ -151,6 +154,10 @@ impl GamesRuntime {
             .clone();
         self.inner.setup.decorate(&mut catalogue);
         self.decorate_game_contexts(&mut catalogue);
+        {
+            let vehicles = self.inner.vehicles.lock().unwrap_or_else(|p|p.into_inner());
+            for game in &mut catalogue { vehicles.decorate(game); }
+        }
         for game in &mut catalogue {
             game["profileContext"] = self
                 .inner
@@ -158,6 +165,14 @@ impl GamesRuntime {
                 .view(game["id"].as_str().unwrap_or(""));
         }
         catalogue
+    }
+    pub(crate) fn current_vehicle_id(&self, game_id: &str) -> Option<String> {
+        self.inner.vehicles.lock().unwrap_or_else(|p|p.into_inner()).current(game_id)
+            .and_then(|vehicle| vehicle["id"].as_str().map(str::to_owned))
+    }
+    #[cfg(test)]
+    pub(crate) fn set_test_vehicle(&self, game_id: &str, vehicle_id: Option<&str>) {
+        self.inner.vehicles.lock().unwrap_or_else(|p|p.into_inner()).set_test_vehicle(game_id, vehicle_id);
     }
     pub(crate) fn status(&self) -> Value {
         let catalogue = self.resource_catalogue();

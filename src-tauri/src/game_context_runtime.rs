@@ -152,6 +152,7 @@ impl GamesRuntime {
                         break;
                     }
                     thread::sleep(Duration::from_millis(100));
+                    inner.vehicles.lock().unwrap_or_else(|p|p.into_inner()).poll();
                 }
             }
         }));
@@ -279,6 +280,7 @@ impl Inner {
                 }
             })(
             );
+            let vehicle_process = process.as_ref().ok().cloned().flatten();
             let error = process.as_ref().err().cloned();
             let setup_matches = game["integrationSetup"]["providerSetupRevision"].as_str()
                 == Some(revision.as_str());
@@ -289,7 +291,7 @@ impl Inner {
                     && game["integrationSetup"]["state"] == "ready"
                     && (id != "assetto-corsa-rally"
                         || game["integrationSetup"]["verified"] == true),
-                provider_setup_revision: revision,
+                provider_setup_revision: revision.clone(),
                 catalogue_revision: catalogue
                     .ok()
                     .and_then(|value| value["catalogueRevision"].as_str().map(str::to_owned)),
@@ -300,6 +302,13 @@ impl Inner {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .observe(id, epoch, observation);
+            let connection = self.setup.provider_connection_snapshot(id).ok().map(|(connection, _, _)|connection);
+            if let Some(connection) = connection {
+                self.vehicles.lock().unwrap_or_else(|p|p.into_inner()).observe(
+                    &game, &connection, vehicle_process, &revision,
+                    supported && game["integrationSetup"]["state"] == "ready", epoch,
+                );
+            }
         }
     }
 }

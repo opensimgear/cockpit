@@ -16,6 +16,7 @@ mod game_activation;
 mod game_context;
 mod game_integration_setup;
 mod game_telemetry;
+mod game_vehicles;
 mod games;
 pub mod gateways;
 mod hid_names;
