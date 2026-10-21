@@ -276,7 +276,8 @@
     for (const a of resources.manifest) if (!doc.ui.assets.some(existing => existing.id === a.id)) doc.ui.assets.push(a);
     const candidate = applyDesignerCommand(createDesignerHistory(doc), instanceId ? { type: 'update-component', id: instanceId, definition } : { type: 'add-component', definition, properties, pageId: page.id, viewportId: activeViewport.id });
     const nextAssets = [...assets, ...resources.payloads.filter(a => !assets.some(existing => existing.assetId === a.assetId))];
-    if (command({ type: 'replace', document: candidate.present })) { assets = nextAssets; select([instanceId ?? document.presentation.widgets.at(-1)!.id]); }
+    if (!command({ type: 'replace', document: candidate.present })) throw new Error(error || 'The widget could not be added to this panel.');
+    assets = nextAssets; select([instanceId ?? document.presentation.widgets.at(-1)!.id]);
   }
   function addLibraryWidget(definition: WidgetDefinition) { try { applyLibraryWidget(definition); } catch (e) { error = e instanceof Error ? e.message : String(e); } }
   function editWidgetDefinition(definition?: WidgetDefinition, instanceId = '') {
@@ -443,13 +444,15 @@
   }
   async function addAsset(file: File | undefined) {
     if (!file) return;
-    await operation(async () => {
+    await operation(() => importWidgetArtwork(file));
+  }
+  async function importWidgetArtwork(file: File) {
       if (file.size > 2 * 1024 * 1024) throw new Error('Each image must be at most 2 MiB');
       const result = await importAsset(document, new Uint8Array(await file.arrayBuffer()), file.type as 'image/png' | 'image/jpeg' | 'image/webp');
       const nextAssets = [...assets.filter(a => a.assetId !== result.asset.assetId), result.asset];
       await validateAssets(result.document, nextAssets.filter(payload => result.document.ui.assets.some(asset => asset.id === payload.assetId)));
-      command({ type: 'replace', document: result.document }); assets = nextAssets; message = `Image added (${result.width} × ${result.height})`;
-    });
+      if (!command({ type: 'replace', document: result.document })) throw new Error(error || 'The image could not be added to this panel.');
+      assets = nextAssets; message = `Image added (${result.width} × ${result.height})`;
   }
   async function removeAsset(id: string) {
     const index=document.ui.assets.findIndex(asset=>asset.id===id);
@@ -510,7 +513,7 @@
     return () => { alive = false; disposed=true; resolveStorageLoad(); clearInterval(poll); stop(); unsubscribe?.(); window.removeEventListener('blur', cancel); window.removeEventListener('pagehide', cancel); };
   });
 </script>
-{#if widgetEditorDefinition}<WidgetDesigner definition={widgetEditorDefinition} assets={widgetEditorAssets} assetOptions={widgetAssetOptions} onsave={saveWidgetDesign} oncancel={() => { widgetEditorDefinition = null; widgetEditInstanceId = ''; }} />{/if}
+{#if widgetEditorDefinition}<WidgetDesigner definition={widgetEditorDefinition} assets={widgetEditorAssets} assetOptions={widgetAssetOptions} onsave={saveWidgetDesign} onasset={importWidgetArtwork} oncancel={() => { widgetEditorDefinition = null; widgetEditInstanceId = ''; }} />{/if}
 <svelte:window onkeydown={widgetDeleteKey}/>
 
 <script module lang="ts">
