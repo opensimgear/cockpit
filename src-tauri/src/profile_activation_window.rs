@@ -453,7 +453,7 @@ fn show_progress_window(window: &WebviewWindow, app: &tauri::AppHandle) -> Resul
 }
 
 fn require_window(window: &WebviewWindow, expected: &[&str]) -> Result<(), String> {
-    if expected.contains(&window.label()) && super::local_document(&window.url().map_err(|e| e.to_string())?) {
+    if expected.contains(&window.label()) && super::local_document(&window.url().map_err(|e| e.to_string())?, window.app_handle().config().build.dev_url.as_ref()) {
         Ok(())
     } else {
         Err("This window cannot control profile activation progress.".into())

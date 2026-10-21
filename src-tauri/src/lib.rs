@@ -81,13 +81,26 @@ use serde_json::Value;
 use std::sync::Arc;
 use tauri::Manager;
 
-fn local_document(url: &tauri::Url) -> bool {
+fn local_document(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
     (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
         || (url.scheme() == "http" && url.host_str() == Some("tauri.localhost"))
         || (cfg!(debug_assertions)
             && url.scheme() == "http"
             && url.host_str() == Some("127.0.0.1")
-            && url.port() == Some(1420))
+            && dev_url.is_some_and(|dev| dev.scheme() == "http" && dev.host_str() == Some("127.0.0.1") && url.origin() == dev.origin()))
+}
+
+#[cfg(test)]
+mod local_navigation_tests {
+    #[test]
+    fn native_navigation_accepts_only_the_configured_loopback_development_origin() {
+        let dev = tauri::Url::parse("http://127.0.0.1:1422/").unwrap();
+        for path in ["http://127.0.0.1:1422/", "http://127.0.0.1:1422/profile-activation-window.html"] { assert!(super::local_document(&tauri::Url::parse(path).unwrap(), Some(&dev))); }
+        for path in ["http://127.0.0.1:1420/", "http://localhost:1422/", "http://example.com:1422/", "https://127.0.0.1:1422/"] { assert!(!super::local_document(&tauri::Url::parse(path).unwrap(), Some(&dev))); }
+        assert!(!super::local_document(&dev, None));
+        assert!(super::local_document(&tauri::Url::parse("tauri://localhost/").unwrap(), None));
+        assert!(super::local_document(&tauri::Url::parse("http://tauri.localhost/").unwrap(), None));
+    }
 }
 
 struct NativeGateway(Arc<gateways::GatewayManager>);
@@ -267,7 +280,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("local-navigation")
-                .on_navigation(|_, url| local_document(url))
+                .on_navigation(|webview, url| local_document(url, webview.app_handle().config().build.dev_url.as_ref()))
                 .build(),
         )
         .setup(|app| {
