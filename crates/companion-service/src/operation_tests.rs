@@ -102,6 +102,9 @@ fn disarmed_cache_preparation_has_a_bounded_lease_without_extending_armed_inputs
         assert_eq!(open["ok"],true); let now=hub.now_ms();
         let mut heartbeat = frame(&open,"heartbeat","1"); heartbeat["operation"] = operation(&open,"checking-cache");
         assert_eq!(hub.handle_wire(heartbeat,"connection",now)["ok"],true);
+        // Admission clamps early timestamps to the current monotonic clock.
+        // Measure the expiry from completed admission, not frame construction.
+        let now = hub.now_ms();
         assert!(hub.serial_panel_preparing("screen","connection"));
         assert!(!hub.serial_panel_preparing("other","connection"));
         hub.tick(now+2000);
@@ -110,7 +113,8 @@ fn disarmed_cache_preparation_has_a_bounded_lease_without_extending_armed_inputs
         if arm {
             assert_eq!(baseline(&hub,"connection",&open,&publication)["ok"],true);
             assert!(!hub.serial_panel_preparing("screen","connection"),"Armed input cannot extend the USB preparation watchdog");
-            hub.tick(now+2000+crate::hub::LEASE_MS);
+            let armed_at = hub.now_ms().max(now+2000);
+            hub.tick(armed_at+crate::hub::LEASE_MS);
             assert!(hub.panel_operation("instance",&publication.publication_hash).is_none());
             assert!(sink.owners.lock().unwrap().is_empty(),"Armed input must retain its ordinary 1500ms lease");
         } else {
