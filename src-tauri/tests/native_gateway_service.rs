@@ -80,11 +80,11 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     );
     assert_eq!(games["ok"], true);
     let catalogue = games["state"]["games"]["catalogue"].as_array().unwrap();
-    assert_eq!(catalogue.len(), 4);
-    assert!(catalogue.iter().any(|g| g["id"] == "dcs"));
-    assert!(catalogue.iter().any(|g| g["id"] == "assetto-corsa-rally"));
-    assert!(catalogue.iter().any(|g| g["id"] == "x-plane-11"));
-    assert!(catalogue.iter().any(|g| g["id"] == "x-plane-12"));
+    let mut ids = catalogue.iter().map(|game| game["id"].as_str().unwrap()).collect::<Vec<_>>();
+    ids.sort_unstable();
+    let mut supported = osg_profiles::activation::SUPPORTED_GAME_IDS.to_vec();
+    supported.sort_unstable();
+    assert_eq!(ids, supported);
     let game_state = games["state"]["games"].as_object().unwrap();
     for retired_field in ["profiles", "defaultProfiles", "session"] {
         assert!(!game_state.contains_key(retired_field), "{retired_field}");
