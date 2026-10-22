@@ -230,7 +230,26 @@
   {:else if selected}
     <section aria-label="Companion settings">
       <button class="text-button back-companions" use:focusDetails disabled={busy || updateOpen || updating} onclick={backToCompanions}><Icon name="back" size={16} />Back to Companions</button>
-      <div class="page-heading"><div class="companion-heading-copy"><div class="eyebrow">COMPANION SETTINGS</div><div class="companion-title"><h1>{text(selected,'name') || 'Companion'}</h1><span class:connected={selected.connected===true} class="connection-state"><span></span>{selected.connected===true?'Connected':'Offline'}</span>{#if settingsError || selectedMessages.length}<div class="companion-status-messages">{#if settingsError}<CompanionMessage id="companion-autosave-status" message={settingsError} kind="error"/>{/if}{#each selectedMessages as message (message.source)}<CompanionMessage message={message.message} kind={message.kind}/>{/each}</div>{/if}</div></div><button class="danger" disabled={busy || updateOpen || updating || settingsState?.saving || settingsState?.pending && !settingsState.error} onclick={()=>action(()=>remove(selected!))}><Icon name="trash" size={15} />Remove</button></div>
+      <div class="page-heading">
+        <div class="companion-heading-copy">
+          <div class="eyebrow">COMPANION SETTINGS</div>
+          <div class="companion-title">
+            <h1>{text(selected,'name') || 'Companion'}</h1>
+            <span class:connected={selected.connected===true} class="connection-state"><span></span>{selected.connected===true?'Connected':'Offline'}</span>
+          </div>
+          {#if settingsError || selectedMessages.length}
+            <div class="companion-status-messages">
+              {#if settingsError}<div id="companion-autosave-status" class="companion-notice error" role="alert"><strong>Error</strong><span>{settingsError}</span></div>{/if}
+              {#each selectedMessages as message (message.source)}
+                <div class="companion-notice" class:error={message.kind==='error'} class:warning={message.kind==='warning'} role={message.kind==='error'?'alert':'status'}>
+                  {#if message.kind!=='info'}<strong>{message.kind==='error'?'Error':'Warning'}</strong>{/if}<span>{message.message}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <button class="danger" disabled={busy || updateOpen || updating || settingsState?.saving || settingsState?.pending && !settingsState.error} onclick={()=>action(()=>remove(selected!))}><Icon name="trash" size={15} />Remove</button>
+      </div>
       <div class="settings-panel">
       {#if ['browser','desktop'].includes(deviceKind(selected)) && hostState.browserUrl}<button onclick={()=>action(async()=>{await invoke('open_companion_browser',{url:hostState.browserUrl});})}><Icon name="link" size={16} />Open browser companion</button>{/if}
       <div class="settings-columns" class:with-firmware={deviceKind(selected)==='esp32'}>
@@ -300,10 +319,10 @@
 </section>
 <style>
   .firmware-version-value{display:flex;align-items:center;gap:8px}.firmware-version-value>span{min-width:0}.firmware-refresh{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:4px;flex-shrink:0}
-  .tile-messages,.companion-status-messages,.firmware-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.tile-messages{position:absolute;right:12px;bottom:12px;flex-wrap:nowrap}.companion-status-messages{align-self:center}.firmware-heading h3{margin:0}
+  .tile-messages,.firmware-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.tile-messages{position:absolute;right:12px;bottom:12px;flex-wrap:nowrap}.companion-status-messages{display:grid;gap:8px;margin-top:14px}.companion-notice{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--line,#344452);border-left:3px solid var(--accent,#64caba);border-radius:6px;background:var(--surface,#14212c);font-size:13px;line-height:1.5;overflow-wrap:anywhere}.companion-notice strong{font-size:12px}.companion-notice.error{border-color:#ff899366;background:color-mix(in srgb,#ff8993 8%,var(--surface,#14212c))}.companion-notice.error strong{color:#ff8993}.companion-notice.warning{border-color:#efc26966;background:color-mix(in srgb,#efc269 8%,var(--surface,#14212c))}.companion-notice.warning strong{color:#efc269}.firmware-heading h3{margin:0}
   .setting input[readonly],.setting input:disabled,.setting select:disabled{color:var(--muted);background:var(--input-bg);border-color:var(--faint-line);cursor:default}.setting:has(input[readonly]),.setting:has(input:disabled),.setting:has(select:disabled){color:var(--muted)}
   .screen-size-input{position:relative;min-width:0}.setting .screen-size-input input{box-sizing:border-box;width:100%;padding-right:42px}.screen-size-info{position:absolute;right:8px;top:0;bottom:0;display:flex;align-items:center}
-  .companion-heading-copy{min-width:0}.companion-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px 16px}.companion-title h1{min-width:0}.companion-title .connection-state{display:inline-block;white-space:nowrap}.companion-title .connection-state>span{display:inline-block;vertical-align:middle;margin-right:6px}.firmware-update{display:inline-flex}.firmware-update:has(button:disabled){cursor:not-allowed}.firmware-update button:disabled{pointer-events:none}
+  .companion-heading-copy{min-width:0;flex:1}.companion-title{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;margin-top:10px}.companion-title h1{min-width:0;margin:0;font-size:34px}.companion-title .connection-state{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;font-size:13px}.companion-title .connection-state>span{width:10px;height:10px;flex:0 0 10px}.firmware-update{display:inline-flex}.firmware-update:has(button:disabled){cursor:not-allowed}.firmware-update button:disabled{pointer-events:none}
   .back-companions{background:transparent;border:0;color:var(--accent);padding:6px 0;margin-bottom:18px;font-size:10px}.back-companions:hover{background:transparent;text-decoration:underline}.settings-panel{padding:21px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.settings-panel .settings-columns{margin-top:0}.page-heading h1{overflow-wrap:anywhere}.page-heading .connection-state{flex-shrink:0}@media(max-width:650px){.page-heading{align-items:flex-start;flex-wrap:wrap}.settings-panel{padding:16px}}
   .firmware-settings{display:flex;flex-direction:column;align-items:flex-start;gap:18px}.firmware-copy{display:grid;gap:12px;max-width:100%;overflow-wrap:anywhere}.firmware-copy p{margin:0;max-width:42ch}.firmware-versions{display:grid;gap:8px;margin:0;font-size:13px;line-height:1.6}.firmware-versions>div{display:grid;grid-template-columns:72px minmax(0,1fr);gap:14px;align-items:baseline}.firmware-versions dt{color:var(--muted)}.firmware-versions dd{margin:0;color:var(--text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.firmware-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;max-width:100%}.firmware-actions button,.firmware-update{max-width:100%}.boot-instructions{margin:0}.firmware-progress-row{display:flex;align-items:center;gap:16px;width:100%}.firmware-progress{display:grid;gap:8px;flex:1;min-width:0}.firmware-progress progress{width:100%;accent-color:var(--accent)}.firmware-update-details{display:grid;justify-items:start;gap:14px;width:100%;min-width:0;padding-top:18px;border-top:1px solid var(--line,#344452)}
   .settings-columns{display:grid;gap:28px;margin-top:18px}.settings-columns.with-firmware{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.identity-settings{min-width:0}.identity-settings .setting:first-child{margin-top:0}.firmware-settings{min-width:0;border-left:1px solid var(--line,#344452);padding-left:28px}.firmware-settings h3{margin-top:0}@media(max-width:800px){.settings-columns.with-firmware{grid-template-columns:1fr}.firmware-settings{border-left:0;border-top:1px solid var(--line,#344452);padding-left:0;padding-top:20px}}

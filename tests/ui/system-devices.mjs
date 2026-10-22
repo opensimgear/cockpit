@@ -562,13 +562,24 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.equal(browserClient.name, 'Browser companion local draft');
     fixture.failCompanionUpdate = true;
     await companionName.fill('Browser companion failed draft');
-    await expect(companionSettings.getByRole('button', { name: /^Error: Fixture companion autosave failed/ })).toBeVisible();
+    await expect(companionSettings.getByRole('alert').filter({hasText:'Fixture companion autosave failed'})).toBeVisible();
+    const errorCard=companionSettings.getByRole('alert').filter({hasText:'Fixture companion autosave failed'});
+    const headingBounds=await companionSettings.locator('.companion-title').boundingBox(),errorBounds=await errorCard.boundingBox();
+    assert.ok(errorBounds.y>=headingBounds.y+headingBounds.height,'Errors appear below the companion name.');
+    assert.equal(await companionSettings.locator('.companion-title button,.companion-title svg').count(),0);
+    const statusGeometry=await companionSettings.locator('.companion-title').evaluate(title=>{
+      const name=title.querySelector('h1'),status=title.querySelector('.connection-state'),dot=status.querySelector('span');
+      const nr=name.getBoundingClientRect(),sr=status.getBoundingClientRect(),dr=dot.getBoundingClientRect();
+      return {font:parseFloat(getComputedStyle(name).fontSize),dotWidth:dr.width,centerDifference:Math.abs(nr.y+nr.height/2-sr.y-sr.height/2),dotCenterDifference:Math.abs(dr.y+dr.height/2-sr.y-sr.height/2)};
+    });
+    assert.ok(statusGeometry.font>31&&statusGeometry.dotWidth>7);
+    assert.ok(statusGeometry.centerDifference<1&&statusGeometry.dotCenterDifference<1);
     await expect(companionName).toHaveValue('Browser companion failed draft');
     assert.equal(browserClient.name, 'Browser companion local draft');
     fixture.failCompanionUpdate = false;
     await companionName.fill('Browser companion');
     await expect.poll(() => browserClient.name).toBe('Browser companion');
-    await expect(companionSettings.getByRole('button', { name: /^Error: Fixture companion autosave failed/ })).toHaveCount(0);
+    await expect(companionSettings.getByRole('alert').filter({hasText:'Fixture companion autosave failed'})).toHaveCount(0);
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(companionSettings).toHaveCount(0);
