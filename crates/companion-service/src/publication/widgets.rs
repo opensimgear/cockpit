@@ -104,22 +104,52 @@ fn resolved<'a>(v: &'a Value, properties: &'a Value) -> &'a Value {
 }
 /// Resolve artwork from this exact pinned instance, rather than letting a
 /// device select an arbitrary publication asset or another definition revision.
-pub(super) fn image_asset(document: &Value, widget: &Value, layer_id: Option<&str>) -> Result<String, String> {
+pub(super) fn image_asset(
+    document: &Value,
+    widget: &Value,
+    layer_id: Option<&str>,
+) -> Result<String, String> {
     if let Some(layer_id) = layer_id {
-        ensure(widget["kind"] == "component", "Image layers require a portable component.")?;
+        ensure(
+            widget["kind"] == "component",
+            "Image layers require a portable component.",
+        )?;
         let config = &widget["config"];
-        let definition = document["presentation"]["definitions"].as_array()
-            .and_then(|definitions| definitions.iter().find(|d| d["id"] == config["definitionId"] && d["version"] == config["definitionVersion"]))
+        let definition = document["presentation"]["definitions"]
+            .as_array()
+            .and_then(|definitions| {
+                definitions.iter().find(|d| {
+                    d["id"] == config["definitionId"] && d["version"] == config["definitionVersion"]
+                })
+            })
             .ok_or("Unknown widget definition revision.")?;
-        let layer = definition["layers"].as_array().and_then(|layers| layers.iter().find(|l| l["id"] == layer_id && l["kind"] == "image"))
+        let layer = definition["layers"]
+            .as_array()
+            .and_then(|layers| {
+                layers
+                    .iter()
+                    .find(|l| l["id"] == layer_id && l["kind"] == "image")
+            })
             .ok_or("Unknown widget image layer.")?;
-        let assets = document["ui"]["assets"].as_array().ok_or("Missing publication assets.")?;
+        let assets = document["ui"]["assets"]
+            .as_array()
+            .ok_or("Missing publication assets.")?;
         let values = properties(definition, &config["properties"], assets)?;
-        let asset = resolved(&layer["assetId"], &values).as_str().filter(|id| !id.is_empty()).ok_or("Widget image layer has no asset.")?;
+        let asset = resolved(&layer["assetId"], &values)
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("Widget image layer has no asset.")?;
         Ok(asset.to_owned())
     } else {
-        ensure(widget["kind"] == "image", "Portable image requests must identify their layer.")?;
-        widget["config"]["assetId"].as_str().filter(|id| !id.is_empty()).map(str::to_owned).ok_or_else(|| "Image widget has no asset.".into())
+        ensure(
+            widget["kind"] == "image",
+            "Portable image requests must identify their layer.",
+        )?;
+        widget["config"]["assetId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| "Image widget has no asset.".into())
     }
 }
 fn properties(definition: &Value, overrides: &Value, assets: &[Value]) -> Result<Value, String> {
@@ -507,6 +537,9 @@ pub(super) fn instance<'a>(
         )
     };
     let mut semantics = json!({"inputs":strip_labels(&d["inputs"]),"outputs":strip_labels(&d["outputs"]),"interaction":d["interaction"]});
+    if d["interaction"]["kind"] == "selector" {
+        semantics["interaction"]["options"] = strip_labels(&d["interaction"]["options"]);
+    }
     if d["interaction"]["kind"] == "navigate" {
         semantics["page"] = props[d["interaction"]["pageProperty"].as_str().unwrap()].clone();
     }
@@ -547,12 +580,46 @@ mod tests {
             styling.capability_fingerprint,
             behavior.capability_fingerprint
         );
-        let complete=Publication::validate(fixture("complete")).unwrap();
-        assert_eq!(complete.ui_id,"shared-systems-complete");
-        let document:Value=serde_json::from_str(&complete.canonical_document).unwrap();
-        assert_eq!(document["presentation"]["widgets"].as_array().unwrap().len(),12);
-        assert!(document["presentation"]["definitions"].as_array().unwrap().iter().any(|definition|definition["id"]=="osg-text-instrument"&&definition["outputs"][0]["kind"]=="text"));
-        assert!(document["presentation"]["definitions"].as_array().unwrap().iter().any(|definition|definition["id"]=="osg-power-icon"&&definition["state"]["confirmedPort"]=="active"));
+        let complete = Publication::validate(fixture("complete")).unwrap();
+        assert_eq!(complete.ui_id, "shared-systems-complete");
+        let document: Value = serde_json::from_str(&complete.canonical_document).unwrap();
+        assert_eq!(
+            document["presentation"]["widgets"]
+                .as_array()
+                .unwrap()
+                .len(),
+            12
+        );
+        assert!(document["presentation"]["definitions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|definition| definition["id"] == "osg-text-instrument"
+                && definition["outputs"][0]["kind"] == "text"));
+        assert!(document["presentation"]["definitions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|definition| definition["id"] == "osg-power-icon"
+                && definition["state"]["confirmedPort"] == "active"));
+    }
+    #[test]
+    fn selector_captions_are_styling_but_option_values_change_capabilities() {
+        let base = Publication::validate(fixture("base")).unwrap();
+        let captions = mutate(|doc| {
+            doc["presentation"]["definitions"][2]["interaction"]["options"][1]["label"] =
+                json!("Another caption")
+        })
+        .unwrap();
+        assert_ne!(base.publication_hash, captions.publication_hash);
+        assert_eq!(base.capability_fingerprint, captions.capability_fingerprint);
+        assert_eq!(base.controls, captions.controls);
+        let values = mutate(|doc| {
+            doc["presentation"]["definitions"][2]["interaction"]["options"][1]["value"] =
+                json!(0.75)
+        })
+        .unwrap();
+        assert_ne!(base.capability_fingerprint, values.capability_fingerprint);
     }
     #[test]
     fn shared_widget_host_rejects_malformed_definitions_before_admission() {

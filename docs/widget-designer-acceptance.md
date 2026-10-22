@@ -3,7 +3,8 @@
 Feature [#112](https://github.com/opensimgear/cockpit/issues/112) implements one
 portable widget library and panel source for Cockpit preview, browser, Android
 and ESP32. The current implementation is on `feat/widgets-112`; the software
-checkpoint is `ac0d2a2`. Physical ESP32 and Android-device validation was deferred
+firmware-build checkpoint is `ac0d2a2`, before the final selector-caption identity
+correction. Physical ESP32 and Android-device validation was deferred
 by the user on 22 October 2026. The qualified release matrix remains empty.
 
 The [authoring guide](companion-guide.md#design-and-reuse-widgets) describes the
@@ -29,13 +30,13 @@ including two independent revisions of the illuminated control:
 
 | Identity | Value |
 | --- | --- |
-| Source publication | `sha256:8aa06224bbdedd8ccff06e5d53f15569829bf24d19b3fbfceb21ad21d3f2a468` |
-| Capability fingerprint | `sha256:0d40efef106d14e299dd839a982d9005c6288060ebe31998399a2493c1ae50d5` |
+| Source publication | `sha256:bd6f89ffb12193c7c005c391a87704e77e3e07f260faadbede4199f7dcb9e7f8` |
+| Capability fingerprint | `sha256:0b2fb7f3a8f95a8e467566e372a03c7c46c01a56e13972afb48d5937a6b73a82` |
 | C/LVGL software-client binary | `97be83ef94006d1232c88f1beee38ecc6167e4132b9b7f9ddf2479772c807034` |
 | Firmware engine contract | `2026.10.22.3`, engine version 1 |
-| Actual Cockpit UI export/import | `.research/widgets-native-ui/1792639786499/evidence.json` |
-| Live browser companion | `.research/widget-browser-native/1792639927641/evidence.json` |
-| Actual C/LVGL over host WSS | `.research/widget-software-native/1792639931938/evidence.json` |
+| Actual Cockpit UI export/import | `.research/widgets-native-ui/1792640440735/evidence.json` |
+| Live browser companion | `.research/widget-browser-native/1792640473926/evidence.json` |
+| Actual C/LVGL over host WSS | `.research/widget-software-native/1792640477640/evidence.json` |
 
 The second C composition changes font, layout, decoration and prepared artwork
 while retaining the capability fingerprint. The first publication is also
@@ -49,6 +50,9 @@ inside the read-only section frame with a separate interactive hit area. Repeate
 UI checks replace their own prior annotation instead of accumulating layers.
 Live checks revoke their temporary clients and prune only newly created source
 publications, retaining unrelated cache entries and asserting cleanup succeeds.
+The UI also edits an existing selector's option caption, saves a new pinned
+library revision and panel publication, and verifies capability identity and
+bindings stay unchanged. Option-value changes still require reconciliation.
 
 The C client links actual firmware source admission, network/client state
 machine, input controller and LVGL compositor. Software adapters provide board
@@ -59,7 +63,7 @@ scheduling, durable flash, touch, DMA, latency or Android authentication.
 ## Reproduction and tolerances
 
 - Run `pnpm --filter @opensimgear/companion-designer coverage`, `pnpm browser:test`
-  and `pnpm check`. The latest local results are 106 designer tests, 21 browser
+  and `pnpm check`. The latest local results are 107 designer tests, 21 browser
   tests and zero Cockpit/browser Svelte diagnostics.
 - Check deterministic fixtures with the `--check` mode of
   `scripts/widget-publication-fixtures.mjs`, `scripts/widget-profile-fixtures.mjs`,
@@ -90,7 +94,7 @@ The latest native compositor peak is 17,248 bytes in both 96 KiB and 32 KiB LVGL
 pool builds. These are native software pool measurements, not complete physical
 board heap or stack measurements. Shared compatibility has 100% line/function
 and 95.38% branch coverage; the compositor has 100% line/function and 84.31%
-branch coverage. The native service suite passes 121 unit and two ESP32 host
+branch coverage. The native service suite passes 122 unit and two ESP32 host
 integration tests.
 
 ## Build and qualification boundaries

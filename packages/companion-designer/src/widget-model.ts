@@ -227,7 +227,9 @@ export function widgetSemantics(definition: WidgetDefinition, overrides: Record<
   return {
     inputs: definition.inputs.map(({ label: _label, ...p }) => p),
     outputs: definition.outputs.map(({ label: _label, ...p }) => p),
-    interaction: definition.interaction,
+    interaction: definition.interaction.kind === "selector"
+      ? { ...definition.interaction, options: definition.interaction.options.map(({ value }) => ({ value })) }
+      : definition.interaction,
     ...(definition.interaction.kind === "navigate" ? { page: properties[definition.interaction.pageProperty] } : {}),
   };
 }

@@ -633,3 +633,25 @@ unrelated publications and assert their new unassigned test publications leave
 the bounded cache after revocation. The complete
 [software acceptance audit](widget-designer-acceptance.md) links requirements,
 exact identities, reproduction commands and deferred device gates.
+
+Final contract review corrects selector option captions: they are visual labels,
+so TypeScript and Rust now omit them from capability projection just as they
+already omit port labels and legacy selector captions. Option values, fallback
+and interaction behavior still affect capability identity. This finalizes the
+new, unreleased schema 3 contract; all canonical source document/publication
+hashes and existing schema 2 behavior remain unchanged. The four schema 3 native
+fixture metadata fingerprints are regenerated. Earlier experimental schema 3
+cache records carry the prior fingerprint and correctly fail validation; final
+dev acceptance uses isolated configuration and WebView storage under this
+worktree's `.research/`, leaving the earlier development records intact.
+
+The corrected contract passes 107 designer tests and 122 native service tests
+plus two ESP32 host checks, with zero designer/Cockpit/browser type diagnostics.
+The actual UI creates a selector-caption revision and new panel publication while
+retaining capability identity and bindings at
+`.research/widgets-native-ui/1792640440735/`. Its exact exported source
+`sha256:bd6f89ffb12193c7c005c391a87704e77e3e07f260faadbede4199f7dcb9e7f8`
+passes live browser acceptance at `.research/widget-browser-native/1792640473926/`
+and unchanged C/LVGL software-engine acceptance at
+`.research/widget-software-native/1792640477640/`, including retention-based
+cleanup. The native browser assets are rebuilt from the corrected source.

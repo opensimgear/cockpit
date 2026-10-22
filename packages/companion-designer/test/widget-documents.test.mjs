@@ -107,6 +107,21 @@ test('library version adoption is explicit and preserves bindings and instance o
   assert.equal(compareDesignerPublications(updated.present, props.present), 'styling');
 });
 
+test('selector caption revisions preserve contracts while option values require reconciliation', async () => {
+  const h = apply(seed(), { type: 'add-component', definition: catalog[2] });
+  const selected = h.present.presentation.widgets.at(-1), revision = structuredClone(catalog[2]);
+  revision.version = 2; revision.interaction.options.forEach((option, index) => option.label = 'Mode ' + index);
+  const styled = apply(h, { type: 'update-component', id: selected.id, definition: revision });
+  assert.equal(compareDesignerPublications(h.present, styled.present), 'styling');
+  assert.deepEqual(styled.present.bindings, h.present.bindings);
+  assert.deepEqual(styled.present.ui.controls, h.present.ui.controls);
+  assert.equal((await publishDocument(styled.present, [])).capabilityFingerprint, (await publishDocument(h.present, [])).capabilityFingerprint);
+  const changed = structuredClone(styled.present);
+  changed.presentation.definitions.find(definition => definition.id === revision.id && definition.version === 2).interaction.options[1].value = .75;
+  assert.equal(validateDesignerDocument(changed).ok, true);
+  assert.equal(compareDesignerPublications(styled.present, changed), 'capability');
+});
+
 test('typed output unit and range changes require semantic reconciliation', () => {
   const h = apply(seed(), { type: 'add-component', definition: catalog[4] });
   const changed = structuredClone(h.present);
