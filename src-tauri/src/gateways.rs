@@ -195,6 +195,7 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 pub struct GatewayManager {
+    widget_library: crate::widget_library::Runtime,
     profiles: Mutex<osg_profiles::service::Service>,
     profile_resources: Arc<crate::profile_resources::Runtime>,
     profile_compilation: crate::profile_compilation::Runtime,
@@ -370,6 +371,7 @@ impl GatewayManager {
             profile_session,
             profile_admission: RwLock::new(()),
             mcp_clients: Mutex::new(BTreeMap::new()),
+            widget_library: crate::widget_library::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("widgets-v1.json"))),
             profile_prepare,
             profile_native: native,
             profile_admission_epoch,
@@ -704,6 +706,13 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
+        // Widget sources are shared metadata; saving never enters output ownership.
+        if matches!(command,"widget_library_get"|"widget_library_merge"|"widgets_list"|"widget_get"|"widget_save") {
+            if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid widget client or closed cockpit.",None);}
+            let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());
+            if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()){return self.error(&error,None);}
+            return match self.widget_library.request(&request){Ok(widgets)=>if command=="widget_save"{json!({"ok":true,"state":{"widgetSaved":widgets}})}else{json!({"ok":true,"state":{"widgetLibrary":widgets}})},Err(error)=>self.error(&error,None)};
+        }
         // Activation progress and cancellation remain responsive while takeover
         // owns the admission/coordinator locks. These APIs never claim outputs.
         if matches!(command,"profile_activation_status"|"profile_activation_cancel"|"profile_activation_current") {

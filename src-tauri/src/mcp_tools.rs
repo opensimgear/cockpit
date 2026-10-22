@@ -200,6 +200,7 @@ impl Tools {
             "cockpit://schemas/profile" => definitions::profile_schema(),
             "cockpit://schemas/local-assignment" => definitions::assignment_schema(),
             "cockpit://schemas/task-results" => definitions::result_schema(),
+            "cockpit://guide/widgets" => crate::widget_library::guide(),
             "cockpit://status" => return self.call("profile_status", json!({}), client),
             _ => return failure("resource_not_found", "Unknown Cockpit context resource. Use resources/list for the bounded context catalogue.", false),
         };
@@ -236,6 +237,9 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "widgets_list" => forward("widgets_list", &["offset","limit"], Some("widgetLibrary")),
+            "widget_get" => forward("widget_get", &["id","version"], Some("widgetLibrary")),
+            "widget_save" => forward("widget_save", &["bundle","expectedVersion"], Some("widgetSaved")),
             "operation_status" => Ok(self
                 .ledger
                 .lock()

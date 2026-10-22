@@ -311,55 +311,8 @@ impl Publication {
             }
         }
         let assets = list(&ui["assets"], 0, 64)?;
-        let mut total = 0;
-        for asset in assets {
-            object(asset, &["id", "sha256", "sizeBytes", "mime"], &[])?;
-            unique(&asset["id"])?;
-            let digest = asset["sha256"].as_str().ok_or("Invalid asset hash.")?;
-            ensure(
-                digest_id(&format!("sha256:{digest}")),
-                "Invalid asset hash.",
-            )?;
-            total += integer(&asset["sizeBytes"], 1, ASSET_BYTES as u64)?;
-            ensure(
-                matches!(
-                    asset["mime"].as_str(),
-                    Some("image/png" | "image/jpeg" | "image/webp")
-                ),
-                "Invalid raster MIME.",
-            )?;
-        }
-        ensure(
-            total <= TOTAL_ASSET_BYTES as u64 && upload.assets.len() == assets.len(),
-            "Asset budget/manifest mismatch.",
-        )?;
-        let mut asset_ids = BTreeSet::new();
-        let mut asset_pixels = 0;
-        for payload in &upload.assets {
-            ensure(
-                asset_ids.insert(&payload.asset_id)
-                    && payload.base64.len() <= ASSET_BYTES.div_ceil(3) * 4,
-                "Invalid asset payload.",
-            )?;
-            let manifest = assets
-                .iter()
-                .find(|a| a["id"] == payload.asset_id)
-                .ok_or("Unknown asset.")?;
-            let bytes = STANDARD
-                .decode(&payload.base64)
-                .map_err(|_| "Invalid asset base64.")?;
-            ensure(
-                STANDARD.encode(&bytes) == payload.base64
-                    && bytes.len() as u64 == manifest["sizeBytes"].as_u64().unwrap()
-                    && hash(&bytes) == manifest["sha256"].as_str().unwrap(),
-                "Asset digest/size mismatch.",
-            )?;
-            asset_pixels += validate_raster(&bytes, manifest["mime"].as_str().unwrap())?;
-            ensure(
-                asset_pixels <= TOTAL_ASSET_PIXELS,
-                "Asset total decoded pixels exceed budget.",
-            )?;
-        }
+        validate_source_assets(&ui["assets"], &upload.assets)?;
+        for asset in assets { unique(&asset["id"])?; }
         let p = &doc["presentation"];
         object(p, &["widgets", "groups", "viewports", "grid"], if doc["schemaVersion"] == 3 { &["definitions"] } else { &[] })?;
         let definitions = if doc["schemaVersion"] == 3 { widgets::definitions(&p["definitions"], assets)? } else { Vec::new() };
@@ -909,6 +862,99 @@ fn validate_raster(bytes: &[u8], mime: &str) -> Result<u64, String> {
         "Decoded asset dimensions exceed budget.",
     )?;
     Ok((w as u64) * (h as u64))
+}
+
+
+fn validate_source_assets(manifest: &Value, payloads: &[AssetPayload]) -> Result<(), String> {
+    let assets = list(manifest, 0, 64)?;
+    let mut ids = BTreeSet::new();
+    let mut total = 0;
+    for asset in assets {
+        object(asset, &["id", "sha256", "sizeBytes", "mime"], &[])?;
+        ensure(ids.insert(stable(&asset["id"])?), "Duplicate asset ID.")?;
+        let digest = asset["sha256"].as_str().ok_or("Invalid asset hash.")?;
+        ensure(
+            digest_id(&format!("sha256:{digest}")),
+            "Invalid asset hash.",
+        )?;
+        total += integer(&asset["sizeBytes"], 1, ASSET_BYTES as u64)?;
+        ensure(
+            matches!(
+                asset["mime"].as_str(),
+                Some("image/png" | "image/jpeg" | "image/webp")
+            ),
+            "Invalid raster MIME.",
+        )?;
+    }
+    ensure(
+        total <= TOTAL_ASSET_BYTES as u64 && payloads.len() == assets.len(),
+        "Asset budget/manifest mismatch.",
+    )?;
+    let mut asset_ids = BTreeSet::new();
+    let mut asset_pixels = 0;
+    for payload in payloads {
+        ensure(
+            asset_ids.insert(&payload.asset_id)
+                && payload.base64.len() <= ASSET_BYTES.div_ceil(3) * 4,
+            "Invalid asset payload.",
+        )?;
+        let manifest = assets
+            .iter()
+            .find(|a| a["id"] == payload.asset_id)
+            .ok_or("Unknown asset.")?;
+        let bytes = STANDARD
+            .decode(&payload.base64)
+            .map_err(|_| "Invalid asset base64.")?;
+        ensure(
+            STANDARD.encode(&bytes) == payload.base64
+                && bytes.len() as u64 == manifest["sizeBytes"].as_u64().unwrap()
+                && hash(&bytes) == manifest["sha256"].as_str().unwrap(),
+            "Asset digest/size mismatch.",
+        )?;
+        asset_pixels += validate_raster(&bytes, manifest["mime"].as_str().unwrap())?;
+        ensure(
+            asset_pixels <= TOTAL_ASSET_PIXELS,
+            "Asset total decoded pixels exceed budget.",
+        )?;
+    }
+    Ok(())
+}
+
+/// Validate portable widget library sources without publishing or assigning a panel.
+pub fn validate_widget_bundle(bundle: &Value) -> Result<(), String> {
+    ensure(
+        serde_json::to_vec(bundle).map_err(|e| e.to_string())?.len() <= BUNDLE_BYTES,
+        "Widget bundle exceeds budget.",
+    )?;
+    object(
+        bundle,
+        &["bundleVersion", "library", "manifest", "assets"],
+        &[],
+    )?;
+    ensure(
+        bundle["bundleVersion"] == 1,
+        "Unsupported widget bundle version.",
+    )?;
+    object(&bundle["library"], &["formatVersion", "definitions"], &[])?;
+    ensure(
+        bundle["library"]["formatVersion"] == 1,
+        "Unsupported widget library version.",
+    )?;
+    ensure(
+        serde_json::to_vec(&bundle["library"])
+            .map_err(|e| e.to_string())?
+            .len()
+            <= DOCUMENT_BYTES,
+        "Widget library exceeds budget.",
+    )?;
+    let payloads: Vec<AssetPayload> =
+        serde_json::from_value(bundle["assets"].clone()).map_err(|_| "Invalid widget assets.")?;
+    validate_source_assets(&bundle["manifest"], &payloads)?;
+    widgets::definitions(
+        &bundle["library"]["definitions"],
+        list(&bundle["manifest"], 0, 64)?,
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

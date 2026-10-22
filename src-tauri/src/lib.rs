@@ -6,6 +6,7 @@ mod config_paths;
 mod mcp;
 mod mcp_credentials;
 mod mcp_tools;
+mod widget_library;
 mod acr_setup;
 mod ac_car_catalogue;
 mod ac_car_catalogue_cache;

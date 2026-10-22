@@ -158,6 +158,7 @@ its own active profile; the MCP draft-only save is deliberately separate.
 | Profiles | `profiles_list`, `profile_get`, `profile_status`, `profile_create`, `profile_duplicate`, `profile_rename`, `profile_delete`, `profile_import`, `profile_export` |
 | Resource and processing discovery | `resources_list`, `resource_inspect`, `resource_search_ports`, `processing_operations_list`, `system_inventory` |
 | Games and companions | `games_list`, `game_vehicles_list`, `game_telemetry_inspect`, `game_aircraft_resource`, `companions_list`, `companion_panels_list`, `companion_inspect` |
+| Widget designs | `widgets_list`, `widget_get`, `widget_save` |
 | Prepared changes | `profile_prepare_changes`, `compilation_inspect`, `profile_save_prepared` |
 | Applied runtime | `profile_apply`, `activation_current`, `activation_status`, `activation_cancel`, `profile_stop`, `profile_recover`, `applied_ports_inspect`, `applied_topology_inspect` |
 | Gateway/CAN setup | `gateways_list`, `gateway_inspect`, `gateway_session`, `gateway_config_read`, `gateway_config_change` |
@@ -165,6 +166,23 @@ its own active profile; the MCP draft-only save is deliberately separate.
 | Device preparation | `device_config_prepare` |
 | Machine-local settings | `local_settings_get`, `local_settings_save` |
 | Mutation reconciliation | `operation_status` |
+
+### Create reusable widgets
+
+Read `cockpit://guide/widgets`, then use `widgets_list` and `widget_get` to
+discover editable source examples. `widget_save` accepts one definition in the
+portable widget bundle format, including optional verified image assets. New
+designs use `expectedVersion: null` and definition `version: 1`; revisions use
+the exact current version and increment it by one. Supply a fresh `operationId`
+and retain it for identical retries. Conflicting revisions and malformed source
+are rejected before storage changes.
+
+The native library is shared with the desktop Widgets section and panel palette;
+the UI picks up MCP changes automatically. Existing local designs are merged on
+first use, preserving their identities and pinned panel revisions. Layer geometry,
+properties, ports, interaction and feedback states remain editable in the same
+widget designer. Saving a design does not publish, assign or activate a panel.
+The ordinary MCP request/reply budgets apply, including image payloads.
 
 Device setup uses the existing native claim, boot, route, generation, validation,
 and readback behavior. Inspect fresh native state before opening a session and

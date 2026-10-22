@@ -82,6 +82,9 @@ pub fn catalogue() -> Vec<Value> {
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
         tool("companion_panels_list","List retained verified companion panel publications and compatibility; publication hashes are immutable authoring metadata.",page(),&[]),
+        tool("widgets_list","List reusable widget designs in the same shared library as the Cockpit Widgets section. Returns the latest revision of each design.",page(),&[]),
+        tool("widget_get","Read a portable widget bundle, including source layers, properties, typed inputs/outputs, states and verified image assets. Omit version for latest. Use this as a template for widget_save; existing panels retain pinned revisions.",vec![("id",string(64)),("version",integer(1,65535))],&["id"]),
+        tool("widget_save","Create or revise one portable widget in the shared Widgets library. Read cockpit://guide/widgets first. bundle is the exact widget_get format with one definition. New IDs require expectedVersion:null and definition.version:1; revisions require the exact current expectedVersion and definition.version:expectedVersion+1. Native validation checks layers, properties, states, typed ports and image digests. Does not publish, assign or activate a panel.",vec![("bundle",object()),("expectedVersion",json!({"type":["integer","null"],"minimum":1,"maximum":65535}))],&["bundle","expectedVersion"]),
         tool("companion_inspect","Inspect a retained companion panel's typed ports using an exact native resource identity and immutable publication hash.",fields(vec![("resourceId",string(36)),("publicationHash",string(71))],page()),&["resourceId","publicationHash"]),
         tool("profile_prepare_changes","Prepare and compile an ephemeral draft without saving, selecting or activating. Supply either profileId plus expectedRevision and typed edits; a full document plus explicit null/numeric expectedRevision; or name plus expectedRevision:null for a new graph. Local assignments remain separate. Returns draftId, deterministic diff, validation and native compiler diagnostics. Read cockpit://schemas/profile and cockpit://guide/configuration first.",vec![("profileId",string(36)),("expectedRevision",nullable_revision()),("name",string(80)),("document",schema::reference("ProfileDocument")),("edits",json!({"type":"array","maxItems":256,"items":schema::reference("Edit")})),("assignments",json!({"type":"array","maxItems":64,"items":schema::reference("LocalAssignment")}))],&["expectedRevision"]),
         tool("profile_save_prepared","Atomically persist the exact prepared document and local assignments with its captured expectedRevision. A save never applies or reapplies outputs. Drafts expire after 30 minutes and belong to this client.",vec![("draftId",string(36))],&["draftId"]),
@@ -115,6 +118,7 @@ pub fn is_mutation(name: &str) -> bool {
     matches!(
         name,
         "profile_create"
+            | "widget_save"
             | "profile_duplicate"
             | "profile_rename"
             | "profile_delete"
@@ -143,6 +147,7 @@ pub fn resources() -> Vec<Value> {
         ("cockpit://schemas/local-assignment","Local assignment contract","Exact native source and port pins, stored separately from portable graphs."),
         ("cockpit://schemas/task-results","Task result contract","Structured success/error results and retry/reconciliation semantics."),
         ("cockpit://status","Current Cockpit profile status","Live selected/saved/applied native status, owner and recovery state."),
+        ("cockpit://guide/widgets","Portable widget creation","Shared widget library, source format, immutable revisions, examples and save workflow."),
     ].into_iter().map(|(uri,name,description)|json!({"uri":uri,"name":name,"description":description,"mimeType":"application/json"})).collect()
 }
 pub fn workflow() -> Value {

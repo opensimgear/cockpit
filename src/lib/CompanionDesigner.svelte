@@ -171,6 +171,16 @@
     hostState={...hostState,...result};return result;
   }
   async function refreshCompanions() { if (!active || disposed) return; try { await send('companion_status'); } catch { /* Local panels remain editable offline. */ } }
+  let refreshingWidgets=false;
+  async function refreshWidgets() {
+    if (!active || disposed || !storageReady || refreshingWidgets || widgetEditorDefinition) return;
+    refreshingWidgets=true;
+    const before=widgetBundle;
+    try { const saved=(await gatewayRequest({command:'widget_library_get'})).widgetLibrary;
+      if (saved) {const merged=await mergeWidgetBundles(before,saved);if(!disposed && widgetBundle===before && !widgetEditorDefinition)widgetBundle=merged;}
+    } catch(e) { if(!disposed) error=`Cannot refresh widget library: ${String(e)}`; }
+    finally { refreshingWidgets=false; }
+  }
   $effect(() => { if (!active) untrack(stop); else if (mounted) untrack(() => { void refreshCompanions(); }); });
 
 
@@ -286,10 +296,13 @@
   }
   async function saveWidgetDesign(definition: WidgetDefinition) {
     if (!store || !storageReady) throw new Error('Widget storage is not ready.');
-    const versions = [...widgetBundle.library.definitions, ...(document.presentation.definitions ?? [])].filter(d => d.id === definition.id).map(d => d.version);
-    const next = { ...definition, version: versions.length ? Math.max(...versions) + 1 : 1 };
+    const existing = widgetBundle.library.definitions.some(d => d.id === definition.id);
+    const expectedVersion = existing ? widgetEditorDefinition!.version : null;
+    const next = { ...definition, version: (expectedVersion ?? 0) + 1 };
     const resources = widgetResources(next);
-    const bundle = await mergeWidgetBundles(widgetBundle, { bundleVersion: 1, library: { formatVersion: 1, definitions: [next] }, manifest: resources.manifest, assets: resources.payloads });
+    const incoming:WidgetLibraryBundle={ bundleVersion: 1, library: { formatVersion: 1, definitions: [next] }, manifest: resources.manifest, assets: resources.payloads };
+    await gatewayRequest({command:'widget_save',bundle:incoming,expectedVersion});
+    const bundle = await mergeWidgetBundles(widgetBundle, incoming);
     const saved = await store.saveWidgets(bundle); widgetBundle = saved.widgets!;
     const instanceId = widgetEditInstanceId; widgetEditorDefinition = null; widgetEditInstanceId = '';
     message = `Saved ${next.title} · version ${next.version}. Existing panels retain their pinned revisions.`;
@@ -300,7 +313,7 @@
   }
   async function importWidgetFile(file?: File) {
     if (!file) return;
-    await operation(async () => { if (!store || file.size > DESIGNER_LIMITS.bundleBytes) throw new Error('Widget bundle exceeds its import budget or storage is not ready.'); const incoming = await importWidgetBundle(await file.text()); const merged = await mergeWidgetBundles(widgetBundle, incoming); const saved = await store.saveWidgets(merged); widgetBundle = saved.widgets!; message = 'Widget library imported. Existing panels keep their pinned versions.'; });
+    await operation(async () => { if (!store || file.size > DESIGNER_LIMITS.bundleBytes) throw new Error('Widget bundle exceeds its import budget or storage is not ready.'); const incoming = await importWidgetBundle(await file.text()); const merged = (await gatewayRequest({command:'widget_library_merge',bundle:incoming})).widgetLibrary!; const saved = await store.saveWidgets(merged); widgetBundle = saved.widgets!; message = 'Widget library imported. Existing panels keep their pinned versions.'; });
   }
   async function exportWidgets() {
     await operation(async () => { const data = await exportWidgetBundle(widgetBundle), url = URL.createObjectURL(new Blob([data], { type: 'application/json' })); const link = globalThis.document.createElement('a'); link.href = url; link.download = 'opensimgear-widgets.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
@@ -500,12 +513,15 @@
     let alive = true;
     void import('./companion-library').then(async ({ CompanionLibraryStore, indexedDbStorage }) => {
       store = new CompanionLibraryStore(indexedDbStorage()); const snapshot = await store.load();
-      if (!alive) return; library = snapshot.library; publications = snapshot.publications; widgetBundle = snapshot.widgets ? {...snapshot.widgets,library:{...snapshot.widgets.library,definitions:includeBuiltinWidgets(snapshot.widgets.library.definitions)}} : widgetBundle; storageReady = true; resolveStorageLoad();
+      if (!alive) return; library = snapshot.library; publications = snapshot.publications;
+      const localWidgets=snapshot.widgets ? {...snapshot.widgets,library:{...snapshot.widgets.library,definitions:includeBuiltinWidgets(snapshot.widgets.library.definitions)}} : widgetBundle;
+      widgetBundle=(await gatewayRequest({command:'widget_library_merge',bundle:localWidgets})).widgetLibrary!;
+      if(!alive)return;storageReady = true; resolveStorageLoad();
       await refreshCompanions();
       await restoreCompanionPanels();
       await refreshCompanions();
     }).catch(e => { if (alive) error = `Cannot open local library: ${String(e)}`; }).finally(resolveStorageLoad);
-    const poll=setInterval(() => { if(active && !busy) void refreshCompanions(); },2500);
+    const poll=setInterval(() => { if(active && !busy) {void refreshCompanions();void refreshWidgets();} },2500);
     const cancel = () => stop();
     window.addEventListener('blur', cancel); window.addEventListener('pagehide', cancel);
     return () => { alive = false; disposed=true; resolveStorageLoad(); clearInterval(poll); stop(); unsubscribe?.(); window.removeEventListener('blur', cancel); window.removeEventListener('pagehide', cancel); };

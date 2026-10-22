@@ -2,6 +2,19 @@ use super::*;
 use std::collections::BTreeSet;
 
 const CLIENT: &str = "authenticated-test-client";
+#[test]
+fn widget_tasks_use_native_validation_persistence_and_mutation_ledger(){
+    let tools=Tools::new(Arc::new(GatewayManager::mcp_test_manager()));
+    let guide=tools.read_resource("cockpit://guide/widgets",CLIENT);
+    let mut bundle=guide["data"]["example"].clone();bundle["library"]["definitions"][0]["id"]=json!("mcp-native-widget");
+    let args=json!({"operationId":operation(),"expectedVersion":null,"bundle":bundle});
+    let saved=tools.call("widget_save",args.clone(),CLIENT);assert_eq!(saved["ok"],true,"{saved}");
+    assert_eq!(tools.call("widget_save",args,CLIENT),saved);
+    let stale=tools.call("widget_save",json!({"operationId":operation(),"expectedVersion":null,"bundle":bundle}),CLIENT);assert_eq!(stale["ok"],false);
+    let got=tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT);assert_eq!(got["data"],bundle);
+    assert_eq!(tools.call("widgets_list",json!({}),CLIENT)["data"]["total"],15);
+    assert_eq!(tools.call("widget_save",json!({"bundle":bundle,"expectedVersion":null}),CLIENT)["error"]["code"],"invalid_arguments");
+}
 #[derive(Default)]
 struct Fake {
     service: Mutex<Option<osg_profiles::service::Service>>,
@@ -387,7 +400,7 @@ fn device_controls_use_shared_native_admission_and_never_forward_caller_commands
 #[test]
 fn context_resources_are_bounded_and_do_not_resolve_arbitrary_paths() {
     let (tools, _) = setup();
-    assert_eq!(resources().len(), 5);
+    assert_eq!(resources().len(), 6);
     for resource in resources() {
         let result = tools.read_resource(resource["uri"].as_str().unwrap(), CLIENT);
         assert_eq!(result["ok"], true, "{result}");

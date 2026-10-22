@@ -15,6 +15,23 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 
+test('shared widget reads and saves bypass slow inventory and retain their own write ordering',async()=>{
+ const inventory=deferred(),write=deferred(),api=transport({invokeResults:async(_command,request)=>{
+  if(request.command==='ports')await inventory.promise;
+  if(request.command==='widget_save')await write.promise;
+  return {ok:true,state:{widgetLibrary:{bundleVersion:1}}};
+ }});
+ const blocked=api.gatewayRequest({command:'ports'});await tick();
+ await api.gatewayRequest({command:'widget_library_get'});
+ const saving=api.gatewayRequest({command:'widget_save',expectedVersion:null,bundle:{bundleVersion:1}});await tick();
+ const reading=api.gatewayRequest({command:'widget_library_get'});await tick();
+ assert.deepEqual(api.calls.map(call=>call.args.request.command),['ports','widget_library_get','widget_save']);
+ await api.gatewayRequest({command:'profile_stop'});
+ write.resolve();await saving;await reading;
+ inventory.resolve();await blocked;
+ assert.deepEqual(api.calls.map(call=>call.args.request.command),['ports','widget_library_get','widget_save','profile_stop','widget_library_get']);
+});
+
 test('passive telemetry bypasses game setup and keeps profile Stop responsive',async()=>{
  const pending=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='game_scan')await pending.promise;return{ok:true,state};}});
  const scan=api.gatewayRequest({command:'game_scan'});await tick();

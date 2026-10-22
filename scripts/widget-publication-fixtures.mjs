@@ -38,6 +38,7 @@ const styled = apply(history, { type: 'update-component', id: first.id, definiti
 const behaviorDefinition = structuredClone(styledDefinition); behaviorDefinition.version = 3; behaviorDefinition.interaction.kind = 'toggle';
 const behavior = apply(styled, { type: 'update-component', id: first.id, definition: behaviorDefinition });
 const outputs = [];
+outputs.push([new URL('../examples/companion/builtin-widgets.widgets.json', import.meta.url), await exportWidgetBundle({bundleVersion:1,library:{formatVersion:1,definitions:catalog},manifest:[],assets:[]})+'\n']);
 for (const [name, doc] of [['base', document], ['styling', styled.present], ['behavior', behavior.present], ['complete',complete]]) {
   const p = await publishDocument(doc, []);
   outputs.push([new URL(`../crates/companion-service/tests/fixtures/widgets-${name}.json`, import.meta.url), JSON.stringify({ canonicalDocument: canonical(p.document), publicationHash: p.publicationHash, capabilityFingerprint: p.capabilityFingerprint, assets: p.assets }, null, 2) + '\n']);
