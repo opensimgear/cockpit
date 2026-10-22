@@ -384,8 +384,13 @@ impl Tools {
         )
     }
     pub(super) fn save_prepared(&self, args: &Value, client: &str) -> Result<Value, Value> {
+        self.save_prepared_at(args, client, Instant::now())
+    }
+    // A supplied monotonic observation keeps expiry tests independent of the
+    // host's uptime. No protocol argument can choose this observation.
+    pub(super) fn save_prepared_at(&self, args: &Value, client: &str, now: Instant) -> Result<Value, Value> {
         let id = text(args, "draftId")?;
-        let draft=self.drafts.lock().unwrap_or_else(|p|p.into_inner()).iter().find(|draft|draft.id==id&&draft.client==client&&draft.created.elapsed()<DRAFT_LIFETIME).cloned()
+        let draft=self.drafts.lock().unwrap_or_else(|p|p.into_inner()).iter().find(|draft|draft.id==id&&draft.client==client&&now.saturating_duration_since(draft.created)<DRAFT_LIFETIME).cloned()
             .ok_or_else(||failure("draft_expired","The prepared draft expired or belongs to another client. Prepare the current saved revision again.",false))?;
         self.native("profile_draft_save",json!({"document":draft.document,"expectedRevision":draft.expected_revision,"assignments":draft.assignments}),client,Some("profiles"))
     }

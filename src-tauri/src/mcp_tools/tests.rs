@@ -314,14 +314,13 @@ fn drafts_are_client_bound_expire_and_validate_nested_fields() {
         )["error"]["code"],
         "draft_expired"
     );
-    tools.drafts.lock().unwrap()[0].created =
-        Instant::now() - DRAFT_LIFETIME - Duration::from_secs(1);
+    // Windows monotonic time may start at boot; subtracting thirty minutes on
+    // a fresh CI runner underflows. Observe a future time instead of backdating.
+    let expired_at = tools.drafts.lock().unwrap()[0].created
+        + DRAFT_LIFETIME + Duration::from_secs(1);
     assert_eq!(
-        tools.call(
-            "profile_save_prepared",
-            json!({"draftId":draft,"operationId":operation()}),
-            CLIENT
-        )["error"]["code"],
+        tools.save_prepared_at(&json!({"draftId":draft}), CLIENT, expired_at)
+            .unwrap_err()["error"]["code"],
         "draft_expired"
     );
     assert!(!fake
