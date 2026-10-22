@@ -20,12 +20,12 @@ static void num(cJSON *v,const char *k,double n){assert(cJSON_ReplaceItemInObjec
 static void dump(cJSON *v,char *out,size_t n){assert(cJSON_PrintPreallocated(v,out,(int)n,false));}
 static void publication_tests(cJSON *p){
     const char *hash=osg_string(p,"publicationHash");
-    assert(osg_decode_publication(p,hash,crypto,&image,800,480));assert(image.panel.page_count==2&&image.panel.widget_count==5);
-    for(size_t i=0;i<5;i++){assert(!strcmp(image.widgets[i].id,osg_demo_widgets[i].id));assert(!strcmp(image.widgets[i].reference,osg_demo_widgets[i].reference));assert(fabs(image.widgets[i].bounds.x-osg_demo_widgets[i].bounds.x)<1e-12);assert(image.widgets[i].foreground==osg_demo_widgets[i].foreground);}
+    assert(osg_decode_publication(p,hash,crypto,&image,800,480));assert(image.scene.panel.page_count==2&&image.scene.panel.widget_count==5);
+    for(size_t i=0;i<5;i++){assert(!strcmp(image.scene.widgets[i].id,osg_demo_widgets[i].id));assert(!strcmp(image.scene.widgets[i].reference,osg_demo_widgets[i].reference));assert(fabs(image.scene.widgets[i].bounds.x-osg_demo_widgets[i].bounds.x)<1e-12);assert(image.scene.widgets[i].foreground==osg_demo_widgets[i].foreground);}
     assert(!osg_decode_publication(p,"sha256:0000000000000000000000000000000000000000000000000000000000000000",crypto,&image,800,480));
     assert(!osg_decode_publication(p,hash,crypto,&image,64,64));
     const char *canonical=osg_string(p,"canonicalDocument");cJSON *doc=json(canonical);char document[OSG_DOCUMENT_BYTES+1],new_hash[72];
-    for(int mutation=0;mutation<22;mutation++){
+    for(int mutation=0;mutation<25;mutation++){
         cJSON *copy=cJSON_Duplicate(doc,true),*ui=cJSON_GetObjectItemCaseSensitive(copy,"ui"),*pr=cJSON_GetObjectItemCaseSensitive(copy,"presentation");
         cJSON *widgets=cJSON_GetObjectItemCaseSensitive(pr,"widgets"),*w=cJSON_GetArrayItem(widgets,0),*cfg=cJSON_GetObjectItemCaseSensitive(w,"config");
         cJSON *bounds=cJSON_GetObjectItemCaseSensitive(w,"bounds"),*vp=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(pr,"viewports"),0);
@@ -52,6 +52,9 @@ static void publication_tests(cJSON *p){
             case 19:num(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(widgets,3),"config"),"min",700);break;
             case 20:string(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(ui,"feedbackWidgets"),0),"kind","text");break;
             case 21:cJSON_DeleteItemFromArray(cJSON_GetObjectItemCaseSensitive(ui,"feedbackWidgets"),3);break;
+            case 22:string(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(ui,"pages"),0),"title","Unicode é");break;
+            case 23:string(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(ui,"pages"),0),"title","");break;
+            case 24:cJSON_DeleteItemFromObjectCaseSensitive(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(ui,"pages"),0),"title");break;
         }
         dump(copy,document,sizeof(document));sha(document,strlen(document),new_hash);
         cJSON *bad=cJSON_Duplicate(p,true);string(bad,"canonicalDocument",document);string(bad,"publicationHash",new_hash);
@@ -88,15 +91,15 @@ static void publication_tests(cJSON *p){
     dump(copy,document,sizeof(document));sha(document,strlen(document),new_hash);
     cJSON *display=cJSON_Duplicate(p,true);string(display,"canonicalDocument",document);string(display,"publicationHash",new_hash);
     assert(osg_decode_publication(display,new_hash,crypto,&image,800,480));
-    assert(image.panel.widget_count==4);
-    for(size_t i=0;i<image.panel.widget_count;i++)assert(image.widgets[i].kind!=OSG_BUTTON);
+    assert(image.scene.panel.widget_count==4);
+    for(size_t i=0;i<image.scene.panel.widget_count;i++)assert(image.scene.widgets[i].kind!=OSG_BUTTON);
     cJSON_Delete(display);cJSON_Delete(copy);
     copy=cJSON_Duplicate(doc,true);ui=cJSON_GetObjectItemCaseSensitive(copy,"ui");pr=cJSON_GetObjectItemCaseSensitive(copy,"presentation");
     cJSON *bitmap=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(pr,"widgets"),0);string(bitmap,"kind","image");cJSON_ReplaceItemInObjectCaseSensitive(bitmap,"config",json("{\"assetId\":\"picture\"}"));cJSON_ReplaceItemInObjectCaseSensitive(bitmap,"controlIds",json("[]"));cJSON_ReplaceItemInObjectCaseSensitive(ui,"controls",json("[]"));
     cJSON_AddItemToArray(cJSON_GetObjectItemCaseSensitive(ui,"assets"),json("{\"id\":\"picture\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"mime\":\"image/png\",\"sizeBytes\":100}"));
     dump(copy,document,sizeof(document));sha(document,strlen(document),new_hash);display=cJSON_Duplicate(p,true);string(display,"canonicalDocument",document);string(display,"publicationHash",new_hash);
-    assert(osg_decode_publication(display,new_hash,crypto,&image,800,480));assert(image.widgets[0].kind==OSG_IMAGE&&!image.widgets[0].pixels);
-    assert(!strcmp(image.image_hashes[0],"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert(osg_decode_publication(display,new_hash,crypto,&image,800,480));assert(image.scene.widgets[0].kind==OSG_IMAGE&&!image.scene.widgets[0].pixels);
+    assert(!strcmp(image.scene.image_hashes[0],"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
     cJSON_Delete(display);cJSON_Delete(copy);
     cJSON_Delete(doc);assert(osg_decode_publication(p,hash,crypto,&image,800,480));
 }
@@ -265,7 +268,16 @@ static void settings_tests(void){
     char host[254];int port;assert(osg_endpoint("wss://cockpit.local:54437/companion",host,&port));assert(port==54437&&!strcmp(host,"cockpit.local"));
     const char *urls[]={"ws://a:1/companion","wss://user@host:1/companion","wss://host:0/companion","wss://host:65536/companion","wss://host:1/companion?secret=x","wss://host/companion","wss://[::1]:1/companion"};for(size_t i=0;i<sizeof(urls)/sizeof(urls[0]);i++)assert(!osg_endpoint(urls[i],host,&port));
 }
-int main(int argc,char **argv){assert(argc==2);osg_json_init();assert(!osg_json_parse("{\"x\":1,\"x\":2}",13));assert(!osg_json_parse("{\"x\":1e999}",11));assert(!osg_json_parse("{} trailing",11));
+static void json_workspace_checks(void){
+    assert(!osg_json_configure(4095,OSG_REPLY_BYTES,2048));assert(!osg_json_configure(1024*1024+1,OSG_REPLY_BYTES,2048));
+    assert(!osg_json_configure(OSG_JSON_HEAP_BYTES,0,2048));assert(!osg_json_configure(OSG_JSON_HEAP_BYTES,1024*1024+1,2048));
+    assert(!osg_json_configure(OSG_JSON_HEAP_BYTES,OSG_REPLY_BYTES,0));assert(!osg_json_configure(OSG_JSON_HEAP_BYTES,OSG_REPLY_BYTES,16385));
+    cJSON *held=cJSON_CreateObject();assert(held);assert(!osg_json_configure(1024*1024,192*1024,8192));cJSON_Delete(held);
+    assert(osg_json_configure(4096,1,1));assert(!osg_json_parse("{}",2));assert(osg_json_last_failure().code==OSG_JSON_BYTES);
+    assert(osg_json_configure(4096,64,1));assert(!osg_json_parse("{\"x\":{}}",8));assert(osg_json_last_failure().code==OSG_JSON_NODES);
+    assert(osg_json_configure(OSG_JSON_HEAP_BYTES,OSG_REPLY_BYTES,2048));assert(osg_json_allocated()==0);
+}
+int main(int argc,char **argv){assert(argc==2);osg_json_init();json_workspace_checks();assert(!osg_json_parse("{\"x\":1,\"x\":2}",13));assert(!osg_json_parse("{\"x\":1e999}",11));assert(!osg_json_parse("{} trailing",11));
     char host_check[254];int port_check;uint64_t count_check;
     assert(!osg_json_parse(NULL,1));assert(!osg_json_parse("",0));assert(!osg_json_parse("{}",OSG_REPLY_BYTES+1));
     assert(!osg_json_parse("{\"x\":\"\\u0000\"}",14));assert(!osg_endpoint(NULL,host_check,&port_check));

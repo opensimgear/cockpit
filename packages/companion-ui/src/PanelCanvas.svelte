@@ -4,6 +4,10 @@
   import { boundsContain, boundsOverlap, viewportRegions, type DesignerDocument, type DesignerWidget } from '@opensimgear/companion-designer';
   import { axisPosition, createPreviewController, type PreviewController, type PreviewSnapshot, type PointerData, type PreviewChange } from './controller.ts';
   import { feedbackPresentation, movedBounds, resizedBounds, resizedCornerBounds, type ResizeCorner, safeAssetUrl, viewportWidgetBounds, type FeedbackSamples } from './presentation.ts';
+  import WidgetView from './WidgetView.svelte';
+  import GroupOutline from './GroupOutline.svelte';
+  import { componentDefinition, componentPresentation } from './widget-presentation.ts';
+  import { resolveWidgetProperties } from '@opensimgear/companion-designer';
   interface Props {
     document: DesignerDocument; pageId?: string; assets?: Record<string, string>; mode?: 'edit' | 'preview'; selectedIds?: string[];
     controller?: PreviewController; feedback?: FeedbackSamples; oncontroller?: (controller: PreviewController) => void;
@@ -21,7 +25,8 @@
   const engine = $derived(controller ?? local);
   let previewState = $state<PreviewSnapshot>({ armed: false, activePointers: 0, values: {}, events: [], reason: 'Disarmed' });
   let now = $state(performance.now());
-  const selectedPage = $derived(pageId ?? document.ui.pages[0]?.id);
+  let localPage = $state<string>();
+  const selectedPage = $derived(localPage ?? pageId ?? document.ui.pages[0]?.id);
   const viewport = $derived(document.presentation.viewports.find(item => item.pageId === selectedPage));
   const widgets = $derived(document.presentation.widgets.filter(item => item.pageId === selectedPage));
   const groups = $derived(document.presentation.groups.filter(item => item.pageId === selectedPage));
@@ -48,7 +53,14 @@
   });
   $effect(() => { if (engine) return engine.subscribe(snapshot => { previewState = snapshot; }); });
   $effect(() => { engine?.setDocument(document); });
+  $effect(() => { pageId; document.ui.id; localPage = undefined; });
   $effect(() => { selectedPage; mode; engine?.disarm('Page or mode changed'); drag = null; viewportDrag = null; });
+  $effect(() => {
+    for (const widget of widgets) if (widget.kind === 'component') {
+      const presentation = componentPresentation(document, widget, feedback, now);
+      engine?.setWidgetEnabled(widget.id, presentation?.interactionEnabled ?? false);
+    }
+  });
   function stop(reason: string) { engine?.disarm(reason); drag = null; viewportDrag = null; }
   function visibility() { if (globalThis.document.visibilityState === 'hidden') stop('Page hidden'); }
   function position(event: PointerEvent, widget: DesignerWidget): PointerData {
@@ -75,6 +87,31 @@
   function choose(widget: DesignerWidget, value: number) {
     const pointer = -10000;
     if (mode === 'preview' && engine?.begin(pointer, widget.id, { value })) engine.release(pointer);
+  }
+  function componentData(widget: DesignerWidget): PointerData {
+    const definition = componentDefinition(document, widget);
+    if (definition?.interaction.kind !== 'selector') return {};
+    const options = definition.interaction.options;
+    const index = options.findIndex(o => o.value === Number(previewState.values[widget.controlIds[0]]));
+    return { value: options[(index + 1) % options.length].value };
+  }
+  function componentNavigate(widget: DesignerWidget) {
+    if (mode !== 'preview' || widget.kind !== 'component') return;
+    const definition = componentDefinition(document, widget);
+    if (definition?.interaction.kind !== 'navigate') return;
+    const page = String(resolveWidgetProperties(definition, widget.config.properties)[definition.interaction.pageProperty]);
+    if (!document.ui.pages.some(p => p.id === page)) return;
+    engine?.disarm('Page changed'); localPage = page;
+  }
+  function componentMove(event: PointerEvent) {
+    const b = event.currentTarget as HTMLElement, r = b.getBoundingClientRect();
+    if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) finish(event, true);
+  }
+  function componentKey(event: KeyboardEvent, widget: DesignerWidget, down: boolean) {
+    if (componentDefinition(document, widget)?.interaction.kind === 'navigate' && [' ', 'Enter'].includes(event.key)) {
+      event.preventDefault(); if (!down) componentNavigate(widget); return;
+    }
+    keyboard(event, widget, down, componentData(widget));
   }
   function axisKey(event: KeyboardEvent, widget: DesignerWidget) {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || mode !== 'preview' || !previewState.armed) return;
@@ -212,10 +249,10 @@
   }
   function groupBounds(id: string) {
     const members = widgets.filter(widget => widget.groupId === id).map(widget => ({ ...widget, bounds: shownBounds(widget) }));
-    if (!members.length) return 'display:none';
+    if (!members.length) return { style: 'display:none', width: 0, height: 0 };
     const x = Math.min(...members.map(item => item.bounds.x)), y = Math.min(...members.map(item => item.bounds.y));
     const right = Math.max(...members.map(item => item.bounds.x + item.bounds.width)), bottom = Math.max(...members.map(item => item.bounds.y + item.bounds.height));
-    return `left:${x * 100}%;top:${y * 100}%;width:${(right - x) * 100}%;height:${(bottom - y) * 100}%`;
+    return { style: `left:${x * 100}%;top:${y * 100}%;width:${(right - x) * 100}%;height:${(bottom - y) * 100}%`, width: (right - x) * contentWidth, height: (bottom - y) * contentHeight };
   }
   function dimensions(widget: DesignerWidget) {
     const bounds = shownBounds(widget);
@@ -250,17 +287,28 @@
         <span>{draggedWidget}</span><strong>+</strong><small>{Math.round(dropBounds.width*(viewport?.width??1280)*(1-insets.left-insets.right))} × {Math.round(dropBounds.height*(viewport?.height??800)*(1-insets.top-insets.bottom))} px</small>
       </div>
     {/if}
-    {#each groups as group}<div class="group-outline" style={groupBounds(group.id)}><span>{group.label}</span></div>{/each}
+    {#each groups as group}{@const bounds=groupBounds(group.id)}<div class="group-outline" style={bounds.style}><GroupOutline label={group.label} width={bounds.width} height={bounds.height} /></div>{/each}
     {#each widgets as widget (widget.id)}
       {@const display = feedbackPresentation(widget, document.ui, feedback, now)}
       {@const size = dimensions(widget)}
       {@const bounds = shownBounds(widget)}
-      <section class="widget" class:image-widget={widget.kind === 'image'} class:selected={selectedIds.includes(widget.id)} class:output={widget.feedbackIds.length > 0} class:feedback-unavailable={widget.feedbackIds.length > 0 && !display.available} class:touch-warning={mode === 'edit' && size.small} class:outside-viewport={mode === 'edit' && !widgetFits(bounds)}
+      {@const composition = componentPresentation(document, widget, feedback, now, { pressed: previewState.pressedWidgetIds?.includes(widget.id), enabled: mode === 'edit' || widget.controlIds.length === 0 || previewState.armed })}
+      <section class="widget" class:component-widget={widget.kind === 'component'} class:image-widget={widget.kind === 'image'} class:selected={selectedIds.includes(widget.id)} class:output={widget.feedbackIds.length > 0} class:feedback-unavailable={widget.kind !== 'component' && widget.feedbackIds.length > 0 && !display.available} class:touch-warning={mode === 'edit' && size.small} class:outside-viewport={mode === 'edit' && !widgetFits(bounds)}
+        data-widget-id={widget.id} data-definition-id={composition?.definition.id} data-definition-version={composition?.definition.version}
         style:left={`${bounds.x * 100}%`} style:top={`${bounds.y * 100}%`} style:width={`${bounds.width * 100}%`} style:height={`${bounds.height * 100}%`}
         style:color={widget.style?.foreground ?? '#dce7ef'} style:background={widget.style?.background ?? '#152532'} style:--widget-accent={widget.style?.accent ?? '#83e3c2'} aria-label={mode === 'edit' ? `${widget.label}, ${size.width} by ${size.height} pixels${size.small ? ", below 44 pixel touch target" : ""}` : widget.label}>
-        {#if widget.kind !== 'image'}<header><span>{widget.label}</span><small>{widget.kind}</small></header>{/if}
+        {#if widget.kind !== 'image' && widget.kind !== 'component'}<header><span>{widget.label}</span><small>{widget.kind}</small></header>{/if}
         <div class="widget-body" inert={mode === 'edit' || (widget.controlIds.length > 0 && !previewState.armed)}>
-          {#if widget.kind === 'image'}
+          {#if widget.kind === 'component' && composition}
+            <WidgetView definition={composition.definition} layers={composition.layers} state={composition.state} samples={composition.outputs} {assets} {now} />
+            {#if composition.definition.interaction.kind !== 'none'}
+              <button class="component-hit" aria-label={String(composition.properties.label ?? widget.label)} aria-pressed={composition.definition.interaction.kind === 'toggle' ? Boolean(previewState.values[widget.controlIds[0]]) : undefined}
+                disabled={!composition.interactionEnabled || widget.controlIds.length > 0 && !previewState.armed}
+                style:left={`${composition.definition.hitArea.x * 100}%`} style:top={`${composition.definition.hitArea.y * 100}%`} style:width={`${composition.definition.hitArea.width * 100}%`} style:height={`${composition.definition.hitArea.height * 100}%`}
+                onpointerdown={(event) => start(event, widget, componentData(widget))} onpointermove={componentMove} onpointerup={(event) => finish(event)} onpointercancel={(event) => finish(event, true)} onlostpointercapture={(event) => finish(event, true)}
+                onkeydown={(event) => componentKey(event, widget, true)} onkeyup={(event) => componentKey(event, widget, false)} onblur={() => keyboardBlur(widget)} onclick={() => componentNavigate(widget)}></button>
+            {/if}
+          {:else if widget.kind === 'image'}
             {#if widget.config.assetId && safeAssetUrl(assets[widget.config.assetId])}<img class="image-content" src={safeAssetUrl(assets[widget.config.assetId])!} alt={widget.label} draggable="false" />{:else}<span>Choose an image asset</span>{/if}
           {:else if widget.kind === 'button'}
             <button class="press-button" class:active={Boolean(previewState.values[widget.controlIds[0]])} aria-pressed={widget.config.buttonMode === 'toggle' ? Boolean(previewState.values[widget.controlIds[0]]) : undefined}
@@ -292,7 +340,7 @@
           {:else if widget.kind === 'gauge'}<div class="gauge-value"><meter min={widget.config.min} max={widget.config.max} value={typeof display.value === 'number' ? display.value : widget.config.min} aria-label={mode === 'edit' ? `${widget.label}, ${size.width} by ${size.height} pixels${size.small ? ", below 44 pixel touch target" : ""}` : widget.label}></meter><output>{display.text}</output></div>
           {:else}<output class:numeric={widget.kind === 'numeric'}>{display.text}</output>{/if}
         </div>
-        {#if widget.feedbackIds.length}<footer class:stale={!display.available}><span>{display.provenance}</span><span>{display.freshness}{display.available ? ` · ${Math.round(display.ageMs)}ms` : ''}</span></footer>{/if}
+        {#if widget.kind !== 'component' && widget.feedbackIds.length}<footer class:stale={!display.available}><span>{display.provenance}</span><span>{display.freshness}{display.available ? ` · ${Math.round(display.ageMs)}ms` : ''}</span></footer>{/if}
         {#if mode === 'edit'}<span class="size-badge" class:warning={size.small}>{size.width} × {size.height}px{size.small ? ' · touch < 44px' : ''}</span><button class="edit-hit" aria-label={`Select or move ${widget.label}`} onpointerdown={(event) => editStart(event, widget)} onpointermove={editMove} onpointerup={editFinish} onpointercancel={() => { drag = null; }} onlostpointercapture={() => { drag = null; }} onkeydown={(event) => editKey(event, widget)}></button>{#each ['nw','ne','sw','se'] as corner}<button class={`resize-corner ${corner}`} aria-label={`Resize ${widget.label} ${corner==='nw'?'top left':corner==='ne'?'top right':corner==='sw'?'bottom left':'bottom right'}`} title="Drag corner to resize" onpointerdown={(event)=>editStart(event,widget,corner as ResizeCorner)} onpointermove={editMove} onpointerup={editFinish} onpointercancel={()=>{drag=null;}} onlostpointercapture={()=>{drag=null;}} onkeydown={(event)=>resizeKey(event,widget,corner as ResizeCorner)}></button>{/each}{/if}
       </section>
     {/each}
@@ -302,8 +350,13 @@
 <style>
   .palette-preview{position:absolute;z-index:10;pointer-events:none;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between;padding:8px;border:2px dashed #83e3c2;border-radius:7px;background:#83e3c225;color:#b7f7df;box-shadow:0 0 0 1px #0c172099;overflow:hidden}.palette-preview span{font-size:12px}.palette-preview strong{align-self:center;font-size:24px;font-weight:400}.palette-preview small{align-self:flex-end;font:10px ui-monospace,monospace}
   .viewport-outline.drop-target{border:2px solid #83e3c2;background:#83e3c222}
-  .panel-canvas{background-position:center;background-size:cover;position:relative;width:100%;min-height:240px;background:#0c1720;border:1px solid #30424f;border-radius:10px;overflow:hidden;font-family:inherit;color:#dce7ef}.safe-area{position:absolute}.editing .safe-area{outline:1px dashed #54746899;background-image:linear-gradient(to right,#5a85711a 1px,transparent 1px),linear-gradient(to bottom,#5a85711a 1px,transparent 1px);background-size:var(--grid-x) var(--grid-y)}.safe-label{position:absolute;top:1px;right:3px;z-index:5;font:7px ui-monospace,monospace;color:#8fb09f;pointer-events:none;background:#102019cc}.size-badge{position:absolute;bottom:1px;right:2px;font:7px ui-monospace,monospace;background:#0c1720dd;padding:2px 3px;z-index:4;pointer-events:none;color:#9ebcad}.size-badge.warning{color:#ffd28b}.widget.touch-warning{border-color:#aa7d42}.group-outline{position:absolute;border:1px dashed #70978c55;pointer-events:none;border-radius:8px;transform:scale(1.015)}.group-outline>span{position:absolute;top:-13px;left:7px;font-size:9px;color:#9cb4aa;background:#0c1720;padding:1px 4px}.widget{position:absolute;border:1px solid #3a4f5e;border-radius:7px;padding:7px;display:flex;flex-direction:column;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden}.widget.selected{outline:2px solid #83e3c2;outline-offset:2px;z-index:2}.widget>header{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:clamp(8px,1vw,12px);margin-bottom:5px;overflow:hidden;flex-shrink:0}.widget>header>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.widget small{font:8px ui-monospace,monospace;opacity:.6}.widget-body{min-height:0;flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden}.widget-body[inert]{opacity:.62}.widget button,.widget select{font:inherit;color:inherit;box-sizing:border-box;background:#203441;border:1px solid #426071;border-radius:5px;cursor:pointer;touch-action:none;user-select:none}.widget button:focus-visible,.widget select:focus-visible,.axis-control:focus-visible{outline:2px solid var(--widget-accent);outline-offset:1px}.widget button.active{background:color-mix(in srgb,var(--widget-accent) 25%,#142430);border-color:var(--widget-accent)}.press-button{width:100%;height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:7px;font-size:clamp(9px,1.4vw,18px)!important;padding:4px}.button-icon{width:24px;height:24px;object-fit:contain}.axis-control.vertical .axis-line.horizontal{width:1px;height:auto;top:0;bottom:0;left:50%;right:auto}.widget select{width:100%;padding:8px;font-size:clamp(9px,1.2vw,15px)}.hat{height:100%;aspect-ratio:1;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:3px;max-width:100%}.hat button{padding:0;font-size:clamp(10px,1.8vw,22px)}.hat-neutral{display:grid;place-items:center;color:var(--widget-accent)}.encoder{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:100%}.encoder button{width:46%;height:90%;font-size:clamp(15px,3vw,34px)}.axis-control{position:relative;width:100%;height:100%;min-height:20px;background:#0c1b26;border:1px solid #3a5e69;border-radius:5px;touch-action:none;user-select:none;overflow:hidden;box-sizing:border-box;cursor:crosshair}.axis-line{position:absolute;background:#335563;pointer-events:none}.axis-line.horizontal{height:1px;left:0;right:0;top:50%}.axis-line.vertical{width:1px;top:0;bottom:0;left:50%}.axis-thumb{width:14px;height:14px;position:absolute;background:var(--widget-accent);border:3px solid #386358;transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;box-sizing:border-box}.axis-control output{position:absolute;bottom:3px;right:5px;font:9px ui-monospace,monospace;color:#9ebfb6;pointer-events:none}.widget output{font-size:clamp(10px,1.6vw,22px);overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere}.widget output.numeric{font-family:ui-monospace,monospace}.icon-value{font-size:clamp(18px,4vw,50px);opacity:.4}.icon-value.on{color:var(--widget-accent);opacity:1}.icon-value img{width:100%;height:100%;max-height:100%;object-fit:contain}.indicator-value{display:flex;align-items:center;justify-content:center;gap:8px}.indicator-value>span{width:13px;height:13px;background:#52616a;border-radius:50%;flex-shrink:0}.indicator-value.on>span{background:var(--widget-accent);box-shadow:0 0 12px #83e3c244}.gauge-value{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}.gauge-value meter{width:95%;height:22px;accent-color:var(--widget-accent)}.widget>footer{font:7px ui-monospace,monospace;display:flex;justify-content:space-between;gap:3px;margin-top:5px;color:#87a699;flex-shrink:0;overflow:hidden;white-space:nowrap}.widget>footer.stale{color:#e9bb80}.feedback-unavailable .widget-body{opacity:.65}.feedback-unavailable meter{opacity:.3}.edit-hit{position:absolute;inset:0;width:100%;height:100%;border:0!important;background:transparent!important;border-radius:0!important;cursor:move!important;z-index:3}.disarmed .widget:not(.output){filter:saturate(.6)}@media(max-width:500px){.widget{padding:4px;border-radius:4px}.widget>header{font-size:8px;margin-bottom:3px}.widget>header small{display:none}.widget>footer{font-size:6px;flex-direction:column;gap:0}.widget .press-button{gap:2px}.widget .press-button small{font-size:6px}.hat{gap:1px}}
+  .panel-canvas{background-position:center;background-size:cover;position:relative;width:100%;min-height:240px;background:#0c1720;border:1px solid #30424f;border-radius:10px;overflow:hidden;font-family:inherit;color:#dce7ef}.safe-area{position:absolute}.editing .safe-area{outline:1px dashed #54746899;background-image:linear-gradient(to right,#5a85711a 1px,transparent 1px),linear-gradient(to bottom,#5a85711a 1px,transparent 1px);background-size:var(--grid-x) var(--grid-y)}.safe-label{position:absolute;top:1px;right:3px;z-index:5;font:7px ui-monospace,monospace;color:#8fb09f;pointer-events:none;background:#102019cc}.size-badge{position:absolute;bottom:1px;right:2px;font:7px ui-monospace,monospace;background:#0c1720dd;padding:2px 3px;z-index:4;pointer-events:none;color:#9ebcad}.size-badge.warning{color:#ffd28b}.widget.touch-warning{border-color:#aa7d42}.group-outline{position:absolute;pointer-events:none}.widget{position:absolute;border:1px solid #3a4f5e;border-radius:7px;padding:7px;display:flex;flex-direction:column;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden}.widget.selected{outline:2px solid #83e3c2;outline-offset:2px;z-index:2}.widget>header{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:clamp(8px,1vw,12px);margin-bottom:5px;overflow:hidden;flex-shrink:0}.widget>header>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.widget small{font:8px ui-monospace,monospace;opacity:.6}.widget-body{min-height:0;flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden}.widget-body[inert]{opacity:.62}.widget button,.widget select{font:inherit;color:inherit;box-sizing:border-box;background:#203441;border:1px solid #426071;border-radius:5px;cursor:pointer;touch-action:none;user-select:none}.widget button:focus-visible,.widget select:focus-visible,.axis-control:focus-visible{outline:2px solid var(--widget-accent);outline-offset:1px}.widget button.active{background:color-mix(in srgb,var(--widget-accent) 25%,#142430);border-color:var(--widget-accent)}.press-button{width:100%;height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:7px;font-size:clamp(9px,1.4vw,18px)!important;padding:4px}.button-icon{width:24px;height:24px;object-fit:contain}.axis-control.vertical .axis-line.horizontal{width:1px;height:auto;top:0;bottom:0;left:50%;right:auto}.widget select{width:100%;padding:8px;font-size:clamp(9px,1.2vw,15px)}.hat{height:100%;aspect-ratio:1;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:3px;max-width:100%}.hat button{padding:0;font-size:clamp(10px,1.8vw,22px)}.hat-neutral{display:grid;place-items:center;color:var(--widget-accent)}.encoder{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:100%}.encoder button{width:46%;height:90%;font-size:clamp(15px,3vw,34px)}.axis-control{position:relative;width:100%;height:100%;min-height:20px;background:#0c1b26;border:1px solid #3a5e69;border-radius:5px;touch-action:none;user-select:none;overflow:hidden;box-sizing:border-box;cursor:crosshair}.axis-line{position:absolute;background:#335563;pointer-events:none}.axis-line.horizontal{height:1px;left:0;right:0;top:50%}.axis-line.vertical{width:1px;top:0;bottom:0;left:50%}.axis-thumb{width:14px;height:14px;position:absolute;background:var(--widget-accent);border:3px solid #386358;transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;box-sizing:border-box}.axis-control output{position:absolute;bottom:3px;right:5px;font:9px ui-monospace,monospace;color:#9ebfb6;pointer-events:none}.widget output{font-size:clamp(10px,1.6vw,22px);overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere}.widget output.numeric{font-family:ui-monospace,monospace}.icon-value{font-size:clamp(18px,4vw,50px);opacity:.4}.icon-value.on{color:var(--widget-accent);opacity:1}.icon-value img{width:100%;height:100%;max-height:100%;object-fit:contain}.indicator-value{display:flex;align-items:center;justify-content:center;gap:8px}.indicator-value>span{width:13px;height:13px;background:#52616a;border-radius:50%;flex-shrink:0}.indicator-value.on>span{background:var(--widget-accent);box-shadow:0 0 12px #83e3c244}.gauge-value{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}.gauge-value meter{width:95%;height:22px;accent-color:var(--widget-accent)}.widget>footer{font:7px ui-monospace,monospace;display:flex;justify-content:space-between;gap:3px;margin-top:5px;color:#87a699;flex-shrink:0;overflow:hidden;white-space:nowrap}.widget>footer.stale{color:#e9bb80}.feedback-unavailable .widget-body{opacity:.65}.feedback-unavailable meter{opacity:.3}.edit-hit{position:absolute;inset:0;width:100%;height:100%;border:0!important;background:transparent!important;border-radius:0!important;cursor:move!important;z-index:3}.disarmed .widget:not(.output){filter:saturate(.6)}@media(max-width:500px){.widget{padding:4px;border-radius:4px}.widget>header{font-size:8px;margin-bottom:3px}.widget>header small{display:none}.widget>footer{font-size:6px;flex-direction:column;gap:0}.widget .press-button{gap:2px}.widget .press-button small{font-size:6px}.hat{gap:1px}}
   .viewport-hit{position:absolute;z-index:0;margin:0;padding:0;background:transparent;border:0;border-radius:0;cursor:pointer;touch-action:none}.viewport-hit:focus-visible{outline:2px solid #80bdd8;outline-offset:-3px}.viewport-outline{position:absolute;box-sizing:border-box;border:1px dashed #66849599;pointer-events:none;z-index:4}.viewport-outline.viewport-selected{border:2px solid #86bad4aa;background:#80bdd805}.viewport-outline.viewport-invalid{border-color:#f5a092;background:#e05b4a12}.viewport-label{position:absolute;top:3px;left:3px;max-width:calc(100% - 6px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 6px;border:1px solid #53768c;border-radius:3px;background:#122837e8;color:#b1ccdc;font:9px ui-monospace,monospace;line-height:1.3;pointer-events:auto;cursor:move;touch-action:none;user-select:none}.viewport-selected .viewport-label{border-color:#86bad4;color:#d2eafa}.viewport-label:focus-visible,.viewport-resize:focus-visible{outline:2px solid #b6e3fa;outline-offset:1px}.viewport-resize{position:absolute;right:-1px;bottom:-1px;width:22px;height:22px;padding:0;background:#23455b;border:1px solid #86bad4;border-radius:5px 0 0 0;color:#cce9f9;font:14px ui-monospace,monospace;pointer-events:auto;cursor:nwse-resize;touch-action:none;user-select:none}.viewport-error{position:absolute;bottom:5px;left:5px;right:5px;width:fit-content;max-width:calc(100% - 10px);z-index:8;padding:5px 7px;border:1px solid #d87566;border-radius:4px;background:#401e1df0;color:#ffd2c9;font:10px ui-monospace,monospace;pointer-events:none}.widget{z-index:2}.widget.selected{z-index:3}.widget.outside-viewport{outline:2px solid #f5a092;outline-offset:1px}
 .widget.image-widget{z-index:1;padding:0;border:0;border-radius:0;background:transparent!important}.image-content{width:100%;height:100%;object-fit:fill;pointer-events:none}.image-widget .widget-body[inert]{opacity:1}
 .resize-corner{position:absolute;width:12px;height:12px;margin:0;padding:0!important;background:transparent!important;border:0!important;border-radius:0!important;z-index:6;touch-action:none}.resize-corner::after{content:'';position:absolute;width:6px;height:6px;border:1px solid #83e3c2;background:#18342d;opacity:.65}.resize-corner:hover::after,.resize-corner:focus-visible::after{opacity:1;background:#83e3c2}.resize-corner.nw{top:0;left:0;cursor:nwse-resize}.resize-corner.ne{top:0;right:0;cursor:nesw-resize}.resize-corner.sw{bottom:0;left:0;cursor:nesw-resize}.resize-corner.se{bottom:0;right:0;cursor:nwse-resize}.resize-corner.nw::after{top:2px;left:2px}.resize-corner.ne::after{top:2px;right:2px}.resize-corner.sw::after{bottom:2px;left:2px}.resize-corner.se::after{bottom:2px;right:2px}
+  .widget.component-widget{border:0;border-radius:0;padding:0;background:transparent!important;filter:none!important}
+  .component-widget .widget-body{position:relative;width:100%;height:100%;display:block}
+  .component-widget .widget-body[inert]{opacity:1}
+  .widget .component-hit{position:absolute;padding:0;background:transparent!important;border:0!important;border-radius:0;touch-action:none}
+  .widget .component-hit:disabled{cursor:default}
 </style>

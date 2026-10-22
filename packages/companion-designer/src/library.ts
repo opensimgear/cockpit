@@ -3,6 +3,7 @@ import { DESIGNER_LIMITS } from "./types.ts";
 import type { DesignerLibrary, DraftEntry } from "./types.ts";
 import { assert, checked, clone, exact, label, newId, normalizeToPortableUi, stableId } from "./model.ts";
 import { validateAssets } from "./assets.ts";
+import { resolveWidgetProperties } from "./widget-model.ts";
 export function createLibrary(): DesignerLibrary { return { schemaVersion: 1, drafts: [] }; }
 export async function saveDraft(library: DesignerLibrary, entry: DraftEntry): Promise<DesignerLibrary> {
   stableId(entry.id); label(entry.name); const document = checked(entry.document), assets = await validateAssets(document, entry.assets);
@@ -25,6 +26,9 @@ export function duplicateDraft(library: DesignerLibrary, id: string, name?: stri
   for (const control of doc.ui.controls) control.id = remap(control.id, "input");
   for (const output of doc.ui.feedbackWidgets) { output.id = remap(output.id, "output"); output.channelId = remap(output.channelId, "channel"); }
   for (const page of doc.ui.pages) page.id = remap(page.id, "page");
+  // Definition assets are namespaced by the portable document. Keeping their
+  // IDs preserves immutable recipe content while the copy gets new control IDs.
+  if (doc.schemaVersion === 3) for (const asset of doc.ui.assets) ids.set(asset.id, asset.id);
   for (const asset of doc.ui.assets) asset.id = remap(asset.id, "asset");
   for (const target of doc.targets) target.id = remap(target.id, "target");
   for (const group of doc.presentation.groups) { group.id = remap(group.id, "group"); group.pageId = remap(group.pageId, "page"); }
@@ -33,6 +37,14 @@ export function duplicateDraft(library: DesignerLibrary, id: string, name?: stri
     for (const region of viewport.regions ?? []) region.id = remap(region.id, "viewport");
   }
   for (const widget of doc.presentation.widgets) {
+    if (widget.kind === "component") {
+      const definition = doc.presentation.definitions!.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion)!;
+      if (definition.interaction.kind === "navigate") {
+        const property = definition.interaction.pageProperty;
+        const previous = resolveWidgetProperties(definition, widget.config.properties)[property];
+        widget.config.properties[property] = remap(String(previous), "page");
+      }
+    }
     if(widget.kind === "image" && widget.config.assetId) widget.config.assetId = remap(widget.config.assetId, "asset");
     widget.id = newId("widget"); widget.pageId = remap(widget.pageId, "page"); if (widget.groupId) widget.groupId = remap(widget.groupId, "group");
     widget.controlIds = widget.controlIds.map(id => remap(id, "input")); widget.feedbackIds = widget.feedbackIds.map(id => remap(id, "output"));

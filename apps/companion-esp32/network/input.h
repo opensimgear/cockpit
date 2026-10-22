@@ -10,7 +10,7 @@
 
 typedef enum { OSG_INPUT_DISARMED, OSG_INPUT_PREPARING, OSG_INPUT_ARMED, OSG_INPUT_BLOCKED } osg_input_mode;
 typedef enum { OSG_INPUT_OK, OSG_INPUT_CANCELLED, OSG_INPUT_TOUCH_FAILED, OSG_INPUT_UI_EXPIRED, OSG_INPUT_HOST_EXPIRED, OSG_INPUT_DISPLAY_FAILED, OSG_INPUT_OVERFLOW, OSG_INPUT_BACKLOG, OSG_INPUT_SEQUENCE } osg_input_fault;
-typedef struct { uint64_t sequence, created_ms; uint8_t widget; bool down; } osg_input_edge;
+typedef struct { uint64_t sequence, created_ms; uint8_t widget; bool down; osg_value_kind kind; double number; } osg_input_edge;
 typedef struct {
     osg_runtime *runtime;
     osg_input_edge queue[OSG_INPUT_QUEUE_CAPACITY];

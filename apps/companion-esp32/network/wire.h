@@ -17,6 +17,11 @@ typedef struct {
     osg_page pages[OSG_MAX_PAGES];
     osg_widget widgets[OSG_MAX_WIDGETS];
     const char *image_hashes[OSG_MAX_WIDGETS];
+} osg_scene;
+/* Fixed-widget compatibility decoder scratch. Portable scenes do not retain
+ * this legacy string arena; their owned strings live in the caller's bank. */
+typedef struct {
+    osg_scene scene;
     char strings[OSG_IMAGE_TEXT_BYTES];
     size_t used;
 } osg_image;
@@ -35,6 +40,12 @@ typedef struct {
 } osg_live_session;
 /* JSON hooks are global: initialize once; only the network task may use cJSON. */
 void osg_json_init(void);
+/* Configure a board's bounded JSON workspace only with no outstanding JSON.
+ * Defaults retain the original fixed-widget limits until a caller opts in. */
+bool osg_json_configure(size_t heap_bytes, size_t reply_bytes, size_t nodes);
+typedef enum { OSG_JSON_OK, OSG_JSON_INVALID, OSG_JSON_BYTES, OSG_JSON_NODES, OSG_JSON_HEAP } osg_json_error;
+typedef struct { osg_json_error code; size_t required, available; } osg_json_diagnostic;
+osg_json_diagnostic osg_json_last_failure(void);
 size_t osg_json_allocated(void);
 cJSON *osg_json_parse(const char *, size_t);
 const char *osg_string(const cJSON *, const char *);

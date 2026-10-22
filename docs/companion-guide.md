@@ -41,6 +41,52 @@ Momentary buttons release with the pointer. Toggles retain requested state until
 
 Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A profile keeps its selected published panel; saving a newer panel does not rewrite that choice or its active graph. Active ownership may block an assignment change. Deactivate/recover the owner and explicitly reconcile the profile's instance and ports before saving a replacement panel choice.
 
+### Design and reuse widgets
+
+Open **Reusable widget library** in the panel editor. Start with the
+[Shared systems complete example](../examples/companion/shared-systems-complete.bundle.json),
+add a catalog entry, or select **Create widget**. Use the pencil beside a library
+entry to edit its design. The widget editor provides an ordered layer tree,
+shape/text/image/gauge layers, bounds, alignment, portable fonts, paint, hit area,
+state overrides, exposed properties, typed ports and undo/redo. Select a preview
+state to edit that state's overrides; **Reset state overrides** restores the
+base layer's appearance for that state.
+
+Link labels, colors, images or numeric fields to exposed properties so each
+instance can vary without copying its definition. Gauge ranges and other
+numeric property links must fit their declared bounds. A linked field stays
+read-only until unlinked; unlinking retains its resolved value. Input and
+feedback ports keep their types and provenance independent of layer styling.
+Only fresh game-confirmed simulator feedback can establish a confirmed active
+state. Touch, local preview and requested values alone cannot light it as
+confirmed.
+
+**Save to widget library** creates an immutable numbered revision. Existing
+panels keep their pinned revisions. Add the latest library entry for a new
+independent instance, or select an existing component and intentionally choose
+its **Library version** in Properties. Editing the selected instance's design
+saves a new library revision and updates that draft instance; save the panel to
+publish the change. Other instances retain their versions and separate control
+and feedback identities. **Export widgets** and **Import widgets** exchange
+portable library bundles with the assets they reference. **Export panel**
+includes the exact definitions pinned by its instances, allowing another
+installation to render the same panel without your local library.
+
+Cockpit preview, browser and Android share the composition renderer and control
+lifecycle. ESP32 renders the same portable source through LVGL. A connected
+ESP32 advertises its engine version, supported fonts, geometry and resource
+limits; assignment checks those capabilities before replacing its running
+panel. A rejected update preserves the prior assignment and explains the
+limitation. You can still edit, preview, export and save the full design locally.
+ESP32's single-pointer input requires separate interactive hit areas on each
+page. An overlap diagnostic identifies both affected widgets; move/resize the
+instances or adjust their local hit areas. Read-only component decoration may
+overlap controls, and controls on separate pages remain independent.
+Reduce instances/layers or choose a suitable target explicitly when necessary.
+Compatible source and artwork updates use the existing publication download
+and cache path without recompiling firmware. A new panel must render and acquire
+a fresh neutral baseline before its controls arm.
+
 ### Multiple viewports on one screen
 
 Set **Companion screen** to the display's resolution, or enter its pixel width and height. The whole canvas represents that screen. Each page starts with one full-screen viewport; existing panels keep their layout.

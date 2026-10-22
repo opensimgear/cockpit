@@ -2,7 +2,8 @@ import { validatePortableUi } from "../../companion-contracts/src/index.ts";
 import type { Control, FeedbackWidget } from "../../companion-contracts/src/index.ts";
 import { DESIGNER_LIMITS } from "./types.ts";
 import type { Bounds, DesignerDocument, DesignerHistory, DesignerWidget, LogicalBinding, LogicalTarget, Viewport, ViewportRegion, WidgetKind } from "./types.ts";
-import { assert, boundsContain, boundsOverlap, checked, clone, newId, normalizeToPortableUi, viewportRegions, widgetViewport } from "./model.ts";
+import { assert, boundsContain, boundsOverlap, canonical, checked, clone, newId, normalizeToPortableUi, viewportRegions, widgetViewport } from "./model.ts";
+import { validateWidgetDefinition, resolveWidgetProperties, widgetSemantics, type WidgetDefinition, type WidgetPropertyValue } from "./widget-model.ts";
 export const widgetPresets: readonly { kind: WidgetKind; title: string }[] = [
   { kind: "button", title: "Button" }, { kind: "selector", title: "Selector" }, { kind: "hat", title: "Hat" },
   { kind: "encoder", title: "Encoder" }, { kind: "slider", title: "Slider" }, { kind: "xy", title: "XY pad" },
@@ -36,6 +37,32 @@ function bindAvailable(doc: DesignerDocument, control: Control): void {
     if (index < 0 && target[key] < max) { index = target[key]; target[key]++; }
   }
   if (index >= 0) doc.bindings.push({ controlId: control.id, targetId: target.id, kind: control.kind, index });
+}
+/** Upgrading is an explicit authoring operation; archived schema 2 documents stay unchanged. */
+export function upgradeWidgetDocument(document: DesignerDocument): DesignerDocument {
+  const doc = checked(document); doc.schemaVersion = 3; doc.presentation.definitions ??= []; return checked(doc);
+}
+function includeDefinition(doc: DesignerDocument, source: WidgetDefinition): WidgetDefinition {
+  const result = validateWidgetDefinition(source, doc.ui.assets.map(a => a.id)); assert(result.ok, result.ok ? "" : result.error);
+  doc.schemaVersion = 3; doc.presentation.definitions ??= [];
+  const existing = doc.presentation.definitions.find(d => d.id === result.value.id && d.version === result.value.version);
+  if (existing) { assert(canonical(existing) === canonical(result.value), "Widget definition revisions are immutable"); return existing; }
+  doc.presentation.definitions.push(result.value); return result.value;
+}
+function addComponent(doc: DesignerDocument, source: WidgetDefinition, pageId: string, properties: Record<string, WidgetPropertyValue> = {}, bounds?: Bounds, viewportId?: string): void {
+  const definition = includeDefinition(doc, source), region = viewportRegions(doc, pageId).find(r => !viewportId || r.id === viewportId);
+  assert(region, "Unknown component viewport"); resolveWidgetProperties(definition, properties, doc.ui.assets.map(a => a.id));
+  const controls = definition.inputs.map(port => {
+    const { name: _name, ...descriptor } = port;
+    const control = { ...descriptor, id: newId("input") } as Control;
+    doc.ui.controls.push(control); bindAvailable(doc, control); return control.id;
+  });
+  const outputs = definition.outputs.map(port => {
+    const output = { id: newId("output"), label: port.label, kind: port.kind, channelId: newId("channel") };
+    doc.ui.feedbackWidgets.push(output); return output.id;
+  });
+  const width = region.bounds.width * .3, height = region.bounds.height * .25;
+  doc.presentation.widgets.push({ id: newId("widget"), pageId, label: definition.title, kind: "component", bounds: bounds ?? { x: region.bounds.x + .025 * region.bounds.width, y: region.bounds.y + .025 * region.bounds.height, width, height }, controlIds: controls, feedbackIds: outputs, config: { definitionId: definition.id, definitionVersion: definition.version, properties: clone(properties) } });
 }
 function addWidget(doc: DesignerDocument, kind: WidgetKind, pageId: string, bounds?: Bounds, axisMode?: "unipolar" | "bipolar", viewportId?: string): DesignerWidget {
   const title = widgetPresets.find(preset => preset.kind === kind)?.title; assert(title, "Unknown preset");
@@ -107,6 +134,8 @@ export function newDocument(title = "Untitled panel"): DesignerDocument {
 export function createDesignerHistory(document: DesignerDocument): DesignerHistory { return { past: [], present: migrateBackgroundImages(document), future: [] }; }
 export type DesignerCommand =
   | { type: "replace"; document: DesignerDocument }
+  | { type: "add-component"; definition: WidgetDefinition; properties?: Record<string, WidgetPropertyValue>; pageId?: string; viewportId?: string; bounds?: Bounds }
+  | { type: "update-component"; id: string; definition?: WidgetDefinition; properties?: Record<string, WidgetPropertyValue> }
   | { type: "add-widget"; kind: WidgetKind; pageId?: string; viewportId?: string; bounds?: Bounds; axisMode?: "unipolar" | "bipolar" }
   | { type: "update-widget"; id: string; patch: Record<string, unknown> }
   | { type: "move-widget"; id: string; bounds: Bounds }
@@ -133,6 +162,18 @@ export function applyDesignerCommand(history: DesignerHistory, command: Designer
   const selected = (ids: string[]) => { const widgets = ids.map(id => doc.presentation.widgets.find(widget => widget.id === id)); assert(ids.length > 0 && widgets.every(Boolean) && new Set(ids).size === ids.length, "Invalid selection"); const result = widgets as DesignerWidget[]; assert(new Set(result.map(widget => widget.pageId)).size === 1, "Selection spans pages"); return result; };
   switch (command.type) {
     case "replace": doc = clone(command.document); break;
+    case "add-component": addComponent(doc, command.definition, command.pageId ?? doc.ui.pages[0].id, command.properties, command.bounds, command.viewportId); break;
+    case "update-component": {
+      const widget = selected([command.id])[0]; assert(widget.kind === "component", "Expected a reusable widget instance");
+      if (command.definition) {
+        const previous = doc.presentation.definitions?.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion);
+        const next = includeDefinition(doc, command.definition); assert(previous && next.id === previous.id, "Choose a revision of the same widget definition");
+        const ports = (d: WidgetDefinition) => { const s = widgetSemantics(d) as { inputs: unknown; outputs: unknown }; return canonical([s.inputs, s.outputs]); };
+        assert(ports(previous) === ports(next), "Widget port changes require explicit rebinding; the existing instance was preserved");
+        widget.config.definitionVersion = next.version;
+      }
+      if (command.properties) widget.config.properties = clone(command.properties); break;
+    }
     case "add-widget": addWidget(doc, command.kind, command.pageId ?? doc.ui.pages[0].id, command.bounds, command.axisMode, command.viewportId); break;
     case "update-widget": {
       assert(Object.keys(command.patch).every(key => ["label", "bounds", "config", "style", "groupId", "pageId"].includes(key)), "Stable binding IDs cannot be edited");

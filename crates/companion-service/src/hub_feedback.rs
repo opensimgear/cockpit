@@ -156,7 +156,7 @@ impl Hub {
             .sessions
             .get(session_id)
             .ok_or("Feedback session ended.")?;
-        // Image preparation runs before the device installs its new runtime.
+        // Image/font preparation runs before the device installs its new runtime.
         // It validates these ACKs without applying feedback to the old panel.
         // Preserve the cursor so the first rendered-panel ACK is a snapshot.
         if !session.armed && frame["type"] == "heartbeat"

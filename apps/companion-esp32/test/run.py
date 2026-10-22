@@ -14,14 +14,14 @@ OUT.mkdir(parents=True, exist_ok=True)
 # Delete only this harness's old coverage counters, never source/build trees.
 for counter in OUT.glob("core-test-*.gcda"):
     counter.unlink()
-sources = [APP / "core/companion.c", APP / "core/raster.c", APP / "test/core_test.c", APP / "boards/esp_lcd_bridge.c"]
+sources = [APP / p for p in ["core/companion.c", "core/widget.c", "core/raster.c", "render/widget_state.c", "render/widget_source.c", "network/input.c", "network/publication.c", "network/panel_source.c", "network/json.c", "network/workspace.c", "third_party/cjson/cJSON.c", "test/component_test.c", "test/core_test.c", "boards/esp_lcd_bridge.c"]]
 subprocess.run([os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g",
-                "-fsanitize=address,undefined", "--coverage", "-I" + str(APP / "core"), "-I" + str(APP / "test"), "-I" + str(APP / "boards"), "-I" + str(APP / "test/include"),
-                *map(str, sources), "-lm", "-o", str(OUT / "core-test")], check=True, cwd=ROOT)
-subprocess.run([str(OUT / "core-test"), str(OUT / "preview.ppm"), str(OUT)], check=True, cwd=ROOT)
-subprocess.run(["gcov", "-j", "-b", "-c", "core-test-companion.gcno", "core-test-raster.gcno", "core-test-esp_lcd_bridge.gcno"], check=True, cwd=OUT)
+                "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048", *["-I" + str(APP / path) for path in ["core", "render", "network", "third_party/cjson", "test", "boards", "test/include"]],
+                *map(str, sources), "-lm", "-lcrypto", "-o", str(OUT / "core-test")], check=True, cwd=ROOT)
+subprocess.run([str(OUT / "core-test"), str(OUT / "preview.ppm"), str(OUT)], check=True, cwd=ROOT, env={**os.environ, "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"})
+subprocess.run(["gcov", "-j", "-b", "-c", "core-test-companion.gcno", "core-test-widget.gcno", "core-test-raster.gcno", "core-test-esp_lcd_bridge.gcno"], check=True, cwd=OUT)
 report = {}
-for name in ("companion", "raster", "esp_lcd_bridge"):
+for name in ("companion", "widget", "raster", "esp_lcd_bridge"):
     data = json.loads(gzip.decompress((OUT / ("core-test-" + name + ".gcov.json.gz")).read_bytes()))
     file = next(f for f in data["files"] if f["file"].endswith("/" + name + ".c"))
     lines = file["lines"]

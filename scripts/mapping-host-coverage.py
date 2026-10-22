@@ -29,9 +29,17 @@ def main():
     target = Path(os.environ.get('CARGO_TARGET_DIR', str(output / 'target')))
     env = dict(os.environ, CARGO_TARGET_DIR=str(target), RUSTFLAGS='-C instrument-coverage',
                LLVM_PROFILE_FILE=str(profiles / '%m-%p.profraw'))
+    # Only host coverage is measured here. Instrumenting the separate real helper
+    # adds overhead inside its strict evaluation/response deadlines; its own
+    # coverage is measured by logic-coverage.py. Keep that process representative
+    # of the normal debug helper without relaxing any runtime budget.
+    helper_target = output / 'logic-helper-target'
+    helper_env = dict(os.environ, CARGO_TARGET_DIR=str(helper_target))
+    for key in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'LLVM_PROFILE_FILE'):
+        helper_env.pop(key, None)
     run(['cargo', 'build', '--locked', '--bin', 'osg-logic', '--manifest-path',
-         root / 'crates/logic/Cargo.toml'], root, env)
-    env['OSG_TEST_LOGIC_WORKER'] = str(target / 'debug' / ('osg-logic.exe' if os.name == 'nt' else 'osg-logic'))
+         root / 'crates/logic/Cargo.toml'], root, helper_env)
+    env['OSG_TEST_LOGIC_WORKER'] = str(helper_target / 'debug' / ('osg-logic.exe' if os.name == 'nt' else 'osg-logic'))
     artifacts = run(['cargo', 'test', '--locked', '--lib', '--no-run', '--message-format=json',
                      '--manifest-path', root / 'crates/mapping-host/Cargo.toml'], root, env)
     binaries = [entry['executable'] for line in artifacts.splitlines()

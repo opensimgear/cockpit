@@ -16,7 +16,9 @@ def main():
     parser.add_argument('--output-dir',type=Path,default=root/'.research/logic-coverage')
     output=parser.parse_args().output_dir.resolve();output.mkdir(parents=True,exist_ok=True)
     profiles=Path(tempfile.mkdtemp(prefix='profiles-',dir=output))
-    env=dict(os.environ,CARGO_TARGET_DIR=str(output/'target'),RUSTFLAGS='-C instrument-coverage',LLVM_PROFILE_FILE=str(profiles/'%m-%p.profraw'))
+    # Keep timing-sensitive evaluator cases from competing with other test cases
+    # under instrumentation. The production 5 ms evaluation budget is unchanged.
+    env=dict(os.environ,CARGO_TARGET_DIR=str(output/'target'),RUSTFLAGS='-C instrument-coverage',LLVM_PROFILE_FILE=str(profiles/'%m-%p.profraw'),RUST_TEST_THREADS='1')
     logs=run(['cargo','test','--locked','--message-format=json','--manifest-path',root/'crates/logic/Cargo.toml'],root,env)
     (output/'tests.log').write_text(logs,encoding='utf-8')
     entries=[]

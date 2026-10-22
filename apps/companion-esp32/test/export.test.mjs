@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { exportPanel, main } from '../tools/export-panel.mjs';
 import { normalizeToPortableUi, canonical } from '../../../packages/companion-designer/src/model.ts';
 import { publishDocument } from '../../../packages/companion-designer/src/assets.ts';
+import { applyDesignerCommand, createDesignerHistory } from '../../../packages/companion-designer/src/editor.ts';
 const source = await readFile(new URL('./panel.bundle.json', import.meta.url), 'utf8');
 const change = mutate => { const b = JSON.parse(source); mutate(b.document, b); b.document.ui = normalizeToPortableUi(b.document); return JSON.stringify(b); };
 test('shared designer publication keeps source identity, channels, pages and immutable output', async () => {
@@ -35,13 +36,12 @@ test('strict designer validation, target budgets and capabilities reject unsuppo
     d.presentation.widgets[1].kind = 'icon'; d.presentation.widgets[1].config = {symbol:'power'};
   })), /unsupported widget/);
   await assert.rejects(exportPanel(change(d => {
-    for (let i=2;i<5;i++) {
-      const pageId='page-'+i;
-      d.ui.pages.push({id:pageId,title:'Page '+i,items:[]});
-      d.presentation.viewports.push({pageId,width:800,height:480});
-      // Keep every page publishable so this case reaches the embedded page budget.
-      d.presentation.widgets[i-1].pageId=pageId;
+    let history = createDesignerHistory(d);
+    for (let i = 2; i < 5; i++) {
+      history = applyDesignerCommand(history, { type: 'add-page', title: 'Page ' + i });
+      history = applyDesignerCommand(history, { type: 'add-widget', kind: 'text', pageId: history.present.ui.pages.at(-1).id });
     }
+    Object.assign(d, history.present);
   })), /budget/);
 });
 test('supported styles, safe insets and text affixes retain source publication changes', async () => {
