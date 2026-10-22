@@ -478,7 +478,12 @@ static void advance(void){
         bool render_failed=panel_render_failed;
         xSemaphoreGive(ui.mutex);
         if(!healthy||render_failed){
-            if(render_failed||fault==OSG_INPUT_DISPLAY_FAILED){disconnected();state=PANEL_ERROR;detail="Panel could not render correctly";operation_failed("render-failed",true);next_request=millis();report("panel-render-failed");return;}
+            if(render_failed||fault==OSG_INPUT_DISPLAY_FAILED){
+                disconnected();state=PANEL_ERROR;
+                detail=render_failed?"Panel could not render correctly":"Display refresh exceeded the input safety deadline";
+                if(!render_failed){operation.diagnostic.code=OSG_PANEL_SOURCE_BUDGET;osg_copy(operation.diagnostic.field,sizeof(operation.diagnostic.field),"display.refreshMs");operation.diagnostic.required=millis()-input.render_start_ms;operation.diagnostic.available=OSG_TOUCH_LEASE_MS;}
+                operation_failed("render-failed",true);next_request=millis();report("panel-render-failed");return;
+            }
             fail("input-cancelled-or-lease-expired-reconnect-required");
             if(fault==OSG_INPUT_TOUCH_FAILED)detail="Touch input failed";
             else if(fault==OSG_INPUT_UI_EXPIRED)detail="Touch update timed out";

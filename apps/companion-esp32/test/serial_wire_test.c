@@ -131,6 +131,15 @@ int main(void){
     incoming=frames;assert(osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));cJSON_Delete(reply);
     large_reply(&socket,true);osg_transport_reply_capacity=32768;large_reply(&socket,false);osg_transport_reply_capacity=sizeof(reply_storage);
     osg_serial_close(&socket);
+    incoming="{\"command\":\"connect\",\"unixMs\":12345}\n";
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    osg_serial_close(&socket);
+    command=osg_serial_take_command();assert(command&&!strcmp(osg_string(command,"command"),"connect"));
+    assert(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(command,"unixMs"))==12345);cJSON_Delete(command);
+    assert(!osg_serial_take_command());
+    incoming="{\"command\":\"arm\",\"armEpoch\":\"1\"}\n";
+    assert(!osg_serial_request(&socket,cJSON_CreateObject(),&reply,10));
+    osg_serial_close(&socket);assert(!osg_serial_take_command());
     assert(!osg_json_allocated());
     puts("Serial status probes remain responsive; fragmented records survive idle/request handoffs and timeouts");
 }

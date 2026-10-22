@@ -17,7 +17,11 @@ bool osg_serial_open(osg_socket *s){
 }
 void osg_serial_close(osg_socket *s){
     if(s->direct){printf("{\"type\":\"serial-close\",\"linkId\":\"%s\"}\n",s->link);fflush(stdout);}
-    cJSON_Delete(deferred);deferred=NULL;
+    /* Reconnect is a console command, not a reply owned by the closing link.
+     * It can arrive while boot-time authentication is still waiting for a
+     * host. Preserve that retry, but discard stale arm/control commands. */
+    const char *command=osg_string(deferred,"command");
+    if(!command||strcmp(command,"connect")){cJSON_Delete(deferred);deferred=NULL;}
 }
 bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned timeout){
     *response=NULL;s->request_error="USB response timed out";
