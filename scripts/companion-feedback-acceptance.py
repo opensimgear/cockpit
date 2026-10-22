@@ -204,6 +204,9 @@ def bounded_text_publication(original):
             bounds=dict(x=0.02, y=0.74, width=0.3, height=0.21),
             controlIds=[], feedbackIds=[output], config=dict(prefix='', suffix='')))
     document['ui']['title'] = 'Bounded feedback acceptance'
+    # This is a separate panel assigned to one peer, not a saved update of the
+    # shared original panel (which would also advance its profile references).
+    document['ui']['id'] = 'bounded-feedback-panel'
     document['ui']['feedbackWidgets'] = outputs
     document['presentation']['widgets'] = widgets
     for row in document['ui']['pages']:

@@ -360,7 +360,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--service',type=Path,required=True);parser.add_argument('--output',type=Path);args=parser.parse_args()
     flight=json.loads((ROOT/'crates/companion-service/tests/fixtures/c1-flight-publication.json').read_text())
     racing=json.loads((ROOT/'scripts/fixtures/companion-racing-publication.json').read_text())
-    configurations=[('flight-left',flight),('flight-right',flight),('racing',racing)]
+    # Installation identity must differ from the portable racing panel ID.
+    configurations=[('flight-left',flight),('flight-right',flight),('racing-peer',racing)]
     evidence=dict(qualification=False,virtualReportsSent=False,driverLayoutsChanged=False,nativeClientPinQualification=False,physicalGameQualification=False,peers='three simulated peers on real loopback pinned-CA WSS',checks=[])
     with tempfile.TemporaryDirectory(prefix='osg-profile-companions-') as temporary:
         directory=Path(temporary).resolve();service=mapping.Service(args.service.resolve(),directory);peers=[]
@@ -383,7 +384,7 @@ def main():
             peers[0].end()
             wait_for(lambda:reading(service,owner,models['flight-left']['nodes']['button'])['status']!='known','Closed optional peer retained a Known graph input')
             assert exact_readings(service,owner,models['flight-right'],expected(flight))
-            assert exact_readings(service,owner,models['racing'],expected(racing))
+            assert exact_readings(service,owner,models['racing-peer'],expected(racing))
             peers[0].open('flight-left',flight)
             time.sleep(.2)
             assert reading(service,owner,models['flight-left']['nodes']['button'])['status']!='known','Reconnect silently reacquired a lost profile input'
@@ -395,7 +396,7 @@ def main():
             mapping.retired_boundaries(service)
             operator(service,'companion_revoke',companionId='flight-left')
             retained=operator(service,'companion_status')['host']['instances']
-            assert {row['instanceId'] for row in retained}=={'flight-right','racing'}
+            assert {row['instanceId'] for row in retained}=={'flight-right','racing-peer'}
             evidence['checks'].append('retired recording/feedback start boundaries rejected and revocation preserves the other paired instances')
             for peer in peers:peer.close()
             peers.clear();operator(service,'companion_disable')
