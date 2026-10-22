@@ -548,6 +548,13 @@
     </div>{/if}
 
   </section>
+  <section class="widgets-section" aria-label="Widgets">
+    <h2>Widgets</h2>
+    <div class="panel-list-heading"><p>Edit reusable widget designs for your panels.</p><div class="panel-list-actions"><button class="action" disabled={!storageReady || busy} onclick={() => widgetImportInput?.click()}><Icon name="upload" size={16} />Import widgets</button><button class="action" disabled={!storageReady || busy} onclick={() => editWidgetDefinition()}><Icon name="plus" size={16} />New widget</button></div></div>
+    <input hidden type="file" accept="application/json,.json" bind:this={widgetImportInput} aria-label="Import widget library" onchange={e => { void importWidgetFile(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
+    {#if !storageReady}<p>Loading widgets…</p>
+    {:else}<div class="widget-design-list">{#each availableWidgets as definition (definition.id)}<button class="widget-design-row" aria-label={`Edit design ${definition.title}`} disabled={busy} onclick={() => editWidgetDefinition(definition)}><span><strong>{definition.title}</strong><small>Version {definition.version} · {definition.size.width} × {definition.size.height}</small></span><Icon name="pencil" size={18} /></button>{/each}</div>{/if}
+  </section>
   {:else if editorOpen}
   <section aria-label="Panel editor">
   <button class="text-button back-panels" use:focusEditor onclick={backToPanels} disabled={busy}><Icon name="back" size={16} />Back to Panels</button>
@@ -729,6 +736,10 @@
 </section>
 
 <style>
+  .widgets-section{margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}
+  .widget-design-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));gap:10px;margin:20px 0}
+  .widget-design-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px;text-align:left;background:var(--surface);border-radius:8px;min-width:0}
+  .widget-design-row span{display:flex;flex-direction:column;gap:6px;min-width:0}.widget-design-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.widget-design-row small{color:var(--muted)}
   .new-panel-dialog form{display:grid;gap:9px}.new-panel-dialog h2{margin-bottom:5px}.new-panel-dialog label{margin:0}.panel-size-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.new-panel-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:9px}.new-panel-dialog input[readonly]{color:var(--muted)}
 
   .toolbar.layout-tools{justify-content:flex-end;align-items:center;gap:12px;margin-top:0}.layout-toolset{display:flex;align-items:center;gap:6px}.layout-toolset + .layout-toolset{border-left:1px solid var(--line);padding-left:12px}
