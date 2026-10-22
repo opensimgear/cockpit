@@ -11,7 +11,7 @@ export type GameArtwork = {
   telemetryLabel: string;
 };
 
-/** Bundled publisher screenshots; provenance is in public/game-art/sources.json. */
+/** Bundled official Steam landscape capsules; provenance is in public/game-art/sources.json. */
 export const gameArtwork: Record<BuiltinGameId, GameArtwork> = {
   dcs: {
     image: '/game-art/dcs.jpg', category: 'Flight', wordmark: 'DCS', edition: 'WORLD',
@@ -43,7 +43,7 @@ export const gameArtwork: Record<BuiltinGameId, GameArtwork> = {
   },
 };
 
-/** User art overrides both discovered art and the bundled screenshots. */
+/** User art overrides both discovered art and the bundled Steam artwork. */
 export function resolveGameArtwork(game: Game): GameArtwork {
   const bundled = gameArtwork[game.id as BuiltinGameId];
   const base: GameArtwork = bundled ?? { image: '', category: 'Custom', wordmark: game.name, edition: '', description: 'Keyboard and mouse bindings · Profile activation', telemetryLabel: 'Bindings and profile activation' };

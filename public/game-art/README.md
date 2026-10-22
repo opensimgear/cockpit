@@ -1,10 +1,10 @@
 # Game tile artwork
 
-These JPEGs are publisher screenshots downloaded from each game's official Steam
-store listing on 2026-10-21. They are bundled locally so game tiles work offline
-and do not make requests to Steam when Cockpit opens. The original 600 px Steam
-thumbnail files are retained without modification; the interface crops them with
-CSS and adds a gradient behind its own text.
+These JPEGs are official 616 × 353 landscape capsules downloaded from each game's
+Steam store listing on 2026-10-22. They are bundled locally so game tiles work offline
+and do not make requests to Steam when Cockpit opens. The original Steam files
+are retained without modification. Cockpit does not add a game-name overlay to
+the artwork; publisher titles and logos within the images are part of the originals.
 
 `sources.json` records the exact image URL, store page, publisher, developer, and
 the legal notice supplied by Steam for every asset. Artwork and game trademarks

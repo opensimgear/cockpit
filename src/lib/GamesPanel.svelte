@@ -203,7 +203,6 @@
         <article class={['game-tile', { unavailable: !game.installed }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
             <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{/if}<div class="art-shade"></div>{#if game.categoryId}<span class="art-category">{categories[game.categoryId]}</span>{:else if !isCustomGameId(game.id)}<span class="art-category">{art.category}</span>{/if}{#if isCustomGameId(game.id)}<span class="art-category custom-art-badge">Custom</span>{/if}
-              <div class={['game-wordmark', { 'long-wordmark': art.wordmark === 'ASSETTO CORSA' }]}>{art.wordmark}<span>{art.edition}</span></div>
             </div>
             <div class="tile-copy">
               <div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div>
@@ -281,11 +280,8 @@
   .tile-details:focus-visible { outline-offset: -4px; }
   .game-art { aspect-ratio: 16 / 9; background: linear-gradient(135deg,var(--accent-bg),var(--surface-raised)); position: relative; overflow: hidden; }
   .game-art-image { width:100%;height:100%;object-fit:cover;display:block; }
-  .art-shade { position:absolute;inset:0;background:linear-gradient(180deg,#07101980 0%,transparent 40%,#07101945 62%,#071019e8 100%); }
+  .art-shade { position:absolute;inset:0;background:linear-gradient(180deg,#07101940 0%,transparent 40%); }
   .art-category { max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;position:absolute;top:14px;left:16px;padding:5px 8px;border:1px solid #ffffff30;border-radius:4px;background:#071019a6;font-size:8px;text-transform:uppercase;letter-spacing:1.5px;color:#f1f5f9; }
-  .game-wordmark { position:absolute;bottom:17px;left:20px;right:16px;font-size:32px;line-height:1;font-weight:750;letter-spacing:3px;color:#fff;text-shadow:0 2px 8px #0008; }
-  .game-wordmark.long-wordmark {font-size:23px;letter-spacing:1.2px;}
-  .game-wordmark span { display:block;font-size:10px;letter-spacing:5px;font-weight:600;margin-top:7px; }
   .tile-copy { padding: 20px; }
   .tile-title { display:flex;justify-content:space-between;align-items:center;gap:12px; }
   .tile-title h2 { font-size:15px;font-weight:600;letter-spacing:-.2px;line-height:1.45; }
