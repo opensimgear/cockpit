@@ -27,6 +27,17 @@ def command(args, cwd, env=None):
     return subprocess.check_output(args, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace")
 
 
+def production_end(lines):
+    # A test-only import near the top does not end the production module.
+    # Keep the existing exclusion for the test/helper section itself.
+    for index, line in enumerate(lines):
+        if line == '#[cfg(test)]':
+            following = next((entry.strip() for entry in lines[index + 1:] if entry.strip()), '')
+            if not following.startswith(('use ', 'pub use ')):
+                return index + 1
+    return len(lines) + 1
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -83,7 +94,7 @@ def main():
     report = {}
     for source in sources:
         lines = source.read_text(encoding='utf-8').splitlines()
-        end = next((index + 1 for index, line in enumerate(lines) if line == '#[cfg(test)]'), len(lines) + 1)
+        end = production_end(lines)
         measured = {line: count for line, count in counts.get(source.name, {}).items() if line < end}
         if not measured:
             raise RuntimeError(f'No production coverage recorded for {source.name}.')
