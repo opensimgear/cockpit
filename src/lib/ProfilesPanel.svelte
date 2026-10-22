@@ -26,7 +26,7 @@
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
   import {ProfileLearningClient}from'./profile-learning';
   import type {DeepReadonly} from './profiles';
-  import { supportedGames, type Game, type GameId } from './games';
+  import { supportedGames, gameCatalogue as registeredGames, isGameId, gameHasIntegration, type Game, type GameId } from './games';
   let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, libraryClient:suppliedLibrary, companionClient:suppliedCompanion, openGameSettings, active=true, onNavigate }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient;libraryClient?:ProfileLibraryClient;companionClient?:Pick<ProfileCompanionAuthoringClient,'catalogue'|'inspect'>; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean; onNavigate?: (profileId:string|null)=>void } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
@@ -57,9 +57,10 @@
   const editor = $derived(workspace.editor);
   const editorInventory=$derived([...workspace.inventory,...Object.values(dcsCatalogues).filter(source=>!workspace.inventory.some(current=>current.id===source.id))]);
   const selectedGame=$derived(editor?profileGameContext(editor.document):'');
-  const contextGame=$derived(gameCatalogue.find(game=>game.id===selectedGame));
+  const selectedGameRegistered=$derived($registeredGames.some(game=>game.id===selectedGame));
+  const contextGame=$derived($registeredGames.find(game=>game.id===selectedGame)??gameCatalogue.find(game=>game.id===selectedGame));
   const vehicleTabs=$derived(editor?.document.vehicleTabs??[]);
-  const vehicleTabsEnabled=$derived(!!selectedGame&&(contextGame?.vehicleSupport?.supported??true));
+  const vehicleTabsEnabled=$derived(!!selectedGame&&gameHasIntegration(contextGame)&&(contextGame?.vehicleSupport?.supported??true));
   const activeVehicleTab=$derived(vehicleTabs.find(tab=>tab.id===activeVehicleTabId));
   const dcsCatalogueKey=$derived(active&&selectedGame==='dcs'&&activeVehicleTab&&!addingVehicleTab?`${editor?.document.id}/${activeVehicleTab.id}/${activeVehicleTab.vehicleId}`:'');
   const routingInventory=$derived(editor?profileGameTabInventory(editor.document,editorInventory,activeVehicleTabId):editorInventory);
@@ -219,7 +220,7 @@
   }
   async function activateProfile(profile:DeepReadonly<ProfileSummary>) {
     if(activationDisabled(profile))return;
-    const gameId=supportedGames.find(game=>game.id===profile.gameIds?.[0])?.id;
+    const gameId=isGameId(profile.gameIds?.[0])?profile.gameIds[0]:undefined;
     await runtime.apply({id:profile.id,revision:profile.revision,baseRevision:profile.revision,dirty:false,readOnly:workspace.readOnly},gameId);
   }
 </script>
@@ -241,7 +242,7 @@
           <button class="icon-button" aria-label="Undo" title={historyStatus.undoLabel?`Undo ${historyStatus.undoLabel}`:'Undo'} disabled={workspace.busy||workspace.readOnly||libraryBusy||!historyStatus.canUndo} onclick={()=>historyStep('undo')}><Icon name="undo" size={18}/></button>
           <button class="icon-button" aria-label="Redo" title={historyStatus.redoLabel?`Redo ${historyStatus.redoLabel}`:'Redo'} disabled={workspace.busy||workspace.readOnly||libraryBusy||!historyStatus.canRedo} onclick={()=>historyStep('redo')}><Icon name="redo" size={18}/></button>
         </div>
-        <label class="game-context" title="Saved with the profile. Selecting a context adds its integration and makes this profile available for that game.">Game context<select aria-label="Game context" value={selectedGame} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#each supportedGames as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label>
+        <label class="game-context" title="Saved with the profile. Selecting a context makes this profile available for that game. Integrated games also add their telemetry block.">Game context<select aria-label="Game context" value={selectedGame} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#if selectedGame&&!selectedGameRegistered}<option value={selectedGame} disabled>{profileGameName(selectedGame)} · Unavailable</option>{/if}{#each $registeredGames as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label>
         <button class="secondary-button" aria-label="Export saved profile" title="Export saved profile" disabled={workspace.busy||libraryBusy||!savedEditor} onclick={()=>savedEditor&&libraryTools?.askExport(savedEditor)}><Icon name="download" size={14}/>Export</button>
         {#if editor.baseRevision===null}<button class="text-button" disabled={workspace.busy} onclick={cancel}>Cancel creation</button>{/if}
         <button class="primary-button" disabled={workspace.busy||workspace.readOnly||!dirty||!!error} onclick={()=>save()}><Icon name="save" size={14}/> {workspace.busy?'Saving…':'Save profile'}</button>

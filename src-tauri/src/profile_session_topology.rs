@@ -40,12 +40,7 @@ impl Request {
             || request.owner.generation > osg_profiles::MAX_REVISION
             || request.owner.profile_revision == 0
             || request.owner.profile_revision > osg_profiles::MAX_REVISION
-            || request.owner.game_id.as_deref().is_some_and(|id| {
-                !matches!(
-                    id,
-                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
-                )
-            })
+            || request.owner.game_id.as_deref().is_some_and(|id| !osg_profiles::activation::valid_game_id(id))
         {
             return Err("Choose an exact applied owner and bounded topology page.".into());
         }

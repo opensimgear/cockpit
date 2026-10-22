@@ -23,6 +23,9 @@ pub(crate) trait Platform: Send + Sync {
     }
     fn launch(&self, game: &Value) -> Result<ProcessIdentity, String>;
     fn find(&self, game: &Value) -> Result<Option<ProcessIdentity>, String>;
+    fn find_many(&self, games: &[Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
+        games.iter().map(|game| self.find(game)).collect()
+    }
     /// Driving telemetry requires its producer, independently of the game menu.
     fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
         self.find(game)
@@ -63,6 +66,36 @@ impl ProcessIdentity {
     }
 }
 
+#[derive(Default)]
+struct ProcessInventory {
+    processes: Vec<(ProcessIdentity, u32)>,
+    // When a protected matching process cannot expose its full path, only
+    // games watching that basename lose proof; unrelated games stay usable.
+    errors: BTreeMap<String, String>,
+}
+impl ProcessInventory {
+    fn inspect(
+        &self,
+        paths: &[String],
+        exclusive: bool,
+    ) -> Result<Option<ProcessIdentity>, String> {
+        for path in paths {
+            let basename = path.rsplit(['\\', '/']).next().unwrap_or("").to_lowercase();
+            if let Some(error) = self.errors.get(&basename) {
+                return Err(error.clone());
+            }
+        }
+        let candidates = self
+            .processes
+            .iter()
+            .filter(|(process, _)| {
+                exclusive || paths.iter().any(|path| paths_match(path, &process.path))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        selected_process(&candidates, exclusive)
+    }
+}
 #[derive(Default)]
 pub(crate) struct NativePlatform;
 
@@ -142,6 +175,9 @@ fn supported(id: &str) -> Result<&'static SupportedGame, String> {
 }
 
 pub(crate) fn executable_picker(game_id: &str) -> Result<(String, &'static str), String> {
+    if game_id == "custom" || crate::game_installations::is_custom_id(game_id) {
+        return Ok(("Choose the game's runtime executable".into(), "Game.exe"));
+    }
     let game = supported(game_id)?;
     let executable = game.executables[0].rsplit('/').next().unwrap();
     Ok((
@@ -164,10 +200,88 @@ fn add_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
 fn path_string(path: &Path) -> Option<String> {
     path.to_str().map(str::to_owned)
 }
-fn normalized_path(path: &str) -> String {
+pub(crate) fn normalized_path(path: &str) -> String {
     path.replace('/', "\\")
         .trim_start_matches("\\\\?\\")
         .to_lowercase()
+}
+pub(crate) fn validate_custom_executable(path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(path);
+    if !crate::game_installations::executable(&path.to_string_lossy())
+        || !path.is_file()
+        || !path
+            .extension()
+            .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("exe"))
+    {
+        return Err("Choose an existing absolute game executable (.exe).".into());
+    }
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("Cannot access game executable: {error}"))?;
+    if canonical.to_str().is_none() {
+        return Err("Game executable path is not valid text.".into());
+    }
+    Ok(canonical)
+}
+pub(crate) fn library_steam_roots() -> Vec<PathBuf> {
+    native::roots().steam
+}
+pub(crate) fn builtin_for_steam(app_id: u32) -> Option<&'static str> {
+    GAMES
+        .iter()
+        .find(|game| game.steam_id == app_id)
+        .map(|game| game.id)
+}
+
+/// Dynamic registrations are installed metadata; provider capabilities remain
+/// exclusive to the built-in simulator catalogue.
+pub(crate) fn merged_catalogue(
+    platform: &dyn Platform,
+    settings: &crate::game_installations::Settings,
+) -> Vec<Value> {
+    let mut games = platform.catalogue(&settings.manual_installations);
+    for game in &mut games {
+        game["integrationSupported"] = json!(true);
+        game["custom"] = json!(false);
+    }
+    for (id, record) in &settings.custom_games {
+        let executable = record
+            .executable
+            .as_deref()
+            .and_then(|path| validate_custom_executable(path).ok())
+            .and_then(|path| path_string(&path));
+        let source = record
+            .library
+            .as_ref()
+            .map(|source| source.client.as_str())
+            .unwrap_or("manual");
+        let steam = record
+            .library
+            .as_ref()
+            .filter(|source| source.client == "steam");
+        games.push(json!({"id":id,"name":record.name,"custom":true,"provider":null,"integrationSupported":false,
+            "installed":executable.is_some(),"executable":executable,"manualPath":record.executable,
+            "installPath":record.library.as_ref().map(|source|source.install_path.clone()).or_else(||record.executable.as_deref().and_then(|path|Path::new(path).parent()).and_then(path_string)),
+            "source":source,"installations":[],"launchSupported":cfg!(windows)&&executable.is_some(),"processMonitoringSupported":cfg!(windows),
+            "launchUnavailableReason":if executable.is_none(){Some("Choose the game's runtime executable to enable process monitoring and launch.")}else if !cfg!(windows){Some("Game launch and process monitoring require Windows.")}else{None},
+            "steamAppId":steam.and_then(|source|source.app_id.parse::<u32>().ok()),"steamExecutable":steam.and_then(|source|source.launcher.clone()),
+            "processExecutables":executable.iter().cloned().collect::<Vec<_>>(),"defaultBackground":record.default_background}));
+    }
+    for game in &mut games {
+        game["categoryId"] = json!(game["id"].as_str().and_then(|id| settings.game_categories.get(id)));
+        if let Some(background) = game["id"]
+            .as_str()
+            .and_then(|id| settings.backgrounds.get(id))
+        {
+            game["background"] = json!(background);
+        }
+        if let Some(background) = game["id"]
+            .as_str()
+            .and_then(|id| settings.default_backgrounds.get(id))
+        {
+            game["defaultBackground"] = json!(background);
+        }
+    }
+    games
 }
 fn paths_match(left: &str, right: &str) -> bool {
     normalized_path(left) == normalized_path(right)
@@ -175,10 +289,11 @@ fn paths_match(left: &str, right: &str) -> bool {
 fn validated_executable(game: &SupportedGame, path: &Path) -> Result<PathBuf, String> {
     let expected = game.executables[0].rsplit('/').next().unwrap();
     if !path.is_absolute()
-        || !path
-            .file_name()
-            .and_then(|p| p.to_str())
-            .is_some_and(|p| game.executables.iter().any(|exe| p.eq_ignore_ascii_case(exe.rsplit('/').next().unwrap())))
+        || !path.file_name().and_then(|p| p.to_str()).is_some_and(|p| {
+            game.executables
+                .iter()
+                .any(|exe| p.eq_ignore_ascii_case(exe.rsplit('/').next().unwrap()))
+        })
         || !path.is_file()
     {
         return Err(format!(
@@ -245,12 +360,12 @@ fn installation(
 // A small bounded KeyValues reader accepts current and legacy Steam manifests.
 // It preserves Windows backslashes and Unicode, and rejects incomplete objects.
 #[derive(Debug, PartialEq)]
-enum Vdf {
+pub(crate) enum Vdf {
     Text(String),
     Object(Vec<(String, Vdf)>),
 }
 impl Vdf {
-    fn get(&self, name: &str) -> Option<&Vdf> {
+    pub(crate) fn get(&self, name: &str) -> Option<&Vdf> {
         match self {
             Self::Object(entries) => entries
                 .iter()
@@ -259,7 +374,7 @@ impl Vdf {
             _ => None,
         }
     }
-    fn text(&self) -> Option<&str> {
+    pub(crate) fn text(&self) -> Option<&str> {
         match self {
             Self::Text(s) => Some(s),
             _ => None,
@@ -358,7 +473,7 @@ fn parse_vdf(input: &str) -> Result<Vdf, String> {
     }
     object(&tokens, &mut 0, 0)
 }
-fn read_vdf(path: &Path) -> Option<Vdf> {
+pub(crate) fn read_vdf(path: &Path) -> Option<Vdf> {
     let mut input = String::new();
     fs::File::open(path)
         .ok()?
@@ -367,7 +482,7 @@ fn read_vdf(path: &Path) -> Option<Vdf> {
         .ok()?;
     parse_vdf(&input).ok()
 }
-fn library_paths(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn library_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths = vec![root.to_path_buf()];
     let manifest = read_vdf(&root.join("steamapps/libraryfolders.vdf"))
         .or_else(|| read_vdf(&root.join("config/libraryfolders.vdf")));
@@ -477,6 +592,49 @@ struct LaunchRequest {
     arguments: Vec<String>,
 }
 fn launch_request(game: &Value) -> Result<LaunchRequest, String> {
+    if game["custom"] == true
+        && crate::game_installations::is_custom_id(game["id"].as_str().unwrap_or(""))
+    {
+        let executable = validate_custom_executable(
+            game["executable"]
+                .as_str()
+                .ok_or("Choose a game executable before launching.")?,
+        )?;
+        if let Some(app_id) = game["steamAppId"]
+            .as_u64()
+            .filter(|id| *id > 0 && *id <= u32::MAX as u64)
+        {
+            let steam = PathBuf::from(
+                game["steamExecutable"]
+                    .as_str()
+                    .ok_or("Steam is unavailable; rescan its installed library.")?,
+            );
+            if !steam.is_absolute()
+                || !steam.is_file()
+                || !steam
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("steam.exe"))
+            {
+                return Err("The Steam client executable is unavailable.".into());
+            }
+            return Ok(LaunchRequest {
+                directory: steam
+                    .parent()
+                    .ok_or("The Steam directory is unavailable.")?
+                    .to_owned(),
+                executable: steam,
+                arguments: vec!["-applaunch".into(), app_id.to_string()],
+            });
+        }
+        return Ok(LaunchRequest {
+            directory: executable
+                .parent()
+                .ok_or("Game directory is unavailable.")?
+                .to_owned(),
+            executable,
+            arguments: vec![],
+        });
+    }
     let spec = supported(game["id"].as_str().ok_or("Choose a supported game.")?)?;
     let path = game["executable"]
         .as_str()
@@ -525,6 +683,20 @@ fn launch_request(game: &Value) -> Result<LaunchRequest, String> {
     })
 }
 fn process_paths(game: &Value) -> Result<Vec<String>, String> {
+    if game["custom"] == true
+        && crate::game_installations::is_custom_id(game["id"].as_str().unwrap_or(""))
+    {
+        return validate_custom_executable(
+            game["executable"]
+                .as_str()
+                .ok_or("Choose the game's runtime executable.")?,
+        )
+        .and_then(|path| {
+            path_string(&path)
+                .map(|path| vec![path])
+                .ok_or("Game executable path is not valid text.".into())
+        });
+    }
     let spec = supported(game["id"].as_str().ok_or("Choose a supported game.")?)?;
     let selected = game["executable"]
         .as_str()
@@ -533,9 +705,15 @@ fn process_paths(game: &Value) -> Result<Vec<String>, String> {
         installation(spec, Path::new(selected)).ok_or("Game executable is no longer available.")?;
     // Unreal's root bootstrap can exit after spawning the real runtime. Watch
     // the runtime when present so a successful handoff does not restore hardware.
-    if matches!(spec.id, "assetto-corsa-rally" | "assetto-corsa-competizione") {
-        if let Some(path) = paths.iter().filter_map(|p| path_string(p))
-            .find(|p| normalized_path(p).contains("\\binaries\\win64\\")) {
+    if matches!(
+        spec.id,
+        "assetto-corsa-rally" | "assetto-corsa-competizione"
+    ) {
+        if let Some(path) = paths
+            .iter()
+            .filter_map(|p| path_string(p))
+            .find(|p| normalized_path(p).contains("\\binaries\\win64\\"))
+        {
             return Ok(vec![path]);
         }
     }
@@ -553,31 +731,55 @@ fn find_game_process(
     // Steam starts AC's persistent menu before a user chooses a car and track.
     // It counts as a launched game, but never as the shared-memory producer.
     let spec = supported("assetto-corsa")?;
-    let selected = game["executable"].as_str().ok_or("Choose an Assetto Corsa installation.")?;
-    let (_, _, root) = installation(spec, Path::new(selected)).ok_or("The Assetto Corsa installation changed.")?;
+    let selected = game["executable"]
+        .as_str()
+        .ok_or("Choose an Assetto Corsa installation.")?;
+    let (_, _, root) =
+        installation(spec, Path::new(selected)).ok_or("The Assetto Corsa installation changed.")?;
     let launcher = root.join("AssettoCorsa.exe");
-    if !launcher.is_file() { return Ok(None); }
-    let launcher = fs::canonicalize(launcher).map_err(|error|format!("Cannot inspect the Assetto Corsa launcher: {error}"))?;
+    if !launcher.is_file() {
+        return Ok(None);
+    }
+    let launcher = fs::canonicalize(launcher)
+        .map_err(|error| format!("Cannot inspect the Assetto Corsa launcher: {error}"))?;
     inspect(&[path_string(&launcher).ok_or("The Assetto Corsa launcher path is not valid text.")?])
 }
-fn selected_process(candidates: &[(ProcessIdentity, u32)], exclusive_xplane: bool) -> Result<Option<ProcessIdentity>, String> {
-    if candidates.len() <= 1 { return Ok(candidates.first().map(|(identity,_)|identity.clone())); }
+fn selected_process(
+    candidates: &[(ProcessIdentity, u32)],
+    exclusive_xplane: bool,
+) -> Result<Option<ProcessIdentity>, String> {
+    if candidates.len() <= 1 {
+        return Ok(candidates.first().map(|(identity, _)| identity.clone()));
+    }
     // The original AC menu can retain its bootstrap after starting a child of
     // the same executable. Only a single verified parent chain is a handoff;
     // independently launched copies, branches, and other runtimes stay ambiguous.
-    let launcher_chain = !exclusive_xplane && candidates.iter().all(|(identity,_)| {
-        identity.path.rsplit(['/', '\\']).next().is_some_and(|name|name.eq_ignore_ascii_case("AssettoCorsa.exe"))
-            && paths_match(&identity.path, &candidates[0].0.path)
-    });
+    let launcher_chain = !exclusive_xplane
+        && candidates.iter().all(|(identity, _)| {
+            identity
+                .path
+                .rsplit(['/', '\\'])
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("AssettoCorsa.exe"))
+                && paths_match(&identity.path, &candidates[0].0.path)
+        });
     if launcher_chain {
-        let leaves = candidates.iter().filter(|(identity,_)|!candidates.iter().any(|(_,parent)|*parent == identity.pid)).collect::<Vec<_>>();
+        let leaves = candidates
+            .iter()
+            .filter(|(identity, _)| !candidates.iter().any(|(_, parent)| *parent == identity.pid))
+            .collect::<Vec<_>>();
         if leaves.len() == 1 {
             let leaf = leaves[0];
             let mut current = leaf;
             let mut visited = BTreeSet::new();
             loop {
-                if !visited.insert(current.0.pid) { break; }
-                match candidates.iter().find(|(identity,_)|identity.pid == current.1) {
+                if !visited.insert(current.0.pid) {
+                    break;
+                }
+                match candidates
+                    .iter()
+                    .find(|(identity, _)| identity.pid == current.1)
+                {
                     Some(parent) if parent.0.epoch <= current.0.epoch => current = parent,
                     Some(_) => break,
                     None if visited.len() == candidates.len() => return Ok(Some(leaf.0.clone())),
@@ -616,6 +818,9 @@ impl Platform for NativePlatform {
         discover(&native::roots(), manual)
     }
     fn validate(&self, game_id: &str, executable: &str) -> Result<(), String> {
+        if crate::game_installations::is_custom_id(game_id) {
+            return validate_custom_executable(executable).map(|_| ());
+        }
         validated_executable(supported(game_id)?, Path::new(executable)).map(|_| ())
     }
     fn spawn_process(&self, game: &Value) -> Result<(), String> {
@@ -640,6 +845,30 @@ impl Platform for NativePlatform {
     }
     fn find(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
         find_game_process(game, false, native::find)
+    }
+    fn find_many(&self, games: &[Value]) -> Vec<Result<Option<ProcessIdentity>, String>> {
+        let mut paths = Vec::new();
+        // Include AC's persistent launcher as well as its driving executable.
+        for game in games {
+            let _ = find_game_process(game, false, |items| {
+                for item in items {
+                    if !paths.contains(item) {
+                        paths.push(item.clone());
+                    }
+                }
+                Ok(None)
+            });
+        }
+        let inventory = native::inventory(&paths);
+        games
+            .iter()
+            .map(|game| match &inventory {
+                Err(error) => Err(error.clone()),
+                Ok(inventory) => {
+                    find_game_process(game, false, |wanted| inventory.inspect(wanted, false))
+                }
+            })
+            .collect()
     }
     fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
         find_game_process(game, true, native::find)
@@ -671,6 +900,9 @@ mod native {
         Err("Game launch requires Windows.".into())
     }
     pub(super) fn find(_: &[String]) -> Result<Option<ProcessIdentity>, String> {
+        Err("Game process monitoring requires Windows.".into())
+    }
+    pub(super) fn inventory(_: &[String]) -> Result<ProcessInventory, String> {
         Err("Game process monitoring requires Windows.".into())
     }
     pub(super) fn alive(_: &ProcessIdentity) -> Result<bool, String> {
@@ -878,7 +1110,14 @@ mod native {
     }
     pub(super) fn find(paths: &[String]) -> Result<Option<ProcessIdentity>, String> {
         let exclusive = paths == ["X-Plane.exe"];
-        let mut candidates = Vec::new();
+        inventory(paths)?.inspect(paths, exclusive)
+    }
+    pub(super) fn inventory(paths: &[String]) -> Result<ProcessInventory, String> {
+        if paths.is_empty() {
+            return Ok(ProcessInventory::default());
+        }
+        let exclusive = paths == ["X-Plane.exe"];
+        let mut inventory = ProcessInventory::default();
         let raw = unsafe { CreateToolhelp32Snapshot(2, 0) };
         if raw as isize == -1 {
             return Err(format!(
@@ -905,12 +1144,22 @@ mod native {
                     .next()
                     .is_some_and(|s| s.eq_ignore_ascii_case(&basename))
             }) {
-                if let Some(handle) = open(entry.pid)? {
-                    if let Some(identity) = identity(&handle, entry.pid)? {
-                        if exclusive || paths.iter().any(|p| paths_match(p, &identity.path)) {
-                            candidates.push((identity, entry.parent));
-                        }
+                match open(entry.pid).and_then(|handle| match handle {
+                    Some(handle) => identity(&handle, entry.pid),
+                    None => Ok(None),
+                }) {
+                    Ok(Some(identity))
+                        if exclusive || paths.iter().any(|p| paths_match(p, &identity.path)) =>
+                    {
+                        inventory.processes.push((identity, entry.parent))
                     }
+                    Err(error) => {
+                        inventory
+                            .errors
+                            .entry(basename.to_lowercase())
+                            .or_insert(error);
+                    }
+                    _ => {}
                 }
             }
             available = unsafe { Process32NextW(snapshot.0, &mut entry) } != 0;
@@ -921,7 +1170,7 @@ mod native {
                 ));
             }
         }
-        selected_process(&candidates, exclusive)
+        Ok(inventory)
     }
     pub(super) fn alive(expected: &ProcessIdentity) -> Result<bool, String> {
         let Some(handle) = open(expected.pid)? else {
@@ -937,13 +1186,78 @@ mod native {
 mod tests {
     use super::*;
     #[test]
+    fn one_protected_basename_does_not_poison_unrelated_batched_processes() {
+        let process = ProcessIdentity {
+            pid: 42,
+            path: "C:\\Games\\Other.exe".into(),
+            epoch: 123,
+        };
+        let inventory = ProcessInventory {
+            processes: vec![(process.clone(), 0)],
+            errors: BTreeMap::from([(
+                "protected.exe".into(),
+                "Access denied for protected process".into(),
+            )]),
+        };
+        assert!(inventory
+            .inspect(&["C:\\Games\\Protected.exe".into()], false)
+            .unwrap_err()
+            .contains("Access denied"));
+        assert_eq!(
+            inventory
+                .inspect(&["C:\\Games\\Other.exe".into()], false)
+                .unwrap(),
+            Some(process)
+        );
+        assert_eq!(
+            inventory
+                .inspect(&["C:\\Games\\Absent.exe".into()], false)
+                .unwrap(),
+            None
+        );
+    }
+    #[test]
+    fn custom_launch_target_is_distinct_from_its_exact_monitored_runtime() {
+        let directory = crate::test_directory();
+        let runtime = directory.path().join("Game.exe");
+        let steam = directory.path().join("steam.exe");
+        fs::write(&runtime, b"game").unwrap();
+        fs::write(&steam, b"client").unwrap();
+        let mut game = json!({"id":"custom-11111111-1111-4111-8111-111111111111","custom":true,"installed":true,"executable":runtime});
+        let direct = launch_request(&game).unwrap();
+        // Windows runner TEMP may use an 8.3 alias; launch validation resolves it.
+        assert_eq!(direct.executable, fs::canonicalize(&runtime).unwrap());
+        assert!(direct.arguments.is_empty());
+        game["steamAppId"] = json!(42);
+        game["steamExecutable"] = json!(steam);
+        let through_client = launch_request(&game).unwrap();
+        assert_eq!(through_client.arguments, vec!["-applaunch", "42"]);
+        assert_eq!(through_client.executable, steam);
+        assert_eq!(
+            process_paths(&game).unwrap(),
+            vec![fs::canonicalize(runtime)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned()]
+        );
+    }
+    #[test]
     fn executable_picker_uses_the_selected_game_and_rejects_unknown_games() {
         for (game, name, exe) in [
             ("dcs", "DCS World", "DCS.exe"),
             ("assetto-corsa-rally", "Assetto Corsa Rally", "acr.exe"),
             ("assetto-corsa", "Assetto Corsa", "acs.exe"),
-            ("assetto-corsa-competizione", "Assetto Corsa Competizione", "AC2-Win64-Shipping.exe"),
-            ("assetto-corsa-evo", "Assetto Corsa EVO", "AssettoCorsaEVO.exe"),
+            (
+                "assetto-corsa-competizione",
+                "Assetto Corsa Competizione",
+                "AC2-Win64-Shipping.exe",
+            ),
+            (
+                "assetto-corsa-evo",
+                "Assetto Corsa EVO",
+                "AssettoCorsaEVO.exe",
+            ),
             ("x-plane-11", "X-Plane 11", "X-Plane.exe"),
             ("x-plane-12", "X-Plane 12", "X-Plane.exe"),
         ] {
@@ -1337,21 +1651,44 @@ mod tests {
     #[test]
     fn assetto_titles_discover_launch_and_monitor_their_own_native_runtime() {
         let scratch = Scratch::new();
-        let steam = scratch.write("Steam/steam.exe", "").parent().unwrap().to_path_buf();
+        let steam = scratch
+            .write("Steam/steam.exe", "")
+            .parent()
+            .unwrap()
+            .to_path_buf();
         let titles = [
             ("assetto-corsa", 244210, "assettocorsa", "acs.exe"),
-            ("assetto-corsa-competizione", 805550, "Assetto Corsa Competizione", "AC2/Binaries/Win64/AC2-Win64-Shipping.exe"),
-            ("assetto-corsa-evo", 3058630, "Assetto Corsa EVO", "AssettoCorsaEVO.exe"),
+            (
+                "assetto-corsa-competizione",
+                805550,
+                "Assetto Corsa Competizione",
+                "AC2/Binaries/Win64/AC2-Win64-Shipping.exe",
+            ),
+            (
+                "assetto-corsa-evo",
+                3058630,
+                "Assetto Corsa EVO",
+                "AssettoCorsaEVO.exe",
+            ),
         ];
         for (_, app, folder, runtime) in titles {
-            scratch.write(&format!("Steam/steamapps/appmanifest_{app}.acf"),
-                &format!("AppState {{ appid {app} installdir \"{folder}\" }}"));
+            scratch.write(
+                &format!("Steam/steamapps/appmanifest_{app}.acf"),
+                &format!("AppState {{ appid {app} installdir \"{folder}\" }}"),
+            );
             scratch.write(&format!("Steam/steamapps/common/{folder}/{runtime}"), "");
         }
         // ACC's bootstrap can remain alongside the long-lived simulator process.
-        scratch.write("Steam/steamapps/common/Assetto Corsa Competizione/AC2.exe", "");
+        scratch.write(
+            "Steam/steamapps/common/Assetto Corsa Competizione/AC2.exe",
+            "",
+        );
         scratch.write("Steam/steamapps/common/assettocorsa/AssettoCorsa.exe", "");
-        let roots = Roots { steam: vec![steam.clone()], launch_supported: true, ..Roots::default() };
+        let roots = Roots {
+            steam: vec![steam.clone()],
+            launch_supported: true,
+            ..Roots::default()
+        };
         let games = discover(&roots, &BTreeMap::new());
         for (id, app, folder, runtime) in titles {
             let game = games.iter().find(|game| game["id"] == id).unwrap();
@@ -1359,17 +1696,40 @@ mod tests {
             assert_eq!(game["installed"], true);
             let launch = launch_request(game).unwrap();
             assert_eq!(launch.executable, steam.join("steam.exe"));
-            assert_eq!(launch.arguments, vec!["-applaunch".to_owned(), app.to_string()]);
+            assert_eq!(
+                launch.arguments,
+                vec!["-applaunch".to_owned(), app.to_string()]
+            );
             let process = process_paths(game).unwrap();
             assert_eq!(process.len(), 1);
             assert!(Path::new(&process[0]).ends_with(runtime));
-            let manual_path = scratch.0.join(format!("Steam/steamapps/common/{folder}/{runtime}"));
-            let manual = discover(&roots, &BTreeMap::from([(id.into(), manual_path.display().to_string())]));
-            let selected = manual.iter().find(|game|game["id"] == id).unwrap();
+            let manual_path = scratch
+                .0
+                .join(format!("Steam/steamapps/common/{folder}/{runtime}"));
+            let manual = discover(
+                &roots,
+                &BTreeMap::from([(id.into(), manual_path.display().to_string())]),
+            );
+            let selected = manual.iter().find(|game| game["id"] == id).unwrap();
             assert_eq!(selected["source"], "manual");
-            assert_eq!(selected["installPath"], steam.join("steamapps/common").join(folder).display().to_string());
-            assert!(NativePlatform.validate(id, manual_path.to_str().unwrap()).is_ok());
-            for (other, _, _, _) in titles { if other != id { assert!(NativePlatform.validate(other, manual_path.to_str().unwrap()).is_err()); } }
+            assert_eq!(
+                selected["installPath"],
+                steam
+                    .join("steamapps/common")
+                    .join(folder)
+                    .display()
+                    .to_string()
+            );
+            assert!(NativePlatform
+                .validate(id, manual_path.to_str().unwrap())
+                .is_ok());
+            for (other, _, _, _) in titles {
+                if other != id {
+                    assert!(NativePlatform
+                        .validate(other, manual_path.to_str().unwrap())
+                        .is_err());
+                }
+            }
         }
     }
 
@@ -1379,46 +1739,96 @@ mod tests {
         let runtime = scratch.write("AC/acs.exe", "");
         let launcher = scratch.write("AC/AssettoCorsa.exe", "");
         let game = json!({"id":"assetto-corsa","executable":runtime});
-        let menu = ProcessIdentity {pid:42, epoch:1, path:launcher.display().to_string()};
+        let menu = ProcessIdentity {
+            pid: 42,
+            epoch: 1,
+            path: launcher.display().to_string(),
+        };
         let mut scans = 0;
-        let found = find_game_process(&game, false, |paths| { scans += 1; Ok((paths == [launcher.display().to_string()]).then(||menu.clone())) }).unwrap();
+        let found = find_game_process(&game, false, |paths| {
+            scans += 1;
+            Ok((paths == [launcher.display().to_string()]).then(|| menu.clone()))
+        })
+        .unwrap();
         assert_eq!(found, Some(menu));
         assert_eq!(scans, 2);
         let mut scans = 0;
-        assert!(find_game_process(&game, true, |_| { scans += 1; Ok(None) }).unwrap().is_none());
+        assert!(find_game_process(&game, true, |_| {
+            scans += 1;
+            Ok(None)
+        })
+        .unwrap()
+        .is_none());
         assert_eq!(scans, 1);
-        let driving = ProcessIdentity {pid:43, epoch:2, path:runtime.display().to_string()};
+        let driving = ProcessIdentity {
+            pid: 43,
+            epoch: 2,
+            path: runtime.display().to_string(),
+        };
         let mut scans = 0;
-        assert_eq!(find_game_process(&game, false, |_| { scans += 1; Ok(Some(driving.clone())) }).unwrap(), Some(driving));
+        assert_eq!(
+            find_game_process(&game, false, |_| {
+                scans += 1;
+                Ok(Some(driving.clone()))
+            })
+            .unwrap(),
+            Some(driving)
+        );
         assert_eq!(scans, 1);
     }
 
-    fn launcher_process(pid: u32, parent: u32, epoch: u64) -> (ProcessIdentity,u32) {
-        (ProcessIdentity {pid,path:"C:/Steam/assettocorsa/AssettoCorsa.exe".into(),epoch},parent)
+    fn launcher_process(pid: u32, parent: u32, epoch: u64) -> (ProcessIdentity, u32) {
+        (
+            ProcessIdentity {
+                pid,
+                path: "C:/Steam/assettocorsa/AssettoCorsa.exe".into(),
+                epoch,
+            },
+            parent,
+        )
     }
     #[test]
     fn assetto_launcher_handoff_selects_the_verified_leaf_of_one_parent_chain() {
-        let (root,child,leaf)=(launcher_process(10,1,100),launcher_process(11,10,110),launcher_process(12,11,120));
-        for candidates in [vec![root.clone(),child.clone()],vec![child.clone(),root.clone()],vec![leaf.clone(),root.clone(),child.clone()]] {
-            let expected = if candidates.len()==2 {child.0.clone()} else {leaf.0.clone()};
-            assert_eq!(selected_process(&candidates,false).unwrap(),Some(expected));
+        let (root, child, leaf) = (
+            launcher_process(10, 1, 100),
+            launcher_process(11, 10, 110),
+            launcher_process(12, 11, 120),
+        );
+        for candidates in [
+            vec![root.clone(), child.clone()],
+            vec![child.clone(), root.clone()],
+            vec![leaf.clone(), root.clone(), child.clone()],
+        ] {
+            let expected = if candidates.len() == 2 {
+                child.0.clone()
+            } else {
+                leaf.0.clone()
+            };
+            assert_eq!(
+                selected_process(&candidates, false).unwrap(),
+                Some(expected)
+            );
         }
     }
     #[test]
     fn independent_or_unverified_launcher_processes_and_runtime_duplicates_remain_ambiguous() {
-        let (root,child)=(launcher_process(10,1,100),launcher_process(11,10,110));
-        let mut foreign=child.clone();foreign.0.path="D:/Steam/assettocorsa/AssettoCorsa.exe".into();
-        let mut runtime_root=root.clone();runtime_root.0.path="C:/Steam/assettocorsa/acs.exe".into();
-        let mut runtime_child=child.clone();runtime_child.0.path=runtime_root.0.path.clone();
+        let (root, child) = (launcher_process(10, 1, 100), launcher_process(11, 10, 110));
+        let mut foreign = child.clone();
+        foreign.0.path = "D:/Steam/assettocorsa/AssettoCorsa.exe".into();
+        let mut runtime_root = root.clone();
+        runtime_root.0.path = "C:/Steam/assettocorsa/acs.exe".into();
+        let mut runtime_child = child.clone();
+        runtime_child.0.path = runtime_root.0.path.clone();
         for candidates in [
-            vec![root.clone(),launcher_process(20,1,120)],
-            vec![root.clone(),child.clone(),launcher_process(12,10,120)],
-            vec![launcher_process(10,11,100),launcher_process(11,10,110)],
-            vec![root.clone(),launcher_process(11,10,90)],
-            vec![root.clone(),foreign],
-            vec![runtime_root,runtime_child],
-        ] {assert!(selected_process(&candidates,false).is_err());}
-        assert!(selected_process(&[root,child],true).is_err());
+            vec![root.clone(), launcher_process(20, 1, 120)],
+            vec![root.clone(), child.clone(), launcher_process(12, 10, 120)],
+            vec![launcher_process(10, 11, 100), launcher_process(11, 10, 110)],
+            vec![root.clone(), launcher_process(11, 10, 90)],
+            vec![root.clone(), foreign],
+            vec![runtime_root, runtime_child],
+        ] {
+            assert!(selected_process(&candidates, false).is_err());
+        }
+        assert!(selected_process(&[root, child], true).is_err());
     }
-
 }

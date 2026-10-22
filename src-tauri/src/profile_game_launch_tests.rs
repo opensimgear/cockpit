@@ -37,7 +37,8 @@ impl PlatformFixture {
 impl Platform for PlatformFixture {
     fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
         vec![json!({"id":"dcs","installed":true,"launchSupported":true,
-            "processMonitoringSupported":true,"executable":"C:\\Games\\DCS\\bin\\DCS.exe"})]
+            "processMonitoringSupported":true,"executable":"C:\\Games\\DCS\\bin\\DCS.exe"}),
+            json!({"id":"x-plane-12","installed":false,"launchSupported":false,"processMonitoringSupported":true})]
     }
     fn validate(&self, _: &str, path: &str) -> Result<(), String> {
         if path.starts_with("C:\\") {

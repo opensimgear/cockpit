@@ -43,6 +43,9 @@ impl Platform for Games {
         ["dcs","x-plane-11","x-plane-12","assetto-corsa-rally"].iter().map(|id|json!({"id":id,"name":if *id=="dcs" {"DCS World"}else{id},"installed":true,"processMonitoringSupported":true,"launchSupported":true,"executable":executable(id)})).collect()
     }
     fn validate(&self, id: &str, path: &str) -> Result<(), String> {
+        if crate::game_installations::is_custom_id(id) {
+            return crate::game_discovery::validate_custom_executable(path).map(|_| ());
+        }
         if path == executable(id) {
             Ok(())
         } else {
@@ -63,7 +66,7 @@ impl Platform for Games {
                 id.into(),
                 ProcessIdentity {
                     pid: 42,
-                    path: executable(id),
+                    path: game["executable"].as_str().unwrap().into(),
                     epoch: 1,
                 },
             );
@@ -80,6 +83,7 @@ impl Platform for Games {
             .lock()
             .unwrap()
             .get(game["id"].as_str().unwrap())
+            .filter(|process|game["executable"].as_str().is_some_and(|path|path.eq_ignore_ascii_case(&process.path)))
             .cloned())
     }
     fn alive(&self, process: &ProcessIdentity) -> Result<bool, String> {
@@ -391,6 +395,67 @@ fn manual_game_launch_uses_saved_context_and_defaults_for_an_unmatched_game() {
     }));
     assert_eq!(without_active["launch"]["profileId"],osg_profiles::DEFAULT_PROFILE_ID);
     assert_eq!(fixture.games.spawns.load(Ordering::Acquire),2);
+}
+
+#[test]
+#[cfg(windows)]
+fn custom_context_native_apply_save_launch_and_external_automatic_need_no_provider() {
+    let fixture = Fixture::new();
+    let manager = &fixture.manager;
+    let executable = fixture._directory.path().join("Custom.exe");
+    std::fs::write(&executable, b"process fixture").unwrap();
+    let added = request(manager, "game_custom_save", json!({"name":"Custom game","executable":executable}));
+    assert_eq!(added["ok"], true, "{added}");
+    let game = added["state"]["games"]["addedGameId"].as_str().unwrap().to_owned();
+    assert!(crate::game_installations::is_custom_id(&game));
+    let profile = ok(manager, "profile_create", json!({"name":"Custom game bindings"}))["document"]["id"].as_str().unwrap().to_owned();
+    save_context(manager, &profile, &game);
+    let candidates = ok(manager, "profile_game_candidates", json!({"gameId":game}));
+    assert_eq!(candidates["profiles"].as_array().unwrap().len(), 1);
+    assert_eq!(candidates["profiles"][0]["id"], profile);
+    assert!(manager.games.prepare_profile_game_context(&game).unwrap().is_none());
+    let applied = ok(manager, "profile_apply", json!({"id":profile,"expectedRevision":2,"gameId":game}));
+    assert_eq!(applied["profileSession"]["owner"]["gameId"], game);
+    let document = ok(manager, "profile_get", json!({"id":profile}))["document"].clone();
+    let saved = ok(manager, "profile_editor_save", json!({"document":document,"expectedRevision":2,"assignments":[]}));
+    assert_eq!(saved["saveApplication"]["state"], "applied", "{saved}");
+    assert_eq!(saved["profileSession"]["owner"]["gameId"], game);
+    ok(manager, "profile_stop", json!({}));
+    let launched = launch(manager, &game).unwrap();
+    assert_eq!(launched["launch"]["profileId"], profile);
+    assert_eq!(launched["launch"]["selectedGameId"], game);
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 1);
+    {
+        let coordinator = manager.profile_session.lock().unwrap();
+        assert!(coordinator.status().owner.as_ref().unwrap().game_id.is_none(), "hardware-first launch preserves its immutable parent owner");
+        assert_eq!(coordinator.active_game_context(), Some(game.as_str()), "the applied child context is native coordinator state, not only a launch response label");
+    }
+    assert_eq!(manager.games.desktop_process(&game).unwrap(), fixture.games.processes.lock().unwrap().get(&game).cloned(), "scoped desktop selection resolves the exact launched process independently of provider/output qualification");
+    let blocked_edit = request(manager, "game_custom_remove", json!({"gameId":game}));
+    assert_eq!(blocked_edit["ok"], false, "{blocked_edit}");
+    assert!(blocked_edit["error"].as_str().unwrap().contains("Deactivate the selected game profile"));
+    assert!(manager.games.profile_game_context(&game).is_err());
+    ok(manager, "profile_stop", json!({}));
+    // The process remains external to Cockpit. Automatic obtains the native
+    // observer's process proof and reuses the normal NativeProfileHost path.
+    fixture.wait_game(&game);
+    ok(manager, "profile_selection_mode", json!({"mode":"automatic"}));
+    manager.poll_automatic();
+    let status = ok(manager, "profile_status", json!({}));
+    assert_eq!(status["profileSession"]["owner"]["profileId"], profile, "{status}");
+    assert_eq!(status["profileSession"]["owner"]["gameId"], game, "{status}");
+    let owner = status["profileSession"]["owner"].clone();
+    ok(manager, "profile_runtime_topology", json!({"owner":owner,"section":"nodes"}));
+    ok(manager, "profile_runtime_inspect", json!({"owner":owner}));
+    assert_eq!(fixture.games.spawns.load(Ordering::Acquire), 1, "automatic discovery never launches another process");
+    ok(manager, "profile_stop", json!({}));
+    let removed = request(manager, "game_custom_remove", json!({"gameId":game}));
+    assert_eq!(removed["ok"], true, "{removed}");
+    let retained = ok(manager, "profile_get", json!({"id":profile}));
+    assert_eq!(retained["document"]["eligibility"]["gameIds"], json!([game]));
+    assert_eq!(request(manager, "profile_apply", json!({"id":profile,"expectedRevision":3,"gameId":game}))["ok"], false);
+    assert!(launch(manager, &game).is_err());
+    assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
 }
 
 #[test]

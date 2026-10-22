@@ -227,7 +227,9 @@ impl Rig {
             observations.push(observed);
         }
         let batch = ProviderBatch {
-            scope: "gateway:complete-rig-fixture".into(),
+            // Native USB discovery retains omitted devices as offline. A
+            // complete gateway configuration scope would delete them instead.
+            scope: "module-usb".into(),
             session: "fixture-provider-session-1".into(),
             revision: 1,
             complete: true,
@@ -780,6 +782,8 @@ fn complete_rig_retains_offline_blocks_and_changed_contracts_but_cannot_reuse_de
             .iter()
             .find(|s| s.endpoint.node_id == logical)
             .unwrap();
+        // An offline physical device is unavailable with its exact retained
+        // contract; an online device with a changed contract remains blocked.
         assert_eq!(
             source.readiness,
             if logical == "can-a" {

@@ -1,6 +1,20 @@
 # Native automatic profile selection
 
-The portable policy accepts only native verified game observations and saved rules. A rule contains one supported game, its validated installation executable identity, a saved unified profile, an enabled flag and an explicit signed priority. PIDs and creation epochs are transient native observations, never saved rule authority.
+The portable policy accepts only native verified game observations and saved rules. A rule contains one registered game, its validated installation executable identity, a saved unified profile, an enabled flag and an explicit signed priority. PIDs and creation epochs are transient native observations, never saved rule authority.
+
+Custom games and imported library entries use the same policy without requiring
+a telemetry provider. Register the actual runtime executable in Games, then set
+the profile's **Game context**. External startup and Cockpit launch both require
+the same exact native process evidence. A Steam launch target is separate from
+the executable being monitored. An unresolved installation cannot supply that
+evidence, and a launcher timeout never counts as a successful game startup.
+
+Stable custom IDs survive rename, relocation and repeated imports. Persisted
+rules and profiles remain readable when a game is removed; new activation or
+launch with that missing registration is rejected until its context is
+reassigned. The catalogue supports 256 entries, with a separate 512-rule storage
+bound. Windows observation takes one process inventory for a catalogue cycle;
+custom games are excluded from simulator telemetry polling.
 
 Recovery/fault and explicit deactivation block automation. Manual mode leaves activation under operator control until the operator explicitly selects Automatic. Without an active owner Cockpit shows **No profile active**. Manual game launch uses the active profile, or Default if no profile is active; retained selection metadata cannot choose a different launch profile. Automatic selects the unique highest-priority matching enabled rule; no match selects Default. A tie reports all highest-priority game IDs and holds the current safe selection, including when those rules name the same profile. Missing or ineligible targets are actionable holds.
 

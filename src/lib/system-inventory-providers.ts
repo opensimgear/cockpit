@@ -301,11 +301,11 @@ export class SystemInventoryController {
       const gameNodes = new Set(topology.nodes.filter(node => node.kind === 'game').map(node => node.id));
       if (topology.edges.some(edge => gameNodes.has(edge.from.nodeId) || gameNodes.has(edge.to.nodeId))) activeGame = runtime.owner.gameId;
     }
-    return { provider: 'integrations', observations: state.catalogue.map(game => {
+    return { provider: 'integrations', observations: state.catalogue.filter(game => !!game.provider).map(game => {
       const id = `integration:${game.id}`, setup = game.integrationSetup;
       const receiving = setup?.live === 'receiving';
       const endpoints = Object.entries(setup?.connection ?? {}).filter(([key, value]) => /host|address|port|endpoint|source/i.test(key) && ['string', 'number'].includes(typeof value)).map(([key, value]) => `${key}: ${value}`).join(', ');
-      return observation(id, `${game.name} · ${game.provider}`, 'integration', 'integrations', now, { role: game.provider, presence: receiving ? 'connected' : !game.installed || setup?.state === 'unsupported-platform' ? 'unavailable' : 'unknown',
+      return observation(id, `${game.name} · ${game.provider}`, 'integration', 'integrations', now, { role: game.provider ?? undefined, presence: receiving ? 'connected' : !game.installed || setup?.state === 'unsupported-platform' ? 'unavailable' : 'unknown',
         status: gameIntegrationLabel(game), diagnostics: [setup?.message, setup?.liveMessage].filter((x): x is string => !!x), evidence: [`integration:${game.id}`, ...(activeGame === game.id ? ['active-bindings'] : [])], targets: [target('integration', game.id)],
         connections: [{ ...link(id, 'host', 'software', receiving, endpoints || undefined), observed: receiving || this.snapshot.components.find(previous => previous.id === id)?.connections.some(connection => connection.observed !== false && connection.endpoint === (endpoints || undefined)) || false }],
         forget: { allowed: false, reason: 'This integration is in the supported catalogue. Manage installation and settings in game details.', effect: '' } });

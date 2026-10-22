@@ -113,6 +113,17 @@ test('oversized native responses fail the bounded stream and reject the pending 
   bridge.close();
 });
 
+test('game catalogues with managed thumbnails have their own bounded response budget', async () => {
+  const catalogue = Array.from({ length: 40 }, (_, index) => ({ id: `custom-${index}`, background: { image: `data:image/jpeg;base64,${'x'.repeat(16_384)}` } }));
+  const result = { ok: true, state: { games: { catalogue } } };
+  const bridge = fixture((envelope, process) => process.stdout.write(`${JSON.stringify({ requestId: envelope.requestId, response: result })}\n`));
+  const response = await bridge.request({ command: 'game_get_state' });
+  assert.equal(response.status, 200); assert.deepEqual(response.body, result); bridge.close();
+  const oversized = fixture((envelope, process) => process.stdout.write(`${JSON.stringify({ requestId: envelope.requestId, response: { data: 'x'.repeat(16_777_216) } })}\n`));
+  const rejected = await oversized.request({ command: 'game_get_state' });
+  assert.equal(rejected.status, 400); assert.match(rejected.body.error, /response exceeds/); oversized.close();
+});
+
 test('unified profile documents have a separately bounded request and response budget', async () => {
   const document = { schemaVersion: 1, editor: { metadata: 'x'.repeat(300_000) } };
   const payload = { command: 'profile_save', document, expectedRevision: 1 };

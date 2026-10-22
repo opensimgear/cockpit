@@ -1,4 +1,6 @@
 mod game_installations;
+mod game_artwork;
+mod game_library;
 mod retained_game_companions;
 mod config_paths;
 mod mcp;
@@ -115,13 +117,17 @@ async fn pick_game_executable(
     current_path: Option<String>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let (title, executable) = game_discovery::executable_picker(&game_id)?;
+    let (title, executable) = if game_id.is_empty() || game_id.starts_with("custom-") {
+        ("Choose game executable".to_owned(), "")
+    } else {
+        game_discovery::executable_picker(&game_id)?
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let mut picker = app
             .dialog()
             .file()
             .set_title(title)
-            .add_filter(executable, &["exe"])
+            .add_filter("Game executable", &["exe"])
             .set_file_name(executable);
         if let Some(parent) = current_path
             .as_deref()
@@ -143,6 +149,19 @@ async fn pick_game_executable(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn pick_game_image(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().set_title("Choose game tile background")
+            .add_filter("Game background image", &["png", "jpg", "jpeg", "webp"])
+            .blocking_pick_file().map(|file| {
+                let path = file.into_path().map_err(|error| error.to_string())?;
+                path.to_str().map(str::to_owned).ok_or_else(|| "The image path is not valid text.".to_owned())
+            }).transpose()
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[derive(serde::Deserialize)]
@@ -315,6 +334,7 @@ pub fn run() {
             open_vjoy,
             optional_dependency_install,
             pick_game_executable,
+            pick_game_image,
             pick_game_integration_folder,
             desktop::desktop_preferences,
             desktop::set_tray_preferences,

@@ -79,7 +79,7 @@ def main():
     profile = output / 'coverage.profdata'
     command([str(llvm / f'llvm-profdata{suffix}'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
-    sources = [root / 'src-tauri/src' / name for name in ['game_telemetry.rs', 'xplane.rs', 'xplane_installation.rs', 'acr_windows.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'game_cleanup.rs', 'game_installations.rs', 'game_discovery.rs', 'companion_game_owner.rs', 'retained_game_companions.rs', 'config_paths.rs', 'profile_retired_game_io.rs']]
+    sources = [root / 'src-tauri/src' / name for name in ['game_telemetry.rs', 'xplane.rs', 'xplane_installation.rs', 'acr_windows.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'game_cleanup.rs', 'game_installations.rs', 'game_discovery.rs', 'game_artwork.rs', 'game_library.rs', 'game_metadata_api.rs', 'companion_game_owner.rs', 'retained_game_companions.rs', 'config_paths.rs', 'profile_retired_game_io.rs']]
     annotated = command([str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
     (output / 'lines.txt').write_text(annotated, encoding='utf-8')

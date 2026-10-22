@@ -308,6 +308,18 @@ test('profile editor keeps one global history group with Save and game context a
  assert.ok(actions>=0&&actions<history&&history<runtimePosition);assert.ok(history<body.indexOf('Save profile'));assert.ok(history<body.indexOf('aria-label="Search profile blocks"'));assert.deepEqual(h.calls.map(call=>call[0]),['get']);
 });
 
+test('custom profile contexts appear in selectors and remain explicitly unavailable after local game removal',async()=>{
+ const games=modules.get('./games'),id='custom-11111111-1111-4111-8111-111111111111',custom={id,name:'Local custom game',provider:null,custom:true,installed:true,launchSupported:true};
+ games.updateGameCatalogue([...games.supportedGames,custom]);
+ try{
+  const h=harness(),document=blankProfile(uid(22),'Custom context'),value=modules.get('./profile-game-context').profileSetGameContext({document,assignments:[]},id,[]);
+  h.docs.set(document.id,value.document);await h.store.refresh();await h.store.open(document.id);
+  const first=html(h.store,h.client);assert.ok(first.includes(`value="${id}"`));assert.ok(first.includes(custom.name));assert.ok(!first.includes('aria-label="Profile vehicle tabs"'));assert.equal(value.document.resources.length,0);
+  games.updateGameCatalogue(games.supportedGames);const missing=html(h.store,h.client),option=missing.match(new RegExp(`<option[^>]*value="${id}"[^>]*>([^]*?)<\\/option>`));
+  assert.ok(option);assert.match(option[0],/disabled/);assert.match(option[1],/Local custom game · Unavailable/);assert.deepEqual(plain(h.store.state.editor.document.eligibility.gameIds),[id]);
+ }finally{games.updateGameCatalogue(games.supportedGames);}
+});
+
 test('vehicle tab buttons keep removal inside the tab and the selected vehicle picker starts the content',async()=>{
  const h=await vehicleWorkspace(),before=plain(h.store.state.editor),calls=plain(h.calls);
  for(const activeId of ['', 'cup']){

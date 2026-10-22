@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { ProfileRuntimeController, type RuntimeControlState, type RuntimeEditorTarget } from './profile-runtime-controller';
   import type { ProfileGameId } from './profile-runtime';
-  import { supportedGames } from './games';
+  import { gameCatalogue } from './games';
   import type { DeepReadonly, ProfileSummary } from './profiles';
   import type {ActivationWindowProgress} from './profile-activation-window';
   let { controller, editor = null, profiles = [], gameIds = [], active = true, onState, compact = false,manageActivationProgress=true }: {
@@ -13,7 +13,7 @@
   let view = $state.raw<DeepReadonly<RuntimeControlState>>(runtime.state);
   let mounted = $state(false), gameId = $state('');
   let nativeOpened=$state(false),nativeResolved=$state(false),elapsed=$state(0);
-  const games = supportedGames;
+  const games = $derived($gameCatalogue);
   const choices = $derived(games.filter(game=>!gameIds.length||gameIds.includes(game.id)));
   const native = $derived(view.status);
   const recoveryNeeded=$derived(native?.state==='recovery-needed'||native?.state==='faulted');

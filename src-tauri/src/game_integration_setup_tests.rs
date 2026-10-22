@@ -895,9 +895,10 @@ fn native_build_admission_rechecks_metadata_without_waiting_for_passive_refresh(
 fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
     use std::sync::mpsc;
     let scratch = Scratch::new();
-    let game = acr_game(&scratch);
+    let game = ac_catalogue_game(&scratch.0.join("AC"));
     let runtime = Arc::new(GameIntegrationSetup::new(scratch.0.join("setup.json"),true));
-    acr_record(&runtime,&game,false);
+    runtime.request(&json!({"command":"game_integration_setup"}), &game, Arc::new(FakePlatform(false))).unwrap();
+    wait_setup(&runtime);
     // Pause a real passive inspection after it has captured saved settings.
     let fingerprints = runtime.inner.fingerprints.lock().unwrap();
     let refreshed = runtime.clone(); let refreshing_game = game.clone();

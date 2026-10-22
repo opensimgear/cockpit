@@ -431,13 +431,13 @@ fn restart_status_recovery_and_ambiguous_acknowledgement_never_resume_mapping() 
 #[test]
 fn unqualified_startup_keeps_restart_recovery_and_acknowledgement_behind_qualification() {
     let root = tempfile::tempdir().unwrap();
-    let mut service = Service::new(
+    let service = Service::with_output(
         Arc::new(ControllerService::new(None, false)),
         Some(root.path().into()),
         Arc::new(|| panic!("no inspection on recovery gate")),
+        Arc::new(|| panic!("no output on recovery gate")),
+        false,
     );
-    // Windows availability is a separate oracle; this test forces the closed gate.
-    service.qualified = false;
     for command in [
         "mapping_virtual_recover",
         "mapping_virtual_acknowledge",

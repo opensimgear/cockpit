@@ -5,12 +5,99 @@ exposes typed telemetry ports to the unified profile graph. See [X-Plane setup, 
 qualification limits](x-plane.md). Native launch/telemetry currently requires
 Windows; live simulator and physical hardware qualification remains pending.
 
-Open **Games** to discover supported installations, edit provider settings and
+Open **Games** to add any game, discover integrated installations, edit provider settings and
 launch a game with the saved unified-profile selection. The initial view shows found installations. The
 **Show all supported** switch reveals muted, unavailable games; their details
 remain accessible for installation setup. Launch appears on hover or keyboard
 focus. Native game launch and process monitoring target Windows; other platforms
 can edit profiles and exercise the interface and portable fixtures.
+
+## Custom games
+
+Choose **Add game**, browse to the game's runtime executable and enter a name.
+You can also paste an absolute path, or save a named entry and choose its path
+later. A game without an executable remains visible but cannot supply process
+identity for launch, automatic selection or scoped output.
+
+Custom games support the same profile **Game context**, matching profiles and
+remembered choices as integrated games. They need no telemetry setup. Selecting
+one in the profile editor changes eligibility without adding a game-integration
+block or vehicle tabs. Keyboard/mouse **Context scoped** output follows the
+verified foreground game; focus or process loss releases its contributions.
+Manual profile mode and automatic matching/conflict behavior are unchanged.
+
+Edit a custom game's name directly in its heading. The single **Game executable**
+field and **Browse** button change the executable for any game. Inline fields
+save on Enter or leaving the field; Escape discards an unfinished change.
+Built-in game names cannot be edited. The game's identity and saved profile
+references stay stable. **Remove** unregisters a custom game and
+keeps referencing profiles readable as unavailable, so their context can be
+reassigned. Deactivate the affected profile before changing its registration;
+registration edits also wait for an in-flight activation or launch to finish.
+An unavailable game never turns scoped output into global output.
+
+## Categories
+
+Use **Manage categories** in the games list or a game's details to add, rename
+or delete categories. Assign one category in any game's details, or when adding
+a custom game. The category selector shares the **Installation** card with the
+tile preview and executable controls. **Filter games by category** shows all games, a chosen
+category or only uncategorized games, alongside the installed/supported filter.
+
+Category names and assignments are saved locally. Renaming keeps assignments;
+deleting a category leaves its games uncategorized. Cancelling the category
+manager leaves the saved list unchanged. Custom games retain a separate
+**Custom** badge on the right of their tile. In details, the destructive **Remove**
+button sits to the right of **Launch** and opens a confirmation before removal.
+
+## Tile backgrounds
+
+Every game's **Installation** card includes a tile preview with **Update image**
+underneath. It opens the image form with the current image ready for positioning.
+Choose **From disk** to browse
+to a PNG, JPEG or WebP image (or paste its path), or **From URL** to enter an HTTP
+or HTTPS image URL. **Use image** loads the image into the editor inside the same
+form without replacing the saved background.
+
+The popup shows the complete image and a frame matching the tile's 16:9 shape.
+Drag the frame to move it or drag any of its four corners to resize. Arrow keys
+also move/resize the focused control; Shift uses larger steps. The image keeps
+its aspect ratio and the entire frame stays within its bounds. **Fit image**
+restores the largest crop that fits. **Save background** commits the image and
+crop together; **Cancel** leaves the current background unchanged.
+**Reset to default**, beside **From URL**, returns to bundled artwork, imported client artwork or a
+neutral title background.
+
+Cockpit copies a bounded thumbnail into its application storage. Moving the
+original source file or changing the source URL cannot break the saved background. Rescans, library imports,
+renames and executable relocation preserve overrides. Invalid images leave the
+previous background intact. Sources are limited to 16 MiB and 8192 pixels per
+dimension; managed thumbnails are at most 12 KiB. Profile export contains neither
+local image paths nor image bytes.
+
+## Import from a game library
+
+Choose **Import from library** to preview installed Steam and Epic entries.
+Search the list, select games and review their executable suggestions before
+choosing **Add selected games**. Known tools are hidden unless **Show tools** is
+enabled; entries with uncertain classification are labelled **Review game**.
+Unreal Engine, plugins, incomplete Epic installations and DLC are excluded.
+
+Steam manifests provide an installation directory, not a reliable game runtime.
+Select the real executable when an installation has several candidates. You may
+import an unresolved entry and finish its path later; activation and scoped
+output wait for that path. Steam launches through the Steam client while Cockpit
+monitors the selected game executable. Existing integrated Steam games reuse
+their built-in identities. Reimporting a client/app identity or matching custom
+executable updates the existing registration instead of duplicating it.
+
+Local Steam artwork is used when available. Import does not replace an explicit
+background override, start games or activate profiles. This workflow covers
+installed titles; account-wide owned-library synchronization is separate.
+Epic entries currently launch their selected executable directly, and some games
+must be started in the client for authentication. GOG, EA, Ubisoft and Battle.net
+remain available through manual executable registration. See the
+[client discovery and feasibility matrix](launcher-discovery.md).
 
 ## Discovery
 
@@ -21,7 +108,7 @@ executable path for a custom installation, or clear the override to return to
 automatic discovery. Finding an executable does not establish telemetry readiness.
 DCS World, Assetto Corsa, Assetto Corsa Competizione, Assetto Corsa EVO,
 Assetto Corsa Rally, X-Plane 11 and X-Plane 12 have separate catalogue identities.
-Each tile uses bundled publisher imagery; image sources are recorded in
+Integrated tiles default to bundled publisher imagery; image sources are recorded in
 [`public/game-art/sources.json`](../public/game-art/sources.json).
 
 ## Vehicle discovery

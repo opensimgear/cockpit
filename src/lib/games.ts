@@ -1,5 +1,18 @@
 export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane';
-export type GameId = 'dcs' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane-11' | 'x-plane-12';
+export type BuiltinGameId = 'dcs' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane-11' | 'x-plane-12';
+export type GameId = BuiltinGameId | `custom-${string}`;
+export type GameCrop = {x:number;y:number;width:number;height:number};
+export type GameBackground = { crop?: GameCrop; image: string; positionX: number; positionY: number };
+export type GameCategories = Record<string, string>;
+export function categoryError(categories: GameCategories): string {
+  const names = Object.values(categories).map(name => name.trim().toLowerCase());
+  return names.length > 64 || new Set(names).size !== names.length || Object.values(categories).some(name => !name.trim() || [...name.trim()].length > 48 || /[\u0000-\u001f\u007f-\u009f]/.test(name))
+    ? 'Use up to 64 categories with distinct names between 1 and 48 characters.' : '';
+}
+export function filterGamesByCategory(games: readonly Game[], category: string): Game[] {
+  return games.filter(game => !category || (category === 'uncategorized' ? !game.categoryId : game.categoryId === category));
+}
+export type GameLibraryCandidate = { id: string; client: string; name: string; installPath: string; executableCandidates: string[]; gameId?: BuiltinGameId; kind: 'game' | 'unknown' | 'tool'; appId?: string };
 export type GameIntegrationSetup = {
   state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
   installed?: boolean; removable?: boolean; removalMessage?: string;
@@ -19,13 +32,13 @@ export type GameIntegrationContext = {
 };
 export type GameVehicle = { id: string; name: string };
 export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car'; vehicles: GameVehicle[]; message?: string };
-export type Game = { id: GameId; name: string; provider: GameProvider; installed: boolean; executable?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
+export type Game = { id: GameId; name: string; categoryId?: string | null; provider?: GameProvider | null; custom?: boolean; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
 export type GameCleanup = { phase: 'idle' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; retiredProfileId?: string | null; error?: string | null; steps?: string[]; recoveryArchive?: string | null };
 export type DetectedGame = { gameId: GameId; name: string };
-export type GamesState = { detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };
-export type GameCommandName = 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
+export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; libraryCandidates?: GameLibraryCandidate[]; libraryDiagnostics?: string[]; addedGameId?: GameId; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };
+export type GameCommandName = 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_custom_save' | 'game_custom_remove' | 'game_background_save' | 'game_library_scan' | 'game_library_import' | 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; gameId?: GameId; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
+export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; name?: string; path?: string | null; positionX?: number; positionY?: number; candidateId?: string; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export const supportedGames: Game[] = [
   { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },
@@ -38,17 +51,57 @@ export const supportedGames: Game[] = [
 ];
 
 export function isGameId(value: unknown): value is GameId {
+  return isBuiltinGameId(value) || isCustomGameId(value);
+}
+
+export function isBuiltinGameId(value: unknown): value is BuiltinGameId {
   return typeof value === 'string' && supportedGames.some(game => game.id === value);
+}
+/** Persisted profiles and owners remain readable while the registry is loading or unavailable. */
+export function isCustomGameId(value: unknown): value is `custom-${string}` {
+  return typeof value === 'string' && /^custom-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
+}
+let registeredGames: readonly Game[] = supportedGames;
+const catalogueListeners = new Set<(games: readonly Game[]) => void>();
+const knownNames = new Map(supportedGames.map(game => [game.id, game.name]));
+/** All selectors consume one native catalogue; pure helpers do not depend on Svelte. */
+export const gameCatalogue = {
+  subscribe(listener: (games: readonly Game[]) => void): () => void {
+    catalogueListeners.add(listener); listener(registeredGames);
+    return () => { catalogueListeners.delete(listener); };
+  },
+};
+export function updateGameCatalogue(games: readonly Game[]): void {
+  registeredGames = [...games];
+  for (const game of registeredGames) knownNames.set(game.id, game.name);
+  for (const listener of catalogueListeners) listener(registeredGames);
+}
+export function getGameCatalogue(): readonly Game[] { return registeredGames; }
+export function isRegisteredGameId(value: unknown): value is GameId { return isGameId(value) && registeredGames.some(game => game.id === value); }
+export function gameName(id: string): string { return knownNames.get(id as GameId) ?? id; }
+export function gameHasIntegration(game: Game | undefined): boolean { return !!game?.provider; }
+export function customGameError(name: string, executable: string): string {
+  const title = name.trim();
+  if (!title || [...title].length > 80 || /[\u0000-\u001f\u007f-\u009f]/.test(title)) return 'Enter a game name between 1 and 80 characters.';
+  if (executable.trim() && !/^(?:[a-zA-Z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/.test(executable.trim())) return 'Enter an absolute executable path.';
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(executable)) return 'The executable path must not contain control characters.';
+  return '';
+}
+/** Installation controls keep custom registrations on their metadata API. */
+export function gameInstallationRequest(game: Game, executable: string | null): GameRequest {
+  return isCustomGameId(game.id)
+    ? { command: 'game_custom_save', gameId: game.id, name: game.name, executable }
+    : { command: 'game_installation', gameId: game.id, executable };
 }
 
 export function isSharedMemoryGame(gameId: unknown): boolean {
-  return isGameId(gameId) && gameId.startsWith('assetto-corsa');
+  return isBuiltinGameId(gameId) && gameId.startsWith('assetto-corsa');
 }
 
 export function gameExecutableName(gameId: GameId): string {
   return gameId.startsWith('x-plane-') ? 'X-Plane.exe' : gameId === 'dcs' ? 'DCS.exe'
     : gameId === 'assetto-corsa' ? 'acs.exe' : gameId === 'assetto-corsa-competizione' ? 'AC2-Win64-Shipping.exe'
-    : gameId === 'assetto-corsa-evo' ? 'AssettoCorsaEVO.exe' : 'acr.exe';
+    : gameId === 'assetto-corsa-evo' ? 'AssettoCorsaEVO.exe' : gameId === 'assetto-corsa-rally' ? 'acr.exe' : 'game executable';
 }
 
 export function gameDisplayPath(path?: string | null): string {
@@ -62,10 +115,11 @@ export function gameDisplayPath(path?: string | null): string {
 }
 
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
-  return catalogue.filter(game => showAll || game.installed);
+  return catalogue.filter(game => showAll || game.installed || isCustomGameId(game.id));
 }
 
 export function gameIntegrationLabel(game: Game): string {
+  if (!gameHasIntegration(game)) return 'Bindings and profile activation';
   if (!game.installed) return 'Game not installed';
   if (!game.integrationSetup) return 'Integration not checked';
   if (game.id === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && game.integrationSetup.connection?.source === 'synthetic') return 'Synthetic test telemetry configured';

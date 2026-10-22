@@ -142,6 +142,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_telemetry_inspect" | "game_integration_settings_save"
+        | "game_categories_save" | "game_category_save" | "game_library_scan" | "game_background_save" | "game_custom_save" | "game_custom_remove" | "game_library_import"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
     Some(command)
@@ -157,7 +158,7 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_library_scan"|"game_background_save"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
             |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
@@ -428,7 +429,9 @@ impl GatewayManager {
             "profile_game_launch" => {
                 let profile = request.get("profileId").map(|value| value.as_str().ok_or("Choose a saved matching profile identity.")).transpose()?;
                 let remember = request.get("rememberChoice").map(|value| value.as_bool().ok_or("Remember choice must be a boolean.")).transpose()?.unwrap_or(false);
-                return self.launch_profile_game(request["gameId"].as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo")).ok_or("Choose a supported native game installation to launch.")?, profile, remember, staged_epoch()?, expected_owner.as_ref());
+                let game_id = request["gameId"].as_str().filter(|id| osg_profiles::activation::valid_game_id(id)).ok_or("Choose a registered native game installation to launch.")?;
+                self.games.registered_profile_game(game_id)?;
+                return self.launch_profile_game(game_id, profile, remember, staged_epoch()?, expected_owner.as_ref());
             },
             "profile_apply" => {
                 let admission_epoch = staged_epoch()?;
@@ -438,7 +441,8 @@ impl GatewayManager {
                 let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
                 if document.revision != expected { return Err("The saved profile changed. Reload it before activating.".into()); }
                 self.capture_profile_activation(request, &document, &assignments);
-                let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| matches!(*id,"dcs"|"x-plane-11"|"x-plane-12"|"assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo")).map(str::to_owned).ok_or("Choose a supported game context or omit gameId for ordinary hardware.")).transpose()?;
+                let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| osg_profiles::activation::valid_game_id(id)).map(str::to_owned).ok_or("Choose a registered game context or omit gameId for ordinary hardware.")).transpose()?;
+                if let Some(game) = game_id.as_deref() { self.games.registered_profile_game(game)?; }
                 if game_id.as_ref().is_some_and(|game| !document.eligibility.game_ids.is_empty() && !document.eligibility.game_ids.contains(game)) { return Err("This profile is not eligible for the selected game context.".into()); }
                 self.pin_staged_manual(id,admission_epoch,expected_owner.as_ref(),native_authorization)?;
                 crate::profile_session::apply_staged_admitted_checked(
@@ -582,6 +586,58 @@ impl GatewayManager {
             _=>self.profile_learning.cancel(text("learnId")?),
         }
     }
+    fn guard_game_registration(&self, request: &Value) -> Result<(), String> {
+        let command = request["command"].as_str().unwrap_or("");
+        if matches!(command, "game_custom_save" | "game_custom_remove" | "game_library_import") {
+            if self.profile_pending.load(Ordering::Acquire) != 0 {
+                return Err("Wait for profile activation or launch to finish before changing game registrations.".into());
+            }
+            let session = self.profile_session.lock().unwrap_or_else(|poison| poison.into_inner());
+            if let Some(active_game) = session.active_game_context() {
+                if request["gameId"] == active_game || command == "game_library_import" {
+                    return Err("Deactivate the selected game profile before changing its registration or importing installations.".into());
+                }
+            }
+        }
+        Ok(())
+    }
+    fn game_metadata_request(&self, request: &Value, native_authorization: Option<&McpAuthorization>) -> Value {
+        if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.", None); }
+        if !request.is_object() || request.to_string().len() > 65_536
+            || !request["clientId"].as_str().is_some_and(|id| crate::protocol::identifier(id, 16, 80)) {
+            return self.error("Invalid game metadata client or request.", None);
+        }
+        // Manifest enumeration, image decoding and catalogue discovery happen
+        // before admission. Stop must not wait for a slow library or source file.
+        let prepared: crate::games::PreparedMetadata = match self.games.prepare_metadata(request) {
+            Ok(prepared) => prepared,
+            Err(error) => return self.error(&error, None),
+        };
+        let committed = {
+            let _profile = self.profile_admission.read().unwrap_or_else(|poison| poison.into_inner());
+            let _game = self.game_admission.write().unwrap_or_else(|poison| poison.into_inner());
+            if self.closed.load(Ordering::Acquire) {
+                Err("Cockpit gateway manager has closed.".into())
+            } else {
+                self.check_mcp_authorization(native_authorization)
+                    .and_then(|()| self.guard_game_registration(request)).and_then(|()| {
+                    if learning_interrupt(request) { self.invalidate_learning(); }
+                    self.games.commit_metadata(prepared)
+                })
+            }
+        };
+        // Collection and presentation reads are outside both admission guards.
+        if committed.is_ok() {
+            self.games.finish_metadata();
+            self.profile_wake.notify();
+        }
+        let mut response = match committed {
+            Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
+            Err(error) => self.error(&error, None),
+        };
+        response["state"]["games"] = self.games.status();
+        response
+    }
     pub fn request(&self, request: Value) -> Value {
         self.request_checked(request, None, false)
     }
@@ -652,6 +708,27 @@ impl GatewayManager {
         // owns the admission/coordinator locks. These APIs never claim outputs.
         if matches!(command,"profile_activation_status"|"profile_activation_cancel"|"profile_activation_current") {
             return self.profile_activation_request(&request);
+        }
+        // Passive state and client-library discovery retain request validation
+        // without holding profile/game admission during metadata reads.
+        if command == "game_background_preview" {
+            if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.",None); }
+            if request.to_string().len()>65_536 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80))
+                || request.as_object().is_none_or(|object| object.keys().any(|key| !["command", "clientId", "path", "url"].contains(&key.as_str())))
+                || request.get("path").is_some_and(|value| !value.is_string())
+                || request.get("url").is_some_and(|value| !value.is_string()) {
+                return self.error("Invalid background image preview request.",None);
+            }
+            return match crate::game_artwork::preview(request["path"].as_str(), request["url"].as_str()) {
+                Ok(image) => { let mut games = self.games.status(); games["backgroundPreview"] = json!({"image":image}); json!({"ok":true,"state":{"games":games}}) }
+                Err(error) => self.error(&error,None),
+            };
+        }
+        if matches!(command, "game_get_state" | "game_library_scan") {
+            return self.request_inner_at(request, None, native_authorization.as_ref(), passive_profile_reads);
+        }
+        if matches!(command, "game_categories_save" | "game_category_save" | "game_custom_save" | "game_custom_remove" | "game_background_save" | "game_library_import") {
+            return self.game_metadata_request(&request, native_authorization.as_ref());
         }
         // Passive game inspection cannot delay profile takeover or emergency
         // cleanup while a large installed SDK catalogue is being paged.
@@ -1055,11 +1132,15 @@ impl GatewayManager {
             };
         }
         if command.starts_with("game_") {
+            if let Err(error) = self.guard_game_registration(&request) { return self.error(&error, None); }
             let mut response = match self.games.request(&request) {
                 Ok(()) => self.decorate(json!({"ok":true,"state":empty_state()}), None),
                 Err(error) => self.error(&error, None),
             };
             response["state"]["games"] = self.games.status();
+            if response["ok"] == true && matches!(command.as_str(), "game_custom_save" | "game_custom_remove" | "game_library_import" | "game_installation") {
+                self.profile_wake.notify();
+            }
             return response;
         }
         if let Err(error) = self.games.guard_request(&request) {
@@ -1615,6 +1696,7 @@ mod tests {
     include!("profile_panel_save_tests.rs");
     include!("profile_activation_tests.rs");
     include!("profile_activation_gateway_tests.rs");
+    include!("game_metadata_gateway_tests.rs");
     fn request(manager: &GatewayManager, command: &str, id: Option<&str>, fields: Value) -> Value {
         let mut request = json!({"command":command,"clientId":CLIENT});
         if let Some(id) = id {

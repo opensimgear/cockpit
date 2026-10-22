@@ -73,12 +73,7 @@ impl<H: Host> Coordinator<H> {
         self.held_run(owner)?;
         let held = self.launch.as_ref().unwrap();
         if held.epoch != Some(epoch)
-            || game_id.is_some_and(|id| {
-                !matches!(
-                    id,
-                    "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
-                )
-            })
+            || game_id.is_some_and(|id| !osg_profiles::activation::valid_game_id(id))
         {
             return Err("The game or committed launch epoch is invalid.".into());
         }

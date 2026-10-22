@@ -4,6 +4,7 @@
   import {guardUiSettings} from './ui-settings-guard';
   import {ProfileAutomaticClient} from './profile-automatic';
   import {ProfileAutomaticController} from './profile-automatic-controller';
+  import {gameCatalogue,gameName} from './games';
   import type {DeepReadonly,ProfileSelectionMode,ProfileSummary} from './profiles';
   let{profiles,active=true,controller:supplied}:{profiles:readonly DeepReadonly<ProfileSummary>[];active?:boolean;controller?:ProfileAutomaticController}=$props();
   const settingsRequest=guardUiSettings(gatewayRequest);
@@ -21,7 +22,7 @@
 <div class="automatic-controls">
   <div class="mode-choice" role="group" aria-label="Profile selection mode" title={description}><span class="mode-label">Profile mode</span><span class:current={view.status?.mode==='manual'}>Manual</span><button type="button" class="mode-switch" role="switch" aria-label="Automatic profile selection" aria-checked={view.status?.mode==='automatic'} disabled={blocked} onclick={toggleMode}><span class="switch-thumb"></span></button><span class:current={view.status?.mode==='automatic'}>Automatic</span></div>
   {#if !view.status}<p role="status">Waiting for native profile mode.</p>{/if}
-  {#if view.status?.conflicts.length}<p class="automatic-warning" role="status">Conflicting games: {view.status.conflicts.join(', ')}. Review matching profiles and remembered choices in game settings.</p>{:else if view.status?.status==='failed'}<p class="automatic-warning" role="status">{view.status.message}</p>{/if}
+  {#if view.status?.conflicts.length}<p class="automatic-warning" role="status">Conflicting games: {view.status.conflicts.map(id=>$gameCatalogue.find(game=>game.id===id)?.name??gameName(id)).join(', ')}. Review matching profiles and remembered choices in game settings.</p>{:else if view.status?.status==='failed'}<p class="automatic-warning" role="status">{view.status.message}</p>{/if}
   {#if view.status?.readOnly}<p class="automatic-warning" role="status">Profile mode is read-only. Resolve the native storage error before changing it.</p>{/if}
   {#if view.pending}<p role="status">Saving profile mode…</p>{/if}{#if view.error}<p class="automatic-warning" role="status">{view.error} <button class="text-button" disabled={view.loading||!!view.pending} onclick={()=>controller.refresh()}>Refresh mode</button></p>{/if}
 </div>

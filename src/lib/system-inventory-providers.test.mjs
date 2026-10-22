@@ -281,6 +281,11 @@ test('malformed duplicate provider identities cannot prevent unrelated native in
  await h.controller.refresh();assert.ok(h.component('virtual:vjoy:1'));assert.equal(h.component('controller:same'),undefined);assert.match(h.controller.snapshot.diagnostics.join(' '),/duplicate identities/);
 });
 
+test('context-only games stay out of integration inventory without hiding real providers',async()=>{
+ const id='custom-11111111-1111-4111-8111-111111111111',h=harness({games:{catalogue:[game(),{id,name:'Custom game',provider:null,custom:true,installed:true,launchSupported:true}]}});
+ await h.controller.refresh();assert.ok(h.component('integration:dcs'));assert.equal(h.component(`integration:${id}`),undefined);
+});
+
 test('failed gateway discovery cannot turn remembered gateways and modules into confirmed offline records', async () => {
  const h=harness({gateways:[gateway()]});await h.controller.refresh();h.state.gateways=[];h.state.gatewayError='Serial discovery unavailable';await h.controller.refresh();
  assert.equal(h.component('gateway:gateway-one').presence,'unknown');assert.equal(h.component('module:gateway-one/panel').forget.allowed,false);assert.match(h.controller.snapshot.diagnostics.join(' '),/Serial discovery unavailable/);

@@ -8,6 +8,19 @@ const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,g
 const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
+test('native custom registry keeps selectable membership distinct from persistent IDs and survives missing executables',()=>{
+ const id='custom-11111111-1111-4111-8111-111111111111',custom={id,name:'A custom game',provider:null,installed:false,launchSupported:false};
+ const seen=[];const stop=games.gameCatalogue.subscribe(value=>seen.push(value.length));
+ assert.equal(games.isGameId(id),true);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId('custom-invalid'),false);
+ games.updateGameCatalogue([...supportedGames,custom]);assert.equal(games.getGameCatalogue().length,8);assert.equal(games.isRegisteredGameId(id),true);
+ assert.equal(games.gameName(id),'A custom game');assert.equal(games.gameName('missing'),'missing');assert.equal(games.gameHasIntegration(custom),false);
+ assert.equal(gameExecutableName(id),'game executable');assert.equal(visibleGames([custom],false).length,1);assert.equal(gameIntegrationLabel(custom),'Bindings and profile activation');
+ assert.deepEqual(plain(games.gameInstallationRequest(custom,'C:\\Games\\Moved.exe')),{command:'game_custom_save',gameId:id,name:'A custom game',executable:'C:\\Games\\Moved.exe'});
+ assert.deepEqual(plain(games.gameInstallationRequest(supportedGames[0],null)),{command:'game_installation',gameId:'dcs',executable:null});
+ assert.equal(games.customGameError('Game','C:\\Games\\game.exe'),'');assert.equal(games.customGameError('Game',''),'');assert.ok(games.customGameError('',''));assert.ok(games.customGameError('Game','relative.exe'));assert.ok(games.customGameError('Game','C:\\game\n.exe'));
+ games.updateGameCatalogue(supportedGames);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId(id),true);assert.equal(games.gameName(id),'A custom game');assert.deepEqual(seen,[7,8,7]);stop();
+});
+
 test('game paths display Windows drive and UNC installations without changing Unix or device paths',()=>{
  for(const [input,expected] of [
   [undefined,''],[null,''],['',''],
@@ -77,4 +90,14 @@ test('missing cleanup metadata is unavailable rather than a manufactured idle se
 test('cleanup labels cannot represent running profiles, process launches or applying a graph',()=>{
  for(const [phase,label]of [['idle','Nothing to restore'],['restoring','Restoring previous owned setup'],['recovery-needed','Recovery needed'],['failed','Cleanup failed']])assert.equal(gameCleanupLabel({phase}),label);
  assert.equal(gameCleanupLabel({phase:'running'}),undefined);assert.equal(gameCleanupLabel({phase:'launching'}),undefined);
+});
+
+test('category filtering includes built-in and custom games and distinguishes uncategorized',()=>{
+  const id='custom-11111111-1111-4111-8111-111111111111',catalogue=[{id,name:'Custom',categoryId:'racing'},games.supportedGames[0],{...games.supportedGames[1],categoryId:'racing'}];
+  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'')).map(game=>game.id),catalogue.map(game=>game.id));
+  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'racing')).map(game=>game.id),[id,'assetto-corsa-rally']);
+  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'uncategorized')).map(game=>game.id),['dcs']);
+  assert.equal(games.filterGamesByCategory(catalogue,'deleted').length,0);
+  for(const categories of [{},{a:'Racing',b:'Flight simulation'}])assert.equal(games.categoryError(categories),'');
+  for(const categories of [{a:''},{a:'Racing',b:' racing '},{a:'x'.repeat(49)},{a:'Bad\nname'},Object.fromEntries(Array.from({length:65},(_,i)=>[i,`Category ${i}`]))])assert.ok(games.categoryError(categories));
 });

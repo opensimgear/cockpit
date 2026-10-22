@@ -103,13 +103,11 @@ impl GatewayManager {
         }
         let game = request["gameId"]
             .as_str()
-            .filter(|id| {
-                matches!(
-                    *id,
-                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
-                )
-            })
-            .ok_or("Choose a supported game context.")?;
+            .filter(|id| osg_profiles::activation::valid_game_id(id))
+            .ok_or("Choose a valid game context.")?;
+        if command != "profile_game_preference_remove" {
+            self.games.registered_profile_game(game)?;
+        }
         let documents = self.context_documents()?;
         let matches = context_profiles(game, &documents);
         if command == "profile_game_preference_save" {

@@ -1,10 +1,10 @@
-import { supportedGames, type GameId } from './games';
+import { isGameId, type GameId } from './games';
 
 export const OPEN_GAME_SETTINGS_EVENT = 'osg:open-game-settings';
 export const RETURN_FROM_GAME_SETTINGS_EVENT = 'osg:return-from-game-settings';
 export type GameSettingsLink<T = unknown> = { gameId: GameId; returnState?: T };
 export type GameSettingsVisit<T> = { gameId: GameId; origin: T };
-const isGame = (value: unknown): value is GameId => supportedGames.some(game => game.id === value);
+const isGame = isGameId;
 
 /** Local navigation data only. The origin stays owned by its editor/store. */
 export function visitGameSettings<T>(gameId: GameId, origin: T): GameSettingsVisit<T> {

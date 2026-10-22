@@ -13,7 +13,7 @@ export async function loadModules(names) {
     if(exportsByName.has(name))return;
     const filename = fileURLToPath(new URL(`${name}.ts`, import.meta.url));
     const exports = {};
-    const code = ts.transpileModule(await readFile(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const code = ts.transpileModule(await readFile(filename, 'utf8'), { fileName: filename, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, inlineSourceMap: true, inlineSources: true } }).outputText;
     // New pure helpers may add dependencies without every consumer fixture
     // needing to repeat their transitive import order.
     for(const match of code.matchAll(/require\(["'](\.\/[^"']+)["']\)/g))await load(match[1]);

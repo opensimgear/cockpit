@@ -281,6 +281,25 @@ fn restart_requires_explicit_owned_recovery_without_starting_workers_or_rehiding
         .any(|call| call.starts_with("enter:")));
     assert_eq!(restarted.status().state, State::Stopped);
 }
+
+#[test]
+fn removed_custom_game_identity_does_not_make_owned_recovery_unreadable() {
+    let folder = temp();
+    let path = folder.path().join("session.json");
+    let (mut runtime, _) = coordinator(Some(path.clone()));
+    let mut custom = candidate();
+    custom.game_id = Some("custom-01234567-89ab-4cde-8fab-0123456789ab".into());
+    runtime.apply(custom).unwrap();
+    let owner = runtime.status().owner.clone().unwrap();
+    drop(runtime);
+    let (mut restarted, probe) = coordinator(Some(path));
+    assert_eq!(restarted.status().state, State::RecoveryNeeded);
+    assert!(probe.lock().unwrap().calls.is_empty());
+    assert_eq!(restarted.manifest.active.as_ref().unwrap().owner, owner);
+    restarted.recover().unwrap();
+    assert_eq!(restarted.status().state, State::Stopped);
+    assert!(probe.lock().unwrap().calls.iter().any(|call|call == "restore:true"));
+}
 #[test]
 fn owned_setup_is_restored_across_switches_and_stale_workers_are_fenced() {
     let (mut runtime, probe) = coordinator(None);

@@ -12,7 +12,7 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
-const MAX_BYTES: usize = 160 * 1024;
+const MAX_BYTES: usize = 2 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Settings {
@@ -47,14 +47,12 @@ impl Settings {
         validate_rules(&self.rules)?;
         if self.preferred_profiles.len() > osg_profiles::activation::MAX_RULES
             || self.preferred_profiles.iter().any(|(game, profile)| {
-                !matches!(
-                    game.as_str(),
-                    "dcs" | "assetto-corsa-rally" | "x-plane-11" | "x-plane-12" | "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"
-                ) || !uuid::Uuid::parse_str(profile).is_ok_and(|id| id.to_string() == *profile)
+                !osg_profiles::activation::valid_game_id(game)
+                    || !uuid::Uuid::parse_str(profile).is_ok_and(|id| id.to_string() == *profile)
             })
         {
             return Err(
-                "Remembered launch choices need supported games and saved profile identities."
+                "Remembered launch choices need valid games and saved profile identities."
                     .into(),
             );
         }

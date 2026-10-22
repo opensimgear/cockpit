@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 const profileRequestLimit = 524_288 + 65_536;
 const editorRequestLimit = 2_097_152;
-const responseEnvelopeLimit = 2_097_152;
+const responseEnvelopeLimit = 16_777_216;
 
 /** @returns {import('vite').Plugin} */
 export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
@@ -51,7 +51,7 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
         if (!task || !envelope.response || typeof envelope.response !== 'object' || Array.isArray(envelope.response)) {
           failProcess(new Error('Native service returned an unmatched response.')); return;
         }
-        if (!task.profile && Buffer.byteLength(line) > 131_072) {
+        if (Buffer.byteLength(line) > task.responseLimit) {
           failProcess(new Error('Native service response exceeds its limit.')); return;
         }
         pending.delete(envelope.requestId);
@@ -69,7 +69,9 @@ export function nativeGatewayBridge({ spawnProcess = spawn } = {}) {
         const failRequestProcess = fail;
         const timer = setTimeout(() => failRequestProcess(new Error('Native gateway service did not reply.')), 130_000);
         const requestId = randomUUID();
-        pending.set(requestId, { resolve, reject, timer, profile: typeof payload?.command === 'string' && payload.command.startsWith('profile_') });
+        const command = typeof payload?.command === 'string' ? payload.command : '';
+        const responseLimit = command.startsWith('game_') ? responseEnvelopeLimit : command.startsWith('profile_') ? 2_097_152 : 131_072;
+        pending.set(requestId, { resolve, reject, timer, responseLimit });
         requestChild.stdin.write(`${JSON.stringify({ requestId, request: payload })}\n`, error => { if (error) failRequestProcess(error); });
       } catch (error) { reject(error); }
     });
