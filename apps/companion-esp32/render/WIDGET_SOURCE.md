@@ -132,16 +132,14 @@ The original default limits remain until a caller opts in. Rejection reports
 the exact field, required and available document/arena/layer/component/image or
 JSON resource count. Syntax and publication-identity failures remain distinct.
 
-Candidate admission, the component model and renderer are compiled into firmware
-but are not yet connected to live schema-3 adoption. The active schema-2 delivery
-path, resource negotiation, image cache and raster main loop remain. Integration
-must still fence/reuse candidate banks, invoke bitmap preparation for their
-admitted bindings, preflight
-supported font glyphs, select board-specific memory limits and connect dynamic
-state without changing ownership, neutral baselines or leases. Group drawing and
-page-background support also remain to be integrated; page backgrounds currently
-fail explicitly. Browser and Android source authoring limits remain independent
-of these device budgets.
+Candidate admission and the component model are compiled into firmware but are
+not yet connected to live schema-3 adoption. The main loop now uses the LVGL
+whole-panel compositor described below; the active delivery decoder still
+accepts schema 2. Integration must still fence/reuse candidate banks, invoke
+bitmap preparation and display-task candidate checks, and negotiate board source
+budgets without changing ownership, neutral baselines or leases. Page backgrounds
+currently fail explicitly. Browser and Android source authoring limits remain
+independent of these device budgets.
 
 Portable layer artwork now uses the existing authenticated `image-chunk` path
 with an optional `layerId`. The host resolves only that layer in the instance's
@@ -185,3 +183,29 @@ The 51-step integration oracle checks 765 appearances in addition to its input
 trace. Independent adapter tests cover bound/unbound output slots and simulator
 origin; all 1,274 projection cases pass with 100% line/function and 88.37% branch
 coverage. The bank API still awaits live main-loop adoption.
+
+`render/panel_draw.c` now connects the existing runtime to LVGL in the firmware
+main loop. It draws mixed fixed widgets and portable components in source order,
+with prepared image alpha over prior content, clipped damage, deterministic
+group labels and the existing compact diagnostic/status font. Browser and Android
+group outlines use the same unkerned portable font and dashed geometry. Current
+text and assets are checked before invalidation, so unsupported glyphs, numeric
+format limits and absent pixels can reject a frame without board writes. The
+candidate check also inspects hidden-page and alternate-state text. This check
+does not create authority or replace final draw/present failure handling.
+
+Narrow LVGL damage regions can contain more rows than full-width strips. The
+widget renderer now splits each such clip into bounded alpha strips, and drains
+solid/image spans synchronously to bound draw-task memory. Firmware uses four
+rows, a 32 KiB builtin LVGL pool without PSRAM, and a pre-reserved 96 KiB PSRAM
+pool on rich boards. The partial buffer is caller-owned and allocated separately.
+The 32 KiB native catalog/fault suite peaks at 13,312 pool bytes; this is software
+evidence, not MCU heap/stack or physical timing qualification. The application
+partition is now 2 MiB; matching partition-table firmware must accompany upgrades.
+
+The real compositor's sanitizer suite covers admitted catalogs, multiple pages,
+mixed overlap/order/alpha, group metadata, partial damage, write/present failures,
+unsupported live text with no writes, and valid 120-unit numeric suffixes. The
+internal font helper permits up to 256 derived units while authored text remains
+bounded by the shared source contract. Live candidate bank adoption, source
+capability negotiation and complete cross-platform acceptance remain unfinished.

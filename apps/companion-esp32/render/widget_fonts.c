@@ -38,7 +38,8 @@ void osg_widget_fonts_destroy(osg_widget_fonts *fonts) {
     for (unsigned i = 0; i < OSG_WIDGET_FONT_SLOTS; i++) if (fonts->slots[i].font) lv_tiny_ttf_destroy(fonts->slots[i].font);
     memset(fonts, 0, sizeof(*fonts));
 }
-/* Strict single-line UTF-8; count the same UTF-16 units as source text limits. */
+/* Strict single-line UTF-8. Derived numeric labels include both the formatted
+ * value and an authored 120-unit suffix; they can exceed the source text bound. */
 static bool decode(const char **text, uint32_t *code, unsigned *units) {
     const unsigned char *s = (const unsigned char *)*text; uint32_t c = *s++; unsigned extra;
     if (c < 0x80) extra = 0;
@@ -48,7 +49,7 @@ static bool decode(const char **text, uint32_t *code, unsigned *units) {
     else return false;
     for (unsigned i = 0; i < extra; i++) { if ((*s & 0xc0) != 0x80) return false; c = c << 6 | (*s++ & 0x3f); }
     if (c < 32 || (extra == 2 && c < 0x800) || (extra == 3 && c < 0x10000) || (c >= 0xd800 && c <= 0xdfff) || c > 0x10ffff) return false;
-    *units += c > 0xffff ? 2 : 1; if (*units > 120) return false;
+    *units += c > 0xffff ? 2 : 1; if (*units > 256) return false;
     *code = c; *text = (const char *)s; return true;
 }
 static bool measure(lv_font_t *face, const char *text, osg_widget_text_metrics *metrics) {

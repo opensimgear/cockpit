@@ -4,7 +4,13 @@
 #include "widget_fonts.h"
 #include "widget_state.h"
 
+#ifndef OSG_WIDGET_DRAW_ROWS
+#ifdef ESP_PLATFORM
+#define OSG_WIDGET_DRAW_ROWS 4
+#else
 #define OSG_WIDGET_DRAW_ROWS 8
+#endif
+#endif
 #define OSG_WIDGET_DRAW_TEXT_BYTES 512
 typedef struct { const unsigned char *pixels; uint16_t width, height; } osg_widget_bitmap;
 /* RGB565 little-endian plus alpha, reusing the verified device image cache.

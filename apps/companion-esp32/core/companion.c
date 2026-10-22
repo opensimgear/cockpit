@@ -364,56 +364,56 @@ osg_damage osg_render_damage(const osg_runtime *r,const osg_runtime *old,uint64_
     }
     return d;
 }
-void osg_render(osg_runtime *r, uint64_t now) {
+void osg_render_widget(osg_runtime *r, size_t i, uint64_t now) {
     static const char *provenance[] = {"REQUESTED", "LOCAL", "HOST ACCEPTED", "HOST SUBMITTED", "GAME CONFIRMED"};
-    fill(r, 0, 0, r->display.width, r->display.height, 0x08c4);
-    if(r->screen!=OSG_SCREEN_PANEL){
-        status_screen(r);
+    if (!r || !r->panel || i >= r->panel->widget_count || r->screen != OSG_SCREEN_PANEL) return;
+    const osg_widget *w = &r->panel->widgets[i]; if (w->page != r->page || w->kind==OSG_COMPONENT) return;
+    int x, y, width, height; geometry(r, w, &x, &y, &width, &height);
+    if(w->kind==OSG_IMAGE){
+        if(w->pixels && w->image_width && w->image_height){
+            if(r->display.image){r->display.image(r->display.context,x,y,width,height,w->pixels,w->image_width,w->image_height,w->background);return;}
+            for(int iy=0;iy<height;iy++)for(int ix=0;ix<width;){
+                const unsigned char *p=w->pixels+3*((size_t)(iy*w->image_height/height)*w->image_width+ix*w->image_width/width);
+                uint16_t color=(uint16_t)(p[0]|p[1]<<8);const unsigned alpha=p[2];
+                int run=1;
+                while(ix+run<width){const unsigned char *q=w->pixels+3*((size_t)(iy*w->image_height/height)*w->image_width+(ix+run)*w->image_width/width);if(q[0]!=p[0]||q[1]!=p[1]||q[2]!=p[2])break;run++;}
+                if(alpha){
+                    if(alpha<255){const unsigned bg=w->background;const unsigned red=(((color>>11)&31)*alpha+((bg>>11)&31)*(255-alpha))/255,green=(((color>>5)&63)*alpha+((bg>>5)&63)*(255-alpha))/255,blue=((color&31)*alpha+(bg&31)*(255-alpha))/255;color=(uint16_t)(red<<11|green<<5|blue);}
+                    fill(r,x+ix,y+iy,run,1,color);
+                }
+                ix+=run;
+            }
+        }
         return;
     }
-    for(int layer=0;layer<2;layer++)for (size_t i = 0; i < r->panel->widget_count; i++) {
-        const osg_widget *w = &r->panel->widgets[i]; if (w->page != r->page || w->kind==OSG_COMPONENT || (w->kind==OSG_IMAGE)!=(layer==0)) continue;
-        int x, y, width, height; geometry(r, w, &x, &y, &width, &height);
-        if(w->kind==OSG_IMAGE){
-            if(w->pixels && w->image_width && w->image_height){
-                if(r->display.image){r->display.image(r->display.context,x,y,width,height,w->pixels,w->image_width,w->image_height,w->background);continue;}
-                for(int iy=0;iy<height;iy++)for(int ix=0;ix<width;){
-                    const unsigned char *p=w->pixels+3*((size_t)(iy*w->image_height/height)*w->image_width+ix*w->image_width/width);
-                    uint16_t color=(uint16_t)(p[0]|p[1]<<8);const unsigned alpha=p[2];
-                    int run=1;
-                    while(ix+run<width){const unsigned char *q=w->pixels+3*((size_t)(iy*w->image_height/height)*w->image_width+(ix+run)*w->image_width/width);if(q[0]!=p[0]||q[1]!=p[1]||q[2]!=p[2])break;run++;}
-                    if(alpha){
-                        if(alpha<255){const unsigned bg=w->background;const unsigned red=(((color>>11)&31)*alpha+((bg>>11)&31)*(255-alpha))/255,green=(((color>>5)&63)*alpha+((bg>>5)&63)*(255-alpha))/255,blue=((color&31)*alpha+(bg&31)*(255-alpha))/255;color=(uint16_t)(red<<11|green<<5|blue);}
-                        fill(r,x+ix,y+iy,run,1,color);
-                    }
-                    ix+=run;
-                }
-            }
-            continue;
-        }
-        fill(r, x, y, width, height, w->background);
-        text(r, x + 4, y + 3, width - 8, height < 20 ? height - 6 : 17, w->label, w->foreground);
-        if (w->kind == OSG_BUTTON) {
-            fill(r, x + 4, y + 24, width - 8, height - 28, r->active == (int)i ? w->accent : 0x2128);
-            text(r, x + 8, y + 28, width - 16, height - 32, r->armed ? "PRESS" : "DISARMED", w->foreground);
-            continue;
-        }
-        const osg_sample *s = &r->samples[i];
-        const bool known = s->available && r->connected && s->source_status != OSG_FEEDBACK_UNKNOWN && s->source_status != OSG_FEEDBACK_DISCONNECTED;
-        const bool stale = s->source_status == OSG_FEEDBACK_STALE || (known && (now < s->received_ms || now - s->received_ms >= OSG_STALE_MS ||
-            s->source_age_ms >= OSG_STALE_MS || now - s->received_ms >= OSG_STALE_MS - s->source_age_ms));
-        char value[384], status[64];
-        if (!known) (void)snprintf(value, sizeof(value), "%s", !r->connected || s->source_status == OSG_FEEDBACK_DISCONNECTED ? "DISCONNECTED" : stale ? "STALE" : "UNKNOWN");
-        else if (w->kind == OSG_TEXT) (void)snprintf(value, sizeof(value), "%.120s%.120s%.120s", w->prefix, s->text, w->suffix);
-        else if (w->kind == OSG_INDICATOR) (void)snprintf(value, sizeof(value), "%s", s->boolean ? "ON" : "OFF");
-        else (void)snprintf(value, sizeof(value), "%.*f %s", w->precision, s->number, w->unit);
-        text(r, x + 4, y + 24, width - 8, height - 44, value, stale ? 0xfd20 : w->foreground);
-        if (w->kind == OSG_GAUGE && known && height >= 66) {
-            const int bw = width - 8;
-            fill(r, x + 4, y + height - 28, bw, 6, 0x2128);
-            fill(r, x + 4, y + height - 28, (int)(bw * (s->number - w->min) / (w->max - w->min)), 6, stale ? 0xfd20 : w->accent);
-        }
-        (void)snprintf(status, sizeof(status), "%s%s", known ? provenance[s->provenance] : "UNKNOWN", known ? stale ? " | STALE" : " | FRESH" : "");
-        text(r, x + 4, y + height - 17, width - 8, 14, status, stale ? 0xfd20 : 0x95b3);
+    fill(r, x, y, width, height, w->background);
+    text(r, x + 4, y + 3, width - 8, height < 20 ? height - 6 : 17, w->label, w->foreground);
+    if (w->kind == OSG_BUTTON) {
+        fill(r, x + 4, y + 24, width - 8, height - 28, r->active == (int)i ? w->accent : 0x2128);
+        text(r, x + 8, y + 28, width - 16, height - 32, r->armed ? "PRESS" : "DISARMED", w->foreground);
+        return;
     }
+    const osg_sample *s = &r->samples[i];
+    const bool known = s->available && r->connected && s->source_status != OSG_FEEDBACK_UNKNOWN && s->source_status != OSG_FEEDBACK_DISCONNECTED;
+    const bool stale = s->source_status == OSG_FEEDBACK_STALE || (known && (now < s->received_ms || now - s->received_ms >= OSG_STALE_MS ||
+        s->source_age_ms >= OSG_STALE_MS || now - s->received_ms >= OSG_STALE_MS - s->source_age_ms));
+    char value[384], status[64];
+    if (!known) (void)snprintf(value, sizeof(value), "%s", !r->connected || s->source_status == OSG_FEEDBACK_DISCONNECTED ? "DISCONNECTED" : stale ? "STALE" : "UNKNOWN");
+    else if (w->kind == OSG_TEXT) (void)snprintf(value, sizeof(value), "%.120s%.120s%.120s", w->prefix, s->text, w->suffix);
+    else if (w->kind == OSG_INDICATOR) (void)snprintf(value, sizeof(value), "%s", s->boolean ? "ON" : "OFF");
+    else (void)snprintf(value, sizeof(value), "%.*f %s", w->precision, s->number, w->unit);
+    text(r, x + 4, y + 24, width - 8, height - 44, value, stale ? 0xfd20 : w->foreground);
+    if (w->kind == OSG_GAUGE && known && height >= 66) {
+        const int bw = width - 8;
+        fill(r, x + 4, y + height - 28, bw, 6, 0x2128);
+        fill(r, x + 4, y + height - 28, (int)(bw * (s->number - w->min) / (w->max - w->min)), 6, stale ? 0xfd20 : w->accent);
+    }
+    (void)snprintf(status, sizeof(status), "%s%s", known ? provenance[s->provenance] : "UNKNOWN", known ? stale ? " | STALE" : " | FRESH" : "");
+    text(r, x + 4, y + height - 17, width - 8, 14, status, stale ? 0xfd20 : 0x95b3);
+}
+void osg_render(osg_runtime *r, uint64_t now) {
+    fill(r, 0, 0, r->display.width, r->display.height, 0x08c4);
+    if(r->screen!=OSG_SCREEN_PANEL){status_screen(r);return;}
+    for(int layer=0;layer<2;layer++)for(size_t i=0;i<r->panel->widget_count;i++)
+        if((r->panel->widgets[i].kind==OSG_IMAGE)==(layer==0))osg_render_widget(r,i,now);
 }

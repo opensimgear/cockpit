@@ -4,7 +4,20 @@
 #define LV_COLOR_DEPTH 16
 #define LV_USE_OS LV_OS_NONE
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#if defined(CONFIG_SPIRAM) && CONFIG_SPIRAM
+#define LV_MEM_POOL_INCLUDE "lvgl_pool.h"
+#define LV_MEM_POOL_ALLOC osg_lvgl_pool_allocate
 #define LV_MEM_SIZE (96 * 1024U)
+#else
+#define LV_MEM_SIZE (32 * 1024U)
+#endif
+#else
+#ifndef LV_MEM_SIZE
+#define LV_MEM_SIZE (96 * 1024U)
+#endif
+#endif
 #define LV_USE_STDLIB_STRING LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
 #define LV_USE_DRAW_SW 1

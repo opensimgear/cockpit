@@ -122,6 +122,7 @@ static void span(lv_layer_t *layer, int x1, int x2, int y, uint32_t color, uint8
     if (x2 < x1 || color == OSG_WIDGET_SOURCE_NO_COLOR || !opacity) return;
     lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d); d.bg_color = lv_color_hex(color); d.bg_opa = opacity; d.border_width = 0; d.radius = 0;
     const lv_area_t area = {x1, y, x2, y}; lv_draw_rect(layer, &d, &area);
+    while (layer->draw_task_head) lv_draw_dispatch();
 }
 static bool error(osg_widget_draw_diagnostic *out, osg_widget_draw_error code, const char *layer, size_t required, size_t available) {
     *out = (osg_widget_draw_diagnostic){code, layer, required, available}; return false;
@@ -137,10 +138,9 @@ bool osg_widget_draw(lv_layer_t *target, const osg_widget_component *component, 
         if (!paint->visible || paint->opacity <= 0) continue;
         const double left = area.x1 + layer->bounds.x * lv_area_get_width(&area), top = area.y1 + layer->bounds.y * lv_area_get_height(&area);
         const double width = layer->bounds.width * component->width, height = layer->bounds.height * component->height;
-        lv_area_t clip = {LV_MAX(target->_clip_area.x1, (int32_t)ceil(left - .5)), LV_MAX(target->_clip_area.y1, (int32_t)ceil(top - .5)), LV_MIN(target->_clip_area.x2, (int32_t)ceil(left + width * sx - .5) - 1), LV_MIN(target->_clip_area.y2, (int32_t)ceil(top + height * sy - .5) - 1)};
-        if (clip.x2 < clip.x1 || clip.y2 < clip.y1) continue;
-        const size_t rows = (size_t)lv_area_get_height(&clip), columns = (size_t)lv_area_get_width(&clip);
-        if (rows > OSG_WIDGET_DRAW_ROWS) return error(diagnostic, OSG_WIDGET_DRAW_BUDGET, layer->id, rows, OSG_WIDGET_DRAW_ROWS);
+        const lv_area_t visible = {LV_MAX(target->_clip_area.x1, (int32_t)ceil(left - .5)), LV_MAX(target->_clip_area.y1, (int32_t)ceil(top - .5)), LV_MIN(target->_clip_area.x2, (int32_t)ceil(left + width * sx - .5) - 1), LV_MIN(target->_clip_area.y2, (int32_t)ceil(top + height * sy - .5) - 1)};
+        if (visible.x2 < visible.x1 || visible.y2 < visible.y1) continue;
+        const size_t columns = (size_t)lv_area_get_width(&visible);
         if (columns > 1024) return error(diagnostic, OSG_WIDGET_DRAW_BUDGET, layer->id, columns, 1024);
         char text[OSG_WIDGET_DRAW_TEXT_BYTES]; osg_widget_bitmap bitmap = {0};
         if (layer->kind == OSG_LAYER_TEXT) {
@@ -151,46 +151,52 @@ bool osg_widget_draw(lv_layer_t *target, const osg_widget_component *component, 
             if (!*layer->asset_id) continue;
             if (!lookup || !lookup(assets, layer->asset_id, (unsigned)lround(width * sx), (unsigned)lround(height * sy), &bitmap) || !bitmap.pixels || !bitmap.width || !bitmap.height || bitmap.width > 1024 || bitmap.height > 1024) return error(diagnostic, OSG_WIDGET_DRAW_ASSET, layer->id, 0, 0);
         }
-        lv_layer_t *draw = target;
-        const uint8_t opacity = (uint8_t)lround(paint->opacity * 255);
-        if (opacity < 255) {
-            lv_mem_monitor_t memory; lv_mem_monitor(&memory); const size_t required = columns * rows * 4 + 8192;
-            if (memory.free_biggest_size < required) return error(diagnostic, OSG_WIDGET_DRAW_BUDGET, layer->id, required, memory.free_biggest_size);
-            draw = lv_draw_layer_create(target, LV_COLOR_FORMAT_ARGB8888, &clip);
-            if (!draw || !lv_draw_layer_alloc_buf(draw)) return error(diagnostic, OSG_WIDGET_DRAW_BUDGET, layer->id, required, memory.free_biggest_size);
-        }
-        const lv_area_t previous = draw->_clip_area; draw->_clip_area = clip;
-        bool ok = true;
-        if (layer->kind == OSG_LAYER_TEXT) {
-            const lv_area_t box = {(int32_t)lround(left), (int32_t)lround(top), (int32_t)lround(left + width * sx) - 1, (int32_t)lround(top + height * sy) - 1};
-            const lv_text_align_t aligns[] = {LV_TEXT_ALIGN_LEFT, LV_TEXT_ALIGN_CENTER, LV_TEXT_ALIGN_RIGHT};
-            ok = osg_widget_text_draw(fonts, draw, box, text, (osg_widget_font)layer->font, layer->font_size, aligns[layer->align], sx, sy, paint->fill == OSG_WIDGET_SOURCE_NO_COLOR ? 0xffffff : paint->fill, 255);
-        } else {
-            const shape s = {layer, paint, width, height, osg_widget_gauge_fraction(layer, context), osg_widget_indicator_active(layer, context)};
-            for (int y = clip.y1; y <= clip.y2; y++) {
-                uint32_t last = OSG_WIDGET_SOURCE_NO_COLOR; uint8_t last_alpha = 0; int start = clip.x1;
-                for (int x = clip.x1; x <= clip.x2 + 1; x++) {
-                    uint32_t color = OSG_WIDGET_SOURCE_NO_COLOR; uint8_t alpha = 255;
-                    if (x <= clip.x2) {
-                        const double local_x = (x + .5 - left) / sx, local_y = (y + .5 - top) / sy;
-                        if (layer->kind == OSG_LAYER_IMAGE) {
-                            const unsigned ix = (unsigned)fmin(bitmap.width - 1, floor(local_x / width * bitmap.width)), iy = (unsigned)fmin(bitmap.height - 1, floor(local_y / height * bitmap.height));
-                            const unsigned char *pixel = bitmap.pixels + ((size_t)iy * bitmap.width + ix) * 3; const uint16_t rgb = (uint16_t)(pixel[0] | pixel[1] << 8);
-                            color = (uint32_t)((rgb >> 11) * 255 / 31) << 16 | (uint32_t)(((rgb >> 5) & 63) * 255 / 63) << 8 | (rgb & 31) * 255 / 31; alpha = pixel[2];
-                        } else color = shape_pixel(&s, local_x, local_y);
+        /* A narrow damaged rectangle can contain many rows in the same LVGL
+         * pixel buffer. Bound alpha strips independently of that outer clip. */
+        for(int32_t row=visible.y1;row<=visible.y2;row+=OSG_WIDGET_DRAW_ROWS) {
+            const lv_area_t clip={visible.x1,row,visible.x2,LV_MIN(visible.y2,row+OSG_WIDGET_DRAW_ROWS-1)};
+            const size_t rows=(size_t)lv_area_get_height(&clip);
+            lv_layer_t *draw = target;
+            const uint8_t opacity = (uint8_t)lround(paint->opacity * 255);
+            if (opacity < 255) {
+                lv_mem_monitor_t memory; lv_mem_monitor(&memory); const size_t required = columns * rows * 4 + 8192;
+                if (memory.free_biggest_size < required) return error(diagnostic, OSG_WIDGET_DRAW_BUDGET, layer->id, required, memory.free_biggest_size);
+                draw = lv_draw_layer_create(target, LV_COLOR_FORMAT_ARGB8888, &clip);
+                if (!draw || !lv_draw_layer_alloc_buf(draw)) return error(diagnostic, OSG_WIDGET_DRAW_BUDGET, layer->id, required, memory.free_biggest_size);
+            }
+            const lv_area_t previous = draw->_clip_area; draw->_clip_area = clip;
+            bool ok = true;
+            if (layer->kind == OSG_LAYER_TEXT) {
+                const lv_area_t box = {(int32_t)lround(left), (int32_t)lround(top), (int32_t)lround(left + width * sx) - 1, (int32_t)lround(top + height * sy) - 1};
+                const lv_text_align_t aligns[] = {LV_TEXT_ALIGN_LEFT, LV_TEXT_ALIGN_CENTER, LV_TEXT_ALIGN_RIGHT};
+                ok = osg_widget_text_draw(fonts, draw, box, text, (osg_widget_font)layer->font, layer->font_size, aligns[layer->align], sx, sy, paint->fill == OSG_WIDGET_SOURCE_NO_COLOR ? 0xffffff : paint->fill, 255);
+            } else {
+                const shape s = {layer, paint, width, height, osg_widget_gauge_fraction(layer, context), osg_widget_indicator_active(layer, context)};
+                for (int y = clip.y1; y <= clip.y2; y++) {
+                    uint32_t last = OSG_WIDGET_SOURCE_NO_COLOR; uint8_t last_alpha = 0; int start = clip.x1;
+                    for (int x = clip.x1; x <= clip.x2 + 1; x++) {
+                        uint32_t color = OSG_WIDGET_SOURCE_NO_COLOR; uint8_t alpha = 255;
+                        if (x <= clip.x2) {
+                            const double local_x = (x + .5 - left) / sx, local_y = (y + .5 - top) / sy;
+                            if (layer->kind == OSG_LAYER_IMAGE) {
+                                const unsigned ix = (unsigned)fmin(bitmap.width - 1, floor(local_x / width * bitmap.width)), iy = (unsigned)fmin(bitmap.height - 1, floor(local_y / height * bitmap.height));
+                                const unsigned char *pixel = bitmap.pixels + ((size_t)iy * bitmap.width + ix) * 3; const uint16_t rgb = (uint16_t)(pixel[0] | pixel[1] << 8);
+                                color = (uint32_t)((rgb >> 11) * 255 / 31) << 16 | (uint32_t)(((rgb >> 5) & 63) * 255 / 63) << 8 | (rgb & 31) * 255 / 31; alpha = pixel[2];
+                            } else color = shape_pixel(&s, local_x, local_y);
+                        }
+                        if (x == clip.x1) { start = x; last = color; last_alpha = alpha; }
+                        else if (color != last || alpha != last_alpha || x > clip.x2) { span(draw, start, x - 1, y, last, last_alpha); start = x; last = color; last_alpha = alpha; }
                     }
-                    if (x == clip.x1) { start = x; last = color; last_alpha = alpha; }
-                    else if (color != last || alpha != last_alpha || x > clip.x2) { span(draw, start, x - 1, y, last, last_alpha); start = x; last = color; last_alpha = alpha; }
                 }
             }
-        }
-        draw->_clip_area = previous;
-        if (draw != target) {
-            lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d); d.src = draw; d.opa = opacity; lv_draw_layer(target, &d, &clip);
-            /* Finish and free this strip before allocating the next layer. */
-            while (target->draw_task_head) lv_draw_dispatch();
-        }
-        if (!ok) return error(diagnostic, OSG_WIDGET_DRAW_TEXT, layer->id, 0, 0);
+            draw->_clip_area = previous;
+            if (draw != target) {
+                lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d); d.src = draw; d.opa = opacity; lv_draw_layer(target, &d, &clip);
+                /* Finish and free this strip before allocating the next layer. */
+                while (target->draw_task_head) lv_draw_dispatch();
+            }
+            if (!ok) return error(diagnostic, OSG_WIDGET_DRAW_TEXT, layer->id, 0, 0);
+            }
     }
     return true;
 }

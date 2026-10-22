@@ -26,6 +26,9 @@ typedef struct {
 bool osg_lvgl_init(osg_lvgl_backend *, osg_board, void *buffer, size_t bytes);
 void osg_lvgl_destroy(osg_lvgl_backend *);
 bool osg_lvgl_render(osg_lvgl_backend *, osg_lvgl_paint, void *context);
+/* Absolute screen regions; NULL means full damage. A non-NULL empty list is a
+ * successful no-op. Paint still replays the scene beneath each LVGL clip. */
+bool osg_lvgl_render_regions(osg_lvgl_backend *, osg_lvgl_paint, void *context, const lv_area_t *, size_t count);
 
 /* These are target drawing operations after source properties and state resolve.
  * Colors are RGB888; bounds and text are clipped to their caller-supplied area. */

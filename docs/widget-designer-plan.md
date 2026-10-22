@@ -323,3 +323,30 @@ two-pixel/RGB565 comparison again. The live firmware still needs to
 use these banks together with display-task preflight, board memory profiles and
 the LVGL main loop before source assignment can be enabled. Feedback correction
 `ee72739` passes [ESP32 CI run 39704009236](https://github.com/opensimgear/cockpit/actions/runs/39704009236).
+
+Scene-bank commit `cbe6986` passes all six ESP32 jobs in
+[CI run 39705147756](https://github.com/opensimgear/cockpit/actions/runs/39705147756).
+The main firmware loop now calls the full LVGL panel compositor. It preserves
+mixed source order and alpha, draws group labels with the same portable font as
+browser/Android, and retains legacy widgets/status screens. Damage is polled
+every tick, including freshness of independently bound component outputs. Only
+a completed draw/present updates the successful-frame timestamp and publication
+hash. Existing network render notifications and immutable panel fences remain.
+
+Native sanitizer checks pass for the new compositor, legacy core/control traces,
+1,357 exact text projections and 1,274 state cases. A narrow-region test exposed
+that LVGL may pack many rows into a pixel buffer when damage is narrow; alpha
+strips now split those clips explicitly. The no-PSRAM 32 KiB pool/four-row build
+also passes the admitted catalog and fault suite, peaking at 13,312 pool bytes.
+The rich-board pool reserves 96 KiB in PSRAM before LVGL initialization. MCU
+cross-build size/stack evidence is still required; physical qualification remains
+deferred. The application partition grows to 2 MiB and matching partition tables
+are required for firmware upgrades; NVS offsets are unchanged.
+
+The actual running dev Cockpit import/edit/pointer-preview/save/reload acceptance
+passes at `.research/widgets-native-ui/1792632708790/`; the shared UI has zero
+Svelte diagnostics and all 26 tests pass. The native whole-panel visual is
+`.research/lvgl-native/panel-catalog.png`. The live network decoder still uses
+schema 2: fenced source-bank adoption, candidate preflight, source capability
+negotiation, remaining designer/catalog acceptance and browser/Android delivery
+checks are still open. No milestone is claimed complete by this integration.

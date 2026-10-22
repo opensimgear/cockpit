@@ -96,4 +96,7 @@ osg_damage osg_render_damage(const osg_runtime *, const osg_runtime *previous, u
 void osg_widget_rect(const osg_runtime *, size_t index, int *x, int *y, int *width, int *height);
 void osg_panel_widget_rect(const osg_panel *, size_t index, uint16_t display_width, uint16_t display_height, int *x, int *y, int *width, int *height);
 void osg_render(osg_runtime *, uint64_t now_ms);
+/* Draw one fixed widget under a target compositor's clip, preserving its
+ * existing appearance. Portable components are drawn by their own renderer. */
+void osg_render_widget(osg_runtime *, size_t index, uint64_t now_ms);
 #endif

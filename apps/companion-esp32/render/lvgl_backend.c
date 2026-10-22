@@ -1,4 +1,5 @@
 #include "lvgl_backend.h"
+#include "lvgl_pool.h"
 #include <math.h>
 #include <string.h>
 
@@ -18,7 +19,7 @@ static void draw(lv_event_t *event) {
 bool osg_lvgl_init(osg_lvgl_backend *backend, osg_board board, void *buffer, size_t bytes) {
     if (!backend || !board.write || board.width < 32 || board.width > 1024 || board.height < 32 || board.height > 1024 || !buffer || (uintptr_t)buffer % LV_DRAW_BUF_ALIGN || bytes < (size_t)board.width * 2 || bytes > UINT32_MAX) return false;
     memset(backend, 0, sizeof(*backend)); backend->board = board;
-    if (!initialized) { lv_init(); initialized = true; }
+    if (!initialized) { if(!osg_lvgl_pool_prepare())return false;lv_init(); initialized = true; }
     backend->display = lv_display_create(board.width, board.height);
     if (!backend->display) return false;
     lv_display_set_color_format(backend->display, LV_COLOR_FORMAT_RGB565);
@@ -38,10 +39,16 @@ void osg_lvgl_destroy(osg_lvgl_backend *backend) {
     lv_display_delete(backend->display); memset(backend, 0, sizeof(*backend));
 }
 bool osg_lvgl_render(osg_lvgl_backend *backend, osg_lvgl_paint paint, void *context) {
+    return osg_lvgl_render_regions(backend,paint,context,NULL,0);
+}
+bool osg_lvgl_render_regions(osg_lvgl_backend *backend, osg_lvgl_paint paint, void *context, const lv_area_t *regions, size_t count) {
     if (!backend || !backend->display || !paint || backend->rendering) return false;
+    if(regions&&!count)return true;
     backend->failed = false; backend->paint = paint; backend->paint_context = context; backend->rendering = true;
     const uint32_t before = backend->flushes;
-    lv_obj_invalidate(backend->surface); lv_refr_now(backend->display);
+    if(!regions)lv_obj_invalidate(backend->surface);
+    else for(size_t i=0;i<count;i++)lv_obj_invalidate_area(backend->surface,&regions[i]);
+    lv_refr_now(backend->display);
     if (backend->flushes == before) backend->failed = true;
     if (!backend->failed && backend->board.present && !backend->board.present(backend->board.context)) backend->failed = true;
     backend->rendering = false; backend->paint = NULL; backend->paint_context = NULL;

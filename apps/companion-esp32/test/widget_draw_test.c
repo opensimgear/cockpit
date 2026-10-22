@@ -106,9 +106,7 @@ static bool probes(void *value, lv_layer_t *layer) {
     assert(!osg_widget_draw(layer, &component, area, &context, NULL, NULL, NULL, &e));
     assert(!osg_widget_draw(layer, &component, (lv_area_t){0, 0, -1, 1}, &context, &fonts, NULL, NULL, &e));
     assert(!osg_widget_draw(layer, &component, (lv_area_t){0, 0, 9999, 9999}, &context, &fonts, NULL, NULL, &e) && e.code == OSG_WIDGET_DRAW_BUDGET);
-    lv_layer_t invalid = *layer; invalid._clip_area = (lv_area_t){0, 0, 199, 8};
-    assert(!osg_widget_draw(&invalid, &component, area, &context, &fonts, NULL, NULL, &e) && e.required == 9 && e.available == 8);
-    invalid._clip_area = (lv_area_t){0, 0, 1024, 7};
+    lv_layer_t invalid = *layer; invalid._clip_area = (lv_area_t){0, 0, 1024, 7};
     assert(!osg_widget_draw(&invalid, &component, (lv_area_t){0, 0, 1024, 119}, &context, &fonts, NULL, NULL, &e) && e.required == 1025 && e.available == 1024);
     visual.kind = OSG_LAYER_IMAGE; visual.asset_id = "prepared";
     assert(!osg_widget_draw(layer, &component, area, &context, &fonts, NULL, NULL, &e) && e.code == OSG_WIDGET_DRAW_ASSET);

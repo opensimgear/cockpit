@@ -92,7 +92,8 @@ static void font_limits(void) {
     for (unsigned size = 8; size <= 128; size += 6) assert(osg_widget_text_measure(&fonts, (size & 2) ? OSG_FONT_MONO : OSG_FONT_SANS, size, "Engine 50.0 % é —", &metrics));
     const char *bad[] = {"\xc0\xaf", "\xe0\x80\x80", "\xed\xa0\x80", "\xf0\x80\x80\x80", "\xf4\x90\x80\x80", "\xe2\x82", "line\nfeed", "\xf0\x9f\x9b\xa9"};
     for (unsigned i = 0; i < sizeof(bad) / sizeof(*bad); i++) assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, bad[i], &metrics));
-    char long_text[122]; memset(long_text, 'A', 121); long_text[121] = 0; assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, long_text, &metrics));
+    char long_text[258]; memset(long_text, 'A', 256); long_text[256] = 0; assert(osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, long_text, &metrics));
+    long_text[256]='A';long_text[257]=0;assert(!osg_widget_text_measure(&fonts, OSG_FONT_SANS, 22, long_text, &metrics));
     osg_widget_fonts_destroy(NULL);
 }
 int main(int argc, char **argv) {
@@ -103,6 +104,11 @@ int main(int argc, char **argv) {
     assert(!osg_lvgl_init(NULL, board, buffer, sizeof(buffer))); assert(!osg_lvgl_init(&backend, board, NULL, sizeof(buffer))); assert(!osg_lvgl_init(&backend, board, buffer, 1));
     assert(osg_lvgl_init(&backend, board, buffer, sizeof(buffer))); assert(!osg_lvgl_render(&backend, NULL, NULL));
     font_limits();
+    /* Empty damage must not present; a real absolute subregion must flush. */
+    const lv_area_t subregion={120,100,199,131};unsigned no_op_writes=writes,no_op_fences=fences;
+    assert(osg_lvgl_render_regions(&backend,primitives,NULL,&subregion,0)&&writes==no_op_writes&&fences==no_op_fences);
+    assert(osg_lvgl_render_regions(&backend,primitives,NULL,&subregion,1));
+    fences=0;
     uint64_t hashes[8];
     for (unsigned i = 0; i < 8; i++) {
         cJSON *frame = cJSON_GetArrayItem(frames, (int)i); assert(osg_lvgl_render(&backend, paint, frame)); hashes[i] = digest(); assert(writes >= 60 && fences == i + 1);

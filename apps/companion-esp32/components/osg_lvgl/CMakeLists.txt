@@ -10,7 +10,7 @@ if(NOT OSG_LVGL_FETCH_RESULT EQUAL 0)
 endif()
 file(GLOB_RECURSE OSG_LVGL_SOURCES "${OSG_LVGL_SOURCE}/src/*.c")
 idf_component_register(
-  SRCS ${OSG_LVGL_SOURCES}
+  SRCS ${OSG_LVGL_SOURCES} "../../render/lvgl_pool.c"
   INCLUDE_DIRS "${OSG_LVGL_SOURCE}" "${OSG_LVGL_SOURCE}/src" "../../render"
-  REQUIRES esp_timer)
+  REQUIRES esp_timer heap)
 target_compile_definitions(${COMPONENT_LIB} PUBLIC LV_CONF_INCLUDE_SIMPLE LV_KCONFIG_IGNORE)
