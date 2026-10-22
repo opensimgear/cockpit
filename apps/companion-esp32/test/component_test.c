@@ -42,6 +42,9 @@ static void compare(osg_runtime *r, const cJSON *expected) {
     assert(r->armed == cJSON_IsTrue(get(expected, "armed"))); assert(same(r->panel->pages[r->page].id, str(expected, "page")));
     for (size_t i = 0; i < r->panel->widget_count; i++) {
         const osg_widget *w = &r->panel->widgets[i]; osg_value_kind kind; double fallback;
+        const char *states[] = {"normal", "active", "pressed", "warning", "stale", "unknown", "disabled", "disconnected"};
+        osg_widget_state_context appearance; osg_widget_runtime_context(r, i, r->now_ms, &appearance);
+        assert(same(str(get(expected, "states"), w->id), states[osg_widget_state_resolve(w->component->definition, &appearance)]));
         if (osg_widget_input(w, &kind, &fallback)) {
             const cJSON *v = get(get(expected, "values"), w->reference); assert(v);
             assert(r->requested[i] == (kind == OSG_BOOL ? cJSON_IsTrue(v) : v->valuedouble));
@@ -75,7 +78,7 @@ static void feedback_checks(osg_runtime *r) {
     assert(osg_ack(good, &s, "1", r, 100));
     const unsigned slot = r->panel->widgets[0].component->outputs[0].slot;
     assert(r->samples[slot].received && r->samples[slot].simulator && r->samples[slot].boolean);
-    osg_widget_state_context context; osg_widget_runtime_context(r, 0, 100, &context); assert(osg_widget_state_resolve(r->panel->widgets[0].component->definition, &context) == OSG_WIDGET_ACTIVE);
+    osg_widget_state_context context; osg_widget_runtime_context(r, 0, 100, &context); assert(osg_widget_state_resolve(r->panel->widgets[0].component->definition, &context) == OSG_WIDGET_DISABLED);
     /* A valid first value followed by an invalid second value cannot partially
      * update a snapshot or its binding identities. */
     cJSON *atomic = cJSON_Duplicate(good, true), *atomic_frame = cJSON_GetObjectItemCaseSensitive(atomic, "feedback");
@@ -181,7 +184,7 @@ void component_tests(void) {
     cJSON *publication = cJSON_CreateObject(); assert(publication);
     cJSON_AddStringToObject(publication, "canonicalDocument", str(fixture, "canonicalDocument")); cJSON_AddStringToObject(publication, "publicationHash", str(fixture, "publicationHash")); cJSON_AddArrayToObject(publication, "assets");
     assert(osg_json_configure(512 * 1024, 192 * 1024, 8192));
-    osg_image *image; assert(osg_panel_source_compile(publication, str(fixture, "publicationHash"), (osg_crypto){.sha256 = source_sha}, &(osg_panel_source_limits){64 * 1024, 32, 800, 480}, &arena, &image, NULL)); cJSON_Delete(publication);
+    osg_scene *image; assert(osg_panel_source_compile(publication, str(fixture, "publicationHash"), (osg_crypto){.sha256 = source_sha}, &(osg_panel_source_limits){64 * 1024, 32, 800, 480}, &arena, &image, NULL)); cJSON_Delete(publication);
     osg_panel *panel = &image->panel;
     assert(osg_panel_valid(panel)); binding_checks(panel, image->widgets); osg_runtime *r = &component_runtime; change_count = 0;
     assert(osg_init(r, panel, (osg_display){.width = 800, .height = 480, .fill = fill, .text = text}, NULL, NULL)); r->typed_sink = record; osg_connected(r, true);

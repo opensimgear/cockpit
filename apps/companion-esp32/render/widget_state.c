@@ -7,8 +7,10 @@ void osg_widget_runtime_context(const osg_runtime *runtime, size_t index, uint64
     if (!runtime || !runtime->panel || index >= runtime->panel->widget_count) return;
     const osg_widget *widget = &runtime->panel->widgets[index];
     if (widget->kind != OSG_COMPONENT || !widget->component || !widget->component->definition) return;
-    out->connected = runtime->connected; out->enabled = true;
-    out->pressed = runtime->active == (int)index && widget->component->definition->interaction != OSG_INTERACTION_NAVIGATE;
+    const osg_interaction_kind interaction = widget->component->definition->interaction;
+    out->connected = runtime->connected;
+    out->enabled = interaction == OSG_INTERACTION_NONE || interaction == OSG_INTERACTION_NAVIGATE || runtime->armed;
+    out->pressed = runtime->active == (int)index && interaction != OSG_INTERACTION_NONE && interaction != OSG_INTERACTION_NAVIGATE;
     for (unsigned p = 0; p < widget->component->definition->output_count; p++) {
         const unsigned slot = widget->component->outputs[p].slot;
         if (slot >= OSG_MAX_WIDGETS) continue;

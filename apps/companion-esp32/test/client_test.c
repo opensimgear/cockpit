@@ -214,7 +214,7 @@ static void idle_assignment_screen_tests(void){
 }
 static void portable_image_tests(const unsigned char *protected_pixels,int protected_asset){
     const char *a="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",*c="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",*d="sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-    osg_image candidate={0};candidate.panel=osg_demo_panel;candidate.panel.pages=candidate.pages;candidate.panel.widgets=candidate.widgets;candidate.panel.widget_count=2;candidate.panel.page_count=1;candidate.pages[0]=osg_demo_pages[0];
+    osg_scene candidate={0};candidate.panel=osg_demo_panel;candidate.panel.pages=candidate.pages;candidate.panel.widgets=candidate.widgets;candidate.panel.widget_count=2;candidate.panel.page_count=1;candidate.pages[0]=osg_demo_pages[0];
     candidate.widgets[0]=osg_demo_widgets[0];candidate.widgets[0].kind=OSG_COMPONENT;
     candidate.widgets[1]=osg_demo_widgets[0];candidate.widgets[1].kind=OSG_IMAGE;candidate.widgets[1].id="legacy-alias";candidate.image_hashes[1]=a;
     osg_bound_bitmap bitmaps[3]={{.layer_id="artwork",.asset_id="art",.hash=a,.bounds={0,0,1,1}},{.layer_id="small-artwork",.asset_id="art",.hash=a,.bounds={0,0,.5,.5}},{.layer_id="other-artwork",.asset_id="other-art",.hash=c,.bounds={0,0,1,1}}};
@@ -246,7 +246,7 @@ static void portable_image_tests(const unsigned char *protected_pixels,int prote
 int main(int argc,char **argv){
     assert(argc==2);osg_json_init();char raw[OSG_REPLY_BYTES];FILE *f=fopen(argv[1],"rb");assert(f);size_t n=fread(raw,1,sizeof(raw),f);fclose(f);fixture=osg_json_parse(raw,n);assert(fixture);
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&images[0],800,480));
-    assert(osg_init(&test_runtime,&images[0].panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
+    assert(osg_init(&test_runtime,&images[0].scene.panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
     setup();advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=false;advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=true;
     advance();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
@@ -261,7 +261,7 @@ int main(int argc,char **argv){
     setup();installation_saved=false;settings.persist=true;store_ok=false;advance();fake_ms+=400;advance();assert(state==FAULT&&!installation_saved);
     setup();settings.persist=true;advance();fake_ms+=400;advance();assert(state==AUTH&&installation_saved);
     assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==WAIT_ASSIGNMENT);assigned_now=true;fake_ms=next_request;advance();
-    assert(state==OPEN);test_drawing=&images[1-image_index].panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
+    assert(state==OPEN);test_drawing=&images[1-image_index].scene.panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
     /* A bad panel does not close a healthy transport or enable live input. */
     stop();state=AUTH;advance();assert(state==OPEN);
     cJSON *valid_fixture=fixture;fixture=cJSON_Duplicate(valid_fixture,true);
@@ -389,7 +389,7 @@ int main(int argc,char **argv){
     host_rejection=NULL;
     const char *reasons[]={"wifi-connection-failed","host-tls-or-connection-failed","pairing-offer-expired","pairing-approval-expired","baseline-not-confirmed-or-touch-changed-reconnect-required","input-cancelled-or-lease-expired-reconnect-required","input-backlog-or-counter-invalid-reconnect-required","session-counter-exhausted","trusted-clock-invalid","setup-storage-unavailable","setup-save-failed-repair-required","setup-delete-failed","invalid-installation-id","host-rejected-or-invalid-reply-stop-and-reconnect"};
     for(size_t i=0;i<sizeof(reasons)/sizeof(*reasons);i++){fail(reasons[i]);update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&test_runtime.screen_message[0]);}
-    osg_image image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
+    osg_scene image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
     image.image_hashes[0]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     assert(load_images(&image,0));assert(image.widgets[0].pixels && image.widgets[0].pixels[0]==255);assert(image.widgets[0].image_width>0);
     assert(operation.completed==operation.total&&operation.misses==1&&operation.hits==0);

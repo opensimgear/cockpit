@@ -161,3 +161,27 @@ only in the supplied instance binding, with exact asset/dimension matching.
 All 116 native host tests, device client/cache regressions, full-panel admission
 and both real LVGL sanitizer harnesses pass. This supplies the preparation path;
 it does not yet enable live schema-3 adoption or qualify physical hardware.
+
+The shared source decoder also admits schema-2 fixed-widget documents. Its lean
+`osg_scene` retains runtime arrays and owned model references without the legacy
+decoder's 8 KiB scratch. The catalog occupies 27,585 native arena bytes. The
+original compatibility decoder keeps its scratch in a separate wrapper. No
+source document or authenticated publication hash is rewritten.
+
+`network/scene_bank.c` owns two lazily allocated scene arenas. The current bank
+is immutable; the inactive bank can be reused only after the display task's
+borrow fence clears. Cancelling a candidate invalidates its preflight ticket
+while retaining the storage identity needed by that fence. Checked tickets bind
+to a slot and monotonically increasing generation, so late validation cannot
+activate different data. Allocation/admission failures preserve the current bank;
+generation exhaustion fails explicitly. Ticket checks and bank activation never
+arm controls. The caller must use the existing state mutex and stop all readers
+before destroying banks. Native sanitizer tests cover these lifetime failures,
+with 100% line/function and 85.58% branch coverage.
+
+Runtime projection now matches the shared canvas's disarmed presentation for
+input components, while navigation and read-only components remain enabled.
+The 51-step integration oracle checks 765 appearances in addition to its input
+trace. Independent adapter tests cover bound/unbound output slots and simulator
+origin; all 1,274 projection cases pass with 100% line/function and 88.37% branch
+coverage. The bank API still awaits live main-loop adoption.

@@ -31,7 +31,7 @@ const display = structuredClone(mixed); display.ui.controls = []; display.bindin
 display.presentation.widgets = display.presentation.widgets.filter(w => w.controlIds.length === 0);
 display.ui.feedbackWidgets = display.ui.feedbackWidgets.filter(f => display.presentation.widgets.some(w => w.feedbackIds.includes(f.id))); display.ui = normalizeToPortableUi(display);
 
-const documents = [catalog, input, mixed, editorial, display];
+const documents = [catalog, input, mixed, editorial, display, legacy];
 const cases = [];
 for (const document of documents) {
   const result = validateDesignerDocument(document); if (!result.ok) throw Error(result.error);
@@ -89,6 +89,11 @@ add(1,['ui','controls',2,'axisMode'], 'bipolar');
 add(1,['ui','controls',2,'fallback'], .5);
 add(1,['presentation','widgets',9,'config','properties','page'], 'missing');
 add(1,['targets',0,'axes'], ['unipolar','unipolar']);
+add(5,['schemaVersion'],3);
+add(5,['presentation','definitions'],[]);
+add(5,['presentation','widgets',0,'kind'],'component');
+add(5,['presentation','widgets',0,'config'],{ definitionId:'missing',definitionVersion:1,properties:{} });
+add(5,['presentation','widgets',0],{ ...legacy.presentation.widgets[0],kind:'component',config:{ definitionId:'missing',definitionVersion:1,properties:{} } });
 const path = 'apps/companion-esp32/test/panel-source.json';
 const result = JSON.stringify({ formatVersion: 1, cases, mutations }) + '\n';
 if (process.argv.includes('--check')) { if ((await readFile(path, 'utf8')).replaceAll('\r\n','\n') !== result) throw Error('Panel source fixture differs from the shared model'); }

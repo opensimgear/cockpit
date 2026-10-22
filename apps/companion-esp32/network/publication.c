@@ -59,10 +59,10 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
         for(size_t i=0;i<64;i++)if(!((digest[i]>='0'&&digest[i]<='9')||(digest[i]>='a'&&digest[i]<='f')))goto done;
         for(const cJSON *before=get(ui,"assets")->child;before!=asset;before=before->next)if(same(osg_string(before,"id"),osg_string(asset,"id")))goto done;
     }
-    image->panel = (osg_panel){save(image, osg_string(ui, "id")), save(image, hash), image->pages, image->widgets,
+    image->scene.panel = (osg_panel){save(image, osg_string(ui, "id")), save(image, hash), image->scene.pages, image->scene.widgets,
         (size_t)cJSON_GetArraySize(pages), (size_t)cJSON_GetArraySize(widgets), NULL};
     size_t buttons = 0, outputs = 0;
-    for (size_t i = 0; i < image->panel.page_count; i++) {
+    for (size_t i = 0; i < image->scene.panel.page_count; i++) {
         const cJSON *page = cJSON_GetArrayItem(pages, (int)i), *viewport = NULL;
         for (const cJSON *v = viewports->child; v; v = v->next) if (same(osg_string(v, "pageId"), osg_string(page, "id"))) {
             if (viewport) goto done;
@@ -70,11 +70,11 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
         }
         const double w = number(viewport, "width"), h = number(viewport, "height");
         if (!viewport || !legacy_title(osg_string(page, "title")) || get(viewport, "backgroundAssetId") || !isfinite(w) || !isfinite(h) || w < 320 || h < 320 || w > 8192 || h > 8192 || floor(w) != w || floor(h) != h) goto done;
-        image->pages[i] = (osg_page){save(image, osg_string(page, "id")), save(image, osg_string(page, "title")), (uint16_t)w, (uint16_t)h};
+        image->scene.pages[i] = (osg_page){save(image, osg_string(page, "id")), save(image, osg_string(page, "title")), (uint16_t)w, (uint16_t)h};
     }
-    for (size_t i = 0; i < image->panel.widget_count; i++) {
+    for (size_t i = 0; i < image->scene.panel.widget_count; i++) {
         const cJSON *v = cJSON_GetArrayItem(widgets, (int)i), *config = get(v, "config"), *style = get(v, "style");
-        osg_widget *w = &image->widgets[i];
+        osg_widget *w = &image->scene.widgets[i];
         const char *kind = osg_string(v, "kind"), *control = NULL, *output = NULL;
         if (same(kind, "button")) w->kind = OSG_BUTTON;
         else if (same(kind, "indicator")) w->kind = OSG_INDICATOR;
@@ -92,7 +92,7 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
             const cJSON *asset=find_id(get(ui,"assets"),osg_string(config,"assetId"));
             char digest[72];if(!asset)goto done;
             memcpy(digest,"sha256:",7);memcpy(digest+7,osg_string(asset,"sha256"),65);
-            image->image_hashes[i]=save(image,digest);if(!image->image_hashes[i])goto done;
+            image->scene.image_hashes[i]=save(image,digest);if(!image->scene.image_hashes[i])goto done;
         }
         if (button) { if (!same(osg_string(config, "buttonMode"), "momentary") || number(config, "pulseMs") != 0 || number(config, "repeatMs") != 0 || get(config, "iconAssetId")) goto done; buttons++; }
         else if(!bitmap) outputs++;
@@ -105,11 +105,11 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
         const double precision = numeric ? number(config, "precision") : 0;
         if (!isfinite(precision) || precision < 0 || precision > 4 || floor(precision) != precision) goto done;
         w->precision = (uint8_t)precision;
-        size_t page = 0; while (page < image->panel.page_count && !same(osg_string(v, "pageId"), image->pages[page].id)) page++;
-        if (page == image->panel.page_count) goto done;
+        size_t page = 0; while (page < image->scene.panel.page_count && !same(osg_string(v, "pageId"), image->scene.pages[page].id)) page++;
+        if (page == image->scene.panel.page_count) goto done;
         w->page = (uint8_t)page;
         const cJSON *viewport = NULL;
-        for (const cJSON *vp = viewports->child; vp; vp = vp->next) if (same(osg_string(vp, "pageId"), image->pages[page].id)) viewport = vp;
+        for (const cJSON *vp = viewports->child; vp; vp = vp->next) if (same(osg_string(vp, "pageId"), image->scene.pages[page].id)) viewport = vp;
         const cJSON *insets = get(viewport, "safeInsets"), *bounds = get(v, "bounds");
         double left = 0, right = 0, top = 0, bottom = 0;
         if (insets) {
@@ -119,13 +119,13 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
         w->bounds = (osg_bounds){left + number(bounds, "x") * (1-left-right), top + number(bounds,"y") * (1-top-bottom), number(bounds,"width") * (1-left-right), number(bounds,"height") * (1-top-bottom)};
         if (!rgb(style,"foreground",0xdf3d,&w->foreground) || !rgb(style,"background",0x1126,&w->background) || !rgb(style,"accent",0x8718,&w->accent)) goto done;
         if (button) {
-            const double scale = fmin((double)width/image->pages[page].width,(double)height/image->pages[page].height);
-            if (floor(w->bounds.width*image->pages[page].width*scale) < 44 || floor(w->bounds.height*image->pages[page].height*scale) < 44) goto done;
+            const double scale = fmin((double)width/image->scene.pages[page].width,(double)height/image->scene.pages[page].height);
+            if (floor(w->bounds.width*image->scene.pages[page].width*scale) < 44 || floor(w->bounds.height*image->scene.pages[page].height*scale) < 44) goto done;
         }
-        for (size_t j = 0; j < i; j++) if (!button && !bitmap && image->widgets[j].kind != OSG_BUTTON && image->widgets[j].kind != OSG_IMAGE && same(w->output_id,image->widgets[j].output_id)) goto done;
+        for (size_t j = 0; j < i; j++) if (!button && !bitmap && image->scene.widgets[j].kind != OSG_BUTTON && image->scene.widgets[j].kind != OSG_IMAGE && same(w->output_id,image->scene.widgets[j].output_id)) goto done;
     }
     if (buttons != (size_t)cJSON_GetArraySize(controls) || outputs != (size_t)cJSON_GetArraySize(feedback)) goto done;
-    valid = osg_panel_valid(&image->panel);
+    valid = osg_panel_valid(&image->scene.panel);
 done:
     cJSON_Delete(doc); return valid;
 }

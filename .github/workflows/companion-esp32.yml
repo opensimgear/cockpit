@@ -68,6 +68,7 @@ jobs:
             .research/esp32-widget-state-native/coverage.json
             .research/esp32-widget-state-native/widget-state-test.log
             .research/esp32-panel-source-native/coverage.json
+            .research/esp32-panel-source-native/scene-bank-coverage.json
             .research/esp32-panel-source-native/panel-source-test.log
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json

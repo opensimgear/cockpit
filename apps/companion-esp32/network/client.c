@@ -191,7 +191,7 @@ static bool image_reference_add(image_reference *refs,size_t *count,const char *
     refs[(*count)++]=(image_reference){widget,layer,hash,pixels,(uint16_t)width,(uint16_t)height};return true;
 }
 static bool same_image(const image_reference *a,const image_reference *b){return a->width==b->width&&a->height==b->height&&equal(a->hash,b->hash);}
-static bool load_images(osg_image *image,unsigned slot){
+static bool load_images(osg_scene *image,unsigned slot){
     loading_owner=slot;load_interrupted=false;detail="Checking saved images";operation_phase("checking-cache");update_screen();
     size_t total=0,reference_count=0;image_reference refs[OSG_MAX_WIDGETS];
     unsigned assets[OSG_MAX_WIDGETS]={0};bool acquired[OSG_MAX_WIDGETS]={false},cached[OSG_MAX_WIDGETS]={false};
@@ -448,7 +448,7 @@ static void advance(void){
     }else if(state==OPEN){
         load_interrupted=false;detail="Opening assigned panel";update_screen();
         xSemaphoreTake(ui.mutex,portMAX_DELAY);
-        bool busy=*ui.drawing_panel==&images[1-image_index].panel;
+        bool busy=*ui.drawing_panel==&images[1-image_index].scene.panel;
         xSemaphoreGive(ui.mutex);if(busy)return;
         v=message("open");cJSON_AddStringToObject(v,"instanceId",assigned);cJSON_AddStringToObject(v,"publicationHash",publication);cJSON_AddBoolToObject(v,"takeover",false);cJSON_AddBoolToObject(v,"externalImages",true);
         ok=request(v,&reply,3000)&&identity(reply,"session-open");
@@ -461,14 +461,14 @@ static void advance(void){
             const cJSON *p=cJSON_GetObjectItemCaseSensitive(reply,"publication");
             ok=osg_decode_publication(p,publication,osg_platform_crypto,candidate,ui.runtime->display.width,ui.runtime->display.height);
             cJSON_Delete(reply);reply=NULL;
-            if(ok)ok=load_images(candidate,1-image_index);
+            if(ok)ok=load_images(&candidate->scene,1-image_index);
             else {detail="Panel data invalid or unsupported";operation_failed("invalid-panel",false);osg_pixels_panel_release(1-image_index);}
             if(!ok){
                 if(load_interrupted){abort_connection();state=OFF;report("panel-load-cancelled");update_screen();return;}
                 disconnected();state=PANEL_ERROR;next_request=millis();report("panel-load-failed");update_screen();return;
             }
             if(ok){xSemaphoreTake(ui.mutex,portMAX_DELAY);
-                ok=osg_init(ui.runtime,&candidate->panel,ui.runtime->display,NULL,NULL);
+                ok=osg_init(ui.runtime,&candidate->scene.panel,ui.runtime->display,NULL,NULL);
                 if(ok){image_index=1-image_index;panel_render_failed=false;osg_connected(ui.runtime,true);osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());remote_armed=false;input_sequence=0;*ui.dirty=true;}
                 xSemaphoreGive(ui.mutex);}
             if(ok){detail="Rendering panel";state=LIVE;next_request=millis();operation_phase("rendering");report("live-disarmed");}

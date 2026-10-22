@@ -147,7 +147,7 @@ static const cJSON *viewport(compiler *c, const char *page) {
     for(const cJSON *v=get(c->presentation,"viewports")->child;v;v=v->next)if(same(str(v,"pageId"),page))return v;
     return NULL;
 }
-static bool pages(compiler *c, osg_image *image) {
+static bool pages(compiler *c, osg_scene *image) {
     for(const cJSON *v=get(c->presentation,"viewports")->child;v;v=v->next) {
         if(!object(c,v,"pageId|width|height","safeInsets|backgroundAssetId|regions","viewport")||index_of(c->pages,str(v,"pageId"))<0||!bounded_number(get(v,"width"),320,8192,true)||!bounded_number(get(v,"height"),320,8192,true))return invalid(c,"viewport");
         for(const cJSON *p=get(c->presentation,"viewports")->child;p!=v;p=p->next)if(same(str(p,"pageId"),str(v,"pageId")))return invalid(c,"viewport.pageId");
@@ -172,7 +172,7 @@ static bool pages(compiler *c, osg_image *image) {
         if(!object(c,g,"id|pageId|label","","group")||!title(str(g,"label"))||!find(c->pages,str(g,"pageId")))return invalid(c,"group");
     return c->error->code==OSG_PANEL_SOURCE_OK;
 }
-static bool widget_bounds(compiler *c, const cJSON *v, osg_widget *w, const osg_image *image) {
+static bool widget_bounds(compiler *c, const cJSON *v, osg_widget *w, const osg_scene *image) {
     osg_bounds source; if(!bounds(c,get(v,"bounds"),&source))return false;
     const int p=index_of(c->pages,str(v,"pageId")); if(p<0)return invalid(c,"widget.pageId"); w->page=(uint8_t)p;
     const cJSON *vp=viewport(c,str(v,"pageId")),*regions=get(vp,"regions"),*insets=get(vp,"safeInsets");
@@ -209,6 +209,7 @@ static bool definition(compiler *c,const cJSON *source,const cJSON *properties,c
 static bool component(compiler *c, const cJSON *v, osg_widget *w) {
     const cJSON *config=get(v,"config"),*defs=get(c->presentation,"definitions"),*source=NULL;
     if(!object(c,config,"definitionId|definitionVersion|properties","","component.config"))return false;
+    if(!cJSON_IsArray(defs))return invalid(c,"component.definitionRevision");
     for(const cJSON *d=defs->child;d;d=d->next)if(same(str(d,"id"),str(config,"definitionId"))&&number(d,"version")==number(config,"definitionVersion"))source=d;
     if(!source)return invalid(c,"component.definitionRevision");
     osg_widget_binding *binding=allocate(c,sizeof(*binding)); if(!binding)return false;
@@ -239,7 +240,7 @@ static bool component(compiler *c, const cJSON *v, osg_widget *w) {
     }
     c->bitmaps+=images;return c->error->code==OSG_PANEL_SOURCE_OK;
 }
-static bool legacy(compiler *c, const cJSON *v, osg_widget *w, osg_image *image, size_t i) {
+static bool legacy(compiler *c, const cJSON *v, osg_widget *w, osg_scene *image, size_t i) {
     const char *kind=str(v,"kind");const cJSON *config=get(v,"config");
     if(same(kind,"button"))w->kind=OSG_BUTTON;else if(same(kind,"indicator"))w->kind=OSG_INDICATOR;else if(same(kind,"text"))w->kind=OSG_TEXT;else if(same(kind,"numeric"))w->kind=OSG_NUMERIC;else if(same(kind,"gauge"))w->kind=OSG_GAUGE;else if(same(kind,"image"))w->kind=OSG_IMAGE;
     else return fail(c,OSG_PANEL_SOURCE_UNSUPPORTED,"widget.kind");
@@ -271,7 +272,7 @@ static bool legacy(compiler *c, const cJSON *v, osg_widget *w, osg_image *image,
     if(get(paint,"accent"))(void)color(get(paint,"accent"),&w->accent);
     return c->error->code==OSG_PANEL_SOURCE_OK;
 }
-static bool page_items(compiler *c, const osg_image *image) {
+static bool page_items(compiler *c, const osg_scene *image) {
     size_t page=0;
     for(const cJSON *p=c->pages->child;p;p=p->next,page++) {
         const cJSON *item=get(p,"items")->child;bool populated=false;
@@ -306,21 +307,22 @@ static bool targets(compiler *c, const cJSON *doc) {
     }
     return true;
 }
-static bool document(compiler *c,const cJSON *doc,const char *hash,osg_image **result) {
+static bool document(compiler *c,const cJSON *doc,const char *hash,osg_scene **result) {
     c->ui=get(doc,"ui");c->presentation=get(doc,"presentation");c->pages=get(c->ui,"pages");c->controls=get(c->ui,"controls");c->feedback=get(c->ui,"feedbackWidgets");c->assets=get(c->ui,"assets");c->widgets=get(c->presentation,"widgets");
-    if(!object(c,doc,"schemaVersion|ui|presentation|targets|bindings","","document")||number(doc,"schemaVersion")!=3||!object(c,c->ui,"schemaVersion|id|title|controls|pages|feedbackWidgets|assets","","ui")||number(c->ui,"schemaVersion")!=1||!osg_stable_id(str(c->ui,"id"))||!title(str(c->ui,"title"))||!object(c,c->presentation,"widgets|groups|viewports|grid|definitions","","presentation"))return invalid(c,"document");
-    if(!array(c,c->pages,1,OSG_MAX_PAGES,"pages")||!array(c,c->controls,0,OSG_MAX_WIDGETS,"controls")||!array(c,c->feedback,0,OSG_MAX_WIDGETS,"feedback")||!array(c,c->assets,0,64,"assets")||!array(c,c->widgets,1,OSG_MAX_WIDGETS,"widgets")||!array(c,get(c->presentation,"groups"),0,64,"groups")||!array(c,get(c->presentation,"viewports"),(size_t)cJSON_GetArraySize(c->pages),(size_t)cJSON_GetArraySize(c->pages),"viewports")||!array(c,get(c->presentation,"definitions"),0,64,"definitions")||!array(c,get(doc,"targets"),0,8,"targets")||!array(c,get(doc,"bindings"),(size_t)cJSON_GetArraySize(c->controls),(size_t)cJSON_GetArraySize(c->controls),"bindings"))return false;
+    const bool portable=number(doc,"schemaVersion")==3;
+    if(!object(c,doc,"schemaVersion|ui|presentation|targets|bindings","","document")||(!portable&&number(doc,"schemaVersion")!=2)||!object(c,c->ui,"schemaVersion|id|title|controls|pages|feedbackWidgets|assets","","ui")||number(c->ui,"schemaVersion")!=1||!osg_stable_id(str(c->ui,"id"))||!title(str(c->ui,"title"))||!object(c,c->presentation,portable?"widgets|groups|viewports|grid|definitions":"widgets|groups|viewports|grid","","presentation"))return invalid(c,"document");
+    if(!array(c,c->pages,1,OSG_MAX_PAGES,"pages")||!array(c,c->controls,0,OSG_MAX_WIDGETS,"controls")||!array(c,c->feedback,0,OSG_MAX_WIDGETS,"feedback")||!array(c,c->assets,0,64,"assets")||!array(c,c->widgets,1,OSG_MAX_WIDGETS,"widgets")||!array(c,get(c->presentation,"groups"),0,64,"groups")||!array(c,get(c->presentation,"viewports"),(size_t)cJSON_GetArraySize(c->pages),(size_t)cJSON_GetArraySize(c->pages),"viewports")||(portable&&!array(c,get(c->presentation,"definitions"),0,64,"definitions"))||!array(c,get(doc,"targets"),0,8,"targets")||!array(c,get(doc,"bindings"),(size_t)cJSON_GetArraySize(c->controls),(size_t)cJSON_GetArraySize(c->controls),"bindings"))return false;
     const cJSON *grid=get(c->presentation,"grid");
     if(!object(c,grid,"columns|rows|snap","","grid")||!bounded_number(get(grid,"columns"),1,128,true)||!bounded_number(get(grid,"rows"),1,128,true)||!cJSON_IsBool(get(grid,"snap")))return invalid(c,"grid");
     if(!unique_ids(c,get(doc,"targets"))||!primitives(c)||!targets(c,doc))return false;
     /* Even unused library revisions must be valid. Rewind only this validation
      * scratch before admitting instances, without charging unused layers twice. */
     const osg_widget_arena mark=*c->arena;const cJSON *definitions=get(c->presentation,"definitions");
-    for(const cJSON *d=definitions->child;d;d=d->next) {
+    for(const cJSON *d=definitions?definitions->child:NULL;d;d=d->next) {
         for(const cJSON *p=definitions->child;p!=d;p=p->next)if(same(str(p,"id"),str(d,"id"))&&number(p,"version")==number(d,"version"))return invalid(c,"definition.duplicateRevision");
         const osg_widget_component *temporary; if(!definition(c,d,NULL,&temporary))return false; *c->arena=mark;
     }
-    osg_image *image=allocate(c,sizeof(*image));if(!image)return false;
+    osg_scene *image=allocate(c,sizeof(*image));if(!image)return false;
     image->panel=(osg_panel){save(c,str(c->ui,"id")),save(c,hash),image->pages,image->widgets,(size_t)cJSON_GetArraySize(c->pages),(size_t)cJSON_GetArraySize(c->widgets),NULL};
     if(!pages(c,image))return false;
     /* Legacy feedback slots remain at their widget index. Components receive
@@ -356,7 +358,7 @@ static bool document(compiler *c,const cJSON *doc,const char *hash,osg_image **r
     if(c->error->code!=OSG_PANEL_SOURCE_OK)return false;
     *result=image;return true;
 }
-bool osg_panel_source_compile(const cJSON *publication,const char *expected,osg_crypto crypto,const osg_panel_source_limits *limits,osg_widget_arena *arena,osg_image **result,osg_panel_source_diagnostic *diagnostic) {
+bool osg_panel_source_compile(const cJSON *publication,const char *expected,osg_crypto crypto,const osg_panel_source_limits *limits,osg_widget_arena *arena,osg_scene **result,osg_panel_source_diagnostic *diagnostic) {
     osg_panel_source_diagnostic local={0};if(!diagnostic)diagnostic=&local;memset(diagnostic,0,sizeof(*diagnostic));if(result)*result=NULL;
     compiler c={.arena=arena,.error=diagnostic,.limits=limits};
     if(!result||!arena||!arena->data||(uintptr_t)arena->data%_Alignof(max_align_t)||arena->used>arena->capacity||!limits||!limits->document_bytes||limits->document_bytes>1024*1024||limits->width<64||limits->height<64||limits->width>4096||limits->height>4096||!crypto.sha256)return invalid(&c,"arguments");

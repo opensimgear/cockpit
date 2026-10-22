@@ -25,5 +25,5 @@ typedef struct {
  * The caller fences an inactive bank before reusing its arena. */
 bool osg_panel_source_compile(const cJSON *publication, const char *expected_hash,
     osg_crypto, const osg_panel_source_limits *, osg_widget_arena *,
-    osg_image **result, osg_panel_source_diagnostic *);
+    osg_scene **result, osg_panel_source_diagnostic *);
 #endif

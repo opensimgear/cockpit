@@ -36,6 +36,34 @@ static osg_widget_state_context context(const cJSON *frame, osg_sample storage[8
     }
     return out;
 }
+static void runtime_adapter(const osg_widget_component *const *components, unsigned count) {
+    osg_runtime *runtime=calloc(1,sizeof(*runtime));assert(runtime);osg_widget_state_context view;
+    osg_widget_binding binding={0};osg_widget widget={.kind=OSG_COMPONENT,.component=&binding};osg_panel panel={.widgets=&widget,.widget_count=1};
+    runtime->panel=&panel;runtime->connected=true;
+    for(unsigned i=0;i<count;i++) {
+        const osg_widget_component *definition=components[i];binding.definition=definition;
+        const bool input=definition->interaction!=OSG_INTERACTION_NONE&&definition->interaction!=OSG_INTERACTION_NAVIGATE;
+        for(unsigned p=0;p<definition->output_count;p++) {
+            binding.outputs[p].slot=(uint8_t)(7+p);runtime->samples[7+p]=(osg_sample){.received=true,.available=true,.simulator=true,.kind=definition->outputs[p].kind,.received_ms=100};
+        }
+        for(unsigned armed=0;armed<2;armed++) {
+            runtime->armed=armed!=0;runtime->active=armed?0:-1;osg_widget_runtime_context(runtime,0,100,&view);
+            assert(view.enabled==(!input||armed)&&view.pressed==(input&&armed)&&view.connected&&view.now_ms==100);
+            for(unsigned p=0;p<definition->output_count;p++)assert(view.outputs[p].value==&runtime->samples[7+p]&&view.outputs[p].simulator);
+        }
+        if(definition->output_count) {
+            runtime->samples[7].received=false;osg_widget_runtime_context(runtime,0,100,&view);assert(!view.outputs[0].value);
+            runtime->samples[7].received=true;runtime->samples[7].simulator=false;osg_widget_runtime_context(runtime,0,100,&view);assert(view.outputs[0].value&&!view.outputs[0].simulator);
+            binding.outputs[0].slot=OSG_MAX_WIDGETS;osg_widget_runtime_context(runtime,0,100,&view);assert(!view.outputs[0].value);
+        }
+    }
+    osg_widget_runtime_context(NULL,0,123,&view);assert(!view.connected&&view.now_ms==123);
+    runtime->panel=NULL;osg_widget_runtime_context(runtime,0,100,&view);assert(!view.connected);runtime->panel=&panel;
+    osg_widget_runtime_context(runtime,1,100,&view);assert(!view.connected);
+    widget.kind=OSG_BUTTON;osg_widget_runtime_context(runtime,0,100,&view);assert(!view.connected);widget.kind=OSG_COMPONENT;
+    widget.component=NULL;osg_widget_runtime_context(runtime,0,100,&view);assert(!view.connected);widget.component=&binding;
+    binding.definition=NULL;osg_widget_runtime_context(runtime,0,100,&view);assert(!view.connected);free(runtime);
+}
 int main(int argc, char **argv) {
     assert(argc == 3); cJSON *source = load(argv[1]), *frames = load(argv[2]);
     unsigned char *memory = malloc(128 * 1024); assert(memory);
@@ -44,7 +72,7 @@ int main(int argc, char **argv) {
     for (const cJSON *c = get(source, "cases")->child; c; c = c->next) {
         assert(count < 32 && osg_widget_source_compile(get(c, "definition"), get(c, "properties"), get(source, "assets"), &arena, &components[count], NULL)); count++;
     }
-    cJSON_Delete(source);
+    cJSON_Delete(source);runtime_adapter(components,count);
     const char *states[] = {"normal", "active", "pressed", "warning", "stale", "unknown", "disabled", "disconnected"}; unsigned total = 0;
     for (const cJSON *frame = get(frames, "cases")->child; frame; frame = frame->next, total++) {
         const unsigned index = (unsigned)n(get(frame, "index")); assert(index < count); const osg_widget_component *component = components[index];

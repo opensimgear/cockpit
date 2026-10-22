@@ -17,6 +17,11 @@ typedef struct {
     osg_page pages[OSG_MAX_PAGES];
     osg_widget widgets[OSG_MAX_WIDGETS];
     const char *image_hashes[OSG_MAX_WIDGETS];
+} osg_scene;
+/* Fixed-widget compatibility decoder scratch. Portable scenes do not retain
+ * this legacy string arena; their owned strings live in the caller's bank. */
+typedef struct {
+    osg_scene scene;
     char strings[OSG_IMAGE_TEXT_BYTES];
     size_t used;
 } osg_image;

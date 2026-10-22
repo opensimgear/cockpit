@@ -75,7 +75,8 @@ const steps = actions.map((action, index) => {
     else controller.release(0);
   }
   const state = controller.snapshot();
-  return { ...action, now, ...(ack ? { ack } : {}), expected: { page, armed: state.armed, values: state.values, pressed: state.pressedWidgetIds, changes: state.events.flatMap(event => event.changes) } };
+  const states = Object.fromEntries(document.presentation.widgets.map(widget => [widget.id, componentPresentation(document, widget, feedback, now, { connected: true, enabled: widget.controlIds.length === 0 || state.armed, pressed: state.pressedWidgetIds.includes(widget.id) }).state]));
+  return { ...action, now, ...(ack ? { ack } : {}), expected: { page, armed: state.armed, values: state.values, pressed: state.pressedWidgetIds, states, changes: state.events.flatMap(event => event.changes) } };
 });
 const result = JSON.stringify({ formatVersion: 1, document, canonicalDocument: canonical(document), publicationHash: publication.publicationHash, steps }) + '\n';
 const path = 'apps/companion-esp32/test/widget-input.json';

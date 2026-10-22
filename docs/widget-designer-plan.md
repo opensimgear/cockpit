@@ -295,3 +295,31 @@ All shared UI tests/type checks, device/core/network/cache regressions and real
 LVGL sanitizer checks pass, including 1,357 exact shared text projections.
 Portable text helpers have 100% line/function and 77.22% branch coverage. Actual
 dev Cockpit acceptance passes at `.research/widgets-native-ui/1792631252789/`.
+
+Portable scenes no longer carry the unused legacy 8 KiB string buffer. The
+catalog's owned native candidate is now 27,585 bytes, down from 35,777. Schema 2
+and schema 3 share strict source admission without changing canonical hashes;
+the fixed-widget compatibility decoder keeps its own scratch. Six panel cases
+(51 instances) and 4,244 shared-validator mutations pass sanitizers; admission
+coverage is 100% lines/functions and 86.52% branches. Existing protocol/client,
+lease, cache and export regressions also pass after the private scene refactor.
+
+`network/scene_bank.c` supplies lazy caller-allocated A/B banks with immutable
+active data, display-borrow fences and generation-bound preflight tickets. A
+cancelled or rejected candidate retains its fence identity until the reader is
+done. Failed allocations report the requested bank size and available capacity;
+stale preflight completions and exhausted generations cannot activate data.
+Native failure/lifetime checks pass with 100% line/function and 85.58% branch
+coverage. This API owns data only and cannot grant input authority.
+
+The 51 shared-controller steps now compare all 15 widget appearances as well as
+their 24 input changes. This exposed a runtime adapter mismatch: input components
+must show disabled while disarmed, while read-only/navigation components remain
+available. The corrected adapter and independent output/provenance mapping pass
+all 1,274 projection cases, with 100% line/function and 88.37% branch coverage.
+The current shared renderer was captured again in the actual dev Cockpit at
+`.research/widget-source-browser-reference/`. The 108 appearances also pass the
+two-pixel/RGB565 comparison again. The live firmware still needs to
+use these banks together with display-task preflight, board memory profiles and
+the LVGL main loop before source assignment can be enabled. Feedback correction
+`ee72739` passes [ESP32 CI run 39704009236](https://github.com/opensimgear/cockpit/actions/runs/39704009236).
