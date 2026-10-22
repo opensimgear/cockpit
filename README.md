@@ -42,6 +42,15 @@ The Pico USB adapter discovers both legacy protocol-1 images and the current pro
 
 STM32 discovery verifies manufacturer/product metadata, a 24-hex UID and bounded CDC protocol-3 automatic-lifecycle snapshots. Explicit report IDs and descriptor positions are validated independently. Capacity and admission failures remain visible. Configuration uses the production Cyphal/CAN contract (`canProtocol=3`) with identity, boot, writer, request and epoch validation. After Apply, readback follows the device's renewed lease with bounded read retries; a device reboot stops reconciliation, and writes are never replayed. CDC-v2 gateways remain readable with their older manual registration/layout Apply controls; those adapters do not claim automatic Enable/Disable/Remove support. Local gateways receive the same handshake checks as USB serial gateways; on macOS/Linux they advertise in the current user's private `/tmp/opensimgear-<user-id>/gateways/` directory. Local streams do not create OS USB/HID controllers.
 
+## AI-assisted configuration
+
+Open **Settings → AI integration** in the desktop app to enable its local MCP
+server and create a Read only or Configure credential for an assistant. The
+assistant shares the running Cockpit's resources and ownership rules: prepare
+and validate changes, save a draft, then explicitly apply the saved revision.
+See the [MCP setup and workflow guide](docs/mcp.md) for client configuration,
+supported tools, conflict handling, and verification limits.
+
 ## Keyboard and mouse mappings (development acceptance)
 
 Unified Profiles can author keyboard and mouse actions with recording previews.

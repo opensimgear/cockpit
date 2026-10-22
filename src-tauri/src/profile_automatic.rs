@@ -80,6 +80,10 @@ impl Runtime {
         };
         json!({"schemaVersion":1,"mode":state.settings.mode,"manualProfileId":state.settings.manual_profile_id,"rules":state.settings.rules,"status":status,"message":message,"conflicts":state.conflicts,"lastAttempt":state.last_attempt,"target":state.target,"readOnly":state.read_only})
     }
+    pub(super) fn settings_snapshot(&self) -> Value {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        json!({"settings":state.settings,"readOnly":state.read_only})
+    }
     fn change(&self, edit: impl FnOnce(&mut Settings) -> Result<(), String>) -> Result<(), String> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.read_only {
@@ -118,6 +122,7 @@ impl Runtime {
         if !matches!(
             command,
             "profile_apply"
+                | "profile_local_settings_save"
                 | "profile_editor_save"
                 | "profile_game_launch"
                 | "profile_select"

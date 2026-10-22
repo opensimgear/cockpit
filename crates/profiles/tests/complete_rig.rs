@@ -734,7 +734,16 @@ fn complete_rig_retains_offline_blocks_and_changed_contracts_but_cannot_reuse_de
         .token(&rig.ids["can-a"], "axis", Access::Read)
         .unwrap();
     rig.batch.revision = 2;
-    rig.batch.observations.retain(|o| o.key != "can-a");
+    // Complete gateway snapshots enumerate remembered modules: omission means removal.
+    // Keep the remembered observation without a live route or port update to model offline.
+    let offline = rig
+        .batch
+        .observations
+        .iter_mut()
+        .find(|o| o.key == "can-a")
+        .unwrap();
+    offline.route = None;
+    offline.ports = None;
     for observation in rig
         .batch
         .observations

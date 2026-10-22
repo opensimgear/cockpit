@@ -29,6 +29,8 @@
     "companion:ui:dev": "pnpm --filter @opensimgear/companion ui:dev",
     "companion:ui:build": "pnpm --filter @opensimgear/companion ui:build",
     "transport:test": "node --test scripts/native-gateway-bridge.test.mjs src/lib/gateway.test.mjs src/lib/gateway-automation.test.mjs src/lib/gateway-workspace.test.mjs src/lib/controller-lifecycle.test.mjs src/lib/runtime-config.test.mjs src/lib/device-actions.test.mjs src/lib/debug-inputs.test.mjs src/lib/games.test.mjs src/lib/controllers.test.mjs",
+    "mcp:test": "node --test src/lib/mcp.test.mjs src/lib/mcp-ui.test.mjs src/lib/ui-settings-guard.test.mjs",
+    "mcp:native:ui": "node --test tests/ui/mcp-native.mjs",
     "profiles:test": "node --test src/lib/profiles.test.mjs",
     "profiles:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profiles.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profiles.test.mjs && node --test src/lib/profile-desktop.test.mjs",
     "module-usb:test": "node --test src/lib/module-usb.test.mjs",
@@ -109,6 +111,7 @@
     "svelte": "^5.55.4"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@tauri-apps/cli": "^2.12.2",
     "@types/node": "^24.19.2",

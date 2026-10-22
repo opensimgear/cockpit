@@ -1,4 +1,26 @@
 #[test]
+fn game_metadata_commit_rechecks_captured_mcp_authorization() {
+    let manager = GatewayManager::mcp_test_manager();
+    let client = crate::mcp_tools::native_client("custom-game-metadata-revocation");
+    manager.mcp_authorize_client(&client, true);
+    let captured = manager.capture_mcp_authorization(&client).unwrap();
+    assert!(captured.is_some());
+    let request = json!({"command":"game_custom_save","clientId":client,
+        "name":"Revoked registration","executable":null});
+    manager.mcp_authorize_client(&client, false);
+    let denied = manager.game_metadata_request(&request, captured.as_ref());
+    assert_eq!(denied["ok"], false, "{denied}");
+    assert!(denied["error"].as_str().unwrap().contains("authorization"));
+    assert!(!manager.games.status()["catalogue"].as_array().unwrap().iter()
+        .any(|game| game["name"] == "Revoked registration"));
+    manager.mcp_authorize_client(&client, true);
+    let accepted = manager.mcp_request(request);
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    assert!(accepted["state"]["games"]["addedGameId"].as_str().unwrap().starts_with("custom-"));
+    manager.shutdown();
+}
+
+#[test]
 fn game_get_state_bypasses_manager_admission_and_keeps_envelope_validation() {
     struct CachedCatalogue;
     impl crate::game_discovery::Platform for CachedCatalogue {

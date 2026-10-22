@@ -21,6 +21,16 @@ test('native custom registry keeps selectable membership distinct from persisten
  games.updateGameCatalogue(supportedGames);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId(id),true);assert.equal(games.gameName(id),'A custom game');assert.deepEqual(seen,[7,8,7]);stop();
 });
 
+test('native executable display paths retain platform identity while making Windows prefixes readable',()=>{
+ const display=games.gameDisplayPath;
+ for(const value of [undefined,null,''])assert.equal(display(value),'');
+ assert.equal(display('C:/Games/DCS/bin/DCS.exe'),'C:\\Games\\DCS\\bin\\DCS.exe');
+ assert.equal(display(String.raw`\\?\C:\Games\DCS.exe`),String.raw`C:\Games\DCS.exe`);
+ assert.equal(display(String.raw`\\?\UNC\server\Games/DCS.exe`),String.raw`\\server\Games\DCS.exe`);
+ assert.equal(display('/home/pilot/Games/DCS.exe'),'/home/pilot/Games/DCS.exe');
+ const opaque=String.raw`\\?\Volume{native-volume}\DCS.exe`;assert.equal(display(opaque),opaque);
+});
+
 test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{
  assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12','assetto-corsa','assetto-corsa-competizione','assetto-corsa-evo']);
  const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,1);assert.equal(visibleGames(catalogue,true).length,7);assert.equal(supportedGames[0].installed,false);

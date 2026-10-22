@@ -8,6 +8,21 @@ fn saved_game_context(document:&osg_profiles::ProfileDocument)->Option<String> {
 }
 
 impl GatewayManager {
+    /// Save an exact AI draft through the shared atomic store transaction.
+    /// Changed panel references require another preview, rather than silently
+    /// substituting a publication during persistence. UI editor Save still
+    /// normalizes references and retains its existing runtime behavior.
+    pub(super) fn save_profile_draft(&self, request: &Value) -> Result<Value, String> {
+        let normalized = self.normalize_editor_panels(request)?;
+        if normalized["document"] != request["document"] {
+            return Err("Companion panel references changed since this draft was prepared. Refresh the panel metadata and prepare this change again.".into());
+        }
+        let mut response = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(request)?;
+        self.decorate_profile_session(&mut response);
+        response["saveApplication"] = json!({"state":"saved","error":null});
+        Ok(response)
+    }
+
     pub(super) fn save_profile_editor(&self, request: &Value, arrival: Option<u64>) -> Result<Value, String> {
         // Capture the run and commit storage under the same admission guard. A
         // later Stop or replacement owner must never be rearmed by Save.

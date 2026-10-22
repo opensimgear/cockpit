@@ -919,6 +919,80 @@ mod tests {
     fn runtime() -> Runtime {
         Runtime::new(None, Arc::new(CompanionProvider::new(Arc::new(|| 1))))
     }
+    #[test]
+    fn inventory_reads_preserve_absent_setup_and_report_stopped_or_corrupt_state() {
+        let directory = crate::test_directory();
+        for path in [None, Some(directory.path().join("absent"))] {
+            let runtime = Runtime::new(path.clone(), Arc::new(CompanionProvider::new(Arc::new(|| 1))));
+            assert!(runtime.resource_instance_ids().unwrap().is_empty());
+            assert!(runtime.resource_companions().unwrap().is_empty());
+            assert!(runtime.resource_transport("missing").is_none());
+            assert!(runtime.resource_publication("missing").is_err());
+            assert!(runtime.profile_panel_operation("missing", "missing").is_none());
+            assert!(runtime.profile_panel_operation_history("missing").is_none());
+            assert!(runtime.profile_retry_panel("missing", "missing").is_ok());
+            assert!(runtime.metadata.get().is_none());
+            assert!(runtime.services.get().is_none());
+            assert!(path.is_none_or(|path| !path.exists()));
+            runtime.shutdown();
+            assert!(runtime.resource_instance_ids().is_err());
+            assert!(runtime.resource_companions().is_err());
+        }
+        std::fs::write(directory.path().join("companion-host-state.dpapi"), b"corrupt").unwrap();
+        {
+            let runtime = Runtime::new(Some(directory.path().into()), Arc::new(CompanionProvider::new(Arc::new(|| 1))));
+            assert!(runtime.resource_instance_ids().is_err());
+            assert!(runtime.resource_companions().is_err());
+            assert!(runtime.services.get().is_none());
+            assert_eq!(std::fs::read(directory.path().join("companion-host-state.dpapi")).unwrap(), b"corrupt");
+        }
+    }
+    #[test]
+    fn screen_validation_enforces_device_content_and_touch_limits() {
+        let base = json!({"ui":{"pages":[{"id":"a"}]},"presentation":{
+            "widgets":[{"kind":"button","label":"Test","pageId":"a","bounds":{"width":0.5,"height":0.5},
+                "config":{"buttonMode":"momentary","pulseMs":0,"repeatMs":0}}],
+            "viewports":[{"pageId":"a","width":480,"height":320}]}});
+        assert!(validate_screen_document(&base, (480,320)).is_ok());
+        for (pointer, value, message) in [
+            ("/presentation/viewports/0/backgroundAssetId", json!("image"), "image widgets"),
+            ("/presentation/groups", json!([{"id":"group"}]), "groups"),
+            ("/presentation/widgets/0/config/iconAssetId", json!("icon"), "image widgets"),
+            ("/presentation/widgets/0/groupId", json!("group"), "groups"),
+            ("/presentation/widgets/0/label", json!("Unsupported 🚀"), "font"),
+            ("/presentation/widgets/0/kind", json!("slider"), "widget type"),
+            ("/presentation/widgets/0/config/buttonMode", json!("toggle"), "momentary"),
+            ("/presentation/widgets/0/bounds/width", json!(0.01), "44 by 44"),
+            ("/presentation/widgets/0/config/prefix", json!("🚀"), "font"),
+            ("/presentation/widgets", json!([]), ""),
+        ] {
+            let mut document = base.clone();
+            // Object keys may be absent in the valid document.
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            document.pointer_mut(parent).unwrap()[key] = value;
+            if message.is_empty() { assert!(validate_screen_document(&document,(480,320)).is_ok()); }
+            else { assert!(validate_screen_document(&document,(480,320)).unwrap_err().contains(message)); }
+        }
+        for kind in ["numeric", "gauge", "image", "text", "indicator"] {
+            let mut document = base.clone();
+            let widget = &mut document["presentation"]["widgets"][0];
+            widget["kind"] = json!(kind);
+            widget["config"] = json!({"precision":4,"min":-1e9,"max":1e9,"assetId":"image"});
+            assert!(validate_screen_document(&document,(480,320)).is_ok());
+            if matches!(kind,"numeric"|"gauge") {
+                document["presentation"]["widgets"][0]["config"]["precision"] = json!(5);
+                assert!(validate_screen_document(&document,(480,320)).unwrap_err().contains("precision"));
+            }
+        }
+        let mut document = base.clone();
+        document["presentation"]["widgets"] = json!(vec![base["presentation"]["widgets"][0].clone();33]);
+        assert!(validate_screen_document(&document,(480,320)).unwrap_err().contains("32 widget"));
+        document["presentation"]["widgets"] = json!([{"kind":"image","label":"Image","pageId":"a","bounds":{"width":4,"height":4},"config":{"assetId":"image"}}]);
+        assert!(validate_screen_document(&document,(480,320)).unwrap_err().contains("pixel budget"));
+        document["presentation"]["widgets"][0]["bounds"] = json!({"width":0.5,"height":0.5});
+        document["presentation"]["widgets"][0]["config"] = json!({});
+        assert!(validate_screen_document(&document,(480,320)).unwrap_err().contains("Choose an asset"));
+    }
     fn call(runtime: &Runtime, command: &str, payload: Value) -> Result<Value, String> {
         runtime.request(&json!({"command":command,"clientId":"operator-one","companion":payload}))
     }
@@ -976,11 +1050,24 @@ mod tests {
         let metadata = runtime.profile_metadata().unwrap();
         assert_eq!(metadata.host_id(), hub.host_id());
         assert_eq!(metadata.publication_uploads().len(), 1);
+        assert!(runtime.resource_instance_ids().unwrap().is_empty());
+        assert!(runtime.resource_companions().unwrap().is_empty());
+        assert!(runtime.resource_transport("missing").is_none());
+        assert!(runtime.resource_publication("missing").is_err());
+        assert!(runtime.profile_panel_operation("missing", "missing").is_none());
+        assert!(runtime.profile_panel_operation_history("missing").is_none());
+        let saved = runtime.saved_panel_updates().unwrap();
+        assert_eq!(saved.len(), 1);
+        assert!(runtime.saved_panel_heads().unwrap().is_empty());
+        assert!(runtime.saved_panel_references().unwrap().is_empty(), "An archive alone is not a saved head");
+        crate::companion_panels::mark_saved(&hub, &directory, upload["publicationHash"].as_str().unwrap()).unwrap();
+        assert_eq!(runtime.saved_panel_heads().unwrap()[&saved[0].panel_id], saved[0].publication_hash);
+        assert_eq!(runtime.saved_panel_references().unwrap()[0].publication_hash, saved[0].publication_hash);
         assert!(runtime.services.get().is_none());
         assert_eq!(std::fs::read(directory.join("companion-host-state.dpapi")).unwrap(), before);
         let mut names = std::fs::read_dir(&directory).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
         names.sort();
-        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panels.json"]);
+        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json"]);
         runtime.shutdown();
         for name in names { std::fs::remove_file(directory.join(name)).unwrap(); }
         std::fs::remove_dir(directory).unwrap();
@@ -1303,6 +1390,18 @@ mod tests {
         );
         let assigned=call(&runtime,"companion_assign",json!({"companionId":"test-installation","instanceId":"saved-panel","publicationHash":fixture["publicationHash"]})).unwrap();
         assert_eq!(assigned["host"]["instances"][0]["armed"], false);
+        assert_eq!(runtime.hub().unwrap().host_id(), services.hub.host_id());
+        assert!(runtime.resource_instance_ids().unwrap().contains("saved-panel"));
+        assert_eq!(runtime.resource_companions().unwrap().len(), 1);
+        assert_eq!(runtime.resource_publication("saved-panel").unwrap().publication_hash, fixture["publicationHash"]);
+        assert!(runtime.profile_panel_operation("saved-panel", fixture["publicationHash"].as_str().unwrap()).is_none(),
+            "An assignment without an opened session has no live operation");
+        assert!(runtime.profile_panel_operation_history("saved-panel").is_none());
+        assert!(runtime.profile_retry_panel("saved-panel", fixture["publicationHash"].as_str().unwrap()).is_ok());
+        assert!(runtime.profile_retry_panel("saved-panel", "changed-publication").is_err());
+        assert!(validate_screen_panel(services, "missing", (480,320)).is_err());
+        assert!(validate_screen_panel(services, fixture["publicationHash"].as_str().unwrap(), (480,320)).is_err(),
+            "A published panel still needs compatible screen dimensions");
         assert_eq!(
             runtime
                 .assigned_publication("saved-panel")

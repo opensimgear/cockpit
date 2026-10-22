@@ -28,15 +28,13 @@ def command(args, cwd, env=None):
 
 
 def production_end(lines):
-    """Stop at the test module, rather than an earlier test-only import."""
+    # A test-only import near the top does not end the production module.
+    # Keep the existing exclusion for the test/helper section itself.
     for index, line in enumerate(lines):
-        if line != '#[cfg(test)]':
-            continue
-        following = index + 1
-        while following < len(lines) and lines[following].startswith('#['):
-            following += 1
-        if following < len(lines) and re.match(r'mod tests\b', lines[following]):
-            return index + 1
+        if line == '#[cfg(test)]':
+            following = next((entry.strip() for entry in lines[index + 1:] if entry.strip()), '')
+            if not following.startswith(('use ', 'pub use ')):
+                return index + 1
     return len(lines) + 1
 
 

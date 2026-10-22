@@ -104,6 +104,9 @@ mod telemetry_api;
 pub(crate) use context_runtime::PreparedGame;
 
 impl GamesRuntime {
+    pub(crate) fn local_provider_settings(&self, id: &str) -> (Value, String) {
+        self.inner.setup.provider_preferences_snapshot(id)
+    }
     pub(crate) fn new(panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>) -> Self {
         let vehicles = crate::game_vehicles::Tracker::new(
             paths.installations.with_file_name("game-vehicles-v1.json"),

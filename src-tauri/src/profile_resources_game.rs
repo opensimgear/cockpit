@@ -541,8 +541,11 @@ mod persistence_tests {
 
     #[test]
     fn blocked_persistence_never_blocks_native_delivery_or_cached_capture_and_retries_raced_changes() {
-        let directory = crate::test_directory();
-        let runtime = Arc::new(Runtime::new(Some(directory.path().into()), Arc::new(|_| panic!("No discovery during cached native work")), false));
+        let directory = tempfile::tempdir().unwrap();
+        // macOS's temporary parent can be a symlink; use its physical path so
+        // this persistence/concurrency fixture passes the real storage guard.
+        let directory_path = directory.path().canonicalize().unwrap();
+        let runtime = Arc::new(Runtime::new(Some(directory_path.clone()), Arc::new(|_| panic!("No discovery during cached native work")), false));
         adopt_metadata(&runtime, 1, "Installed catalogue");
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
@@ -571,14 +574,15 @@ mod persistence_tests {
         Runtime::persist(&runtime.state, &runtime.persistence_gate);
         let state = runtime.state.lock().unwrap();
         assert!(!state.pending_save);
-        let restored = Registry::restore(Store::new(directory.path().into()).load().unwrap().unwrap()).unwrap();
+        let restored = Registry::restore(Store::new(directory_path).load().unwrap().unwrap()).unwrap();
         assert_eq!(restored.saved_fingerprint().unwrap(), state.registry.saved_fingerprint().unwrap());
     }
 
     #[test]
     fn queued_metadata_writers_snapshot_after_the_writer_gate_and_never_restore_older_catalogues() {
-        let directory = crate::test_directory();
-        let runtime = Arc::new(Runtime::new(Some(directory.path().into()), Arc::new(|_| vec![]), false));
+        let directory = tempfile::tempdir().unwrap();
+        let directory_path = directory.path().canonicalize().unwrap();
+        let runtime = Arc::new(Runtime::new(Some(directory_path.clone()), Arc::new(|_| vec![]), false));
         adopt_metadata(&runtime, 1, "Before repair");
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
@@ -593,7 +597,7 @@ mod persistence_tests {
         release_tx.send(()).unwrap();
         first.join().unwrap(); second.join().unwrap();
         assert!(!runtime.state.lock().unwrap().pending_save);
-        let restored = Registry::restore(Store::new(directory.path().into()).load().unwrap().unwrap()).unwrap();
+        let restored = Registry::restore(Store::new(directory_path).load().unwrap().unwrap()).unwrap();
         assert_eq!(restored.list(0, 1).unwrap().resources[0].name, "After repair");
     }
 

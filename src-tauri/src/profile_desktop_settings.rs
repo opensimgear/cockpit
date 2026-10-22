@@ -40,6 +40,11 @@ pub(crate) struct Settings {
     pub error: Option<String>,
 }
 impl Settings {
+    pub(crate) fn revision(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let capture = serde_json::json!({"preferences":self.value,"error":self.error});
+        format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(&capture).expect("JSON value")))
+    }
     pub(crate) fn open(path: Option<PathBuf>) -> Self {
         let loaded = path.as_ref().map_or_else(|| Ok(Preferences::default()), |path| load(path));
         match loaded {
@@ -75,6 +80,10 @@ impl Settings {
         let bytes = serde_json::to_vec(&next).map_err(|e| e.to_string())?;
         if bytes.len() > 524_288 { return Err("Desktop input settings exceed 512 KiB.".into()); }
         if let Some(path) = &self.path {
+            let current = load(path)?;
+            if serde_json::to_value(&current).map_err(|e|e.to_string())? != serde_json::to_value(&self.value).map_err(|e|e.to_string())? {
+                return Err("Desktop input settings changed on disk. Reload their current settings before saving.".into());
+            }
             let parent = path.parent().ok_or("Missing desktop settings directory.")?;
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
@@ -120,6 +129,21 @@ fn load(path: &Path) -> Result<Preferences, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stale_desktop_preferences_preserve_external_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("desktop.json");
+        let mut first = Settings::open(Some(path.clone()));
+        let mut second = Settings::open(Some(path.clone()));
+        let revision = first.revision();
+        first.configure(true, Scope::DesktopWide).unwrap();
+        assert_ne!(first.revision(),revision);
+        assert!(second.configure(false, Scope::Application).unwrap_err().contains("changed on disk"));
+        let restored = Settings::open(Some(path));
+        assert!(restored.value.enabled);
+        assert_eq!(restored.value.scope,Scope::DesktopWide);
+        assert_eq!(restored.revision(),first.revision());
+    }
     #[test]
     fn enablement_is_explicit_and_invalid_settings_are_preserved() {
         let directory = tempfile::tempdir().unwrap();

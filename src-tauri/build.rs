@@ -44,6 +44,10 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "gateway_request",
+            "mcp_settings_get",
+            "mcp_settings_update",
+            "mcp_credential_create",
+            "mcp_credential_revoke",
             "profile_activation_window_open",
             "profile_activation_window_update",
             "profile_activation_window_state",

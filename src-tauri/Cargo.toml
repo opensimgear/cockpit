@@ -36,8 +36,12 @@ sha2 = "0.10"
 base64 = "0.22"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 tempfile = "3"
-ureq = { version = "2", default-features = false, features = ["tls"] }
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+rmcp = { version = "=3.6.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time"] }
+tokio-util = "0.7"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

@@ -2,6 +2,8 @@
 
 This directory owns the portable C renderer and ESP-IDF firmware entry point. It starts the [ESP32 companion story](https://github.com/opensimgear/cockpit/issues/63) with tested rendering and a Wi-Fi/WSS display client. It supports serial Wi-Fi provisioning, pinned-CA host-approved pairing, assigned live panel downloads and typed feedback. The default display adapter is explicitly **headless**: it builds for both ESP32 and ESP32-S3 without guessing screen pins. Live momentary touch input activates automatically after the current panel is rendered, all touches are released and Cockpit acknowledges a fresh neutral baseline. Broader physical-device qualification remains open.
 
+The shared partition layout requires at least 4 MB of flash. Headless builds default to 4 MB; board profiles supply their board-specific flash settings.
+
 ## Generic screen interface
 
 The runtime depends only on rectangle and clipped text callbacks in core/companion.h. The included raster adapter turns them into synchronous RGB565 pixel spans with a 256-pixel (512-byte) scratch buffer. No full-screen framebuffer, heap allocation or PSRAM is required by this core. A driver can convert spans for RGB888, monochrome or a different byte order, or replace the drawing callbacks with an existing graphics library.

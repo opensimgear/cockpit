@@ -246,7 +246,7 @@ remain visible. Frontend checks report no errors or warnings.
 ## CI repair follow-up
 
 The mobile lockfile now includes the shared image dependency closure. Headless
-ESP32/ESP32-S3 builds use a profile-specific 4 MiB flash default matching the
+ESP32/ESP32-S3 builds use a 4 MiB flash default matching the
 shared partition table; display-board settings remain profile-specific.
 Cross-platform fixtures use canonical storage roots and explicit unavailable
 backends. Async catalogue tests pause at the portable publication boundary.
@@ -268,3 +268,11 @@ rejected Apply. Companion desktop coverage also includes existing acquisition,
 restoration, authoring and resource integration tests instead of only local host
 unit tests. A Windows pilot using the unchanged host module passes 85 tests
 (two explicitly ignored) and measures 72.81%, retaining the 71% threshold.
+
+Integration with the concurrently merged native MCP server preserves both
+request surfaces. Passive game reads retain MCP read semantics, and prepared
+game metadata rechecks captured MCP authorization under native admission before
+commit. A regression verifies that revoked authorization cannot register a game
+and fresh authorization can. Combined MCP boundary tests pass 25/25, its UI
+tests pass 26/26, conflicted frontend/export fixtures pass 52/52 and combined
+coverage-tool regressions pass 20/20.
