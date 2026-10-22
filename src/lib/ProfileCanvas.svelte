@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
+  import {canvasOverviewLayoutScore} from './profile-overview-layout';
   import ProfileSignalLanes from './ProfileSignalLanes.svelte';
   import {signalOverview,signalBundleWidth} from './profile-signal-overview';
   import type { DeepReadonly, ProfileDocument, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
@@ -155,7 +156,7 @@
     layoutBusy=true;layoutError='';
     try{
       const {layoutProfileWithElk}=await import('./profile-elk-runtime');
-      const result=await layoutProfileWithElk(layoutNodes,bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT);
+      const result=await layoutProfileWithElk(layoutNodes,bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,overview?candidate=>canvasOverviewLayoutScore(layoutNodes,bindings,candidate.positions,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT):undefined);
       if(epoch!==layoutEpoch||tab!==activeVehicleTabId||readOnly)return;
       if(document!==sourceDocument||drag||segmentDrag||wire){layoutError='The graph changed while arranging it. Run Auto-layout again.';return;}
       bundlePicker=null;selectionView=null;focusedSelectionId='';

@@ -1,0 +1,177 @@
+{
+  "nodes": [
+    {
+      "id": "game-context-dcs-1",
+      "position": {
+        "x": 48,
+        "y": 552
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "right-stick",
+      "position": {
+        "x": 512,
+        "y": 48
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "left-stick",
+      "position": {
+        "x": 512,
+        "y": 300
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "rudder-pedals",
+      "position": {
+        "x": 48,
+        "y": 804
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "aux-panel",
+      "position": {
+        "x": 512,
+        "y": 552
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "virtual-flight",
+      "position": {
+        "x": 976,
+        "y": 552
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "virtual-aux",
+      "position": {
+        "x": 1018.61,
+        "y": 317.273
+      },
+      "width": 288,
+      "height": 188
+    },
+    {
+      "id": "dcs-keyboard",
+      "position": {
+        "x": 976,
+        "y": 48
+      },
+      "width": 288,
+      "height": 188
+    }
+  ],
+  "bindings": [
+    {
+      "id": "overview:[\"right-stick\",\"virtual-flight\"]",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "overview:[\"right-stick\",\"virtual-flight\"]"
+      }
+    },
+    {
+      "id": "overview:[\"rudder-pedals\",\"virtual-flight\"]",
+      "from": {
+        "nodeId": "rudder-pedals",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "overview:[\"rudder-pedals\",\"virtual-flight\"]"
+      }
+    },
+    {
+      "id": "overview:[\"left-stick\",\"virtual-aux\"]",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "overview:[\"left-stick\",\"virtual-aux\"]"
+      }
+    },
+    {
+      "id": "overview:[\"left-stick\",\"virtual-flight\"]",
+      "from": {
+        "nodeId": "left-stick",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "overview:[\"left-stick\",\"virtual-flight\"]"
+      }
+    },
+    {
+      "id": "overview:[\"aux-panel\",\"virtual-aux\"]",
+      "from": {
+        "nodeId": "aux-panel",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "virtual-aux",
+        "portId": "overview:[\"aux-panel\",\"virtual-aux\"]"
+      }
+    },
+    {
+      "id": "overview:[\"aux-panel\",\"virtual-flight\"]",
+      "from": {
+        "nodeId": "aux-panel",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "virtual-flight",
+        "portId": "overview:[\"aux-panel\",\"virtual-flight\"]"
+      }
+    },
+    {
+      "id": "overview:[\"game-context-dcs-1\",\"aux-panel\"]",
+      "from": {
+        "nodeId": "game-context-dcs-1",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "aux-panel",
+        "portId": "overview:[\"game-context-dcs-1\",\"aux-panel\"]"
+      }
+    },
+    {
+      "id": "overview:[\"rudder-pedals\",\"aux-panel\"]",
+      "from": {
+        "nodeId": "rudder-pedals",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "aux-panel",
+        "portId": "overview:[\"rudder-pedals\",\"aux-panel\"]"
+      }
+    },
+    {
+      "id": "overview:[\"right-stick\",\"dcs-keyboard\"]",
+      "from": {
+        "nodeId": "right-stick",
+        "portId": ""
+      },
+      "to": {
+        "nodeId": "dcs-keyboard",
+        "portId": "overview:[\"right-stick\",\"dcs-keyboard\"]"
+      }
+    }
+  ]
+}

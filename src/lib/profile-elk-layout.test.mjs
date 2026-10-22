@@ -5,6 +5,7 @@ import ELK from 'elkjs/lib/elk.bundled.js';
 import { loadModules } from './test-module-loader.mjs';
 
 const { profileElkGraph, layoutElkDiagram } = (await loadModules(['./profile-elk-layout'])).get('./profile-elk-layout');
+const {canvasOverviewLayoutScore}=(await loadModules(['./profile-overview-layout'])).get('./profile-overview-layout');
 const width = 288, height = 188, plain = value => JSON.parse(JSON.stringify(value));
 const edge = (from, to, id = `${from}-${to}`, fromPort = 'out', toPort = 'in') => ({ id, from: { nodeId: from, portId: fromPort }, to: { nodeId: to, portId: toPort } });
 const block = (id, x = 0, y = 0) => ({ id, position: { x, y }, width, height });
@@ -121,4 +122,32 @@ test('malformed, partial, shifted-port, and obstructed engine responses never pr
     const section = result.edges[0].sections[0], a = section.startPoint, b = section.endPoint;
     section.bendPoints = [{ x: a.x + 32, y: a.y }, { x: a.x + 32, y: a.y - 40 }, { x: b.x + width / 2, y: a.y - 40 }, { x: b.x + width / 2, y: b.y }, { x: b.x - 16, y: b.y }];
   })), /crosses block b/);
+});
+
+
+test('overview chooses block placement using rendered routes, reducing crossings on mixed controller branches', async () => {
+  const nodes=['right','left','game','pedals','keyboard','aux','companion','flight'].map(id=>block(id));
+  const bindings=[edge('right','flight'),edge('right','keyboard'),edge('left','flight'),edge('left','aux'),edge('game','companion'),edge('pedals','companion'),edge('pedals','flight'),edge('companion','aux'),edge('companion','flight')];
+  // Overview bundle IDs identify distinct destination inputs.
+  for(const binding of bindings)binding.to.portId=binding.id;
+  const score=layout=>canvasOverviewLayoutScore(nodes,bindings,layout.positions,width,height);
+  const baseline=await layoutElkDiagram(nodes,bindings,width,height,engine);
+  const result=await layoutElkDiagram(nodes,bindings,width,height,engine,score);
+  assertComplete(nodes,bindings,result);
+  assert.ok(score(result)[0]<score(baseline)[0],`Expected fewer crossings: ${score(baseline)} -> ${score(result)}`);
+  assert.deepEqual(plain(await layoutElkDiagram(nodes,bindings,width,height,engine,score)),plain(result),'Search remains deterministic');
+});
+
+test('Feature Lab overview places short output branches earlier and eliminates rendered route crossings', async () => {
+  const {nodes,bindings}=JSON.parse(await readFile(new URL('../../tests/fixtures/profiles/feature-lab-overview-geometry.json',import.meta.url),'utf8'));
+  const before=JSON.stringify({nodes,bindings});
+  const score=layout=>canvasOverviewLayoutScore(nodes,bindings,layout.positions,width,height);
+  const baseline=await layoutElkDiagram(nodes,bindings,width,height,engine);
+  assert.ok(score(baseline)[0]>0,'Fixture reproduces crossings from the previous single layout');
+  const result=await layoutElkDiagram(nodes,bindings,width,height,engine,score);
+  assert.equal(score(result)[0],0);
+  const positions=new Map(result.positions.map(node=>[node.nodeId,node]));
+  assert.ok(positions.get('dcs-keyboard').x<positions.get('virtual-flight').x,'Short keyboard branch belongs before the final flight output');
+  assertComplete(nodes,bindings,result);
+  assert.equal(JSON.stringify({nodes,bindings}),before,'Candidate search preserves authored data');
 });

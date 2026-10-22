@@ -4,7 +4,7 @@ import type { ELK as ElkEngine } from 'elkjs/lib/elk-api';
 import ElkWorker from 'elkjs/lib/elk-worker.min.js?worker';
 import type { DiagramNode } from './profile-diagram';
 import type { DeepReadonly, ProfileBinding } from './profiles';
-import { layoutElkDiagram, type ProfileElkLayout } from './profile-elk-layout';
+import { layoutElkDiagram, type ProfileElkLayout, type ProfileLayoutScore } from './profile-elk-layout';
 
 let engine: ElkEngine | undefined;
 let worker: Worker | undefined;
@@ -36,7 +36,7 @@ function getEngine(): ElkEngine {
 
 /** The expensive layered search stays in a same-origin worker. A failed or
  * timed-out worker is discarded so the next request gets a fresh engine. */
-export async function layoutProfileWithElk(nodes: readonly DiagramNode[], bindings: readonly DeepReadonly<Pick<ProfileBinding, 'id' | 'from' | 'to'>>[], width: number, height: number): Promise<ProfileElkLayout> {
+export async function layoutProfileWithElk(nodes: readonly DiagramNode[], bindings: readonly DeepReadonly<Pick<ProfileBinding, 'id' | 'from' | 'to'>>[], width: number, height: number, score?: ProfileLayoutScore): Promise<ProfileElkLayout> {
   const current = getEngine();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let rejectRequest: ((error: Error) => void) | undefined;
@@ -46,7 +46,7 @@ export async function layoutProfileWithElk(nodes: readonly DiagramNode[], bindin
     timer = setTimeout(() => stopEngine(new Error('ELK layout took too long. Please try Auto layout again.')), 30_000);
   });
   try {
-    return await Promise.race([layoutElkDiagram(nodes, bindings, width, height, current), interrupted]);
+    return await Promise.race([layoutElkDiagram(nodes, bindings, width, height, current, score), interrupted]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     if (rejectRequest) pending.delete(rejectRequest);

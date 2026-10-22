@@ -166,8 +166,28 @@ export function profileElkResult(prepared: PreparedGraph, result: ElkNode): Prof
   };
 }
 
-export async function layoutElkDiagram(nodes: readonly DiagramNode[], bindings: readonly Binding[], width: number, height: number, engine: Pick<ELK, 'layout'>): Promise<ProfileElkLayout> {
+export type ProfileLayoutScore = (layout: ProfileElkLayout) => readonly number[];
+
+export async function layoutElkDiagram(nodes: readonly DiagramNode[], bindings: readonly Binding[], width: number, height: number, engine: Pick<ELK, 'layout'>, score?: ProfileLayoutScore): Promise<ProfileElkLayout> {
   const prepared = profileElkGraph(nodes, bindings, width, height);
   if (!nodes.length) return { positions: [], wireRoutes: [] };
-  return profileElkResult(prepared, await engine.layout(prepared.graph));
+  const first = profileElkResult(prepared, await engine.layout(prepared.graph));
+  if (!score || !bindings.length) return first;
+  let best = first, bestScore = score(first);
+  // Keep the original candidate as a floor. Deterministic alternatives vary
+  // both node ordering and sink layering; short branches need not sit beside
+  // the final outputs when that forces other routes across them.
+  for (const strategy of ['NETWORK_SIMPLEX', 'LONGEST_PATH_SOURCE']) {
+    for (const seed of [1, 7, 19, 31]) {
+      if (strategy === 'NETWORK_SIMPLEX' && seed === 1) continue;
+      const graph = {...prepared.graph, layoutOptions: {...prepared.graph.layoutOptions,
+        'elk.layered.layering.strategy': strategy, 'elk.randomSeed': String(seed)}};
+      const candidate = profileElkResult(prepared, await engine.layout(graph)), candidateScore = score(candidate);
+      const difference = candidateScore.findIndex((value, index) => value !== bestScore[index]);
+      if (difference >= 0 && candidateScore[difference] < bestScore[difference]) {
+        best = candidate; bestScore = candidateScore;
+      }
+    }
+  }
+  return best;
 }
