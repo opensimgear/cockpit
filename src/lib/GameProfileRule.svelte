@@ -1,13 +1,15 @@
 <script lang="ts">
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
+  import {guardUiSettings} from './ui-settings-guard';
   import {notify} from './notifications';
   import {GameProfileContextClient,type GameProfileCandidates} from './game-profile-context';
   import type {DeepReadonly} from './profiles';
   import type {Game} from './games';
   import Icon from './Icon.svelte';
   let{game,active=true,busy=false,client:suppliedClient}:{game:Game;active?:boolean;busy?:boolean;client?:GameProfileContextClient}=$props();
-  const client=untrack(()=>suppliedClient)??new GameProfileContextClient(async request=>{const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Matching profiles are unavailable.');return result;});
+  const settingsRequest=guardUiSettings(gatewayRequest);
+  const client=untrack(()=>suppliedClient)??new GameProfileContextClient(async request=>{const result=(await settingsRequest(request)).profiles;if(!result)throw new Error('Matching profiles are unavailable.');return result;});
   let candidates=$state.raw<DeepReadonly<GameProfileCandidates>|null>(null),profileId=$state(''),loading=$state(false),pending=$state(false),error=$state(''),mounted=$state(false);
   let epoch=0,disposed=false,contextId=untrack(()=>game.id);
   const savedId=$derived(candidates?.preferredProfileId??'');

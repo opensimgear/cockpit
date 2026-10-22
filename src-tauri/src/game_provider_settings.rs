@@ -106,6 +106,16 @@ impl GameIntegrationSetup {
     pub(crate) fn provider_setup_revision(&self, id: &str) -> String {
         self.provider_snapshot(id).1
     }
+    pub(crate) fn provider_preferences_snapshot(&self, id: &str) -> (Value, String) {
+        let (saved, revision) = self.provider_snapshot(id);
+        let mut settings = json!({"connection":saved.get("connection").cloned().unwrap_or_else(|| defaults(id))});
+        if id == "dcs" {
+            for key in ["userFolder", "aircraftModule"] {
+                if let Some(value) = saved.get(key) { settings[key] = value.clone(); }
+            }
+        }
+        (settings, revision)
+    }
     pub(crate) fn provider_connection_snapshot(
         &self,
         id: &str,

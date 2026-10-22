@@ -23,6 +23,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm transport:test
+      - run: pnpm mcp:test
       - name: Unified Devices inventory and actual USB component handlers
         run: pnpm system-inventory:test
       - name: Inventory, provider and topology coverage at least 71 percent per module
@@ -159,6 +160,7 @@ jobs:
             printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
             python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
             python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
+            python3 -m unittest discover -s scripts -p test_integration_coverage.py -v
             python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"
           '
       - name: USB, inventory and compiler preview coverage at least 71 percent

@@ -12,7 +12,7 @@ import {latestSavedPanels} from './companion-library.ts';
 import * as companionScreen from './companion-screen.ts';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
+const modules=await loadModules(['./ui-settings-guard','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'a'.repeat(64)}`;
 const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
 const automatic=(mode='manual')=>({schemaVersion:1,mode,manualProfileId:modules.get('./profiles').DEFAULT_PROFILE_ID,rules:[],status:mode==='manual'?'manual':'waiting',message:'Native profile selection policy.',conflicts:[],lastAttempt:null,target:null,readOnly:false});

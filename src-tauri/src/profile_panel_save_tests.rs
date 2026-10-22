@@ -109,3 +109,64 @@ fn delayed_saved_panel_application_cannot_allocate_an_epoch_after_deactivation()
     assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),stopped);
     assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
 }
+
+#[test]
+fn mcp_profile_reads_are_passive_and_changed_panel_drafts_require_another_preview() {
+    let (manager, _) = setup();
+    let first = save_panel_upload(&manager, "MCP original panel", true);
+    let original_hash = first["panelSaved"]["publicationHash"].as_str().unwrap();
+    let latest = save_panel_upload(&manager, "MCP updated panel", true);
+    let latest_hash = latest["panelSaved"]["publicationHash"].clone();
+    assert_ne!(latest_hash, original_hash);
+    // Model a retained library restored with its historical immutable panel.
+    // It has not yet been opened by a UI reader that follows the saved panel.
+    let mut document = panel_profile_document(original_hash);
+    document.companion_assignments[0].panel_id = Some("flight-panel".into());
+    let id = document.id.clone();
+    let before = manager.profiles.lock().unwrap().request(&json!({
+        "command":"profile_draft_save", "document":document,
+        "expectedRevision":null, "assignments":[]
+    })).unwrap()["document"].clone();
+    let tools = crate::mcp_tools::Tools::new(manager.clone());
+    for (tool, args) in [
+        ("profile_get", json!({"id":id})),
+        ("profiles_list", json!({"limit":1})),
+        ("profile_export", json!({"id":id})),
+    ] {
+        let result = tools.call(tool, args, "mcp-passive-panel-test");
+        assert_eq!(result["ok"], true, "{result}");
+    }
+    let draft = tools.call("profile_prepare_changes", json!({
+        "profileId":id, "expectedRevision":1,
+        "edits":[{"kind":"set_name","name":"Reviewed historical panel"}]
+    }), "mcp-passive-panel-test");
+    assert_eq!(draft["ok"], true, "{draft}");
+    assert_eq!(draft["data"]["document"]["companionAssignments"][0]["publicationHash"], original_hash);
+    let after_reads = manager.profiles.lock().unwrap().request(&json!({"command":"profile_get","id":id})).unwrap();
+    assert_eq!(after_reads["document"], before, "MCP inspection/prepare must not persist refreshed panel references");
+    let rejected = tools.call("profile_save_prepared", json!({
+        "draftId":draft["data"]["draftId"], "operationId":uuid::Uuid::new_v4().to_string()
+    }), "mcp-passive-panel-test");
+    assert_eq!(rejected["ok"], false, "{rejected}");
+    assert_eq!(rejected["error"]["code"], "resource_changed", "{rejected}");
+    let after_rejected = manager.profiles.lock().unwrap().request(&json!({"command":"profile_get","id":id})).unwrap();
+    assert_eq!(after_rejected["document"], before);
+    assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
+    // Ordinary UI reads retain the established follow-latest behavior.
+    let ui = request(&manager, "profile_get", None, json!({"id":id}));
+    assert_eq!(ui["state"]["profiles"]["document"]["companionAssignments"][0]["publicationHash"], latest_hash);
+    let revision = ui["state"]["profiles"]["document"]["revision"].as_u64().unwrap();
+    assert!(revision > 1);
+    let reviewed = tools.call("profile_prepare_changes", json!({
+        "profileId":id, "expectedRevision":revision,
+        "edits":[{"kind":"set_name","name":"Reviewed current panel"}]
+    }), "mcp-passive-panel-test");
+    assert_eq!(reviewed["ok"], true, "{reviewed}");
+    let saved = tools.call("profile_save_prepared", json!({
+        "draftId":reviewed["data"]["draftId"], "operationId":uuid::Uuid::new_v4().to_string()
+    }), "mcp-passive-panel-test");
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!(saved["data"]["document"]["companionAssignments"], reviewed["data"]["document"]["companionAssignments"]);
+    assert_eq!(saved["data"]["document"]["name"], "Reviewed current panel");
+    assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
+}

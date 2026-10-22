@@ -431,11 +431,13 @@ fn restart_status_recovery_and_ambiguous_acknowledgement_never_resume_mapping() 
 #[test]
 fn ordinary_startup_keeps_restart_recovery_and_acknowledgement_behind_qualification() {
     let root = tempfile::tempdir().unwrap();
-    let service = Service::new(
+    let mut service = Service::new(
         Arc::new(ControllerService::new(None, false)),
         Some(root.path().into()),
         Arc::new(|| panic!("no inspection on recovery gate")),
     );
+    // This case verifies the unqualified gate, not a platform's default state.
+    service.qualified = false;
     for command in [
         "mapping_virtual_recover",
         "mapping_virtual_acknowledge",
