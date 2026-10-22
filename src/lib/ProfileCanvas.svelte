@@ -4,7 +4,7 @@
   import {canvasOverviewLayoutScore} from './profile-overview-layout';
   import ProfileSignalLanes from './ProfileSignalLanes.svelte';
   import {signalOverview,signalBundleWidth} from './profile-signal-overview';
-  import type { DeepReadonly, ProfileDocument, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
+  import type { DeepReadonly, ProfileDocument, ProfileEndpoint, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH } from './profile-editor';
@@ -20,7 +20,7 @@
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform, routeEndpoint }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
@@ -28,6 +28,7 @@
     connectBlocks?:(fromNodeId:string,toNodeId:string,position?:CanvasPoint,fromPortId?:string,toPortId?:string)=>void;connectionFrom?:(nodeId:string,position?:CanvasPoint,portId?:string)=>void;connectionTo?:(nodeId:string,position?:CanvasPoint,portId?:string)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
     editConnection?:(bindingId:string)=>void;
     selectedEdgeId?:string;selectConnection?:(bindingId:string)=>void;connectionSourceId?:string;connectionTargetId?:string;connectionSourcePort?:string;connectionTargetPort?:string;reconnectingBindingId?:string;
+    routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;
     reconnectConnection?:(bindingId:string,side:'from'|'to',nodeId:string,position?:CanvasPoint,portId?:string)=>void;disconnectConnection?:(bindingId:string)=>void;
     dropOnConnection?:(component:ProfilePaletteComponent,bindingId:string,position:CanvasPoint)=>void;
     diagnostics?:readonly DeepReadonly<CompileDiagnostic>[];
@@ -561,7 +562,7 @@
     {/if}
   {#if overview&&(overviewBundle||showTransforms)}
     <div class="canvas-lanes-panel" transition:slideLanes>
-    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {routeEndpoint} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target);}} disconnect={disconnectConnection} {readOnly}/>{/key}
     </div>
   {/if}
   </div>

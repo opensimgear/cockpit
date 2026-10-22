@@ -1,12 +1,13 @@
 <script lang="ts">
   import type {Snippet} from 'svelte';
+  import type {ProfileEndpoint,DeepReadonly} from './profiles';
   import Icon from './Icon.svelte';
   import type {CanvasNode} from './profile-canvas';
   import type {SignalBundle,SignalLane} from './profile-signal-overview';
   import {processingSummary,PROCESSING_PRESETS} from './profile-processing';
-  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,readOnly=false}:
+  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,routeEndpoint,readOnly=false}:
     {bundle?:SignalBundle;nodes:CanvasNode[];activeTransform?:string;close:()=>void;
-      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;readOnly?:boolean}=$props();
+      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;readOnly?:boolean}=$props();
   const dragType='application/x-osg-chain-transform';
   let dragged=$state<{laneId:string;nodeId:string}|null>(null),dropTarget=$state(''),dragError=$state('');
   function movable(node:CanvasNode){return !!transfer&&!readOnly&&node.processing?.inputs.length===1&&node.processing.outputs.length===1;}
@@ -51,7 +52,7 @@
       <div class="lane-head"><span>Source</span><span>Transform chain</span><span>Destination</span></div>
       {#each lanes as lane (lane.id)}
         <div class="signal-lane" data-lane-id={lane.id}>
-          <div class="lane-endpoint">{#each lane.sources as source (`${source.nodeId}/${source.portId}`)}<strong>{port(source.nodeId,source.portId)}</strong>{/each}</div>
+          <div class="lane-endpoint">{#each lane.sources as source (`${source.nodeId}/${source.portId}`)}<div data-endpoint-side="from">{#if routeEndpoint}{@render routeEndpoint(lane.id,'from',source)}{:else}<strong>{port(source.nodeId,source.portId)}</strong>{/if}</div>{/each}</div>
           <div class="lane-chain" role="group" aria-label={`Transform chain for ${port(lane.destination.nodeId,lane.destination.portId)}`}>
             <div class="chain-track">
             {#each lane.transforms as id,index (id)}{@const node=byId.get(id)}
@@ -62,7 +63,7 @@
             {:else}<span class="direct">Direct</span>{/each}
             {#if dragged}<button class="chain-router chain-end" class:drop-target={dropTarget===`${lane.id}:`} aria-label="Drop transformation at end of chain" title="Drop at end of chain" disabled={readOnly} ondragover={event=>over(event,lane.id,null)} ondrop={event=>drop(event,lane.id,null)}><Icon name="arrow" size={16}/></button>{/if}
           </div>{@render addButton(lane)}</div>
-          <div class="lane-endpoint"><strong>{port(lane.destination.nodeId,lane.destination.portId)}</strong><div class="lane-actions">{#if disconnect}<button class="disconnect-route danger" aria-label={`Disconnect ${port(lane.destination.nodeId,lane.destination.portId)}`} title="Disconnect route" disabled={readOnly} onclick={()=>disconnect?.(lane.id)}><Icon name="unlink" size={16}/></button>{/if}</div></div>
+          <div class="lane-endpoint"><div data-endpoint-side="to">{#if routeEndpoint}{@render routeEndpoint(lane.id,'to',lane.destination)}{:else}<strong>{port(lane.destination.nodeId,lane.destination.portId)}</strong>{/if}</div><div class="lane-actions">{#if disconnect}<button class="disconnect-route danger" aria-label={`Disconnect ${port(lane.destination.nodeId,lane.destination.portId)}`} title="Disconnect route" disabled={readOnly} onclick={()=>disconnect?.(lane.id)}><Icon name="unlink" size={16}/></button>{/if}</div></div>
         </div>
       {:else}<p class="empty">No signals.</p>{/each}
     {:else}<div class="transform-library">{#each transforms as node (node.id)}<button class="transform-chip" class:active={activeTransform===node.id} aria-pressed={activeTransform===node.id} data-transform-id={node.id} onclick={()=>edit(node.id)}><strong>{node.name}</strong><small>{node.processing?.draft?'Needs input · ':''}{processingSummary(node.processing!)}</small></button>{:else}<p>No transforms. Drop one from the component palette to start a chain.</p>{/each}</div>{/if}
@@ -77,7 +78,7 @@
   .connection-direction{display:grid;place-items:center;color:var(--accent)}.destination-device{text-align:right}h3,h4{margin:3px 0;font-size:15px}
   .lane-scroll{max-height:340px;overflow:auto}.lane-head,.signal-lane{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(280px,2.5fr) minmax(130px,.9fr);gap:16px;padding:5px 16px;box-sizing:border-box}
   .lane-head{align-items:center;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);border-bottom:1px solid var(--line)}
-  .signal-lane{align-items:center;min-height:38px;border-bottom:1px solid var(--line)}.lane-endpoint{display:flex;flex-direction:column;gap:3px;min-width:0}.lane-endpoint strong{font-size:12px;overflow-wrap:anywhere}
+  .signal-lane{align-items:center;min-height:38px;border-bottom:1px solid var(--line)}.lane-endpoint{display:flex;flex-direction:column;gap:3px;min-width:0}
   .lane-chain,.transform-library{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0}
   .transform-chip{box-sizing:border-box;background:color-mix(in srgb,#9b80d8 14%,var(--surface));border:1px solid color-mix(in srgb,#9b80d8 40%,var(--line));color:var(--text);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:2px;max-width:220px;min-width:0;text-align:left;cursor:pointer}
   .transform-chip strong{font-size:12px;line-height:14px}.transform-chip small{font-size:10px;line-height:12px;color:var(--soft);overflow-wrap:anywhere}

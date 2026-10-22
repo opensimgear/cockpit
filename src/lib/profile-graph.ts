@@ -206,6 +206,29 @@ export function graphReorderProcessing(value: DeepReadonly<ProfileGraphDraft>, o
   for(let i=0;i<orderedNodeIds.length;i++){const node=next.document.processingNodes.find(node=>node.id===orderedNodeIds[i])!;next.document.bindings.push({id:ids[i],from,to:{nodeId:node.id,portId:node.inputs[0].id}});from={nodeId:node.id,portId:node.outputs[0].id};}
   next.document.bindings.push({id:ids.at(-1)!,from,to:clone(exit[0].to)});return checked(next);
 }
+/** Give this terminal lane private copies of shared ancestors before changing
+ * its source. Other terminal consumers retain their original stages and wires. */
+export function graphIsolateSignalLane(value:DeepReadonly<ProfileGraphDraft>,laneId:string):ProfileGraphDraft {
+  const lane=signalOverview(value.document).flatMap(bundle=>bundle.lanes).find(lane=>lane.id===laneId);
+  if(!lane)throw Error('This signal row no longer exists.');
+  const bindings=value.document.bindings.filter(binding=>lane.bindingIds.includes(binding.id));
+  const shared=new Set(lane.transforms.filter(id=>value.document.bindings.some(binding=>binding.from.nodeId===id&&!lane.bindingIds.includes(binding.id))));
+  for(let size=-1;size!==shared.size;){size=shared.size;for(const binding of bindings)if(shared.has(binding.to.nodeId)&&lane.transforms.includes(binding.from.nodeId))shared.add(binding.from.nodeId);}
+  const next=graphDraft(value),ids=new Map<string,string>();
+  for(const id of shared){
+    const node=clone<ProfileProcessingNode>(value.document.processingNodes.find(node=>node.id===id)!);
+    node.id=graphFreshId(next.document,'transform');ids.set(id,node.id);scopeNewNode(next.document,node.id,nodeTab(value.document,id));next.document.processingNodes.push(node);
+  }
+  for(const binding of bindings){
+    const from={...binding.from,nodeId:ids.get(binding.from.nodeId)??binding.from.nodeId},to={...binding.to,nodeId:ids.get(binding.to.nodeId)??binding.to.nodeId};
+    if(shared.has(binding.to.nodeId))next.document.bindings.push({id:graphFreshId(next.document,'route'),from,to});
+    else if(shared.has(binding.from.nodeId)){
+      next.document.bindings.find(item=>item.id===binding.id)!.from=from;
+      if(next.document.editor.wireRoutes)next.document.editor.wireRoutes=next.document.editor.wireRoutes.filter(route=>route.bindingId!==binding.id);
+    }
+  }
+  return checked(next);
+}
 /** Move within one linear lane; copying into another lane never shares settings. */
 export function graphTransferProcessing(value:DeepReadonly<ProfileGraphDraft>,sourceLaneId:string,nodeId:string,targetLaneId:string,beforeNodeId:string|null):ProfileGraphDraft{
   const lanes=[...new Map(signalOverview(value.document).flatMap(bundle=>bundle.lanes).map(lane=>[lane.id,lane])).values()];

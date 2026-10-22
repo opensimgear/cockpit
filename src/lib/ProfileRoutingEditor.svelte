@@ -1,5 +1,6 @@
 <script lang="ts">
   import{onDestroy,tick,untrack}from'svelte';
+  import {routeEndpointChoices,reconnectRouteEndpoint,type RouteEndpointEdit} from './profile-route-endpoints';
   import ProfileCanvas from './ProfileCanvas.svelte';
   import ProfilePortCombobox from './ProfilePortCombobox.svelte';
   import Icon from './Icon.svelte';
@@ -38,6 +39,7 @@
   const copy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value));
   let message=$state(''),routeOpen=$state(false),fromNode=$state(''),fromPort=$state(''),toNode=$state(''),toPort=$state(''),editingRoute=$state(''),highlighted=$state<string[]>([]),preset=$state<ProcessingPreset>('identity');
   let connectionRoute=$state(''),pendingConnection=$state(false);
+  let laneError=$state<{laneId:string;side:'from'|'to';message:string}|null>(null);
   let sourceSearch=$state(''),targetSearch=$state('');
   let pickerAnchor=$state<CanvasPoint>({x:400,y:180}),wireAnchor=$state<CanvasPoint>({x:400,y:180});
   let selectedEdgeId=$state(''),autoCommitArmed=$state(false),wireTransforms=$state(false);
@@ -85,7 +87,7 @@
   const mappingOptions=$derived.by(()=>{const ports=[...(assignmentPage?.ports??[]),...Object.values(selectedMappings)],seen=new Set<string>();return ports.filter(port=>{const key=optionKey(port);if(seen.has(key))return false;seen.add(key);return true;});});
   $effect(()=>{const id=selectedId;if(id!==assignmentFor){assignmentFor=id;policyInspectorOpen=!assignments.some(assignment=>assignment.resourceId===id);assignmentSource='';assignmentPage=null;selectedMappings={};assignmentError='';assignmentBusy=false;assignmentEpoch++;assignmentBrowser.clear();}});
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
-  $effect(()=>{if(previousVehicleTab!==activeVehicleTabId){previousVehicleTab=activeVehicleTabId;routeOpen=false;fromNode='';fromPort='';toNode='';toPort='';editingRoute='';connectionRoute='';pendingConnection=false;highlighted=[];message='';}});
+  $effect(()=>{if(previousVehicleTab!==activeVehicleTabId){previousVehicleTab=activeVehicleTabId;laneError=null;routeOpen=false;fromNode='';fromPort='';toNode='';toPort='';editingRoute='';connectionRoute='';pendingConnection=false;highlighted=[];message='';}});
   $effect(()=>{
     const sources=assignments.filter(assignment=>visibleIds.has(assignment.resourceId)).map(assignment=>({sourceId:assignment.sourceId,resource:inventory.find(resource=>resource.id===assignment.sourceId),companion:document.resources.some(resource=>resource.id===assignment.resourceId&&resource.kind==='companion'),publication:document.companionAssignments.find(item=>item.resourceId===assignment.resourceId)?.publicationHash})),revision=inventoryRevision;
     untrack(()=>refreshDiscoveries(sources,revision));
@@ -110,6 +112,7 @@
   function destination(id:string,position?:CanvasPoint,portId?:string){if(!routeOpen||toNode){closeRoute();fromNode='';fromPort='';}toNode=id;toPort=portId??'';routeOpen=true;autoCommitArmed=true;message='';focusRoute(position);autoConnect();}
   function connectBlocks(from:string,to:string,position?:CanvasPoint,fromPortId?:string,toPortId?:string){closeRoute();fromNode=from;fromPort=fromPortId??'';toNode=to;toPort=toPortId??'';routeOpen=true;autoCommitArmed=true;focusRoute(position);autoConnect();}
   function closeRoute(){const wasOpen=routeOpen;routeOpen=false;autoCommitArmed=false;fromNode='';fromPort='';toNode='';toPort='';sourceSearch='';targetSearch='';editingRoute='';connectionRoute='';pendingConnection=false;highlighted=[];message='';selectedId='';selectedEdgeId='';wireTransforms=false;preset='identity';if(wasOpen)void tick().then(()=>routingElement?.querySelector<HTMLElement>('[aria-label="Profile canvas"]')?.focus());}
+  function chooseLanePort(edit:RouteEndpointEdit,key:string){if(readOnly)return;laneError=null;const port=routeEndpointChoices(graph,edit,discoveredChoices[edit.endpoint.nodeId]??[]).find(port=>port.key===key);if(!port||port.profilePortId===edit.endpoint.portId)return;try{change(reconnectRouteEndpoint(graph,edit,port),edit.side==='from'?'Change route source':'Change route destination');}catch(error){laneError={laneId:edit.laneId,side:edit.side,message:error instanceof Error?error.message:String(error)};}}
   function routeKeyboard(event:KeyboardEvent){if((routeOpen||selectedEdgeId)&&event.key==='Escape'&&!connectionBinding){event.preventDefault();event.stopPropagation();closeRoute();}}
   function selectedEndpoints(){const from=sourcePorts.find(port=>port.key===fromPort),to=targetPorts.find(port=>port.key===toPort);if(!from||!to)throw new Error('Select an output and an input.');return[{nodeId:fromNode,port:from},{nodeId:toNode,port:to}] as const;}
   function prepareConnection(){const[from,to]=selectedEndpoints();return canvasConnectionPlan(graph,from,to,editingRoute||undefined);}
@@ -195,6 +198,12 @@
     <button class="secondary-button" disabled={readOnly} onclick={()=>{const id=connectionBinding!.id;closeConnection();if(id)editRoute(id);}}>Edit exact ports</button>
   </dialog>{/if}
   <ProfileCanvas bind:this={canvas} companionAuthoring {document} {activeVehicleTabId} {assignments} {inventory} {inventoryClient} {readOnly} bind:selectedId {openGameSettings} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} change={(next,label)=>change({document:next,assignments:copy(assignments) as ProfileLocalAssignment[]},label??'Edit canvas layout')} {connectBlocks} connectionFrom={source} connectionTo={destination} {selectedEdgeId} {selectConnection} {reconnectConnection} {disconnectConnection} {dropOnConnection} connectionSourceId={routeOpen?fromNode:''} connectionTargetId={routeOpen?toNode:''} connectionSourcePort={routeOpen?fromPort:''} connectionTargetPort={routeOpen?toPort:''} reconnectingBindingId={routeOpen?editingRoute:''} selectProviderPort={selectPort} removeProviderPort={(nodeId,portId)=>apply(()=>graphRemovePort(graph,nodeId,portId),'Remove selected port and routes')} highlightedEdges={highlighted} diagnostics={[]} {undo} {redo} {discoveredPorts} {discoveryBusy} {discoveryErrors} connectionOpen={routeOpen} closeConnectionPanel={closeRoute} insertTransform={openConnection} transferTransform={(sourceLane,nodeId,targetLane,before)=>apply(()=>graphTransferProcessing(graph,sourceLane,nodeId,targetLane,before),sourceLane===targetLane?'Move transformation in chain':'Copy transformation to chain')}>
+    {#snippet routeEndpoint(laneId,side,endpoint)}
+      {@const edit={laneId,side,endpoint}}
+      {@const choices=routeEndpointChoices(graph,edit,discoveredChoices[endpoint.nodeId]??[])}
+      <ProfilePortCombobox compact label={side==='from'?'Filter source signals':'Filter destination signals'} placeholder="Type to filter signals" options={choices.map(port=>({value:port.key,label:port.name,description:`${port.observed?.descriptor.id??port.key} · ${portContractLabel(port.contract)}`,searchText:`${port.name} ${port.key}`}))} value={endpoint.portId} onselect={key=>chooseLanePort(edit,key)} disabled={readOnly}/>
+      {#if laneError?.laneId===laneId&&laneError.side===side}<p class="routing-error" role="alert">{laneError.message}</p>{/if}
+    {/snippet}
     {#snippet transformSettings(node)}
       {#if node.processing}<ProfileTransformSettings node={node.processing} change={updateProcessing} configure={(kind,parameters)=>configureDraft(node.id,kind,parameters)} actions={actionPorts}/>{#if node.processing.inputs.length===1&&node.processing.outputs.length===1}<button class="secondary-button" disabled={readOnly} onclick={()=>apply(()=>graphBypassProcessing(graph,node.id),'Bypass transformation')}>Bypass transform</button>{/if}{/if}
     {/snippet}

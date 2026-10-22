@@ -10,6 +10,7 @@
     value = $bindable(''),
     query = $bindable(''),
     disabled = false,
+    compact = false,
     limit = 200,
     onselect,
   }: {
@@ -19,6 +20,7 @@
     value?: string;
     query?: string;
     disabled?: boolean;
+    compact?: boolean;
     limit?: number;
     onselect?: (value:string)=>void;
   } = $props();
@@ -29,6 +31,7 @@
   let listbox = $state<HTMLDivElement>();
   let inputElement=$state<HTMLInputElement>();
   let dropdownAbove=$state(false),dropdownHeight=$state(280);
+  let dropdownPosition=$state('');
   let scrollTop=$state(0);
   const rowHeight=76;
   const selected = $derived(options.find(option => option.value === value));
@@ -56,9 +59,18 @@
     });
   });
 
+  function dropdownPopover(element:HTMLDivElement){
+    if(compact)element.showPopover();
+    return{destroy(){if(compact&&element.matches(':popover-open'))element.hidePopover();}};
+  }
+
+  function positionDropdown(){
+    if(inputElement&&typeof window!=='undefined'){const rect=inputElement.getBoundingClientRect(),below=window.innerHeight-rect.bottom-60,above=rect.top-60;dropdownAbove=below<200&&above>below;dropdownHeight=Math.max(76,Math.min(280,dropdownAbove?above:below));if(compact){const width=Math.min(Math.max(rect.width,280),window.innerWidth-24),left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12));dropdownPosition=`position:fixed;left:${left}px;right:auto;width:${width}px;z-index:60;${dropdownAbove?`top:auto;bottom:${window.innerHeight-rect.top}px`:`top:${rect.bottom}px;bottom:auto`}`;}}
+  }
+
   function show() {
     if (disabled || open) return;
-    if(inputElement&&typeof window!=='undefined'){const rect=inputElement.getBoundingClientRect(),below=window.innerHeight-rect.bottom-60,above=rect.top-60;dropdownAbove=below<200&&above>below;dropdownHeight=Math.max(76,Math.min(280,dropdownAbove?above:below));}
+    positionDropdown();
     query = '';
     open = true;
     scrollTop=0;
@@ -116,7 +128,9 @@
   }
 </script>
 
-<div class="port-combobox" onfocusout={focusout}>
+<svelte:window onresize={()=>{if(compact&&open)positionDropdown();}}/>
+<svelte:document onscrollcapture={event=>{if(compact&&open&&!(event.target instanceof Element&&event.target.closest('.port-options')))positionDropdown();}}/>
+<div class="port-combobox" class:compact onfocusout={focusout}>
   <label id={`${uid}-label`} for={`${uid}-input`}>{label}</label>
   <div class="input-wrap">
     <input
@@ -143,7 +157,7 @@
     <span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span>
   </div>
   {#if open && !disabled}
-    <div class="port-dropdown" class:above={dropdownAbove}>
+    <div class="port-dropdown" popover={compact?'manual':undefined} use:dropdownPopover class:above={dropdownAbove} style={compact?dropdownPosition:undefined}>
       <div id={`${uid}-listbox`} class="port-options" role="listbox" aria-labelledby={`${uid}-label`} style={`max-height:${dropdownHeight}px`} bind:this={listbox} onscroll={event=>scrollTop=event.currentTarget.scrollTop}>
         <div class="virtual-spacer" aria-hidden="true" style={`height:${windowStart*rowHeight}px`}></div>
         {#each visibleOptions as option, offset (option.value)}
@@ -179,6 +193,8 @@
 
 <style>
   .port-combobox { position: relative; display: grid; gap: 6px; min-width: 0; }
+  .compact label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .port-combobox.compact{gap:0}.port-combobox.compact input{height:28px;padding:4px 24px 4px 6px;font-size:11px}
   label { color: var(--muted); font-size: 10px; }
   .input-wrap { position: relative; min-width: 0; }
   input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 29px 9px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--text); font: inherit; font-size: 11px; text-overflow: ellipsis; }
@@ -187,6 +203,7 @@
   input::placeholder { color: var(--muted); }
   .chevron { position: absolute; right: 8px; top: 50%; display: flex; transform: translateY(-50%) rotate(90deg); color: var(--text); pointer-events: none; }
   .port-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 8px 22px #0004; overflow: hidden; }
+  .port-dropdown:popover-open{margin:0;padding:0;color:var(--text)}
   .port-dropdown.above{top:auto;bottom:100%;margin-top:0;margin-bottom:4px}
   .port-options { max-height: min(280px, 35vh); overflow-y: auto; overscroll-behavior: contain; }
   .port-options button { display: flex; flex-direction:column;justify-content:center;gap:3px; box-sizing: border-box; width: 100%;height:76px; min-width: 0; padding: 9px 10px; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); color: var(--text); background: var(--surface); text-align: left; font: inherit; cursor: pointer; overflow:hidden; }
