@@ -1,6 +1,7 @@
 // Additional real-client scenarios for the running native Cockpit.
 // This module neither mocks IPC nor requires a physical device or live output.
 import assert from 'node:assert/strict';
+import {desktopUiConflict} from './mcp-settings-ui-scenario.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -155,6 +156,8 @@ export async function softwareScenarios({ page, writer, connect, endpoint, token
     const [local, otherLocal] = await Promise.all([ok(writer, 'local_settings_get', providerScope), ok(second, 'local_settings_get', providerScope)]);
     assert.equal(local.revision, otherLocal.revision);
     assert.equal(local.settings.connection.source, 'rref'); assert.equal(local.settings.connection.version, 11);
+    report.desktopUiConflict = await desktopUiConflict({page,writer,ok,mutation});
+    report.desktopUiConflict.restored = true;
     providerOriginal = { connection: clone(local.settings.connection) };
     providerCandidate = clone(providerOriginal);
     providerCandidate.connection.freshnessMs = providerOriginal.connection.freshnessMs === 3000 ? 3100 : 3000;

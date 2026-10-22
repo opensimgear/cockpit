@@ -1,11 +1,13 @@
 <script lang="ts">
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
+  import {guardUiSettings} from './ui-settings-guard';
   import {ProfileAutomaticClient} from './profile-automatic';
   import {ProfileAutomaticController} from './profile-automatic-controller';
   import type {DeepReadonly,ProfileSelectionMode,ProfileSummary} from './profiles';
   let{profiles,active=true,controller:supplied}:{profiles:readonly DeepReadonly<ProfileSummary>[];active?:boolean;controller?:ProfileAutomaticController}=$props();
-  const provided=untrack(()=>supplied),controller=provided??new ProfileAutomaticController(new ProfileAutomaticClient(async request=>{const result=(await gatewayRequest(request)).profiles;if(!result)throw new Error('Native automatic profile selection is unavailable.');return result;}));
+  const settingsRequest=guardUiSettings(gatewayRequest);
+  const provided=untrack(()=>supplied),controller=provided??new ProfileAutomaticController(new ProfileAutomaticClient(async request=>{const result=(await settingsRequest(request)).profiles;if(!result)throw new Error('Native automatic profile selection is unavailable.');return result;}));
   let view=$state.raw(controller.state),mounted=$state(false);
   const blocked=$derived(!active||!view.status||view.stale||view.status.readOnly||!!view.pending);
   const description='Manual activates profiles when you choose. Automatic activates matching game contexts. Set a remembered profile in game settings when several match.';

@@ -57,6 +57,8 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
   const artifacts = resolve('.research/mcp-native', String(Date.now())); await mkdir(artifacts, { recursive: true });
   let settings, writer, endpoint;
   try {
+    await until(() => page.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke === 'function'
+      && !!document.querySelector('nav[aria-label="Main navigation"]')), 'The native UI bridge did not finish startup');
     settings = await page.invoke('mcp_settings_get');
     await page.native({ command: 'profile_stop' });
     const write = await page.invoke('mcp_credential_create', { name: 'Live acceptance writer', scope: 'write' }); credentials.push(write.credential.id);

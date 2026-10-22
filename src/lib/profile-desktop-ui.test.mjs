@@ -1,5 +1,5 @@
 import assert from'node:assert/strict';import test from'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./profile-desktop','./profile-desktop-runtime','./profile-runtime']),plain=value=>JSON.parse(JSON.stringify(value));
+const modules=await loadModules(['./ui-settings-guard','./profiles','./profile-desktop','./profile-desktop-runtime','./profile-runtime']),plain=value=>JSON.parse(JSON.stringify(value));
 async function component(name,send){
  const filename=new URL(name,import.meta.url);let source=await readFile(filename,'utf8'),handlers;
  source=source.replace('</script>',name.includes('Editor')?'captureDesktopUI({beginCapture,keyCapture,save,field,scope,setPicker(value){picker=value;},get state(){return{draft,capture,error,captureBusy}}});</script>':'captureDesktopUI({request,configure,get state(){return{status,busy,error}}});</script>');
@@ -38,10 +38,11 @@ test('key capture requires native confirmation that outputs are stopped and rele
 });
 test('desktop controls keep preferences separate, send exact stop and ignore an older status after Stop',async()=>{
  const calls=[];let resolveOld;const stopped={enabled:false,qualified:false,state:'paused',reason:'Explicit Stop',scope:{kind:'application'},application:null,runtime:null};
- const view=await component('./ProfileDesktopControls.svelte',async request=>{calls.push(plain(request));if(request.command==='profile_desktop_status')return new Promise(resolve=>resolveOld=resolve);return{desktop:stopped};});
+ let delayed=true;const settingsRevision=`sha256:${'1'.repeat(64)}`;
+ const view=await component('./ProfileDesktopControls.svelte',async request=>{calls.push(plain(request));if(request.command.startsWith('profile_local_settings_'))return{localSettings:{scope:'desktop',gameId:null,revision:settingsRevision,settings:{enabled:false,scope:stopped.scope},profileSession:{owner:null}}};if(request.command==='profile_desktop_status'&&delayed){delayed=false;return new Promise(resolve=>resolveOld=resolve);}return{desktop:stopped};});
  const{html,handlers:h}=view.render({requested:true});assert.deepEqual(calls,[]);assert.match(html,/requires keyboard and mouse output/);assert.match(html,/Deactivate profile outputs/);assert.match(html,/releases its outputs/);assert.doesNotMatch(html,/Pause|Clear pause|Start profile|Stop keyboard and mouse output/);
  const old=h.request({command:'profile_desktop_status'});await h.request({command:'profile_desktop_stop'});resolveOld({desktop:{...stopped,state:'active'}});await old;assert.equal(h.state.status.state,'paused');assert.equal(h.state.error,'');
- h.configure(false);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls.at(-1),{command:'profile_desktop_configure',enabled:false,scope:{kind:'application'}});assert.ok(calls.every(request=>!Object.hasOwn(request,'document')&&!Object.hasOwn(request,'pid')&&!Object.hasOwn(request,'executable')));assert.doesNotMatch(html,/Application scope|Use last focused external application|Native owners/);
+ h.configure(false);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls.find(call=>call.command==='profile_local_settings_save'),{command:'profile_local_settings_save',scope:'desktop',expectedSettingsRevision:settingsRevision,expectedActiveOwner:null,settings:{enabled:false,scope:{kind:'application'}}});assert.ok(calls.every(request=>!Object.hasOwn(request,'document')&&!Object.hasOwn(request,'pid')&&!Object.hasOwn(request,'executable')));assert.doesNotMatch(html,/Application scope|Use last focused external application|Native owners/);
 });
 test('keyboard scope offers context and global graph scopes without native application capture',async()=>{
  const calls=[],changes=[],view=await component('./ProfileDesktopEditor.svelte',async request=>{calls.push(plain(request));throw Error('Scope authoring must be passive');});

@@ -3,10 +3,12 @@
   import { invoke, isTauri } from '@tauri-apps/api/core';
   import OptionalDependencies from './OptionalDependencies.svelte';
   import { gatewayRequest } from './gateway';
+  import {guardUiSettings} from './ui-settings-guard';
   import { desktopStatus, type DesktopStatus } from './profile-desktop-runtime';
   import type { VisibilityStatus } from './visibility';
   import type { NativeSystemInventory } from './system-inventory-providers';
 
+  const settingsRequest=guardUiSettings(gatewayRequest);
   let visibility = $state.raw<VisibilityStatus | null>(null);
   let desktop = $state.raw<DesktopStatus | null>(null);
   let inventory = $state.raw<NativeSystemInventory | null>(null);
@@ -28,7 +30,7 @@
         if (!result.controllers?.visibility) throw new Error('Device hiding settings are unavailable.');
         if (!disposed) visibility = result.controllers.visibility;
       }),
-      gatewayRequest({ command: 'profile_desktop_status' }).then(result => {
+      settingsRequest({ command: 'profile_desktop_status' }).then(result => {
         const status = desktopStatus(result.desktop);
         if (!disposed) desktop = status;
       }),
@@ -52,7 +54,7 @@
     if (busy || !desktop) return;
     busy = 'desktop'; error = '';
     try {
-      const result = desktopStatus((await gatewayRequest({ command: 'profile_desktop_configure', enabled, scope: desktop.scope })).desktop);
+      const result = desktopStatus((await settingsRequest({ command: 'profile_desktop_configure', enabled, scope: desktop.scope })).desktop);
       if (!disposed) desktop = result;
     } catch (reason) { if (!disposed) error = reason instanceof Error ? reason.message : String(reason); }
     finally { if (!disposed) busy = ''; }

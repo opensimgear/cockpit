@@ -1,10 +1,12 @@
 <script lang="ts">
   import{onMount,untrack}from'svelte';
   import{gatewayRequest}from'./gateway';
+  import {guardUiSettings} from './ui-settings-guard';
   import{desktopStatus,type DesktopStatus,type DesktopRequest}from'./profile-desktop-runtime';
   let{active=true,requested=false}:{active?:boolean;requested?:boolean}=$props();
+  const settingsRequest=guardUiSettings(gatewayRequest);
   let status=$state.raw<DesktopStatus|null>(null),busy=$state(''),error=$state(''),mounted=$state(false),requestEpoch=0;
-  async function request(request:DesktopRequest){const epoch=++requestEpoch;busy=request.command;error='';try{const captured=desktopStatus((await gatewayRequest(request)).desktop);if(epoch===requestEpoch)status=captured;}catch(reason){if(epoch===requestEpoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(epoch===requestEpoch)busy='';}}
+  async function request(request:DesktopRequest){const epoch=++requestEpoch;busy=request.command;error='';try{const captured=desktopStatus((await settingsRequest(request)).desktop);if(epoch===requestEpoch)status=captured;}catch(reason){if(epoch===requestEpoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(epoch===requestEpoch)busy='';}}
   onMount(()=>{mounted=true;return()=>{mounted=false;requestEpoch++;};});
   $effect(()=>{if(!mounted||!active)return;const refresh=()=>{if(!document.hidden&&!busy)void request({command:'profile_desktop_status'});};untrack(refresh);const timer=window.setInterval(refresh,1500);return()=>window.clearInterval(timer);});
   function configure(enabled:boolean){if(status)void request({command:'profile_desktop_configure',enabled,scope:status.scope});}

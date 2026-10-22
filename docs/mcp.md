@@ -185,6 +185,11 @@ preferences are separate from portable profile data. Changes to automatic mode
 or a matching enabled rule can cause native automatic activation; review and
 authorize that runtime effect before saving them.
 
+Desktop output controls, profile mode and remembered game choices in the UI
+also retain their displayed native settings revision and owner. A concurrent
+MCP edit makes an older UI save report a conflict and require a refresh; the UI
+does not fetch a newer revision at Save time to authorize an old form.
+
 ### v1 capability matrix
 
 Every `local_settings_save` requires **Configure** access, an `operationId`, the
