@@ -71,7 +71,7 @@
 </script>
 
 <div class="unified-launch" class:compact aria-label={`Unified profile launch for ${game.name}`}>
-  <div class="launch-actions">{@render actions?.()}<button class="primary-button" disabled={disabled} aria-label={`Launch ${game.name}`} onclick={launch}><Icon name={launching?'refresh':'play'} size={14}/>{launching?'Preparing launch…':'Launch'}</button></div>
+  <div class="launch-actions"><button class="primary-button" disabled={disabled} aria-label={`Launch ${game.name}`} onclick={launch}><Icon name={launching?'refresh':'play'} size={14}/>{launching?'Preparing launch…':'Launch'}</button>{@render actions?.()}</div>
   {#if unavailable}<p class="launch-help"><Icon name="info" size={14}/><span>{unavailable}</span></p>{/if}
   {#if message}<p class="launch-message" role="status" aria-live="polite"><Icon name={launching?'refresh':'info'} size={14}/><span>{message}</span></p>{/if}
   {#if status}<p class="launch-help"><Icon name={status.state==='running'?'check':'info'} size={14}/><span>{statusLabel(status)}</span></p>{#if status.degradation.length}<ul class="launch-degradation" aria-label="Unavailable profile branches">{#each status.degradation as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}{#if status.fault}<p class="launch-error" role="status"><Icon name="alert" size={14}/><span>{status.fault}</span></p>{/if}{/if}

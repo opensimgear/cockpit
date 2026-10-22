@@ -47,7 +47,8 @@ category or only uncategorized games, alongside the installed/supported filter.
 Category names and assignments are saved locally. Renaming keeps assignments;
 deleting a category leaves its games uncategorized. Cancelling the category
 manager leaves the saved list unchanged. Custom games retain a separate
-**Custom** badge on the right of their tile and details actions.
+**Custom** badge on the right of their tile. In details, the destructive **Remove**
+button sits to the right of **Launch** and opens a confirmation before removal.
 
 ## Tile backgrounds
 

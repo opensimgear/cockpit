@@ -235,3 +235,10 @@ rename with a missing executable), frontend provider/launch/crop tests pass
 20/20, checks report zero errors/warnings, and both frontend builds pass.
 The native build succeeds after removing generated worktree build caches to
 recover disk space. Hardware validation remains deferred.
+
+The details action row now omits the Custom badge and puts a red destructive
+Remove button to the right of Launch. The existing confirmation is retained,
+with a destructive confirmation button. Running native background/removal and
+category acceptance both pass: opening confirmation leaves the game registered,
+Cancel and Escape preserve it, and explicit confirmation removes it. Tile badges
+remain visible. Frontend checks report no errors or warnings.
