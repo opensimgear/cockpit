@@ -1,3 +1,5 @@
+import type {CompanionHostState} from './companions';
+
 /** Compare versions within a release series. Date versions predate component SemVer. */
 export function compareFirmwareVersions(left:string,right:string):number|undefined {
   const semantic=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -18,4 +20,15 @@ export function firmwareUpdateAvailable(installed?:string,available?:string|null
 export function firmwareMeetsAvailable(installed?:string,available?:string|null):boolean {
   if(!installed||!available)return false;
   return installed===available || (compareFirmwareVersions(installed,available)??-1)>=0;
+}
+
+/** Boards may have different locally staged builds. Never advertise another
+ * board's version when the host supplies per-board metadata. */
+export function companionFirmwareVersion(state:CompanionHostState,companionId:string):string|null {
+  const board=state.firmware?.[companionId]?.profile;
+  if(state.firmwareProfiles?.length){
+    const profile=state.firmwareProfiles.find(profile=>profile.id===board);
+    return profile?.available?profile.version??null:null;
+  }
+  return state.firmwareVersion??null;
 }

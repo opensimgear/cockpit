@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import CompanionMessage from './CompanionMessage.svelte';
-  import { firmwareUpdateAvailable, compareFirmwareVersions } from './companion-firmware';
+  import { firmwareUpdateAvailable, compareFirmwareVersions, companionFirmwareVersion } from './companion-firmware';
   import { companionMessages } from './companion-messages';
   import { newPairingConnected } from './companion-pairing';
   import { invoke } from '@tauri-apps/api/core';
@@ -40,7 +40,7 @@
   let polling = false;
   let updateOpen=$state(false), updatePort=$state(''), updateProfile=$state(''), updating=$state(false);
   const firmwareInfo=(client:Record<string,unknown>)=>hostState.firmware?.[text(client,'companionId')];
-  const outdated=(client:Record<string,unknown>)=>deviceKind(client)==='esp32' && firmwareUpdateAvailable(firmwareInfo(client)?.version,hostState.firmwareVersion);
+  const outdated=(client:Record<string,unknown>)=>deviceKind(client)==='esp32' && firmwareUpdateAvailable(firmwareInfo(client)?.version,companionFirmwareVersion(hostState,text(client,'companionId')));
   async function prepareUpdate(){
     await send('companion_usb_ports',{companionId:selectedId});
     updateProfile=firmwareInfo(selected!)?.profile ?? '';
@@ -57,6 +57,7 @@
   const clients = $derived(hostState.host?.clients ?? []);
   const text = (row: Record<string, unknown>, key: string) => typeof row[key] === 'string' ? String(row[key]) : '';
   const selected=$derived(clients.find(c=>text(c,'companionId')===selectedId));
+  const selectedFirmwareVersion=$derived(selected?companionFirmwareVersion(hostState,text(selected,'companionId')):null);
   const selectedMessages=$derived(selected?companionMessages(hostState,selected).filter(message=>message.source==='connection'):[]);
   const selectedScreen=$derived(companionScreenSize(hostState,selectedId));
   const firmwareUpdateDisabledReason = $derived(selected?.connected!==true ? 'This companion is offline. Connect it by USB to update its firmware.' : updating ? 'A firmware update is already in progress.' : busy ? 'Wait for the current operation to finish.' : '');
@@ -274,11 +275,11 @@
       </div>
       {#if deviceKind(selected)==='esp32'}
         <section class="firmware-settings" aria-label="Firmware">
-          <div class="firmware-heading"><h3>Firmware</h3><CompanionMessage kind={outdated(selected)?'warning':'info'} message={outdated(selected)?'Firmware update available':hostState.firmwareVersion && firmwareInfo(selected)?.version && (compareFirmwareVersions(firmwareInfo(selected)!.version,hostState.firmwareVersion)??-1)>0?'Installed firmware is newer than the available release':hostState.firmwareVersion && firmwareInfo(selected)?.version===hostState.firmwareVersion?'Firmware is up to date':hostState.firmwareError||'Check for available firmware, then connect this companion by USB to update.'}/></div>
+          <div class="firmware-heading"><h3>Firmware</h3><CompanionMessage kind={outdated(selected)?'warning':'info'} message={outdated(selected)?'Firmware update available':selectedFirmwareVersion && firmwareInfo(selected)?.version && (compareFirmwareVersions(firmwareInfo(selected)!.version,selectedFirmwareVersion!)??-1)>0?'Installed firmware is newer than the available release':selectedFirmwareVersion && firmwareInfo(selected)?.version===selectedFirmwareVersion?'Firmware is up to date':hostState.firmwareError||'Check for available firmware, then connect this companion by USB to update.'}/></div>
           <div class="firmware-copy">
             <dl class="firmware-versions">
               <div><dt>Current</dt><dd>{firmwareInfo(selected)?.version??'Unknown'}</dd></div>
-              <div><dt>Available</dt><dd class="firmware-version-value"><span>{hostState.firmwareVersion??'Unknown'}</span><button class="firmware-refresh" aria-label="Refresh available firmware" title="Refresh available firmware" disabled={busy || updating || updateOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} /></button></dd></div>
+              <div><dt>Available</dt><dd class="firmware-version-value"><span>{selectedFirmwareVersion??'Unknown'}</span><button class="firmware-refresh" aria-label="Refresh available firmware" title="Refresh available firmware" disabled={busy || updating || updateOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} /></button></dd></div>
             </dl>
             <p>{hostState.firmwareSource==='development'?'Development firmware from this Cockpit build':'Firmware from published ESP32 companion releases'}</p>
           </div>
