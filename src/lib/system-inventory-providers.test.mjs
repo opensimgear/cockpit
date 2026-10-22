@@ -564,6 +564,34 @@ test('local-only forget leaves unavailable providers untouched and failed native
   assert.ok(failure.component('controller:wheel'));
 });
 
+test('remembered capture IDs absent from native inventory clean up locally without touching same-name online controllers', async () => {
+  const memory=storage();
+  const old=harness({storage:memory,controllers:[source('old-right',{name:'VKBsim Gladiator EVO R'}),source('old-left',{name:'VKBsim Gladiator EVO OT L'})]});
+  await old.controller.refresh();old.controller.dispose();
+  const live=harness({storage:memory,controllers:[source('new-right',{name:'VKBsim Gladiator EVO R'}),source('new-left',{name:'VKBsim Gladiator EVO OT L'})]});
+  await live.controller.refresh();
+  for(const id of ['old-right','old-left']){
+    assert.equal(live.component('controller:'+id).forget.allowed,true);
+    await live.controller.forget('controller:'+id);
+    assert.equal(live.component('controller:'+id),undefined);
+  }
+  assert.equal(live.requests.some(r=>r.command==='controller_forget'),false);
+  for(const id of ['new-right','new-left'])assert.equal(live.component('controller:'+id).presence,'connected');
+  await live.controller.refresh();assert.equal(live.component('controller:old-right'),undefined);
+  await live.controller.forget('controller:old-right');
+  assert.equal(live.requests.some(r=>r.command==='controller_forget'),false);
+});
+
+test('an absent native controller ID still cannot be cleaned up when a profile references it', async()=>{
+  const memory=storage(),old=harness({storage:memory,controllers:[source('old-stick')]});
+  await old.controller.refresh();old.controller.dispose();
+  const live=harness({storage:memory});await live.controller.refresh();
+  live.custom.set('profile_list',()=>({profiles:{profiles:[{id:'flight',name:'Flight'}]}}));
+  live.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{sourceId:'old-stick',resourceId:'stick',ports:[]}]}}));
+  await assert.rejects(live.controller.forget('controller:old-stick'),/Used in profiles/);
+  assert.ok(live.component('controller:old-stick'));assert.equal(live.requests.some(r=>r.command==='controller_forget'),false);
+});
+
 test('identity grouping combines independent hidden, ownership and readiness evidence without weakening removal safety', () => {
   const sample = gatewayObservations([gateway({ state: { ...gateway().state, modules: [module('panel', { online: false })] } })], 1).find(component => component.type === 'osg');
   const grouped = correlateSystem([sample, { ...sample, id: 'usb:serial', targets: [{ kind: 'usb', id: 'serial' }], presence: 'connected', owner: 'External writer', hidden: true, capture: 'ready', evidence: ['USB proof'], diagnostics: ['USB diagnostic'] }], [resource('same', [connection('gateway:gateway-one', 'panel'), connection('standalone-usb', 'serial')])]);

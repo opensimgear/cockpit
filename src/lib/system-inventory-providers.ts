@@ -374,13 +374,21 @@ export class SystemInventoryController {
     await this.refresh();
     signal?.throwIfAborted();
     const current = this.snapshot.components.find(c => c.id === id);
-    if (!current?.forget.allowed || current.presence === 'connected' || current.owner || current.hidden) throw Error(current?.forget.reason || 'The selected component is no longer eligible.');
+    // A prior gateway removal or a concurrent refresh may already have retired
+    // this row. There is no remaining provider or local record to remove.
+    if (!current) return;
+    if (!current.forget.allowed || current.presence === 'connected' || current.owner || current.hidden) throw Error(current.forget.reason || 'The selected component is no longer eligible.');
     const [c] = await this.reviewForget([id]);
     signal?.throwIfAborted();
     if (!c?.forget.allowed || c.presence === 'connected' || c.owner || c.hidden) throw Error(c?.forget.reason || 'The selected component is no longer eligible.');
     const t = c.targets.find(t => t.kind === 'controller' || t.kind === 'module' || t.kind === 'companion');
     this.epoch++;
-    if (t?.kind === 'controller') await this.send({ command: 'controller_forget', sourceId: t.id });
+    if (t?.kind === 'controller') {
+      // The browser inventory outlives native capture IDs. Only forget a source
+      // the fresh provider actually returned; absent IDs are local history.
+      const captured = this.captures.get('controllers')?.observations.some(observation => observation.targets.some(target => target.kind === 'controller' && target.id === t.id));
+      if (captured) await this.send({ command: 'controller_forget', sourceId: t.id });
+    }
     else if (t?.kind === 'module' && this.gateways().some(e => e.id === t.gatewayId && e.state?.connected)) await this.send({ command: 'forget', gatewayId: t.gatewayId, moduleId: t.id });
     else if (t?.kind === 'companion') await this.send({ command: 'companion_revoke', companion: { companionId: t.id } });
     this.registry.forget(id); this.onChange(this.snapshot);

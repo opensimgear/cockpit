@@ -99,6 +99,7 @@
     await refreshTask?.catch(() => undefined);
     for (const c of items) {
       if (abort.signal.aborted) break;
+      if (!snapshot.components.some(current => current.id === c.id)) continue;
       cleanupCurrentId = c.id;
       try {
         await controller.forget(c.id, abort.signal);
