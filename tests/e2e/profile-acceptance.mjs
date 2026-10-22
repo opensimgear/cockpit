@@ -155,7 +155,7 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
     assert.deepEqual(await readFile(journalPath),journalBytes,'Cold startup must preserve exact durable cleanup evidence');
     assert.equal((await request('profile_runtime_inspect',{owner:active.owner})).ok,false);
     const denied=await request('profile_apply',{id:saved.id,expectedRevision:1});assert.equal(denied.ok,false);
-    assert.match(denied.error,/Recover the interrupted profile session before applying/i);
+    assert.match(denied.error,/Recover the interrupted profile session before activating another profile/i);
     const returned=await reconnect();assert.deepEqual(routeOf(returned),crashRoute,'This case requires the original exact CAN route');
     assert.deepEqual(publicationOf(returned),publication);
     await ok('action_describe',{gatewayId,moduleId});
