@@ -1,5 +1,6 @@
 #include "platform.h"
 #include "candidate.h"
+#include "render_profile.h"
 #include "workspace.h"
 #include "firmware.h"
 #include "input.h"
@@ -322,7 +323,7 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
     xSemaphoreGive(ui.mutex);return ok?true:request_problem("Input lease or acknowledgement invalid");
 }
 void osg_network_status(const char *request_id){
-    cJSON *v=cJSON_CreateObject();char encoded[2048],epoch[21];
+    cJSON *v=cJSON_CreateObject();char encoded[4096],epoch[21];
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
     const char *status=state==LIVE&&input.mode==OSG_INPUT_ARMED?"live-armed":phases[state];
     cJSON_AddStringToObject(v,"status",status);
@@ -332,6 +333,8 @@ void osg_network_status(const char *request_id){
     cJSON_AddStringToObject(v,"deviceType","esp32");
     cJSON_AddStringToObject(v,"firmwareVersion",OSG_FIRMWARE_VERSION);
     cJSON_AddStringToObject(v,"boardProfile",OSG_BOARD_PROFILE);
+    cJSON *profile=osg_render_profile_json(ui.runtime->display.width,ui.runtime->display.height);
+    if(profile)cJSON_AddItemToObject(v,"renderProfile",profile);
     cJSON_AddStringToObject(v,"companionId",settings.companion);
     cJSON_AddBoolToObject(v,"touchAvailable",ui.touch_capable);
     cJSON_AddBoolToObject(v,"setupSaved",installation_saved);
@@ -508,6 +511,9 @@ static void advance(void){
         if(state==WAIT_ASSIGNMENT)osg_socket_close(&connection);
         if(!open_socket()){fail("host-tls-or-connection-failed");return;}
         v=message("auth");cJSON_AddStringToObject(v,"token",settings.token);
+        cJSON *profile=osg_render_profile_json(ui.runtime->display.width,ui.runtime->display.height);
+        if(!profile){cJSON_Delete(v);fail("render-profile-unavailable");return;}
+        cJSON_AddItemToObject(v,"renderProfile",profile);
         ok=request(v,&reply,3000)&&identity(reply,"authenticated")&&choose(reply);
     }else if(state==OPEN){
         load_interrupted=false;detail="Opening assigned panel";update_screen();
@@ -524,7 +530,8 @@ static void advance(void){
             osg_copy(operation.session,sizeof(operation.session),session.session);osg_copy(operation.generation,sizeof(operation.generation),session.generation);
             osg_scene *candidate=NULL;osg_panel_source_diagnostic diagnostic;
             const cJSON *p=cJSON_GetObjectItemCaseSensitive(reply,"publication");
-            const osg_panel_source_limits limits={.document_bytes=osg_workspace_rich()?64*1024:OSG_DOCUMENT_BYTES,.bitmap_references=32,.width=ui.runtime->display.width,.height=ui.runtime->display.height};
+            const osg_render_limits *profile=osg_render_profile_limits();
+            const osg_panel_source_limits limits={.document_bytes=profile->document_bytes,.bitmap_references=profile->image_references,.width=ui.runtime->display.width,.height=ui.runtime->display.height};
             osg_pixels_panel_release(slot);
             xSemaphoreTake(ui.mutex,portMAX_DELAY);
             osg_scene_result result=osg_scene_banks_prepare(&banks,*ui.drawing_panel,p,publication,osg_platform_crypto,&limits,&candidate_ticket,&candidate,&diagnostic);
@@ -700,7 +707,8 @@ static void update_screen(void){
 }
 static void network_task(void *arg){
     (void)arg;osg_json_init();
-    if(osg_workspace_rich()&&!osg_json_configure(512*1024,192*1024,4096)){fail("json-workspace-unavailable");return;}
+    const osg_render_limits *profile=osg_render_profile_limits();
+    if(!osg_json_configure(profile->json_bytes,profile->reply_bytes,profile->json_nodes)){fail("json-workspace-unavailable");return;}
     if(osg_store_load(&settings)){
         installation_saved=true;
         if(settings.direct){state=AUTH;next_request=millis();}
@@ -755,7 +763,8 @@ static void scene_release(void *context,void *pointer){(void)context;free(pointe
 static size_t scene_available(void *context){(void)context;return osg_workspace_available();}
 void osg_network_start(osg_network_ui value){
     ui=value;ui.runtime->screen=OSG_SCREEN_UNPAIRED;osg_input_bind(&input,ui.runtime,ui.touch_capable,millis());
-    const osg_scene_memory memory=osg_workspace_rich()?(osg_scene_memory){192*1024,128,32}:(osg_scene_memory){16*1024,24,8};
+    const osg_render_limits *profile=osg_render_profile_limits();
+    const osg_scene_memory memory={profile->scene_bytes,profile->total_layers,profile->components};
     if(!osg_scene_banks_init(&banks,memory,(osg_scene_allocator){NULL,scene_allocate,scene_release,scene_available})){report("scene-bank-initialization-failed");return;}
     if(!osg_serial_start()){report("serial-driver-initialization-failed");return;}
     if(xTaskCreate(network_task,"companion-network",24576,NULL,4,NULL)!=pdPASS)report("network-task-allocation-failed");

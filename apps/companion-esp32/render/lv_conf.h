@@ -1,5 +1,6 @@
 #ifndef LV_CONF_H
 #define LV_CONF_H
+#include "render_profile_limits.h"
 /* One render task owns LVGL. Input and transport never call its API. */
 #define LV_COLOR_DEPTH 16
 #define LV_USE_OS LV_OS_NONE
@@ -9,13 +10,13 @@
 #define LV_MEM_POOL_INCLUDE "lvgl_pool.h"
 #define LV_MEM_POOL_ALLOC osg_lvgl_pool_allocate
 #if defined(CONFIG_SPIRAM) && CONFIG_SPIRAM
-#define LV_MEM_SIZE (96 * 1024U)
+#define LV_MEM_SIZE OSG_RENDER_RICH_LVGL_POOL_BYTES
 #else
-#define LV_MEM_SIZE (32 * 1024U)
+#define LV_MEM_SIZE OSG_RENDER_COMPACT_LVGL_POOL_BYTES
 #endif
 #else
 #ifndef LV_MEM_SIZE
-#define LV_MEM_SIZE (96 * 1024U)
+#define LV_MEM_SIZE OSG_RENDER_RICH_LVGL_POOL_BYTES
 #endif
 #endif
 #define LV_USE_STDLIB_STRING LV_STDLIB_CLIB

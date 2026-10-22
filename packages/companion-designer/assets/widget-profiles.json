@@ -1,0 +1,40 @@
+{
+  "formatVersion": 1,
+  "engine": "osg-widget-lvgl",
+  "engineVersion": 1,
+  "fontSet": "osg-portable-v1",
+  "textFormat": { "fractionDigits": 4, "magnitudeExclusive": "1e21", "sourceUnits": 120, "derivedUnits": 256 },
+  "features": [
+    "widget.v1", "panel.v2", "panel.v3", "group.v1",
+    "interaction.none", "interaction.momentary", "interaction.toggle", "interaction.selector", "interaction.navigate",
+    "layer.rectangle", "layer.ellipse", "layer.line", "layer.text", "layer.image", "layer.indicator",
+    "layer.gauge.horizontal", "layer.gauge.vertical", "layer.gauge.radial", "font.sans", "font.mono",
+    "legacy.button", "legacy.indicator", "legacy.text", "legacy.numeric", "legacy.gauge", "legacy.image"
+  ],
+  "profiles": {
+    "compact": {
+      "id": "esp32-lvgl-compact-v1",
+      "limits": {
+        "documentBytes": 16384, "sceneBytes": 16384, "totalLayers": 24, "components": 8,
+        "jsonBytes": 98304, "jsonNodes": 2048, "replyBytes": 32768, "fontSize": 48,
+        "lvglPoolBytes": 32768, "drawRows": 4, "widgets": 32, "pages": 4, "outputs": 32,
+        "definitions": 64, "layersPerWidget": 32, "portsPerWidget": 8,
+        "imageReferences": 32, "imageWidth": 800, "imageHeight": 800, "imagePixels": 384000,
+        "imageBytes": 1228800, "touchPixels": 44, "pointers": 1, "scale": 32,
+        "appBytes": 2097152, "cacheBytes": 1966080
+      }
+    },
+    "rich": {
+      "id": "esp32-lvgl-psram-v1",
+      "limits": {
+        "documentBytes": 65536, "sceneBytes": 196608, "totalLayers": 128, "components": 32,
+        "jsonBytes": 524288, "jsonNodes": 4096, "replyBytes": 196608, "fontSize": 128,
+        "lvglPoolBytes": 98304, "drawRows": 4, "widgets": 32, "pages": 4, "outputs": 32,
+        "definitions": 64, "layersPerWidget": 32, "portsPerWidget": 8,
+        "imageReferences": 32, "imageWidth": 800, "imageHeight": 800, "imagePixels": 384000,
+        "imageBytes": 1228800, "touchPixels": 44, "pointers": 1, "scale": 32,
+        "appBytes": 2097152, "cacheBytes": 1966080
+      }
+    }
+  }
+}

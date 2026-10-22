@@ -96,7 +96,10 @@ fn operator(h: &Hub, value: Value) -> Value {
     h.command(&value).unwrap()
 }
 fn paired(h: &Hub, companion: &str) -> String {
-    let offer = operator(h, json!({"command":"companion_pair_offer"}));
+    paired_kind(h,companion,"desktop")
+}
+fn paired_kind(h:&Hub,companion:&str,kind:&str)->String{
+    let offer = operator(h, json!({"command":"companion_pair_offer","kind":kind}));
     let secret = offer["secret"].as_str().unwrap();
     let request = wire(
         h,
@@ -114,6 +117,29 @@ fn paired(h: &Hub, companion: &str) -> String {
         json!({"type":"pair-status","secret":secret,"requestId":request["requestId"]}),
     );
     reply["token"].as_str().unwrap().to_owned()
+}
+#[test]
+fn renderer_reports_follow_authenticated_connections_and_never_grant_input(){
+    let hub=Hub::new("host".into(),Arc::new(NullSourceSink));let token=paired_kind(&hub,"screen","esp32");
+    let profile=crate::render_profile::test_profile(true);
+    let request=json!({"type":"auth","token":token,"renderProfile":profile});
+    assert_eq!(wire(&hub,"one",request.clone())["ok"],true);
+    assert_eq!(hub.render_profile("screen").unwrap(),Some(profile.clone()));
+    let status=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(status["clients"][0]["renderProfile"],profile);assert_eq!(status["instances"],json!([]));
+    let mut conflicting=request.clone();conflicting["renderProfile"]["screen"]["width"]=json!(480);
+    assert_eq!(wire(&hub,"two",conflicting)["ok"],true);assert!(hub.render_profile("screen").is_err());
+    hub.disconnect_connection("two",hub.now_ms());assert_eq!(hub.render_profile("screen").unwrap(),Some(profile.clone()));
+    hub.disconnect_connection("one",hub.now_ms());assert!(hub.render_profile("screen").unwrap().is_none());
+    let mut invalid=request.clone();invalid["renderProfile"]["limits"]["fontSize"]=json!(4096);
+    assert_eq!(wire(&hub,"bad",invalid)["ok"],false);assert!(hub.render_profile("screen").unwrap().is_none());
+    assert_eq!(wire(&hub,"one",request.clone())["ok"],true);
+    assert_eq!(wire(&hub,"two",json!({"type":"auth","token":token}))["ok"],true);assert!(hub.render_profile("screen").is_err());
+    operator(&hub,json!({"command":"companion_revoke","companionId":"screen"}));assert!(hub.render_profile("screen").is_err());
+    // Renderer metadata cannot promote a legacy installation's kind or grant
+    // source ownership; unknown/desktop credentials remain backward compatible.
+    let desktop=paired(&hub,"legacy");assert_eq!(wire(&hub,"desktop",json!({"type":"auth","token":desktop,"renderProfile":profile}))["ok"],true);
+    let status=operator(&hub,json!({"command":"companion_status"}));assert_eq!(status["clients"][0]["kind"],"desktop");assert_eq!(status["instances"],json!([]));
 }
 fn publish(h: &Hub, p: PublicationUpload) -> Publication {
     let result = Publication::validate(p.clone()).unwrap();

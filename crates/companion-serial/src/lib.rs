@@ -62,6 +62,10 @@ fn safe_panel_operation(device: &Value) -> Option<Value> {
         || safe.get("generation").is_some_and(|generation| generation != &device["generation"]) { return None; }
     Some(safe)
 }
+fn safe_render_profile(device:&Value)->Option<Value>{
+    let profile=osg_companion_service::render_profile::validate(device.get("renderProfile")?).ok()?;
+    (profile["firmwareVersion"]==device["firmwareVersion"]&&profile["boardProfile"]==device["boardProfile"]).then_some(profile)
+}
 fn block_failed_panel(host: &Value, device: &Value, blocked: &mut Option<String>) {
     let Some(operation) = safe_panel_operation(device).filter(|operation| operation["phase"] == "failed") else { return; };
     if host["instances"].as_array().is_some_and(|rows| rows.iter().any(|row|
@@ -795,6 +799,7 @@ fn worker(
                                                     v["generation"].as_str().unwrap_or(""), &operation);
                                                 safe["operation"] = operation;
                                             }
+                                            if let Some(profile)=safe_render_profile(&v){safe["renderProfile"]=profile;}
                                             {
                                                 let mut state = public.lock().unwrap_or_else(|p|p.into_inner());
                                                 state["device"] = safe;
@@ -998,6 +1003,15 @@ mod tests {
         let link=manager.links.lock().unwrap().get("COM8").unwrap().state.clone(); link.lock().unwrap()["connected"]=json!(false);
         assert!(manager.record_for(Some("sunton"),json!({"command":"connect"})).is_err());
         assert!(rx5.try_recv().is_err()); assert!(rx8.try_recv().is_err());
+    }
+    #[test]
+    fn usb_renderer_metadata_matches_its_nonce_bound_firmware_identity(){
+        let fixtures:Value=serde_json::from_str(include_str!("../../../apps/companion-esp32/test/render-profiles.json")).unwrap();
+        let profile=fixtures["valid"][0].clone();let mut device=json!({"firmwareVersion":profile["firmwareVersion"],"boardProfile":profile["boardProfile"],"renderProfile":profile});
+        assert!(safe_render_profile(&device).is_some());
+        for (key,value) in [("firmwareVersion",json!("older")),("boardProfile",json!("other"))]{let mut wrong=device.clone();wrong[key]=value;assert!(safe_render_profile(&wrong).is_none());}
+        device["renderProfile"]["limits"]["fontSize"]=json!(4096);assert!(safe_render_profile(&device).is_none());
+        assert!(safe_render_profile(&json!({})).is_none());
     }
     #[test]
     fn panel_diagnostics_are_bounded_and_exact_session_bound() {

@@ -20,6 +20,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libssl-dev
       - name: Network protocol, live input, lease and provisioning checks
         run: |
+          node scripts/widget-profile-fixtures.mjs --check
           python3 apps/companion-esp32/test/network.py
           python3 apps/companion-esp32/test/storage.py
           python3 apps/companion-esp32/test/workspace.py

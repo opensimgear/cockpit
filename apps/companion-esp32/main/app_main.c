@@ -4,6 +4,7 @@
 #include "panel.h"
 #include "platform.h"
 #include "candidate.h"
+#include "render_profile.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -38,7 +39,7 @@ void app_main(void) {
     if(!buffer||!osg_panel_draw_init(&renderer,board,buffer,bytes)) {
         ESP_LOGE("companion","LVGL display pool/buffer allocation failed (%u buffer bytes)",(unsigned)bytes);free(buffer);return;
     }
-    renderer.max_font_size=osg_workspace_rich()?128:48;
+    renderer.max_font_size=(unsigned)osg_render_profile_limits()->font_size;
     if (!osg_init(&runtime, &osg_demo_panel, osg_raster_display(&renderer.diagnostic_font, board.width, board.height), NULL, NULL)) {
         ESP_LOGE("companion", "Unsupported panel/display profile"); return;
     }

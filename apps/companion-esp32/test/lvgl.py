@@ -19,7 +19,7 @@ LVGL = source()
 OUT = ROOT / '.research/lvgl-native'
 OUT.mkdir(parents=True, exist_ok=True)
 flags = ['-std=c11', '-O1', '-g', '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-DLV_CONF_INCLUDE_SIMPLE', '-DLV_KCONFIG_IGNORE', '-I' + str(APP / 'render'), '-I' + str(LVGL), '-I' + str(APP / 'boards'), '-I' + str(APP / 'core'), '-I' + str(APP / 'third_party/cjson')]
-cache = sha256((APP / 'render/lv_conf.h').read_bytes() + (APP / 'third_party/lvgl-font-cache.patch.json').read_bytes() + json.dumps(flags).encode()).hexdigest()
+cache = sha256((APP / 'render/lv_conf.h').read_bytes() + (APP / 'render/render_profile_limits.h').read_bytes() + (APP / 'third_party/lvgl-font-cache.patch.json').read_bytes() + json.dumps(flags).encode()).hexdigest()
 objects = OUT / cache
 objects.mkdir(exist_ok=True)
 
@@ -97,8 +97,9 @@ if any(value < 71 for value in metrics.values()):
 
 # The no-PSRAM board uses the same scene renderer with a smaller LVGL pool and
 # four-row strips. Build LVGL itself with that pool size as well as our adapter.
-compact_flags = [*flags, '-DLV_MEM_SIZE=32768', '-DOSG_WIDGET_DRAW_ROWS=4']
-compact_objects = OUT / sha256((APP / 'render/lv_conf.h').read_bytes() + (APP / 'third_party/lvgl-font-cache.patch.json').read_bytes() + json.dumps(compact_flags).encode()).hexdigest()
+compact_profile=json.loads((ROOT/'packages/companion-designer/assets/widget-profiles.json').read_text())['profiles']['compact']['limits']
+compact_flags = [*flags, '-DLV_MEM_SIZE='+str(compact_profile['lvglPoolBytes']), '-DOSG_WIDGET_DRAW_ROWS='+str(compact_profile['drawRows'])]
+compact_objects = OUT / sha256((APP / 'render/lv_conf.h').read_bytes() + (APP / 'render/render_profile_limits.h').read_bytes() + (APP / 'third_party/lvgl-font-cache.patch.json').read_bytes() + json.dumps(compact_flags).encode()).hexdigest()
 compact_objects.mkdir(exist_ok=True)
 
 def compile_compact(path):

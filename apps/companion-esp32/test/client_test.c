@@ -98,6 +98,10 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
     if(!strcmp(type,"pair")||(!strcmp(type,"pair-status")&&!approved_now)){
         cJSON_AddStringToObject(*out,"type","pair-pending");cJSON_AddStringToObject(*out,"requestId","request");
     }else if(!strcmp(type,"pair-status")||!strcmp(type,"auth")){
+        if(!strcmp(type,"auth")){
+            const cJSON *profile=cJSON_GetObjectItemCaseSensitive(v,"renderProfile");assert(profile&&cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(profile,"engineVersion"))==1);
+            assert(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(profile,"limits"),"sceneBytes"))==osg_render_profile_limits()->scene_bytes);
+        }
         cJSON_AddStringToObject(*out,"type",!strcmp(type,"auth")?"authenticated":"paired");
         cJSON_AddStringToObject(*out,"hostId",wrong_identity?"wrong-host":"host");cJSON_AddStringToObject(*out,"companionId",settings.companion);
         if(!strcmp(type,"pair-status"))cJSON_AddStringToObject(*out,"token","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");

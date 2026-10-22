@@ -261,3 +261,22 @@ after adoption. Structured diagnostics are bounded and checked by the host's
 existing operation validator; unknown fields, oversized identities and invalid
 resource counts are rejected. They identify the exact item/layer/field and
 required/available counts in Cockpit without creating control authority.
+
+Engine `2026.10.22.2` reports `osg-widget-lvgl` engine version 1 with a compact or
+PSRAM profile, portable font-set ID, text-format bounds, feature set, physical
+geometry and resource limits. Authentication and nonce-bound USB status carry
+the same report. Firmware, TypeScript and Rust consume the shared manifest at
+`packages/companion-designer/assets/widget-profiles.json`; run
+`node scripts/widget-profile-fixtures.mjs --check` after changes. Generated
+limits drive scene/font/JSON/reply allocation, LVGL pool size and four-row alpha
+strips. The generator checks partition capacities against `partitions.csv`.
+Runtime availability and cache fragmentation can still reject a candidate with
+its own exact diagnostic; advertised upper bounds do not guarantee free memory.
+
+Host admission requires a complete known versioned profile. USB metadata must
+match its current ready device's firmware/board identity. Conflicting active
+connection reports are errors, and reports disappear on disconnect/revocation.
+They describe content capability only and cannot grant input/session authority
+or physical qualification. Actual C reports match the common manifest in both
+memory profiles, including all 176 JSON-allocation failure sites without leaks.
+Assignment enablement and actual Cockpit transport acceptance remain open.

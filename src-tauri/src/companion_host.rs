@@ -39,6 +39,11 @@ fn usb_panel_operation(assignment: &Value, devices: &[Value]) -> Option<ProfileP
         assignment["instanceId"].as_str()?,assignment["publicationHash"].as_str()?).ok()?;
     Some(report)
 }
+fn usb_render_profile(usb:&Value)->Option<Value>{
+    if usb["connected"]!=true||usb["ready"]!=true{return None;}
+    let device=&usb["device"];let profile=osg_companion_service::render_profile::validate(&device["renderProfile"]).ok()?;
+    (profile["firmwareVersion"]==device["firmwareVersion"]&&profile["boardProfile"]==device["boardProfile"]).then_some(profile)
+}
 fn describe_usb_presence(host:&mut Value,devices:&[Value]){
     let assignments=host["instances"].as_array().cloned().unwrap_or_default();
     if let Some(clients)=host["clients"].as_array_mut(){for client in clients{
@@ -54,6 +59,15 @@ fn describe_usb_presence(host:&mut Value,devices:&[Value]){
             if usb["connected"]!=true || usb["ready"]!=true {continue;}
         }
         client["connected"]=json!(true);
+        if let Some(profile)=usb_render_profile(usb){
+            if client["renderProfileError"].is_null(){
+                if !client["renderProfile"].is_null()&&client["renderProfile"]!=profile{
+                    client["renderProfile"]=Value::Null;client["renderProfileError"]=json!("USB and authenticated connections report conflicting renderer profiles.");
+                }else{client["renderProfile"]=profile;}
+            }
+        }else if !usb["device"]["renderProfile"].is_null() || (!client["renderProfile"].is_null()&&client["renderProfile"]["firmwareVersion"]!=usb["device"]["firmwareVersion"]){
+            client["renderProfile"]=Value::Null;client["renderProfileError"]=json!("The USB renderer report does not match its firmware identity.");
+        }
         if let Some(transports)=client["transports"].as_array_mut(){if !transports.contains(&json!("usb")){transports.push(json!("usb"));}}
         else{client["transports"]=json!(["usb"]);}
         client["connectionStatus"]=json!(usb_recovery_message(usb).unwrap_or_else(||usb["device"]["statusMessage"].as_str().unwrap_or_else(||match usb["device"]["status"].as_str(){
@@ -270,16 +284,35 @@ impl Runtime {
             .unwrap_or_default();
         let firmware_path=services.directory.join("companion-firmware.json");
         let mut firmware:Value=std::fs::read(&firmware_path).ok().filter(|b|b.len()<65536).and_then(|b|serde_json::from_slice(&b).ok()).filter(Value::is_object).unwrap_or(json!({}));
+        let previous_firmware=firmware.clone();
         let mut host=services.hub.command(&json!({"command":"companion_status"}))?;
         describe_usb_presence(&mut host,&services.usb.statuses());
         for usb in services.usb.statuses(){
         if let Some(id)=usb["device"]["companionId"].as_str().filter(|id|host["clients"].as_array().is_some_and(|rows|rows.iter().any(|c|c["companionId"]==*id))){
-            let info=json!({"version":usb["device"]["firmwareVersion"].as_str().unwrap_or("unknown"),"profile":usb["device"]["boardProfile"].as_str().or_else(||firmware[id]["profile"].as_str()),"connectionMode":usb["device"]["connectionMode"].as_str().filter(|mode|matches!(*mode,"wifi"|"serial")).or_else(||firmware[id]["connectionMode"].as_str())});
-            if firmware[id]!=info{firmware[id]=info;std::fs::write(&firmware_path,serde_json::to_vec(&firmware).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;}
+            let mut info=json!({"version":usb["device"]["firmwareVersion"].as_str().unwrap_or("unknown"),"profile":usb["device"]["boardProfile"].as_str().or_else(||firmware[id]["profile"].as_str()),"connectionMode":usb["device"]["connectionMode"].as_str().filter(|mode|matches!(*mode,"wifi"|"serial")).or_else(||firmware[id]["connectionMode"].as_str())});
+            if let Ok(profile)=osg_companion_service::render_profile::validate(&firmware[id]["renderProfile"]){if profile["firmwareVersion"]==info["version"]&&profile["boardProfile"]==info["profile"]{info["renderProfile"]=profile;}}
+            firmware[id]=info;
         }
         }
-        if let Some(metadata)=firmware.as_object_mut(){for info in metadata.values_mut(){if let Some((width,height))=screen_dimensions(info["profile"].as_str().unwrap_or("")){info["width"]=json!(width);info["height"]=json!(height);}}}
-        if let Some(clients)=host["clients"].as_array_mut(){for client in clients{if client["kind"]=="esp32"{if let Some(id)=client["companionId"].as_str(){if let Some(size)=screen_dimensions(firmware[id]["profile"].as_str().unwrap_or("")){client["screen"]=json!({"width":size.0,"height":size.1});}}}}}
+        if let Some(clients)=host["clients"].as_array(){for client in clients{
+            if client["kind"]!="esp32"{continue;}
+            let Some(id)=client["companionId"].as_str() else{continue};
+            if client["renderProfileError"].is_null(){if let Ok(profile)=osg_companion_service::render_profile::validate(&client["renderProfile"]){
+                if !firmware[id].is_object(){firmware[id]=json!({});}
+                firmware[id]["version"]=profile["firmwareVersion"].clone();firmware[id]["profile"]=profile["boardProfile"].clone();firmware[id]["renderProfile"]=profile;
+                continue;
+            }}
+            if client["connected"]==true{if let Some(info)=firmware[id].as_object_mut(){info.remove("renderProfile");}}
+        }}
+        if firmware!=previous_firmware{std::fs::write(&firmware_path,serde_json::to_vec(&firmware).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;}
+        if let Some(metadata)=firmware.as_object_mut(){for info in metadata.values_mut(){
+            if let Ok(profile)=osg_companion_service::render_profile::validate(&info["renderProfile"]){info["width"]=profile["screen"]["width"].clone();info["height"]=profile["screen"]["height"].clone();}
+            else if let Some((width,height))=screen_dimensions(info["profile"].as_str().unwrap_or("")){info["width"]=json!(width);info["height"]=json!(height);}
+        }}
+        if let Some(clients)=host["clients"].as_array_mut(){for client in clients{if client["kind"]=="esp32"{
+            if let Ok(profile)=osg_companion_service::render_profile::validate(&client["renderProfile"]){client["screen"]=profile["screen"].clone();}
+            else if let Some(id)=client["companionId"].as_str(){if let Some(size)=screen_dimensions(firmware[id]["profile"].as_str().unwrap_or("")){client["screen"]=json!({"width":size.0,"height":size.1});}}
+        }}}
         let mut listener=serde_json::to_value(services.server.status()).map_err(|e|e.to_string())?;
         let config=services.saved_listener.lock().unwrap_or_else(|p|p.into_inner()).clone();
         listener["configuredEnabled"]=json!(config.is_some());
@@ -834,6 +867,18 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reported_renderer_profiles_are_matched_to_current_usb_identity_and_conflicts_are_visible(){
+        let fixture:Value=serde_json::from_str(include_str!("../../apps/companion-esp32/test/render-profiles.json")).unwrap();
+        let profile=fixture["valid"][0].clone();
+        let usb=json!({"connected":true,"ready":true,"device":{"companionId":"screen","firmwareVersion":profile["firmwareVersion"],"boardProfile":profile["boardProfile"],"renderProfile":profile}});
+        let mut host=json!({"clients":[{"companionId":"screen","kind":"esp32","connected":false}],"instances":[]});
+        describe_usb_presence(&mut host,&[usb.clone()]);assert_eq!(host["clients"][0]["renderProfile"],profile);
+        host["clients"][0]["renderProfile"]["screen"]["width"]=json!(480);
+        describe_usb_presence(&mut host,&[usb.clone()]);assert!(host["clients"][0]["renderProfile"].is_null()&&host["clients"][0]["renderProfileError"].is_string());
+        let mut invalid=usb;invalid["device"]["firmwareVersion"]=json!("older");assert!(usb_render_profile(&invalid).is_none());
+        invalid["ready"]=json!(false);assert!(usb_render_profile(&invalid).is_none());
+    }
     #[test]
     fn pre_open_usb_diagnostics_require_current_assignment_identity_and_nonce_freshness() {
         let hash=format!("sha256:{}","a".repeat(64));

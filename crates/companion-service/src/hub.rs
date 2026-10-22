@@ -141,6 +141,7 @@ struct Inner {
     code_offer: Option<CodeOffer>,
     pending: BTreeMap<String, Pending>,
     connections: BTreeMap<String, String>,
+    render_profiles: BTreeMap<String, Value>,
     sessions: BTreeMap<String, Session>,
     used_sessions: BTreeSet<String>,
     feedback: BTreeMap<String, crate::feedback::FeedbackBook>,
@@ -215,6 +216,21 @@ pub(crate) fn exact(v: &Value, required: &[&str], optional: &[&str]) -> Result<(
 }
 
 impl Hub {
+    fn connection_render_profile(inner:&Inner,companion:&str)->Result<Option<Value>,String>{
+        let connections=inner.connections.iter().filter(|(_,owner)|owner.as_str()==companion).map(|(id,_)|id).collect::<Vec<_>>();
+        let profiles=connections.iter().filter_map(|id|inner.render_profiles.get(*id)).collect::<Vec<_>>();
+        let Some(first)=profiles.first() else{return Ok(None)};
+        ensure(profiles.len()==connections.len(),"A renderer profile is missing on one active connection.")?;
+        ensure(profiles.iter().all(|profile|*profile==*first),"Active connections report conflicting renderer profiles.")?;
+        Ok(Some((*first).clone()))
+    }
+    /// Current authenticated content metadata. It grants no source/input lease
+    /// and is discarded on disconnect/revoke rather than restoring authority.
+    pub fn render_profile(&self,companion:&str)->Result<Option<Value>,String>{
+        let inner=self.inner.lock().unwrap_or_else(|p|p.into_inner());
+        ensure(id(companion)&&inner.record.credentials.iter().any(|item|item.companion_id==companion),"Unknown companion installation.")?;
+        Self::connection_render_profile(&inner,companion)
+    }
     pub fn new(host_id: String, sink: Arc<dyn SourceSink>) -> Self {
         Self::from_record(
             Record {
@@ -336,6 +352,7 @@ impl Hub {
                 code_offer: None,
                 pending: BTreeMap::new(),
                 connections: BTreeMap::new(),
+                render_profiles: BTreeMap::new(),
                 sessions: BTreeMap::new(),
                 used_sessions: BTreeSet::new(),
                 feedback: BTreeMap::new(),
@@ -514,6 +531,7 @@ impl Hub {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let _ = self.expire(&mut inner, now_ms);
         inner.connections.remove(connection_id);
+        inner.render_profiles.remove(connection_id);
         let ids: Vec<_> = inner
             .sessions
             .iter()
@@ -612,6 +630,8 @@ impl Hub {
                     self.disarm(inner, &id, "revoked", true);
                 }
                 inner.connections.retain(|_, c| c != companion);
+                let connected=inner.connections.keys().cloned().collect::<BTreeSet<_>>();
+                inner.render_profiles.retain(|connection,_|connected.contains(connection));
                 inner.pending.retain(|_, p| p.companion_id != companion);
                 inner.record = record;
                 let retained=inner.record.instances.iter().map(|a|a.instance_id.clone()).collect::<BTreeSet<_>>();
@@ -872,7 +892,9 @@ impl Hub {
                 // display names and an authenticated connection cannot prove it.
                 let transports=inner.sessions.values().filter(|session|session.companion_id==client.companion_id)
                     .map(|session|session.transport).collect::<BTreeSet<_>>();
+                let (render_profile,render_error)=match Self::connection_render_profile(inner,&client.companion_id){Ok(value)=>(value,None),Err(error)=>(None,Some(error))};
                 json!({"companionId":client.companion_id,"name":client.name,"kind":client.kind,
+                    "renderProfile":render_profile,"renderProfileError":render_error,
                     "connected":inner.connections.values().any(|value|value==&client.companion_id),"transports":transports,
                     "operation":inner.sessions.values().filter(|s|s.companion_id==client.companion_id).find_map(|s|s.operation.as_ref()),
                     "panelError":inner.sessions.values().filter(|s|s.companion_id==client.companion_id&&s.panel_error).map(|s|s.operation.as_ref().and_then(|o|o["message"].as_str()).unwrap_or("The screen cannot display the assigned panel. Remove unsupported content in the panel editor.")).next()})
@@ -1049,7 +1071,7 @@ impl Hub {
                 )
             }
             "auth" => {
-                exact(frame, &["type", "token"], &["version"])?;
+                exact(frame, &["type", "token"], &["version","renderProfile"])?;
                 ensure(
                     inner.connections.contains_key(connection_id)
                         || inner.connections.len() < MAX_CLIENTS * 2,
@@ -1065,6 +1087,9 @@ impl Hub {
                     .find(|c| equal_hash(&c.token_hash, &digest))
                     .ok_or("Installation credential is invalid or revoked.")?;
                 let companion = credential.companion_id.clone();
+                let render_profile=if let Some(profile)=frame.get("renderProfile"){
+                    Some(crate::render_profile::validate(profile)?)
+                }else{None};
                 ensure(
                     inner.connections.values().any(|c| c == &companion)
                         || inner.connections.values().collect::<BTreeSet<_>>().len() < MAX_CLIENTS,
@@ -1086,6 +1111,7 @@ impl Hub {
                 inner
                     .connections
                     .insert(connection_id.into(), companion.clone());
+                if let Some(profile)=render_profile{inner.render_profiles.insert(connection_id.into(),profile);}
                 Ok(
                     json!({"ok":true,"type":"authenticated","hostId":inner.record.host_id,"companionId":companion,"assignments":inner.record.instances.iter().filter(|a|a.companion_id==companion).map(|a|json!({"instanceId":a.instance_id,"publicationHash":a.publication_hash,"name":a.definition.name})).collect::<Vec<_>>()}),
                 )

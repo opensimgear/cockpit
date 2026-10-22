@@ -428,3 +428,33 @@ standalone storage harness. The display candidate API now has its own
 again locally. The source-engine MCU run is
 [39708656734](https://github.com/opensimgear/cockpit/actions/runs/39708656734);
 the header correction requires a fresh run before claiming full CI success.
+
+Header correction `f7d60aa` passes all six ESP32 jobs in
+[CI run 39708911043](https://github.com/opensimgear/cockpit/actions/runs/39708911043).
+Engine `2026.10.22.2` adds versioned renderer capability reports to authenticated
+connections and nonce-bound USB status. Both memory profiles derive their
+advertised and enforced scene, JSON, reply, font and LVGL limits from
+`packages/companion-designer/assets/widget-profiles.json`. The generator also
+checks the application/cache partition sizes. Text formatting explicitly reports
+its four-digit precision and magnitude bound; this is a target limit, not a
+restriction on portable authoring or browser/Android rendering.
+
+The shared TypeScript/Rust validators accept only complete known profiles and
+matching geometry/firmware identities. Reports grant no transport or input
+authority. Disconnect/revocation clears authenticated reports, and conflicting
+active reports produce an error instead of selecting the more permissive target.
+The native host caches validated metadata for offline display without restoring
+a session. Native firmware tests compare the actual C reports to the shared
+manifest and exercise every profile-construction allocation failure in both
+memory domains. Native and firmware alpha drawing now default to the same
+four-row strips. Assignment compatibility still uses the legacy validator;
+consuming these reports and actual Cockpit transport acceptance are next.
+
+Capability metadata validation passes 119 service tests plus two ESP32 host
+integration checks, 35 serial tests and 17 native host tests. The designer suite
+passes with 100% line/function and 97.67% branch coverage for profile admission.
+The rebuilt running dev Cockpit again passes catalog import, actual pointer
+preview, immutable library editing and native save/reload at
+`.research/widgets-native-ui/1792635916120/`. Windows socket/DPAPI tests require
+the normal local execution context; their sandbox-only failures do not reproduce
+there. Firmware cross-build validation of this metadata change is still pending.
