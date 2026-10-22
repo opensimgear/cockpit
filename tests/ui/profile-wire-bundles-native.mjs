@@ -119,6 +119,7 @@ test('native Feature Lab collapses parallel wires while preserving exact signal 
       if (edit) edit.click(); else [...document.querySelectorAll('.profiles-workspace button')].find(button => button.textContent.trim() === '← Back to Profiles')?.click();
       return false;
     }, name), 'Open the disposable Feature Lab copy');
+    await native.evaluate(() => { if(document.querySelector('.canvas-stage')?.dataset.view==='overview')document.querySelector('[aria-label="Toggle detailed graph"]').click(); });
     await until(async () => (await snapshot()).edges.reduce((sum, edge) => sum + edge.count, 0) === 73, 'Every Base signal must be represented');
     await native.evaluate(() => document.querySelector('.canvas-stage').scrollIntoView({ block: 'center' }));
     await click('Fit all'); await pause(150);

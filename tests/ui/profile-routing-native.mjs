@@ -260,6 +260,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       }
       return false;
     }, name), 'Open Feature Lab test copy');
+    await native.evaluate(() => { if(document.querySelector('.canvas-stage')?.dataset.view==='overview')document.querySelector('[aria-label="Toggle detailed graph"]').click(); });
     await until(async () => (await state()).edges === 73, 'All 73 Feature Lab routes must render');
     await native.evaluate(() => { document.querySelector('.canvas-stage').scrollIntoView({ block: 'center' }); });
     await pause(150);

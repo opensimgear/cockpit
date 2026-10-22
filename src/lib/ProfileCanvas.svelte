@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
+  import ProfileSignalLanes from './ProfileSignalLanes.svelte';
+  import {signalOverview,signalBundleWidth} from './profile-signal-overview';
   import type { DeepReadonly, ProfileDocument, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
@@ -17,7 +19,7 @@
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
@@ -32,6 +34,7 @@
     dropComponent?:(component:ProfilePaletteComponent,position:CanvasPoint)=>void;endPaletteDrag?:()=>void;
     discoveredPorts?:Record<string,readonly DeepReadonly<ProfilePort>[]>;discoveryBusy?:readonly string[];discoveryErrors?:Record<string,string>;
     connectionPanel?:Snippet;connectionOpen?:boolean;closeConnectionPanel?:()=>void;
+    transformSettings?:Snippet<[CanvasNode]>;insertTransform?:(bindingId:string)=>void;
   } = $props();
   let stage: HTMLDivElement;
   let inspectorPanel=$state.raw<HTMLElement|undefined>();
@@ -39,6 +42,9 @@
   let selectionView:CanvasViewport|null=null,focusedSelectionId='';
   const inspectorContentId = $props.id();
   let search = $state('');
+  let pendingOverviewDrop=$state<{component:ProfilePaletteComponent;position:CanvasPoint}|null>(null);
+  const overview=true;
+  let overviewBundleId=$state(''),showTransforms=$state(false),activeTransform=$state('');
   let searchInput: HTMLInputElement;
   let view = $state<CanvasViewport>({ ...untrack(() => document.editor.viewport) });
   let dragged = $state<{id:string;position:CanvasPoint}|null>(null);
@@ -62,8 +68,14 @@
   const router=createDiagramRouter();
   const committedDocument=$derived(profileTabDocument(document,activeVehicleTabId));
   const visibleDocument=$derived(segmentPreview||groupPreview?profileTabDocument((segmentPreview??groupPreview)!,activeVehicleTabId):committedDocument);
-  const committedNodes=$derived(canvasNodes(committedDocument,assignments,inventory));
-  const nodes = $derived(visibleDocument===committedDocument?committedNodes:canvasNodes(visibleDocument, assignments, inventory));
+  const allNodes=$derived(canvasNodes(visibleDocument,assignments,inventory));
+  const committedNodes=$derived(canvasNodes(committedDocument,assignments,inventory).filter(node=>!overview||!node.processing));
+  const overviewBundles=$derived(signalOverview(committedDocument));
+  const overviewById=$derived(new Map(overviewBundles.map(bundle=>[bundle.id,bundle])));
+  const overviewBundle=$derived(overviewById.get(overviewBundleId));
+  const routingBindings=$derived(overview?overviewBundles.map(bundle=>bundle.binding):committedDocument.bindings);
+  const maximumRoutes=$derived(Math.max(1,...overviewBundles.map(bundle=>bundle.lanes.length)));
+  const nodes = $derived(visibleDocument===committedDocument?committedNodes:allNodes.filter(node=>!overview||!node.processing));
   const nodesById=$derived(new Map(nodes.map(node=>[node.id,node])));
   const portGroups=$derived(new Map(nodes.map(node=>{const ports=node.resource?discoveredPorts[node.id]??node.resource.ports:null;const inputs=ports?ports.filter(port=>port.direction==='input'):node.processing?.inputs??node.virtual?.ports??node.desktop?.ports??[],outputs=ports?ports.filter(port=>port.direction==='output'):node.processing?.outputs??[];return[node.id,{inputs,outputs,names:new Map([...inputs,...outputs].map(port=>[`${port.direction}/${port.id}`,port.name]))}];})));
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
@@ -73,13 +85,13 @@
   const cornerRadius=$derived($canvasStyling.cornerRadius);
   const committedRouteNodes=$derived(canvasRouteNodes(committedNodes));
   const routeNodes=$derived(canvasRouteNodes(renderedNodes));
-  const committedRoutes=$derived(router(committedRouteNodes,committedDocument.bindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:committedDocument.editor.wireRoutes}));
+  const committedRoutes=$derived(router(committedRouteNodes,routingBindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:overview?undefined:committedDocument.editor.wireRoutes}));
   const routes=$derived.by(()=>{
     if(segmentPreview&&segmentDrag){const preview=diagramRoutes(routeNodes,visibleDocument.bindings.filter(binding=>binding.id===segmentDrag!.bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:visibleDocument.editor.wireRoutes})[0];return preview?committedRoutes.map(route=>route.binding.id===preview.binding.id?preview:route):committedRoutes;}
     return dragged||groupPreview?canvasPreviewRoutes(committedRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius):committedRoutes;
   });
   const bundledRoutes=$derived(bundleDiagramRoutes([...routes.filter(route=>route.binding.id!==selectedEdgeId),...routes.filter(route=>route.binding.id===selectedEdgeId)],$canvasStyling.collapseParallelWires,selectedEdgeId));
-  const wireNetwork=$derived($canvasStyling.collapseParallelWires?buildDiagramWireTrunks(bundledRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius,!!dragged||!!groupPreview,selectedEdgeId):{bundles:bundledRoutes,trunks:[]});
+  const wireNetwork=$derived(!overview&&$canvasStyling.collapseParallelWires?buildDiagramWireTrunks(bundledRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius,!!dragged||!!groupPreview,selectedEdgeId):{bundles:bundledRoutes,trunks:[]});
   const renderedRoutes=$derived(wireNetwork.bundles);
   const sharedTrunks=$derived(wireNetwork.trunks);
   const clickableBundles=$derived([...renderedRoutes,...sharedTrunks]);
@@ -89,7 +101,7 @@
     return [...groups.values()];
   });
   const bundleMembers=$derived(bundlePicker?routes.filter(route=>bundlePicker!.ids.includes(route.binding.id)):[]);
-  const frames=$derived(canvasGroups(visibleDocument,nodes));
+  const frames=$derived(overview?[]:canvasGroups(visibleDocument,nodes));
   const paletteSize=$derived.by(()=>{const size=canvasNodeSize({kind:paletteDrag?.component.kind==='transformation'?'processing':'resource'});return paletteDrag?.component.kind==='transformation'&&['gate','any','all','priority'].includes(paletteDrag.component.preset)?{...size,height:size.height+PROFILE_TRANSFORM_PORT_ROW}:size;});
   const dropGroup=$derived.by(()=>{if(dragged){const size=canvasNodeSize(nodes.find(node=>node.id===dragged!.id)??{});return canvasGroupAt(visibleDocument,{x:dragged.position.x+size.width/2,y:dragged.position.y+size.height/2});}return palettePreview?canvasGroupAt(visibleDocument,{x:palettePreview.x+paletteSize.width/2,y:palettePreview.y+paletteSize.height/2}):null;});
   const selected = $derived(nodes.find(node => node.id === selectedId));
@@ -102,6 +114,9 @@
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
   let portEpoch = 0;
+  let laneScope=untrack(()=>`${document.id}/${activeVehicleTabId}`);
+  $effect(()=>{const scope=`${document.id}/${activeVehicleTabId}`;if(scope!==laneScope){laneScope=scope;closeLanes();}});
+  $effect(()=>{if(overview&&selectedId&&allNodes.some(node=>node.id===selectedId&&node.processing)){activeTransform=selectedId;showTransforms=true;selectedId='';}});
   $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;layoutEpoch++;layoutBusy=false;selectionView=null;focusedSelectionId='';clearPendingMove();clearConnectionClick();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
   $effect(()=>{void focusSelectionId;void inspectorPanel;void drag;void wire;void segmentDrag;void connectionOpen;if(mounted)untrack(syncSelectionFocus);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
@@ -116,11 +131,27 @@
   onDestroy(() => { portEpoch++;layoutEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
   function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
   function fit() { bundlePicker=null;fitView(); }
+  function closeLanes(){pendingOverviewDrop=null;overviewBundleId='';showTransforms=false;activeTransform='';}
+  function openOverview(id:string){
+    if(overviewBundleId===id){closeLanes();return;}
+    pendingOverviewDrop=null;clearConnectionClick();selectionView=null;focusedSelectionId='';
+    closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';overviewBundleId=id;
+  }
+  function slideLanes(_node:HTMLElement){return {duration:window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:180,css:(t:number)=>`transform:translateY(${(1-t)*100}%)`};}
+  function trimArrowShaft(element:SVGPathElement,settings:{path:string;head:number}){
+    function update({path,head}:typeof settings){
+      // Actions may update before Svelte writes d during a drag or Undo.
+      // Measure the new geometry, otherwise the old length leaves a gap mid-wire.
+      element.setAttribute('d',path);
+      const length=element.getTotalLength();element.style.strokeDasharray=`${Math.max(0,length-head*.55)} ${head}`;
+    }
+    update(settings);return{update};
+  }
   function zoom(factor:number,at?:CanvasPoint) { bundlePicker=null;view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2}); }
   async function layout() {
     if(readOnly||layoutBusy||drag||segmentDrag||wire)return;
     const sourceDocument=document,tab=activeVehicleTabId,epoch=++layoutEpoch;
-    const layoutNodes=canvasRouteNodes(committedNodes),bindings=committedDocument.bindings;
+    const layoutNodes=canvasRouteNodes(committedNodes),bindings=routingBindings;
     layoutBusy=true;layoutError='';
     try{
       const {layoutProfileWithElk}=await import('./profile-elk-runtime');
@@ -134,18 +165,18 @@
       let next=nodes.length?canvasMoveIntoGroup(source,nodes[0].id,nodes[0].position):JSON.parse(JSON.stringify(source)) as ProfileDocument;
       const visibleIds=new Set(layoutNodes.map(node=>node.id)),positions=result.positions;
       const visibleBindings=new Set(bindings.map(binding=>binding.id));
-      next.editor.wireRoutes=[...(next.editor.wireRoutes??[]).filter(route=>!visibleBindings.has(route.bindingId)),...result.wireRoutes];
-      if(!next.editor.wireRoutes.length)delete next.editor.wireRoutes;
+      if(!overview)next.editor.wireRoutes=[...(next.editor.wireRoutes??[]).filter(route=>!visibleBindings.has(route.bindingId)),...result.wireRoutes];
+      if(!next.editor.wireRoutes?.length)delete next.editor.wireRoutes;
       next.editor.positions=[...next.editor.positions.filter(position=>!visibleIds.has(position.nodeId)),...positions];
       for(const position of positions)next=canvasMoveIntoGroup(next,position.nodeId,position);
-      const nextVisible=profileTabDocument(next,activeVehicleTabId),nextNodes=canvasNodes(nextVisible,assignments,inventory),nextFrames=canvasGroups(nextVisible,nextNodes);
+      const nextVisible=profileTabDocument(next,activeVehicleTabId),nextNodes=canvasNodes(nextVisible,assignments,inventory).filter(node=>!overview||!node.processing),nextFrames=overview?[]:canvasGroups(nextVisible,nextNodes);
       view=canvasFit([...nextNodes,...nextFrames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])],stage?.clientWidth||900,stage?.clientHeight||600);
       return next;
       }),'Auto-layout');
     }catch(error){if(epoch===layoutEpoch&&tab===activeVehicleTabId)layoutError=error instanceof Error?error.message:String(error);}
     finally{if(epoch===layoutEpoch)layoutBusy=false;}
   }
-  function choose(id:string) { bundlePicker=null;clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
+  function choose(id:string) { closeLanes();bundlePicker=null;clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
   function chooseConnection(id:string) {bundlePicker=null;stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView())void tick().then(()=>{if(!selectedId)selectConnection?.(id);});else selectConnection(id);}else editConnection?.(id);}
   function openBundle(event:MouseEvent|KeyboardEvent,bundle:DiagramWireBundle,insertion?:{component:ProfilePaletteComponent;position:CanvasPoint}){
     event.preventDefault();event.stopPropagation();clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId='';
@@ -207,7 +238,7 @@
     if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
     event.preventDefault();event.stopPropagation();
     const component=paletteDrag!.component,position=palettePosition(event),hit=(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]'),bindingId=component.kind==='transformation'?hit?.dataset.connectionId:undefined,bundle=hit?.dataset.bundleId?clickableBundles.find(bundle=>bundle.id===hit.dataset.bundleId&&bundle.members.length>1):undefined;clearPalettePreview();
-    try{if(bundle&&component.kind==='transformation'&&dropOnConnection)openBundle(event,bundle,{component,position});else if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
+    try{if(overview&&bindingId&&overviewById.has(bindingId)&&component.kind==='transformation'){const projected=overviewById.get(bindingId)!;if(projected.lanes.length===1)dropOnConnection?.(component,projected.lanes[0].id,position);else{openOverview(bindingId);pendingOverviewDrop={component,position};}}else if(bundle&&component.kind==='transformation'&&dropOnConnection)openBundle(event,bundle,{component,position});else if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
   }
   function restoreSelectionView(){const previous=selectionView;selectionView=null;focusedSelectionId='';if(previous)view={...previous};return !!previous;}
   function syncSelectionFocus(){
@@ -330,7 +361,7 @@
       }
       if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);return;
     }
-    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeConnectionPanel?.();selectConnection?.('');selectedId='';}}}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
+    if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeLanes();closeConnectionPanel?.();selectConnection?.('');selectedId='';}}}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
   }
   function wheel(event:WheelEvent) {
     event.preventDefault();if(segmentDrag)return;bundlePicker=null;
@@ -346,7 +377,7 @@
     if(event.key==='Escape'&&wire){event.preventDefault();const pointer=wire.pointer;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';suppressWireClick=true;if(stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);return;}
     if(event.key==='Escape'&&drag){event.preventDefault();const pointer=drag.pointer;view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;layoutError='';if(stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);return;}
     if((event.target as Element).closest('input,textarea,select,[contenteditable="true"]'))return;
-    if(event.key==='Escape'){event.preventDefault();closeConnectionPanel?.();selectConnection?.('');selectedId='';return;}
+    if(event.key==='Escape'){event.preventDefault();closeLanes();closeConnectionPanel?.();selectConnection?.('');selectedId='';return;}
     if(!readOnly&&selectedEdgeId&&disconnectConnection&&['Delete','Backspace'].includes(event.key)){event.preventDefault();disconnectConnection(selectedEdgeId);return;}
     if(!readOnly&&(undo||redo)&&(event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())){event.preventDefault();if(event.shiftKey||event.key.toLowerCase()==='y')redo?.();else undo?.();return;}
     if((event.target as Element).closest('button,a'))return;
@@ -373,7 +404,6 @@
 <section class="profile-graph" aria-label="Profile resource graph">
   <div class="canvas-toolbar">
     <div class="canvas-search"><Icon name="search" size={14}/><input aria-label="Search profile blocks" placeholder="Find a block, type or transport…" bind:this={searchInput} bind:value={search} onkeydown={event=>{if(event.key==='Enter')focusMatch();}}/>{#if search}<button class="search-clear" type="button" aria-label="Clear block search" title="Clear block search" onclick={()=>{search='';searchInput.focus();}}><Icon name="close" size={14}/></button>{/if}</div>
-    <button class="text-button" onclick={focusMatch} disabled={!matches.length}>{search?`${matches.length} matches`:`${nodes.length} blocks`}</button>
     {#if selectedEdge&&document.editor.wireRoutes?.some(route=>route.bindingId===selectedEdgeId)}<button class="text-button" disabled={readOnly} onclick={()=>resetWireRoute(selectedEdgeId)}>Reset bends</button>{/if}
     <div class="canvas-view-controls">
       <button class="canvas-icon-button" type="button" aria-label="Fit all" title="Fit all" onclick={fit}><Icon name="fit" size={16}/></button>
@@ -382,10 +412,10 @@
     </div>
   </div>
   {#if layoutBusy}<p class="canvas-help" role="status">Arranging blocks and connections…</p>{/if}
-  <p class="canvas-help" id="profile-canvas-help">Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. Double-click a wire to add a draggable reroute point; select a point and press Delete to remove it. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.</p>
+  <p class="canvas-help" id="profile-canvas-help">{#if overview}Drag between blocks to connect. Thicker arrows carry more signals; click an arrow to edit its transform chains. Drop a transform on an arrow to insert it. Click the selected arrow again, press Escape, or click the canvas to dismiss.{:else}Drop components, then drag between ports or input/output boxes. Full inputs cannot receive another connection. Choose arrow style and corner radius in Settings → Styling. Double-click a wire to add a draggable reroute point; select a point and press Delete to remove it. With horizontal/vertical arrows, select a wire to drag its straight segments. Select a block to configure it or a wire to manage its connection. Drag a wire endpoint to reconnect it; drop a transformation onto a wire to insert it. Escape or blank canvas cancels. Drag the background to pan. Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'scrolls'}; Ctrl/⌘ + wheel {$canvasNavigation.wheelAction==='zoom'?'scrolls':'zooms'}. Configure this in Settings → General. Ctrl/⌘ + Z undoes; Shift + Z redoes.{/if}</p>
   <div class="canvas-layout">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
-    <div class="canvas-stage" class:node-dragging={!!dragged||!!groupPreview} class:wire-blocked={!!wireRejectedReason||segmentBlocked} class:segment-dragging={!!segmentDrag} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={scheduleMove} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
+    <div class="canvas-stage" data-view={overview?'overview':'detailed'} class:node-dragging={!!dragged||!!groupPreview} class:wire-blocked={!!wireRejectedReason||segmentBlocked} class:segment-dragging={!!segmentDrag} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={scheduleMove} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
       {#if layoutError}<p class="canvas-layout-error port-error" role="alert">{layoutError}</p>{/if}
       <div class="canvas-world" style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
         {#if palettePreview&&paletteDrag}
@@ -407,7 +437,16 @@
             {@const route=bundle.route}
             {@const binding=route.binding}
             {@const grouped=bundle.members.length>1}
-            {@const visibleLabel=!grouped&&(selectedEdgeId===binding.id||hoveredEdgeId===binding.id)}
+            {@const visibleLabel=!overview&&!grouped&&(selectedEdgeId===binding.id||hoveredEdgeId===binding.id)}
+            {#if overview}
+              {@const projected=overviewById.get(binding.id)!}
+              {@const width=signalBundleWidth(projected.lanes.length,maximumRoutes)}
+              {@const head=Math.max(10,width*2.4)}
+              {@const markerId=`${inspectorContentId}-arrow-${overviewBundles.indexOf(projected)}`}
+              <defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth={head} markerHeight={head} viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path class:selected={overviewBundleId===binding.id} d="M0,0 L10,5 L0,10 Z"/></marker></defs>
+              <path class="signal-edge overview-edge" data-binding-id={binding.id} data-route-count={projected.lanes.length} data-arrow-style={wireStyle} class:selected={overviewBundleId===binding.id} class:drop-target={paletteConnectionId===binding.id} style={`stroke-width:${width}px`} use:trimArrowShaft={{path:route.path,head}} marker-end={`url(#${markerId})`} d={route.path}><title>{nodesById.get(binding.from.nodeId)?.name} → {nodesById.get(binding.to.nodeId)?.name}</title></path>
+              <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Inspect signals from ${nodesById.get(binding.from.nodeId)?.name} to ${nodesById.get(binding.to.nodeId)?.name}`} aria-pressed={overviewBundleId===binding.id} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={()=>openOverview(binding.id)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openOverview(binding.id);}}}/>
+            {:else}
             <path class="signal-edge" class:bundled={grouped} class:orthogonal={wireStyle==='orthogonal'} data-binding-id={binding.id} data-binding-ids={JSON.stringify(bundle.members.map(route=>route.binding.id))} data-bundle-count={bundle.members.length} data-bundle-id={grouped?bundle.id:undefined} data-arrow-style={wireStyle} class:selected={selectedEdgeId===binding.id} class:drop-target={paletteConnectionId===binding.id} class:highlighted={bundle.members.some(route=>highlightedEdges.includes(route.binding.id))} class:problem={bundle.members.some(route=>route.customBlocked||diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(route.binding.id)))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{grouped?`${bundle.members.length} connections: ${nodesById.get(binding.from.nodeId)?.name??binding.from.nodeId} → ${nodesById.get(binding.to.nodeId)?.name??binding.to.nodeId}`:`${portName(binding.from.nodeId,binding.from.portId,'output')} → ${portName(binding.to.nodeId,binding.to.portId,'input')}`}</title></path>
             {#if selectConnection||editConnection||dropOnConnection}
               <path class="signal-edge-hit" data-connection-id={binding.id} data-bundle-id={grouped?bundle.id:undefined} d={route.path} role="button" tabindex="0" aria-label={grouped?`Choose from ${bundle.members.length} connections between ${binding.from.nodeId} and ${binding.to.nodeId}`:`Select connection ${binding.id}: ${binding.from.portId} to ${binding.to.portId}`} aria-pressed={selectedEdgeId===binding.id} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onpointerenter={()=>hoveredEdgeId=binding.id} onpointerleave={()=>hoveredEdgeId=''} onclick={event=>grouped?openBundle(event,bundle):connectionClick(event,binding.id)} ondblclick={event=>grouped?openBundle(event,bundle):addWireHandle(event,binding.id)} onkeydown={event=>grouped?bundleKey(event,bundle):connectionKey(event,binding.id)}><title>{grouped?'Choose an individual connection to inspect or edit':'Select to manage connection; double-click to add a reroute point'}</title></path>
@@ -436,13 +475,14 @@
                 <circle class="connection-endpoint" data-reconnect-side="to" data-reconnect-binding={binding.id} cx={end.x} cy={end.y} r="7" role="button" tabindex="0" aria-label={`Reconnect destination of ${binding.id}`} onpointerdown={event=>beginReconnect(event,binding.id,'to')} onkeydown={event=>reconnectKey(event,binding.id,'to')}><title>Drag to another input</title></circle>
               {/if}
             {/if}
+            {/if}
           {/snippet}
-          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id!==selectedEdgeId) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id!==(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
           {#each sharedTrunks as trunk (trunk.id)}
             <path class="signal-trunk" data-trunk-id={trunk.id} data-trunk-direction={trunk.direction} data-trunk-endpoint={JSON.stringify(trunk.endpoint)} data-binding-ids={JSON.stringify(trunk.members.map(route=>route.binding.id))} data-arrow-style={wireStyle} class:highlighted={trunk.members.some(route=>highlightedEdges.includes(route.binding.id))} class:drop-target={paletteConnectionId===trunk.route.binding.id} d={trunk.route.path}><title>{trunk.members.length} connections share this {trunk.direction==='output'?'output':'input'} trunk</title></path>
             <path class="signal-trunk-hit" data-trunk-id={trunk.id} data-bundle-id={trunk.id} data-connection-id={trunk.route.binding.id} d={trunk.route.path} role="button" tabindex="0" aria-label={`Choose from ${trunk.members.length} connections sharing this ${trunk.direction==='output'?'output':'input'}`} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={event=>openBundle(event,trunk)} ondblclick={event=>openBundle(event,trunk)} onkeydown={event=>bundleKey(event,trunk)}><title>Choose a signal on this shared trunk</title></path>
           {/each}
-          {#each renderedRoutes.filter(bundle=>bundle.members.length>1) as bundle (bundle.route.binding.id)}
+          {#each renderedRoutes.filter(bundle=>!overview&&bundle.members.length>1) as bundle (bundle.route.binding.id)}
             <g class="connection-bundle-badge" data-bundle-id={bundle.id} data-connection-id={bundle.route.binding.id} role="button" tabindex="0" aria-label={`Choose from ${bundle.members.length} connections`} use:positionBundleBadge={{path:bundle.route.path,zoom:view.zoom,bindingId:bundle.route.binding.id}} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={event=>openBundle(event,bundle)} onkeydown={event=>bundleKey(event,bundle)}>
               <title>{bundle.members.length} connections · Click to choose a signal</title><rect x="-17" y="-10" width="34" height="20" rx="10"/><text text-anchor="middle" dominant-baseline="central">×{bundle.members.length}</text>
             </g>
@@ -452,7 +492,7 @@
               <title>{trunk.members.length} connections · Click to choose a signal</title><rect x="-17" y="-10" width="34" height="20" rx="10"/><text text-anchor="middle" dominant-baseline="central">×{trunk.members.length}</text>
             </g>
           {/each}
-          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id===selectedEdgeId) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id===(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
           {#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={diagramPendingPath(canvasNodeAnchor(from,pending.direction,pending.portId),pending.end,pending.direction,wireStyle,cornerRadius)}><title>Choose the other block, then select compatible ports</title></path>{#if wireRejectedReason}<text class="wire-drop-error" x={pending.end.x+12} y={pending.end.y-12}>{wireRejectedReason}</text>{/if}{/if}{/if}
         </svg>
         {#each renderedNodes as node (node.id)}
@@ -473,14 +513,14 @@
                 </div>
               </div>
             {:else}
-            <button class="block-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">{node.category}</span><strong>{node.name}</strong><code>{node.id}</code></button>
-            <div class="block-body"><span class="block-state">{canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
+            <button class="block-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">{node.category}</span><strong>{node.name}</strong>{#if !overview}<code>{node.id}</code>{/if}</button>
+            <div class="block-body"><span class="block-state">{canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if !overview&&node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if !overview&&node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
             <div class="block-port-groups">
               <button data-connection-target={node.id} data-drop-disabled={inputState(node.id).full} class:connection-unavailable={inputState(node.id).full} class:connection-rejected={rejectedHandle(node.id)} class:connection-active={activeHandle(node.id,'input')} class:connection-hover={wire?.direction==='output'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'input')} aria-label={`Inputs / actions for ${node.name} (${blockInputs.length})`} title={inputState(node.id).reason||'Drag to Outputs on another block, or click to choose an output'} disabled={readOnly||inputState(node.id).full||(!discovering&&!discoveryErrors[node.id]&&!blockInputs.length)} onpointerdown={event=>beginWire(event,node.id,'input')} onclick={event=>wireClick(event,node.id,'input')}>
-                <span class="port-dot" aria-hidden="true"></span><span class="port-group-heading">Inputs / actions <span>{discovering&&!blockInputs.length?'…':blockInputs.length}</span></span>
+                <span class="port-dot" aria-hidden="true"></span><span class="port-group-heading">Inputs / actions {#if !overview}<span>{discovering&&!blockInputs.length?'…':blockInputs.length}</span>{/if}</span>
               </button>
               <button data-connection-source={node.id} class:connection-active={activeHandle(node.id,'output')} class:connection-hover={wire?.direction==='input'&&wireTargetId===node.id} data-connection-active={activeHandle(node.id,'output')} aria-label={`Outputs for ${node.name} (${blockOutputs.length})`} title="Drag to Inputs / actions on another block, or click to choose an input" disabled={readOnly||(!discovering&&!discoveryErrors[node.id]&&!blockOutputs.length)} onpointerdown={event=>beginWire(event,node.id,'output')} onclick={event=>wireClick(event,node.id,'output')}>
-                <span class="port-dot" aria-hidden="true"></span><span class="port-group-heading">Outputs <span>{discovering&&!blockOutputs.length?'…':blockOutputs.length}</span></span>
+                <span class="port-dot" aria-hidden="true"></span><span class="port-group-heading">Outputs {#if !overview}<span>{discovering&&!blockOutputs.length?'…':blockOutputs.length}</span>{/if}</span>
               </button>
             </div>
             {/if}
@@ -517,12 +557,19 @@
         </div>
     </aside>
     {/if}
+  {#if overview&&(overviewBundle||showTransforms)}
+    <div class="canvas-lanes-panel" transition:slideLanes>
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes insertionPending={!!pendingOverviewDrop} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} insert={id=>{if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,id,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    </div>
+  {/if}
   </div>
-  <div class="graph-result-summary"><span>{visibleDocument.resources.length} resource blocks</span><span>{visibleDocument.bindings.length} signal routes</span><span>{visibleDocument.processingNodes.length} transformations</span><span>{controllerEffects.virtual} requested virtual controllers</span><span>{visibleDocument.desktopOutputs?.length??0} desktop endpoint</span><span>{controllerEffects.hidden} hide-while-active requests</span></div>
-  <section class="controller-effect-summary" aria-label="Draft controller effects"><strong>Draft controller effects</strong><p>Publication choices: <span>{controllerEffects.enabled} enable while active</span> · <span>{controllerEffects.disabled} disable while active</span> · <span>{controllerEffects.configured} keep configured</span>.</p><p>{controllerEffects.hidden} hide-while-active requests · {controllerEffects.virtual} requested virtual controllers.</p><small>Draft requests. Activation checks device support and ownership; Save applies changes when this profile is active.</small></section>
+  {#if !overview}<div class="graph-result-summary"><span>{visibleDocument.resources.length} resource blocks</span><span>{visibleDocument.bindings.length} signal routes</span><span>{visibleDocument.processingNodes.length} transformations</span><span>{controllerEffects.virtual} requested virtual controllers</span><span>{visibleDocument.desktopOutputs?.length??0} desktop endpoint</span><span>{controllerEffects.hidden} hide-while-active requests</span></div>
+  <section class="controller-effect-summary" aria-label="Draft controller effects"><strong>Draft controller effects</strong><p>Publication choices: <span>{controllerEffects.enabled} enable while active</span> · <span>{controllerEffects.disabled} disable while active</span> · <span>{controllerEffects.configured} keep configured</span>.</p><p>{controllerEffects.hidden} hide-while-active requests · {controllerEffects.virtual} requested virtual controllers.</p><small>Draft requests. Activation checks device support and ownership; Save applies changes when this profile is active.</small></section>{/if}
 </section>
 
 <style>
+  .signal-edge.overview-edge.selected{stroke:var(--text);filter:drop-shadow(0 0 4px var(--accent));}.signal-edges marker path.selected{fill:var(--text);}
+  .canvas-lanes-panel{position:absolute;inset:auto 0 0;z-index:6;max-height:65%;overflow:auto;overscroll-behavior:contain;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -10px 24px #0002;}
   .signal-trunk{pointer-events:none;fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.signal-trunk.highlighted{stroke:#e0bd7e;stroke-width:4}.signal-trunk.drop-target{stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent))}.signal-trunk-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer;outline:none!important}.signal-trunk-hit:hover,.signal-trunk-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none!important}
   .connection-trunk-badge{pointer-events:all;cursor:pointer;outline:none}.connection-trunk-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-trunk-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-trunk-badge:hover rect,.connection-trunk-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}
   .signal-edge.bundled{stroke-width:2.5}.connection-bundle-badge{pointer-events:all;cursor:pointer;outline:none}.connection-bundle-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-bundle-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-bundle-badge:hover rect,.connection-bundle-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}
