@@ -14,6 +14,7 @@ typedef struct {
 } osg_widget_state_context;
 
 osg_widget_state osg_widget_state_resolve(const osg_widget_component *, const osg_widget_state_context *);
+const osg_sample *osg_widget_current_sample(const osg_widget_state_context *, int output);
 /* The visual gate is a necessary input condition, not an arming decision.
  * Existing session ownership, neutral baselines and leases remain authoritative. */
 bool osg_widget_gate_open(const osg_widget_component *, const osg_widget_state_context *);

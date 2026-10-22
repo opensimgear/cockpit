@@ -2,6 +2,10 @@
 #include <math.h>
 #include <string.h>
 
+#if LV_USE_OS != LV_OS_NONE || LV_DRAW_SW_DRAW_UNIT_CNT != 1
+#error "Portable font bitmaps require the pinned single synchronous software draw unit"
+#endif
+
 extern const unsigned char sans_start[] __asm__("_binary_osg_sans_ttf_start");
 extern const unsigned char sans_end[] __asm__("_binary_osg_sans_ttf_end");
 extern const unsigned char mono_start[] __asm__("_binary_osg_mono_ttf_start");
@@ -78,13 +82,20 @@ bool osg_widget_text_draw(osg_widget_fonts *fonts, lv_layer_t *layer, lv_area_t 
         const int32_t x = (int32_t)lround(area.x1 + offset + ((double)pen + glyph.ofs_x) * sx), y = (int32_t)lround(baseline - (glyph.box_h + glyph.ofs_y - 1) * sy);
         const lv_area_t target = {x, y, x + (int32_t)lround(glyph.box_w * sx) - 1, y + (int32_t)lround(glyph.box_h * sy) - 1};
         pen += glyph.adv_w;
+        /* Spaces and other advancing glyphs may have no bitmap. Passing an
+         * empty image to LVGL's ARGB transform path can divide by zero. */
+        if (!glyph.box_w || !glyph.box_h || target.x2 < target.x1 || target.y2 < target.y1) continue;
         if (target.x2 < layer->_clip_area.x1 || target.x1 > layer->_clip_area.x2 || target.y2 < layer->_clip_area.y1 || target.y1 > layer->_clip_area.y2) continue;
         const lv_draw_buf_t *bitmap = lv_font_get_glyph_bitmap(&glyph, NULL);
         if (!bitmap) { ok = false; break; }
         lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d); d.src = bitmap; d.recolor = lv_color_hex(color); d.opa = opacity;
         d.scale_x = (int32_t)lround(sx * LV_SCALE_NONE); d.scale_y = (int32_t)lround(sy * LV_SCALE_NONE); d.pivot = (lv_point_t){0, 0};
         lv_area_t source = {x, y, x + glyph.box_w - 1, y + glyph.box_h - 1};
-        lv_draw_image(layer, &d, &source); lv_draw_wait_for_finish();
+        lv_draw_image(layer, &d, &source);
+        /* With LV_OS_NONE, wait_for_finish is a no-op. A preceding alpha layer
+         * can leave this image queued, so drain the single software draw unit
+         * before releasing the borrowed TinyTTF bitmap. */
+        while (layer->draw_task_head) lv_draw_dispatch();
         lv_font_glyph_release_draw_data(&glyph);
     }
     layer->_clip_area = previous; return ok;

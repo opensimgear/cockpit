@@ -40,7 +40,43 @@ type, unit and range validation. `test/widget_state.py` passes 1,274 comparisons
 against the shared projection plus invalid-number and clock-boundary checks,
 with ASan/UBSan and 100% line/function, 88.97% branch coverage.
 
-This decoder is compiled into firmware but is not yet connected to live
+`widget_draw.c` now consumes those admitted definitions and sample snapshots
+directly. It implements ordered rectangle/ellipse/line/text/image/indicator and
+linear/vertical/radial gauge layers, independent x/y scaling, clipping, inherited
+state paint and group opacity. Rounded corners and radial gauges are evaluated
+in authored coordinates, so stretching a widget also stretches its decoration.
+The existing RGB565-plus-alpha image-cache format is accepted through a pinned
+bitmap lookup callback. Missing assets, unsupported text and strip/resource
+limits fail with the affected layer; they are never silently omitted.
+
+Alpha layers use one partial ARGB8888 strip, limited to eight rows and 1,024
+columns, with an explicit memory check. That strip is drained before the next
+allocation. TinyTTF bitmaps likewise remain owned until their queued image tasks
+finish: LVGL's no-OS `wait_for_finish` alone does not drain queued tasks. Empty
+glyph bitmaps retain their text advance without becoming invalid image draws.
+The pinned single synchronous software draw unit is enforced at compile time.
+
+Live numeric text uses exact binary64 rounding at 0–4 decimal places. The 1,353
+shared-code text fixtures include decimal ties, negative zero, subnormals and
+large magnitudes. Values with magnitude at least 1e21 fail explicitly, as do
+overlong strings or missing font glyphs. This is a target display limit, not a
+restriction on portable browser/Android authoring.
+
+The real-LVGL harness now admits twelve source instances and executes nine
+feedback/interaction scenarios, rather than consuming pre-resolved drawing
+commands. All 108 appearances match actual WidgetView captures in the running
+dev Cockpit within two physical pixels and one RGB565 channel step for solid
+colors. Edge checks allow rasterizer alpha blends and require at least 95% of
+each significant color footprint in both directions. Source layer regions avoid
+mistaking glyph AA shades for unrelated instrument paint. The comparison models
+the catalog's alpha bezel over its canvas and rejects changed compositing until
+the fixture is updated. Negative controls reject missing, displaced or recolored
+features. This proves the catalog fixture, not every possible authored design.
+Renderer tests include prepared-image alpha, vertical gauges, allocation budget
+rejection, unsupported glyphs, board failure and recovery. ASan/UBSan pass, with
+100% line/function and 85.61% branch coverage for `widget_draw.c`.
+
+The decoder and renderer are compiled into firmware but are not yet connected to live
 publication adoption. The existing schema-2 decoder, resource negotiation,
 feedback/input path, image cache and raster main loop are unchanged. Integration
 must still apply full-document/source byte limits, bind logical IDs/assets,

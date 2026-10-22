@@ -167,6 +167,32 @@ checks pass, with 100% line/function and 88.97% branch coverage. These functions
 do not own input or replace session admission; live sample mapping remains to be
 connected.
 
+The source-driven LVGL renderer now draws admitted definitions, dynamic samples
+and inherited appearances directly. Its nine scenarios cover 12 instances,
+including independently overridden buttons and an explicit three-port state
+example. All 108 appearances match the actual shared WidgetView captured in the
+running dev Cockpit, using the documented two-pixel geometry/ink and one-step
+RGB565 solid-color tolerances. Evidence:
+`.research/widget-source-browser-reference/source-parity.json` and
+`.research/lvgl-native/source-*.png`. The comparator also rejects missing,
+displaced and recolored negative controls.
+
+Both LVGL harnesses and the 1,274 state cases pass ASan/UBSan again. Exact live
+text matches 1,353 shared-code cases. Native renderer coverage is 100% lines and
+functions, 85.61% branches. Queue draining fixes TinyTTF bitmap lifetime behind
+alpha-layer tasks; source alpha uses one bounded strip at a time. A WSL Windows
+mount I/O stall required a native-filesystem test snapshot; source hashes were
+verified against this worktree and retained at
+`.research/lvgl-native/widget-draw-source-hashes.json`. This does not enable
+schema-3 assigned panels yet: full publication/port mapping, main-loop adoption,
+capability negotiation and same-firmware live updates remain pending.
+The actual native import/edit/preview/save/reload check passes again at
+`.research/widgets-native-ui/1792627358657/`.
+
+CI exposed a missing workspace package link in the state oracle job. The setup
+fix at `00d3c3f` passes all six ESP32 jobs in
+[CI run 39695083501](https://github.com/opensimgear/cockpit/actions/runs/39695083501).
+
 W2 allows bounded runtime construction from the portable source. Extend the
 existing authenticated canonical-document delivery and immutable candidate
 snapshots to schema 3, keeping the source publication hash unchanged. This avoids
@@ -174,8 +200,8 @@ resurrecting the old branch's separate composite authoring format. Reuse current
 asset/image-cache transfer and board fences; the generic A/B target-content
 infrastructure remains available where prepared assets require it.
 
-The remaining work must implement device-side layer/state/property admission,
-typed component inputs/feedback, dynamic LVGL construction, capability/resource
+The remaining work must connect source admission and LVGL drawing to complete
+panel snapshots, typed component inputs/feedback, capability/resource
 negotiation, main-loop adoption and same-firmware data updates. Rich S3 limits and
 lower-memory Sunton limits must be explicit and independent of browser/Android
 authoring. Preserve existing lease/baseline/cancellation and source-confirmation

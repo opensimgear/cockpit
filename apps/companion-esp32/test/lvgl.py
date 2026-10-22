@@ -60,6 +60,23 @@ if any(value < 71 for metrics in report.values() for value in metrics.values()):
     raise RuntimeError('LVGL module coverage below 71%: ' + str(report))
 print('LVGL module coverage:', report)
 
+# Unlike the feasibility fixture above, this path admits the actual portable
+# definitions and resolves live state/text/gauges inside the C renderer.
+for counter in OUT.glob('widget-draw-test-*.gcda'):
+    counter.unlink()
+subprocess.run([os.environ.get('CC', 'gcc'), *flags, '--coverage', '-Wall', '-Wextra', '-Werror', *[str(APP / 'render' / (name + '.c')) for name in ['lvgl_backend', 'widget_fonts', 'widget_source', 'widget_state', 'widget_draw']], str(APP / 'test/widget_draw_test.c'), str(APP / 'third_party/cjson/cJSON.c'), str(font_object), str(library), '-lm', '-o', str(OUT / 'widget-draw-test')], check=True)
+subprocess.run([str(OUT / 'widget-draw-test'), str(APP / 'test/widget-draw.json'), str(OUT)], check=True, timeout=60, env=test_environment)
+subprocess.run(['gcov', '-j', '-b', '-c', 'widget-draw-test-widget_draw.gcno'], cwd=OUT, check=True, capture_output=True)
+coverage = json.loads(gzip.decompress((OUT / 'widget-draw-test-widget_draw.gcov.json.gz').read_bytes()))
+module = next(f for f in coverage['files'] if f['file'].endswith('/widget_draw.c'))
+lines, functions = module['lines'], module['functions']
+branches = [b for line in lines for b in line.get('branches', [])]
+metrics = {'lines': 100 * sum(line['count'] > 0 for line in lines) / len(lines), 'branches': 100 * sum(branch['count'] > 0 for branch in branches) / len(branches), 'functions': 100 * sum(f['execution_count'] > 0 for f in functions) / len(functions)}
+(OUT / 'widget-draw-coverage.json').write_text(json.dumps(metrics, indent=2) + '\n')
+print('Admitted-source LVGL renderer coverage:', metrics)
+if any(value < 71 for value in metrics.values()):
+    raise RuntimeError('Admitted-source LVGL renderer coverage below 71%')
+
 
 def chunk(kind, data):
     return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))

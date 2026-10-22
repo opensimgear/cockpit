@@ -31,7 +31,9 @@ jobs:
       - name: Native firmware sanitizers, coverage and preview
         run: python3 apps/companion-esp32/test/run.py
       - name: Locked LVGL shared-source states, partial buffers, failure recovery and coverage
-        run: python3 apps/companion-esp32/test/lvgl.py
+        run: |
+          node scripts/widget-draw-fixtures.mjs --check
+          python3 apps/companion-esp32/test/lvgl.py
       - name: Bounded render content, binary structure and modeled power-cut recovery
         run: |
           python3 apps/companion-esp32/test/package.py
@@ -49,6 +51,7 @@ jobs:
             .research/esp32-native/coverage.json
             .research/esp32-native/preview.png
             .research/lvgl-native/coverage.json
+            .research/lvgl-native/widget-draw-coverage.json
             .research/lvgl-native/*.png
             .research/esp32-content-store-native/coverage.json
             .research/esp32-content-store-native/content-store-test.log
