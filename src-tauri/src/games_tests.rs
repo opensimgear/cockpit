@@ -14,7 +14,7 @@ impl Platform for FakePlatform {
         GAMES.iter().map(|id|json!({"id":id,"name":id,"provider":if *id=="dcs"{"dcs-bios"}else{*id},"installed":true,"executable":manual.get(*id).cloned().unwrap_or_else(||format!("C:\\Games\\{id}\\game.exe")),"launchSupported":true,"processMonitoringSupported":false})).collect()
     }
     fn validate(&self, _: &str, path: &str) -> Result<(), String> {
-        if path.starts_with("C:\\") {
+        if path.starts_with("C:\\") || Path::new(path).is_absolute() {
             Ok(())
         } else {
             Err("Invalid executable".into())

@@ -789,18 +789,6 @@ fn ac_setup_repair_replaces_catalogue_even_for_same_build_and_check_never_rescan
 #[test]
 fn ac_catalogue_publication_waits_for_setup_completion_and_cancelled_repair_preserves_it() {
     use std::sync::mpsc;
-    struct PausedCarProbe { entered: mpsc::Sender<()>, release: Mutex<mpsc::Receiver<()>> }
-    impl Platform for PausedCarProbe {
-        fn catalogue(&self, _: &BTreeMap<String,String>) -> Vec<Value> { vec![] }
-        fn validate(&self, _: &str, _: &str) -> Result<(),String> { Ok(()) }
-        fn launch(&self, _: &Value) -> Result<ProcessIdentity,String> { Err("Unexpected launch".into()) }
-        fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>,String> {
-            self.entered.send(()).unwrap();
-            self.release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-            Ok(None)
-        }
-        fn alive(&self, _: &ProcessIdentity) -> Result<bool,String> { Ok(false) }
-    }
     let scratch = Scratch::new();
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
     let game = ac_catalogue_game(&scratch.0.join("AC"));
@@ -808,8 +796,8 @@ fn ac_catalogue_publication_waits_for_setup_completion_and_cancelled_repair_pres
     ac_catalogue_car(root, "car", "Original Car");
     let (entered, observed) = mpsc::channel();
     let (release, blocked) = mpsc::channel();
-    runtime.request(&json!({"command":"game_integration_setup"}), &game,
-        Arc::new(PausedCarProbe { entered, release:Mutex::new(blocked) })).unwrap();
+    *runtime.inner.ac_cars_publication_pause.lock().unwrap() = Some((entered, blocked));
+    runtime.request(&json!({"command":"game_integration_setup"}), &game, Arc::new(FakePlatform(false))).unwrap();
     observed.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     assert!(runtime.busy());
     assert_eq!(ac_catalogue_choices(&runtime, &game), json!([]), "An unfinished setup must not publish its scanned choices");
@@ -821,8 +809,8 @@ fn ac_catalogue_publication_waits_for_setup_completion_and_cancelled_repair_pres
     ac_catalogue_car(root, "new_car", "New Car");
     let (entered, observed) = mpsc::channel();
     let (release, blocked) = mpsc::channel();
-    runtime.request(&json!({"command":"game_integration_setup"}), &game,
-        Arc::new(PausedCarProbe { entered, release:Mutex::new(blocked) })).unwrap();
+    *runtime.inner.ac_cars_publication_pause.lock().unwrap() = Some((entered, blocked));
+    runtime.request(&json!({"command":"game_integration_setup"}), &game, Arc::new(FakePlatform(false))).unwrap();
     observed.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     assert_eq!(ac_catalogue_choices(&runtime, &game), initial);
     runtime.request(&json!({"command":"game_integration_cancel"}), &game, Arc::new(FakePlatform(false))).unwrap();
@@ -904,22 +892,11 @@ fn native_build_admission_rechecks_metadata_without_waiting_for_passive_refresh(
 #[test]
 fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
     use std::sync::mpsc;
-    struct WaitingPlatform { entered: mpsc::Sender<()>, release: Mutex<mpsc::Receiver<()>> }
-    impl Platform for WaitingPlatform {
-        fn catalogue(&self, _: &BTreeMap<String,String>) -> Vec<Value> { vec![] }
-        fn validate(&self, _: &str, _: &str) -> Result<(),String> { Ok(()) }
-        fn launch(&self, _: &Value) -> Result<ProcessIdentity,String> { Err("Unexpected launch".into()) }
-        fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>,String> {
-            self.entered.send(()).unwrap();
-            self.release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-            Ok(None)
-        }
-        fn alive(&self, _: &ProcessIdentity) -> Result<bool,String> { Ok(false) }
-    }
     let scratch = Scratch::new();
-    let game = acr_game(&scratch);
+    let game = ac_catalogue_game(&scratch.0.join("AC"));
     let runtime = Arc::new(GameIntegrationSetup::new(scratch.0.join("setup.json"),true));
-    acr_record(&runtime,&game,false);
+    runtime.request(&json!({"command":"game_integration_setup"}), &game, Arc::new(FakePlatform(false))).unwrap();
+    wait_setup(&runtime);
     // Pause a real passive inspection after it has captured saved settings.
     let fingerprints = runtime.inner.fingerprints.lock().unwrap();
     let refreshed = runtime.clone(); let refreshing_game = game.clone();
@@ -930,7 +907,8 @@ fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     let (entered, observed) = mpsc::channel(); let (release, blocked) = mpsc::channel();
-    let platform = Arc::new(WaitingPlatform { entered, release:Mutex::new(blocked) });
+    *runtime.inner.ac_cars_publication_pause.lock().unwrap() = Some((entered, blocked));
+    let platform = Arc::new(FakePlatform(false));
     let (submitted, received) = mpsc::channel();
     let setup = runtime.clone(); let setup_game = game.clone();
     let request = std::thread::spawn(move||submitted.send(setup.request(&json!({"command":"game_integration_setup"}),&setup_game,platform)).unwrap());

@@ -541,7 +541,7 @@ mod persistence_tests {
 
     #[test]
     fn blocked_persistence_never_blocks_native_delivery_or_cached_capture_and_retries_raced_changes() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let runtime = Arc::new(Runtime::new(Some(directory.path().into()), Arc::new(|_| panic!("No discovery during cached native work")), false));
         adopt_metadata(&runtime, 1, "Installed catalogue");
         let (entered_tx, entered_rx) = mpsc::channel();
@@ -577,7 +577,7 @@ mod persistence_tests {
 
     #[test]
     fn queued_metadata_writers_snapshot_after_the_writer_gate_and_never_restore_older_catalogues() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let runtime = Arc::new(Runtime::new(Some(directory.path().into()), Arc::new(|_| vec![]), false));
         adopt_metadata(&runtime, 1, "Before repair");
         let (entered_tx, entered_rx) = mpsc::channel();

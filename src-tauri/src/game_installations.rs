@@ -72,8 +72,8 @@ impl LibrarySource {
             || self.launcher.as_ref().is_some_and(|path| {
                 !executable(path)
                     || self.client != "steam"
-                    || !Path::new(path).file_name().is_some_and(|name| {
-                        name.to_string_lossy().eq_ignore_ascii_case("steam.exe")
+                    || !path.rsplit(['\\', '/']).next().is_some_and(|name| {
+                        name.eq_ignore_ascii_case("steam.exe")
                     })
             })
         {

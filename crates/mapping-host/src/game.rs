@@ -638,7 +638,10 @@ mod tests {
     }
     #[test]
     fn independent_optional_requirements_fail_before_taking_ownership() {
-        let (s, _root, c) = setup();
+        let (mut s, _root, c) = setup();
+        // Exercise the unavailable backend independently of this host's qualification.
+        s.qualified = false;
+        s.game_visibility = Arc::new(|_, _| Err("Fixture visibility is not qualified.".into()));
         let mut virtual_only = c.clone();
         virtual_only["profile"]["requirements"]["virtualDevices"] = json!(true);
         let bindings=c["profile"]["targets"].as_array().unwrap().iter().enumerate().map(|(i,t)|json!({"target":t["id"],"slot":i+1,"axes":if i==0{vec![48]}else{vec![]},"layout":t["layout"]})).collect::<Vec<_>>();

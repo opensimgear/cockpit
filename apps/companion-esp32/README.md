@@ -58,6 +58,10 @@ From apps/companion-esp32 with IDF exported:
 
 For the identified Waveshare 7-inch S3 board, use a fresh build directory and -DOSG_BOARD_PROFILE=waveshare-lcd7-s3; see [its flash guide](boards/waveshare-lcd7/README.md). This enables the real display/touch adapter and required PSRAM configuration. Other builds still default to headless.
 
+Headless ESP32 and ESP32-S3 builds select 4 MiB flash to fit the shared application
+and image partitions. Use a device with at least that capacity. Display board
+profiles retain their own flash settings (Sunton 4 MiB, Waveshare 8 MiB).
+
 Use -DOSG_PANEL_INCLUDE=/absolute/path/to/generated to embed another exported panel. To use a real screen, supply -DOSG_BOARD_SOURCE=/absolute/path/to/board.c and its matching dimensions/driver. Width/height menuconfig values apply to the headless adapter only. Use separate build/config paths per MCU.
 
 Flash with the matching build's idf.py -B build-esp32s3 -p PORT flash monitor (or build-esp32). No flash or eFuse operation is performed by tests. Reflash a known-good image over serial for this milestone; Use the serial forget command to clear a saved installation. Automatic trust/config migrations and OTA remain future work. OTA is tracked in #64, broader board qualification in #65.

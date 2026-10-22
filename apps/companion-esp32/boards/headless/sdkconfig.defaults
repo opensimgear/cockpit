@@ -1,0 +1,2 @@
+# The shared application/image partition table requires at least 4 MiB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
