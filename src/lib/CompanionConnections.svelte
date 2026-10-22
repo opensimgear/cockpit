@@ -238,22 +238,22 @@
             <h1>{text(selected,'name') || 'Companion'}</h1>
             <span class:connected={selected.connected===true} class="connection-state"><span></span>{selected.connected===true?'Connected':'Offline'}</span>
           </div>
-          {#if settingsError || selectedMessages.length}
-            <div class="companion-status-messages">
-              {#if settingsError}<div id="companion-autosave-status" class="companion-notice error" role="alert"><strong>Error</strong><span>{settingsError}</span></div>{/if}
-              {#each selectedMessages as message (message.source)}
-                <div class="companion-notice" class:error={message.kind==='error'} class:warning={message.kind==='warning'} role={message.kind==='error'?'alert':'status'}>
-                  {#if message.kind!=='info'}<strong>{message.kind==='error'?'Error':'Warning'}</strong>{/if}<span>{message.message}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
         </div>
         <div class="remove-companion">
           <button class="danger" aria-describedby={updateOpen || updating ? 'companion-remove-reason' : undefined} disabled={busy || updateOpen || updating || settingsState?.saving || settingsState?.pending && !settingsState.error} onclick={()=>action(()=>remove(selected!))}><Icon name="trash" size={15} />Remove</button>
           {#if updateOpen || updating}<p id="companion-remove-reason" role="status">{updating && !hostState.usb?.waitingForBoot ? 'Wait for the firmware update to finish before removing this companion.' : 'Finish or cancel the firmware update before removing this companion.'}</p>{/if}
         </div>
       </div>
+      {#if settingsError || selectedMessages.length}
+        <div class="companion-status-messages">
+          {#if settingsError}<div id="companion-autosave-status" class="companion-notice error" role="alert"><strong>Error</strong><span>{settingsError}</span></div>{/if}
+          {#each selectedMessages as message (message.source)}
+            <div class="companion-notice" class:error={message.kind==='error'} class:warning={message.kind==='warning'} role={message.kind==='error'?'alert':'status'}>
+              {#if message.kind!=='info'}<strong>{message.kind==='error'?'Error':'Warning'}</strong>{/if}<span>{message.message}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
       <div class="settings-panel">
       {#if ['browser','desktop'].includes(deviceKind(selected)) && hostState.browserUrl}<button onclick={()=>action(async()=>{await invoke('open_companion_browser',{url:hostState.browserUrl});})}><Icon name="link" size={16} />Open browser companion</button>{/if}
       <div class="settings-columns" class:with-firmware={deviceKind(selected)==='esp32'}>
@@ -323,7 +323,7 @@
 </section>
 <style>
   .firmware-version-value{display:flex;align-items:center;gap:8px}.firmware-version-value>span{min-width:0}.firmware-refresh{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:4px;flex-shrink:0}
-  .tile-messages,.firmware-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.tile-messages{position:absolute;right:12px;bottom:12px;flex-wrap:nowrap}.companion-status-messages{display:grid;gap:8px;margin-top:14px}.companion-notice{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--line,#344452);border-left:3px solid var(--accent,#64caba);border-radius:6px;background:var(--surface,#14212c);font-size:13px;line-height:1.5;overflow-wrap:anywhere}.companion-notice strong{font-size:12px}.companion-notice.error{border-color:#ff899366;background:color-mix(in srgb,#ff8993 8%,var(--surface,#14212c))}.companion-notice.error strong{color:#ff8993}.companion-notice.warning{border-color:#efc26966;background:color-mix(in srgb,#efc269 8%,var(--surface,#14212c))}.companion-notice.warning strong{color:#efc269}.firmware-heading h3{margin:0}
+  .tile-messages,.firmware-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.tile-messages{position:absolute;right:12px;bottom:12px;flex-wrap:nowrap}.companion-status-messages{display:grid;gap:8px;margin:0 0 18px;min-width:0}.companion-notice{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--line,#344452);border-left:3px solid var(--accent,#64caba);border-radius:6px;background:var(--surface,#14212c);font-size:13px;line-height:1.5;overflow-wrap:anywhere}.companion-notice strong{font-size:12px}.companion-notice.error{border-color:#ff899366;background:color-mix(in srgb,#ff8993 8%,var(--surface,#14212c))}.companion-notice.error strong{color:#ff8993}.companion-notice.warning{border-color:#efc26966;background:color-mix(in srgb,#efc269 8%,var(--surface,#14212c))}.companion-notice.warning strong{color:#efc269}.firmware-heading h3{margin:0}
   .setting input[readonly],.setting input:disabled,.setting select:disabled{color:var(--muted);background:var(--input-bg);border-color:var(--faint-line);cursor:default}.setting:has(input[readonly]),.setting:has(input:disabled),.setting:has(select:disabled){color:var(--muted)}
   .screen-size-input{position:relative;min-width:0}.setting .screen-size-input input{box-sizing:border-box;width:100%;padding-right:42px}.screen-size-info{position:absolute;right:8px;top:0;bottom:0;display:flex;align-items:center}
   .remove-companion{display:grid;justify-items:end;gap:8px;max-width:250px}.remove-companion p{margin:0;font-size:12px;text-align:right}
