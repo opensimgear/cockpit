@@ -35,6 +35,9 @@ struct Progress {
 impl ProgressCallbacks for Progress {
     fn init(&mut self, _: u32, total: usize) {
         self.total = total;
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state["stage"] = json!("Uploading firmware");
+        state["progress"] = json!(0);
     }
     fn update(&mut self, current: usize) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -182,6 +185,23 @@ pub fn flash_firmware(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn each_segment_returns_from_verification_to_upload_progress() {
+        use super::*;
+        let state=Arc::new(Mutex::new(json!({"stage":"Waiting for boot mode"})));
+        let mut progress=Progress{state:state.clone(),total:1};
+        for address in [0x1000,0x8000,0x10000] {
+            progress.init(address,400);
+            assert_eq!(state.lock().unwrap()["stage"],"Uploading firmware");
+            assert_eq!(state.lock().unwrap()["progress"],0);
+            progress.update(100);
+            assert_eq!(state.lock().unwrap()["progress"],25);
+            progress.update(400);progress.verifying();
+            assert_eq!(state.lock().unwrap()["stage"],"Verifying firmware");
+            assert_eq!(state.lock().unwrap()["progress"],100);
+            progress.finish(false);
+        }
+    }
     use super::*;
     #[test]
     fn updates_write_partition_table_and_application_but_preserve_pairing_storage() {
