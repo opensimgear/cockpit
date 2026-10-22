@@ -1,0 +1,389 @@
+{
+  "valid": [
+    {
+      "formatVersion": 1,
+      "engine": "osg-widget-lvgl",
+      "engineVersion": 1,
+      "fontSet": "osg-portable-v1",
+      "textFormat": {
+        "fractionDigits": 4,
+        "magnitudeExclusive": "1e21",
+        "sourceUnits": 120,
+        "derivedUnits": 256
+      },
+      "features": [
+        "widget.v1",
+        "panel.v2",
+        "panel.v3",
+        "group.v1",
+        "interaction.none",
+        "interaction.momentary",
+        "interaction.toggle",
+        "interaction.selector",
+        "interaction.navigate",
+        "layer.rectangle",
+        "layer.ellipse",
+        "layer.line",
+        "layer.text",
+        "layer.image",
+        "layer.indicator",
+        "layer.gauge.horizontal",
+        "layer.gauge.vertical",
+        "layer.gauge.radial",
+        "font.sans",
+        "font.mono",
+        "legacy.button",
+        "legacy.indicator",
+        "legacy.text",
+        "legacy.numeric",
+        "legacy.gauge",
+        "legacy.image"
+      ],
+      "id": "esp32-lvgl-compact-v1",
+      "limits": {
+        "documentBytes": 16384,
+        "sceneBytes": 16384,
+        "totalLayers": 24,
+        "components": 8,
+        "jsonBytes": 98304,
+        "jsonNodes": 2048,
+        "replyBytes": 32768,
+        "fontSize": 48,
+        "lvglPoolBytes": 32768,
+        "drawRows": 4,
+        "widgets": 32,
+        "pages": 4,
+        "outputs": 32,
+        "definitions": 64,
+        "layersPerWidget": 32,
+        "portsPerWidget": 8,
+        "imageReferences": 32,
+        "imageWidth": 800,
+        "imageHeight": 800,
+        "imagePixels": 384000,
+        "imageBytes": 1228800,
+        "touchPixels": 44,
+        "pointers": 1,
+        "scale": 32,
+        "appBytes": 2097152,
+        "cacheBytes": 1966080
+      },
+      "firmwareVersion": "2026.10.22.3",
+      "boardProfile": "headless",
+      "screen": {
+        "width": 800,
+        "height": 480
+      }
+    },
+    {
+      "formatVersion": 1,
+      "engine": "osg-widget-lvgl",
+      "engineVersion": 1,
+      "fontSet": "osg-portable-v1",
+      "textFormat": {
+        "fractionDigits": 4,
+        "magnitudeExclusive": "1e21",
+        "sourceUnits": 120,
+        "derivedUnits": 256
+      },
+      "features": [
+        "widget.v1",
+        "panel.v2",
+        "panel.v3",
+        "group.v1",
+        "interaction.none",
+        "interaction.momentary",
+        "interaction.toggle",
+        "interaction.selector",
+        "interaction.navigate",
+        "layer.rectangle",
+        "layer.ellipse",
+        "layer.line",
+        "layer.text",
+        "layer.image",
+        "layer.indicator",
+        "layer.gauge.horizontal",
+        "layer.gauge.vertical",
+        "layer.gauge.radial",
+        "font.sans",
+        "font.mono",
+        "legacy.button",
+        "legacy.indicator",
+        "legacy.text",
+        "legacy.numeric",
+        "legacy.gauge",
+        "legacy.image"
+      ],
+      "id": "esp32-lvgl-psram-v1",
+      "limits": {
+        "documentBytes": 65536,
+        "sceneBytes": 196608,
+        "totalLayers": 128,
+        "components": 32,
+        "jsonBytes": 524288,
+        "jsonNodes": 4096,
+        "replyBytes": 196608,
+        "fontSize": 128,
+        "lvglPoolBytes": 98304,
+        "drawRows": 4,
+        "widgets": 32,
+        "pages": 4,
+        "outputs": 32,
+        "definitions": 64,
+        "layersPerWidget": 32,
+        "portsPerWidget": 8,
+        "imageReferences": 32,
+        "imageWidth": 800,
+        "imageHeight": 800,
+        "imagePixels": 384000,
+        "imageBytes": 1228800,
+        "touchPixels": 44,
+        "pointers": 1,
+        "scale": 32,
+        "appBytes": 2097152,
+        "cacheBytes": 1966080
+      },
+      "firmwareVersion": "2026.10.22.3",
+      "boardProfile": "headless",
+      "screen": {
+        "width": 800,
+        "height": 480
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "path": [
+        "engineVersion"
+      ],
+      "value": 2,
+      "valid": false
+    },
+    {
+      "path": [
+        "id"
+      ],
+      "value": "unknown",
+      "valid": false
+    },
+    {
+      "path": [
+        "fontSet"
+      ],
+      "value": "system-fonts",
+      "valid": false
+    },
+    {
+      "path": [
+        "screen",
+        "width"
+      ],
+      "value": 63,
+      "valid": false
+    },
+    {
+      "path": [
+        "screen",
+        "height"
+      ],
+      "value": 1025,
+      "valid": false
+    },
+    {
+      "path": [
+        "screen",
+        "width"
+      ],
+      "value": 64.5,
+      "valid": false
+    },
+    {
+      "path": [
+        "screen",
+        "width"
+      ],
+      "value": "800",
+      "valid": false
+    },
+    {
+      "path": [
+        "screen",
+        "extra"
+      ],
+      "value": 1,
+      "valid": false
+    },
+    {
+      "path": [
+        "screen"
+      ],
+      "value": [],
+      "valid": false
+    },
+    {
+      "path": [
+        "limits",
+        "fontSize"
+      ],
+      "value": 4096,
+      "valid": false
+    },
+    {
+      "path": [
+        "limits",
+        "extra"
+      ],
+      "value": 1,
+      "valid": false
+    },
+    {
+      "path": [
+        "limits"
+      ],
+      "value": null,
+      "valid": false
+    },
+    {
+      "path": [
+        "textFormat",
+        "magnitudeExclusive"
+      ],
+      "value": "1e308",
+      "valid": false
+    },
+    {
+      "path": [
+        "features"
+      ],
+      "value": [
+        "legacy.image",
+        "legacy.gauge",
+        "legacy.numeric",
+        "legacy.text",
+        "legacy.indicator",
+        "legacy.button",
+        "font.mono",
+        "font.sans",
+        "layer.gauge.radial",
+        "layer.gauge.vertical",
+        "layer.gauge.horizontal",
+        "layer.indicator",
+        "layer.image",
+        "layer.text",
+        "layer.line",
+        "layer.ellipse",
+        "layer.rectangle",
+        "interaction.navigate",
+        "interaction.selector",
+        "interaction.toggle",
+        "interaction.momentary",
+        "interaction.none",
+        "group.v1",
+        "panel.v3",
+        "panel.v2",
+        "widget.v1"
+      ],
+      "valid": true
+    },
+    {
+      "path": [
+        "features"
+      ],
+      "value": [
+        "panel.v2",
+        "panel.v3",
+        "group.v1",
+        "interaction.none",
+        "interaction.momentary",
+        "interaction.toggle",
+        "interaction.selector",
+        "interaction.navigate",
+        "layer.rectangle",
+        "layer.ellipse",
+        "layer.line",
+        "layer.text",
+        "layer.image",
+        "layer.indicator",
+        "layer.gauge.horizontal",
+        "layer.gauge.vertical",
+        "layer.gauge.radial",
+        "font.sans",
+        "font.mono",
+        "legacy.button",
+        "legacy.indicator",
+        "legacy.text",
+        "legacy.numeric",
+        "legacy.gauge",
+        "legacy.image",
+        "panel.v2"
+      ],
+      "valid": false
+    },
+    {
+      "path": [
+        "features"
+      ],
+      "value": [],
+      "valid": false
+    },
+    {
+      "path": [
+        "firmwareVersion"
+      ],
+      "value": "",
+      "valid": false
+    },
+    {
+      "path": [
+        "firmwareVersion"
+      ],
+      "value": "bad text",
+      "valid": false
+    },
+    {
+      "path": [
+        "firmwareVersion"
+      ],
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "valid": false
+    },
+    {
+      "path": [
+        "boardProfile"
+      ],
+      "value": "bad board",
+      "valid": false
+    },
+    {
+      "path": [
+        "token"
+      ],
+      "value": "credential",
+      "valid": false
+    },
+    {
+      "path": [
+        "screen"
+      ],
+      "value": {
+        "width": 64,
+        "height": 1024
+      },
+      "valid": true
+    },
+    {
+      "path": [
+        "firmwareVersion"
+      ],
+      "value": "local-build_1",
+      "valid": true
+    },
+    {
+      "path": [
+        "boardProfile"
+      ],
+      "value": "custom_board",
+      "valid": true
+    }
+  ]
+}

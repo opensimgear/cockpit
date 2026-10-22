@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "workspace.h"
 #include "esp_transport_ssl.h"
 #include "esp_transport_ws.h"
 #include "esp_timer.h"
@@ -46,7 +47,7 @@ void osg_socket_close(osg_socket *s){
     if(s->tls)esp_transport_destroy(s->tls);
     mbedtls_platform_zeroize(s,sizeof(*s));
 }
-char osg_transport_frame[OSG_FRAME_BYTES+1], osg_transport_reply[OSG_REPLY_BYTES];
+char osg_transport_frame[OSG_FRAME_BYTES+1];
 static bool transport_failure(osg_socket *s,const char *reason){s->request_error=reason;return false;}
 static bool receive_frame(osg_socket *s,size_t *length,int64_t deadline){
     size_t used=0,frame_used=0;int payload=0;bool fragmented=false;
@@ -78,18 +79,19 @@ static bool receive_frame(osg_socket *s,size_t *length,int64_t deadline){
 bool osg_socket_request(osg_socket *s,cJSON *request,cJSON **response,unsigned timeout){
     if(s->direct)return osg_serial_request(s,request,response,timeout);
     char outbound[4096];*response=NULL;s->request_error=NULL;
+    if(!osg_transport_storage_prepare()){cJSON_Delete(request);return transport_failure(s,"Cockpit reply workspace allocation failed");}
     const bool encoded=request&&cJSON_PrintPreallocated(request,outbound,sizeof(outbound),false);cJSON_Delete(request);
     if(!encoded){mbedtls_platform_zeroize(outbound,sizeof(outbound));return transport_failure(s,"Request exceeds WebSocket buffer");}
     const size_t bytes=strlen(outbound);
     const int sent=esp_transport_ws_send_raw(s->ws,WS_TRANSPORT_OPCODES_TEXT|WS_TRANSPORT_OPCODES_FIN,outbound,(int)bytes,500);
     mbedtls_platform_zeroize(outbound,sizeof(outbound));if(sent!=(int)bytes)return transport_failure(s,"Wi-Fi request write failed");
-    mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));
+    mbedtls_platform_zeroize(osg_transport_reply,osg_transport_reply_capacity);
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
-    osg_transfer transfer={.bytes=osg_transport_reply,.capacity=sizeof(osg_transport_reply)};
-    for(;;){size_t n=0;if(!receive_frame(s,&n,deadline)){mbedtls_platform_zeroize(osg_transport_frame,sizeof(osg_transport_frame));mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return false;}
+    osg_transfer transfer={.bytes=osg_transport_reply,.capacity=osg_transport_reply_capacity};
+    for(;;){size_t n=0;if(!receive_frame(s,&n,deadline)){mbedtls_platform_zeroize(osg_transport_frame,sizeof(osg_transport_frame));mbedtls_platform_zeroize(osg_transport_reply,osg_transport_reply_capacity);return false;}
         const int result=osg_reply_feed(&transfer,osg_transport_frame,n,osg_platform_crypto,response);
         mbedtls_platform_zeroize(osg_transport_frame,n);
-        if(result<0){mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return transport_failure(s,"Invalid Cockpit reply data or checksum");}
-        if(result==1){mbedtls_platform_zeroize(osg_transport_reply,sizeof(osg_transport_reply));return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));}
+        if(result<0){mbedtls_platform_zeroize(osg_transport_reply,osg_transport_reply_capacity);return transport_failure(s,"Invalid Cockpit reply data or checksum");}
+        if(result==1){mbedtls_platform_zeroize(osg_transport_reply,osg_transport_reply_capacity);return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));}
     }
 }

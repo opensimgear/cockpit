@@ -3,7 +3,7 @@ import type { DesignerDocument, DesignerWidget } from '@opensimgear/companion-de
 
 export interface PreviewChange { controlId: string; value: Value }
 export interface PreviewEvent { sequence: number; atMs: number; reason: string; changes: PreviewChange[] }
-export interface PreviewSnapshot { armed: boolean; activePointers: number; values: Record<string, Value>; events: PreviewEvent[]; reason: string }
+export interface PreviewSnapshot { armed: boolean; activePointers: number; pressedWidgetIds?: string[]; values: Record<string, Value>; events: PreviewEvent[]; reason: string }
 export interface PointerData { x?: number; y?: number; value?: number; direction?: -1 | 1 }
 interface Owner { widgetId: string; controlIds: string[] }
 interface Timer { next: number; high: boolean; pulseMs: number; periodMs: number; repeat: boolean; widgetId: string }
@@ -37,9 +37,18 @@ export function createPreviewController(initial: DesignerDocument, options: { cl
   const timers = new Map<string, Timer>();
   const events: PreviewEvent[] = [];
   const subscribers = new Set<(state: PreviewSnapshot) => void>();
+  const availability = new Map<string, boolean>();
   const controls = () => new Map(document.ui.controls.map(control => [control.id, control]));
-  const widget = (id: string) => document.presentation.widgets.find(item => item.id === id);
-  function snapshot(): PreviewSnapshot { return { armed, activePointers: pointers.size, values: { ...values }, events: events.map(event => ({ ...event, changes: event.changes.map(change => ({ ...change })) })), reason }; }
+  const widget = (id: string): DesignerWidget | undefined => {
+    const item = document.presentation.widgets.find(item => item.id === id);
+    if (item?.kind !== 'component') return item;
+    const definition = document.presentation.definitions?.find(d => d.id === item.config.definitionId && d.version === item.config.definitionVersion);
+    const interaction = definition?.interaction;
+    if (interaction?.kind === 'momentary' || interaction?.kind === 'toggle') return { ...item, kind: 'button', config: { buttonMode: interaction.kind, pulseMs: 0, repeatMs: 0 } };
+    if (interaction?.kind === 'selector') return { ...item, kind: 'selector', config: { options: interaction.options } };
+    return undefined;
+  };
+  function snapshot(): PreviewSnapshot { return { armed, activePointers: pointers.size, pressedWidgetIds: [...new Set([...pointers.values()].map(p => p.widgetId))], values: { ...values }, events: events.map(event => ({ ...event, changes: event.changes.map(change => ({ ...change })) })), reason }; }
   function notify() { const state = snapshot(); for (const callback of subscribers) callback(state); }
   function write(changes: PreviewChange[], cause: string, atMs = clock()) {
     const changed = changes.filter(change => values[change.controlId] !== change.value);
@@ -59,7 +68,7 @@ export function createPreviewController(initial: DesignerDocument, options: { cl
   }
   function arm() { disarm('New preview'); armed = true; lastTick = clock(); reason = 'Local preview'; notify(); return snapshot(); }
   function subscribe(callback: (state: PreviewSnapshot) => void) { subscribers.add(callback); callback(snapshot()); return () => { subscribers.delete(callback); }; }
-  function setDocument(next: DesignerDocument) { disarm('Document changed'); for (const key of Object.keys(values)) delete values[key]; document = next; initialize(); notify(); }
+  function setDocument(next: DesignerDocument) { disarm('Document changed'); availability.clear(); for (const key of Object.keys(values)) delete values[key]; document = next; initialize(); notify(); }
   function initialize() { for (const control of document.ui.controls) values[control.id] = fallbackValue(control); }
   initialize();
   function startPulse(controlId: string, item: DesignerWidget, pulseMs: number, periodMs: number, repeat: boolean) {
@@ -83,7 +92,7 @@ export function createPreviewController(initial: DesignerDocument, options: { cl
   }
   function begin(pointerId: number, widgetId: string, data: PointerData = {}): boolean {
     const item = widget(widgetId);
-    if (!armed || !item || !Number.isSafeInteger(pointerId) || pointers.has(pointerId) || pointers.size >= 32 || !item.controlIds.length) return false;
+    if (!armed || !item || availability.get(widgetId) === false || !Number.isSafeInteger(pointerId) || pointers.has(pointerId) || pointers.size >= 32 || !item.controlIds.length) return false;
     if ([...pointers.values()].some(owner => owner.controlIds.some(id => item.controlIds.includes(id)))) return false;
     const byId = controls();
     if (item.controlIds.some(id => !byId.has(id))) return false;
@@ -144,6 +153,15 @@ export function createPreviewController(initial: DesignerDocument, options: { cl
     for (const id of active) timers.delete(id);
     neutral(active, cause); reason = cause; notify();
   }
+  function setWidgetEnabled(widgetId: string, enabled: boolean) {
+    if ((availability.get(widgetId) ?? true) === enabled) return;
+    availability.set(widgetId, enabled);
+    if (!enabled) {
+      cancelWidget(widgetId, 'Widget unavailable');
+      neutral(widget(widgetId)?.controlIds ?? [], 'Widget unavailable');
+      notify();
+    }
+  }
   function tick(now = clock()) {
     if (!Number.isFinite(now) || now < lastTick) return;
     if (armed && timers.size && now - lastTick > 1000) { disarm('Preview timing gap'); lastTick = now; return; }
@@ -160,6 +178,6 @@ export function createPreviewController(initial: DesignerDocument, options: { cl
     }
     notify();
   }
-  return { arm, disarm, snapshot, subscribe, setDocument, begin, move, release, cancelWidget, tick };
+  return { arm, disarm, snapshot, subscribe, setDocument, begin, move, release, cancelWidget, setWidgetEnabled, tick };
 }
 export type PreviewController = ReturnType<typeof createPreviewController>;

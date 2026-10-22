@@ -7,17 +7,24 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: pnpm
+      - name: Link shared source packages for independent projection oracles
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Designer publication export compatibility and coverage
         run: node --experimental-test-coverage --test-coverage-include=apps/companion-esp32/tools/export-panel.mjs --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test apps/companion-esp32/test/export.test.mjs
       - name: Native network test dependency
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libssl-dev
       - name: Network protocol, live input, lease and provisioning checks
         run: |
+          node scripts/widget-profile-fixtures.mjs --check
+          node scripts/widget-compatibility-fixtures.mjs --check
           python3 apps/companion-esp32/test/network.py
           python3 apps/companion-esp32/test/storage.py
+          python3 apps/companion-esp32/test/workspace.py
           python3 apps/companion-esp32/test/serial.py
           python3 -m unittest discover -s apps/companion-esp32/test -p "provision_test.py" -v
       - name: Sunton shared-SPI display and touch fault injection
@@ -25,13 +32,49 @@ jobs:
       - name: Waveshare driver fault injection and coverage
         run: python3 apps/companion-esp32/test/waveshare.py
       - name: Native firmware sanitizers, coverage and preview
-        run: python3 apps/companion-esp32/test/run.py
+        run: |
+          node scripts/widget-input-fixtures.mjs --check
+          python3 apps/companion-esp32/test/run.py
+      - name: Locked LVGL shared-source states, partial buffers, failure recovery and coverage
+        run: |
+          node scripts/widget-draw-fixtures.mjs --check
+          python3 apps/companion-esp32/test/lvgl.py
+      - name: Bounded render content, binary structure and modeled power-cut recovery
+        run: |
+          python3 apps/companion-esp32/test/package.py
+          python3 apps/companion-esp32/test/content_store.py
+      - name: Portable widget source admission, immutable ownership and differential validation
+        run: |
+          node scripts/widget-source-fixtures.mjs --check
+          python3 apps/companion-esp32/test/widget_source.py
+          node scripts/widget-state-fixtures.mjs --check
+          python3 apps/companion-esp32/test/widget_state.py
+      - name: Complete portable panel identity, bindings, metadata and immutable candidate admission
+        run: |
+          node scripts/panel-source-fixtures.mjs --check
+          python3 apps/companion-esp32/test/panel_source.py
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-portable-evidence
           path: |
             .research/esp32-native/coverage.json
             .research/esp32-native/preview.png
+            .research/lvgl-native/coverage.json
+            .research/lvgl-native/widget-draw-coverage.json
+            .research/lvgl-native/panel-draw-coverage.json
+            .research/lvgl-native/*.png
+            .research/lvgl-native/software-client-smoke.json
+            .research/esp32-content-store-native/coverage.json
+            .research/esp32-content-store-native/content-store-test.log
+            .research/esp32-render-package-native/coverage.json
+            .research/esp32-render-package-native/package-test.log
+            .research/esp32-widget-source-native/coverage.json
+            .research/esp32-widget-source-native/widget-source-test.log
+            .research/esp32-widget-state-native/coverage.json
+            .research/esp32-widget-state-native/widget-state-test.log
+            .research/esp32-panel-source-native/coverage.json
+            .research/esp32-panel-source-native/scene-bank-coverage.json
+            .research/esp32-panel-source-native/panel-source-test.log
             .research/esp32-network/coverage.json
             .research/esp32-serial/coverage.json
             .research/esp32-network/*-test.log
@@ -47,13 +90,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Cross-build network firmware with headless display with pinned SDK
         run: |
-          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-${{ matrix.target }} -DIDF_TARGET=${{ matrix.target }} -DSDKCONFIG=build-${{ matrix.target }}/sdkconfig build
+          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-${{ matrix.target }} -DIDF_TARGET=${{ matrix.target }} -DSDKCONFIG=build-${{ matrix.target }}/sdkconfig build size size-components
       - uses: actions/upload-artifact@v4
         with:
           name: esp32-headless-${{ matrix.target }}
           path: |
             apps/companion-esp32/build-${{ matrix.target }}/*.bin
             apps/companion-esp32/build-${{ matrix.target }}/*.elf
+            apps/companion-esp32/build-${{ matrix.target }}/*.map
             apps/companion-esp32/build-${{ matrix.target }}/bootloader/*.bin
             apps/companion-esp32/build-${{ matrix.target }}/partition_table/*.bin
             apps/companion-esp32/build-${{ matrix.target }}/flasher_args.json
@@ -64,7 +108,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Cross-build Waveshare V1.2 display and touch firmware
         run: |
-          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-waveshare-lcd7 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-waveshare-lcd7/sdkconfig -DOSG_BOARD_PROFILE=waveshare-lcd7-s3 build
+          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-waveshare-lcd7 -DIDF_TARGET=esp32s3 -DSDKCONFIG=build-waveshare-lcd7/sdkconfig -DOSG_BOARD_PROFILE=waveshare-lcd7-s3 build size size-components
       - name: Stage firmware artifact for board verification
         run: python3 scripts/package-companion-firmware.py apps/companion-esp32/build-waveshare-lcd7
       - uses: actions/upload-artifact@v4
@@ -74,6 +118,7 @@ jobs:
             src-tauri/resources/firmware/waveshare-lcd7-s3/
             apps/companion-esp32/build-waveshare-lcd7/*.bin
             apps/companion-esp32/build-waveshare-lcd7/*.elf
+            apps/companion-esp32/build-waveshare-lcd7/*.map
             apps/companion-esp32/build-waveshare-lcd7/bootloader/*.bin
             apps/companion-esp32/build-waveshare-lcd7/partition_table/*.bin
             apps/companion-esp32/build-waveshare-lcd7/flasher_args.json
@@ -85,7 +130,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Cross-build Sunton 3.5-inch display and resistive touch firmware
         run: |
-          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-sunton-3248s035r -DIDF_TARGET=esp32 -DSDKCONFIG=build-sunton-3248s035r/sdkconfig -DOSG_BOARD_PROFILE=sunton-3248s035r build
+          docker run --rm -v "$PWD:/project" -w /project/apps/companion-esp32 espressif/idf:v5.5.2 idf.py -B build-sunton-3248s035r -DIDF_TARGET=esp32 -DSDKCONFIG=build-sunton-3248s035r/sdkconfig -DOSG_BOARD_PROFILE=sunton-3248s035r build size size-components
       - name: Stage firmware artifact for board verification
         run: python3 scripts/package-companion-firmware.py apps/companion-esp32/build-sunton-3248s035r
       - uses: actions/upload-artifact@v4
@@ -94,6 +139,7 @@ jobs:
           path: |
             src-tauri/resources/firmware/sunton-3248s035r/
             apps/companion-esp32/build-sunton-3248s035r/flasher_args.json
+            apps/companion-esp32/build-sunton-3248s035r/*.map
           if-no-files-found: error
   host-wire:
     runs-on: windows-2022

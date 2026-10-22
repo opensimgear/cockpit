@@ -96,7 +96,10 @@ fn operator(h: &Hub, value: Value) -> Value {
     h.command(&value).unwrap()
 }
 fn paired(h: &Hub, companion: &str) -> String {
-    let offer = operator(h, json!({"command":"companion_pair_offer"}));
+    paired_kind(h,companion,"desktop")
+}
+fn paired_kind(h:&Hub,companion:&str,kind:&str)->String{
+    let offer = operator(h, json!({"command":"companion_pair_offer","kind":kind}));
     let secret = offer["secret"].as_str().unwrap();
     let request = wire(
         h,
@@ -114,6 +117,50 @@ fn paired(h: &Hub, companion: &str) -> String {
         json!({"type":"pair-status","secret":secret,"requestId":request["requestId"]}),
     );
     reply["token"].as_str().unwrap().to_owned()
+}
+#[test]
+fn renderer_reports_follow_authenticated_connections_and_never_grant_input(){
+    let hub=Hub::new("host".into(),Arc::new(NullSourceSink));let token=paired_kind(&hub,"screen","esp32");
+    let profile=crate::render_profile::test_profile(true);
+    let request=json!({"type":"auth","token":token,"renderProfile":profile});
+    assert_eq!(wire(&hub,"one",request.clone())["ok"],true);
+    assert_eq!(hub.render_profile("screen").unwrap(),Some(profile.clone()));
+    let status=operator(&hub,json!({"command":"companion_status"}));
+    assert_eq!(status["clients"][0]["renderProfile"],profile);assert_eq!(status["instances"],json!([]));
+    let mut conflicting=request.clone();conflicting["renderProfile"]["screen"]["width"]=json!(480);
+    assert_eq!(wire(&hub,"two",conflicting)["ok"],true);assert!(hub.render_profile("screen").is_err());
+    hub.disconnect_connection("two",hub.now_ms());assert_eq!(hub.render_profile("screen").unwrap(),Some(profile.clone()));
+    hub.disconnect_connection("one",hub.now_ms());assert!(hub.render_profile("screen").unwrap().is_none());
+    let mut invalid=request.clone();invalid["renderProfile"]["limits"]["fontSize"]=json!(4096);
+    assert_eq!(wire(&hub,"bad",invalid)["ok"],false);assert!(hub.render_profile("screen").unwrap().is_none());
+    assert_eq!(wire(&hub,"one",request.clone())["ok"],true);
+    assert_eq!(wire(&hub,"two",json!({"type":"auth","token":token}))["ok"],true);assert!(hub.render_profile("screen").is_err());
+    operator(&hub,json!({"command":"companion_revoke","companionId":"screen"}));assert!(hub.render_profile("screen").is_err());
+    // Renderer metadata cannot promote a legacy installation's kind or grant
+    // source ownership; unknown/desktop credentials remain backward compatible.
+    let desktop=paired(&hub,"legacy");assert_eq!(wire(&hub,"desktop",json!({"type":"auth","token":desktop,"renderProfile":profile}))["ok"],true);
+    let status=operator(&hub,json!({"command":"companion_status"}));assert_eq!(status["clients"][0]["kind"],"desktop");assert_eq!(status["instances"],json!([]));
+}
+#[test]
+fn source_open_checks_this_connections_renderer_before_creating_a_session(){
+    let fixtures:Value=serde_json::from_str(include_str!("../../../apps/companion-esp32/test/widget-compatibility.json")).unwrap();
+    let item=fixtures["cases"].as_array().unwrap().iter().find(|item|item["name"]=="rich catalog").unwrap();
+    let canonical=item["canonicalDocument"].as_str().unwrap().to_owned();
+    let hub=Hub::new("host".into(),Arc::new(NullSourceSink));let token=paired_kind(&hub,"screen","esp32");
+    let publication=publish(&hub,PublicationUpload{publication_hash:format!("sha256:{}",crate::publication::hash(canonical.as_bytes())),canonical_document:canonical,capability_fingerprint:None,assets:vec![]});
+    assign(&hub,"screen","panel",&publication.publication_hash);
+    let auth=|connection:&str,profile:Value|wire(&hub,connection,json!({"type":"auth","token":token,"renderProfile":profile}));
+    assert_eq!(auth("compact",crate::render_profile::test_profile(false))["ok"],true);
+    let failed=wire(&hub,"compact",json!({"type":"open","instanceId":"panel"}));assert_eq!(failed["ok"],false);assert!(failed["error"].as_str().unwrap().contains("documentBytes"));
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["instances"][0]["connected"],false);hub.disconnect_connection("compact",hub.now_ms());
+    assert_eq!(wire(&hub,"legacy",json!({"type":"auth","token":token}))["ok"],true);
+    assert_eq!(wire(&hub,"legacy",json!({"type":"open","instanceId":"panel"}))["ok"],false);assert_eq!(operator(&hub,json!({"command":"companion_status"}))["instances"][0]["connected"],false);
+    assert_eq!(auth("rich",crate::render_profile::test_profile(true))["ok"],true);
+    assert_eq!(wire(&hub,"rich",json!({"type":"open","instanceId":"panel"}))["ok"],false); // mixed missing report
+    hub.disconnect_connection("legacy",hub.now_ms());
+    assert_eq!(wire(&hub,"rich",json!({"type":"open","instanceId":"panel"}))["ok"],true);
+    let status=operator(&hub,json!({"command":"companion_status"}));assert_eq!(status["instances"][0]["connected"],true);assert_eq!(status["instances"][0]["armed"],false);
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["instances"][0]["publicationHash"],publication.publication_hash);
 }
 fn publish(h: &Hub, p: PublicationUpload) -> Publication {
     let result = Publication::validate(p.clone()).unwrap();
@@ -998,4 +1045,16 @@ fn device_images_are_external_sized_and_bound_to_the_authenticated_session(){
     assert_eq!(base64::engine::general_purpose::STANDARD.decode(reply["base64"].as_str().unwrap()).unwrap(),vec![224,7,255].repeat(6));
     assert_eq!(wire(&h,"other-link",request.clone())["ok"],false);
     request["generation"]=json!("2");assert_eq!(wire(&h,"screen-link",request)["ok"],false);
+}
+
+#[test]
+fn portable_image_layer_requests_keep_existing_session_and_input_authority_checks(){
+    let h=Hub::new("host".into(),Arc::new(Sink::default()));let token=paired(&h,"screen");let p=publish(&h,crate::publication::image_tests::portable_artwork_upload());assign(&h,"screen","instance",&p.publication_hash);
+    let open=connect(&h,"screen-link",&token,"instance");let mut request=frame(&open,"image-chunk","0");request.as_object_mut().unwrap().remove("sequence");
+    request["widgetId"]=json!("widget-0");request["layerId"]=json!("artwork");request["width"]=json!(2);request["height"]=json!(3);request["offset"]=json!(0);
+    let reply=wire(&h,"screen-link",request.clone());assert_eq!(reply["ok"],true,"{reply}");assert_eq!(reply["layerId"],"artwork");assert_eq!(reply["total"],18);
+    assert_eq!(wire(&h,"other-link",request.clone())["ok"],false);
+    for (key,value) in [("layerId",json!(null)),("layerId",json!("label")),("layerId",json!("missing")),("widgetId",json!("widget-1")),("generation",json!("2")),("publicationHash",json!("sha256:0000000000000000000000000000000000000000000000000000000000000000"))] { let mut bad=request.clone();bad[key]=value;assert_eq!(wire(&h,"screen-link",bad)["ok"],false); }
+    assert_eq!(baseline(&h,"screen-link",&open,&p)["ok"],true);
+    assert_eq!(wire(&h,"screen-link",request)["ok"],false,"Artwork must not bypass the armed-session restriction");
 }

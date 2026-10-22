@@ -281,6 +281,7 @@ int main(int argc, char **argv) {
     }
     image_test();partial_render_test();
     validation(); input(); feedback(); bridge_test();
+    extern void component_tests(void); component_tests();
     for (int i = 0; i < 3; i++) { spy s; osg_runtime *r = setup(&s, i == 0 ? 800 : i == 1 ? 320 : 480, i == 0 ? 480 : i == 1 ? 240 : 800); osg_render(r, 0); assert(s.draws && s.texts); }
     preview(argc > 1 ? argv[1] : NULL, 800, 480,OSG_SCREEN_PANEL); preview(NULL, 320, 240,OSG_SCREEN_PANEL); preview(NULL, 480, 800,OSG_SCREEN_PANEL);
     for(int screen=OSG_SCREEN_UNPAIRED;screen<=OSG_SCREEN_ERROR;screen++){

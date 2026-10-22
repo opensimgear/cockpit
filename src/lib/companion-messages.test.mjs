@@ -2,6 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { companionMessages } from './companion-messages.ts';
 
+test('conflicting renderer reports surface without claiming a panel or transport',()=>{
+  assert.deepEqual(companionMessages({}, {renderProfileError:'Active connections report conflicting renderer profiles.',connectionStatus:'Loading panel'}),[
+    {source:'connection',kind:'error',message:'Active connections report conflicting renderer profiles.'},
+  ]);
+});
+
+test('portable panel diagnostics identify the instance layer and exact target budget',()=>{
+  const operation={instanceId:'panel',publicationHash:'hash',phase:'failed',errorCode:'panel-budget',retryable:false,message:'Panel font limit',diagnostic:{widget:'master-widget',definition:'button',layer:'caption',field:'fontSize',required:128,available:48}};
+  const message=companionMessages({}, {operation})[0];
+  assert.equal(message.kind,'error');assert.match(message.message,/master-widget \/ caption \/ fontSize: 128 required, 48 available/);
+  operation.diagnostic.widget='';assert.match(companionMessages({}, {operation})[0].message,/button \/ caption/);
+});
+
 test('panel failure is an error with its complete native text and replaces the duplicate connection status', () => {
   const detail = 'Panel image could not be loaded · checksum mismatch\nReconnect USB to retry.';
   const state = { firmwareVersion: '2.0', firmware: { screen: { version: '1.0' } } };

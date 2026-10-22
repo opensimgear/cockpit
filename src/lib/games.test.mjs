@@ -8,14 +8,17 @@ const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,g
 const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
-test('native executable display paths retain platform identity while making Windows prefixes readable',()=>{
- const display=games.gameDisplayPath;
- for(const value of [undefined,null,''])assert.equal(display(value),'');
- assert.equal(display('C:/Games/DCS/bin/DCS.exe'),'C:\\Games\\DCS\\bin\\DCS.exe');
- assert.equal(display(String.raw`\\?\C:\Games\DCS.exe`),String.raw`C:\Games\DCS.exe`);
- assert.equal(display(String.raw`\\?\UNC\server\Games/DCS.exe`),String.raw`\\server\Games\DCS.exe`);
- assert.equal(display('/home/pilot/Games/DCS.exe'),'/home/pilot/Games/DCS.exe');
- const opaque=String.raw`\\?\Volume{native-volume}\DCS.exe`;assert.equal(display(opaque),opaque);
+test('game paths display Windows drive and UNC installations without changing Unix or device paths',()=>{
+ for(const [input,expected] of [
+  [undefined,''],[null,''],['',''],
+  ['C:/Games/DCS/bin/DCS.exe',String.raw`C:\Games\DCS\bin\DCS.exe`],
+  [String.raw`\\?\C:\Games\acs.exe`,String.raw`C:\Games\acs.exe`],
+  [String.raw`\\?\UNC\server\Games\acs.exe`,String.raw`\\server\Games\acs.exe`],
+  [String.raw`\\?\unc\server\Games\acs.exe`,String.raw`\\server\Games\acs.exe`],
+  [String.raw`\\server/Games/acs.exe`,String.raw`\\server\Games\acs.exe`],
+  ['/home/pilot/X-Plane/X-Plane','/home/pilot/X-Plane/X-Plane'],
+  [String.raw`\\?\Volume{fixture}\game.exe`,String.raw`\\?\Volume{fixture}\game.exe`],
+ ])assert.equal(games.gameDisplayPath(input),expected);
 });
 
 test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{

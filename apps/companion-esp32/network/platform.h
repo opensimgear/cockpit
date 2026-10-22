@@ -1,6 +1,7 @@
 #ifndef OSG_PLATFORM_H
 #define OSG_PLATFORM_H
 #include "settings.h"
+#include "workspace.h"
 #include "pixel_cache.h"
 #include "esp_transport.h"
 #include "freertos/FreeRTOS.h"
@@ -11,6 +12,9 @@ bool osg_trusted_ca(const osg_settings *, unsigned char *, size_t, size_t *);
 bool osg_socket_open(osg_socket *,const osg_settings *);
 void osg_socket_close(osg_socket *);
 bool osg_socket_request(osg_socket *, cJSON *, cJSON **, unsigned timeout_ms);
+/* One network-task owner; retained for its process lifetime. Frame size stays
+ * unchanged. Reply assembly may use a larger PSRAM workspace on rich boards. */
+extern char osg_transport_frame[OSG_FRAME_BYTES+1];
 bool osg_serial_open(osg_socket *);
 void osg_serial_close(osg_socket *);
 bool osg_serial_request(osg_socket *,cJSON *,cJSON **,unsigned);

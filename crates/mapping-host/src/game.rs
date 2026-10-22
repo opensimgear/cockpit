@@ -639,13 +639,8 @@ mod tests {
     #[test]
     fn independent_optional_requirements_fail_before_taking_ownership() {
         let (mut s, _root, c) = setup();
-        // Exercise the unqualified fixture regardless of the host's supported
-        // backend. Production Windows qualification remains unchanged.
+        // Exercise the unqualified backend independently of the host OS default.
         s.qualified = false;
-        s.game_visibility = Arc::new(|operation, _| {
-            assert_eq!(operation, "preflight");
-            Err("Captured device visibility is not qualified in this fixture.".into())
-        });
         let mut virtual_only = c.clone();
         virtual_only["profile"]["requirements"]["virtualDevices"] = json!(true);
         let bindings=c["profile"]["targets"].as_array().unwrap().iter().enumerate().map(|(i,t)|json!({"target":t["id"],"slot":i+1,"axes":if i==0{vec![48]}else{vec![]},"layout":t["layout"]})).collect::<Vec<_>>();
@@ -658,10 +653,14 @@ mod tests {
         hiding["profile"]["requirements"]["deviceHiding"] = json!(true);
         assert!(Capture::parse(&hiding).is_err());
         hiding["visibility"] = json!({"mode":"linux-grab","sourceIds":["physical"]});
-        assert!(s
-            .game_preflight(&hiding)
-            .unwrap_err()
-            .contains("visibility is not qualified"));
+        let visibility_error = s.game_preflight(&hiding).unwrap_err();
+        // Windows exposes the qualified adapter but still requires local opt-in.
+        // Other hosts must reject the unavailable adapter before any inspection.
+        assert!(visibility_error.contains(if cfg!(windows) {
+            "Enable optional visibility explicitly"
+        } else {
+            "visibility is not qualified"
+        }), "{visibility_error}");
         hiding["visibility"]["mode"] = json!("global");
         assert!(Capture::parse(&hiding).is_err());
         assert!(s.game_lease.lock().unwrap().is_none());

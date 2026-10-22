@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { exportPanel, main } from '../tools/export-panel.mjs';
 import { normalizeToPortableUi, canonical } from '../../../packages/companion-designer/src/model.ts';
 import { publishDocument } from '../../../packages/companion-designer/src/assets.ts';
+import { applyDesignerCommand, createDesignerHistory } from '../../../packages/companion-designer/src/editor.ts';
 const source = await readFile(new URL('./panel.bundle.json', import.meta.url), 'utf8');
 const change = mutate => { const b = JSON.parse(source); mutate(b.document, b); b.document.ui = normalizeToPortableUi(b.document); return JSON.stringify(b); };
 test('shared designer publication keeps source identity, channels, pages and immutable output', async () => {
@@ -16,7 +17,7 @@ test('shared designer publication keeps source identity, channels, pages and imm
   assert.equal(live.canonicalDocument, canonical(publication.document));
   assert.equal(live.publicationHash, publication.publicationHash);
   assert.equal(live.capabilityFingerprint, publication.capabilityFingerprint);
-  assert.equal(result.header, (await readFile(new URL('./panel.h', import.meta.url), 'utf8')).replaceAll('\r\n','\n'));
+  assert.equal(result.header, (await readFile(new URL('./panel.h', import.meta.url), 'utf8')).replaceAll('\r\n', '\n'));
   assert.match(result.header, /radio-channel/); assert.match(result.header, /master/);
   assert.match((await exportPanel(source, { width: 320, height: 240 })).header, /OSG_GAUGE/);
   assert.match((await exportPanel(source, { width: 480, height: 800 })).header, /OSG_NUMERIC/);
@@ -35,8 +36,12 @@ test('strict designer validation, target budgets and capabilities reject unsuppo
     d.presentation.widgets[1].kind = 'icon'; d.presentation.widgets[1].config = {symbol:'power'};
   })), /unsupported widget/);
   await assert.rejects(exportPanel(change(d => {
-    // Keep every page publishable so this reaches the firmware's page budget.
-    for (let i=2;i<5;i++) {d.ui.pages.push({id:'page-'+i,title:'Page '+i,items:[]});d.presentation.viewports.push({pageId:'page-'+i,width:800,height:480});d.presentation.widgets[i-1].pageId='page-'+i;}
+    let history = createDesignerHistory(d);
+    for (let i = 2; i < 5; i++) {
+      history = applyDesignerCommand(history, { type: 'add-page', title: 'Page ' + i });
+      history = applyDesignerCommand(history, { type: 'add-widget', kind: 'text', pageId: history.present.ui.pages.at(-1).id });
+    }
+    Object.assign(d, history.present);
   })), /budget/);
 });
 test('supported styles, safe insets and text affixes retain source publication changes', async () => {

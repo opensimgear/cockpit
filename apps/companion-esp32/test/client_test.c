@@ -64,7 +64,7 @@ bool osg_store_load(osg_settings *s){if(load_ok)*s=saved_settings;return load_ok
 static unsigned forgets;
 bool osg_store_forget(void){forgets++;return store_ok;}
 static struct {char hash[72];unsigned width,height,pins;size_t bytes,written;bool complete;unsigned char *pixels;} pixel_store[128];
-static bool cache_fail,write_fail,finish_fail,image_request_ok=true;
+static bool cache_fail,write_fail,finish_fail,image_request_ok=true,wrong_image_layer;
 static const char *pixel_error="cache_io";
 static unsigned chunk_requests;
 void osg_pixels_panel_release(unsigned owner){for(unsigned i=0;i<128;i++){pixel_store[i].pins&=~(1u<<owner);if(!pixel_store[i].pins&&!pixel_store[i].complete){free(pixel_store[i].pixels);memset(&pixel_store[i],0,sizeof(pixel_store[i]));}}}
@@ -98,6 +98,10 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
     if(!strcmp(type,"pair")||(!strcmp(type,"pair-status")&&!approved_now)){
         cJSON_AddStringToObject(*out,"type","pair-pending");cJSON_AddStringToObject(*out,"requestId","request");
     }else if(!strcmp(type,"pair-status")||!strcmp(type,"auth")){
+        if(!strcmp(type,"auth")){
+            const cJSON *profile=cJSON_GetObjectItemCaseSensitive(v,"renderProfile");assert(profile&&cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(profile,"engineVersion"))==1);
+            assert(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(profile,"limits"),"sceneBytes"))==osg_render_profile_limits()->scene_bytes);
+        }
         cJSON_AddStringToObject(*out,"type",!strcmp(type,"auth")?"authenticated":"paired");
         cJSON_AddStringToObject(*out,"hostId",wrong_identity?"wrong-host":"host");cJSON_AddStringToObject(*out,"companionId",settings.companion);
         if(!strcmp(type,"pair-status"))cJSON_AddStringToObject(*out,"token","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
@@ -115,6 +119,7 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         size_t width=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"width")),height=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"height")),offset=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"offset")),total=width*height*3,count=total-offset;if(count>6144)count=6144;
         unsigned char pixels[6144];memset(pixels,255,count);unsigned char encoded[8193];EVP_EncodeBlock(encoded,pixels,(int)count);
         cJSON_AddStringToObject(*out,"type","image-chunk");cJSON_AddStringToObject(*out,"widgetId",osg_string(v,"widgetId"));cJSON_AddStringToObject(*out,"publicationHash",session.publication);cJSON_AddNumberToObject(*out,"width",(double)width);cJSON_AddNumberToObject(*out,"height",(double)height);cJSON_AddNumberToObject(*out,"offset",(double)offset);cJSON_AddNumberToObject(*out,"total",(double)total);cJSON_AddStringToObject(*out,"base64",(char *)encoded);
+        if(osg_string(v,"layerId"))cJSON_AddStringToObject(*out,"layerId",wrong_image_layer?"other-layer":osg_string(v,"layerId"));
     }else if(!strcmp(type,"heartbeat")||!strcmp(type,"baseline")||!strcmp(type,"input")||!strcmp(type,"close")){
         if(!strcmp(type,"baseline")){baseline_requests++;assert(!mock_host_armed);assert(!strcmp(osg_string(v,"sequence"),"0"));cJSON *values=cJSON_GetObjectItemCaseSensitive(v,"values");assert(cJSON_IsObject(values)&&cJSON_GetArraySize(values)==1&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(values,"master")));mock_host_armed=true;mock_button=false;if(touch_during_baseline){osg_network_touch(true,true,100,100);osg_network_touch(true,false,0,0);}}
         if(!strcmp(type,"baseline")&&serial_during_baseline)mock_serial_input="{\"command\":\"stop\"}\n";
@@ -128,6 +133,13 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
 }
 static void fill(void *p,int x,int y,int w,int h,uint16_t c){(void)p;(void)x;(void)y;(void)w;(void)h;(void)c;}
 static void label(void *p,int x,int y,int w,int h,const char *s,uint16_t c){(void)s;fill(p,x,y,w,h,c);}
+/* This protocol harness checks the display-task handoff; real font/pixel
+ * preflight is exercised by panel_draw_test against the same admitted model. */
+static void checked_advance(void){
+    advance();
+    if(state==PREPARING){osg_scene_ticket ticket;assert(osg_network_candidate_begin(&ticket));osg_network_candidate_finish(ticket,true,NULL);advance();}
+}
+#define advance() checked_advance()
 static void cmd(const char *json){cJSON *v=osg_json_parse(json,strlen(json));assert(v);command(v);cJSON_Delete(v);}
 static void setup(void){
     stop();memset(&settings,0,sizeof(settings));osg_copy(settings.host,sizeof(settings.host),"host");osg_copy(settings.companion,sizeof(settings.companion),"screen");
@@ -138,6 +150,7 @@ static void setup(void){
 static void live_ready(void){
     setup();state=AUTH;osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     advance();assert(state==OPEN);advance();assert(state==LIVE&&!remote_armed&&!test_runtime.armed);
+    assert(osg_set_page(&test_runtime,0));osg_input_bind(&input,&test_runtime,true,fake_ms);bound_page=0;
     assert(!strcmp(operation.phase,"rendering")&&!strcmp(operation.instance,"instance")&&!strcmp(operation.session,session.session));
     osg_network_render(test_runtime.panel,true,true);osg_network_touch(true,false,0,0);
 }
@@ -158,7 +171,8 @@ static void live_input_tests(void){
     assert(input_requests==sent);fake_ms+=20;osg_network_touch(true,false,0,0);advance();assert(!mock_button);
     int closed=close_requests;cmd("{\"command\":\"disarm\"}");assert(state==OFF&&!mock_host_armed&&!test_runtime.armed&&close_requests==closed+1);
     cmd("{\"command\":\"connect\",\"instanceId\":\"instance\"}");advance();advance();assert(state==LIVE&&!test_runtime.armed);cmd(stale);assert(!test_runtime.armed);
-    live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);advance();assert(mock_button);cmd("{\"command\":\"page\",\"page\":1}");assert(state==OFF&&!mock_button&&!mock_host_armed&&test_runtime.page==1);
+    live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);advance();assert(mock_button);cmd("{\"command\":\"page\",\"page\":1}");assert(state==AUTH&&!mock_button&&!mock_host_armed&&test_runtime.page==1);
+    advance();advance();assert(state==LIVE&&test_runtime.page==1&&!test_runtime.armed&&!remote_armed);
     live_ready();live_arm();fake_ms++;osg_network_touch(true,true,100,100);advance();assert(mock_button);osg_network_touch(true,true,-1,-1);assert(!test_runtime.armed);advance();assert(state==FAULT&&!mock_button);
     live_ready();live_arm();sent=input_requests;for(int i=0;i<33;i++){fake_ms++;osg_network_touch(true,true,100,100);osg_network_touch(true,false,0,0);}assert(input.mode==OSG_INPUT_BLOCKED);advance();assert(state==FAULT&&input_requests==sent&&!mock_host_armed);
     live_ready();live_arm();sent=input_requests;fake_ms++;osg_network_touch(true,true,100,100);fake_ms+=250;osg_network_touch(true,true,100,100);advance();advance();assert(state==FAULT&&input_requests==sent);
@@ -193,7 +207,7 @@ static void idle_assignment_screen_tests(void){
     }
     assert(baseline_requests==baseline_before&&input_requests==input_before);
     assigned_now=true;fake_ms=next_request;advance();update_screen();
-    assert(state==OPEN&&test_runtime.screen==OSG_SCREEN_LOADING);
+    assert(state==OPEN&&test_runtime.screen==OSG_SCREEN_PANEL&&test_runtime.screen_message[0]);
     advance();update_screen();assert(state==LIVE&&test_runtime.screen==OSG_SCREEN_PANEL&&!test_runtime.armed);
     for(unsigned fault=0;fault<3;fault++){
         setup();state=AUTH;assigned_now=false;
@@ -211,10 +225,101 @@ static void idle_assignment_screen_tests(void){
     }
     stop();
 }
+static void portable_image_tests(const unsigned char *protected_pixels,int protected_asset){
+    const char *a="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",*c="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",*d="sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    osg_scene candidate={0};candidate.panel=osg_demo_panel;candidate.panel.pages=candidate.pages;candidate.panel.widgets=candidate.widgets;candidate.panel.widget_count=2;candidate.panel.page_count=1;candidate.pages[0]=osg_demo_pages[0];
+    candidate.widgets[0]=osg_demo_widgets[0];candidate.widgets[0].kind=OSG_COMPONENT;
+    candidate.widgets[1]=osg_demo_widgets[0];candidate.widgets[1].kind=OSG_IMAGE;candidate.widgets[1].id="legacy-alias";candidate.image_hashes[1]=a;
+    osg_bound_bitmap bitmaps[3]={{.layer_id="artwork",.asset_id="art",.hash=a,.bounds={0,0,1,1}},{.layer_id="small-artwork",.asset_id="art",.hash=a,.bounds={0,0,.5,.5}},{.layer_id="other-artwork",.asset_id="other-art",.hash=c,.bounds={0,0,1,1}}};
+    osg_widget_binding binding={.bitmaps=bitmaps,.bitmap_count=3};candidate.widgets[0].component=&binding;
+    unsigned downloaded=chunk_requests;const int baselines=baseline_requests,inputs=input_requests;
+    assert(load_images(&candidate,0));assert(chunk_requests>downloaded&&operation.hits==1&&operation.misses==2&&operation.completed==operation.total);
+    assert(bitmaps[0].pixels==protected_pixels&&candidate.widgets[1].pixels==protected_pixels);
+    assert(bitmaps[0].width==360&&bitmaps[0].height==182&&bitmaps[1].width==180&&bitmaps[1].height==91&&bitmaps[2].pixels);
+    assert(pixel_store[protected_asset].pins==3&&protected_pixels[0]==255);
+    downloaded=chunk_requests;assert(load_images(&candidate,0));assert(chunk_requests==downloaded&&operation.hits==3&&operation.misses==0);
+    bitmaps[1].hash=d;wrong_image_layer=true;assert(!load_images(&candidate,0));assert(!strcmp(operation.error,"image-download-invalid")&&pixel_store[protected_asset].pins==2&&protected_pixels[0]==255);wrong_image_layer=false;
+    serial_during_image=true;assert(!load_images(&candidate,0)&&load_interrupted&&interrupted_command);serial_during_image=false;cJSON_Delete(interrupted_command);interrupted_command=NULL;
+    assert(pixel_store[protected_asset].pins==2&&protected_pixels[0]==255);
+    assert(load_images(&candidate,0));assert(bitmaps[1].pixels&&operation.completed==operation.total);
+    candidate.widgets[0].component=NULL;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));candidate.widgets[0].component=&binding;
+    binding.bitmaps=NULL;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));binding.bitmaps=bitmaps;
+    binding.bitmap_count=33;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-count"));binding.bitmap_count=3;
+    bitmaps[0].layer_id="bad:id";assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));bitmaps[0].layer_id="artwork";
+    const double invalid[]={NAN,INFINITY,-1,2};
+    for(unsigned i=0;i<4;i++){bitmaps[0].bounds.width=invalid[i];assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));bitmaps[0].bounds.width=1;bitmaps[0].bounds.height=invalid[i];assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));bitmaps[0].bounds.height=1;}
+    bitmaps[0].bounds.width=0;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-dimensions"));bitmaps[0].bounds.width=1;
+    bitmaps[0].hash="bad";assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-identity"));bitmaps[0].hash=a;
+    osg_bound_bitmap many[32];char layer_ids[32][16];for(unsigned i=0;i<32;i++){snprintf(layer_ids[i],sizeof(layer_ids[i]),"art-%u",i);many[i]=bitmaps[0];many[i].layer_id=layer_ids[i];}
+    binding.bitmaps=many;binding.bitmap_count=32;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-count"));binding.bitmaps=bitmaps;binding.bitmap_count=2;
+    candidate.panel.widget_count=1;candidate.widgets[0].bounds=(osg_bounds){0,0,1,1};bitmaps[1].bounds=(osg_bounds){0,0,1,1};bitmaps[1].hash=d;
+    assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-budget"));
+    assert(pixel_store[protected_asset].pins==2&&protected_pixels[0]==255&&baseline_requests==baselines&&input_requests==inputs);
+}
+static void candidate_handoff_tests(void){
+    live_ready();assert(osg_set_page(&test_runtime,1));bound_page=1;
+    const osg_panel *old=test_runtime.panel;const unsigned active=banks.active;const size_t bytes=banks.slots[active].arena.used;
+    unsigned char *snapshot=malloc(bytes);assert(snapshot);memcpy(snapshot,banks.slots[active].arena.data,bytes);
+    stop();state=AUTH;next_request=fake_ms;advance();assert(state==OPEN);
+    (advance)();assert(state==PREPARING&&test_runtime.panel==old&&!test_runtime.connected&&!remote_armed&&!strcmp(operation.phase,"checking-cache"));
+    osg_scene_ticket ticket;assert(!osg_network_candidate_begin(NULL));const osg_panel *pending_panel=osg_network_candidate_begin(&ticket);assert(pending_panel&&test_drawing==pending_panel);
+    osg_scene_ticket ignored;assert(!osg_network_candidate_begin(&ignored));
+    osg_scene_ticket wrong=ticket;wrong.generation++;osg_network_candidate_finish(wrong,true,NULL);assert(test_drawing==pending_panel&&!candidate_finished);
+    int baselines=baseline_requests;(advance)();assert(state==PREPARING&&baseline_requests==baselines&&!candidate_finished);
+    stop();assert(!candidate_pending&&test_drawing==pending_panel&&!test_runtime.armed);
+    cmd("{\"command\":\"connect\"}");advance();assert(state==OPEN);int before=requests;(advance)();assert(state==OPEN&&requests==before);
+    osg_network_candidate_finish(ticket,true,NULL);assert(!test_drawing&&!candidate_finished);
+    (advance)();assert(state==PREPARING);osg_scene_ticket newer;assert(osg_network_candidate_begin(&newer)&&newer.generation>ticket.generation);
+    osg_network_candidate_finish(ticket,true,NULL);assert(test_drawing&&candidate_pending&&!candidate_finished);
+    osg_panel_source_diagnostic rejected={.code=OSG_PANEL_SOURCE_BUDGET,.required=128,.available=48};strcpy(rejected.widget,"master-widget");strcpy(rejected.layer,"caption");strcpy(rejected.field,"fontSize");
+    osg_network_candidate_finish(newer,false,&rejected);memset(&rejected,0,sizeof(rejected));(advance)();update_screen();
+    assert(state==PANEL_ERROR&&test_runtime.panel==old&&!test_runtime.armed&&test_runtime.screen==OSG_SCREEN_PANEL);
+    assert(!strcmp(operation.diagnostic.field,"fontSize")&&operation.diagnostic.required==128&&operation.diagnostic.available==48);
+    assert(!memcmp(snapshot,banks.slots[active].arena.data,bytes)&&baseline_requests==baselines);free(snapshot);
+    cmd("{\"command\":\"connect\"}");advance();advance();assert(state==LIVE&&test_runtime.page==1&&!test_runtime.armed&&!remote_armed&&!input.display_ready);
+    const size_t capacity=banks.memory.bytes;banks.memory.bytes=1;old=test_runtime.panel;
+    cmd("{\"command\":\"connect\"}");advance();advance();assert(state==PANEL_ERROR&&test_runtime.panel==old&&operation.diagnostic.code==OSG_PANEL_SOURCE_BUDGET);
+    assert(operation.diagnostic.required>operation.diagnostic.available);banks.memory.bytes=capacity;
+    cmd("{\"command\":\"connect\"}");advance();advance();assert(state==LIVE&&!test_runtime.armed);
+    puts("Candidate handoff: cancellation/read fences, stale completions, heartbeats, owned diagnostics, active-byte preservation, budget failure and stable-page recovery passed");
+}
+static cJSON *portable_publication(unsigned version){
+    cJSON *publication=cJSON_Duplicate(fixture,true);assert(publication);
+    const char *canonical=osg_string(publication,"canonicalDocument");cJSON *document=osg_json_parse(canonical,strlen(canonical));assert(document);
+    cJSON_ReplaceItemInObjectCaseSensitive(document,"schemaVersion",cJSON_CreateNumber(3));
+    const char *source="{\"formatVersion\":1,\"id\":\"portable-test\",\"version\":1,\"title\":\"Portable test\",\"size\":{\"width\":200,\"height\":120},\"properties\":[],\"inputs\":[{\"name\":\"press\",\"label\":\"Press\",\"kind\":\"button\"}],\"outputs\":[],\"interaction\":{\"kind\":\"momentary\",\"port\":\"press\"},\"hitArea\":{\"x\":0,\"y\":0,\"width\":1,\"height\":1},\"state\":{},\"layers\":[{\"id\":\"base\",\"label\":\"Base\",\"kind\":\"rectangle\",\"bounds\":{\"x\":0,\"y\":0,\"width\":1,\"height\":1},\"fill\":\"#10212c\",\"radius\":8},{\"id\":\"caption\",\"label\":\"Caption\",\"kind\":\"text\",\"bounds\":{\"x\":0.1,\"y\":0.2,\"width\":0.8,\"height\":0.6},\"text\":\"ONE\",\"font\":\"sans\",\"fontSize\":22,\"align\":\"center\",\"fill\":\"#ffffff\"}]}";
+    cJSON *definition=osg_json_parse(source,strlen(source));assert(definition);cJSON_ReplaceItemInObjectCaseSensitive(definition,"version",cJSON_CreateNumber(version));
+    cJSON *layers=cJSON_GetObjectItemCaseSensitive(definition,"layers");
+    if(version==2){
+        cJSON_ReplaceItemInObjectCaseSensitive(cJSON_GetArrayItem(layers,1),"text",cJSON_CreateString("TWO"));
+        const char *dot="{\"id\":\"dot\",\"label\":\"Dot\",\"kind\":\"ellipse\",\"bounds\":{\"x\":0.7,\"y\":0.1,\"width\":0.1,\"height\":0.1},\"fill\":\"#63dfd0\"}";
+        cJSON_AddItemToArray(layers,osg_json_parse(dot,strlen(dot)));
+    }
+    cJSON *presentation=cJSON_GetObjectItemCaseSensitive(document,"presentation"),*definitions=cJSON_AddArrayToObject(presentation,"definitions");assert(definitions);cJSON_AddItemToArray(definitions,definition);
+    cJSON *widget=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(presentation,"widgets"),0);cJSON_ReplaceItemInObjectCaseSensitive(widget,"kind",cJSON_CreateString("component"));
+    cJSON *config=cJSON_CreateObject();cJSON_AddStringToObject(config,"definitionId","portable-test");cJSON_AddNumberToObject(config,"definitionVersion",version);cJSON_AddObjectToObject(config,"properties");cJSON_ReplaceItemInObjectCaseSensitive(widget,"config",config);
+    char *encoded=cJSON_PrintUnformatted(document);assert(encoded);char hash[72];assert(sha(encoded,strlen(encoded),hash));
+    cJSON_ReplaceItemInObjectCaseSensitive(publication,"canonicalDocument",cJSON_CreateString(encoded));cJSON_ReplaceItemInObjectCaseSensitive(publication,"publicationHash",cJSON_CreateString(hash));cJSON_free(encoded);cJSON_Delete(document);return publication;
+}
+static void portable_delivery_tests(void){
+    cJSON *original=fixture;char hashes[2][72];
+    for(unsigned version=1;version<=2;version++){
+        fixture=original;cJSON *publication=portable_publication(version);fixture=publication;
+        live_ready();assert(test_runtime.panel->widgets[0].kind==OSG_COMPONENT&&test_runtime.panel->widgets[0].component->definition->version==version);
+        assert(test_runtime.panel->widgets[0].component->definition->layer_count==(version==1?2:3));
+        strcpy(hashes[version-1],test_runtime.panel->publication_hash);assert(!strcmp(test_runtime.panel->widgets[0].id,"master-widget"));
+        /* Input still waits for a rendered frame, released touch and baseline. */
+        live_arm();osg_network_touch(true,true,100,100);advance();assert(mock_button);fake_ms+=20;osg_network_touch(true,false,0,0);advance();assert(!mock_button);
+        stop();cJSON_Delete(publication);
+    }
+    fixture=original;assert(strcmp(hashes[0],hashes[1]));
+    puts("One installed client engine admitted two different portable widget compositions as data, preserving IDs and existing baseline/ordered input semantics");
+}
 int main(int argc,char **argv){
     assert(argc==2);osg_json_init();char raw[OSG_REPLY_BYTES];FILE *f=fopen(argv[1],"rb");assert(f);size_t n=fread(raw,1,sizeof(raw),f);fclose(f);fixture=osg_json_parse(raw,n);assert(fixture);
-    assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&images[0],800,480));
-    assert(osg_init(&test_runtime,&images[0].panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
+    static osg_image initial_image;
+    assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&initial_image,800,480));
+    assert(osg_init(&test_runtime,&initial_image.scene.panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
     setup();advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=false;advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=true;
     advance();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
@@ -229,12 +334,12 @@ int main(int argc,char **argv){
     setup();installation_saved=false;settings.persist=true;store_ok=false;advance();fake_ms+=400;advance();assert(state==FAULT&&!installation_saved);
     setup();settings.persist=true;advance();fake_ms+=400;advance();assert(state==AUTH&&installation_saved);
     assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==WAIT_ASSIGNMENT);assigned_now=true;fake_ms=next_request;advance();
-    assert(state==OPEN);test_drawing=&images[1-image_index].panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
+    assert(state==OPEN);test_drawing=&banks.slots[1-banks.active].scene->panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
     /* A bad panel does not close a healthy transport or enable live input. */
     stop();state=AUTH;advance();assert(state==OPEN);
     cJSON *valid_fixture=fixture;fixture=cJSON_Duplicate(valid_fixture,true);
     cJSON_ReplaceItemInObjectCaseSensitive(fixture,"canonicalDocument",cJSON_CreateString("{}"));
-    advance();assert(state==PANEL_ERROR&&!test_runtime.armed);update_screen();assert(test_runtime.screen==OSG_SCREEN_PANEL_ERROR);
+    advance();assert(state==PANEL_ERROR&&!test_runtime.armed);update_screen();assert(test_runtime.screen==OSG_SCREEN_PANEL&&test_runtime.screen_message[0]);
     cJSON_Delete(fixture);fixture=valid_fixture;
     next_request=fake_ms;advance();assert(state==PANEL_ERROR&&!test_runtime.armed&&!strcmp(requested_type,"heartbeat"));
     obsolete_session=true;fake_ms+=250;advance();obsolete_session=false;assert(state==AUTH);
@@ -302,7 +407,7 @@ int main(int argc,char **argv){
     state=LIVE;update_screen();assert(test_runtime.screen==OSG_SCREEN_PANEL);
     state=FAULT;detail="Cockpit response timed out";update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&!strcmp(test_runtime.screen_message,detail));
     state=AUTH;update_screen();assert(test_runtime.screen==OSG_SCREEN_CONNECTING&&!test_runtime.screen_message[0]);
-    state=OPEN;detail=NULL;update_screen();assert(test_runtime.screen==OSG_SCREEN_LOADING);
+    state=OPEN;detail=NULL;update_screen();assert(test_runtime.screen==OSG_SCREEN_PANEL);
     detail="Downloading panel images";update_screen();assert(!strcmp(test_runtime.screen_message,detail));
     state=OFF;update_screen();assert(test_runtime.screen==OSG_SCREEN_DISCONNECTED&&!test_runtime.screen_message[0]);
     live_input_tests();
@@ -339,7 +444,7 @@ int main(int argc,char **argv){
     stop();
     live_ready();update_screen();assert(!remote_armed);
     osg_network_render(test_runtime.panel,true,false);advance();update_screen();
-    assert(state==PANEL_ERROR&&test_runtime.screen==OSG_SCREEN_PANEL_ERROR&&!test_runtime.armed);
+    assert(state==PANEL_ERROR&&test_runtime.screen==OSG_SCREEN_PANEL&&!test_runtime.armed);
     assert(!strcmp(test_runtime.screen_message,"Panel could not render correctly"));
     setup();state=AUTH;host_rejection="Credential has been revoked.";advance();update_screen();
     assert(state==FAULT&&!strcmp(test_runtime.screen_message,"Authentication: Credential has been revoked."));
@@ -357,7 +462,7 @@ int main(int argc,char **argv){
     host_rejection=NULL;
     const char *reasons[]={"wifi-connection-failed","host-tls-or-connection-failed","pairing-offer-expired","pairing-approval-expired","baseline-not-confirmed-or-touch-changed-reconnect-required","input-cancelled-or-lease-expired-reconnect-required","input-backlog-or-counter-invalid-reconnect-required","session-counter-exhausted","trusted-clock-invalid","setup-storage-unavailable","setup-save-failed-repair-required","setup-delete-failed","invalid-installation-id","host-rejected-or-invalid-reply-stop-and-reconnect"};
     for(size_t i=0;i<sizeof(reasons)/sizeof(*reasons);i++){fail(reasons[i]);update_screen();assert(test_runtime.screen==OSG_SCREEN_ERROR&&test_runtime.screen_message[0]);}
-    osg_image image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
+    osg_scene image={0};image.panel=osg_demo_panel;image.panel.widgets=image.widgets;image.panel.pages=image.pages;image.panel.widget_count=1;image.panel.page_count=1;image.pages[0]=osg_demo_pages[0];image.widgets[0]=osg_demo_widgets[0];image.widgets[0].kind=OSG_IMAGE;
     image.image_hashes[0]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     assert(load_images(&image,0));assert(image.widgets[0].pixels && image.widgets[0].pixels[0]==255);assert(image.widgets[0].image_width>0);
     assert(operation.completed==operation.total&&operation.misses==1&&operation.hits==0);
@@ -387,7 +492,9 @@ int main(int argc,char **argv){
     pixel_error="cache_active_corrupt";assert(!cache_failure());assert(!operation.retryable&&strstr(detail,"restart the companion")&&active_pixels[0]==255);pixel_error="cache_io";
     image.panel.widget_count=0;cache_fail=true;assert(load_images(&image,0));assert(operation.total==0&&operation.completed==0);cache_fail=false;image.panel.widget_count=1;
     image.widgets[0].bounds.width=0;assert(!load_images(&image,0));assert(!strcmp(detail,"Invalid image dimensions"));
+    portable_image_tests(active_pixels,active_asset);
     idle_assignment_screen_tests();
+    candidate_handoff_tests();portable_delivery_tests();
     for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);
-    cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
+    osg_scene_banks_destroy(&banks);cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
 }

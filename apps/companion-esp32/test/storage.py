@@ -7,6 +7,6 @@ out=root/".research/esp32-storage"
 out.mkdir(parents=True,exist_ok=True)
 subprocess.run(["gcc","-std=c11","-Wall","-Wextra","-Werror","-pedantic","-g","-fsanitize=address,undefined",
  *["-I"+str(app/p) for p in ["test/include","network","core","third_party/cjson"]],
- *[str(app/p) for p in ["test/storage_test.c","network/settings.c","network/json.c","third_party/cjson/cJSON.c"]],
+ *[str(app/p) for p in ["test/storage_test.c","network/settings.c","network/json.c", "network/workspace.c","third_party/cjson/cJSON.c"]],
  "-lm","-o",str(out/"storage-test")],check=True)
 subprocess.run([str(out/"storage-test")],check=True)

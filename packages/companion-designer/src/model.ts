@@ -2,6 +2,8 @@ import { validatePortableUi } from "../../companion-contracts/src/index.ts";
 import type { Control, FeedbackWidget, Validation } from "../../companion-contracts/src/index.ts";
 import { DESIGNER_LIMITS } from "./types.ts";
 import type { Bounds, DesignerDocument, DesignerWidget, LogicalTarget, ViewportRegion } from "./types.ts";
+import { WIDGET_LIMITS, validateWidgetDefinition, resolveWidgetProperties, resolveWidgetLayers } from "./widget-model.ts";
+import type { WidgetDefinition } from "./widget-model.ts";
 export const clone = <T>(value: T): T => structuredClone(value);
 export function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 export function object(value: unknown): Record<string, unknown> {
@@ -99,9 +101,17 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
   try {
     const json = JSON.stringify(input); assert(json && new TextEncoder().encode(json).length <= 1024 * 1024, "Designer document exceeds 1 MiB");
     const doc = exact(JSON.parse(json), ["schemaVersion", "ui", "presentation", "targets", "bindings"]);
-    assert(doc.schemaVersion === 2, "Unsupported designer schema");
+    assert(doc.schemaVersion === 2 || doc.schemaVersion === 3, "Unsupported designer schema");
     const logical = validatePortableUi(doc.ui, { allowEmptyControls:true }); assert(logical.ok, logical.ok ? "" : logical.error);
-    const ui = logical.value, p = exact(doc.presentation, ["widgets", "groups", "viewports", "grid"]);
+    const ui = logical.value, p = exact(doc.presentation, ["widgets", "groups", "viewports", "grid", ...(doc.schemaVersion === 3 ? ["definitions"] : [])]);
+    const definitions: WidgetDefinition[] = [];
+    if (doc.schemaVersion === 3) {
+      const revisions = new Set<string>();
+      for (const source of array(p.definitions, 0, WIDGET_LIMITS.definitions)) {
+        const result = validateWidgetDefinition(source, ui.assets.map(a => a.id)); assert(result.ok, result.ok ? "" : result.error);
+        const key = `${result.value.id}@${result.value.version}`; assert(!revisions.has(key), "Duplicate widget definition revision"); revisions.add(key); definitions.push(result.value);
+      }
+    }
     const usedIds = new Set([...ui.controls.map(c => c.id), ...ui.feedbackWidgets.map(w => w.id), ...ui.pages.map(p => p.id), ...ui.assets.map(a => a.id)]);
     const newId = (value: unknown) => { stableId(value); assert(!usedIds.has(value), "Duplicate stable ID"); usedIds.add(value); };
     const pageIds = ui.pages.map(page => page.id);
@@ -143,13 +153,27 @@ export function validateDesignerDocument(input: unknown): Validation<DesignerDoc
       assert(regions.some(region => boundsContain(region.bounds, widget.bounds)), `Widget "${widget.label}" must fit entirely inside one viewport`);
       if (widget.style !== undefined) colorStyle(widget.style);
       if (widget.groupId !== undefined) assert(groups.some(group => group.id === widget.groupId && group.pageId === widget.pageId), "Invalid group reference");
-      const expected = inputKinds[widget.kind] ?? [], output = outputKinds[widget.kind];
-      assert(expected.length > 0 || output || widget.kind === "image", "Unsupported widget");
+      const definition = widget.kind === "component" ? definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion) : undefined;
+      if (widget.kind === "component") {
+        exact(widget.config, ["definitionId", "definitionVersion", "properties"]); assert(definition, "Unknown widget definition revision");
+        const properties = resolveWidgetProperties(definition, widget.config.properties, ui.assets.map(a => a.id));
+        resolveWidgetLayers(definition, properties, "normal");
+        if (definition.interaction.kind === "navigate") assert(pageIds.includes(String(properties[definition.interaction.pageProperty])), "Unknown navigation page");
+      }
+      const expected = definition ? definition.inputs.map(p => p.kind) : inputKinds[widget.kind] ?? [];
+      const outputs = definition ? definition.outputs.map(p => p.kind) : outputKinds[widget.kind] ? [outputKinds[widget.kind]] : [];
+      assert(expected.length > 0 || outputs.length || widget.kind === "image" || definition, "Unsupported widget");
       assert(array(widget.controlIds, expected.length, expected.length).length === expected.length, "Invalid input arity");
-      assert(array(widget.feedbackIds, output ? 1 : 0, output ? 1 : 0).length === (output ? 1 : 0), "Invalid feedback arity");
+      assert(array(widget.feedbackIds, outputs.length, outputs.length).length === outputs.length, "Invalid feedback arity");
       const controls = widget.controlIds.map((id, index) => { const control = ui.controls.find(control => control.id === id); assert(control?.kind === expected[index] && !controlIds.includes(id), "Incompatible or duplicate input binding"); controlIds.push(id); return control; });
-      for (const id of widget.feedbackIds) { const feedback = ui.feedbackWidgets.find(widget => widget.id === id); assert(feedback?.kind === output && !feedbackIds.includes(id), "Incompatible feedback binding"); feedbackIds.push(id); }
-      validateConfig(widget, controls, ui.assets.map(asset => asset.id));
+      for (const [index, id] of widget.feedbackIds.entries()) { const feedback = ui.feedbackWidgets.find(widget => widget.id === id); assert(feedback?.kind === outputs[index] && !feedbackIds.includes(id), "Incompatible feedback binding"); feedbackIds.push(id); }
+      if (definition) {
+        for (const [index, port] of definition.inputs.entries()) {
+          const control = controls[index];
+          if (port.kind === "axis") assert(control.kind === "axis" && control.axisMode === port.axisMode && control.fallback === port.fallback, "Component axis contract mismatch");
+          if (port.kind === "hat") assert(control.kind === "hat" && control.fallback === port.fallback, "Component hat contract mismatch");
+        }
+      } else validateConfig(widget, controls, ui.assets.map(asset => asset.id));
     }
     assert(controlIds.length === ui.controls.length && feedbackIds.length === ui.feedbackWidgets.length, "Unbound primitive");
     const targets = array(doc.targets, 0, DESIGNER_LIMITS.targets) as LogicalTarget[];

@@ -1,5 +1,6 @@
 pub mod feedback;
 pub mod operation;
+pub mod render_profile;
 pub use feedback::*;
 mod hub;
 pub mod pairing_code;
