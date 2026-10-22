@@ -13,11 +13,11 @@ GameGlass reference; no external artwork or Star Citizen provider is included.
 | Story | Required software delivery | Status |
 | --- | --- | --- |
 | W0 #113 | Strict versioned definitions, instances, layers, properties, ports, states, identity, capability contracts and LVGL feasibility | Software contracts implemented and checked; physical feasibility deferred |
-| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Shared renderer, visual parity and live browser workflow checked; final Android build pending |
+| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Software delivered; shared renderer, visual parity, live browser and final Android APK checks pass; device qualification deferred |
 | W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Implemented; actual Cockpit WSS/C-engine acceptance and all six firmware CI jobs pass; hardware deferred |
-| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Actual Cockpit authoring/save/reload and UI export/import pass; complete live delivery checks in progress |
-| W4 #117 | Original control/instrument catalog, library bundles, publishing/reconciliation, example panel and runtime updates | Twelve families implemented and checked; complete-panel live workflow acceptance pending |
-| W5 #118 | Running native dev Cockpit acceptance, automated/native/build checks, documentation and software parity evidence | Evidence and guidance in progress; final requirement audit pending |
+| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Software delivered; actual Cockpit authoring, immutable versions, caption identity, export/import and complete live delivery pass |
+| W4 #117 | Original control/instrument catalog, library bundles, publishing/reconciliation, example panel and runtime updates | Software delivered; all twelve families and complete live publication/update workflows pass; physical traces deferred |
+| W5 #118 | Running native dev Cockpit acceptance, automated/native/build checks, documentation and software parity evidence | Software audit complete; final-source firmware and mobile builds pass; physical qualification deferred |
 
 Physical ESP32 and Android-device validation is deferred at the user's explicit
 request on 22 October 2026. It must remain identified as deferred evidence, and
@@ -655,3 +655,17 @@ passes live browser acceptance at `.research/widget-browser-native/1792640473926
 and unchanged C/LVGL software-engine acceptance at
 `.research/widget-software-native/1792640477640/`, including retention-based
 cleanup. The native browser assets are rebuilt from the corrected source.
+
+Final production commit `ff00ac3` passes all six firmware jobs in
+[run 39718306085](https://github.com/opensimgear/cockpit/actions/runs/39718306085),
+and mobile checks, Android APK and iOS simulator builds in
+[run 39718306274](https://github.com/opensimgear/cockpit/actions/runs/39718306274).
+The PR mobile run `39718311345` independently passes the same final source.
+Android artifact `12400910427` is a 56,854,457-byte archive with digest
+`sha256:02a92736152c8e57522fe61ffbf8f17fd8885e355655c1230e9e56e2280d83b8`;
+iOS simulator artifact `12400380726` is 27,907,484 bytes. These are development
+build artifacts; no physical-device or signed-release qualification is implied.
+The requirement audit now records software delivery complete and explicitly
+retains all deferred physical/native acceptance. A repeated actual UI run at
+`.research/widgets-native-ui/1792641344088/` confirms bounded layer editing and
+leaves one unassigned showcase panel in the isolated final dev Cockpit for review.

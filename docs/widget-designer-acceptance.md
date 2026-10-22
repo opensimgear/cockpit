@@ -3,8 +3,8 @@
 Feature [#112](https://github.com/opensimgear/cockpit/issues/112) implements one
 portable widget library and panel source for Cockpit preview, browser, Android
 and ESP32. The current implementation is on `feat/widgets-112`; the software
-firmware-build checkpoint is `ac0d2a2`, before the final selector-caption identity
-correction. Physical ESP32 and Android-device validation was deferred
+validated production-source checkpoint is `ff00ac3`. Physical ESP32 and
+Android-device validation was deferred
 by the user on 22 October 2026. The qualified release matrix remains empty.
 
 The [authoring guide](companion-guide.md#design-and-reuse-widgets) describes the
@@ -17,11 +17,11 @@ individual checkpoints and their limits.
 | Milestone | Software implementation and checks | Outstanding acceptance |
 | --- | --- | --- |
 | W0 #113 | Strict schema 3 definitions/instances, immutable revisions, typed ports/properties, layers, state precedence, canonical source and separate capability identity. Schema 2 remains supported. Shared TypeScript/Rust/C fixtures validate admission and preserve source. Existing transport, cache, board drivers, scene ownership and session contracts are reused. | Physical Waveshare feasibility and separate Sunton measurements. |
-| W1 #114 | Cockpit, browser and Android import the same `PanelCanvas`, `WidgetView`, controller, font metrics and state projection. Shared traces cover input cancellation and provenance/freshness. Browser SSR tests render all twelve families; actual native preview and live browser sessions pass. | Current-branch APK build is running; physical Android WebView/native lifecycle acceptance remains under #55. |
+| W1 #114 | Cockpit, browser and Android import the same `PanelCanvas`, `WidgetView`, controller, font metrics and state projection. Shared traces cover input cancellation and provenance/freshness. Browser SSR tests render all twelve families; actual native preview and live browser sessions pass. The final-source Android APK and iOS simulator builds pass. | Physical Android WebView/native lifecycle acceptance remains under #55. |
 | W2 #115 | Pinned LVGL backend renders dynamic text, indicators, gauges, alpha, clipping and mixed legacy/components. Bounded source arenas, font pools, partial buffers, snapshots, generation/present fences and neutral-baseline admission are enforced. Authenticated WSS and nonce-bound USB carry explicit target reports. Both memory profiles pass actual native C/LVGL checks. One unchanged software-client binary accepts two full source compositions and reconnects through the real Cockpit host. All six firmware CI jobs pass on the current implementation commit. | Physical rendering, memory/flash/PSRAM, DMA/touch timing and board/transport qualification under #65/#76. |
 | W3 #116 | Visual layer/state editor, geometry/style/font/image/property/port inspectors, undo/redo, snapping, resize/alignment, immutable library and intentional version adoption. Independent instance controls/feedback use existing profile bindings. Rich source survives authoring, import and incompatible-target saves. Actual Cockpit import/edit/reuse/preview/save/reload and UI library/panel export/import pass. | Device checks from W1/W2. No software authoring limitation is hidden by target simplification. |
-| W4 #117 | Original illuminated button, toggle, selector, indicator, text/numeric instruments, linear/radial gauges, frame, divider, vector icon and navigation. Existing immutable publication, asset preparation, progress/cache, assignment and reconciliation paths handle updates. Source-preserving compatibility reports name unsupported fonts, budgets, geometry and overlapping touch areas. Live browser and C/LVGL consume the exact same edited multi-widget export. | Physical cross-platform traces; final build collection. |
-| W5 #118 | Software state/text/font/geometry/alpha/input oracles; actual Cockpit/browser/WSS/C-engine workflows; independent simultaneous browser sources, source-specific loss, neutral reconnect, held-touch replacement, invalid-assignment preservation and warm image reuse. Native fault-injection suites cover transport, bounded cache and cancellation. Guidance and original examples are checked in. | Final CI/Android results and final review; all physical/native qualification evidence remains explicitly deferred. Existing baseline repository failures are listed below. |
+| W4 #117 | Original illuminated button, toggle, selector, indicator, text/numeric instruments, linear/radial gauges, frame, divider, vector icon and navigation. Existing immutable publication, asset preparation, progress/cache, assignment and reconciliation paths handle updates. Source-preserving compatibility reports name unsupported fonts, budgets, geometry and overlapping touch areas. Live browser and C/LVGL consume the exact same edited multi-widget export. | Physical cross-platform traces. |
+| W5 #118 | Software state/text/font/geometry/alpha/input oracles; actual Cockpit/browser/WSS/C-engine workflows; independent simultaneous browser sources, source-specific loss, neutral reconnect, held-touch replacement, invalid-assignment preservation and warm image reuse. Native fault-injection suites cover transport, bounded cache and cancellation. Guidance and original examples are checked in; final-source firmware and mobile builds pass. | Review and physical/native qualification evidence. Existing baseline repository failures are listed below. |
 
 ## Exact live-source evidence
 
@@ -99,11 +99,17 @@ integration tests.
 
 ## Build and qualification boundaries
 
-All six ESP32 jobs pass for implementation commit `ac0d2a2` in
-[run 39716957768](https://github.com/opensimgear/cockpit/actions/runs/39716957768).
-The current mobile workflow is
-[run 39716772123](https://github.com/opensimgear/cockpit/actions/runs/39716772123);
-its result must be recorded before claiming the final Android build passed.
+All six ESP32 jobs pass for final production commit `ff00ac3` in
+[run 39718306085](https://github.com/opensimgear/cockpit/actions/runs/39718306085).
+Mobile checks, Android APK and iOS simulator builds pass on that same commit in
+[run 39718306274](https://github.com/opensimgear/cockpit/actions/runs/39718306274).
+The Android artifact is `mobile-android` (ID `12400910427`, 56,854,457 archive
+bytes, digest `sha256:02a92736152c8e57522fe61ffbf8f17fd8885e355655c1230e9e56e2280d83b8`).
+The iOS simulator artifact is `mobile-ios-simulator` (ID `12400380726`,
+27,907,484 archive bytes). The independent PR mobile run
+[39718311345](https://github.com/opensimgear/cockpit/actions/runs/39718311345)
+also passes. Later documentation-only commits do not change these validated
+production sources.
 Debug APKs and iOS simulator archives do not qualify physical devices or signed
 release installation/update.
 
