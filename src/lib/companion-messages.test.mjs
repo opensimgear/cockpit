@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { companionMessages } from './companion-messages.ts';
 
+test('list firmware warnings follow each board when available versions differ',()=>{
+  const state={firmwareVersion:null,firmware:{sunton:{version:'2026.10.22.7',profile:'sunton'},waveshare:{version:'2026.10.19.8',profile:'waveshare'}},firmwareProfiles:[{id:'sunton',available:true,version:'2026.10.22.7'},{id:'waveshare',available:true,version:'2026.10.21.1'}]};
+  const client=companionId=>({companionId,kind:'esp32'});
+  assert.deepEqual(companionMessages(state,client('sunton')),[]);
+  assert.deepEqual(companionMessages(state,client('waveshare')),[{source:'firmware',kind:'warning',message:'Firmware update available'}]);
+  state.firmwareProfiles[1].available=false;
+  assert.deepEqual(companionMessages(state,client('waveshare')),[]);
+});
+
 test('conflicting renderer reports surface without claiming a panel or transport',()=>{
   assert.deepEqual(companionMessages({}, {renderProfileError:'Active connections report conflicting renderer profiles.',connectionStatus:'Loading panel'}),[
     {source:'connection',kind:'error',message:'Active connections report conflicting renderer profiles.'},

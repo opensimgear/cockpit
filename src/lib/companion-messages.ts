@@ -1,4 +1,4 @@
-import { firmwareUpdateAvailable } from './companion-firmware.ts';
+import { firmwareUpdateAvailable, companionFirmwareVersion } from './companion-firmware.ts';
 import type { CompanionHostState, CompanionOperation } from './companions.ts';
 
 export type CompanionMessage = { source:'connection'|'firmware'; kind:'info'|'warning'|'error'; message:string };
@@ -38,7 +38,7 @@ export function companionMessages(state:CompanionHostState,client:Record<string,
   else if(connection&&connection!=='No panel assigned')messages.push({source:'connection',kind:usb?.device?.status==='error'?'error':usb?.device?.status==='offline'?'warning':'info',message:connection});
   if(client.kind==='esp32'){
     const firmware=state.firmware?.[id];
-    if(firmware&&firmwareUpdateAvailable(firmware.version,state.firmwareVersion))messages.push({source:'firmware',kind:'warning',message:'Firmware update available'});
+    if(firmware&&firmwareUpdateAvailable(firmware.version,companionFirmwareVersion(state,id)))messages.push({source:'firmware',kind:'warning',message:'Firmware update available'});
     else if(!firmware)messages.push({source:'firmware',kind:'info',message:'Firmware version unknown · connect USB to check'});
   }
   return messages;
