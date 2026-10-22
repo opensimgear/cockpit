@@ -189,18 +189,18 @@ fn automatic_corridors_preserve_generated_status_without_changing_execution_iden
 
 #[test]
 fn saved_wire_layout_preserves_exact_metadata_across_service_restart() {
-    let directory=tempfile::tempdir().unwrap();
-    // Resolve macOS temporary-directory aliases before strict storage validation.
+    // macOS temp paths may contain a symlink; storage intentionally rejects
+    // symlinked ancestors, so use the same physical parent as the other test.
+    let parent=std::env::temp_dir();
     #[cfg(unix)]
-    let root=directory.path().canonicalize().unwrap();
-    #[cfg(not(unix))]
-    let root=directory.path().to_owned();
-    let mut service=osg_profiles::service::Service::new(Some(root.clone()));
+    let parent=parent.canonicalize().unwrap();
+    let directory=tempfile::tempdir_in(parent).unwrap();
+    let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));
     let mut graph=decorated();graph.editor.arrow_style=Some(EditorArrowStyle::Smooth);
     graph.editor.wire_routes=vec![EditorWireRoute{binding_id:graph.bindings[0].id.clone(),points:vec![EditorWirePoint{x:0.0,y:0.0},EditorWirePoint{x:100.0,y:0.0}],automatic:false,handles:vec![EditorWirePoint{x:50.0,y:0.0}]},EditorWireRoute{binding_id:graph.bindings[1].id.clone(),points:vec![EditorWirePoint{x:0.0,y:100.0},EditorWirePoint{x:100.0,y:100.0}],automatic:true,handles:vec![]}];
     let saved=service.request(&json!({"command":"profile_editor_save","document":graph,"assignments":[],"expectedRevision":null})).unwrap();
     drop(service);
-    let mut service=osg_profiles::service::Service::new(Some(root));
+    let mut service=osg_profiles::service::Service::new(Some(directory.path().into()));
     let exported=service.request(&json!({"command":"profile_export","id":graph.id})).unwrap();
     assert_eq!(exported["document"]["editor"],saved["document"]["editor"]);
 }

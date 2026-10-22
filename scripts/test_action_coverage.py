@@ -58,18 +58,18 @@ class IntegrationCoverageTests(unittest.TestCase):
     def test_test_only_import_does_not_hide_following_production_functions(self):
         lines = ['#[cfg(test)]', 'use crate::fixture;', '',
                  'fn production() {}', '#[cfg(test)]', 'mod tests {', '}']
-        self.assertEqual(integration_coverage.production_line_limit(lines), 5)
+        self.assertEqual(integration_coverage.production_end(lines), 5)
 
     def test_external_test_module_attributes_are_excluded(self):
         lines = ['fn production() {}', '#[cfg(test)]',
                  '#[path = "other_tests.rs"]', 'mod tests;']
-        self.assertEqual(integration_coverage.production_line_limit(lines), 2)
-        self.assertEqual(integration_coverage.production_line_limit(lines[:1]), 2)
+        self.assertEqual(integration_coverage.production_end(lines), 2)
+        self.assertEqual(integration_coverage.production_end(lines[:1]), 2)
 
     def test_assetto_adapter_keeps_real_production_code_in_the_report(self):
         source = Path(__file__).resolve().parents[1] / 'src-tauri/src/acr_windows.rs'
         lines = source.read_text(encoding='utf-8').splitlines()
-        end = integration_coverage.production_line_limit(lines)
+        end = integration_coverage.production_end(lines)
         self.assertIn('fn consistent_copy(', '\n'.join(lines[:end - 1]))
         self.assertEqual(lines[end], 'mod tests {')
         self.assertGreater(end, 100)

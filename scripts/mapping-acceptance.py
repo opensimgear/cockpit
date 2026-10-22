@@ -187,7 +187,10 @@ def main():
             assert default['name']=='Default' and default['revision']==1 and not default['resources']
             assert service.request('profile_delete',id=DEFAULT,expectedRevision=1)['ok'] is False
             visibility=state(service,'controller_visibility_status','controllers')['visibility']
-            assert not visibility['enabled'] and not visibility['qualified'] and not visibility['global']['inspected'],visibility
+            assert not visibility['enabled'] and not visibility['global']['inspected'],visibility
+            # Platform capability is separate from installed-driver readiness.
+            # Windows remains qualified even when the CI host lacks HidHide.
+            assert visibility['qualified'] == (sys.platform == 'win32'),visibility
             if args.expect_unavailable and sys.platform=='win32':
                 assert state(service,'controller_visibility_inspect','controllers')['visibility']['global'].get('error')
             retired_boundaries(service)

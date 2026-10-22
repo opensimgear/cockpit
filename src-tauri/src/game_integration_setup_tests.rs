@@ -796,7 +796,7 @@ fn ac_catalogue_publication_waits_for_setup_completion_and_cancelled_repair_pres
     ac_catalogue_car(root, "car", "Original Car");
     let (entered, observed) = mpsc::channel();
     let (release, blocked) = mpsc::channel();
-    *runtime.inner.assetto_probe_pause.lock().unwrap() = Some((entered, blocked));
+    *runtime.inner.native_probe_pause.lock().unwrap() = Some((entered, blocked));
     runtime.request(&json!({"command":"game_integration_setup"}), &game,
         Arc::new(FakePlatform(false))).unwrap();
     observed.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
@@ -810,7 +810,7 @@ fn ac_catalogue_publication_waits_for_setup_completion_and_cancelled_repair_pres
     ac_catalogue_car(root, "new_car", "New Car");
     let (entered, observed) = mpsc::channel();
     let (release, blocked) = mpsc::channel();
-    *runtime.inner.assetto_probe_pause.lock().unwrap() = Some((entered, blocked));
+    *runtime.inner.native_probe_pause.lock().unwrap() = Some((entered, blocked));
     runtime.request(&json!({"command":"game_integration_setup"}), &game,
         Arc::new(FakePlatform(false))).unwrap();
     observed.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
@@ -908,7 +908,7 @@ fn passive_refresh_cannot_overwrite_a_newly_admitted_setup_worker() {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     let (entered, observed) = mpsc::channel(); let (release, blocked) = mpsc::channel();
-    *runtime.inner.assetto_probe_pause.lock().unwrap() = Some((entered, blocked));
+    *runtime.inner.native_probe_pause.lock().unwrap() = Some((entered, blocked));
     let platform = Arc::new(FakePlatform(false));
     let (submitted, received) = mpsc::channel();
     let setup = runtime.clone(); let setup_game = game.clone();

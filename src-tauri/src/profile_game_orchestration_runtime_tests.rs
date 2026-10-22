@@ -478,7 +478,7 @@ fn completed_newer_stop_cannot_be_rebased_by_an_older_apply_or_launch_arrival() 
             // Also cover Stop arriving after Apply's first parse/check but
             // before its separate Manual policy-pinning boundary.
             assert!(manager
-                .pin_staged_manual(osg_profiles::DEFAULT_PROFILE_ID, arrival, None)
+                .pin_staged_manual(osg_profiles::DEFAULT_PROFILE_ID, arrival, None, None)
                 .unwrap_err()
                 .contains("cancelled"));
         }
@@ -489,7 +489,7 @@ fn completed_newer_stop_cannot_be_rebased_by_an_older_apply_or_launch_arrival() 
         };
         request["command"] = json!(command);
         request["clientId"] = json!("native-arrival-test");
-        let reply = manager.request_inner_at(request, Some(arrival));
+        let reply = manager.request_inner_at(request, Some(arrival), None, false);
         assert_eq!(reply["ok"], false, "{command}: {reply}");
         assert!(reply["error"].as_str().unwrap().contains("cancelled"));
         assert!(manager

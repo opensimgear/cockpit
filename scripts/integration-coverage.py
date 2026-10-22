@@ -27,18 +27,14 @@ def command(args, cwd, env=None):
     return subprocess.check_output(args, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace")
 
 
-def production_line_limit(lines):
-    """Exclude the test module, without stopping at test-only imports."""
+def production_end(lines):
+    # A test-only import near the top does not end the production module.
+    # Keep the existing exclusion for the test/helper section itself.
     for index, line in enumerate(lines):
-        if line != '#[cfg(test)]':
-            continue
-        following = index + 1
-        while following < len(lines) and (not lines[following].strip()
-                or lines[following].startswith('#[')
-                or lines[following].startswith('//')):
-            following += 1
-        if following < len(lines) and re.match(r'mod\s+\w+', lines[following]):
-            return index + 1
+        if line == '#[cfg(test)]':
+            following = next((entry.strip() for entry in lines[index + 1:] if entry.strip()), '')
+            if not following.startswith(('use ', 'pub use ')):
+                return index + 1
     return len(lines) + 1
 
 
@@ -98,7 +94,7 @@ def main():
     report = {}
     for source in sources:
         lines = source.read_text(encoding='utf-8').splitlines()
-        end = production_line_limit(lines)
+        end = production_end(lines)
         measured = {line: count for line, count in counts.get(source.name, {}).items() if line < end}
         if not measured:
             raise RuntimeError(f'No production coverage recorded for {source.name}.')

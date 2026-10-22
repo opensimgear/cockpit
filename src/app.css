@@ -17,7 +17,7 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .4; }
 button, input, select, a { outline-offset: 4px; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); }
-button, input, select { color: inherit; }
+button, input, select, textarea { color: inherit; }
 button { border: 0; }
 a { color: inherit; text-decoration: none; }
 button svg, a svg { flex-shrink: 0; }

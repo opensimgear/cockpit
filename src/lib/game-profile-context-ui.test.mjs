@@ -1,5 +1,5 @@
 import assert from'node:assert/strict';import test from'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import*as server from'svelte/internal/server';import*as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./game-profile-context']),{GameProfileContextClient}=modules.get('./game-profile-context');
+const modules=await loadModules(['./ui-settings-guard','./game-profile-context']),{GameProfileContextClient}=modules.get('./game-profile-context');
 const id='11111111-1111-4111-8111-111111111111',other='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`,plain=value=>JSON.parse(JSON.stringify(value));
 const game=()=>({id:'dcs',name:'DCS World',installed:true,launchSupported:true}),summary=(id,name)=>({id,name,revision:1,isDefault:false,semanticHash:hash,gameIds:['dcs']}),candidates=()=>({gameId:'dcs',profiles:[summary(id,'DCS rig'),summary(other,'Other rig')],preferredProfileId:null});
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};},settle=()=>new Promise(resolve=>setImmediate(resolve));
