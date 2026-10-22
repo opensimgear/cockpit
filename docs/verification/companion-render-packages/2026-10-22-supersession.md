@@ -8,7 +8,7 @@ PR [#77](https://github.com/opensimgear/cockpit/pull/77), head
 337 files changed by #77 from its merge base, their current equivalents and the
 original hardware reports. The shared schema-3 widget source and LVGL backend
 supersede the old custom scene compiler/interpreter. Closing #77 does not
-complete #69–#76 or qualify the new firmware on hardware.
+complete feature #69 or qualify the new firmware on hardware.
 
 ## Preserved implementation
 
@@ -50,7 +50,9 @@ All fourteen original files under this directory (excluding this audit) were
 copied unchanged from #77's exact head. They include the foundation/runtime
 records, stopped-input baseline, software/build captures, A/B, failed C,
 D, warm-cache and corrected Waveshare repeat JSON reports. The
-[original plan](../../companion-render-packages.md) is explicitly marked historical.
+[current feature plan](../../companion-render-packages.md) replaces obsolete
+implementation guidance; the [original plan](https://github.com/opensimgear/cockpit/blob/f2c9147b863a1aab7de1dd9026bf54e5430b16c4/docs/companion-render-packages.md)
+and original issue requirements remain archived.
 Original report commands, branch links, local evidence paths and firmware
 versions describe that old engine; they are not instructions or acceptance
 claims for current main.
