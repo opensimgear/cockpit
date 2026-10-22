@@ -17,7 +17,7 @@ individual checkpoints and their limits.
 | --- | --- | --- |
 | W0 #113 | Strict schema 3 definitions/instances, immutable revisions, typed ports/properties, layers, state precedence, canonical source and separate capability identity. Schema 2 remains supported. Shared TypeScript/Rust/C fixtures validate admission and preserve source. Existing transport, cache, board drivers, scene ownership and session contracts are reused. | Physical Waveshare feasibility and separate Sunton measurements. |
 | W1 #114 | Cockpit, browser and Android import the same `PanelCanvas`, `WidgetView`, controller, font metrics and state projection. Shared traces cover input cancellation and provenance/freshness. Browser SSR tests render all twelve families; actual native preview and live browser sessions pass. | Current-branch APK build is running; physical Android WebView/native lifecycle acceptance remains under #55. |
-| W2 #115 | Pinned LVGL backend renders dynamic text, indicators, gauges, alpha, clipping and mixed legacy/components. Bounded source arenas, font pools, partial buffers, snapshots, generation/present fences and neutral-baseline admission are enforced. Authenticated WSS and nonce-bound USB carry explicit target reports. Both memory profiles pass actual native C/LVGL checks. One unchanged software-client binary accepts two full source compositions and reconnects through the real Cockpit host. | Physical rendering, memory/flash/PSRAM, DMA/touch timing and board/transport qualification under #65/#76. Final branch cross-build results are still being collected. |
+| W2 #115 | Pinned LVGL backend renders dynamic text, indicators, gauges, alpha, clipping and mixed legacy/components. Bounded source arenas, font pools, partial buffers, snapshots, generation/present fences and neutral-baseline admission are enforced. Authenticated WSS and nonce-bound USB carry explicit target reports. Both memory profiles pass actual native C/LVGL checks. One unchanged software-client binary accepts two full source compositions and reconnects through the real Cockpit host. All six firmware CI jobs pass on the current implementation commit. | Physical rendering, memory/flash/PSRAM, DMA/touch timing and board/transport qualification under #65/#76. |
 | W3 #116 | Visual layer/state editor, geometry/style/font/image/property/port inspectors, undo/redo, snapping, resize/alignment, immutable library and intentional version adoption. Independent instance controls/feedback use existing profile bindings. Rich source survives authoring, import and incompatible-target saves. Actual Cockpit import/edit/reuse/preview/save/reload and UI library/panel export/import pass. | Device checks from W1/W2. No software authoring limitation is hidden by target simplification. |
 | W4 #117 | Original illuminated button, toggle, selector, indicator, text/numeric instruments, linear/radial gauges, frame, divider, vector icon and navigation. Existing immutable publication, asset preparation, progress/cache, assignment and reconciliation paths handle updates. Source-preserving compatibility reports name unsupported fonts, budgets, geometry and overlapping touch areas. Live browser and C/LVGL consume the exact same edited multi-widget export. | Physical cross-platform traces; final build collection. |
 | W5 #118 | Software state/text/font/geometry/alpha/input oracles; actual Cockpit/browser/WSS/C-engine workflows; independent simultaneous browser sources, source-specific loss, neutral reconnect, held-touch replacement, invalid-assignment preservation and warm image reuse. Native fault-injection suites cover transport, bounded cache and cancellation. Guidance and original examples are checked in. | Final CI/Android results and final review; all physical/native qualification evidence remains explicitly deferred. Existing baseline repository failures are listed below. |
@@ -29,13 +29,13 @@ including two independent revisions of the illuminated control:
 
 | Identity | Value |
 | --- | --- |
-| Source publication | `sha256:f942174f4c005d6d048380fc7bafe151eba561ce1666f532de699871518af422` |
-| Capability fingerprint | `sha256:cafee6c5f1edf4f542c6da4e470e9598398c6094f547cbfcf5891a1b9885c9f1` |
+| Source publication | `sha256:8aa06224bbdedd8ccff06e5d53f15569829bf24d19b3fbfceb21ad21d3f2a468` |
+| Capability fingerprint | `sha256:0d40efef106d14e299dd839a982d9005c6288060ebe31998399a2493c1ae50d5` |
 | C/LVGL software-client binary | `97be83ef94006d1232c88f1beee38ecc6167e4132b9b7f9ddf2479772c807034` |
 | Firmware engine contract | `2026.10.22.3`, engine version 1 |
-| Actual Cockpit UI export/import | `.research/widgets-native-ui/1792638902877/evidence.json` |
-| Live browser companion | `.research/widget-browser-native/1792639314316/evidence.json` |
-| Actual C/LVGL over host WSS | `.research/widget-software-native/1792639258402/evidence.json` |
+| Actual Cockpit UI export/import | `.research/widgets-native-ui/1792639786499/evidence.json` |
+| Live browser companion | `.research/widget-browser-native/1792639927641/evidence.json` |
+| Actual C/LVGL over host WSS | `.research/widget-software-native/1792639931938/evidence.json` |
 
 The second C composition changes font, layout, decoration and prepared artwork
 while retaining the capability fingerprint. The first publication is also
@@ -44,6 +44,11 @@ its source; the other stays armed and held. Reconnect starts a fresh neutral
 session. Requested/local pointer state returns to unknown without inventing
 confirmed simulator feedback. The native host rejects a deliberately overlapping
 assignment and a missing glyph while retaining the previous armed assignment.
+The edited control keeps its secondary caption above the main label and sits
+inside the read-only section frame with a separate interactive hit area. Repeated
+UI checks replace their own prior annotation instead of accumulating layers.
+Live checks revoke their temporary clients and prune only newly created source
+publications, retaining unrelated cache entries and asserting cleanup succeeds.
 
 The C client links actual firmware source admission, network/client state
 machine, input controller and LVGL compositor. Software adapters provide board
@@ -90,8 +95,8 @@ integration tests.
 
 ## Build and qualification boundaries
 
-All six ESP32 jobs pass for catalog commit `ee18c70` in
-[run 39715198166](https://github.com/opensimgear/cockpit/actions/runs/39715198166).
+All six ESP32 jobs pass for implementation commit `ac0d2a2` in
+[run 39716957768](https://github.com/opensimgear/cockpit/actions/runs/39716957768).
 The current mobile workflow is
 [run 39716772123](https://github.com/opensimgear/cockpit/actions/runs/39716772123);
 its result must be recorded before claiming the final Android build passed.

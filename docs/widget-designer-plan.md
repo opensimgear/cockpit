@@ -618,3 +618,18 @@ companion-platform build runs out of disk during compilation and supplies no
 test-success evidence. Only files created by that failed build in this
 worktree's disposable cache were removed; remaining platform validation is
 delegated to the normal CI jobs, without enabling native authentication.
+
+The six firmware jobs also pass on implementation commit `ac0d2a2` in
+[run 39716957768](https://github.com/opensimgear/cockpit/actions/runs/39716957768).
+The final visual review places the edited control inside its section frame and
+keeps its READY caption above the main label. Repeated native UI checks replace
+their own old annotations rather than accumulating layers. The resulting exact
+export (`sha256:8aa06224bbdedd8ccff06e5d53f15569829bf24d19b3fbfceb21ad21d3f2a468`)
+passes Cockpit export/import at `.research/widgets-native-ui/1792639786499/`,
+live browser acceptance at `.research/widget-browser-native/1792639927641/`, and
+full C/LVGL acceptance at `.research/widget-software-native/1792639931938/`.
+Live runners now use the native prune API's retention-list semantics, preserve
+unrelated publications and assert their new unassigned test publications leave
+the bounded cache after revocation. The complete
+[software acceptance audit](widget-designer-acceptance.md) links requirements,
+exact identities, reproduction commands and deferred device gates.

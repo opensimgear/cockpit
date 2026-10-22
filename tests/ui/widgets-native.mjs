@@ -82,6 +82,19 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     await click('Stop preview');
     await evaluate(`document.querySelector('[aria-label^="Edit design Illuminated button"]').click()`);
     await until(`!!document.querySelector('dialog.widget-designer[open]')`, 'Widget editor did not open');
+    // Repeated acceptance runs retain immutable revisions. Remove only this
+    // test's previous READY annotations before adding a new one, keeping the
+    // reusable recipe bounded and the main label readable on every run.
+    const baseLayers = source.document.presentation.definitions.find(definition => definition.id === 'osg-illuminated-button' && definition.version === 1).layers.length;
+    if (await evaluate(`document.querySelector('[aria-label="Widget name"]').value==='Illuminated button native acceptance'`)) {
+      while (await evaluate(`document.querySelectorAll('.layers-panel li').length>${baseLayers}`)) {
+        const count = await evaluate(`document.querySelectorAll('.layers-panel li').length`);
+        await evaluate(`document.querySelector('.layers-panel li:last-child button').click()`);
+        await until(`document.querySelector('[aria-label="Layer text"]')?.value==='READY'`, 'Only prior acceptance annotations may be normalized');
+        await click('Delete layer');
+        await until(`document.querySelectorAll('.layers-panel li').length===${count - 1}`, 'Prior acceptance annotation was not removed');
+      }
+    }
     const beforeLayers = await evaluate(`document.querySelectorAll('.layers-panel li').length`);
     await change('[aria-label="Widget name"]', 'Illuminated button native acceptance');
     await change('[aria-label="New layer type"]', 'text');
@@ -89,6 +102,9 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     await click('Add layer');
     await until(`document.querySelectorAll('.layers-panel li').length===${beforeLayers + 1}`, 'New layer did not appear');
     await change('[aria-label="Layer text"]', 'READY');
+    await change('.layer-properties > .geometry:first-of-type label:nth-child(4) input', 18);
+    await change('.layer-properties > .geometry:first-of-type label:nth-child(2) input', 8);
+    await evaluate(`(()=>{const input=[...document.querySelectorAll('.layer-properties label')].find(label=>label.textContent.trim()==='Font size').querySelector('input');input.value='14';input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
     await change('[aria-label="Widget preview state"]', 'active');
     await change('[aria-label="Layer text"]', 'ACTIVE');
     await until(`document.querySelector('.design-stage svg')?.textContent.includes('ACTIVE')`, 'State text override did not render');
@@ -109,7 +125,7 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     assert.equal(revisions[0], 1); assert.ok(revisions[1] > 1);
     // The rich ESP32 profile requires independent, nonoverlapping touch areas.
     // Reuse the read-only frame's cell rather than covering the first control.
-    for (const [field, value] of [[3, 176], [4, 100], [1, 596], [2, 166]]) await change(`.properties-overlay .bounds label:nth-child(${field}) input`, value);
+    for (const [field, value] of [[3, 144], [4, 86], [1, 612], [2, 194]]) await change(`.properties-overlay .bounds label:nth-child(${field}) input`, value);
     await click('Save');
     await until(`document.querySelector('.editor-title>p')?.textContent==='Edit the panel layout.'&&!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Save'&&!b.disabled)`, 'Updated panel did not save');
     await screenshot('reused-instance');

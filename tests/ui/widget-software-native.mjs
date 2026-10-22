@@ -103,7 +103,7 @@ test('one actual firmware/LVGL software client loads two source compositions fro
   const api=await native(),companionId='software-'+randomUUID(),instanceId='software-'+randomUUID();
   const directory=resolve('.research/widget-software-native',String(Date.now()));await mkdir(directory,{recursive:true});
   const evidence={actualNativeCockpit:true,realAuthenticatedWss:true,actualFirmwareClient:true,actualLvgl:true,physicalHardware:false,compositions:[],wireTypes:[],status:[]};
-  let client,child,createdListener=false,ticker,stepBusy=false,stopping=false,engineError,sequence=0,tail=Promise.resolve();
+  let client,child,createdListener=false,ticker,stepBusy=false,stopping=false,engineError,sequence=0,tail=Promise.resolve(),complete=false;
   const pending=new Map(),events=[],testHashes=new Set(),existingHashes=new Set();let last,stderr='';
   const program=process.env.OSG_WIDGETS_SOFTWARE_BIN;
   assert.ok(program,'Build the software-client target and set OSG_WIDGETS_SOFTWARE_BIN.');
@@ -223,7 +223,7 @@ test('one actual firmware/LVGL software client loads two source compositions fro
     if(binary)assert.equal(createHash('sha256').update(await readFile(binary)).digest('hex'),evidence.binarySha256);
     await writeFile(join(directory,'evidence.json'),JSON.stringify(evidence,null,2));
     console.log(JSON.stringify({directory,compositions:evidence.compositions.map(item=>({publicationHash:item.publicationHash,widgets:item.widgets,frames:item.frames})),wireCounts:evidence.wireTypes.reduce((counts,type)=>(counts[type]=(counts[type]??0)+1,counts),{})}));
-    stopping=true;clearInterval(ticker);await tail;await command('quit');const exit=await ended;assert.equal(exit.code,0,stderr);await Promise.all(events);
+    stopping=true;clearInterval(ticker);await tail;await command('quit');const exit=await ended;assert.equal(exit.code,0,stderr);await Promise.all(events);complete=true;
   }catch(error){
     evidence.failure=String(error);await writeFile(join(directory,'evidence.json'),JSON.stringify(evidence,null,2));throw error;
   }finally{
@@ -231,9 +231,15 @@ test('one actual firmware/LVGL software client loads two source compositions fro
     if(child&&child.exitCode===null){child.stdin.end();await pause(50);if(child.exitCode===null)child.kill();}
     await client?.close().catch(()=>{});
     await api.request('companion_revoke',{companionId}).catch(()=>{});
-    if(testHashes.size)await api.request('companion_prune',{panelIds:[],hashes:[...testHashes]}).catch(()=>{});
+    let cleanup;
+    if(testHashes.size)cleanup=await api.request('companion_status').then(state=>api.request('companion_prune',{
+      panelIds:[...new Set(state.host.publications.filter(panel=>testHashes.has(panel.publicationHash)).map(panel=>panel.uiId))],
+      // The native API takes a retention list, not a list of hashes to delete.
+      hashes:state.host.publications.filter(panel=>!testHashes.has(panel.publicationHash)).map(panel=>panel.publicationHash),
+    })).catch(()=>undefined);
     if(createdListener)await api.request('companion_disable').catch(()=>{});
     if(engineError||stderr)await writeFile(join(directory,'engine.txt'),String(engineError??'')+'\n'+stderr);
     api.close();
+    if(complete&&testHashes.size)assert.ok(cleanup&&!cleanup.host.publications.some(panel=>testHashes.has(panel.publicationHash)),'Temporary software publications must leave the bounded native cache after revocation');
   }
 });

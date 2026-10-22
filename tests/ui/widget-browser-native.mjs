@@ -70,7 +70,7 @@ test('the live browser companion shares an edited widget publication and isolate
   const bundleFile = process.env.OSG_WIDGETS_BUNDLE ?? 'examples/companion/shared-systems-complete.bundle.json';
   const imported = await importBundle(await readFile(bundleFile, 'utf8')), panel = await publishDocument(imported.document, imported.assets);
   const evidence = { actualNativeCockpit: true, actualBrowserApp: true, nativeMobileQualified: false, bundleFile: resolve(bundleFile), publicationHash: panel.publicationHash, capabilityFingerprint: panel.capabilityFingerprint, checks: [] };
-  let createdListener = false, published = false;
+  let createdListener = false, published = false, complete = false;
   const instance = async id => (await api.request('companion_status')).host.instances.find(row => row.instanceId === id);
   try {
     const state = await api.request('companion_status');
@@ -129,7 +129,7 @@ test('the live browser companion shares an edited widget publication and isolate
     assert.deepEqual((await instance(peers[1].instanceId)).values, baseline);
     evidence.checks.push('Reload retains normal browser pairing and requires a new neutral session baseline without replaying prior input.');
     assert.deepEqual(errors, []); evidence.wire = wire; evidence.companions = peers.map(({ companionId, instanceId }) => ({ companionId, instanceId }));
-    await writeFile(join(directory, 'evidence.json'), JSON.stringify(evidence, null, 2)); console.log(JSON.stringify({ directory, publicationHash: panel.publicationHash, checks: evidence.checks }));
+    await writeFile(join(directory, 'evidence.json'), JSON.stringify(evidence, null, 2)); console.log(JSON.stringify({ directory, publicationHash: panel.publicationHash, checks: evidence.checks })); complete = true;
   } catch (error) {
     evidence.failure = String(error); evidence.errors = errors; evidence.wire = wire;
     for (const [index, peer] of peers.entries()) if (!peer.page.isClosed()) { await peer.page.screenshot({ path: join(directory, `failure-${index}.png`), fullPage: true }).catch(() => {}); await writeFile(join(directory, `page-${index}.txt`), await peer.page.locator('body').innerText().catch(() => 'Unavailable')); }
@@ -137,8 +137,10 @@ test('the live browser companion shares an edited widget publication and isolate
   } finally {
     for (const browser of browsers) await browser.close().catch(() => {});
     for (const peer of peers) await api.request('companion_revoke', { companionId: peer.companionId }).catch(() => {});
-    if (published) await api.request('companion_prune', { panelIds: [], hashes: [panel.publicationHash] }).catch(() => {});
+    let cleanup;
+    if (published) cleanup = await api.request('companion_status').then(state => api.request('companion_prune', { panelIds: [panel.document.ui.id], hashes: state.host.publications.filter(publication => publication.publicationHash !== panel.publicationHash).map(publication => publication.publicationHash) })).catch(() => undefined);
     if (createdListener) await api.request('companion_disable').catch(() => {});
     api.close();
+    if (complete && published) assert.ok(cleanup && !cleanup.host.publications.some(publication => publication.publicationHash === panel.publicationHash), 'Temporary browser publication must leave the bounded native cache after revocation');
   }
 });
