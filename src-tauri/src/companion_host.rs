@@ -1476,9 +1476,10 @@ mod tests {
         assert!(runtime.profile_panel_operation_history("saved-panel").is_none());
         assert!(runtime.profile_retry_panel("saved-panel", fixture["publicationHash"].as_str().unwrap()).is_ok());
         assert!(runtime.profile_retry_panel("saved-panel", "changed-publication").is_err());
-        assert!(validate_screen_panel(services, "missing", (480,320)).is_err());
-        assert!(validate_screen_panel(services, fixture["publicationHash"].as_str().unwrap(), (480,320)).is_err(),
-            "A published panel still needs compatible screen dimensions");
+        let legacy_screen = json!({"kind":"esp32","connected":true,"screen":{"width":480,"height":320}});
+        assert!(validate_target_panel(&services.hub, "missing", &legacy_screen, &Value::Null).is_err());
+        assert!(validate_target_panel(&services.hub, fixture["publicationHash"].as_str().unwrap(), &legacy_screen, &Value::Null).is_err(),
+            "A published panel still needs to pass the target screen preflight");
         assert_eq!(
             runtime
                 .assigned_publication("saved-panel")
