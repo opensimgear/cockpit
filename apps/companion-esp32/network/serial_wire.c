@@ -7,7 +7,6 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
-extern char osg_transport_frame[OSG_FRAME_BYTES+1], osg_transport_reply[OSG_REPLY_BYTES];
 static cJSON *deferred;
 cJSON *osg_serial_take_command(void){cJSON *v=deferred;deferred=NULL;return v;}
 bool osg_serial_open(osg_socket *s){
@@ -22,6 +21,7 @@ void osg_serial_close(osg_socket *s){
 }
 bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned timeout){
     *response=NULL;s->request_error="USB response timed out";
+    if(!osg_transport_storage_prepare()){s->request_error="USB reply workspace allocation failed";cJSON_Delete(request);return false;}
     if(s->serial_sequence==UINT64_MAX){s->request_error="USB sequence exhausted";cJSON_Delete(request);return false;}
     char id[21],outbound[8192];
     snprintf(id,sizeof(id),"%" PRIu64,++s->serial_sequence);
@@ -30,8 +30,8 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     bool ok=cJSON_PrintPreallocated(v,outbound,sizeof(outbound),false);cJSON_Delete(v);
     if(!ok){s->request_error="USB request exceeds buffer";mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
     puts(outbound);fflush(stdout);mbedtls_platform_zeroize(outbound,sizeof(outbound));
-    memset(osg_transport_reply,0,OSG_REPLY_BYTES);
-    osg_transfer transfer={.bytes=osg_transport_reply,.capacity=OSG_REPLY_BYTES};
+    memset(osg_transport_reply,0,osg_transport_reply_capacity);
+    osg_transfer transfer={.bytes=osg_transport_reply,.capacity=osg_transport_reply_capacity};
     const int64_t deadline=esp_timer_get_time()+(int64_t)timeout*1000;
     while(esp_timer_get_time()<deadline){
         int c=getchar();
@@ -60,10 +60,10 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
         if(result<0){s->request_error="Invalid USB reply data or checksum";break;}
         if(result==1){
             mbedtls_platform_zeroize(osg_transport_frame,OSG_FRAME_BYTES+1);
-            mbedtls_platform_zeroize(osg_transport_reply,OSG_REPLY_BYTES);
+            mbedtls_platform_zeroize(osg_transport_reply,osg_transport_reply_capacity);
             s->request_error=NULL;return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(*response,"ok"));
         }
     }
     mbedtls_platform_zeroize(osg_transport_frame,OSG_FRAME_BYTES+1);
-    mbedtls_platform_zeroize(osg_transport_reply,OSG_REPLY_BYTES);return false;
+    mbedtls_platform_zeroize(osg_transport_reply,osg_transport_reply_capacity);return false;
 }

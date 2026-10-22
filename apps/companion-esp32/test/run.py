@@ -14,7 +14,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 # Delete only this harness's old coverage counters, never source/build trees.
 for counter in OUT.glob("core-test-*.gcda"):
     counter.unlink()
-sources = [APP / p for p in ["core/companion.c", "core/widget.c", "core/raster.c", "render/widget_state.c", "render/widget_source.c", "network/input.c", "network/publication.c", "network/panel_source.c", "network/json.c", "third_party/cjson/cJSON.c", "test/component_test.c", "test/core_test.c", "boards/esp_lcd_bridge.c"]]
+sources = [APP / p for p in ["core/companion.c", "core/widget.c", "core/raster.c", "render/widget_state.c", "render/widget_source.c", "network/input.c", "network/publication.c", "network/panel_source.c", "network/json.c", "network/workspace.c", "third_party/cjson/cJSON.c", "test/component_test.c", "test/core_test.c", "boards/esp_lcd_bridge.c"]]
 subprocess.run([os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g",
                 "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048", *["-I" + str(APP / path) for path in ["core", "render", "network", "third_party/cjson", "test", "boards", "test/include"]],
                 *map(str, sources), "-lm", "-lcrypto", "-o", str(OUT / "core-test")], check=True, cwd=ROOT)

@@ -1,4 +1,5 @@
 #include "wire.h"
+#include "workspace.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -13,7 +14,7 @@ static void *bounded_malloc(size_t n) {
     if (n > heap_limit - sizeof(allocation) || allocated > heap_limit - n - sizeof(allocation)) {
         last_failure = (osg_json_diagnostic){OSG_JSON_HEAP, n > SIZE_MAX - allocated - sizeof(allocation) ? SIZE_MAX : allocated + n + sizeof(allocation), heap_limit}; return NULL;
     }
-    allocation *a = malloc(sizeof(*a) + n); if (!a) { last_failure = (osg_json_diagnostic){OSG_JSON_HEAP,n + sizeof(allocation),0}; return NULL; }
+    allocation *a = osg_workspace_allocate(sizeof(*a) + n); if (!a) { last_failure = (osg_json_diagnostic){OSG_JSON_HEAP,n + sizeof(allocation),osg_workspace_available()}; return NULL; }
     a->bytes = n; allocated += n + sizeof(*a); return a + 1;
 }
 static void bounded_free(void *p) { if (p) { allocation *a = (allocation *)p - 1; allocated -= a->bytes + sizeof(*a); volatile unsigned char *s = p; for (size_t i = 0; i < a->bytes; i++) s[i] = 0; free(a); } }

@@ -350,3 +350,27 @@ Svelte diagnostics and all 26 tests pass. The native whole-panel visual is
 schema 2: fenced source-bank adoption, candidate preflight, source capability
 negotiation, remaining designer/catalog acceptance and browser/Android delivery
 checks are still open. No milestone is claimed complete by this integration.
+
+Renderer commit `dc9496e` passes portable, host-wire and Waveshare jobs in
+[CI run 39706570399](https://github.com/opensimgear/cockpit/actions/runs/39706570399).
+Waveshare's linked application is 0x18e050 bytes, with 22% app-partition headroom.
+The Sunton/ESP32 jobs expose a 28,784-byte static DRAM overflow. The compact LVGL
+pool and shared transport reply buffer now use checked lifetime reservations,
+removing their 64 KiB of fixed arrays from compact-target BSS. Actual MCU rebuilds
+must confirm the new fit; no runtime heap/stack or physical performance result is
+inferred from that linker adjustment.
+
+Rich-board replies now reserve 192 KiB in PSRAM and JSON uses its configurable
+512 KiB/4,096-node PSRAM budget. Compact boards retain the existing 32 KiB reply
+and JSON limits. Both USB and WSS use the same bounded reply workspace and keep
+the existing frame/chunk protocol. Native tests pass for allocation failures and
+retries in both ESP memory domains, shared source/bank/core regressions, settings,
+and protocol/session/cache behavior. Serial checks verify 40 KiB reply assembly
+and explicit rejection with the compact reply capacity.
+
+The existing mobile workflow was dispatched on the widget branch. Shared checks
+passed, but native builds found that the mobile lockfile omitted the shared
+service's image decoder dependencies. Atomic fix `035b414` adds exactly those
+eight locked packages without unrelated upgrades. The corrected Android build
+is running in [mobile CI 39707088010](https://github.com/opensimgear/cockpit/actions/runs/39707088010).
+Authentication qualification gates remain independent in #55/#56.

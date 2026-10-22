@@ -197,8 +197,10 @@ does not create authority or replace final draw/present failure handling.
 Narrow LVGL damage regions can contain more rows than full-width strips. The
 widget renderer now splits each such clip into bounded alpha strips, and drains
 solid/image spans synchronously to bound draw-task memory. Firmware uses four
-rows, a 32 KiB builtin LVGL pool without PSRAM, and a pre-reserved 96 KiB PSRAM
-pool on rich boards. The partial buffer is caller-owned and allocated separately.
+rows, a pre-reserved 32 KiB internal-RAM LVGL pool without PSRAM, and a
+pre-reserved 96 KiB PSRAM pool on rich boards. The partial buffer is caller-owned
+and allocated separately. Pool reservation fails before `lv_init` rather than
+entering LVGL with a null builtin allocator backing store.
 The 32 KiB native catalog/fault suite peaks at 13,312 pool bytes; this is software
 evidence, not MCU heap/stack or physical timing qualification. The application
 partition is now 2 MiB; matching partition-table firmware must accompany upgrades.
@@ -209,3 +211,21 @@ unsupported live text with no writes, and valid 120-unit numeric suffixes. The
 internal font helper permits up to 256 derived units while authored text remains
 bounded by the shared source contract. Live candidate bank adoption, source
 capability negotiation and complete cross-platform acceptance remain unfinished.
+
+The real Waveshare build of `dc9496e` succeeds with a 0x18e050-byte application
+and 22% free application space. Its first Sunton/ESP32 cross-build exposed a
+28,784-byte static DRAM overflow. Both the compact LVGL pool and transport reply
+assembly buffer now use bounded process-lifetime reservations, removing those
+64 KiB of fixed arrays from compact-target static DRAM. The actual MCU rebuild
+must verify the resulting fit; this does not establish free runtime heap or
+task-stack qualification.
+
+USB and WSS share one reply pointer/capacity, preserving 16 KiB protocol frames.
+Compact boards retain 32 KiB replies and the original JSON budget. Rich boards
+reserve 192 KiB replies in PSRAM and configure a 512 KiB JSON heap/4,096-node
+budget, also using PSRAM. Failed reservations preserve an empty pointer and can
+retry without starting a transport request or granting input. Fault tests compile
+the actual ESP-platform paths for both memory domains and verify failure/retry,
+single reservation and pool size. Serial tests assemble and verify a 40 KiB
+reply using the host's existing 2 KiB chunks; the compact reply budget rejects
+the same transfer explicitly. Candidate scene banks still await live adoption.

@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "workspace.h"
 #include "firmware.h"
 #include "input.h"
 #include "widget.h"
@@ -626,6 +627,7 @@ static void update_screen(void){
 }
 static void network_task(void *arg){
     (void)arg;osg_json_init();
+    if(osg_workspace_rich()&&!osg_json_configure(512*1024,192*1024,4096)){fail("json-workspace-unavailable");return;}
     if(osg_store_load(&settings)){
         installation_saved=true;
         if(settings.direct){state=AUTH;next_request=millis();}

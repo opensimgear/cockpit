@@ -6,9 +6,9 @@
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
 #ifdef ESP_PLATFORM
 #include "sdkconfig.h"
-#if defined(CONFIG_SPIRAM) && CONFIG_SPIRAM
 #define LV_MEM_POOL_INCLUDE "lvgl_pool.h"
 #define LV_MEM_POOL_ALLOC osg_lvgl_pool_allocate
+#if defined(CONFIG_SPIRAM) && CONFIG_SPIRAM
 #define LV_MEM_SIZE (96 * 1024U)
 #else
 #define LV_MEM_SIZE (32 * 1024U)

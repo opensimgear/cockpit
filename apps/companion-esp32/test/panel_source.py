@@ -13,7 +13,7 @@ for counter in OUT.glob('panel-source-test-*.gcda'):
 flags = ['-std=c11', '-O1', '-g', '--coverage', '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-Wall', '-Wextra', '-Werror']
 flags += ['-DCJSON_NESTING_LIMIT=24','-DCJSON_CIRCULAR_LIMIT=2048']
 flags += ['-I' + str(APP / p) for p in ['core', 'render', 'network', 'third_party/cjson']]
-sources = ['core/companion.c', 'core/widget.c', 'render/widget_state.c', 'render/widget_source.c', 'network/json.c', 'network/panel_source.c', 'network/scene_bank.c', 'third_party/cjson/cJSON.c', 'test/panel_source_test.c']
+sources = ['core/companion.c', 'core/widget.c', 'render/widget_state.c', 'render/widget_source.c', 'network/json.c', 'network/workspace.c', 'network/panel_source.c', 'network/scene_bank.c', 'third_party/cjson/cJSON.c', 'test/panel_source_test.c']
 subprocess.run([os.environ.get('CC','gcc'), *flags, *[str(APP / p) for p in sources], '-lm', '-lcrypto', '-o', str(OUT / 'panel-source-test')], check=True)
 result = subprocess.run([str(OUT / 'panel-source-test'), str(APP / 'test/panel-source.json')], capture_output=True, text=True, timeout=120, env={**os.environ,'UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'})
 (OUT / 'panel-source-test.log').write_text(result.stdout + result.stderr)

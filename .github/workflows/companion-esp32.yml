@@ -22,6 +22,7 @@ jobs:
         run: |
           python3 apps/companion-esp32/test/network.py
           python3 apps/companion-esp32/test/storage.py
+          python3 apps/companion-esp32/test/workspace.py
           python3 apps/companion-esp32/test/serial.py
           python3 -m unittest discover -s apps/companion-esp32/test -p "provision_test.py" -v
       - name: Sunton shared-SPI display and touch fault injection
