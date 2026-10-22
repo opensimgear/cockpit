@@ -71,6 +71,7 @@ jobs:
           node scripts/widget-state-fixtures.mjs --check
           node scripts/widget-draw-fixtures.mjs --check
           node scripts/widget-input-fixtures.mjs --check
+          node scripts/panel-source-fixtures.mjs --check
           python3 scripts/prepare-widget-fonts.py --check
       - name: Component release tooling and companion release-readiness validation
         run: |

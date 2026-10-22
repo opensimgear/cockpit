@@ -11,6 +11,7 @@
 
 typedef enum { OSG_BUTTON, OSG_INDICATOR, OSG_TEXT, OSG_NUMERIC, OSG_GAUGE, OSG_IMAGE, OSG_COMPONENT } osg_kind;
 typedef struct osg_widget_binding osg_widget_binding;
+typedef struct osg_panel_metadata osg_panel_metadata;
 typedef struct { double x, y, width, height; } osg_bounds;
 typedef struct { const char *id, *title; uint16_t width, height; } osg_page;
 typedef struct {
@@ -29,6 +30,7 @@ typedef struct {
     const osg_page *pages;
     const osg_widget *widgets;
     size_t page_count, widget_count;
+    const osg_panel_metadata *metadata;
 } osg_panel;
 /* Callbacks consume their arguments synchronously. Coordinates are clipped by
  * the core. Drivers own fonts, pixel format conversion, DMA completion and pins. */

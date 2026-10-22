@@ -57,6 +57,8 @@ struct osg_widget_binding {
     osg_bound_bitmap *bitmaps;
     uint8_t bitmap_count;
 };
+typedef struct { const char *id, *label; uint8_t page; uint32_t members; } osg_widget_group;
+struct osg_panel_metadata { const osg_widget_group *groups; size_t group_count; };
 typedef struct {
     const char *id, *channel, *unit;
     osg_value_kind kind;

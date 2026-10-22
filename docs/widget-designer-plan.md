@@ -229,3 +229,28 @@ worktree, recorded in `.research/lvgl-native/widget-draw-source-hashes.json`.
 
 Source-renderer commit `e680b81` passes all six ESP32 software/cross-build jobs in
 [CI run 39697413581](https://github.com/opensimgear/cockpit/actions/runs/39697413581).
+
+Complete schema-3 candidate admission now verifies the authenticated source hash,
+strict document shape, pinned/unused definitions, input/output contracts, logical
+bindings, page items, groups, safe insets, viewports and asset identities. The
+owned candidate can mix legacy widgets and portable components; it retains group
+metadata and prepared image references. Failed candidates rewind arena counters
+and preserve earlier admitted bytes. JSON heap/reply/node budgets are configurable
+only without outstanding objects and report exact resource counts. Five source
+cases (46 instances) and 4,239 shared-validator mutations pass fatal sanitizers;
+admission coverage is 100% lines/functions and 86.35% branches. The catalog uses
+35,777 native arena bytes. This is not MCU heap/stack qualification.
+
+The shared 51-step/24-change controller trace now goes through this complete
+publication decoder. Core coverage is 100% lines/functions and 79.24% branches;
+wire/client/serial/lease/cache regressions also pass. Actual dev Cockpit
+import/edit/pointer-preview/save/reload checks pass again at
+`.research/widgets-native-ui/1792630087043/`. Live network adoption, bank fencing,
+bitmap preparation, group drawing, board capability negotiation and the main
+LVGL loop remain; the active firmware delivery path still accepts schema 2 only.
+Typed-model commit `1dfc156` passes all six ESP32 jobs in
+[CI run 39700777334](https://github.com/opensimgear/cockpit/actions/runs/39700777334).
+Both real LVGL harnesses and 1,274 shared state cases also pass with the new
+panel metadata ABI. All 107 native snapshot sources/fixtures match this worktree;
+hashes and the complete admission log are retained in
+`.research/esp32-panel-source-native/`.

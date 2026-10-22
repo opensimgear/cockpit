@@ -46,7 +46,7 @@ export async function exportPanel(serialized, target = { width: 800, height: 480
     const v = d.presentation.viewports.find(v => v.pageId === p.id);
     return '{ ' + [text(p.id, 'page ID', 64), text(p.title, 'page title'), v.width, v.height].join(', ') + ' }';
   });
-  const header = ['/* Generated from a validated immutable Cockpit publication. Do not edit. */', '#ifndef OSG_GENERATED_PANEL_H', '#define OSG_GENERATED_PANEL_H', '#include "companion.h"', 'static const osg_page osg_demo_pages[] = {', pages.join(',\n'), '};', 'static const osg_widget osg_demo_widgets[] = {', widgets.map(w => w.line).join(',\n'), '};', 'static const osg_panel osg_demo_panel = { ' + [text(d.ui.id, 'UI ID', 64), text(publication.publicationHash, 'publication hash'), 'osg_demo_pages', 'osg_demo_widgets', pages.length, widgets.length].join(', ') + ' };', '#endif', ''].join('\n');
+  const header = ['/* Generated from a validated immutable Cockpit publication. Do not edit. */', '#ifndef OSG_GENERATED_PANEL_H', '#define OSG_GENERATED_PANEL_H', '#include "companion.h"', 'static const osg_page osg_demo_pages[] = {', pages.join(',\n'), '};', 'static const osg_widget osg_demo_widgets[] = {', widgets.map(w => w.line).join(',\n'), '};', 'static const osg_panel osg_demo_panel = { ' + [text(d.ui.id, 'UI ID', 64), text(publication.publicationHash, 'publication hash'), 'osg_demo_pages', 'osg_demo_widgets', pages.length, widgets.length, 'NULL'].join(', ') + ' };', '#endif', ''].join('\n');
   return { header, publicationHash: publication.publicationHash, panel: d };
 }
 export async function main(args) {

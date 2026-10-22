@@ -4,8 +4,10 @@
 #include "widget_state.h"
 #include "wire.h"
 #include "input.h"
+#include "panel_source.h"
 #include <assert.h>
 #include <math.h>
+#include <openssl/sha.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +19,7 @@ static const cJSON *get(const cJSON *v, const char *key) { return cJSON_GetObjec
 static const char *str(const cJSON *v, const char *key) { return cJSON_GetStringValue(get(v, key)); }
 static double number(const cJSON *v, const char *key) { const cJSON *field = get(v, key); assert(cJSON_IsNumber(field)); return field->valuedouble; }
 static bool same(const char *a, const char *b) { return a && b && !strcmp(a, b); }
-static const cJSON *find(const cJSON *array, const char *id) { for (const cJSON *v = array->child; v; v = v->next) if (same(str(v, "id"), id)) return v; return NULL; }
+static bool source_sha(const void *p, size_t n, char out[72]) { unsigned char digest[32]; SHA256(p, n, digest); memcpy(out, "sha256:", 7); for (unsigned i = 0; i < 32; i++) (void)snprintf(out + 7 + i * 2, 3, "%02x", digest[i]); return true; }
 static void fill(void *p, int x, int y, int w, int h, uint16_t c) { (void)p; (void)x; (void)y; (void)w; (void)h; (void)c; }
 static void text(void *p, int x, int y, int w, int h, const char *s, uint16_t c) { (void)s; fill(p, x, y, w, h, c); }
 static bool record(void *p, const char *id, osg_value_kind kind, double value, uint64_t sequence) {
@@ -138,49 +140,50 @@ static void queue_checks(osg_runtime *r) {
     assert(queue.mode == OSG_INPUT_BLOCKED && !r->armed && r->requested[13] == -1);
     r->sink = NULL; r->typed_sink = NULL; r->sink_context = NULL;
 }
-static void binding_checks(osg_panel *panel, osg_widget *widgets, osg_widget_binding *bindings) {
-    const unsigned original_slot = bindings[0].outputs[0].slot;
-    bindings[0].outputs[0].slot = OSG_MAX_WIDGETS; assert(!osg_panel_valid(panel)); bindings[0].outputs[0].slot = (uint8_t)original_slot;
-    const unsigned second_slot = bindings[1].outputs[0].slot;
-    bindings[1].outputs[0].slot = (uint8_t)original_slot; assert(!osg_panel_valid(panel)); bindings[1].outputs[0].slot = (uint8_t)second_slot;
-    const char *second_id = bindings[1].outputs[0].id;
-    bindings[1].outputs[0].id = bindings[0].outputs[0].id; assert(!osg_panel_valid(panel)); bindings[1].outputs[0].id = second_id;
-    widgets[0].component = NULL; assert(!osg_panel_valid(panel)); widgets[0].component = &bindings[0];
+static void binding_checks(osg_panel *panel, osg_widget *widgets) {
+    osg_widget_binding *first = (osg_widget_binding *)widgets[0].component, *second = (osg_widget_binding *)widgets[1].component;
+    const unsigned original_slot = first->outputs[0].slot;
+    first->outputs[0].slot = OSG_MAX_WIDGETS; assert(!osg_panel_valid(panel)); first->outputs[0].slot = (uint8_t)original_slot;
+    const unsigned second_slot = second->outputs[0].slot;
+    second->outputs[0].slot = (uint8_t)original_slot; assert(!osg_panel_valid(panel)); second->outputs[0].slot = (uint8_t)second_slot;
+    const char *second_id = second->outputs[0].id;
+    second->outputs[0].id = first->outputs[0].id; assert(!osg_panel_valid(panel)); second->outputs[0].id = second_id;
+    widgets[0].component = NULL; assert(!osg_panel_valid(panel)); widgets[0].component = first;
     const char *reference = widgets[1].reference;
     widgets[1].reference = widgets[0].reference; assert(!osg_panel_valid(panel)); widgets[1].reference = reference;
     const osg_bounds before = widgets[1].bounds; widgets[1].bounds = widgets[0].bounds; assert(!osg_panel_valid(panel)); widgets[1].bounds = before;
     const osg_bounds frame = widgets[7].bounds; widgets[7].bounds = (osg_bounds){0, 0, 1, 1}; assert(osg_panel_valid(panel)); widgets[7].bounds = frame;
+    osg_widget_group groups[2] = {{"group", "Controls", 0, 1}, {"other", "Other", 0, 0}};
+    osg_panel_metadata metadata = {groups, 2}; panel->metadata = &metadata; assert(osg_panel_valid(panel));
+    metadata.group_count = 65; assert(!osg_panel_valid(panel)); metadata.group_count = 2;
+    metadata.groups = NULL; assert(!osg_panel_valid(panel)); metadata.groups = groups;
+    groups[0].id = "!bad"; assert(!osg_panel_valid(panel)); groups[0].id = "group";
+    groups[0].label = NULL; assert(!osg_panel_valid(panel)); groups[0].label = " "; assert(!osg_panel_valid(panel)); groups[0].label = "Controls";
+    groups[0].page = 2; assert(!osg_panel_valid(panel)); groups[0].page = 0;
+    groups[0].members = UINT32_C(1) << 31; assert(!osg_panel_valid(panel)); groups[0].members = UINT32_C(1) << 12; assert(!osg_panel_valid(panel)); groups[0].members = 1;
+    groups[1].id = "group"; assert(!osg_panel_valid(panel)); groups[1].id = "other";
+    metadata.group_count = 0; metadata.groups = NULL; assert(osg_panel_valid(panel)); panel->metadata = NULL;
     assert(!osg_widget_text_valid("\xc0\x80") && !osg_widget_text_valid("\xed\xa0\x80") && !osg_widget_text_valid("\xf4\x90\x80\x80") && !osg_widget_text_valid("\xe2\x82"));
     assert(osg_widget_text_valid("é —") && osg_widget_text_blank(" \xc2\xa0") && !osg_widget_text_blank("Text") && !osg_widget_text_blank(NULL));
 }
 void component_tests(void) {
-    cJSON *fixture = load("apps/companion-esp32/test/widget-input.json"); const cJSON *document = get(fixture, "document"), *ui = get(document, "ui"), *presentation = get(document, "presentation");
+    cJSON *fixture = load("apps/companion-esp32/test/widget-input.json");
     unsigned char *memory = malloc(192 * 1024); assert(memory); osg_widget_arena arena = {.data = memory, .capacity = 192 * 1024, .max_layers = 128, .max_components = 32};
-    osg_widget widgets[OSG_MAX_WIDGETS] = {0}; osg_widget_binding bindings[OSG_MAX_WIDGETS] = {0}; osg_page pages[4] = {0};
-    osg_panel panel = {.ui_id = str(ui, "id"), .publication_hash = str(fixture, "publicationHash"), .pages = pages, .widgets = widgets, .page_count = (size_t)cJSON_GetArraySize(get(ui, "pages")), .widget_count = (size_t)cJSON_GetArraySize(get(presentation, "widgets"))};
-    for (size_t i = 0; i < panel.page_count; i++) { const cJSON *p = cJSON_GetArrayItem(get(ui, "pages"), (int)i); pages[i] = (osg_page){str(p, "id"), str(p, "title"), 800, 480}; }
-    unsigned slot = 0;
-    for (size_t i = 0; i < panel.widget_count; i++) {
-        const cJSON *w = cJSON_GetArrayItem(get(presentation, "widgets"), (int)i), *config = get(w, "config"), *b = get(w, "bounds");
-        const cJSON *definition = find(get(presentation, "definitions"), str(config, "definitionId")); assert(definition);
-        assert(osg_widget_source_compile(definition, get(config, "properties"), get(ui, "assets"), &arena, &bindings[i].definition, NULL));
-        widgets[i] = (osg_widget){.id = str(w, "id"), .reference = cJSON_GetArraySize(get(w, "controlIds")) ? cJSON_GetStringValue(cJSON_GetArrayItem(get(w, "controlIds"), 0)) : "", .output_id = "", .label = str(w, "label"), .prefix = "", .suffix = "", .unit = "", .kind = OSG_COMPONENT, .bounds = {number(b, "x"), number(b, "y"), number(b, "width"), number(b, "height")}, .component = &bindings[i]};
-        while (widgets[i].page < panel.page_count && !same(pages[widgets[i].page].id, str(w, "pageId"))) widgets[i].page++;
-        for (unsigned port = 0; port < bindings[i].definition->output_count; port++) {
-            const char *id = cJSON_GetStringValue(cJSON_GetArrayItem(get(w, "feedbackIds"), (int)port)); const cJSON *out = find(get(ui, "feedbackWidgets"), id); assert(out && slot < OSG_MAX_WIDGETS);
-            bindings[i].outputs[port] = (osg_bound_output){id, str(out, "channelId"), (uint8_t)slot++};
-        }
-    }
-    assert(osg_panel_valid(&panel)); binding_checks(&panel, widgets, bindings); osg_runtime *r = &component_runtime; change_count = 0;
-    assert(osg_init(r, &panel, (osg_display){.width = 800, .height = 480, .fill = fill, .text = text}, NULL, NULL)); r->typed_sink = record; osg_connected(r, true);
-    osg_live_session live = session(&panel); unsigned step = 0;
+    cJSON *publication = cJSON_CreateObject(); assert(publication);
+    cJSON_AddStringToObject(publication, "canonicalDocument", str(fixture, "canonicalDocument")); cJSON_AddStringToObject(publication, "publicationHash", str(fixture, "publicationHash")); cJSON_AddArrayToObject(publication, "assets");
+    assert(osg_json_configure(512 * 1024, 192 * 1024, 8192));
+    osg_image *image; assert(osg_panel_source_compile(publication, str(fixture, "publicationHash"), (osg_crypto){.sha256 = source_sha}, &(osg_panel_source_limits){64 * 1024, 32, 800, 480}, &arena, &image, NULL)); cJSON_Delete(publication);
+    osg_panel *panel = &image->panel;
+    assert(osg_panel_valid(panel)); binding_checks(panel, image->widgets); osg_runtime *r = &component_runtime; change_count = 0;
+    assert(osg_init(r, panel, (osg_display){.width = 800, .height = 480, .fill = fill, .text = text}, NULL, NULL)); r->typed_sink = record; osg_connected(r, true);
+    osg_live_session live = session(panel); unsigned step = 0;
     for (const cJSON *action = get(fixture, "steps")->child; action; action = action->next, step++) {
         const char *type = str(action, "type"); const uint64_t now = (uint64_t)number(action, "now");
         if (same(type, "arm")) assert(osg_preview_arm(r));
         else if (same(type, "disarm")) osg_disarm(r);
         else if (same(type, "tick")) osg_tick(r, now);
         else if (same(type, "feedback")) { const cJSON *ack = get(action, "ack"); assert(osg_ack(ack, &live, str(ack, "sequence"), r, now)); osg_tick(r, now); }
-        else if (same(type, "down")) point(r, widget_index(&panel, str(action, "widgetId")), true);
+        else if (same(type, "down")) point(r, widget_index(panel, str(action, "widgetId")), true);
         else if (same(type, "up")) osg_touch(r, false, 0, 0);
         else if (same(type, "out")) osg_touch(r, true, -1, -1);
         else abort();
@@ -191,5 +194,5 @@ void component_tests(void) {
     queue_checks(r);
     assert(!osg_widget_input(NULL, NULL, NULL)); osg_widget_state_context context; osg_widget_runtime_context(NULL, 0, 0, &context); assert(!context.connected);
     assert(!osg_panel_output(NULL, 0, NULL));
-    cJSON_Delete(fixture); free(memory);
+    cJSON_Delete(fixture); free(memory); assert(osg_json_configure(OSG_JSON_HEAP_BYTES, OSG_REPLY_BYTES, 2048));
 }

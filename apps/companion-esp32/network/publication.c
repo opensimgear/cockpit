@@ -7,6 +7,11 @@ static const cJSON *get(const cJSON *v, const char *key) { return cJSON_GetObjec
 static bool same(const char *a, const char *b) { return a && b && !strcmp(a, b); }
 static double number(const cJSON *v, const char *key) { const cJSON *n = get(v, key); return cJSON_IsNumber(n) ? n->valuedouble : NAN; }
 static bool size(const cJSON *v, size_t min, size_t max) { return cJSON_IsArray(v) && (size_t)cJSON_GetArraySize(v) >= min && (size_t)cJSON_GetArraySize(v) <= max; }
+static bool legacy_title(const char *s) {
+    if (!s || !*s || strlen(s) > 120) return false;
+    for (; *s; s++) if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9') || strchr(" .,:;-_+=|/%!()?", *s))) return false;
+    return true;
+}
 static const char *save(osg_image *image, const char *s) {
     if (!s || strlen(s) + 1 > sizeof(image->strings) - image->used) return NULL;
     char *p = image->strings + image->used; memcpy(p, s, strlen(s) + 1); image->used += strlen(s) + 1; return p;
@@ -55,7 +60,7 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
         for(const cJSON *before=get(ui,"assets")->child;before!=asset;before=before->next)if(same(osg_string(before,"id"),osg_string(asset,"id")))goto done;
     }
     image->panel = (osg_panel){save(image, osg_string(ui, "id")), save(image, hash), image->pages, image->widgets,
-        (size_t)cJSON_GetArraySize(pages), (size_t)cJSON_GetArraySize(widgets)};
+        (size_t)cJSON_GetArraySize(pages), (size_t)cJSON_GetArraySize(widgets), NULL};
     size_t buttons = 0, outputs = 0;
     for (size_t i = 0; i < image->panel.page_count; i++) {
         const cJSON *page = cJSON_GetArrayItem(pages, (int)i), *viewport = NULL;
@@ -64,7 +69,7 @@ bool osg_decode_publication(const cJSON *p, const char *expected, osg_crypto cry
             viewport = v;
         }
         const double w = number(viewport, "width"), h = number(viewport, "height");
-        if (!viewport || get(viewport, "backgroundAssetId") || !isfinite(w) || !isfinite(h) || w < 320 || h < 320 || w > 8192 || h > 8192 || floor(w) != w || floor(h) != h) goto done;
+        if (!viewport || !legacy_title(osg_string(page, "title")) || get(viewport, "backgroundAssetId") || !isfinite(w) || !isfinite(h) || w < 320 || h < 320 || w > 8192 || h > 8192 || floor(w) != w || floor(h) != h) goto done;
         image->pages[i] = (osg_page){save(image, osg_string(page, "id")), save(image, osg_string(page, "title")), (uint16_t)w, (uint16_t)h};
     }
     for (size_t i = 0; i < image->panel.widget_count; i++) {

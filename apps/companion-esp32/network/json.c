@@ -7,16 +7,26 @@
 
 typedef union { max_align_t alignment; size_t bytes; } allocation;
 static size_t allocated;
+static size_t heap_limit = OSG_JSON_HEAP_BYTES, reply_limit = OSG_REPLY_BYTES, node_limit = 2048;
+static osg_json_diagnostic last_failure;
 static void *bounded_malloc(size_t n) {
-    if (n > OSG_JSON_HEAP_BYTES - sizeof(allocation) || allocated > OSG_JSON_HEAP_BYTES - n - sizeof(allocation)) return NULL;
-    allocation *a = malloc(sizeof(*a) + n); if (!a) return NULL;
+    if (n > heap_limit - sizeof(allocation) || allocated > heap_limit - n - sizeof(allocation)) {
+        last_failure = (osg_json_diagnostic){OSG_JSON_HEAP, n > SIZE_MAX - allocated - sizeof(allocation) ? SIZE_MAX : allocated + n + sizeof(allocation), heap_limit}; return NULL;
+    }
+    allocation *a = malloc(sizeof(*a) + n); if (!a) { last_failure = (osg_json_diagnostic){OSG_JSON_HEAP,n + sizeof(allocation),0}; return NULL; }
     a->bytes = n; allocated += n + sizeof(*a); return a + 1;
 }
 static void bounded_free(void *p) { if (p) { allocation *a = (allocation *)p - 1; allocated -= a->bytes + sizeof(*a); volatile unsigned char *s = p; for (size_t i = 0; i < a->bytes; i++) s[i] = 0; free(a); } }
 void osg_json_init(void) { cJSON_Hooks hooks = {bounded_malloc, bounded_free}; cJSON_InitHooks(&hooks); }
+bool osg_json_configure(size_t heap_bytes, size_t reply_bytes, size_t nodes) {
+    if (allocated || heap_bytes < 4096 || heap_bytes > 1024 * 1024 || !reply_bytes || reply_bytes > 1024 * 1024 || !nodes || nodes > 16384) return false;
+    heap_limit = heap_bytes; reply_limit = reply_bytes; node_limit = nodes; return true;
+}
 size_t osg_json_allocated(void) { return allocated; }
+osg_json_diagnostic osg_json_last_failure(void) { return last_failure; }
 static bool safe_tree(const cJSON *v, int depth, size_t *nodes) {
-    if (!v || depth > 24 || ++*nodes > 2048 || (cJSON_IsNumber(v) && !isfinite(v->valuedouble))) return false;
+    if (!v || depth > 24 || (cJSON_IsNumber(v) && !isfinite(v->valuedouble))) return false;
+    if (++*nodes > node_limit) { last_failure = (osg_json_diagnostic){OSG_JSON_NODES,*nodes,node_limit}; return false; }
     for (const cJSON *a = v->child; a; a = a->next) {
         if (cJSON_IsObject(v)) for (const cJSON *b = a->next; b; b = b->next)
             if (!a->string || !b->string || !strcmp(a->string, b->string)) return false;
@@ -25,16 +35,20 @@ static bool safe_tree(const cJSON *v, int depth, size_t *nodes) {
     return true;
 }
 cJSON *osg_json_parse(const char *s, size_t n) {
-    if (!s || !n || n > OSG_REPLY_BYTES || memchr(s, 0, n)) return NULL;
+    last_failure = (osg_json_diagnostic){OSG_JSON_INVALID,0,0};
+    if (!s || !n) return NULL;
+    if (n > reply_limit) { last_failure = (osg_json_diagnostic){OSG_JSON_BYTES,n,reply_limit}; return NULL; }
+    if (memchr(s, 0, n)) return NULL;
     /* cJSON strings cannot represent embedded NUL. Reject its escaped form too. */
     for (size_t i = 0; i + 5 < n; i++) if (s[i] == '\\' && !memcmp(s + i, "\\u0000", 6)) return NULL;
     const char *end = NULL;
     cJSON *v = cJSON_ParseWithLengthOpts(s, n, &end, false);
     if (!v) return NULL;
+    last_failure = (osg_json_diagnostic){OSG_JSON_INVALID,0,0};
     while ((size_t)(end - s) < n && isspace((unsigned char)*end)) end++;
     size_t nodes = 0;
     if ((size_t)(end - s) != n || !safe_tree(v, 0, &nodes)) { cJSON_Delete(v); return NULL; }
-    return v;
+    last_failure = (osg_json_diagnostic){0}; return v;
 }
 const char *osg_string(const cJSON *v, const char *key) {
     const cJSON *s = cJSON_GetObjectItemCaseSensitive(v, key);
@@ -86,7 +100,7 @@ int osg_reply_feed(osg_transfer *t, const char *bytes, size_t n, osg_crypto cryp
         cJSON *count = cJSON_GetObjectItemCaseSensitive(v, "bytes");
         const char *id = osg_string(v, "id"), *hash = osg_string(v, "sha256");
         if (!t->active && osg_stable_id(id) && osg_hash_id(hash) && cJSON_IsNumber(count) &&
-            count->valuedouble > 0 && count->valuedouble <= t->capacity && count->valuedouble <= OSG_REPLY_BYTES && floor(count->valuedouble) == count->valuedouble) {
+            count->valuedouble > 0 && count->valuedouble <= t->capacity && count->valuedouble <= reply_limit && floor(count->valuedouble) == count->valuedouble) {
             t->expected = (size_t)count->valuedouble; t->size = 0; t->index = 0; t->active = true;
             (void)osg_copy(t->id, sizeof(t->id), id); (void)osg_copy(t->hash, sizeof(t->hash), hash); result = 0;
         }

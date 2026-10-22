@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { importBundle, publishDocument } from '../packages/companion-designer/src/assets.ts';
-import { normalizeToPortableUi, checked } from '../packages/companion-designer/src/model.ts';
+import { normalizeToPortableUi, checked, canonical } from '../packages/companion-designer/src/model.ts';
 import { componentDefinition, componentPresentation } from '../packages/companion-ui/src/widget-presentation.ts';
 import { createPreviewController } from '../packages/companion-ui/src/controller.ts';
 
@@ -77,7 +77,7 @@ const steps = actions.map((action, index) => {
   const state = controller.snapshot();
   return { ...action, now, ...(ack ? { ack } : {}), expected: { page, armed: state.armed, values: state.values, pressed: state.pressedWidgetIds, changes: state.events.flatMap(event => event.changes) } };
 });
-const result = JSON.stringify({ formatVersion: 1, document, publicationHash: publication.publicationHash, steps }) + '\n';
+const result = JSON.stringify({ formatVersion: 1, document, canonicalDocument: canonical(document), publicationHash: publication.publicationHash, steps }) + '\n';
 const path = 'apps/companion-esp32/test/widget-input.json';
 if (process.argv.includes('--check')) { if ((await readFile(path, 'utf8')).replaceAll('\r\n', '\n') !== result) throw Error('Shared input fixture differs from actual controller behavior'); }
 else await writeFile(path, result);

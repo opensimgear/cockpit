@@ -90,6 +90,16 @@ bool osg_panel_valid(const osg_panel *p) {
                 touch.x < a.x + a.width && a.x < touch.x + touch.width && touch.y < a.y + a.height && a.y < touch.y + touch.height) return false;
         }
     }
+    if (p->metadata) {
+        const osg_panel_metadata *m = p->metadata;
+        if (m->group_count > 64 || (m->group_count && !m->groups)) return false;
+        for (size_t i = 0; i < m->group_count; i++) {
+            const osg_widget_group *group = &m->groups[i];
+            if (!id_valid(group->id) || !osg_widget_text_valid(group->label) || osg_widget_text_blank(group->label) || group->page >= p->page_count || (p->widget_count < 32 && group->members >> p->widget_count)) return false;
+            for (size_t before = 0; before < i; before++) if (!strcmp(group->id, m->groups[before].id)) return false;
+            for (size_t w = 0; w < p->widget_count; w++) if ((group->members & (UINT32_C(1) << w)) && p->widgets[w].page != group->page) return false;
+        }
+    }
     return true;
 }
 bool osg_init(osg_runtime *r, const osg_panel *p, osg_display d, osg_input_sink sink, void *ctx) {

@@ -102,10 +102,38 @@ lines/functions and 78.86% branches; portable widget contracts are 100%
 lines/functions and 75.90% branches. A native runtime snapshot is 17,456 bytes;
 this is not an MCU heap or task-stack qualification.
 
-The decoder, component model and renderer are compiled into firmware but are not
-yet connected to live schema-3 publication adoption. The schema-2 decoder,
-resource negotiation, image cache and raster main loop remain. Integration
-must still apply full-document/source byte limits, bind logical IDs/assets,
-preflight supported font glyphs, select board-specific memory limits and connect
-dynamic state without changing ownership, neutral baselines or leases. Browser
-and Android source authoring limits remain independent of these device budgets.
+`network/panel_source.c` now admits complete schema-3 publication candidates.
+It verifies the exact canonical source hash, strict source shape, all definition
+revisions (including unused ones), pinned instance properties, primitive arity
+and types, one-to-one logical target bindings, normalized page items, groups,
+safe insets, viewport regions and asset digests. Legacy widgets and portable
+components can share a candidate. Group IDs/labels/page membership are retained
+in owned metadata; prepared image references retain the existing hash identity.
+The returned scene owns its entire image/model in caller-provided aligned memory.
+On failure counters rewind and earlier admitted bytes remain unchanged.
+
+The five panel cases contain 46 instances, including mixed legacy/components,
+independent controls, editorial metadata, prepared artwork references and a
+display-only panel. All 4,239 mutations are checked against the actual shared
+TypeScript document validator. Valid source outside this target's supported
+features is explicitly rejected; the evidence log names each such exception.
+The 51-step control trace now uses this full authenticated-source decoder,
+instead of manually constructing the runtime bindings. ASan/UBSan pass; panel
+admission coverage is 100% lines/functions and 86.35% branches. The catalog
+candidate occupies 35,777 native arena bytes, including owned metadata/model;
+this does not qualify MCU memory or task stacks.
+
+JSON heap/reply/node limits can be configured only with no outstanding JSON.
+The original default limits remain until a caller opts in. Rejection reports
+the exact field, required and available document/arena/layer/component/image or
+JSON resource count. Syntax and publication-identity failures remain distinct.
+
+Candidate admission, the component model and renderer are compiled into firmware
+but are not yet connected to live schema-3 adoption. The active schema-2 delivery
+path, resource negotiation, image cache and raster main loop remain. Integration
+must still fence/reuse candidate banks, prepare their bitmap references, preflight
+supported font glyphs, select board-specific memory limits and connect dynamic
+state without changing ownership, neutral baselines or leases. Group drawing and
+page-background support also remain to be integrated; page backgrounds currently
+fail explicitly. Browser and Android source authoring limits remain independent
+of these device budgets.
