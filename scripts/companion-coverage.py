@@ -40,7 +40,9 @@ def main():
             raise SystemExit("Install llvm-tools-preview for the pinned Rust toolchain.")
     targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "profile", "profile_owned", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
     if not options.service_only:
-        targets.append(("desktop", root / "src-tauri/Cargo.toml", "companion_host::tests", [root / "src-tauri/src/companion_host.rs"]))
+        # Host production APIs are also exercised by authoring, acquisition,
+        # restoration and resource integration tests outside companion_host.
+        targets.append(("desktop", root / "src-tauri/Cargo.toml", "companion", [root / "src-tauri/src/companion_host.rs"]))
     summary = {}
     for name, manifest, selection, sources in targets:
         artifacts = run(["cargo", "test", "--locked", "--lib", "--no-run", "--message-format=json", "--manifest-path", manifest], root, environment)

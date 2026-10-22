@@ -260,3 +260,11 @@ discovery tests pass 16/16 with both normal and actual Windows short-path TEMP.
 The unified profile acceptance script distinguishes backend qualification from
 local enablement and driver presence; its full Windows lifecycle passes without
 virtual reports or driver-layout changes. Physical validation remains deferred.
+
+The final gateway/device acceptance reached its crash/recovery scenario and
+exposed an outdated error-message expectation. It now checks the recovery
+instruction, unchanged recovery state and exact journal preservation after
+rejected Apply. Companion desktop coverage also includes existing acquisition,
+restoration, authoring and resource integration tests instead of only local host
+unit tests. A Windows pilot using the unchanged host module passes 85 tests
+(two explicitly ignored) and measures 72.81%, retaining the 71% threshold.
