@@ -15,7 +15,7 @@
     newDocument, createDesignerHistory, applyDesignerCommand, applyPixelDesignerCommand, undoDesigner, redoDesigner, DESIGNER_LIMITS,
     createLibrary, saveDraft, duplicateDraft, openDraft,
     importAsset, validateAssets, exportBundle, importBundle, publishDocument,
-    viewportRegions, widgetViewport, boundsContain, widgetPresets, createWidgetCatalog, newId, canonical,
+    viewportRegions, widgetViewport, boundsContain, widgetPresets, createWidgetCatalog, includeBuiltinWidgets, newId, canonical,
     mergeWidgetBundles, importWidgetBundle, exportWidgetBundle, widgetAssetIds,
     type DesignerHistory, type DesignerWidget, type AssetPayload,
     type Publication, type Bounds, type WidgetDefinition, type WidgetLibraryBundle, type WidgetPropertyValue,
@@ -500,7 +500,7 @@
     let alive = true;
     void import('./companion-library').then(async ({ CompanionLibraryStore, indexedDbStorage }) => {
       store = new CompanionLibraryStore(indexedDbStorage()); const snapshot = await store.load();
-      if (!alive) return; library = snapshot.library; publications = snapshot.publications; widgetBundle = snapshot.widgets ?? widgetBundle; storageReady = true; resolveStorageLoad();
+      if (!alive) return; library = snapshot.library; publications = snapshot.publications; widgetBundle = snapshot.widgets ? {...snapshot.widgets,library:{...snapshot.widgets.library,definitions:includeBuiltinWidgets(snapshot.widgets.library.definitions)}} : widgetBundle; storageReady = true; resolveStorageLoad();
       await refreshCompanions();
       await restoreCompanionPanels();
       await refreshCompanions();

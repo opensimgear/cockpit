@@ -1,4 +1,5 @@
 import type { WidgetDefinition, WidgetLayer, WidgetProperty } from "./widget-model.ts";
+import { createCapsuleToggle } from './widget-toggle.ts';
 
 const full = { x: 0, y: 0, width: 1, height: 1 };
 const colors: WidgetProperty[] = [
@@ -75,5 +76,11 @@ export function createWidgetCatalog(): WidgetDefinition[] {
     { id: "gap", label: "Ring opening", kind: "rectangle", bounds: { x: .44, y: .1, width: .12, height: .2 }, fill: { property: "background" } },
     { id: "stem", label: "Power stem", kind: "rectangle", bounds: { x: .48, y: .12, width: .04, height: .29 }, fill: "#42515a", states: { active: { fill: { property: "accent" } } } },
   );
-  return [button, toggle, selector, indicator, numeric, bar, radial, frame, divider, navigation, text, icon];
+  return [button, toggle, selector, indicator, numeric, bar, radial, frame, divider, navigation, text, icon, createCapsuleToggle(false), createCapsuleToggle(true)];
+}
+
+/** Saved designs retain their exact versions; new built-ins remain discoverable after updates. */
+export function includeBuiltinWidgets(definitions: WidgetDefinition[]): WidgetDefinition[] {
+  const retained = new Set(definitions.map(definition => definition.id));
+  return [...definitions, ...createWidgetCatalog().filter(definition => !retained.has(definition.id))];
 }

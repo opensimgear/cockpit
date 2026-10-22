@@ -15,7 +15,7 @@ function seed() {
 const component = doc => doc.presentation.widgets.find(w => w.kind === 'component');
 
 test('all original catalog entries validate with shared portable layers and interactions', () => {
-  assert.equal(catalog.length, 12);
+  assert.equal(catalog.length, 14);
   for (const definition of catalog) assert.equal(validateWidgetDefinition(definition).ok, true, definition.id);
   const again = createWidgetCatalog(); again[0].properties[0].default = 'Different';
   assert.equal(createWidgetCatalog()[0].properties[0].default, 'ENGINE');

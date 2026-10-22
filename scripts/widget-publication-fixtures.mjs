@@ -1,14 +1,15 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { newDocument, createDesignerHistory, applyDesignerCommand as apply, createWidgetCatalog, normalizeToPortableUi, publishDocument, exportBundle, canonical } from '../packages/companion-designer/src/index.ts';
+import { newDocument, createDesignerHistory, applyDesignerCommand as apply, createWidgetCatalog, normalizeToPortableUi, publishDocument, exportBundle, exportWidgetBundle, canonical } from '../packages/companion-designer/src/index.ts';
 
 // Production authoring APIs produce fixtures consumed independently by Rust.
 function panel(definitions, title, uiId) {
+  const rowStep=.96/Math.ceil(definitions.length/4);
   let history = createDesignerHistory(newDocument(title));
   history = apply(history, { type: 'delete-widget', id: history.present.presentation.widgets[0].id });
   history = apply(history, { type: 'set-viewport', pageId: history.present.ui.pages[0].id, width: 800, height: 480 });
   for (const [index, definition] of definitions.entries()) {
-    history = apply(history, { type: 'add-component', definition, properties: definition.interaction.kind === 'navigate' ? { page: history.present.ui.pages[0].id } : {}, bounds: { x: .025 + (index % 4) * .24, y: .025 + Math.floor(index / 4) * .32, width: .22, height: .28 } });
+    history = apply(history, { type: 'add-component', definition, properties: definition.interaction.kind === 'navigate' ? { page: history.present.ui.pages[0].id } : {}, bounds: { x: .025 + (index % 4) * .24, y: .025 + Math.floor(index / 4) * rowStep, width: .22, height: Math.round((rowStep-.04)*100)/100 } });
   }
   const document = structuredClone(history.present), ids = new Map();
   const remap = (old, replacement) => { ids.set(old, replacement); return replacement; };
@@ -43,6 +44,7 @@ for (const [name, doc] of [['base', document], ['styling', styled.present], ['be
 }
 outputs.push([new URL('../examples/companion/shared-systems.bundle.json', import.meta.url), await exportBundle(document, []) + '\n']);
 outputs.push([new URL('../examples/companion/shared-systems-complete.bundle.json', import.meta.url), await exportBundle(complete, []) + '\n']);
+outputs.push([new URL('../examples/companion/capsule-toggles.widgets.json', import.meta.url), await exportWidgetBundle({bundleVersion:1,library:{formatVersion:1,definitions:catalog.filter(d=>d.id.startsWith('osg-capsule-toggle-'))},manifest:[],assets:[]})+'\n']);
 for (const [url, contents] of outputs) {
   if (process.argv.includes('--check')) {
     if (readFileSync(url, 'utf8').replaceAll('\r\n', '\n') !== contents) throw new Error(`Widget fixture differs: ${fileURLToPath(url)}`);

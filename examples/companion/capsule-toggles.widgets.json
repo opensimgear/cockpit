@@ -1,0 +1,1042 @@
+{
+  "bundleVersion": 1,
+  "library": {
+    "formatVersion": 1,
+    "definitions": [
+      {
+        "formatVersion": 1,
+        "id": "osg-capsule-toggle-horizontal",
+        "version": 1,
+        "title": "Capsule toggle · Horizontal",
+        "size": {
+          "width": 200,
+          "height": 128
+        },
+        "properties": [
+          {
+            "name": "label",
+            "label": "Title",
+            "type": "text",
+            "default": "GSAFE"
+          },
+          {
+            "name": "accent",
+            "label": "Thumb glow",
+            "type": "color",
+            "default": "#bde7ec"
+          },
+          {
+            "name": "highlight",
+            "label": "Thumb center",
+            "type": "color",
+            "default": "#d7f1f4"
+          },
+          {
+            "name": "foreground",
+            "label": "Title color",
+            "type": "color",
+            "default": "#d2edf0"
+          },
+          {
+            "name": "background",
+            "label": "Track color",
+            "type": "color",
+            "default": "#252d30"
+          },
+          {
+            "name": "edge",
+            "label": "Outline",
+            "type": "color",
+            "default": "#a9c6cb"
+          }
+        ],
+        "inputs": [
+          {
+            "name": "press",
+            "label": "Toggle",
+            "kind": "button"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "active",
+            "label": "Confirmed on",
+            "kind": "indicator"
+          }
+        ],
+        "interaction": {
+          "kind": "toggle",
+          "port": "press"
+        },
+        "state": {
+          "confirmedPort": "active"
+        },
+        "hitArea": {
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1
+        },
+        "layers": [
+          {
+            "id": "title",
+            "label": "Title",
+            "kind": "text",
+            "bounds": {
+              "x": 0,
+              "y": 0.0234375,
+              "width": 1,
+              "height": 0.265625
+            },
+            "text": {
+              "property": "label"
+            },
+            "font": "sans",
+            "fontSize": 24,
+            "align": "center",
+            "fill": {
+              "property": "foreground"
+            },
+            "states": {
+              "disabled": {
+                "opacity": 0.4
+              },
+              "disconnected": {
+                "opacity": 0.4
+              },
+              "stale": {
+                "opacity": 0.6
+              }
+            }
+          },
+          {
+            "id": "track-glow",
+            "label": "Track halo",
+            "kind": "rectangle",
+            "bounds": {
+              "x": 0.18,
+              "y": 0.4375,
+              "width": 0.64,
+              "height": 0.4375
+            },
+            "radius": 28,
+            "stroke": {
+              "property": "edge"
+            },
+            "strokeWidth": 6,
+            "opacity": 0.12,
+            "states": {
+              "pressed": {
+                "opacity": 0.3
+              },
+              "disabled": {
+                "opacity": 0.03
+              },
+              "disconnected": {
+                "opacity": 0.03
+              }
+            }
+          },
+          {
+            "id": "track",
+            "label": "Capsule track",
+            "kind": "rectangle",
+            "bounds": {
+              "x": 0.18,
+              "y": 0.4375,
+              "width": 0.64,
+              "height": 0.4375
+            },
+            "radius": 28,
+            "fill": {
+              "property": "background"
+            },
+            "stroke": {
+              "property": "edge"
+            },
+            "strokeWidth": 2,
+            "states": {
+              "active": {
+                "stroke": {
+                  "property": "accent"
+                }
+              },
+              "pressed": {
+                "stroke": {
+                  "property": "accent"
+                },
+                "strokeWidth": 3
+              },
+              "warning": {
+                "stroke": "#efbc73"
+              },
+              "disabled": {
+                "opacity": 0.4
+              },
+              "disconnected": {
+                "opacity": 0.4
+              },
+              "stale": {
+                "opacity": 0.6
+              }
+            }
+          },
+          {
+            "id": "off-halo",
+            "label": "Off halo",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.165,
+              "y": 0.4140625,
+              "width": 0.31,
+              "height": 0.484375
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.035,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "off-glow",
+            "label": "Off glow",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.19,
+              "y": 0.453125,
+              "width": 0.26,
+              "height": 0.40625
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.12,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "off-thumb",
+            "label": "Off thumb",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.21,
+              "y": 0.484375,
+              "width": 0.22,
+              "height": 0.34375
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.9,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "off-highlight",
+            "label": "Off highlight",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.235,
+              "y": 0.5234375,
+              "width": 0.17,
+              "height": 0.265625
+            },
+            "fill": {
+              "property": "highlight"
+            },
+            "opacity": 0.2,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-halo",
+            "label": "On halo",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.525,
+              "y": 0.4140625,
+              "width": 0.31,
+              "height": 0.484375
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.035,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-glow",
+            "label": "On glow",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.55,
+              "y": 0.453125,
+              "width": 0.26,
+              "height": 0.40625
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.12,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-thumb",
+            "label": "On thumb",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.57,
+              "y": 0.484375,
+              "width": 0.22,
+              "height": 0.34375
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.9,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-highlight",
+            "label": "On highlight",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.595,
+              "y": 0.5234375,
+              "width": 0.17,
+              "height": 0.265625
+            },
+            "fill": {
+              "property": "highlight"
+            },
+            "opacity": 0.2,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "formatVersion": 1,
+        "id": "osg-capsule-toggle-vertical",
+        "version": 1,
+        "title": "Capsule toggle · Vertical",
+        "size": {
+          "width": 104,
+          "height": 200
+        },
+        "properties": [
+          {
+            "name": "label",
+            "label": "Title",
+            "type": "text",
+            "default": "PWR"
+          },
+          {
+            "name": "accent",
+            "label": "Thumb glow",
+            "type": "color",
+            "default": "#bde7ec"
+          },
+          {
+            "name": "highlight",
+            "label": "Thumb center",
+            "type": "color",
+            "default": "#d7f1f4"
+          },
+          {
+            "name": "foreground",
+            "label": "Title color",
+            "type": "color",
+            "default": "#d2edf0"
+          },
+          {
+            "name": "background",
+            "label": "Track color",
+            "type": "color",
+            "default": "#252d30"
+          },
+          {
+            "name": "edge",
+            "label": "Outline",
+            "type": "color",
+            "default": "#a9c6cb"
+          }
+        ],
+        "inputs": [
+          {
+            "name": "press",
+            "label": "Toggle",
+            "kind": "button"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "active",
+            "label": "Confirmed on",
+            "kind": "indicator"
+          }
+        ],
+        "interaction": {
+          "kind": "toggle",
+          "port": "press"
+        },
+        "state": {
+          "confirmedPort": "active"
+        },
+        "hitArea": {
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1
+        },
+        "layers": [
+          {
+            "id": "title",
+            "label": "Title",
+            "kind": "text",
+            "bounds": {
+              "x": 0,
+              "y": 0.015,
+              "width": 1,
+              "height": 0.17
+            },
+            "text": {
+              "property": "label"
+            },
+            "font": "sans",
+            "fontSize": 24,
+            "align": "center",
+            "fill": {
+              "property": "foreground"
+            },
+            "states": {
+              "disabled": {
+                "opacity": 0.4
+              },
+              "disconnected": {
+                "opacity": 0.4
+              },
+              "stale": {
+                "opacity": 0.6
+              }
+            }
+          },
+          {
+            "id": "track-glow",
+            "label": "Track halo",
+            "kind": "rectangle",
+            "bounds": {
+              "x": 0.23076923076923078,
+              "y": 0.26,
+              "width": 0.5384615384615384,
+              "height": 0.64
+            },
+            "radius": 28,
+            "stroke": {
+              "property": "edge"
+            },
+            "strokeWidth": 6,
+            "opacity": 0.12,
+            "states": {
+              "pressed": {
+                "opacity": 0.3
+              },
+              "disabled": {
+                "opacity": 0.03
+              },
+              "disconnected": {
+                "opacity": 0.03
+              }
+            }
+          },
+          {
+            "id": "track",
+            "label": "Capsule track",
+            "kind": "rectangle",
+            "bounds": {
+              "x": 0.23076923076923078,
+              "y": 0.26,
+              "width": 0.5384615384615384,
+              "height": 0.64
+            },
+            "radius": 28,
+            "fill": {
+              "property": "background"
+            },
+            "stroke": {
+              "property": "edge"
+            },
+            "strokeWidth": 2,
+            "states": {
+              "active": {
+                "stroke": {
+                  "property": "accent"
+                }
+              },
+              "pressed": {
+                "stroke": {
+                  "property": "accent"
+                },
+                "strokeWidth": 3
+              },
+              "warning": {
+                "stroke": "#efbc73"
+              },
+              "disabled": {
+                "opacity": 0.4
+              },
+              "disconnected": {
+                "opacity": 0.4
+              },
+              "stale": {
+                "opacity": 0.6
+              }
+            }
+          },
+          {
+            "id": "off-halo",
+            "label": "Off halo",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.20192307692307693,
+              "y": 0.605,
+              "width": 0.5961538461538461,
+              "height": 0.31
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.035,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "off-glow",
+            "label": "Off glow",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.25,
+              "y": 0.63,
+              "width": 0.5,
+              "height": 0.26
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.12,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "off-thumb",
+            "label": "Off thumb",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.28846153846153844,
+              "y": 0.65,
+              "width": 0.4230769230769231,
+              "height": 0.22
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.9,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "off-highlight",
+            "label": "Off highlight",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.33653846153846156,
+              "y": 0.675,
+              "width": 0.3269230769230769,
+              "height": 0.17
+            },
+            "fill": {
+              "property": "highlight"
+            },
+            "opacity": 0.2,
+            "visible": true,
+            "states": {
+              "normal": {
+                "visible": true
+              },
+              "active": {
+                "visible": false
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-halo",
+            "label": "On halo",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.20192307692307693,
+              "y": 0.245,
+              "width": 0.5961538461538461,
+              "height": 0.31
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.035,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-glow",
+            "label": "On glow",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.25,
+              "y": 0.27,
+              "width": 0.5,
+              "height": 0.26
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.12,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-thumb",
+            "label": "On thumb",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.28846153846153844,
+              "y": 0.29,
+              "width": 0.4230769230769231,
+              "height": 0.22
+            },
+            "fill": {
+              "property": "accent"
+            },
+            "opacity": 0.9,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          },
+          {
+            "id": "on-highlight",
+            "label": "On highlight",
+            "kind": "ellipse",
+            "bounds": {
+              "x": 0.33653846153846156,
+              "y": 0.315,
+              "width": 0.3269230769230769,
+              "height": 0.17
+            },
+            "fill": {
+              "property": "highlight"
+            },
+            "opacity": 0.2,
+            "visible": false,
+            "states": {
+              "normal": {
+                "visible": false
+              },
+              "active": {
+                "visible": true
+              },
+              "pressed": {
+                "visible": false
+              },
+              "warning": {
+                "visible": false
+              },
+              "stale": {
+                "visible": false
+              },
+              "unknown": {
+                "visible": false
+              },
+              "disabled": {
+                "visible": false
+              },
+              "disconnected": {
+                "visible": false
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "manifest": [],
+  "assets": []
+}

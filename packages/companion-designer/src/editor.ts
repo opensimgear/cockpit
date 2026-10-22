@@ -61,7 +61,9 @@ function addComponent(doc: DesignerDocument, source: WidgetDefinition, pageId: s
     const output = { id: newId("output"), label: port.label, kind: port.kind, channelId: newId("channel") };
     doc.ui.feedbackWidgets.push(output); return output.id;
   });
-  const width = region.bounds.width * .3, height = region.bounds.height * .25;
+  const viewport = doc.presentation.viewports.find(viewport => viewport.pageId === pageId)!;
+  const scale = Math.min(1, region.bounds.width * viewport.width * .95 / definition.size.width, region.bounds.height * viewport.height * .95 / definition.size.height);
+  const width = definition.size.width * scale / viewport.width, height = definition.size.height * scale / viewport.height;
   doc.presentation.widgets.push({ id: newId("widget"), pageId, label: definition.title, kind: "component", bounds: bounds ?? { x: region.bounds.x + .025 * region.bounds.width, y: region.bounds.y + .025 * region.bounds.height, width, height }, controlIds: controls, feedbackIds: outputs, config: { definitionId: definition.id, definitionVersion: definition.version, properties: clone(properties) } });
 }
 function addWidget(doc: DesignerDocument, kind: WidgetKind, pageId: string, bounds?: Bounds, axisMode?: "unipolar" | "bipolar", viewportId?: string): DesignerWidget {

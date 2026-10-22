@@ -5,9 +5,9 @@ import { widgetLayerText } from '../packages/companion-ui/src/widget-presentatio
 const { document } = await importBundle(await readFile('examples/companion/shared-systems-complete.bundle.json', 'utf8'));
 const position=index=>({x:.025+(index%4)*.24,y:.025+Math.floor(index/4)*.24,width:.22,height:.21});
 const widgets = document.presentation.widgets.map((widget,index) => ({ definition: document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion), properties: widget.config.properties, bounds: position(index) }));
-widgets.push({ ...widgets[0], properties: { label: 'SECOND', accent: '#ff765e' }, bounds: position(12) });
+widgets.push({ ...widgets[0], properties: { label: 'SECOND', accent: '#ff765e' }, bounds: position(widgets.length) });
 const allStates = structuredClone(widgets[0]);
-allStates.definition.id = 'all-device-states'; allStates.properties = { label: 'ALL STATES' }; allStates.bounds = position(13);
+allStates.definition.id = 'all-device-states'; allStates.properties = { label: 'ALL STATES' }; allStates.bounds = position(widgets.length);
 allStates.definition.outputs.push({ name: 'warning', label: 'Warning', kind: 'indicator' }, { name: 'enabled', label: 'Enabled', kind: 'indicator' });
 allStates.definition.state = { confirmedPort: 'active', warningPort: 'warning', enabledPort: 'enabled' }; widgets.push(allStates);
 

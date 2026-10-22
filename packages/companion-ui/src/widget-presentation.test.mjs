@@ -15,6 +15,21 @@ function feedback(document, widget, value = true, patch = {}) {
   return { [output.channelId]: { channelId: output.channelId, outputId: output.id, status: 'fresh', value, provenance: 'game-confirmed', sourceKind: 'simulator', sourceAgeMs: 0, receivedAtMs: 100, unit: port.unit ?? 'ratio', ...(port.range ? { range: port.range } : {}), ...patch } };
 }
 
+test('capsule toggles latch their requested input while artwork follows confirmed OFF/ON feedback',()=>{
+  for(const index of [12,13]){
+    const {document,widget}=panel(index),engine=createPreviewController(document,{clock:()=>100});engine.arm();
+    assert.ok(engine.begin(1,widget.id));assert.ok(engine.release(1));
+    assert.equal(engine.snapshot().values[widget.controlIds[0]],true);
+    assert.equal(componentPresentation(document,widget,{},100).state,'unknown');
+    const off=componentPresentation(document,widget,feedback(document,widget,false),100);
+    assert.ok(off.layers.find(l=>l.id==='off-thumb').visible);assert.equal(off.layers.find(l=>l.id==='on-thumb').visible,false);
+    const confirmed=feedback(document,widget,true);
+    assert.ok(engine.begin(2,widget.id));assert.ok(engine.release(2));assert.equal(engine.snapshot().values[widget.controlIds[0]],false);
+    assert.equal(componentPresentation(document,widget,confirmed,100).state,'active');
+    assert.equal(componentPresentation(document,widget,confirmed,1100).state,'stale');engine.disarm();
+  }
+});
+
 test('one shared composition projection preserves identities and confirmed-state semantics', () => {
   const { document, widget, definition } = panel();
   const samples = feedback(document, widget);

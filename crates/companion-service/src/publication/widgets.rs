@@ -588,7 +588,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            12
+            14
         );
         assert!(document["presentation"]["definitions"]
             .as_array()

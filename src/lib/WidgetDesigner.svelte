@@ -137,7 +137,7 @@
     </aside>
     <main class="design-stage-panel">
       <div class="state-toolbar"><label>State<select aria-label="Widget preview state" bind:value={previewState}><option value="base">Base appearance</option>{#each WIDGET_STATES as state}<option value={state}>{state}</option>{/each}</select></label><label class="snap"><input type="checkbox" bind:checked={snap} />Snap to grid</label><span>Simulated state preview</span></div>
-      <div class="design-stage-wrap"><div class="design-stage" bind:this={stage} style:aspect-ratio={`${draft.size.width}/${draft.size.height}`}>
+      <div class="design-stage-wrap"><div class="design-stage" bind:this={stage} style:aspect-ratio={`${draft.size.width}/${draft.size.height}`} style:max-width={`${440*draft.size.width/draft.size.height}px`}>
         <WidgetView definition={draft} {layers} state={previewState === 'base' ? 'normal' : previewState} samples={simulated} {assets} />
         {#if shownBounds && layer}<div class="selected-layer" style:left={`${shownBounds.x * 100}%`} style:top={`${shownBounds.y * 100}%`} style:width={`${shownBounds.width * 100}%`} style:height={`${shownBounds.height * 100}%`}>
           <button class="layer-drag" aria-label={`Move layer ${layer.label}`} onpointerdown={e => begin(e, false)} onpointermove={move} onpointerup={finish} onpointercancel={() => drag = null} onlostpointercapture={() => drag = null}></button>

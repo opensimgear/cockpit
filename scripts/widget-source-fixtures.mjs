@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { importBundle, validateWidgetDefinition, resolveWidgetProperties, resolveWidgetLayers, WIDGET_STATES } from '../packages/companion-designer/src/index.ts';
+import { importBundle, createWidgetCatalog, validateWidgetDefinition, resolveWidgetProperties, resolveWidgetLayers, WIDGET_STATES } from '../packages/companion-designer/src/index.ts';
 
 // Independent TypeScript oracle for device-side source admission and resolution.
 const { document } = await importBundle(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
@@ -44,6 +44,7 @@ sourceCases.push(bipolar);
 const empty = structuredClone(custom); empty.id = 'empty-literals'; empty.title = 'Empty'; empty.layers = [empty.layers[3], empty.layers[4]];
 empty.layers[0].text = ''; empty.layers[0].align = 'left'; delete empty.layers[0].states; empty.layers[1].assetId = '';
 sourceCases.push({ definition: empty, properties: {} });
+sourceCases.push(...createWidgetCatalog().filter(d=>d.id.startsWith('osg-capsule-toggle-')).map(definition=>({definition,properties:{}})));
 
 function valid(definition, properties) {
   const checked = validateWidgetDefinition(definition, assets.map(a => a.id));

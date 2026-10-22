@@ -21,6 +21,7 @@ function add(name,doc,profile=1){
 }
 add('rich catalog',structuredClone(catalog));add('compact catalog rejects retained budgets',structuredClone(catalog),0);
 add('compact reusable switch',single(),0);add('rich legacy panel',structuredClone(legacy));
+add('compact horizontal capsule toggle',single(12,complete),0);add('compact vertical capsule toggle',single(13,complete),0);
 let doc=single();doc.presentation.viewports[0].width=1600;doc.presentation.viewports[0].height=960;add('letterboxed authored canvas',doc);
 doc=single();doc.presentation.widgets[0].bounds.width=.05;add('small interactive hit area',doc);
 doc=single();doc.presentation.widgets[0].bounds.width=.22;doc.presentation.definitions[0].hitArea.width=.1;add('small local hit area',doc);
