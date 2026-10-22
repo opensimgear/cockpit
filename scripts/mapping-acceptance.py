@@ -135,6 +135,12 @@ def assert_preserved(files):
     assert all(file.read_bytes() == expected for file,expected in files.items()), 'Obsolete configuration was read as writable runtime state or overwritten'
 
 
+def assert_passive_visibility(visibility, host):
+    assert not visibility['enabled'] and not visibility['global']['inspected'], visibility
+    # Backend qualification is independent of local opt-in and driver presence.
+    assert visibility['qualified'] == (host == 'win32'), visibility
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--service',type=Path,required=True)
@@ -187,7 +193,7 @@ def main():
             assert default['name']=='Default' and default['revision']==1 and not default['resources']
             assert service.request('profile_delete',id=DEFAULT,expectedRevision=1)['ok'] is False
             visibility=state(service,'controller_visibility_status','controllers')['visibility']
-            assert not visibility['enabled'] and not visibility['qualified'] and not visibility['global']['inspected'],visibility
+            assert_passive_visibility(visibility, sys.platform)
             if args.expect_unavailable and sys.platform=='win32':
                 assert state(service,'controller_visibility_inspect','controllers')['visibility']['global'].get('error')
             retired_boundaries(service)

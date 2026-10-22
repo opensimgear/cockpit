@@ -242,3 +242,21 @@ with a destructive confirmation button. Running native background/removal and
 category acceptance both pass: opening confirmation leaves the game registered,
 Cancel and Escape preserve it, and explicit confirmation removes it. Tile badges
 remain visible. Frontend checks report no errors or warnings.
+
+## CI repair follow-up
+
+The mobile lockfile now includes the shared image dependency closure. Headless
+ESP32/ESP32-S3 builds use a profile-specific 4 MiB flash default matching the
+shared partition table; display-board settings remain profile-specific.
+Cross-platform fixtures use canonical storage roots and explicit unavailable
+backends. Async catalogue tests pause at the portable publication boundary.
+The native service test checks all supported game identities, and the Windows
+launch fixture compares canonical paths even when TEMP uses an 8.3 alias.
+
+The integration coverage parser now finds the test module rather than stopping
+at a test-only import. Replaying the real Linux artifact measures all 17 modules
+at 81.03–100%, retaining the 71% gate. Coverage-tool regressions pass 17/17, and
+discovery tests pass 16/16 with both normal and actual Windows short-path TEMP.
+The unified profile acceptance script distinguishes backend qualification from
+local enablement and driver presence; its full Windows lifecycle passes without
+virtual reports or driver-layout changes. Physical validation remains deferred.

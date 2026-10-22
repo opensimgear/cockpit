@@ -1225,10 +1225,8 @@ mod tests {
         fs::write(&steam, b"client").unwrap();
         let mut game = json!({"id":"custom-11111111-1111-4111-8111-111111111111","custom":true,"installed":true,"executable":runtime});
         let direct = launch_request(&game).unwrap();
-        assert!(paths_match(
-            &direct.executable.to_string_lossy(),
-            &runtime.to_string_lossy()
-        ));
+        // Windows runner TEMP may use an 8.3 alias; launch validation resolves it.
+        assert_eq!(direct.executable, fs::canonicalize(&runtime).unwrap());
         assert!(direct.arguments.is_empty());
         game["steamAppId"] = json!(42);
         game["steamExecutable"] = json!(steam);
