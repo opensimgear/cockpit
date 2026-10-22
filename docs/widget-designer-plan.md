@@ -523,3 +523,13 @@ cache does not qualify durable flash behavior, ESP-IDF task scheduling, physical
 touch/DMA/stack budgets or Android native authentication. Those independent
 hardware/native gates remain unchanged. Remaining milestone/catalog/designer
 acceptance and final Android branch build still need a complete feature audit.
+
+The visual widget inspector now exposes numeric property links for gauge
+minimum/maximum, corner radius, stroke width and opacity. Paint/radius pickers
+offer only properties whose declared bounds fit the field; linked number inputs
+stay read-only until explicitly unlinked. Unlinking retains the resolved value,
+and existing definition validation/undo/versioning handles the edit without
+changing typed ports. Actual dev Cockpit acceptance at
+`.research/widgets-native-ui/1792637663929/` verifies pinned exposed gauge ranges
+and intentional unlinking, along with import, pointer preview and save/reload.
+Cockpit/browser Svelte checks again have zero errors/warnings.

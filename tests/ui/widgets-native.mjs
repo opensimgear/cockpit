@@ -107,6 +107,16 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     assert.equal(await evaluate(`!!document.querySelector('[aria-label="Edit design Illuminated button native acceptance"]')`), true);
     assert.equal(await evaluate(`document.querySelector('[data-definition-id="osg-illuminated-button"][data-definition-version="${revisions[1]}"] .component-hit').style.width`), '90%');
     checks.push('The saved panel and widget library persist after native WebView reload.');
+    await evaluate(`document.querySelector('[aria-label="Edit design Linear gauge"]').click()`);
+    await until(`!!document.querySelector('dialog.widget-designer[open]')`, 'Gauge editor did not open');
+    await evaluate(`[...document.querySelectorAll('.layers-panel li button')].find(button=>button.querySelector('strong')?.textContent==='Gauge').click()`);
+    await until(`document.querySelector('[aria-label="Minimum property"]')?.value==='minimum'&&document.querySelector('[aria-label="Maximum property"]')?.value==='maximum'`, 'Exposed gauge ranges were not retained in the visual inspector');
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Gauge minimum"]').disabled&&document.querySelector('[aria-label="Gauge maximum"]').disabled`),true);
+    await change('[aria-label="Minimum property"]','');
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Gauge minimum"]').disabled`),false);
+    assert.equal(await evaluate(`document.querySelector('[aria-label="Gauge minimum"]').value`),'0');
+    await click('Cancel');
+    checks.push('The visual gauge inspector preserves exposed ranges and can intentionally unlink a property without changing its resolved value.');
     await writeFile(`${directory}/evidence.json`, JSON.stringify({ origin, actualNativeCockpit: true, checks, saved }, null, 2));
     console.log(JSON.stringify({ directory, checks }));
   } catch (error) {
