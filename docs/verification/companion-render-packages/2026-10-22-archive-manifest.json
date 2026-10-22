@@ -1,0 +1,95 @@
+{
+  "sourceCommit": "f2c9147b863a1aab7de1dd9026bf54e5430b16c4",
+  "comparedMain": "b95bb6d525f72e2de18105f0389f06f71f062678",
+  "supersededBy": {
+    "pullRequest": 139,
+    "mergeCommit": "ac24fc28bd3bb6378d8e040c9fdd27aa14448999"
+  },
+  "physicalValidationRepeated": false,
+  "files": [
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-16-foundation.md",
+      "bytes": 5099,
+      "gitBlob": "4e2d4d0bb5b3dfb37a1cd834620092d58f8357a8",
+      "sha256": "e5636c12b91cfd2cd475900451796c8d3a428c8e4f0f28b216451dfcca29cac1"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-16-runtime.md",
+      "bytes": 26417,
+      "gitBlob": "3cd730c2ee8203de50dbbdca6f3982ff2882154f",
+      "sha256": "bc09c065ce98ff9628870ab4b97de62b87a1ef8ed38ba0c058ac0dbede9b2ab9"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-17-ab-proof.json",
+      "bytes": 10160,
+      "gitBlob": "c6c4ed50a44bb73599b4f598d96357dfbdf9daee",
+      "sha256": "46b063af953023a61f7db61eef5755301bd1b74087419548c0263b9a67756dc0"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-17-c-animation-proof.json",
+      "bytes": 18819,
+      "gitBlob": "66c616e528eb52cc0f6e0cb5e822bbb6b38d4881",
+      "sha256": "06d4110e6650814c0f9110f10af2bb77b43279f5371ec0f70fb7bf6ce1607932"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-17-d-animation-proof.json",
+      "bytes": 18471,
+      "gitBlob": "70d3b4ad5c68a22f844585212d817c514e92c263",
+      "sha256": "0a98f55d0ba3f51f4db9d4535a6fffa6a6c5d86ee954ed8b87f106a20dd47a76"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-17-device-metrics.json",
+      "bytes": 15354,
+      "gitBlob": "94ceb5f8fe7d441a564d1e4e02f0524259fb9748",
+      "sha256": "60a0fd47f0d67d1768065bd8d37a5c2b0aff4d692a84a9444da99ff700059c02"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-17-warm-proof.json",
+      "bytes": 27508,
+      "gitBlob": "f6c999723720a1c7537f6c8f9d683c51e8e010aa",
+      "sha256": "c740f4362670e67e46dd75eaf9bf852bbb37acbba6adc8f91af9f6ac83def57c"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/2026-10-17-waveshare-repeat-proof.json",
+      "bytes": 9239,
+      "gitBlob": "13196c6cade2dd4af81a9a770f7499605dcdb4d1",
+      "sha256": "8c1237064b690be06cb79213e3d25b3bb53282006c39058e305c5a518b479685"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/evidence/software-checks.json",
+      "bytes": 4594,
+      "gitBlob": "9447dd257ae6127bed20bc075e73dfd2f855b918",
+      "sha256": "08e067793c5c43b8fcf5076283eacedbcd672a08e6184ac67a1b739214c080da"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/evidence/sunton-3248s035r-cross-build.json",
+      "bytes": 2794,
+      "gitBlob": "61b4e157fc9d2d115bde4f7b232b1169115f2550",
+      "sha256": "6ec014eff2164ed3f0adad0f3d5f6501161bd5582c96653ab4cc2a0fa2184839"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/evidence/sunton-3248s035r-stopped-redraw.json",
+      "bytes": 6182,
+      "gitBlob": "c713e6194dfe5481ee3c4970cefcf0d6ea1b0a95",
+      "sha256": "c9c46ee628b4376dcef7f78312b15860a1085c58e863a570f1b56aa078950ad3"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/evidence/waveshare-lcd7-s3-cross-build.json",
+      "bytes": 2811,
+      "gitBlob": "969eabc54bbd3ca1624b261ca35c49923adc9d72",
+      "sha256": "9c434f3fc7e2db35919b65b0cc2c92de7d3f43e140cdd70d7b96a94f79aff94a"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/evidence/waveshare-lcd7-s3-stopped-redraw.json",
+      "bytes": 6136,
+      "gitBlob": "a853142e203de23912a36567072d4a616858d650",
+      "sha256": "a8fb5f410ae9ac5aa77ee1204e89478fbca48b9810ae5a13f5189ed4a7c80657"
+    },
+    {
+      "path": "docs/verification/companion-render-packages/milestone-0-baseline.md",
+      "bytes": 11906,
+      "gitBlob": "73937b717f25641936e6ae7a225f5240bd12fbcc",
+      "sha256": "50ae2230b4e05393711b23596074afc86fc05414d003b86d9d81ff6dba042a1d"
+    }
+  ]
+}

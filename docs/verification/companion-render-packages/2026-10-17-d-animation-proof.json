@@ -1,0 +1,579 @@
+{
+  "boards": [
+    {
+      "application": {
+        "beforeBytes": 926560,
+        "beforeSha256": "e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+        "status": "missing-after",
+        "unchangedVerified": false
+      },
+      "board": "sunton",
+      "boardProfile": "sunton-3248s035r",
+      "consecutiveLiveContent": {
+        "allZero": true,
+        "byteIncrement": 0,
+        "counterRegressions": 0,
+        "measuredPairs": 666,
+        "missingCounterPairs": 0,
+        "pairs": 666,
+        "requestIncrement": 0
+      },
+      "consecutiveLiveSerialHealth": {
+        "allZero": null,
+        "counterRegressionPairs": 0,
+        "counterRegressionsByField": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "increments": {
+          "breaks": null,
+          "bufferFull": null,
+          "deferredFull": null,
+          "fifoOverflows": null,
+          "frameErrors": null,
+          "frameOverflows": null,
+          "invalidJson": null,
+          "invalidReply": null,
+          "parityErrors": null,
+          "queueFullObservations": null,
+          "replyMismatch": null,
+          "requestTimeouts": null,
+          "writeFailures": null
+        },
+        "measuredPairs": 0,
+        "missingCounterPairs": 666,
+        "pairs": 666
+      },
+      "deviceEventCounts": {
+        "arming": 4,
+        "input-cancelled-or-lease-expired-reconnect-required": 2,
+        "live-armed": 4,
+        "presenting-render-package": 1,
+        "refreshing-cockpit-assignment-disarmed": 1,
+        "render-package-verified": 4,
+        "render-session-disarmed": 4
+      },
+      "deviceEventSequenceGaps": 0,
+      "deviceEvents": [
+        {
+          "elapsedMs": 357,
+          "sequence": 1,
+          "status": "render-package-verified",
+          "transportElapsedMs": 316
+        },
+        {
+          "elapsedMs": 559,
+          "sequence": 2,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 500
+        },
+        {
+          "elapsedMs": 2537,
+          "sequence": 3,
+          "status": "arming",
+          "transportElapsedMs": 2508
+        },
+        {
+          "elapsedMs": 2638,
+          "sequence": 4,
+          "status": "live-armed",
+          "transportElapsedMs": 2600
+        },
+        {
+          "elapsedMs": 23700,
+          "sequence": 5,
+          "status": "refreshing-cockpit-assignment-disarmed",
+          "transportElapsedMs": 23640
+        },
+        {
+          "elapsedMs": 87323,
+          "sequence": 6,
+          "status": "render-package-verified",
+          "transportElapsedMs": 87291
+        },
+        {
+          "elapsedMs": 87374,
+          "sequence": 7,
+          "status": "presenting-render-package",
+          "transportElapsedMs": 87350
+        },
+        {
+          "elapsedMs": 89347,
+          "sequence": 8,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 89288
+        },
+        {
+          "elapsedMs": 91321,
+          "sequence": 9,
+          "status": "arming",
+          "transportElapsedMs": 91275
+        },
+        {
+          "elapsedMs": 91422,
+          "sequence": 10,
+          "status": "live-armed",
+          "transportElapsedMs": 91368
+        },
+        {
+          "elapsedMs": 673708,
+          "sequence": 11,
+          "status": "input-cancelled-or-lease-expired-reconnect-required",
+          "transportElapsedMs": 673683
+        },
+        {
+          "elapsedMs": 674464,
+          "sequence": 12,
+          "status": "render-package-verified",
+          "transportElapsedMs": 674413
+        },
+        {
+          "elapsedMs": 674615,
+          "sequence": 13,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 674587
+        },
+        {
+          "elapsedMs": 676631,
+          "sequence": 14,
+          "status": "arming",
+          "transportElapsedMs": 676586
+        },
+        {
+          "elapsedMs": 676731,
+          "sequence": 15,
+          "status": "live-armed",
+          "transportElapsedMs": 676679
+        },
+        {
+          "elapsedMs": 703685,
+          "sequence": 16,
+          "status": "input-cancelled-or-lease-expired-reconnect-required",
+          "transportElapsedMs": 703637
+        },
+        {
+          "elapsedMs": 704744,
+          "sequence": 17,
+          "status": "render-package-verified",
+          "transportElapsedMs": 704706
+        },
+        {
+          "elapsedMs": 704896,
+          "sequence": 18,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 704880
+        },
+        {
+          "elapsedMs": 706964,
+          "sequence": 19,
+          "status": "arming",
+          "transportElapsedMs": 706907
+        },
+        {
+          "elapsedMs": 707064,
+          "sequence": 20,
+          "status": "live-armed",
+          "transportElapsedMs": 707033
+        }
+      ],
+      "feedbackRejectedCount": 0,
+      "firmwareVersions": [
+        "2026.10.16.2"
+      ],
+      "firstLiveSerialHealth": {
+        "counters": null,
+        "elapsedMs": 4004,
+        "firmwareVersion": "2026.10.16.2",
+        "generation": "1",
+        "packageHash": "sha256:3b7150d33a9525837100617843d257196167ae49ba248a540fefdcad0bd0cc2a",
+        "sessionId": "a5efcf8a-9785-410e-82c0-7218c75d48be",
+        "sourcePublicationHash": "sha256:bb36f992d4ace26131b626eddf2f19f05dfd4bfafee48aa9630efb10df23f2c8"
+      },
+      "inputEvidenceCounts": {
+        "baselines": 4,
+        "inputBatches": 32,
+        "sourceLosses": 4
+      },
+      "lastContentBytes": 329158,
+      "lastContentRequests": 168,
+      "liveEvents": [
+        {
+          "board": "sunton",
+          "boardProfile": "sunton-3248s035r",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 4004,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 23042,
+          "packageHash": "sha256:3b7150d33a9525837100617843d257196167ae49ba248a540fefdcad0bd0cc2a",
+          "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+          "revision": "C",
+          "samples": 20,
+          "sessionId": "a5efcf8a-9785-410e-82c0-7218c75d48be",
+          "sourcePublicationHash": "sha256:bb36f992d4ace26131b626eddf2f19f05dfd4bfafee48aa9630efb10df23f2c8",
+          "targetProfileId": "sunton-3248s035r-render-v1"
+        },
+        {
+          "board": "sunton",
+          "boardProfile": "sunton-3248s035r",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 93042,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 673002,
+          "packageHash": "sha256:7b6748ce1bb9ffc09746dc7a72fb1bd4231d35ceb8f2c65536e46ec0b633bb40",
+          "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+          "revision": "D",
+          "samples": 581,
+          "sessionId": "73c0ffae-2d10-466f-a1d5-8f8e3a13ffb0",
+          "sourcePublicationHash": "sha256:de8a8576bd4f8c1cb22be25d98e459d40d1d836416b233b171a12dcbc1adfc0b",
+          "targetProfileId": "sunton-3248s035r-render-v1"
+        },
+        {
+          "board": "sunton",
+          "boardProfile": "sunton-3248s035r",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 678041,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 703029,
+          "packageHash": "sha256:7b6748ce1bb9ffc09746dc7a72fb1bd4231d35ceb8f2c65536e46ec0b633bb40",
+          "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+          "revision": "D",
+          "samples": 26,
+          "sessionId": "eea29c91-b0c3-44f6-8512-db093be0df9f",
+          "sourcePublicationHash": "sha256:de8a8576bd4f8c1cb22be25d98e459d40d1d836416b233b171a12dcbc1adfc0b",
+          "targetProfileId": "sunton-3248s035r-render-v1"
+        },
+        {
+          "board": "sunton",
+          "boardProfile": "sunton-3248s035r",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 708021,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 750049,
+          "packageHash": "sha256:7b6748ce1bb9ffc09746dc7a72fb1bd4231d35ceb8f2c65536e46ec0b633bb40",
+          "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+          "revision": "D",
+          "samples": 43,
+          "sessionId": "007538ce-8080-4522-9feb-9f507566a092",
+          "sourcePublicationHash": "sha256:de8a8576bd4f8c1cb22be25d98e459d40d1d836416b233b171a12dcbc1adfc0b",
+          "targetProfileId": "sunton-3248s035r-render-v1"
+        }
+      ],
+      "longestContinuousLiveMs": 579960,
+      "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+      "serialHealthCounterRegressions": 0,
+      "serialHealthMax": null,
+      "serialHealthSamples": 0,
+      "sessionCount": 4,
+      "startupAckMaxBytes": 404,
+      "steadyAckMaxBytes": 398,
+      "targetProfileId": "sunton-3248s035r-render-v1"
+    },
+    {
+      "application": {
+        "afterBytes": 944352,
+        "afterSha256": "7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+        "beforeBytes": 944352,
+        "beforeSha256": "7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+        "status": "unchanged",
+        "unchangedVerified": true
+      },
+      "board": "waveshare",
+      "boardProfile": "waveshare-lcd7-s3",
+      "consecutiveLiveContent": {
+        "allZero": true,
+        "byteIncrement": 0,
+        "counterRegressions": 0,
+        "measuredPairs": 662,
+        "missingCounterPairs": 0,
+        "pairs": 662,
+        "requestIncrement": 0
+      },
+      "consecutiveLiveSerialHealth": {
+        "allZero": true,
+        "counterRegressionPairs": 0,
+        "counterRegressionsByField": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "increments": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "measuredPairs": 662,
+        "missingCounterPairs": 0,
+        "pairs": 662
+      },
+      "deviceEventCounts": {
+        "arming": 2,
+        "invalid-command-json": 1,
+        "live-armed": 2,
+        "presenting-render-package": 1,
+        "refreshing-cockpit-assignment-disarmed": 1,
+        "render-package-transfer-or-validation-failed": 1,
+        "render-package-verified": 2,
+        "render-session-disarmed": 2
+      },
+      "deviceEventSequenceGaps": 0,
+      "deviceEvents": [
+        {
+          "elapsedMs": 2076,
+          "sequence": 1,
+          "status": "invalid-command-json",
+          "transportElapsedMs": 2058
+        },
+        {
+          "elapsedMs": 2183,
+          "sequence": 2,
+          "status": "render-package-transfer-or-validation-failed",
+          "transportElapsedMs": 2147
+        },
+        {
+          "elapsedMs": 5220,
+          "sequence": 3,
+          "status": "render-package-verified",
+          "transportElapsedMs": 5186
+        },
+        {
+          "elapsedMs": 5372,
+          "sequence": 4,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 5341
+        },
+        {
+          "elapsedMs": 7347,
+          "sequence": 5,
+          "status": "arming",
+          "transportElapsedMs": 7321
+        },
+        {
+          "elapsedMs": 7397,
+          "sequence": 6,
+          "status": "live-armed",
+          "transportElapsedMs": 7342
+        },
+        {
+          "elapsedMs": 23750,
+          "sequence": 7,
+          "status": "refreshing-cockpit-assignment-disarmed",
+          "transportElapsedMs": 23725
+        },
+        {
+          "elapsedMs": 96432,
+          "sequence": 8,
+          "status": "render-package-verified",
+          "transportElapsedMs": 96396
+        },
+        {
+          "elapsedMs": 96432,
+          "sequence": 9,
+          "status": "presenting-render-package",
+          "transportElapsedMs": 96417
+        },
+        {
+          "elapsedMs": 98303,
+          "sequence": 10,
+          "status": "render-session-disarmed",
+          "transportElapsedMs": 98285
+        },
+        {
+          "elapsedMs": 100331,
+          "sequence": 11,
+          "status": "arming",
+          "transportElapsedMs": 100299
+        },
+        {
+          "elapsedMs": 100331,
+          "sequence": 12,
+          "status": "live-armed",
+          "transportElapsedMs": 100322
+        }
+      ],
+      "feedbackRejectedCount": 0,
+      "firmwareVersions": [
+        "2026.10.17.1"
+      ],
+      "firstLiveSerialHealth": {
+        "counters": {
+          "breaks": 180,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 11,
+          "replyMismatch": 0,
+          "requestTimeouts": 2,
+          "writeFailures": 0
+        },
+        "elapsedMs": 9018,
+        "firmwareVersion": "2026.10.17.1",
+        "generation": "1",
+        "packageHash": "sha256:4a816275b8170102128fb2f3b553873eccebf42a9ae393fd9b342ad5429ff38b",
+        "sessionId": "8b08296e-b222-4ef8-8086-f4d009d7315f",
+        "sourcePublicationHash": "sha256:135a47a5bdb5f541a0d35891369778f2639251c14b6cbdaecf3df66c2ad4e6e0"
+      },
+      "inputEvidenceCounts": {
+        "baselines": 2,
+        "inputBatches": 28,
+        "sourceLosses": 2
+      },
+      "lastContentBytes": 1100355,
+      "lastContentRequests": 562,
+      "liveEvents": [
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.17.1",
+          "firstObservedMs": 9018,
+          "firstSerialHealth": {
+            "breaks": 180,
+            "bufferFull": 0,
+            "deferredFull": 0,
+            "fifoOverflows": 0,
+            "frameErrors": 0,
+            "frameOverflows": 0,
+            "invalidJson": 0,
+            "invalidReply": 0,
+            "parityErrors": 0,
+            "queueFullObservations": 11,
+            "replyMismatch": 0,
+            "requestTimeouts": 2,
+            "writeFailures": 0
+          },
+          "generation": "1",
+          "lastObservedMs": 23042,
+          "packageHash": "sha256:4a816275b8170102128fb2f3b553873eccebf42a9ae393fd9b342ad5429ff38b",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "C",
+          "samples": 15,
+          "sessionId": "8b08296e-b222-4ef8-8086-f4d009d7315f",
+          "sourcePublicationHash": "sha256:135a47a5bdb5f541a0d35891369778f2639251c14b6cbdaecf3df66c2ad4e6e0",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.17.1",
+          "firstObservedMs": 102003,
+          "firstSerialHealth": {
+            "breaks": 180,
+            "bufferFull": 0,
+            "deferredFull": 0,
+            "fifoOverflows": 0,
+            "frameErrors": 0,
+            "frameOverflows": 0,
+            "invalidJson": 0,
+            "invalidReply": 0,
+            "parityErrors": 0,
+            "queueFullObservations": 11,
+            "replyMismatch": 0,
+            "requestTimeouts": 2,
+            "writeFailures": 0
+          },
+          "generation": "1",
+          "lastObservedMs": 750049,
+          "packageHash": "sha256:2f103e2e3dcd54133de0ebdcc6d337258dcf4451278cee1ed484f14e5742f81a",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "D",
+          "samples": 649,
+          "sessionId": "aa6f6b91-e824-467a-b1c9-c521d91e835b",
+          "sourcePublicationHash": "sha256:e34848719a1ffc5070997d33ff36035ff8d45a7d6adb60b5987b040e21fc4ff5",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        }
+      ],
+      "longestContinuousLiveMs": 648046,
+      "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+      "serialHealthCounterRegressions": 0,
+      "serialHealthMax": {
+        "breaks": 180,
+        "bufferFull": 0,
+        "deferredFull": 0,
+        "fifoOverflows": 0,
+        "frameErrors": 0,
+        "frameOverflows": 0,
+        "invalidJson": 0,
+        "invalidReply": 0,
+        "parityErrors": 0,
+        "queueFullObservations": 11,
+        "replyMismatch": 0,
+        "requestTimeouts": 2,
+        "writeFailures": 0
+      },
+      "serialHealthSamples": 748,
+      "sessionCount": 2,
+      "startupAckMaxBytes": 398,
+      "steadyAckMaxBytes": 398,
+      "targetProfileId": "waveshare-lcd7-s3-render-v1"
+    }
+  ],
+  "formatVersion": 1,
+  "inputEvidenceByInstance": {
+    "render-poc-sunton": {
+      "baselines": 4,
+      "inputBatches": 32,
+      "sourceLosses": 4
+    },
+    "render-poc-waveshare": {
+      "baselines": 2,
+      "inputBatches": 28,
+      "sourceLosses": 2
+    }
+  },
+  "inputEvidenceCounts": {
+    "baselines": 6,
+    "inputBatches": 60,
+    "sourceLosses": 6
+  },
+  "liveStatus": "live-armed",
+  "maximumSampleGapMs": 2500,
+  "notEstablished": [
+    "visual quality",
+    "soak qualification",
+    "power-cut recovery",
+    "absence of unobserved serial failures or lost queue events"
+  ],
+  "records": 2290,
+  "runComplete": true,
+  "scope": "Consecutive sampled runtime and full application readback evidence only.",
+  "unattributedDeviceEventCount": 0
+}

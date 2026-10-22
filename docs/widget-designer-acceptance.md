@@ -1,5 +1,10 @@
 # Shared widget software acceptance
 
+The [PR #77 supersession audit](verification/companion-render-packages/2026-10-22-supersession.md)
+records the preserved Waveshare coherence fix and historical hardware evidence,
+plus remaining diagnostics, durable-source restoration and animation work. Those
+older board runs do not qualify the LVGL firmware.
+
 Feature [#112](https://github.com/opensimgear/cockpit/issues/112) implements one
 portable widget library and panel source for Cockpit preview, browser, Android
 and ESP32. The current implementation is on `feat/widgets-112`; the software

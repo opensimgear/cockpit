@@ -1,0 +1,593 @@
+{
+  "schema": 1,
+  "measurementScope": "Cumulative stopped device diagnostics; application verification is separate in runtime proof.",
+  "samples": [
+    {
+      "metrics": {
+        "touch-poll": {
+          "maxUs": 751,
+          "p95UpperUs": 64,
+          "failed": 0,
+          "count": 23863
+        },
+        "input-source-ack": {
+          "maxUs": 0,
+          "p95UpperUs": 0,
+          "failed": 0,
+          "count": 0
+        },
+        "render": {
+          "maxUs": 2014710,
+          "p95UpperUs": 262144,
+          "failed": 0,
+          "count": 797
+        },
+        "source-ack": {
+          "maxUs": 110000,
+          "p95UpperUs": 131072,
+          "failed": 0,
+          "count": 506
+        },
+        "host-request": {
+          "maxUs": 3013409,
+          "p95UpperUs": 524288,
+          "failed": 3,
+          "count": 853
+        },
+        "touch-poll-interval": {
+          "maxUs": 54043,
+          "p95UpperUs": 32768,
+          "failed": 0,
+          "count": 23862
+        },
+        "present": {
+          "maxUs": 0,
+          "p95UpperUs": 0,
+          "failed": 0,
+          "count": 0
+        }
+      },
+      "declaredApplicationSha256": "sha256:e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+      "smallestLargestInternalBytes": 81920,
+      "renderAgeMaxUs": 290000,
+      "windowMs": 481427,
+      "stackMinBytes": [
+        4516,
+        7532,
+        5796
+      ],
+      "touchAgeMaxUs": 24000,
+      "board": "sunton",
+      "capturedAtUtc": "2026-10-16T22:02:33.124377+00:00",
+      "scenario": "ab",
+      "sourceAckAgeMaxUs": 485000,
+      "minimumInternalBytes": 85004
+    },
+    {
+      "metrics": {
+        "touch-poll": {
+          "maxUs": 788,
+          "p95UpperUs": 512,
+          "failed": 0,
+          "count": 56004
+        },
+        "input-source-ack": {
+          "maxUs": 0,
+          "p95UpperUs": 0,
+          "failed": 0,
+          "count": 0
+        },
+        "render": {
+          "maxUs": 2014710,
+          "p95UpperUs": 262144,
+          "failed": 0,
+          "count": 3782
+        },
+        "source-ack": {
+          "maxUs": 110000,
+          "p95UpperUs": 131072,
+          "failed": 0,
+          "count": 2363
+        },
+        "host-request": {
+          "maxUs": 3013409,
+          "p95UpperUs": 524288,
+          "failed": 4,
+          "count": 2715
+        },
+        "touch-poll-interval": {
+          "maxUs": 54043,
+          "p95UpperUs": 32768,
+          "failed": 0,
+          "count": 56003
+        },
+        "present": {
+          "maxUs": 0,
+          "p95UpperUs": 0,
+          "failed": 0,
+          "count": 0
+        }
+      },
+      "declaredApplicationSha256": "sha256:e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+      "smallestLargestInternalBytes": 81920,
+      "renderAgeMaxUs": 290000,
+      "windowMs": 1124746,
+      "stackMinBytes": [
+        4516,
+        7532,
+        5796
+      ],
+      "touchAgeMaxUs": 24000,
+      "board": "sunton",
+      "capturedAtUtc": "2026-10-16T22:13:16.470322+00:00",
+      "scenario": "warm",
+      "sourceAckAgeMaxUs": 485000,
+      "minimumInternalBytes": 85004
+    },
+    {
+      "metrics": {
+        "touch-poll": {
+          "maxUs": 617,
+          "p95UpperUs": 512,
+          "failed": 0,
+          "count": 23420
+        },
+        "input-source-ack": {
+          "maxUs": 0,
+          "p95UpperUs": 0,
+          "failed": 0,
+          "count": 0
+        },
+        "render": {
+          "maxUs": 1840105,
+          "p95UpperUs": 262144,
+          "failed": 0,
+          "count": 646
+        },
+        "source-ack": {
+          "maxUs": 22000,
+          "p95UpperUs": 32768,
+          "failed": 0,
+          "count": 545
+        },
+        "host-request": {
+          "maxUs": 3002609,
+          "p95UpperUs": 131072,
+          "failed": 4,
+          "count": 1682
+        },
+        "touch-poll-interval": {
+          "maxUs": 23001,
+          "p95UpperUs": 32768,
+          "failed": 0,
+          "count": 23419
+        },
+        "present": {
+          "maxUs": 134488,
+          "p95UpperUs": 131072,
+          "failed": 0,
+          "count": 646
+        }
+      },
+      "declaredApplicationSha256": "sha256:dda923112d55e94c733f5b49238d644abe3e9b0447d4c491e9bbfd28cec2ea6a",
+      "smallestLargestInternalBytes": 45056,
+      "renderAgeMaxUs": 372000,
+      "windowMs": 472223,
+      "stackMinBytes": [
+        4344,
+        6968,
+        5580
+      ],
+      "touchAgeMaxUs": 23000,
+      "board": "waveshare",
+      "capturedAtUtc": "2026-10-16T22:02:33.386378+00:00",
+      "scenario": "ab",
+      "sourceAckAgeMaxUs": 300000,
+      "minimumInternalBytes": 73263
+    },
+    {
+      "metrics": {
+        "touch-poll": {
+          "maxUs": 664,
+          "p95UpperUs": 512,
+          "failed": 0,
+          "count": 55666
+        },
+        "input-source-ack": {
+          "maxUs": 0,
+          "p95UpperUs": 0,
+          "failed": 0,
+          "count": 0
+        },
+        "render": {
+          "maxUs": 1844135,
+          "p95UpperUs": 262144,
+          "failed": 0,
+          "count": 3333
+        },
+        "source-ack": {
+          "maxUs": 23000,
+          "p95UpperUs": 32768,
+          "failed": 0,
+          "count": 2817
+        },
+        "host-request": {
+          "maxUs": 3002609,
+          "p95UpperUs": 131072,
+          "failed": 16,
+          "count": 4015
+        },
+        "touch-poll-interval": {
+          "maxUs": 23125,
+          "p95UpperUs": 32768,
+          "failed": 0,
+          "count": 55665
+        },
+        "present": {
+          "maxUs": 134488,
+          "p95UpperUs": 131072,
+          "failed": 0,
+          "count": 3333
+        }
+      },
+      "declaredApplicationSha256": "sha256:dda923112d55e94c733f5b49238d644abe3e9b0447d4c491e9bbfd28cec2ea6a",
+      "smallestLargestInternalBytes": 45056,
+      "renderAgeMaxUs": 400000,
+      "windowMs": 1117521,
+      "stackMinBytes": [
+        4344,
+        6968,
+        5580
+      ],
+      "touchAgeMaxUs": 23000,
+      "board": "waveshare",
+      "capturedAtUtc": "2026-10-16T22:13:18.700105+00:00",
+      "scenario": "warm",
+      "sourceAckAgeMaxUs": 309000,
+      "minimumInternalBytes": 73263
+    },
+    {
+      "board": "waveshare",
+      "scenario": "uart-fixed-ab",
+      "capturedAtUtc": "2026-10-16T22:31:30.980359+00:00",
+      "declaredApplicationSha256": "sha256:7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+      "windowMs": 464525,
+      "minimumInternalBytes": 73207,
+      "smallestLargestInternalBytes": 47104,
+      "stackMinBytes": [
+        4336,
+        6960,
+        5412
+      ],
+      "touchAgeMaxUs": 22000,
+      "renderAgeMaxUs": 386000,
+      "sourceAckAgeMaxUs": 313000,
+      "metrics": {
+        "host-request": {
+          "count": 2108,
+          "failed": 4,
+          "maxUs": 3002834,
+          "p95UpperUs": 131072
+        },
+        "source-ack": {
+          "count": 973,
+          "failed": 0,
+          "maxUs": 22000,
+          "p95UpperUs": 32768
+        },
+        "input-source-ack": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "render": {
+          "count": 1177,
+          "failed": 0,
+          "maxUs": 1851041,
+          "p95UpperUs": 262144
+        },
+        "present": {
+          "count": 1177,
+          "failed": 0,
+          "maxUs": 148851,
+          "p95UpperUs": 131072
+        },
+        "touch-poll": {
+          "count": 23034,
+          "failed": 0,
+          "maxUs": 541,
+          "p95UpperUs": 512
+        },
+        "touch-poll-interval": {
+          "count": 23033,
+          "failed": 0,
+          "maxUs": 22037,
+          "p95UpperUs": 32768
+        }
+      }
+    },
+    {
+      "board": "sunton",
+      "scenario": "c-animation",
+      "capturedAtUtc": "2026-10-16T22:54:53.307582+00:00",
+      "declaredApplicationSha256": "sha256:e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+      "windowMs": 871580,
+      "minimumInternalBytes": 85004,
+      "smallestLargestInternalBytes": 86016,
+      "stackMinBytes": [
+        4516,
+        7524,
+        7300
+      ],
+      "touchAgeMaxUs": 33000,
+      "renderAgeMaxUs": 310000,
+      "sourceAckAgeMaxUs": 1006000,
+      "metrics": {
+        "host-request": {
+          "count": 1202,
+          "failed": 3,
+          "maxUs": 3012703,
+          "p95UpperUs": 524288
+        },
+        "source-ack": {
+          "count": 1022,
+          "failed": 0,
+          "maxUs": 120000,
+          "p95UpperUs": 131072
+        },
+        "input-source-ack": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "render": {
+          "count": 2042,
+          "failed": 0,
+          "maxUs": 1982291,
+          "p95UpperUs": 262144
+        },
+        "present": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "touch-poll": {
+          "count": 43267,
+          "failed": 0,
+          "maxUs": 793,
+          "p95UpperUs": 512
+        },
+        "touch-poll-interval": {
+          "count": 43266,
+          "failed": 0,
+          "maxUs": 61963,
+          "p95UpperUs": 32768
+        }
+      }
+    },
+    {
+      "board": "waveshare",
+      "scenario": "c-animation",
+      "capturedAtUtc": "2026-10-16T22:54:52.775897+00:00",
+      "declaredApplicationSha256": "sha256:7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+      "windowMs": 1374551,
+      "minimumInternalBytes": 73203,
+      "smallestLargestInternalBytes": 45056,
+      "stackMinBytes": [
+        4336,
+        6960,
+        5412
+      ],
+      "touchAgeMaxUs": 23000,
+      "renderAgeMaxUs": 602000,
+      "sourceAckAgeMaxUs": 304000,
+      "metrics": {
+        "host-request": {
+          "count": 1805,
+          "failed": 3,
+          "maxUs": 3002617,
+          "p95UpperUs": 131072
+        },
+        "source-ack": {
+          "count": 1222,
+          "failed": 0,
+          "maxUs": 22000,
+          "p95UpperUs": 32768
+        },
+        "input-source-ack": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p95UpperUs": 0
+        },
+        "render": {
+          "count": 854,
+          "failed": 0,
+          "maxUs": 1864100,
+          "p95UpperUs": 524288
+        },
+        "present": {
+          "count": 854,
+          "failed": 0,
+          "maxUs": 138364,
+          "p95UpperUs": 131072
+        },
+        "touch-poll": {
+          "count": 68530,
+          "failed": 19,
+          "maxUs": 797,
+          "p95UpperUs": 512
+        },
+        "touch-poll-interval": {
+          "count": 68529,
+          "failed": 0,
+          "maxUs": 22027,
+          "p95UpperUs": 32768
+        }
+      }
+    },
+    {
+      "board": "sunton",
+      "scenario": "d-animation",
+      "capturedAtUtc": "2026-10-16T23:16:11.010507+00:00",
+      "declaredApplicationSha256": "sha256:e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+      "windowMs": 985907,
+      "windowScope": "Diagnostics reset before C-to-D run; includes brief warm C, D download, D runtime and stopped capture. SDK minimum heap and stack high-water values span the boot lifetime.",
+      "minimumInternalBytes": 84676,
+      "smallestLargestInternalBytes": 86016,
+      "stackMinBytes": [
+        4516,
+        7236,
+        7300
+      ],
+      "touchAgeMaxUs": 34000,
+      "renderAgeMaxUs": 312000,
+      "sourceAckAgeMaxUs": 1007000,
+      "pendingInputMaxUs": 247000,
+      "queueMax": 2,
+      "serialRequestRxBytes": 1496676,
+      "serialRequestTxBytes": 763363,
+      "metrics": {
+        "host-request": {
+          "count": 2232,
+          "failed": 2,
+          "maxUs": 727343,
+          "p50UpperUs": 131072,
+          "p95UpperUs": 524288,
+          "p99UpperUs": 524288
+        },
+        "source-ack": {
+          "count": 2046,
+          "failed": 0,
+          "maxUs": 125000,
+          "p50UpperUs": 131072,
+          "p95UpperUs": 131072,
+          "p99UpperUs": 131072
+        },
+        "input-source-ack": {
+          "count": 32,
+          "failed": 0,
+          "maxUs": 125000,
+          "p50UpperUs": 131072,
+          "p95UpperUs": 131072,
+          "p99UpperUs": 131072
+        },
+        "render": {
+          "count": 4194,
+          "failed": 0,
+          "maxUs": 1996531,
+          "p50UpperUs": 131072,
+          "p95UpperUs": 262144,
+          "p99UpperUs": 262144
+        },
+        "present": {
+          "count": 0,
+          "failed": 0,
+          "maxUs": 0,
+          "p50UpperUs": 0,
+          "p95UpperUs": 0,
+          "p99UpperUs": 0
+        },
+        "touch-poll": {
+          "count": 49169,
+          "failed": 0,
+          "maxUs": 2177,
+          "p50UpperUs": 16,
+          "p95UpperUs": 512,
+          "p99UpperUs": 1024
+        },
+        "touch-poll-interval": {
+          "count": 49169,
+          "failed": 0,
+          "maxUs": 52745,
+          "p50UpperUs": 32768,
+          "p95UpperUs": 32768,
+          "p99UpperUs": 32768
+        }
+      }
+    },
+    {
+      "board": "waveshare",
+      "scenario": "d-animation",
+      "capturedAtUtc": "2026-10-16T23:16:11.027508+00:00",
+      "declaredApplicationSha256": "sha256:7c2f001308152675aef70c5e5676635deb0ce6aeeb7656b1b5f3ff0c818cd263",
+      "windowMs": 986188,
+      "windowScope": "Diagnostics reset before C-to-D run; includes brief warm C, D download, D runtime and stopped capture. SDK minimum heap and stack high-water values span the boot lifetime.",
+      "minimumInternalBytes": 73203,
+      "smallestLargestInternalBytes": 45056,
+      "stackMinBytes": [
+        4336,
+        6928,
+        5412
+      ],
+      "touchAgeMaxUs": 23000,
+      "renderAgeMaxUs": 565000,
+      "sourceAckAgeMaxUs": 313000,
+      "pendingInputMaxUs": 42000,
+      "queueMax": 1,
+      "serialRequestRxBytes": 2873787,
+      "serialRequestTxBytes": 1030893,
+      "metrics": {
+        "host-request": {
+          "count": 3051,
+          "failed": 3,
+          "maxUs": 304313,
+          "p50UpperUs": 32768,
+          "p95UpperUs": 131072,
+          "p99UpperUs": 131072
+        },
+        "source-ack": {
+          "count": 2476,
+          "failed": 0,
+          "maxUs": 23000,
+          "p50UpperUs": 32768,
+          "p95UpperUs": 32768,
+          "p99UpperUs": 32768
+        },
+        "input-source-ack": {
+          "count": 28,
+          "failed": 0,
+          "maxUs": 21000,
+          "p50UpperUs": 32768,
+          "p95UpperUs": 32768,
+          "p99UpperUs": 32768
+        },
+        "render": {
+          "count": 2743,
+          "failed": 0,
+          "maxUs": 1862492,
+          "p50UpperUs": 131072,
+          "p95UpperUs": 262144,
+          "p99UpperUs": 524288
+        },
+        "present": {
+          "count": 2743,
+          "failed": 0,
+          "maxUs": 148661,
+          "p50UpperUs": 131072,
+          "p95UpperUs": 131072,
+          "p99UpperUs": 262144
+        },
+        "touch-poll": {
+          "count": 49287,
+          "failed": 0,
+          "maxUs": 1122,
+          "p50UpperUs": 256,
+          "p95UpperUs": 512,
+          "p99UpperUs": 1024
+        },
+        "touch-poll-interval": {
+          "count": 49287,
+          "failed": 0,
+          "maxUs": 23001,
+          "p50UpperUs": 32768,
+          "p95UpperUs": 32768,
+          "p99UpperUs": 32768
+        }
+      }
+    }
+  ]
+}

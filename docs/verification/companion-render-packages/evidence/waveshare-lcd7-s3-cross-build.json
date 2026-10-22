@@ -1,0 +1,75 @@
+{
+  "evidence_version": 1,
+  "verification_date": "2026-10-16",
+  "kind": "cross_build_only",
+  "source_project": "C:\\Users\\ivang\\_pws\\opensimgear\\cockpit",
+  "source_execution_path": "/mnt/c/Users/ivang/_pws/opensimgear/cockpit",
+  "build_directory": "apps/companion-esp32/build-render-waveshare",
+  "target": "esp32s3",
+  "board_profile": "waveshare-lcd7-s3",
+  "esp_idf_version": "5.5.2",
+  "sdk_cache": "/home/ivang/_pws/opensimgear/cockpit/.research/esp32-idf-v5.5.2",
+  "tools_cache": "/home/ivang/_pws/opensimgear/cockpit/.research/esp32-idf-tools",
+  "exit_code": 0,
+  "source_compile_errors": [],
+  "application": {
+    "path": "apps/companion-esp32/build-render-waveshare/opensimgear_companion_esp32.bin",
+    "bytes": 897824,
+    "sha256": "8082bb7af54b619c46fa302a3fb7c9aa13acd7895259a3b41419dc00e3692f53",
+    "partition_bytes": 1536000,
+    "partition_free_bytes": 638176
+  },
+  "static_memory": {
+    "source": "esp_idf_size --format json link-map analysis",
+    "static_data_bytes": 139588,
+    "regions": {
+      "dram": {
+        "data_bytes": 0,
+        "bss_bytes": 0,
+        "rodata_bytes": 0,
+        "other_bytes": 0,
+        "used_bytes": 0,
+        "linker_region_bytes": 0
+      },
+      "iram": {
+        "text_bytes": 15356,
+        "vectors_bytes": 1028,
+        "other_bytes": 0,
+        "used_bytes": 16384,
+        "linker_region_bytes": 16384
+      },
+      "shared_diram": {
+        "data_bytes": 20716,
+        "bss_bytes": 118872,
+        "rodata_bytes": 0,
+        "text_bytes": 78355,
+        "vectors_bytes": 0,
+        "other_bytes": 0,
+        "used_bytes": 217943,
+        "linker_region_bytes": 341760
+      }
+    },
+    "runtime_heap_or_stack_measurement": false,
+    "note": "Link-map allocations, not runtime free heap. shared_diram code and data share one linker region."
+  },
+  "render_modules_compiled": [
+    {
+      "source": "apps/companion-esp32/render/package.c",
+      "source_sha256": "ea99effe31ae25d3113b807502494c12d052cf353ee02976e21d3560db3d7ba8",
+      "object_compiled": true
+    },
+    {
+      "source": "apps/companion-esp32/render/expressions.c",
+      "source_sha256": "8a52bd885805b9aadb2775d267ae0412a3d781d7f5a988f4c1b7e6d3c7429bda",
+      "object_compiled": true
+    }
+  ],
+  "limits": [
+    "No board flashed or port accessed by this cross-build verification.",
+    "This binary is not the image identified by installed-device capture evidence.",
+    "Unused render functions may be discarded by the linker; successful compilation does not prove downloadable scene execution.",
+    "Existing application partition fit only; downloadable content partitions and end-to-end activation were not exercised."
+  ],
+  "local_log": ".research/render-waveshare-cross-build.log",
+  "local_size_report": ".research/render-waveshare-size.json"
+}

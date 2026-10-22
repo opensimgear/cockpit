@@ -1,0 +1,278 @@
+{
+  "boards": [
+    {
+      "application": {
+        "afterBytes": 926560,
+        "afterSha256": "e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+        "beforeBytes": 926560,
+        "beforeSha256": "e99c62dcb3357046ea241b38d7451e6f4d0662bd5d53fdaf7d9bc7f9bfb09554",
+        "status": "unchanged",
+        "unchangedVerified": true
+      },
+      "board": "sunton",
+      "boardProfile": "sunton-3248s035r",
+      "consecutiveLiveContent": {
+        "allZero": true,
+        "byteIncrement": 0,
+        "counterRegressions": 0,
+        "measuredPairs": 163,
+        "missingCounterPairs": 0,
+        "pairs": 163,
+        "requestIncrement": 0
+      },
+      "consecutiveLiveSerialHealth": {
+        "allZero": null,
+        "counterRegressionPairs": 0,
+        "counterRegressionsByField": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "increments": {
+          "breaks": null,
+          "bufferFull": null,
+          "deferredFull": null,
+          "fifoOverflows": null,
+          "frameErrors": null,
+          "frameOverflows": null,
+          "invalidJson": null,
+          "invalidReply": null,
+          "parityErrors": null,
+          "queueFullObservations": null,
+          "replyMismatch": null,
+          "requestTimeouts": null,
+          "writeFailures": null
+        },
+        "measuredPairs": 0,
+        "missingCounterPairs": 163,
+        "pairs": 163
+      },
+      "deviceEventCounts": {},
+      "deviceEventSequenceGaps": 0,
+      "deviceEvents": [],
+      "feedbackRejectedCount": 0,
+      "firmwareVersions": [
+        "2026.10.16.2"
+      ],
+      "firstLiveSerialHealth": {
+        "counters": null,
+        "elapsedMs": 70009,
+        "firmwareVersion": "2026.10.16.2",
+        "generation": "1",
+        "packageHash": "sha256:d55f1529a1857c67e2cd07507bc678cd91c52c404fc1fed6a2972bd81beaf1bc",
+        "sessionId": "758ed77e-182b-4173-92c3-9341fa069d79",
+        "sourcePublicationHash": "sha256:969ed1470b386e72ebf6df88fb95cee709d0f19c197f63db71961bfe10258375"
+      },
+      "inputEvidenceCounts": null,
+      "lastContentBytes": 657246,
+      "lastContentRequests": 336,
+      "liveEvents": [
+        {
+          "board": "sunton",
+          "boardProfile": "sunton-3248s035r",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 70009,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 100196,
+          "packageHash": "sha256:d55f1529a1857c67e2cd07507bc678cd91c52c404fc1fed6a2972bd81beaf1bc",
+          "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+          "revision": "A",
+          "samples": 31,
+          "sessionId": "758ed77e-182b-4173-92c3-9341fa069d79",
+          "sourcePublicationHash": "sha256:969ed1470b386e72ebf6df88fb95cee709d0f19c197f63db71961bfe10258375",
+          "targetProfileId": "sunton-3248s035r-render-v1"
+        },
+        {
+          "board": "sunton",
+          "boardProfile": "sunton-3248s035r",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 166023,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 299002,
+          "packageHash": "sha256:ce6543303e0703980853d8aea104c61b0062f92cc4a28130972daba2a72e6aa7",
+          "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+          "revision": "B",
+          "samples": 134,
+          "sessionId": "b61d1bef-d3f4-4d32-a020-05b93cdb1676",
+          "sourcePublicationHash": "sha256:e868c3a26adad450cd117dcebafebbf89c2c3af72060c79af5b4b558db83f70a",
+          "targetProfileId": "sunton-3248s035r-render-v1"
+        }
+      ],
+      "longestContinuousLiveMs": 132979,
+      "profileHash": "sha256:565920b7d8067118dd5dcd96fd49284fd46d739a9130f30ad0f98a4978d339dd",
+      "serialHealthCounterRegressions": 0,
+      "serialHealthMax": null,
+      "serialHealthSamples": 0,
+      "sessionCount": 2,
+      "startupAckMaxBytes": null,
+      "steadyAckMaxBytes": null,
+      "targetProfileId": "sunton-3248s035r-render-v1"
+    },
+    {
+      "application": {
+        "afterBytes": 942848,
+        "afterSha256": "dda923112d55e94c733f5b49238d644abe3e9b0447d4c491e9bbfd28cec2ea6a",
+        "beforeBytes": 942848,
+        "beforeSha256": "dda923112d55e94c733f5b49238d644abe3e9b0447d4c491e9bbfd28cec2ea6a",
+        "status": "unchanged",
+        "unchangedVerified": true
+      },
+      "board": "waveshare",
+      "boardProfile": "waveshare-lcd7-s3",
+      "consecutiveLiveContent": {
+        "allZero": true,
+        "byteIncrement": 0,
+        "counterRegressions": 0,
+        "measuredPairs": 136,
+        "missingCounterPairs": 0,
+        "pairs": 136,
+        "requestIncrement": 0
+      },
+      "consecutiveLiveSerialHealth": {
+        "allZero": null,
+        "counterRegressionPairs": 0,
+        "counterRegressionsByField": {
+          "breaks": 0,
+          "bufferFull": 0,
+          "deferredFull": 0,
+          "fifoOverflows": 0,
+          "frameErrors": 0,
+          "frameOverflows": 0,
+          "invalidJson": 0,
+          "invalidReply": 0,
+          "parityErrors": 0,
+          "queueFullObservations": 0,
+          "replyMismatch": 0,
+          "requestTimeouts": 0,
+          "writeFailures": 0
+        },
+        "increments": {
+          "breaks": null,
+          "bufferFull": null,
+          "deferredFull": null,
+          "fifoOverflows": null,
+          "frameErrors": null,
+          "frameOverflows": null,
+          "invalidJson": null,
+          "invalidReply": null,
+          "parityErrors": null,
+          "queueFullObservations": null,
+          "replyMismatch": null,
+          "requestTimeouts": null,
+          "writeFailures": null
+        },
+        "measuredPairs": 0,
+        "missingCounterPairs": 136,
+        "pairs": 136
+      },
+      "deviceEventCounts": {},
+      "deviceEventSequenceGaps": 0,
+      "deviceEvents": [],
+      "feedbackRejectedCount": 0,
+      "firmwareVersions": [
+        "2026.10.16.2"
+      ],
+      "firstLiveSerialHealth": {
+        "counters": null,
+        "elapsedMs": 80007,
+        "firmwareVersion": "2026.10.16.2",
+        "generation": "1",
+        "packageHash": "sha256:d9bf0c28a2fb50766fd274ca4339763803a32980e718621043fe5df88d899615",
+        "sessionId": "18ffe728-164b-4c61-a520-3cc83e8b7649",
+        "sourcePublicationHash": "sha256:a0ee1c7ffd637f3b8a8e59ee86e197726a1113ff5f10d9d1763971d343fff7fe"
+      },
+      "inputEvidenceCounts": null,
+      "lastContentBytes": 2190550,
+      "lastContentRequests": 1121,
+      "liveEvents": [
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 80007,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 100196,
+          "packageHash": "sha256:d9bf0c28a2fb50766fd274ca4339763803a32980e718621043fe5df88d899615",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "A",
+          "samples": 21,
+          "sessionId": "18ffe728-164b-4c61-a520-3cc83e8b7649",
+          "sourcePublicationHash": "sha256:a0ee1c7ffd637f3b8a8e59ee86e197726a1113ff5f10d9d1763971d343fff7fe",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 178037,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 246045,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 69,
+          "sessionId": "475affcb-cf3b-48c8-b303-dfca87a68ff6",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        },
+        {
+          "board": "waveshare",
+          "boardProfile": "waveshare-lcd7-s3",
+          "firmwareVersion": "2026.10.16.2",
+          "firstObservedMs": 251042,
+          "firstSerialHealth": null,
+          "generation": "1",
+          "lastObservedMs": 299002,
+          "packageHash": "sha256:993ad97c5058986bedc9f4618c8d10d10e2e1f52e843b9024543f501d3dd6cf1",
+          "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+          "revision": "B",
+          "samples": 49,
+          "sessionId": "88499bec-11e0-4fbb-bf9a-08e2c1217051",
+          "sourcePublicationHash": "sha256:3a31cdf194a1a486306b8a8d048fa556959fa40dd4097c37c28f6a95d6255d2e",
+          "targetProfileId": "waveshare-lcd7-s3-render-v1"
+        }
+      ],
+      "longestContinuousLiveMs": 68008,
+      "profileHash": "sha256:ba6b97e77c32fba015ff30ec61ea8c8d0ec29acc961e25ad5ff4ad5cce6f37be",
+      "serialHealthCounterRegressions": 0,
+      "serialHealthMax": null,
+      "serialHealthSamples": 0,
+      "sessionCount": 3,
+      "startupAckMaxBytes": null,
+      "steadyAckMaxBytes": null,
+      "targetProfileId": "waveshare-lcd7-s3-render-v1"
+    }
+  ],
+  "formatVersion": 1,
+  "inputEvidenceByInstance": {},
+  "inputEvidenceCounts": {
+    "baselines": 5,
+    "sourceLosses": 5
+  },
+  "liveStatus": "live-armed",
+  "maximumSampleGapMs": 2500,
+  "notEstablished": [
+    "visual quality",
+    "soak qualification",
+    "power-cut recovery",
+    "absence of unobserved serial failures or lost queue events"
+  ],
+  "records": 905,
+  "runComplete": true,
+  "scope": "Consecutive sampled runtime and full application readback evidence only.",
+  "unattributedDeviceEventCount": 0
+}
