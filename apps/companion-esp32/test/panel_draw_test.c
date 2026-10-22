@@ -132,19 +132,20 @@ static void preflight(void) {
     draw.backend.rendering=true;assert(!osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100));osg_panel_draw_destroy(&draw);assert(draw.backend.display);draw.backend.rendering=false;
 }
 static void compatibility(const cJSON *fixture) {
-    unsigned accepted=0,rejected_text=0;
+    unsigned accepted=0,rejected_text=0,rejected_overlap=0;
     const cJSON *cases=cJSON_GetObjectItemCaseSensitive(fixture,"cases"),*profiles=cJSON_GetObjectItemCaseSensitive(fixture,"profiles");
     for(const cJSON *item=cases->child;item;item=item->next) {
         const cJSON *issues=cJSON_GetObjectItemCaseSensitive(item,"issues"),*profile=cJSON_GetArrayItem(profiles,cJSON_GetObjectItemCaseSensitive(item,"profile")->valueint);
         const cJSON *limits=cJSON_GetObjectItemCaseSensitive(profile,"limits");
         const char *name=osg_string(item,"name"),*canonical=osg_string(item,"canonicalDocument");
-        bool check_text=false,check_zero=false;
+        bool check_text=false,check_zero=false,check_overlap=false;
         for(const cJSON *issue=issues->child;issue;issue=issue->next) {
             const char *field=osg_string(issue,"field");
             if(!strcmp(field,"text.glyphs")||!strcmp(field,"group.label")||!strcmp(field,"fontSize"))check_text=true;
             if(!strcmp(field,"geometry.minimumPixels"))check_zero=true;
+            if(!strcmp(field,"hitArea.overlap"))check_overlap=true;
         }
-        if(issues->child&&!check_text&&!check_zero)continue;
+        if(issues->child&&!check_text&&!check_zero&&!check_overlap)continue;
         size_t capacity=(size_t)cJSON_GetObjectItemCaseSensitive(limits,"sceneBytes")->valueint;
         unsigned char *memory=malloc(capacity);assert(memory);
         osg_widget_arena arena={.data=memory,.capacity=capacity,.max_layers=(size_t)cJSON_GetObjectItemCaseSensitive(limits,"totalLayers")->valueint,.max_components=(size_t)cJSON_GetObjectItemCaseSensitive(limits,"components")->valueint};
@@ -154,6 +155,7 @@ static void compatibility(const cJSON *fixture) {
         assert(cJSON_AddStringToObject(publication,"canonicalDocument",canonical)&&cJSON_AddStringToObject(publication,"publicationHash",hash)&&cJSON_AddArrayToObject(publication,"assets"));
         osg_scene *scene=NULL;osg_panel_source_diagnostic error;
         bool admitted=osg_panel_source_compile(publication,hash,(osg_crypto){.sha256=sha},&source_limits,&arena,&scene,&error);
+        if(check_overlap){assert(!admitted&&error.code==OSG_PANEL_SOURCE_UNSUPPORTED);rejected_overlap++;cJSON_Delete(publication);free(memory);continue;}
         if(!admitted)fprintf(stderr,"compatibility %s: source field=%s required=%zu available=%zu\n",name,error.field,error.required,error.available);
         assert(admitted);cJSON_Delete(publication);
         void *prepared[32]={0};unsigned count=0;
@@ -180,7 +182,7 @@ static void compatibility(const cJSON *fixture) {
         assert(!runtime.armed&&!runtime.connected);
     }
     draw.max_font_size=128;
-    printf("Shared target oracle: %u accepted source panels render, %u glyph/font/zero-area failures reject before writes\n",accepted,rejected_text);
+    printf("Shared target oracle: %u accepted source panels render, %u glyph/font/zero-area and %u overlapping-touch failures reject before writes\n",accepted,rejected_text,rejected_overlap);
 }
 int main(int argc,char **argv) {
     assert(argc==3||argc==4);osg_board board={.width=800,.height=480,.write=write_pixels,.present=present};

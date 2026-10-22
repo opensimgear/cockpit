@@ -14,6 +14,8 @@ test('target compatibility preserves source and uses actual portable target limi
   const byName=name=>fixture.cases.find(item=>item.name===name);
   assert.equal(byName('rich catalog').issues.length,0);
   for(const name of ['complete rich catalog','compact text instrument','compact original icon'])assert.equal(byName(name).issues.length,0,name);
+  for(const name of ['overlapping portable touch areas','navigation touch areas cannot overlap controls'])assert.equal(byName(name).issues[0].field,'hitArea.overlap',name);
+  for(const name of ['overlapping artwork with separate local hit areas','touch areas may share an edge','readonly artwork can overlap portable controls','touch areas on different pages are independent'])assert.equal(byName(name).issues.length,0,name);
   assert.ok(byName('compact catalog rejects retained budgets').issues.some(issue=>issue.field==='components'));
   assert.equal(byName('compact reusable switch').issues.length,0);
   assert.ok(byName('alternate-state unsupported glyph').issues.some(issue=>issue.layer&&issue.definition&&issue.widget&&issue.required==='U+1F600'));

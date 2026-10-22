@@ -78,6 +78,10 @@ ESP32 advertises its engine version, supported fonts, geometry and resource
 limits; assignment checks those capabilities before replacing its running
 panel. A rejected update preserves the prior assignment and explains the
 limitation. You can still edit, preview, export and save the full design locally.
+ESP32's single-pointer input requires separate interactive hit areas on each
+page. An overlap diagnostic identifies both affected widgets; move/resize the
+instances or adjust their local hit areas. Read-only component decoration may
+overlap controls, and controls on separate pages remain independent.
 Reduce instances/layers or choose a suitable target explicitly when necessary.
 Compatible source and artwork updates use the existing publication download
 and cache path without recompiling firmware. A new panel must render and acquire

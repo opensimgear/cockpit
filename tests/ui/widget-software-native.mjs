@@ -11,7 +11,8 @@ import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {deflateSync} from 'node:zlib';
 import {TransferDecoder} from '../../apps/browser-companion/src/transport.ts';
-import {newDocument,createDesignerHistory,applyDesignerCommand,createWidgetCatalog,publishDocument} from '../../packages/companion-designer/src/index.ts';
+import {newDocument,createDesignerHistory,applyDesignerCommand,createWidgetCatalog,publishDocument,importBundle,normalizeToPortableUi} from '../../packages/companion-designer/src/index.ts';
+import {fallbackValue} from '../../packages/companion-ui/src/controller.ts';
 import {sendPublication} from '../../src/lib/companions.ts';
 
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -52,7 +53,29 @@ function icon(){
   const rows=Buffer.alloc(8*(1+8*4));for(let y=0;y<8;y++)for(let x=0;x<8;x++){const at=y*33+1+x*4;rows[at]=x===y||x+y===7?255:25;rows[at+1]=190;rows[at+2]=160;rows[at+3]=255;}
   return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(rows)),chunk('IEND',Buffer.alloc(0))]);
 }
+const momentary=panel=>panel.document.presentation.widgets.findLast(widget=>widget.kind==='component'&&panel.document.presentation.definitions.find(definition=>definition.id===widget.config.definitionId&&definition.version===widget.config.definitionVersion).interaction.kind==='momentary');
+const touchPoint=widget=>({x:Math.round((widget.bounds.x+widget.bounds.width/2)*800),y:Math.round((widget.bounds.y+widget.bounds.height/2)*480)});
+async function exportedCompositions(file){
+  const incoming=await importBundle(await readFile(file,'utf8'));
+  const first=await publishDocument(incoming.document,incoming.assets),original=momentary(first);
+  assert.ok(original,'The exported acceptance panel needs a reusable momentary control.');
+  const bytes=icon(),assetId='software-acceptance-'+randomUUID(),document=structuredClone(first.document);
+  document.ui.assets.push({id:assetId,sha256:createHash('sha256').update(bytes).digest('hex'),sizeBytes:bytes.length,mime:'image/png'});
+  let history=createDesignerHistory(document);
+  const definition=structuredClone(first.document.presentation.definitions.find(definition=>definition.id===original.config.definitionId&&definition.version===original.config.definitionVersion));
+  definition.version=Math.max(...first.document.presentation.definitions.filter(entry=>entry.id===definition.id).map(entry=>entry.version))+1;
+  const label=definition.layers.find(layer=>layer.kind==='text'&&layer.text?.property==='label');assert.ok(label);label.font='mono';label.fontSize=20;
+  definition.layers.push({id:'new-composition-lamp',label:'New decoration',kind:'ellipse',bounds:{x:.08,y:.72,width:.08,height:.12},fill:{property:'accent'}});
+  definition.layers.push({id:'new-composition-artwork',label:'New artwork',kind:'image',bounds:{x:.82,y:.72,width:.12,height:.18},assetId});
+  history=applyDesignerCommand(history,{type:'update-component',id:original.id,definition,properties:{...original.config.properties,label:'ENGINE B',accent:'#ff765e'}});
+  history=applyDesignerCommand(history,{type:'move-widget',id:original.id,bounds:{x:.745,y:.375,width:.22,height:.21}});
+  const second=await publishDocument(history.present,[...incoming.assets,{assetId,base64:bytes.toString('base64')}],{optimizeAssets:false});
+  assert.equal(first.capabilityFingerprint,second.capabilityFingerprint,'Font, layout, new decoration and artwork changes preserve input/feedback contracts');
+  assert.deepEqual(momentary(first).controlIds,momentary(second).controlIds);
+  return [first,second];
+}
 async function compositions(){
+  if(process.env.OSG_WIDGETS_SOFTWARE_BUNDLE)return exportedCompositions(process.env.OSG_WIDGETS_SOFTWARE_BUNDLE);
   let history=createDesignerHistory(newDocument('Software shared controls'));
   history=applyDesignerCommand(history,{type:'delete-widget',id:history.present.presentation.widgets[0].id});
   const pageId=history.present.ui.pages[0].id;
@@ -81,7 +104,7 @@ test('one actual firmware/LVGL software client loads two source compositions fro
   const directory=resolve('.research/widget-software-native',String(Date.now()));await mkdir(directory,{recursive:true});
   const evidence={actualNativeCockpit:true,realAuthenticatedWss:true,actualFirmwareClient:true,actualLvgl:true,physicalHardware:false,compositions:[],wireTypes:[],status:[]};
   let client,child,createdListener=false,ticker,stepBusy=false,stopping=false,engineError,sequence=0,tail=Promise.resolve();
-  const pending=new Map(),events=[],testPanelIds=new Set();let last,stderr='';
+  const pending=new Map(),events=[],testHashes=new Set(),existingHashes=new Set();let last,stderr='';
   const program=process.env.OSG_WIDGETS_SOFTWARE_BIN;
   assert.ok(program,'Build the software-client target and set OSG_WIDGETS_SOFTWARE_BIN.');
   const binary=process.env.OSG_WIDGETS_SOFTWARE_BINARY_FILE;
@@ -96,6 +119,7 @@ test('one actual firmware/LVGL software client loads two source compositions fro
   const until=async(work,message)=>{for(let i=0;i<250;i++){if(engineError)throw engineError;const result=await work();if(result)return result;await pause(25);}throw Error(message+': '+JSON.stringify(last));};
   try{
     let state=await api.request('companion_status');
+    for(const publication of state.host.publications)existingHashes.add(publication.publicationHash);
     if(!state.listener?.enabled){state=await api.request('companion_enable',{address:'127.0.0.1',advertisedHost:'127.0.0.1',port:await freePort(),discovery:false});createdListener=true;}
     const certificate=(await api.request('companion_browser_certificate')).certificatePem;
     const offer=await api.request('companion_pair_offer',{kind:'esp32'}),pairing=JSON.parse(offer.pairing.manualPayload);
@@ -133,33 +157,47 @@ test('one actual firmware/LVGL software client loads two source compositions fro
     await until(async()=>{const current=await api.request('companion_status');return current.host.clients.find(row=>row.companionId===companionId)?.renderProfile;},'Software engine report did not reach Cockpit');
     const panels=await compositions();
     for(const [index,panel] of panels.entries()){
-      testPanelIds.add(panel.document.ui.id);
+      if(!existingHashes.has(panel.publicationHash))testHashes.add(panel.publicationHash);
       await sendPublication(panel,(command,payload)=>api.request(command,payload),{saveAsLatest:false});
       let baselines;
       if(index===1){
-        await command('touch',{down:true,valid:true,x:220,y:192});
-        await until(async()=>{const current=await api.request('companion_status');return current.host.instances.find(row=>row.instanceId===instanceId).values?.[panels[0].document.presentation.widgets[0].controlIds[0]]===true;},'Held input did not reach the old composition');
+        await command('touch',{down:true,valid:true,...touchPoint(momentary(panels[0]))});
+        await until(async()=>{const current=await api.request('companion_status');return current.host.instances.find(row=>row.instanceId===instanceId).values?.[momentary(panels[0]).controlIds[0]]===true;},'Held input did not reach the old composition');
         baselines=evidence.wireTypes.filter(type=>type==='baseline').length;
       }
       await api.request('companion_assign',{companionId,instanceId,publicationHash:panel.publicationHash});
       if(index===1){
         await until(async()=>last?.publicationHash===panel.publicationHash&&!last.armed&&last.operation?.phase==='awaiting-neutral','Replacement did not remain disarmed while touch was held');
         assert.equal(evidence.wireTypes.filter(type=>type==='baseline').length,baselines,'Held touch must not admit a new neutral baseline');
-        await command('touch',{down:false,valid:true,x:220,y:192});evidence.heldSwitchRequiresRelease=true;
+        await command('touch',{down:false,valid:true,...touchPoint(momentary(panels[0]))});evidence.heldSwitchRequiresRelease=true;
       }
       const ready=await until(async()=>last?.publicationHash===panel.publicationHash&&last.armed&&last.operation?.phase==='ready'?last:false,'Source composition did not render and arm');
       const state=await api.request('companion_status'),instance=state.host.instances.find(row=>row.instanceId===instanceId);
-      assert.equal(instance.publicationHash,panel.publicationHash);assert.equal(instance.armed,true);assert.ok(Object.values(instance.values).every(value=>value===false));
+      assert.equal(instance.publicationHash,panel.publicationHash);assert.equal(instance.armed,true);assert.deepEqual(instance.values,Object.fromEntries(panel.document.ui.controls.map(control=>[control.id,fallbackValue(control)])));
       assert.equal(ready.processId,evidence.processId);
-      evidence.compositions.push({publicationHash:panel.publicationHash,widgets:ready.widgets,frames:ready.frames,operation:ready.operation,neutralValues:instance.values,appearance:ready.appearance});
-      const original=panel.document.presentation.widgets[0],controlId=original.controlIds[0];
-      const touch=async down=>{const appearance=await command('touch',{down,valid:true,x:220,y:192});assert.equal(appearance.appearance[0].state,down?'pressed':'unknown');await until(async()=>{
+      evidence.compositions.push({publicationHash:panel.publicationHash,capabilityFingerprint:panel.capabilityFingerprint,widgets:ready.widgets,frames:ready.frames,operation:ready.operation,neutralValues:instance.values,appearance:ready.appearance});
+      const original=momentary(panel),controlId=original.controlIds[0];
+      const touch=async down=>{const appearance=await command('touch',{down,valid:true,...touchPoint(original)});assert.equal(appearance.appearance.find(item=>item.widget===original.id).state,down?'pressed':'unknown');await until(async()=>{
         const current=await api.request('companion_status'),instance=current.host.instances.find(row=>row.instanceId===instanceId);return instance.values?.[controlId]===down;
       },'Actual software touch input did not arrive in order');};
       await touch(true);await touch(false);
       if(index===0){
+        if(process.env.OSG_WIDGETS_SOFTWARE_BUNDLE){
+          const document=structuredClone(panel.document),selected=document.presentation.widgets.find(widget=>widget.id===original.id);
+          const other=document.presentation.widgets.find(widget=>widget.kind==='component'&&widget.id!==selected.id&&widget.controlIds.length);
+          assert.ok(other);selected.bounds=structuredClone(other.bounds);
+          document.ui=normalizeToPortableUi(document);
+          const overlapping=await publishDocument(document,panel.assets);
+          if(!existingHashes.has(overlapping.publicationHash))testHashes.add(overlapping.publicationHash);
+          await sendPublication(overlapping,(command,payload)=>api.request(command,payload),{saveAsLatest:false});
+          await assert.rejects(()=>api.request('companion_assign',{companionId,instanceId,publicationHash:overlapping.publicationHash}),/hitArea.overlap/);
+          const retained=(await api.request('companion_status')).host.instances.find(row=>row.instanceId===instanceId);
+          assert.equal(retained.publicationHash,panel.publicationHash);assert.equal(retained.armed,true);
+          evidence.overlappingTouchAssignmentPreservesRunningPanel=true;
+        }
         const document=structuredClone(panel.document);document.presentation.widgets[0].config.properties.label='😀';
-        const incompatible=await publishDocument(document,[]);
+        const incompatible=await publishDocument(document,panel.assets);
+        if(!existingHashes.has(incompatible.publicationHash))testHashes.add(incompatible.publicationHash);
         await sendPublication(incompatible,(command,payload)=>api.request(command,payload),{saveAsLatest:false});
         await assert.rejects(()=>api.request('companion_assign',{companionId,instanceId,publicationHash:incompatible.publicationHash}),/U\+1F600/);
         const current=(await api.request('companion_status')).host.instances.find(row=>row.instanceId===instanceId);
@@ -167,7 +205,8 @@ test('one actual firmware/LVGL software client loads two source compositions fro
       }
       if(index===1){
         const values=(await api.request('companion_status')).host.instances.find(row=>row.instanceId===instanceId).values;
-        assert.equal(values[panel.document.presentation.widgets[1].controlIds[0]],false,'Second reusable instance remains independent');
+        const independent=panel.document.presentation.widgets.find(widget=>widget.kind==='component'&&widget.id!==original.id&&widget.controlIds.some(id=>panel.document.ui.controls.find(control=>control.id===id)?.kind==='button'));
+        assert.ok(independent);assert.equal(values[independent.controlIds[0]],false,'Another reusable instance remains independent');
       }
       const path=process.env.OSG_WIDGETS_ENGINE_EVIDENCE_DIR;
       if(path){await command('snapshot',{path:path+`/composition-${index}.ppm`});}
@@ -192,7 +231,7 @@ test('one actual firmware/LVGL software client loads two source compositions fro
     if(child&&child.exitCode===null){child.stdin.end();await pause(50);if(child.exitCode===null)child.kill();}
     await client?.close().catch(()=>{});
     await api.request('companion_revoke',{companionId}).catch(()=>{});
-    if(testPanelIds.size)await api.request('companion_prune',{panelIds:[...testPanelIds],hashes:[]}).catch(()=>{});
+    if(testHashes.size)await api.request('companion_prune',{panelIds:[],hashes:[...testHashes]}).catch(()=>{});
     if(createdListener)await api.request('companion_disable').catch(()=>{});
     if(engineError||stderr)await writeFile(join(directory,'engine.txt'),String(engineError??'')+'\n'+stderr);
     api.close();

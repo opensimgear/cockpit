@@ -13,9 +13,9 @@ GameGlass reference; no external artwork or Star Citizen provider is included.
 | Story | Required software delivery | Status |
 | --- | --- | --- |
 | W0 #113 | Strict versioned definitions, instances, layers, properties, ports, states, identity, capability contracts and LVGL feasibility | Software contracts implemented and checked; physical feasibility deferred |
-| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Shared renderer and visual parity checked; live browser workflow and final Android build pending |
+| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Shared renderer, visual parity and live browser workflow checked; final Android build pending |
 | W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Implemented; actual Cockpit WSS/C-engine acceptance and all six firmware CI jobs pass; hardware deferred |
-| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Actual Cockpit authoring/save/reload passes; export/import delivery acceptance pending |
+| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Actual Cockpit authoring/save/reload and UI export/import pass; complete live delivery checks in progress |
 | W4 #117 | Original control/instrument catalog, library bundles, publishing/reconciliation, example panel and runtime updates | Twelve families implemented and checked; complete-panel live workflow acceptance pending |
 | W5 #118 | Running native dev Cockpit acceptance, automated/native/build checks, documentation and software parity evidence | Evidence and guidance in progress; final requirement audit pending |
 
@@ -557,3 +557,47 @@ at 17,248 bytes in its 32 KiB LVGL pool. Source admission covers seven documents
 These are software measurements, without physical board or Android-device
 qualification. Successful native UI acceptance removes its own unassigned test
 panel after proving persistence, keeping repeated runs within draft/cache limits.
+
+Complete-panel live acceptance exposed a target-preflight gap: firmware already
+rejects overlapping single-pointer touch areas, but the host had accepted that
+assignment. Shared TypeScript/Rust compatibility now applies the firmware's
+local-hit-area and safe-inset rules, reports `hitArea.overlap` with both widget
+identities, and preserves browser/Android authoring. The expanded 46-case oracle
+contains 21 admitted/rendered panels, seven font/glyph/zero-area rejections and
+two overlapping-touch rejections in both native LVGL memory-pool builds. Touch
+areas sharing an edge, separate local hit areas, read-only component overlays
+and controls on separate pages remain supported. Native service tests again
+pass 121 unit and two ESP32 host integration checks. Shared compatibility has
+100% line/function and 95.38% branch coverage. No firmware contract or source
+publication identity changes are required for this predictive host check.
+
+The rebuilt running Cockpit rejects an overlapping-touch assignment while the
+previous complete panel stays armed. Acceptance at
+`.research/widget-software-native/1792639258402/evidence.json` uses exactly the
+UI-exported panel from `.research/widgets-native-ui/1792638902877/`: publication
+`sha256:f942174f4c005d6d048380fc7bafe151eba561ce1666f532de699871518af422`.
+The same source passes live browser acceptance at
+`.research/widget-browser-native/1792639314316/evidence.json`. Two separately
+paired browser processes hold input independently; closing one clears only its
+source, while the other remains armed and held. Browser reload retains normal
+pairing and establishes a fresh neutral baseline. HTTPS/WSS browser trust is
+scoped to the actual server public key after CA and hostname verification.
+
+The full C-engine test keeps one PID and binary hash
+`97be83ef94006d1232c88f1beee38ecc6167e4132b9b7f9ddf2479772c807034`
+while loading two thirteen-widget compositions. The second changes typography,
+layout and newly authored decorative/image layers with the same capability
+fingerprint, so logical bindings remain stable. It downloads the prepared image
+once, reuses it on reconnect, and requires release before replacement can arm.
+The original one-to-three-widget regression also passes at
+`.research/widget-software-native/1792639266231/evidence.json`.
+
+The native UI test now exercises actual Export/Import downloads for both the
+widget library and complete edited panel, checks the exported publication
+against the host-admitted hash, and verifies reimport preserves pinned
+definitions/properties while allocating fresh independent control identities.
+Set `OSG_WIDGETS_BUNDLE` for its input bundle and for live browser acceptance;
+set `OSG_WIDGETS_SOFTWARE_BUNDLE` to send that exact exported file to the unchanged
+C engine. The browser SSR harness now compiles the actual WidgetView and
+GroupOutline dependencies and covers all twelve catalog families; all 21 browser
+checks pass, including focus/visibility cancellation and feedback lifecycle.

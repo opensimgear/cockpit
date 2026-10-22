@@ -58,6 +58,12 @@ doc=images(1);delete doc.presentation.widgets[0].config.assetId;add('empty image
 doc=single();doc.presentation.definitions[0].layers.find(layer=>layer.kind==='text').states={normal:{opacity:0},active:{opacity:1,text:'😀'}};add('transparent alternate text',doc);
 add('complete rich catalog',complete);add('complete compact catalog budget',complete,0);
 add('compact text instrument',single(10,complete),0);add('compact original icon',single(11,complete),0);
+doc=structuredClone(catalog);doc.presentation.widgets[1].bounds=structuredClone(doc.presentation.widgets[0].bounds);add('overlapping portable touch areas',doc);
+doc.presentation.definitions[0].hitArea={x:0,y:0,width:.4,height:1};doc.presentation.definitions[1].hitArea={x:.6,y:0,width:.4,height:1};add('overlapping artwork with separate local hit areas',doc);
+doc=structuredClone(catalog);doc.presentation.widgets[1].bounds.x=doc.presentation.widgets[0].bounds.x+doc.presentation.widgets[0].bounds.width;add('touch areas may share an edge',doc);
+doc=structuredClone(catalog);doc.presentation.widgets[3].bounds=structuredClone(doc.presentation.widgets[0].bounds);add('readonly artwork can overlap portable controls',doc);
+doc=structuredClone(catalog);doc.presentation.widgets[9].bounds=structuredClone(doc.presentation.widgets[0].bounds);add('navigation touch areas cannot overlap controls',doc);
+doc=structuredClone(catalog);doc.ui.pages.push({id:'other-page',title:'Other page',items:[]});doc.presentation.viewports.push({...structuredClone(doc.presentation.viewports[0]),pageId:'other-page'});doc.presentation.widgets[1].pageId='other-page';doc.presentation.widgets[1].bounds=structuredClone(doc.presentation.widgets[0].bounds);add('touch areas on different pages are independent',doc);
 
 // Keep source identity in the oracle to prove target checks never rewrite it.
 for(const item of cases){item.canonicalDocument=canonical(item.document);delete item.document;}

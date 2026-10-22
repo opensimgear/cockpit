@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { canonical, importBundle, importWidgetBundle, publishDocument } from '../../packages/companion-designer/src/index.ts';
 
 // Uses the actual dev Cockpit WebView and normal UI handlers. No state injection.
 test('reusable widgets import, edit, preview and persist in the native Cockpit', {
@@ -26,6 +27,23 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
   const layerCount = source.document.presentation.widgets.reduce((sum, widget) => sum + source.document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion).layers.length, 0);
   await mkdir(directory, { recursive: true });
   const screenshot = async name => { const r = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(`${directory}/${name}.png`, Buffer.from(r.data, 'base64')); };
+  const download = async (label, folder) => {
+    const path = resolve(directory, folder); await mkdir(path, { recursive: true });
+    await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: path });
+    await click(label);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const names = (await readdir(path)).filter(name => name.endsWith('.json'));
+      if (names.length === 1) { const file = resolve(path, names[0]); try { const text = await readFile(file, 'utf8'); JSON.parse(text); return { file, text }; } catch {} }
+      await pause(100);
+    }
+    throw Error(label + ' did not download a complete JSON bundle');
+  };
+  const importFile = async (selector, file) => {
+    const { root } = await send('DOM.getDocument');
+    const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector });
+    assert.ok(nodeId, 'Missing import control ' + selector);
+    await send('DOM.setFileInputFiles', { nodeId, files: [resolve(file)] });
+  };
   try {
     await send('Page.enable');
     await send('Page.setInterceptFileChooserDialog', { enabled: true });
@@ -35,9 +53,7 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     await until(`!!document.querySelector('.panel-import:not(:disabled),.back-panels:not(:disabled)')`, 'Companions did not finish loading');
     if (await evaluate(`!!document.querySelector('.back-panels')`)) await click('Back to Panels');
     await until(`!!document.querySelector('input.panel-import:not(:disabled)')`, 'Panel library not ready');
-    const { root } = await send('DOM.getDocument');
-    const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input.panel-import' });
-    await send('DOM.setFileInputFiles', { nodeId, files: [resolve(bundlePath)] });
+    await importFile('input.panel-import', bundlePath);
     await until(`document.querySelectorAll('.component-widget').length===${widgetCount}`, 'Shared catalog panel did not import');
     const loadedFonts = await evaluate(`(async()=>{const faces=await Promise.all(['OSGPortableSans','OSGPortableMono'].map(face=>document.fonts.load('22px '+face)));await document.fonts.ready;return faces.map(group=>group.map(font=>({family:font.family,status:font.status})));})()`);
     for (const [index, name] of ['OSGPortableSans', 'OSGPortableMono'].entries()) assert.ok(loadedFonts[index].some(font => font.family === name && font.status === 'loaded'), 'The actual portable font face must load');
@@ -91,6 +107,9 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     await until(`document.querySelectorAll('[data-definition-id="osg-illuminated-button"]').length===2`, 'Second independent instance did not appear');
     const revisions = await evaluate(`[...document.querySelectorAll('[data-definition-id="osg-illuminated-button"]')].map(e=>Number(e.getAttribute('data-definition-version')))`);
     assert.equal(revisions[0], 1); assert.ok(revisions[1] > 1);
+    // The rich ESP32 profile requires independent, nonoverlapping touch areas.
+    // Reuse the read-only frame's cell rather than covering the first control.
+    for (const [field, value] of [[3, 176], [4, 100], [1, 596], [2, 166]]) await change(`.properties-overlay .bounds label:nth-child(${field}) input`, value);
     await click('Save');
     await until(`document.querySelector('.editor-title>p')?.textContent==='Edit the panel layout.'&&!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Save'&&!b.disabled)`, 'Updated panel did not save');
     await screenshot('reused-instance');
@@ -118,15 +137,49 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     assert.equal(await evaluate(`document.querySelector('[aria-label="Gauge minimum"]').value`),'0');
     await click('Cancel');
     checks.push('The visual gauge inspector preserves exposed ranges and can intentionally unlink a property without changing its resolved value.');
+    const exported = await download('Export', 'panel-export');
+    const portable = await importBundle(exported.text), published = await publishDocument(portable.document, portable.assets);
+    assert.equal(portable.document.presentation.widgets.length, widgetCount + 1);
+    assert.deepEqual(portable.document.presentation.widgets.filter(widget => widget.config.definitionId === 'osg-illuminated-button').map(widget => widget.config.definitionVersion), revisions);
+    const nativePublications = await evaluate(`(async()=>{const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'widget-export-acceptance'}});if(!reply.ok)throw Error(reply.error);return reply.state.companions.host.publications;})()`);
+    assert.ok(nativePublications.some(panel => panel.publicationHash === published.publicationHash), 'The UI-exported panel must match a publication admitted by the actual Cockpit host');
+    const widgetExport = await download('Export widgets', 'widget-export');
+    const widgetLibrary = await importWidgetBundle(widgetExport.text);
+    assert.ok(widgetLibrary.library.definitions.some(definition => definition.id === 'osg-illuminated-button' && definition.version === revisions[1] && definition.layers.some(layer => layer.kind === 'text' && layer.text === 'READY')));
+    await importFile('[aria-label="Import widget library"]', widgetExport.file);
+    await until(`document.body.innerText.includes('Widget library imported. Existing panels keep their pinned versions.')`, 'The exported widget library did not import through its normal UI');
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll('[data-definition-id="osg-illuminated-button"]')].map(e=>Number(e.getAttribute('data-definition-version')))`), revisions);
+    checks.push('Actual UI downloads round-trip the edited library and exact host-admitted panel publication without changing pinned revisions.');
+    // Panel imports intentionally allocate fresh installation-independent control
+    // identities. Verify their content through another normal UI export.
+    await click('Back to Panels');
+    await importFile('input.panel-import', exported.file);
+    await until(`document.querySelectorAll('.component-widget').length===${widgetCount + 1}`, 'The UI-exported panel did not reimport');
+    const roundTrip = await download('Export', 'panel-reimport');
+    const imported = await importBundle(roundTrip.text);
+    assert.equal(canonical(imported.document.presentation.definitions), canonical(portable.document.presentation.definitions));
+    const configs = document => document.presentation.widgets.map(widget => {
+      const config = structuredClone(widget.config);
+      const definition = document.presentation.definitions.find(definition => definition.id === config.definitionId && definition.version === config.definitionVersion);
+      if (definition.interaction.kind === 'navigate') config.properties[definition.interaction.pageProperty] = document.ui.pages.findIndex(page => page.id === config.properties[definition.interaction.pageProperty]);
+      return config;
+    });
+    assert.deepEqual(configs(imported.document), configs(portable.document));
+    assert.notEqual(imported.document.ui.controls[0].id, portable.document.ui.controls[0].id);
+    checks.push('The exported panel reimports through the actual UI with identical pinned definitions/properties and fresh independent control identities.');
+    // Return to the saved panel; the round-trip draft was never saved.
+    await click('Back to Panels');
+    await until(`!![...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Discard and continue')`, 'Unsaved imported panel did not request discard');
+    await click('Discard and continue');
+    await until(`!!document.querySelector('.panel-import:not(:disabled)')`, 'Panel list did not return after discarding the import');
     if(process.env.OSG_WIDGETS_KEEP_ACCEPTANCE_PANEL!=='1'){
-      await click('Back to Panels');
       await click('Delete '+panelName);
       await until(`!!document.querySelector('.delete-confirmation[open]')`,'Acceptance cleanup confirmation did not open');
       await evaluate(`document.querySelector('.delete-confirmation .destructive-button').click()`);
       await until(`![...document.querySelectorAll('.panel-tile-title')].some(title=>title.textContent===${JSON.stringify(panelName)})&&!!document.querySelector('.panel-import:not(:disabled)')`,'Acceptance panel cleanup did not finish');
       checks.push('The temporary unassigned acceptance panel is removed after persistence is verified, preserving bounded draft/cache capacity.');
     }
-    await writeFile(`${directory}/evidence.json`, JSON.stringify({ origin, actualNativeCockpit: true, checks, saved }, null, 2));
+    await writeFile(`${directory}/evidence.json`, JSON.stringify({ origin, actualNativeCockpit: true, checks, saved, exportedPanel: exported.file, exportedWidgetLibrary: widgetExport.file, publicationHash: published.publicationHash, capabilityFingerprint: published.capabilityFingerprint }, null, 2));
     console.log(JSON.stringify({ directory, checks }));
   } catch (error) {
     await writeFile(`${directory}/failure.txt`, String(error));

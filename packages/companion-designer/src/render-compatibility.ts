@@ -2,7 +2,7 @@ import fonts from '../../companion-ui/assets/fonts/metrics.json' with { type: 'j
 import { canonical, validateDesignerDocument } from './model.ts';
 import { validateRenderProfile } from './render-profiles.ts';
 import { resolveWidgetLayers, WIDGET_STATES, widgetRequiredFeatures } from './widget-model.ts';
-import type { DesignerDocument } from './types.ts';
+import type { Bounds, DesignerDocument, DesignerWidget } from './types.ts';
 
 export interface RenderCompatibilityIssue {
   widget?: string; definition?: string; layer?: string;
@@ -72,6 +72,7 @@ export function renderCompatibility(input:DesignerDocument, report:unknown):Rend
     const key=`${hash}:${width}:${height}`;
     if(!rasters.has(key)){rasters.add(key);imageBytes+=width*height*3;over('imageBytes',imageBytes,limits.imageBytes);}
   };
+  const touchAreas:{widget:DesignerWidget;bounds:Bounds;interactive:boolean}[]=[];
   for(const widget of document.presentation.widgets){
     identity={widget:widget.id};
     const viewport=document.presentation.viewports.find(viewport=>viewport.pageId===widget.pageId)!;
@@ -79,8 +80,10 @@ export function renderCompatibility(input:DesignerDocument, report:unknown):Rend
     const width=widget.bounds.width*(1-(inset?.left??0)-(inset?.right??0))*viewport.width*scale;
     const height=widget.bounds.height*(1-(inset?.top??0)-(inset?.bottom??0))*viewport.height*scale;
     const pixelWidth=Math.floor(width),pixelHeight=Math.floor(height);
+    let hit:Bounds={x:0,y:0,width:1,height:1},interactive=widget.kind==='button';
     if(widget.kind==='component'){
       const definition=definitions.find(d=>d.id===widget.config.definitionId&&d.version===widget.config.definitionVersion)!;
+      hit=definition.hitArea;interactive=definition.interaction.kind!=='none';
       identity.definition=definition.id;components++;totalLayers+=definition.layers.length;
       over('components',components,limits.components);over('layers',totalLayers,limits.totalLayers);
       for(const name of widgetRequiredFeatures(definition))feature(name);
@@ -135,6 +138,19 @@ export function renderCompatibility(input:DesignerDocument, report:unknown):Rend
         else add('image.assetId','selected asset','unavailable',p.id);
       }
     }
+    // Match the firmware's single-pointer admission, including local hit areas.
+    // Read-only component artwork may overlap; legacy button geometry retains
+    // its existing stricter rule. Compare after the same safe-inset transform.
+    const usableX=1-(inset?.left??0)-(inset?.right??0),usableY=1-(inset?.top??0)-(inset?.bottom??0);
+    const bounds={x:(inset?.left??0)+widget.bounds.x*usableX+widget.bounds.width*usableX*hit.x,y:(inset?.top??0)+widget.bounds.y*usableY+widget.bounds.height*usableY*hit.y,width:widget.bounds.width*usableX*hit.width,height:widget.bounds.height*usableY*hit.height};
+    const overlap=touchAreas.find(other=>{
+      const portable=widget.kind==='component'||other.widget.kind==='component';
+      const constrained=portable?interactive&&other.interactive:widget.kind!=='image'&&other.widget.kind!=='image'&&(widget.kind==='button'||other.widget.kind==='button');
+      const a=other.bounds;
+      return widget.pageId===other.widget.pageId&&constrained&&bounds.x<a.x+a.width&&a.x<bounds.x+bounds.width&&bounds.y<a.y+a.height&&a.y<bounds.y+bounds.height;
+    });
+    if(overlap)add('hitArea.overlap','non-overlapping touch targets',overlap.widget.id,p.id);
+    touchAreas.push({widget,bounds,interactive});
   }
   // Several states may expose the same unsupported glyph or size. Keep one
   // actionable diagnostic per exact identity/field/count rather than eight.

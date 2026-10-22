@@ -276,6 +276,7 @@ pub(crate) fn check_document(
             check.over("imageBytes", image_bytes, limit("imageBytes"));
         }
     };
+    let mut touch_areas: Vec<(&Value, [f64; 4], bool)> = Vec::new();
     for widget in widgets {
         check.widget = Some(string(&widget["id"]).into());
         check.definition = None;
@@ -296,6 +297,8 @@ pub(crate) fn check_document(
             * scale;
         let (pw, ph) = (width.floor() as usize, height.floor() as usize);
         let config = &widget["config"];
+        let mut hit = [0.0, 0.0, 1.0, 1.0];
+        let mut interactive = widget["kind"] == "button";
         if widget["kind"] == "component" {
             let definition = definitions
                 .iter()
@@ -304,6 +307,8 @@ pub(crate) fn check_document(
                         && definition["version"] == config["definitionVersion"]
                 })
                 .ok_or("Missing admitted definition.")?;
+            hit = ["x", "y", "width", "height"].map(|field| number(&definition["hitArea"][field]));
+            interactive = definition["interaction"]["kind"] != "none";
             check.definition = Some(string(&definition["id"]).into());
             components += 1;
             total_layers += items(&definition["layers"]).len();
@@ -485,6 +490,43 @@ pub(crate) fn check_document(
                 }
             }
         }
+        // Keep the firmware's single-pointer overlap rule, using local hit
+        // areas after its safe-inset transform. Decorative components may overlap.
+        let usable_x = 1.0 - number(&inset["left"]) - number(&inset["right"]);
+        let usable_y = 1.0 - number(&inset["top"]) - number(&inset["bottom"]);
+        let bounds = [
+            number(&inset["left"])
+                + number(&widget["bounds"]["x"]) * usable_x
+                + number(&widget["bounds"]["width"]) * usable_x * hit[0],
+            number(&inset["top"])
+                + number(&widget["bounds"]["y"]) * usable_y
+                + number(&widget["bounds"]["height"]) * usable_y * hit[1],
+            number(&widget["bounds"]["width"]) * usable_x * hit[2],
+            number(&widget["bounds"]["height"]) * usable_y * hit[3],
+        ];
+        if let Some((other, _, _)) = touch_areas.iter().find(|(other, a, other_interactive)| {
+            let portable = widget["kind"] == "component" || other["kind"] == "component";
+            let constrained = if portable {
+                interactive && *other_interactive
+            } else {
+                widget["kind"] != "image"
+                    && other["kind"] != "image"
+                    && (widget["kind"] == "button" || other["kind"] == "button")
+            };
+            widget["pageId"] == other["pageId"]
+                && constrained
+                && bounds[0] < a[0] + a[2]
+                && a[0] < bounds[0] + bounds[2]
+                && bounds[1] < a[1] + a[3]
+                && a[1] < bounds[1] + bounds[3]
+        }) {
+            check.add(
+                "hitArea.overlap",
+                json!("non-overlapping touch targets"),
+                other["id"].clone(),
+            );
+        }
+        touch_areas.push((widget, bounds, interactive));
     }
     Ok(check.issues)
 }
