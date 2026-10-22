@@ -560,7 +560,7 @@
     {/if}
   {#if overview&&(overviewBundle||showTransforms)}
     <div class="canvas-lanes-panel" transition:slideLanes>
-    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes insertionPending={!!pendingOverviewDrop} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target);}} disconnect={disconnectConnection} {readOnly}/>{/key}
     </div>
   {/if}
   </div>
