@@ -80,11 +80,13 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     );
     assert_eq!(games["ok"], true);
     let catalogue = games["state"]["games"]["catalogue"].as_array().unwrap();
-    assert_eq!(catalogue.len(), 4);
-    assert!(catalogue.iter().any(|g| g["id"] == "dcs"));
-    assert!(catalogue.iter().any(|g| g["id"] == "assetto-corsa-rally"));
-    assert!(catalogue.iter().any(|g| g["id"] == "x-plane-11"));
-    assert!(catalogue.iter().any(|g| g["id"] == "x-plane-12"));
+    let supported = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12",
+        "assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"];
+    assert_eq!(catalogue.len(), supported.len());
+    for id in supported {
+        assert_eq!(catalogue.iter().filter(|game| game["id"] == id).count(), 1,
+            "The native catalogue must contain exactly one {id}");
+    }
     let game_state = games["state"]["games"].as_object().unwrap();
     for retired_field in ["profiles", "defaultProfiles", "session"] {
         assert!(!game_state.contains_key(retired_field), "{retired_field}");
