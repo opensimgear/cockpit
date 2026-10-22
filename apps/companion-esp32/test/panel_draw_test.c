@@ -76,7 +76,9 @@ static void mixed_order(void) {
 }
 static void catalog(const cJSON *fixture,const char *directory) {
     const cJSON *cases=cJSON_GetObjectItemCaseSensitive(fixture,"cases");
-    for(int n=0;n<2;n++) {
+    const int admitted[]={0,1,6};
+    for(size_t selected=0;selected<sizeof(admitted)/sizeof(*admitted);selected++) {
+        const int n=admitted[selected];
         const cJSON *publication=cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(cases,n),"publication");
         unsigned char *memory=malloc(192*1024);assert(memory);osg_widget_arena arena={.data=memory,.capacity=192*1024,.max_layers=128,.max_components=32};
         osg_scene *scene=NULL;osg_panel_source_diagnostic diagnostic;
@@ -93,8 +95,8 @@ static void catalog(const cJSON *fixture,const char *directory) {
         runtime.connected=true;runtime.armed=true;full();
         for(size_t p=0;p<scene->panel.page_count;p++) { runtime.page=(uint8_t)p;full(); }
         runtime.page=0;assert(osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},1100));
-        if(n==0) {
-            full();char path[1024];assert(snprintf(path,sizeof(path),"%s/panel-catalog.ppm",directory)>0);FILE *f=fopen(path,"wb");assert(f);fprintf(f,"P6\n800 480\n255\n");
+        if(n==0||n==6) {
+            full();char path[1024];assert(snprintf(path,sizeof(path),"%s/panel-catalog%s.ppm",directory,n==6?"-complete":"")>0);FILE *f=fopen(path,"wb");assert(f);fprintf(f,"P6\n800 480\n255\n");
             for(unsigned i=0;i<800*480;i++){uint32_t c=pixels[i];unsigned char rgb[]={(unsigned char)((c>>11)*255/31),(unsigned char)(((c>>5)&63)*255/63),(unsigned char)((c&31)*255/31)};assert(fwrite(rgb,1,3,f)==3);}fclose(f);
         }
         free(memory);

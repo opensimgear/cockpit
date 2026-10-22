@@ -3,10 +3,11 @@ import {readFile,writeFile} from 'node:fs/promises';
 import {canonical,normalizeToPortableUi,renderCompatibility,validateDesignerDocument} from '../packages/companion-designer/src/index.ts';
 
 const catalog=JSON.parse(await readFile('examples/companion/shared-systems.bundle.json','utf8')).document;
+const complete=JSON.parse(await readFile('examples/companion/shared-systems-complete.bundle.json','utf8')).document;
 const legacy=JSON.parse(JSON.parse(await readFile('apps/companion-esp32/test/live-publication.json','utf8')).canonicalDocument);
 const profiles=JSON.parse(await readFile('apps/companion-esp32/test/render-profiles.json','utf8')).valid;
-function single(index=0){
-  const doc=structuredClone(catalog),widget=doc.presentation.widgets[index];
+function single(index=0,source=catalog){
+  const doc=structuredClone(source),widget=doc.presentation.widgets[index];
   doc.presentation.widgets=[widget];doc.presentation.definitions=doc.presentation.definitions.filter(def=>def.id===widget.config.definitionId);
   doc.ui.controls=doc.ui.controls.filter(control=>widget.controlIds.includes(control.id));doc.ui.feedbackWidgets=doc.ui.feedbackWidgets.filter(output=>widget.feedbackIds.includes(output.id));
   doc.bindings=doc.bindings.filter(binding=>widget.controlIds.includes(binding.controlId));doc.ui=normalizeToPortableUi(doc);return doc;
@@ -55,6 +56,8 @@ doc=single();doc.presentation.definitions[0].layers=Array.from({length:25},(_,in
 doc=single();doc.bindings=[];add('incomplete logical binding',doc);
 doc=images(1);delete doc.presentation.widgets[0].config.assetId;add('empty image asset',doc);
 doc=single();doc.presentation.definitions[0].layers.find(layer=>layer.kind==='text').states={normal:{opacity:0},active:{opacity:1,text:'😀'}};add('transparent alternate text',doc);
+add('complete rich catalog',complete);add('complete compact catalog budget',complete,0);
+add('compact text instrument',single(10,complete),0);add('compact original icon',single(11,complete),0);
 
 // Keep source identity in the oracle to prove target checks never rewrite it.
 for(const item of cases){item.canonicalDocument=canonical(item.document);delete item.document;}

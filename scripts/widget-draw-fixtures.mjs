@@ -2,11 +2,12 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { importBundle, resolveWidgetLayers, resolveWidgetState } from '../packages/companion-designer/src/index.ts';
 import { widgetLayerText } from '../packages/companion-ui/src/widget-presentation.ts';
 
-const { document } = await importBundle(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
-const widgets = document.presentation.widgets.map(widget => ({ definition: document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion), properties: widget.config.properties, bounds: widget.bounds }));
-widgets.push({ ...widgets[0], properties: { label: 'SECOND', accent: '#ff765e' }, bounds: { x: .505, y: .665, width: .22, height: .28 } });
+const { document } = await importBundle(await readFile('examples/companion/shared-systems-complete.bundle.json', 'utf8'));
+const position=index=>({x:.025+(index%4)*.24,y:.025+Math.floor(index/4)*.24,width:.22,height:.21});
+const widgets = document.presentation.widgets.map((widget,index) => ({ definition: document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion), properties: widget.config.properties, bounds: position(index) }));
+widgets.push({ ...widgets[0], properties: { label: 'SECOND', accent: '#ff765e' }, bounds: position(12) });
 const allStates = structuredClone(widgets[0]);
-allStates.definition.id = 'all-device-states'; allStates.properties = { label: 'ALL STATES' }; allStates.bounds = { x: .745, y: .665, width: .22, height: .28 };
+allStates.definition.id = 'all-device-states'; allStates.properties = { label: 'ALL STATES' }; allStates.bounds = position(13);
 allStates.definition.outputs.push({ name: 'warning', label: 'Warning', kind: 'indicator' }, { name: 'enabled', label: 'Enabled', kind: 'indicator' });
 allStates.definition.state = { confirmedPort: 'active', warningPort: 'warning', enabledPort: 'enabled' }; widgets.push(allStates);
 

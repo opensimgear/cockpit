@@ -21,7 +21,8 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
   const click = label => until(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>(b.getAttribute('aria-label')??b.textContent.trim())===${JSON.stringify(label)});if(!b||b.disabled)return false;b.click();return true;})()`, 'Missing enabled button ' + label);
   const change = (selector, value) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing field '+${JSON.stringify(selector)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   const run = Date.now(), directory = '.research/widgets-native-ui/' + run, checks = [], panelName = 'Shared systems ' + run;
-  const source = JSON.parse(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
+  const bundlePath=process.env.OSG_WIDGETS_BUNDLE??'examples/companion/shared-systems.bundle.json';
+  const source = JSON.parse(await readFile(bundlePath, 'utf8')),widgetCount=source.document.presentation.widgets.length;
   const layerCount = source.document.presentation.widgets.reduce((sum, widget) => sum + source.document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion).layers.length, 0);
   await mkdir(directory, { recursive: true });
   const screenshot = async name => { const r = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(`${directory}/${name}.png`, Buffer.from(r.data, 'base64')); };
@@ -36,8 +37,8 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     await until(`!!document.querySelector('input.panel-import:not(:disabled)')`, 'Panel library not ready');
     const { root } = await send('DOM.getDocument');
     const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input.panel-import' });
-    await send('DOM.setFileInputFiles', { nodeId, files: [resolve('examples/companion/shared-systems.bundle.json')] });
-    await until(`document.querySelectorAll('.component-widget').length===10`, 'Shared catalog panel did not import');
+    await send('DOM.setFileInputFiles', { nodeId, files: [resolve(bundlePath)] });
+    await until(`document.querySelectorAll('.component-widget').length===${widgetCount}`, 'Shared catalog panel did not import');
     const loadedFonts = await evaluate(`(async()=>{const faces=await Promise.all(['OSGPortableSans','OSGPortableMono'].map(face=>document.fonts.load('22px '+face)));await document.fonts.ready;return faces.map(group=>group.map(font=>({family:font.family,status:font.status})));})()`);
     for (const [index, name] of ['OSGPortableSans', 'OSGPortableMono'].entries()) assert.ok(loadedFonts[index].some(font => font.family === name && font.status === 'loaded'), 'The actual portable font face must load');
     assert.equal(await evaluate(`document.querySelectorAll('.widget-artwork text tspan').length>40`), true);
@@ -45,11 +46,11 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     await change('[aria-label="Panel name"]', panelName);
     await evaluate(`document.querySelector('[aria-label="Panel name"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
     await until(`document.querySelector('.panel-title-button')?.textContent.trim()===${JSON.stringify(panelName)}`, 'Panel rename did not commit');
-    assert.equal(await evaluate(`document.querySelectorAll('.widget-artwork').length`), 10);
+    assert.equal(await evaluate(`document.querySelectorAll('.widget-artwork').length`), widgetCount);
     assert.equal(await evaluate(`document.documentElement.scrollWidth>innerWidth`), false);
     assert.equal(await evaluate(`document.querySelectorAll('.component-widget [data-layer-id]').length`), layerCount);
     await screenshot('shared-catalog');
-    checks.push('The native designer imports all ten portable catalog widgets and renders their ordered layers.');
+    checks.push(`The native designer imports all ${widgetCount} portable catalog widgets and renders their ordered layers.`);
     await click('Save');
     await until(`document.querySelector('.editor-title>p')?.textContent==='Edit the panel layout.'&&!![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Save'&&!b.disabled)`, 'Panel save did not settle');
     await click('Preview');
@@ -117,6 +118,14 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     assert.equal(await evaluate(`document.querySelector('[aria-label="Gauge minimum"]').value`),'0');
     await click('Cancel');
     checks.push('The visual gauge inspector preserves exposed ranges and can intentionally unlink a property without changing its resolved value.');
+    if(process.env.OSG_WIDGETS_KEEP_ACCEPTANCE_PANEL!=='1'){
+      await click('Back to Panels');
+      await click('Delete '+panelName);
+      await until(`!!document.querySelector('.delete-confirmation[open]')`,'Acceptance cleanup confirmation did not open');
+      await evaluate(`document.querySelector('.delete-confirmation .destructive-button').click()`);
+      await until(`![...document.querySelectorAll('.panel-tile-title')].some(title=>title.textContent===${JSON.stringify(panelName)})&&!!document.querySelector('.panel-import:not(:disabled)')`,'Acceptance panel cleanup did not finish');
+      checks.push('The temporary unassigned acceptance panel is removed after persistence is verified, preserving bounded draft/cache capacity.');
+    }
     await writeFile(`${directory}/evidence.json`, JSON.stringify({ origin, actualNativeCockpit: true, checks, saved }, null, 2));
     console.log(JSON.stringify({ directory, checks }));
   } catch (error) {

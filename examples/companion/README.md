@@ -1,13 +1,39 @@
 # Importable companion examples
 
-Import either JSON file through **Companions → Panels → Import panel**, then **Save panel** and **Preview locally**. See the [user guide](../../docs/companion-guide.md) for panel assignment, browser pairing and profile-owned control/feedback routes. Both files are bundleVersion 1 with a schema 2 designer document and no assets. They contain no host addresses, credentials, installation identities, local slots or simulator connection settings.
+Import a JSON bundle through **Companions → Panels → Import panel**, then save and preview locally. See the [user guide](../../docs/companion-guide.md) for panel assignment, browser pairing and profile-owned control/feedback routes. The flight and racing files are bundleVersion 1 with a schema 2 designer document and no assets. All examples omit host addresses, credentials, installation identities, local slots and simulator connection settings.
 
 | Bundle | Logical controller shape | Pages |
 | --- | --- | --- |
 | [Flight button box](flight-button-box.json) | 2 axes (unipolar flaps, bipolar trim), 7 buttons, 1 hat | Flight controls / Flight feedback |
 | [Racing axes](axis-racing.json) | 4 axes (bipolar steering; unipolar throttle, brake and handbrake), 2 buttons | Driving controls / Driving feedback |
+| [Shared systems complete](shared-systems-complete.bundle.json) | Reusable controls, confirmed feedback, instruments and decoration; schema 3 | All twelve catalog families |
 
 The logical target shapes are complete. Unified profiles select exact declared companion ports and explicitly route them into chosen virtual layouts or supported actions; these examples never allocate or select a native device. Saving/importing a panel does not start output. Start with local preview; the [qualified release matrix is currently empty](../../docs/companion-release-matrix.md).
+
+## Shared systems widgets
+
+The complete panel contains an illuminated momentary button, toggle, selector,
+status indicator, numeric display, linear and radial gauges, frame, divider,
+page navigation, text instrument and power icon. Each is an original editable
+layer composition using the pinned portable fonts. Browser and Android use the
+same renderer as Cockpit preview; ESP32 uses LVGL with the same definitions,
+properties and typed ports. Assignment checks the connected board's reported
+font, geometry and resource limits and reports incompatibility explicitly. The
+complete panel exceeds the compact board's component budget; use fewer instances
+or pages appropriate to its reported limits.
+
+The text instrument accepts typed text feedback. The power icon's editable
+ellipse and stem illuminate only from fresh game-confirmed simulator feedback.
+Pressed/requested/local values do not establish an active confirmed indicator.
+No Star Citizen integration, GameGlass artwork or external font service is
+included. Configure supported sources explicitly in Profiles.
+
+The [earlier ten-widget panel](shared-systems.bundle.json) is retained byte for
+byte so archived source identities remain reproducible. Regenerate both bundles
+and their native publication fixtures using
+`node scripts/widget-publication-fixtures.mjs`; add `--check` to verify them.
+See [reusable widget authoring](../../docs/companion-guide.md#design-and-reuse-widgets)
+for immutable revisions, per-instance properties and portable library bundles.
 
 ## Flight button box
 

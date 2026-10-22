@@ -88,6 +88,13 @@ def check_controls():
     assert not match(background, foreground, [foreground]).getpixel((7, 7)), 'Missing features must fail'
     assert not match(shifted, foreground, [foreground]).getpixel((7, 7)), 'Shifts beyond tolerance must fail'
     assert not match(wrong_color, foreground, [foreground]).getpixel((7, 7)), 'Different paint colors must fail'
+    # A fractional widget edge can round by one row in either renderer. Keep
+    # the already allowed two-pixel context outside its crop, while counting
+    # only the original widget pixels. Missing/shifted/recolored ink above must
+    # still fail; neither color tolerance nor the 95% threshold changes.
+    edge = Image.new('RGB', (24, 24), foreground)
+    edge.paste(rgb565((13, 23, 32)), (0, 22, 24, 24))
+    assert match(edge, rgb565((13, 23, 32)), [foreground]).crop((2, 2, 22, 22)).getpixel((10, 19))
 
 
 check_controls()
@@ -107,7 +114,8 @@ for frame in fixture['frames']:
         bounds = widget['bounds']
         x, y = round(bounds['x'] * 800), round(bounds['y'] * 480)
         width, height = round(bounds['width'] * 800), round(bounds['height'] * 480)
-        images = [canonical(image.crop((x, y, x + width, y + height))) for image in [browser, native]]
+        contexts = [canonical(image.crop((x - 2, y - 2, x + width + 2, y + height + 2))) for image in [browser, native]]
+        images = [image.crop((2, 2, width + 2, height + 2)) for image in contexts]
         whole = (0, 0, width, height)
         palette = [(rgb565((13, 23, 32)), whole, True), (rgb565((255, 255, 255)), whole, True)]
         properties = {p['name']: widget['properties'].get(p['name'], p['default']) for p in widget['definition']['properties']}
@@ -150,7 +158,7 @@ for frame in fixture['frames']:
                 count = len(eligible)
                 if count < 32:
                     continue
-                matched = match(images[1 - side], color, [p for p, _, _ in palette])
+                matched = match(contexts[1 - side], color, [p for p, _, _ in palette]).crop((2, 2, width + 2, height + 2))
                 accepted = list(values(matched))
                 outside = sum(not accepted[i] for i in eligible)
                 result = {'color': color, 'pixels': count, 'outsideTwoPixels': outside / count, 'side': side}

@@ -520,6 +520,7 @@ mod tests {
         serde_json::from_str(match name {
             "styling" => include_str!("../../tests/fixtures/widgets-styling.json"),
             "behavior" => include_str!("../../tests/fixtures/widgets-behavior.json"),
+            "complete" => include_str!("../../tests/fixtures/widgets-complete.json"),
             _ => include_str!("../../tests/fixtures/widgets-base.json"),
         })
         .unwrap()
@@ -546,6 +547,12 @@ mod tests {
             styling.capability_fingerprint,
             behavior.capability_fingerprint
         );
+        let complete=Publication::validate(fixture("complete")).unwrap();
+        assert_eq!(complete.ui_id,"shared-systems-complete");
+        let document:Value=serde_json::from_str(&complete.canonical_document).unwrap();
+        assert_eq!(document["presentation"]["widgets"].as_array().unwrap().len(),12);
+        assert!(document["presentation"]["definitions"].as_array().unwrap().iter().any(|definition|definition["id"]=="osg-text-instrument"&&definition["outputs"][0]["kind"]=="text"));
+        assert!(document["presentation"]["definitions"].as_array().unwrap().iter().any(|definition|definition["id"]=="osg-power-icon"&&definition["state"]["confirmedPort"]=="active"));
     }
     #[test]
     fn shared_widget_host_rejects_malformed_definitions_before_admission() {

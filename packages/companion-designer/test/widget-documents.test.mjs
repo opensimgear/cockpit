@@ -15,10 +15,14 @@ function seed() {
 const component = doc => doc.presentation.widgets.find(w => w.kind === 'component');
 
 test('all original catalog entries validate with shared portable layers and interactions', () => {
-  assert.equal(catalog.length, 10);
+  assert.equal(catalog.length, 12);
   for (const definition of catalog) assert.equal(validateWidgetDefinition(definition).ok, true, definition.id);
   const again = createWidgetCatalog(); again[0].properties[0].default = 'Different';
   assert.equal(createWidgetCatalog()[0].properties[0].default, 'ENGINE');
+  assert.equal(catalog.find(d=>d.id==='osg-text-instrument').outputs[0].kind,'text');
+  const icon=catalog.find(d=>d.id==='osg-power-icon');
+  assert.equal(icon.state.confirmedPort,'active');assert.equal(icon.interaction.kind,'none');
+  assert.ok(icon.layers.some(layer=>layer.kind==='ellipse'));assert.equal(icon.inputs.length,0);
 });
 
 test('schema 2 upgrade is explicit, detached and preserves legacy publications', async () => {

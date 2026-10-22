@@ -61,5 +61,19 @@ export function createWidgetCatalog(): WidgetDefinition[] {
 
   const navigation = base("page-link", "Page navigation"); navigation.properties[0].default = "NEXT";
   navigation.properties.push({ name: "page", label: "Destination page", type: "text", default: "" }); navigation.interaction = { kind: "navigate", pageProperty: "page" };
-  return [button, toggle, selector, indicator, numeric, bar, radial, frame, divider, navigation];
+
+  const text = base("text-instrument", "Text instrument"); text.properties[0].default = "MESSAGE";
+  text.outputs = [{ name: "value", label: "Text", kind: "text" }];
+  text.layers[1].bounds = { x: .08, y: .08, width: .84, height: .25 };
+  text.layers.push({ id: "value", label: "Live text", kind: "text", bounds: { x: .08, y: .4, width: .84, height: .4 }, text: "—", outputPort: "value", font: "mono", fontSize: 24, align: "center", fill: { property: "foreground" } });
+
+  const icon = base("power-icon", "Power icon"); icon.properties[0].default = "POWER"; icon.size = { width: 120, height: 120 };
+  icon.outputs = [{ name: "active", label: "Confirmed active", kind: "indicator" }]; icon.state = { confirmedPort: "active" };
+  icon.layers[1].bounds = { x: .08, y: .75, width: .84, height: .2 };
+  icon.layers.push(
+    { id: "ring", label: "Power ring", kind: "ellipse", bounds: { x: .25, y: .15, width: .5, height: .5 }, fill: { property: "background" }, stroke: "#42515a", strokeWidth: 6, states: { active: { stroke: { property: "accent" } } } },
+    { id: "gap", label: "Ring opening", kind: "rectangle", bounds: { x: .44, y: .1, width: .12, height: .2 }, fill: { property: "background" } },
+    { id: "stem", label: "Power stem", kind: "rectangle", bounds: { x: .48, y: .12, width: .04, height: .29 }, fill: "#42515a", states: { active: { fill: { property: "accent" } } } },
+  );
+  return [button, toggle, selector, indicator, numeric, bar, radial, frame, divider, navigation, text, icon];
 }

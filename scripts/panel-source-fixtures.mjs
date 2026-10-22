@@ -32,6 +32,7 @@ display.presentation.widgets = display.presentation.widgets.filter(w => w.contro
 display.ui.feedbackWidgets = display.ui.feedbackWidgets.filter(f => display.presentation.widgets.some(w => w.feedbackIds.includes(f.id))); display.ui = normalizeToPortableUi(display);
 
 const documents = [catalog, input, mixed, editorial, display, legacy];
+documents.push((await importBundle(await readFile('examples/companion/shared-systems-complete.bundle.json','utf8'))).document);
 const cases = [];
 for (const document of documents) {
   const result = validateDesignerDocument(document); if (!result.ok) throw Error(result.error);

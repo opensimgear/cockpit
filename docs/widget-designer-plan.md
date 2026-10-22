@@ -12,12 +12,12 @@ GameGlass reference; no external artwork or Star Citizen provider is included.
 
 | Story | Required software delivery | Status |
 | --- | --- | --- |
-| W0 #113 | Strict versioned definitions, instances, layers, properties, ports, states, identity, capability contracts and LVGL feasibility | In progress |
-| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Renderer implemented; qualification pending |
-| W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Runtime/source delivery integrated; capability negotiation and actual host acceptance pending |
-| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Authoring implemented; device workflow pending |
-| W4 #117 | Original control/instrument catalog, library bundles, publishing/reconciliation, example panel and runtime updates | Pending |
-| W5 #118 | Running native dev Cockpit acceptance, automated/native/build checks, documentation and software parity evidence | Pending |
+| W0 #113 | Strict versioned definitions, instances, layers, properties, ports, states, identity, capability contracts and LVGL feasibility | Software contracts implemented and checked; physical feasibility deferred |
+| W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Shared renderer and visual parity checked; live browser workflow and final Android build pending |
+| W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Implemented; actual Cockpit WSS/C-engine acceptance and all six firmware CI jobs pass; hardware deferred |
+| W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Actual Cockpit authoring/save/reload passes; export/import delivery acceptance pending |
+| W4 #117 | Original control/instrument catalog, library bundles, publishing/reconciliation, example panel and runtime updates | Twelve families implemented and checked; complete-panel live workflow acceptance pending |
+| W5 #118 | Running native dev Cockpit acceptance, automated/native/build checks, documentation and software parity evidence | Evidence and guidance in progress; final requirement audit pending |
 
 Physical ESP32 and Android-device validation is deferred at the user's explicit
 request on 22 October 2026. It must remain identified as deferred evidence, and
@@ -533,3 +533,27 @@ changing typed ports. Actual dev Cockpit acceptance at
 `.research/widgets-native-ui/1792637663929/` verifies pinned exposed gauge ranges
 and intentional unlinking, along with import, pointer preview and save/reload.
 Cockpit/browser Svelte checks again have zero errors/warnings.
+
+Numeric-property commit `f9216fd` passes all six ESP32 jobs in
+[CI run 39713978949](https://github.com/opensimgear/cockpit/actions/runs/39713978949).
+The original catalog now also includes a standalone typed text instrument and
+an editable vector power icon. Its ring/stem illuminate only from fresh
+game-confirmed simulator feedback. The complete twelve-family bundle is
+`examples/companion/shared-systems-complete.bundle.json`; the established
+ten-widget example and its archived publication/capability hashes are unchanged.
+
+The complete catalog passes 121 native publication tests and two ESP32 host
+checks, actual Cockpit import/edit/preview/save/reload at
+`.research/widgets-native-ui/1792638131568/`, and 126 browser/LVGL appearance
+comparisons over nine states. The visual verifier retains two pixels of context
+outside each fractional widget crop, so its existing two-pixel geometry rule
+also applies at the crop edge. Counted widget pixels, RGB565 color tolerance and
+the 95% matching threshold are unchanged; missing, displaced and recolored
+feature controls still reject. Rich/compact native compositor checks cover all
+17 admitted cases of the expanded 40-case shared target oracle; seven unsupported
+font/glyph/zero-area cases reject before drawing. The compact compositor peaks
+at 17,248 bytes in its 32 KiB LVGL pool. Source admission covers seven documents,
+63 widgets and 4,244 mutations; dynamic text checks retain 1,357 projections.
+These are software measurements, without physical board or Android-device
+qualification. Successful native UI acceptance removes its own unassigned test
+panel after proving persistence, keeping repeated runs within draft/cache limits.
