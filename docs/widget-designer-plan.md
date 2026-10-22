@@ -601,3 +601,20 @@ set `OSG_WIDGETS_SOFTWARE_BUNDLE` to send that exact exported file to the unchan
 C engine. The browser SSR harness now compiles the actual WidgetView and
 GroupOutline dependencies and covers all twelve catalog families; all 21 browser
 checks pass, including focus/visibility cancellation and feedback lifecycle.
+
+Catalog commit `ee18c70` passes all six ESP32 jobs in
+[CI run 39715198166](https://github.com/opensimgear/cockpit/actions/runs/39715198166).
+General CI remains separate: the starting commit `c144301` already fails the
+two game-setup worker tests and the complete-profile-rig persistent-identity
+test in [baseline run 39678476707](https://github.com/opensimgear/cockpit/actions/runs/39678476707).
+The same failures occur on the feature branch; they do not establish a clean
+overall repository build. The browser harness regression introduced by the new
+renderer imports is fixed above. Stale mapping-host and companion-platform
+lockfiles also lacked their existing shared service's image/pairing dependencies;
+their refresh adds missing transitive entries while preserving existing pins.
+Locked mapping-host tests compile and run: 110 pass, two optional-driver
+qualification expectation tests fail in this Windows environment. The local
+companion-platform build runs out of disk during compilation and supplies no
+test-success evidence. Only files created by that failed build in this
+worktree's disposable cache were removed; remaining platform validation is
+delegated to the normal CI jobs, without enabling native authentication.
