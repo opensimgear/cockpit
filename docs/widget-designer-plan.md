@@ -604,10 +604,10 @@ checks pass, including focus/visibility cancellation and feedback lifecycle.
 
 Catalog commit `ee18c70` passes all six ESP32 jobs in
 [CI run 39715198166](https://github.com/opensimgear/cockpit/actions/runs/39715198166).
-General CI remains separate: the starting commit `c144301` already fails the
+At this stage, general CI remained separate: the starting commit `c144301` already failed the
 two game-setup worker tests and the complete-profile-rig persistent-identity
 test in [baseline run 39678476707](https://github.com/opensimgear/cockpit/actions/runs/39678476707).
-The same failures occur on the feature branch; they do not establish a clean
+The same failures occurred on the feature branch; they did not establish a clean
 overall repository build. The browser harness regression introduced by the new
 renderer imports is fixed above. Stale mapping-host and companion-platform
 lockfiles also lacked their existing shared service's image/pairing dependencies;

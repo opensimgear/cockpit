@@ -732,7 +732,9 @@ fn complete_rig_retains_offline_blocks_and_changed_contracts_but_cannot_reuse_de
         .token(&rig.ids["can-a"], "axis", Access::Read)
         .unwrap();
     rig.batch.revision = 2;
-    rig.batch.observations.retain(|o| o.key != "can-a");
+    // A gateway's complete response includes remembered offline modules.
+    // Omission means explicit removal; losing delivery only withdraws its route.
+    rig.batch.observations.iter_mut().find(|o| o.key == "can-a").unwrap().route = None;
     for observation in rig
         .batch
         .observations
@@ -771,7 +773,11 @@ fn complete_rig_retains_offline_blocks_and_changed_contracts_but_cannot_reuse_de
             .iter()
             .find(|s| s.endpoint.node_id == logical)
             .unwrap();
-        assert_eq!(source.readiness, PlanReadiness::Blocked);
+        assert_eq!(source.readiness, if logical == "can-a" {
+            PlanReadiness::Unavailable
+        } else {
+            PlanReadiness::Blocked
+        });
         assert!(source.token.is_none());
         assert!(document.resources.iter().any(|r| r.id == logical));
         assert!(document

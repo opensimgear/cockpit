@@ -8,6 +8,19 @@ const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,g
 const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
+test('game paths display Windows drive and UNC installations without changing Unix or device paths',()=>{
+ for(const [input,expected] of [
+  [undefined,''],[null,''],['',''],
+  ['C:/Games/DCS/bin/DCS.exe',String.raw`C:\Games\DCS\bin\DCS.exe`],
+  [String.raw`\\?\C:\Games\acs.exe`,String.raw`C:\Games\acs.exe`],
+  [String.raw`\\?\UNC\server\Games\acs.exe`,String.raw`\\server\Games\acs.exe`],
+  [String.raw`\\?\unc\server\Games\acs.exe`,String.raw`\\server\Games\acs.exe`],
+  [String.raw`\\server/Games/acs.exe`,String.raw`\\server\Games\acs.exe`],
+  ['/home/pilot/X-Plane/X-Plane','/home/pilot/X-Plane/X-Plane'],
+  [String.raw`\\?\Volume{fixture}\game.exe`,String.raw`\\?\Volume{fixture}\game.exe`],
+ ])assert.equal(games.gameDisplayPath(input),expected);
+});
+
 test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{
  assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12','assetto-corsa','assetto-corsa-competizione','assetto-corsa-evo']);
  const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,1);assert.equal(visibleGames(catalogue,true).length,7);assert.equal(supportedGames[0].installed,false);

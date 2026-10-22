@@ -113,15 +113,18 @@ production sources.
 Debug APKs and iOS simulator archives do not qualify physical devices or signed
 release installation/update.
 
-General CI was already failing on starting commit `c144301`, as shown in
-[baseline run 39678476707](https://github.com/opensimgear/cockpit/actions/runs/39678476707):
-two game-setup worker tests report `Disconnected`, and the complete-profile-rig
-test reports `Unknown persistent resource identity`. Those same failures remain
-on this feature branch. The baseline's stale mapping-host lockfile is repaired;
-locked local mapping-host tests compile and run with 110 passing and two
-optional-driver qualification expectation failures in this Windows environment.
-The local companion-platform build ran out of disk during compilation, so it
-supplies no passing test result. Remaining platform validation uses CI.
+The general CI failures also present on starting commit `c144301`
+([baseline run 39678476707](https://github.com/opensimgear/cockpit/actions/runs/39678476707))
+are repaired before merge: setup concurrency tests now pause at the worker's
+actual probe boundary on every OS; remembered offline modules withdraw routes
+instead of being omitted from an authoritative gateway roster; qualification
+tests explicitly distinguish an unqualified backend from Windows local opt-in.
+Persistence fixtures resolve macOS temporary-directory symlinks before using
+the inventory store's unchanged strict path checks. Frontend tests cover game
+path display and the current single-active-desktop-endpoint diagnostic.
+Local Windows mapping-host tests pass all 112 cases, the complete-rig suite
+passes all four cases, and frontend coverage/build checks pass. Final CI run
+identities and merge status are recorded on [PR #139](https://github.com/opensimgear/cockpit/pull/139).
 
 Physical ESP32 and Android-device rows stay unchecked in #113–#118 and the
 [release matrix](companion-release-matrix.md). No issue closure, native mobile

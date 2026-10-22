@@ -25,6 +25,8 @@ struct Inner {
     ac_cars: Mutex<crate::ac_car_catalogue_cache::Cache>,
     #[cfg(test)]
     ac_cars_publication_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    #[cfg(test)]
+    assetto_probe_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     cancel: AtomicBool,
     busy: AtomicBool,
     closed: AtomicBool,
@@ -223,6 +225,8 @@ impl GameIntegrationSetup {
                 ac_cars: Mutex::new(crate::ac_car_catalogue_cache::Cache::new(path.with_file_name("assetto-corsa-cars-v1.json"))),
                 #[cfg(test)]
                 ac_cars_publication_pause: Mutex::new(None),
+                #[cfg(test)]
+                assetto_probe_pause: Mutex::new(None),
                 path,
                 native,
                 settings_error: loaded.as_ref().err().cloned(),
@@ -702,6 +706,13 @@ impl GameIntegrationSetup {
                 } else { None };
                 if inner.cancel.load(Ordering::Acquire) {
                     return Err("Assetto telemetry check was cancelled.".into());
+                }
+                // Pause the actual worker boundary in concurrency tests on every OS.
+                // Native probing can return before process lookup on unsupported hosts.
+                #[cfg(test)]
+                if let Some((entered, release)) = inner.assetto_probe_pause.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                    entered.send(()).map_err(|_| "Assetto probe test disconnected.")?;
+                    release.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_| "Assetto probe test timed out.")?;
                 }
                 let proof = crate::acr_setup::probe(
                     &game,
