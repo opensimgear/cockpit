@@ -30,6 +30,7 @@ function harness(options = {}) {
     if (input.command === 'profile_status') return { profiles: { profileSession: state.runtime ?? { state: 'stopped', owner: null, appliedSnapshot: null } } };
     if (input.command === 'game_get_state') return { games: state.games };
     if (input.command === 'system_inventory') return { systemInventory: state.native };
+    if (input.command === 'profile_list') return { profiles: { profiles: [] } };
     if (['controller_forget', 'forget', 'companion_revoke'].includes(input.command)) return {};
     throw Error('Unexpected provider mutation: ' + input.command);
   };
@@ -205,7 +206,10 @@ test('forget review explains exact retained local bindings and degrades honestly
  h.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{resourceId:'steering',sourceId:'offline',ports:[]}]}}));
  const review=await h.controller.reviewForget(['controller:offline']);assert.equal(review[0].references[0].name,'Driving / steering');
  assert.ok(h.component('controller:offline'));assert.equal(h.requests.some(r=>r.command==='controller_forget'),false);
- h.failures.set('profile_list',Error('Metadata unavailable'));const partial=await h.controller.reviewForget(['controller:offline']);assert.match(partial[0].diagnostics.join(' '),/retained/);
+ assert.equal(review[0].forget.allowed,false);assert.match(review[0].forget.reason,/Used in profiles/);
+ await assert.rejects(h.controller.forget('controller:offline'),/Used in profiles/);
+ h.failures.set('profile_list',Error('Metadata unavailable'));const partial=await h.controller.reviewForget(['controller:offline']);assert.equal(partial[0].forget.allowed,false);assert.match(partial[0].diagnostics.join(' '),/fully inspected/);
+ await assert.rejects(h.controller.forget('controller:offline'),/Profile usage could not be checked/);
 });
 
 test('forget review resolves actual host facade UUID assignments and preserves source evidence through an offline provider refresh', async () => {
@@ -274,6 +278,25 @@ test('gateway cleanup review includes child binding references without deleting 
  const g=gateway({present:false,state:{...gateway().state,connected:false,modules:[module('panel',{online:false})]}}),h=harness({gateways:[g]});await h.controller.refresh();
  h.custom.set('profile_list',()=>({profiles:{profiles:[{id:'saved',name:'Flight'}]}}));h.custom.set('profile_assignments_get',()=>({profiles:{assignments:[{resourceId:'can-switches',sourceId:'panel',ports:[]}]}}));
  const review=await h.controller.reviewForget(['gateway:gateway-one']);assert.equal(review[0].references[0].name,'Flight / can-switches');assert.ok(h.component('module:gateway-one/panel'));
+ assert.equal(review[0].forget.allowed,false);await assert.rejects(h.controller.forget('gateway:gateway-one'),/Used in profiles/);
+});
+
+test('cleanup cancellation fences pending reference checks but retains a completed provider removal', async () => {
+ const h=harness({controllers:[source('first',{online:false}),source('second',{online:false})],storage:storage()});
+ await h.controller.refresh();
+ const check=deferred(), started=deferred(), abort=new AbortController();
+ h.custom.set('profile_list',()=>{started.resolve();return check.promise;});
+ const cancelled=h.controller.forget('controller:first',abort.signal);
+ await started.promise;abort.abort();check.resolve({profiles:{profiles:[]}});
+ await assert.rejects(cancelled,/abort/i);assert.ok(h.component('controller:first'));
+ assert.equal(h.requests.some(r=>r.command==='controller_forget'),false);
+ h.custom.delete('profile_list');
+ const removal=deferred(), removing=deferred(), stop=new AbortController();
+ h.custom.set('controller_forget',()=>{removing.resolve();return removal.promise;});
+ const committed=h.controller.forget('controller:first',stop.signal);
+ await removing.promise;stop.abort();removal.resolve({});await committed;
+ assert.equal(h.component('controller:first'),undefined);assert.ok(h.component('controller:second'));
+ await h.controller.refresh();assert.equal(h.component('controller:first'),undefined);
 });
 
 test('malformed duplicate provider identities cannot prevent unrelated native inventory from publishing', async () => {

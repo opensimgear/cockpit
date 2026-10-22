@@ -24,6 +24,8 @@
   let inventoryElement: HTMLDivElement | undefined;
   let busy = $state(false), error = $state(''), confirmation = $state<SystemComponent[]>([]);
   let cleanupSelection = $state<string[]>([]), cleanupRunning = $state(false);
+  let cleanupCurrentId = $state(''), cleanupCancelling = $state(false);
+  let cleanupAbort: AbortController | undefined;
   let refreshTask: Promise<SystemSnapshot> | undefined;
   let controller: SystemInventoryController;
   let reviewEpoch = 0;
@@ -64,13 +66,13 @@
   function setMode(value: string) { mode = value; try { localStorage.setItem('osg-devices-mode', value); } catch { /* mode remains usable */ } }
   function canCleanup(component: SystemComponent) {
     const current = snapshot.components.find(item => item.id === component.id);
-    return !!current?.forget.allowed && current.presence !== 'connected' && !current.owner && !current.hidden;
+    return component.forget.allowed && !!current?.forget.allowed && current.presence !== 'connected' && !current.owner && !current.hidden;
   }
   function selectCleanup(id: string, checked: boolean) {
     cleanupSelection = checked ? [...new Set([...cleanupSelection, id])] : cleanupSelection.filter(item => item !== id);
   }
   function closeCleanup() {
-    if (cleanupRunning) return;
+    if (cleanupRunning) { cleanupCancelling = true; cleanupAbort?.abort(); return; }
     reviewEpoch++; confirmation = []; cleanupSelection = [];
   }
   async function reviewForget(items: SystemComponent[]) {
@@ -92,13 +94,21 @@
   async function forget() {
     const items = [...cleanupSelected];
     if (busy || !items.length) return;
-    busy = true; cleanupRunning = true; const failures: string[] = [];
+    busy = true; cleanupRunning = true; cleanupCancelling = false;
+    const abort = new AbortController(); cleanupAbort = abort; const failures: string[] = [];
     await refreshTask?.catch(() => undefined);
     for (const c of items) {
-      try { await controller.forget(c.id); if (selectedId === c.id) { selectedId = ''; detailsOpen = false; onNavigate?.(null); } }
-      catch (e) { failures.push(`${c.name}: ${String(e)}`); }
+      if (abort.signal.aborted) break;
+      cleanupCurrentId = c.id;
+      try {
+        await controller.forget(c.id, abort.signal);
+        confirmation = confirmation.filter(item => item.id !== c.id && snapshot.components.some(current => current.id === item.id));
+        cleanupSelection = cleanupSelection.filter(id => confirmation.some(item => item.id === id));
+        if (selectedId === c.id) { selectedId = ''; detailsOpen = false; onNavigate?.(null); }
+      }
+      catch (e) { if (!abort.signal.aborted) failures.push(`${c.name}: ${String(e)}`); }
     }
-    confirmation = []; cleanupSelection = []; cleanupRunning = false; error = failures.join('\n'); busy = false;
+    cleanupCurrentId = ''; cleanupRunning = false; cleanupCancelling = false; cleanupAbort = undefined; error = failures.join('\n'); busy = false;
     await refresh();
     if (failures.length) error = failures.join('\n');
   }
@@ -111,7 +121,7 @@
     snapshot = controller.snapshot;
     void refresh();
     const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
-    return () => { reviewEpoch++; clearInterval(timer); controller.dispose(); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); controller.dispose(); };
   });
 </script>
 
@@ -198,10 +208,10 @@
   </section>
 {/if}
 {#if confirmation.length}
-  <dialog class="cleanup-dialog" use:dialog oncancel={event => { if (cleanupRunning) event.preventDefault(); else closeCleanup(); }} aria-labelledby="cleanup-title" aria-describedby="cleanup-help">
+  <dialog class="cleanup-dialog" use:dialog oncancel={event => { event.preventDefault(); closeCleanup(); }} aria-labelledby="cleanup-title" aria-describedby="cleanup-help">
     <header class="cleanup-heading"><h2 id="cleanup-title">Cleanup devices</h2><p id="cleanup-help">Select the devices to forget. Review what will be removed before confirming.</p></header>
     <div class="cleanup-body">
-      <p class="cleanup-summary" role="status">{cleanupRunning ? 'Cleaning up selected devices…' : busy ? 'Checking stored references…' : `${cleanupSelected.length} of ${confirmation.length} selected`}</p>
+      <p class="cleanup-summary" role="status">{#if busy}<span class="cleanup-spinner" aria-hidden="true"></span>{/if}{cleanupCancelling ? 'Cancelling after the current device finishes…' : cleanupRunning ? 'Cleaning up selected devices…' : busy ? 'Checking stored references…' : `${cleanupSelected.length} of ${confirmation.length} selected`}</p>
       <div class="cleanup-table-wrap">
         <table class="cleanup-table" aria-label="Devices to clean up">
           <colgroup><col class="cleanup-select-column" /><col class="cleanup-name-column" /><col /></colgroup>
@@ -210,20 +220,22 @@
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions (The native checkbox provides keyboard interaction; the row expands its pointer target.) -->
             <tr class:cleanup-unavailable={!canCleanup(c)} class:cleanup-selectable={!busy && canCleanup(c)} onclick={event => { if (!busy && canCleanup(c) && !(event.target instanceof HTMLInputElement)) selectCleanup(c.id, !cleanupSelection.includes(c.id)); }}>
               <td class="cleanup-checkbox"><input type="checkbox" aria-label={`Select ${c.name}`} checked={cleanupSelected.some(item => item.id === c.id)} disabled={busy || !canCleanup(c)} onchange={event => selectCleanup(c.id, event.currentTarget.checked)} /></td>
-              <th scope="row">{c.name}</th>
-              <td><p>{c.forget.effect}</p>{#each c.diagnostics.filter(d => d.startsWith('Affected stored references')) as diagnostic}<p class="cleanup-reference">{diagnostic}</p>{/each}{#if c.references.length}<p class="cleanup-reference"><strong>Affected references (retained as unresolved):</strong> {c.references.map(r => r.name).join(', ')}</p>{/if}{#if !canCleanup(c)}<p class="cleanup-reference">{snapshot.components.find(item => item.id === c.id)?.forget.reason || 'This device is no longer eligible for cleanup.'}</p>{/if}</td>
+              <th scope="row">{#if cleanupCurrentId === c.id}<span class="cleanup-spinner" role="status" aria-label={`Cleaning up ${c.name}`}></span>{/if}{c.name}</th>
+              <td><p>{c.forget.effect}</p>{#each c.diagnostics.filter(d => d.startsWith('Affected stored references')) as diagnostic}<p class="cleanup-reference">{diagnostic}</p>{/each}{#if c.references.length}<p class="cleanup-reference"><strong>Used in profiles — cleanup blocked:</strong> {c.references.map(r => r.name).join(', ')}</p>{/if}{#if !canCleanup(c)}<p class="cleanup-reference">{!c.forget.allowed ? c.forget.reason : snapshot.components.find(item => item.id === c.id)?.forget.reason || 'This device is no longer eligible for cleanup.'}</p>{/if}</td>
             </tr>
           {/each}</tbody>
         </table>
       </div>
     </div>
-    <footer class="cleanup-actions"><button class="secondary-button destructive-button" disabled={busy || !cleanupSelected.length} onclick={forget}>Confirm</button><button class="secondary-button" data-cleanup-cancel disabled={cleanupRunning} onclick={closeCleanup}>Cancel</button></footer>
+    <footer class="cleanup-actions"><button class="secondary-button destructive-button" disabled={busy || !cleanupSelected.length} onclick={forget}>Confirm</button><button class="secondary-button" data-cleanup-cancel disabled={cleanupCancelling} onclick={closeCleanup}>{cleanupCancelling ? 'Cancelling…' : 'Cancel'}</button></footer>
   </dialog>
 {/if}
 
 </section>
 
 <style>
+  .cleanup-spinner {display:inline-block;width:14px;height:14px;margin-right:8px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:cleanup-spin .8s linear infinite;vertical-align:middle}
+  @keyframes cleanup-spin {to {transform:rotate(360deg)}}
   .system-inventory[hidden] {display:none}
   .inventory-heading {align-items:center}.inventory-heading > div {min-width:0}.cleanup-button {flex-shrink:0}
   .details-toolbar {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}

@@ -139,7 +139,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       { resourceId: 'retained-throttle-binding', sourceId: 'remembered-throttle', ports: [] },
       { resourceId: 'retained-wheel-binding', sourceId: 'remembered-wheel', ports: [] },
       { resourceId: 'retained-virtual-binding', sourceId: 'vjoy:4', ports: [] },
-    ] } });
+    ].filter(assignment => !fixture.unboundCleanupSources?.includes(assignment.sourceId)) } });
     if (request.command === 'profile_desktop_status') return result({ desktop: {
       enabled: false, qualified: false, state: 'disabled', reason: 'Fixture observation only.', scope: { kind: 'application' },
     } });
@@ -994,6 +994,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(dialog).toContainText('OS device, vJoy layout, driver and bindings are retained');
     await expect(dialog).toContainText('retained-virtual-binding');
     await expect(confirmCleanup).toBeDisabled();
+    await expect(dialog.getByRole('checkbox', { name: 'Select Missing remembered virtual joystick', exact: true })).toBeDisabled();
+    await expect(dialog).toContainText('Used in profiles');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    fixture.unboundCleanupSources = ['vjoy:4'];
+    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
     await dialog.getByRole('checkbox', { name: 'Select Missing remembered virtual joystick', exact: true }).check();
     await expect(confirmCleanup).toBeEnabled();
     await confirmCleanup.click();
@@ -1011,6 +1016,11 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const selectAll = dialog.getByRole('checkbox', { name: 'Select all', exact: true });
     const selectWheel = dialog.getByRole('checkbox', { name: 'Select Remembered wheel', exact: true });
     const selectThrottle = dialog.getByRole('checkbox', { name: 'Select Remembered throttle', exact: true });
+    await expect(selectWheel).toBeDisabled(); await expect(selectThrottle).toBeDisabled();
+    await expect(dialog).toContainText('Used in profiles');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    fixture.unboundCleanupSources.push('remembered-wheel', 'remembered-throttle');
+    await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
     await expect(selectAll).not.toBeChecked();
     await expect(selectWheel).not.toBeChecked(); await expect(selectThrottle).not.toBeChecked();
     await expect(confirmCleanup).toBeDisabled();
@@ -1046,6 +1056,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(page.getByText(/Remembered throttle: Error: Fixture removal failed once/)).toBeVisible();
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-wheel').length, 0);
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-throttle').length, 1);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     // Failure is reported without replay. On retry a returning wheel cannot
     // be removed, and an unchanged remembered throttle stays suppressed.
     fixture.failForget = null; fixture.keepForgotten = true;
@@ -1058,6 +1069,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('[data-component-id="controller:remembered-throttle"]')).toHaveCount(0);
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-wheel').length, 0);
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-throttle').length, 2);
+    await expect(selectThrottle).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     await filter.selectOption('all'); await search.fill(''); await list.click();
     // Mode survives remount and page reload; no inspection acquired ownership.
     await topology.click(); await page.reload(); await nav.getByRole('button', { name: /^Devices(?:\s|$)/ }).click();

@@ -346,7 +346,7 @@ export class SystemInventoryController {
   /** Inspect existing local bindings for confirmation only; never change or activate them. */
   async reviewForget(ids: string[]): Promise<SystemComponent[]> {
     const selected = this.snapshot.components.filter(c => ids.includes(c.id));
-    const result = selected.map(c => ({ ...c, references: [...c.references] }));
+    const result = selected.map(c => ({ ...c, forget: { ...c.forget }, references: [...c.references] }));
     try {
       const profiles = (await this.send({ command: 'profile_list' })).profiles?.profiles;
       if (!profiles || profiles.length > 256) throw Error('Stored binding inventory unavailable.');
@@ -359,13 +359,24 @@ export class SystemInventoryController {
           for (const a of assignments) if (sourceIds.has(a.sourceId)) c.references.push({ kind: 'binding', id: `${profile.id}/${a.resourceId}`, name: `${profile.name} / ${a.resourceId}` });
         }
       }
-    } catch (error) { for (const c of result) c.diagnostics = [...c.diagnostics, `Affected stored references could not be fully inspected: ${message(error)} All user bindings are retained and may show unresolved targets.`]; }
+      for (const c of result) if (c.references.some(reference => reference.kind === 'binding')) {
+        c.forget = { ...c.forget, allowed: false, reason: 'Used in profiles. Remove its profile assignments before cleaning up this device.' };
+      }
+    } catch (error) { for (const c of result) {
+      c.diagnostics = [...c.diagnostics, `Affected stored references could not be fully inspected: ${message(error)}`];
+      c.forget = { ...c.forget, allowed: false, reason: 'Profile usage could not be checked. Retry before cleaning up this device.' };
+    } }
     return result;
   }
   /** Refresh and revalidate immediately before a one-shot guarded provider mutation. */
-  async forget(id: string): Promise<void> {
+  async forget(id: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     await this.refresh();
-    const c = this.snapshot.components.find(c => c.id === id);
+    signal?.throwIfAborted();
+    const current = this.snapshot.components.find(c => c.id === id);
+    if (!current?.forget.allowed || current.presence === 'connected' || current.owner || current.hidden) throw Error(current?.forget.reason || 'The selected component is no longer eligible.');
+    const [c] = await this.reviewForget([id]);
+    signal?.throwIfAborted();
     if (!c?.forget.allowed || c.presence === 'connected' || c.owner || c.hidden) throw Error(c?.forget.reason || 'The selected component is no longer eligible.');
     const t = c.targets.find(t => t.kind === 'controller' || t.kind === 'module' || t.kind === 'companion');
     this.epoch++;
