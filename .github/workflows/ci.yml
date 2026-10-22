@@ -178,7 +178,6 @@ jobs:
           '
       - name: Game integration setup coverage at least 71 percent
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.research/setup-coverage-target
           OSG_DCS_SETUP_ARCHIVE: ${{ runner.temp }}/osg-dcs-bios-v0.11.7.zip
         run: |
           curl --fail --location --proto '=https' --tlsv1.2 \
@@ -344,6 +343,9 @@ jobs:
           python scripts/module-usb-coverage.py
       - name: Windows companion trust, WSS, source isolation and operator coverage
         if: runner.os == 'Windows'
+        env:
+          # Reuse the instrumented desktop build from the preceding coverage step.
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.research/module-usb-coverage/target
         run: python scripts/companion-coverage.py
       - name: Build Windows desktop and service binaries
         if: runner.os == 'Windows'
