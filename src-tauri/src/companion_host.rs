@@ -174,6 +174,7 @@ struct Services {
 struct Metadata {
     hub: Hub,
     directory: PathBuf,
+    cache_warning: Option<String>,
 }
 pub struct Runtime {
     path: Option<PathBuf>,
@@ -245,8 +246,8 @@ impl Runtime {
             (Hub::new(format!("host-{}", uuid::Uuid::new_v4()), self.provider.clone()),
                 std::env::temp_dir().join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
-        crate::companion_panels::restore(&hub, &directory)?;
-        let _ = self.metadata.set(Metadata {hub, directory});
+        let cache_warning=crate::companion_panels::restore_or_quarantine(&hub, &directory)?;
+        let _ = self.metadata.set(Metadata {hub, directory, cache_warning});
         Ok(self.metadata.get().expect("metadata initialized under its gate"))
     }
     fn services(&self) -> Result<&Services, String> {
@@ -256,6 +257,7 @@ impl Runtime {
                 let hub = metadata.hub.clone();
                 let directory = metadata.directory.clone();
                 let server = ServerRuntime::with_browser(hub.clone(), directory.clone(), BROWSER_ASSETS)?;
+                if let Some(warning)=&metadata.cache_warning { server.record_error(warning.clone()); }
                 let saved_listener=match std::fs::read(directory.join("companion-listener.json")){
                     Ok(bytes)=>match serde_json::from_slice::<ServerConfig>(&bytes){
                         Ok(config)=>Some(config),
@@ -873,7 +875,7 @@ impl Runtime {
     #[cfg(test)]
     pub(crate) fn with_profile_metadata(hub:Hub, provider:Arc<CompanionProvider>, directory:PathBuf)->Self {
         let mut runtime=Self::new(None,provider);
-        assert!(runtime.metadata.set(Metadata {hub,directory}).is_ok());
+        assert!(runtime.metadata.set(Metadata {hub,directory,cache_warning:None}).is_ok());
         runtime.profile_wire_fixture = true;
         runtime
     }

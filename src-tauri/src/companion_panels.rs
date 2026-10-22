@@ -99,10 +99,47 @@ pub(super) fn restore(hub:&Hub,directory:&Path)->Result<(),String>{
     }
     Ok(())
 }
+/// The cache is disposable, but its contents may be useful for recovery. Keep
+/// validation strict and preserve rejected archives instead of trusting an old
+/// fingerprint or preventing unrelated profile metadata from loading.
+pub(super) fn restore_or_quarantine(hub:&Hub,directory:&Path)->Result<Option<String>,String>{
+    match restore(hub,directory) {
+        Ok(())=>Ok(None),
+        Err(error)=>{
+            let backup=directory.join(format!("companion-panels.rejected-{}.json",uuid::Uuid::new_v4()));
+            fs::rename(directory.join("companion-panels.json"),&backup)
+                .map_err(|e|format!("Cannot preserve rejected saved panel cache ({error}): {e}"))?;
+            Ok(Some(format!("Saved panel cache was incompatible and has been set aside at {}: {error}. Save the affected panels again before applying their profiles.",backup.display())))
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
+    #[test]
+    fn incompatible_fingerprint_is_preserved_without_blocking_panel_metadata(){
+        let directory=crate::test_directory();
+        let mut upload:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        upload.capability_fingerprint=Some(format!("sha256:{}","0".repeat(64)));
+        let bytes=serde_json::to_vec(&vec![upload.clone()]).unwrap();
+        fs::write(directory.path().join("companion-panels.json"),&bytes).unwrap();
+        let hub=Hub::new("cache-upgrade".into(),Arc::new(osg_companion_service::NullSourceSink));
+        let warning=restore_or_quarantine(&hub,directory.path()).unwrap().unwrap();
+        assert!(warning.contains("Capability fingerprint mismatch"));
+        assert!(hub.publication_uploads().is_empty(),"Never bypass capability validation");
+        assert!(latest(&hub,directory.path()).unwrap().is_empty());
+        let backup=fs::read_dir(directory.path()).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(fs::read(&backup).unwrap(),bytes);
+        assert!(restore_or_quarantine(&hub,directory.path()).unwrap().is_none());
+        upload.capability_fingerprint=None;
+        let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");
+        hub.command(&command).unwrap();save(&hub,directory.path()).unwrap();
+        let next=Hub::new("cache-upgrade".into(),Arc::new(osg_companion_service::NullSourceSink));
+        assert!(restore_or_quarantine(&next,directory.path()).unwrap().is_none());
+        assert_eq!(latest(&next,directory.path()).unwrap().len(),1);
+        assert_eq!(fs::read(backup).unwrap(),bytes,"Saving a repaired panel preserves rejected cache evidence");
+    }
     #[test]
     fn saved_panel_heads_reuse_stable_identity_and_can_return_to_an_existing_snapshot(){
         let directory=crate::test_directory();
