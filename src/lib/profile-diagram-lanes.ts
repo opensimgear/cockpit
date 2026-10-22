@@ -255,3 +255,57 @@ export function separateDiagramParallels<T extends LaneRoute>(routes:T[],clear:(
   }
   return routes;
 }
+
+/** Finish squared routes on readable tracks. Parallel interiors keep a visual
+ * gap where obstacles allow it; disjoint vertical runs favour common columns.
+ * Port anchors and authored/retained routes never move. */
+export function spaceDiagramTracks<T extends LaneRoute>(routes:T[],clear:(route:T,points:Point[])=>boolean,spacing=24):T[]{
+  let all=segments(routes),budget=64;
+  const extent=(segment:Segment)=>Math.abs(segment.a.x-segment.b.x)+Math.abs(segment.a.y-segment.b.y);
+  const ordered=all.filter(segment=>!routes[segment.route].manual&&segment.index>0&&segment.index<routes[segment.route].points.length-2)
+    .sort((a,b)=>Number(a.horizontal)-Number(b.horizontal)||extent(b)-extent(a)||routes[a.route].binding.id.localeCompare(routes[b.route].binding.id)||a.index-b.index);
+  const coordinate=(segment:Segment)=>segment.horizontal?segment.a.y:segment.a.x;
+  for(let pass=0;pass<2;pass++)for(const segment of ordered){
+    if(budget--<=0)return routes;
+    const route=routes[segment.route],index=segment.index,from=coordinate({...segment,a:route.points[index],b:route.points[index+1]});
+    const peers=all.filter(peer=>peer.route!==segment.route);
+    const score=(points:Point[])=>{
+      let crowding=0,crossings=0,sharedLength=0,length=0;
+      for(let i=Math.max(0,index-1);i<=Math.min(points.length-2,index+1);i++){
+        const a=points[i],b=points[i+1],lane={route:segment.route,index:i,a,b,horizontal:a.y===b.y};length+=extent(lane);
+        for(const peer of peers){
+          sharedLength+=interaction(lane,peer).overlap;
+          if(lane.horizontal!==peer.horizontal){crossings+=interaction(lane,peer).crossings;continue;}
+          // Shared physical port leads are intentional junctions.
+          const peerPoints=routes[peer.route].points;
+          if(i===0&&peer.index===0&&same(points[0],peerPoints[0])||i===points.length-2&&peer.index===peerPoints.length-2&&same(points.at(-1)!,peerPoints.at(-1)!))continue;
+          const gap=Math.abs(coordinate(lane)-coordinate(peer));if(gap>=spacing)continue;
+          const axis=lane.horizontal?'x':'y';
+          const overlap=Math.min(Math.max(a[axis],b[axis]),Math.max(peer.a[axis],peer.b[axis]))-Math.max(Math.min(a[axis],b[axis]),Math.min(peer.a[axis],peer.b[axis]));
+          if(overlap>0)crowding+=overlap*(spacing-gap)/spacing;
+        }
+      }
+      const at=segment.horizontal?points[index].y:points[index].x;
+      let alignment=0;
+      if(!segment.horizontal){
+        alignment=Math.abs(at-Math.round(at/spacing)*spacing)*2;
+        const neighbours=peers.filter(peer=>!peer.horizontal&&Math.abs(coordinate(peer)-from)<spacing*2&&Math.max(Math.min(peer.a.y,peer.b.y),Math.min(points[index].y,points[index+1].y))>=Math.min(Math.max(peer.a.y,peer.b.y),Math.max(points[index].y,points[index+1].y)));
+        if(neighbours.length)alignment+=neighbours.reduce((sum,peer)=>sum+Math.min(spacing,Math.abs(at-coordinate(peer))),0)/neighbours.length*.2;
+      }
+      return {crossings,overlap:sharedLength,value:crowding*8+sharedLength*4+length*.025+alignment+crossings*320};
+    };
+    let best=route.points,bestScore=score(best);const originalCrossings=bestScore.crossings,originalOverlap=bestScore.overlap;
+    const center=segment.horizontal?from:Math.round(from/spacing)*spacing;
+    for(const at of [...new Set([center,center-spacing,center+spacing,center-spacing*2,center+spacing*2,from-spacing,from+spacing])]){
+      if(at===from)continue;
+      const candidate=route.points.map(point=>({...point})),axis=segment.horizontal?'y':'x';candidate[index][axis]=at;candidate[index+1][axis]=at;
+      if(!diagramSimpleRoute(candidate)||!clear(route,candidate))continue;
+      const next=score(candidate);
+      // A clear crossing is preferable to a long accidental merged trunk.
+      // Small congestion gains must never introduce additional crossings.
+      if((next.crossings<=originalCrossings||next.overlap<originalOverlap-spacing*2)&&next.overlap<=originalOverlap+spacing+1e-6&&next.value<bestScore.value-1e-6){best=candidate;bestScore=next;}
+    }
+    if(best!==route.points){routes[segment.route]={...route,points:best};all=segments(routes);}
+  }
+  return routes;
+}

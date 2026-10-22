@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadModules} from './test-module-loader.mjs';
 
-const {refineDiagramLanes,separateDiagramParallels,diagramRouteQuality,diagramSimpleRoute}=(await loadModules(['./profile-diagram-lanes'])).get('./profile-diagram-lanes');
+const {refineDiagramLanes,separateDiagramParallels,spaceDiagramTracks,diagramRouteQuality,diagramSimpleRoute}=(await loadModules(['./profile-diagram-lanes'])).get('./profile-diagram-lanes');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const parallel=(id,sourceColumn,targetColumn)=>({binding:{id},manual:false,points:[
   {x:1200,y:1015},{x:sourceColumn,y:1015},{x:sourceColumn,y:1057},
@@ -106,4 +106,38 @@ test('a separation candidate cannot duplicate a peer path after collinear cleanu
   const result=separateDiagramParallels([...fixed,destination,moving],(_route,points)=>diagramSimpleRoute(points)&&points[2].y===1069);
   assert.equal(result.at(-1),moving,'if every clear candidate duplicates a peer, retain the previous geometry');
   assert.equal(result[3],destination);
+});
+
+const squared=(id,x,y=0,endY=200)=>({binding:{id},manual:false,points:[{x:0,y},{x,y},{x,y:endY},{x:400,y:endY}]});
+test('squared tracks separate nearly touching routes without moving anchors or adding crossings',()=>{
+  const routes=[squared('one',200),squared('two',206,20,220)];
+  const original=plain(routes),result=spaceDiagramTracks(routes.map(route=>({...route})),()=>true);
+  assert.ok(Math.abs(result[0].points[1].x-result[1].points[1].x)>=24);
+  assert.ok(diagramRouteQuality(result).crossings<=diagramRouteQuality(original).crossings);
+  for(let i=0;i<routes.length;i++){assert.deepEqual(plain(result[i].points[0]),original[i].points[0]);assert.deepEqual(plain(result[i].points.at(-1)),original[i].points.at(-1));assert.ok(diagramSimpleRoute(result[i].points));}
+});
+test('disjoint vertical segments align on a common column and spacing stays deterministic',()=>{
+  const make=()=>[squared('one',201,0,80),squared('two',209,150,230)];
+  const result=spaceDiagramTracks(make(),()=>true);
+  assert.equal(result[0].points[1].x,result[1].points[1].x);
+  assert.equal(result[0].points[1].x%24,0);
+  assert.deepEqual(plain(result),plain(spaceDiagramTracks(make(),()=>true)));
+});
+test('track spacing respects obstacles and authored paths and has bounded validation work',()=>{
+  const manual={...squared('manual',206,20,220),manual:true},moving=squared('moving',200);
+  let checks=0;
+  const blocked=spaceDiagramTracks([moving,manual],()=>{checks++;return false;});
+  assert.deepEqual(plain(blocked),plain([moving,manual]));
+  const result=spaceDiagramTracks([moving,manual],(_route,points)=>{checks++;return points[1].x>=200;});
+  assert.deepEqual(plain(result[1]),plain(manual));assert.ok(result[0].points[1].x>=200);
+  assert.ok(Math.abs(result[0].points[1].x-manual.points[1].x)>=24);assert.ok(checks<=64*7*2);
+  assert.deepEqual(plain(spaceDiagramTracks([],()=>true)),[]);
+});
+
+test('crowded converging squared routes favour clear intersections over long merged trunks',()=>{
+  const routes=[squared('upper',200,0,300),squared('lower',200,100,300),squared('return',200,200,100)];
+  const before=diagramRouteQuality(routes),original=plain(routes);
+  const after=spaceDiagramTracks(routes.map(route=>({...route})),()=>true);
+  assert.ok(diagramRouteQuality(after).overlap<before.overlap/2);
+  for(let i=0;i<after.length;i++){assert.ok(diagramSimpleRoute(after[i].points));assert.deepEqual(plain(after[i].points[0]),original[i].points[0]);assert.deepEqual(plain(after[i].points.at(-1)),original[i].points.at(-1));}
 });

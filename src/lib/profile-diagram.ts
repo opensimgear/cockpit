@@ -1,6 +1,6 @@
 import type { DeepReadonly, ProfileBinding, ProfileWireRoute, ProfileWireStyle } from './profiles';
 import { profileAnchorWireRoute, profileWireCorners } from './profile-wire-layout';
-import { diagramAutomaticCorners, diagramSimpleRoute, refineDiagramLanes, separateDiagramParallels } from './profile-diagram-lanes';
+import { diagramAutomaticCorners, diagramSimpleRoute, refineDiagramLanes, separateDiagramParallels, spaceDiagramTracks } from './profile-diagram-lanes';
 import { simplifyDiagramRoute } from './profile-diagram-simplify';
 export { diagramRouteQuality } from './profile-diagram-lanes';
 
@@ -593,7 +593,12 @@ function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadon
     }
     return[route.binding.id,{...route,manual,points,...pathFor(points,route.binding,manual)}];
   }));
-  return bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
+  const result=bindings.flatMap(binding=>byBinding.has(binding.id)?[byBinding.get(binding.id)!]:[]);
+  if(options.style!=='orthogonal')return result;
+  return spaceDiagramTracks(result.map(route=>retainedById.has(route.binding.id)?{...route,manual:true}:route),clearRoute).map(route=>{
+    const original=byBinding.get(route.binding.id)!;
+    return route.points===original.points?original:{...original,points:route.points,...pathFor(route.points,route.binding,original.manual)};
+  });
 }
 
 /** Keep route geometry stable across inventory, selection and viewport updates.
