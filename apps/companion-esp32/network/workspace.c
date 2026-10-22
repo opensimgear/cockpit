@@ -17,7 +17,9 @@ bool osg_workspace_rich(void) {
 }
 void *osg_workspace_allocate(size_t bytes) {
 #ifdef ESP_PLATFORM
-    return heap_caps_malloc(bytes,capabilities());
+    /* Scene arenas require max_align_t alignment; the
+     * capability allocator's default alignment is only word-sized on ESP32. */
+    return heap_caps_aligned_alloc(_Alignof(max_align_t),bytes,capabilities());
 #else
     return malloc(bytes);
 #endif
