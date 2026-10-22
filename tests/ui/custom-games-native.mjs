@@ -52,10 +52,10 @@ test('custom games, backgrounds and installed library imports use the actual nat
     const source=resolve(artifacts,'background-source.jpg');await copyFile('public/game-art/dcs.jpg',source);
     for(const target of [{id:gameId,name},{id:'dcs',name:'DCS World'}]){
       if(target.id!==gameId){await uiGames();const show=page.getByRole('switch',{name:'Show all supported',exact:true});if(await show.isVisible())await show.check();await page.getByRole('button',{name:/Open DCS World details/}).click();}
-      const backgrounds=page.getByRole('region',{name:'Tile background',exact:true});await backgrounds.getByLabel('Tile background image path',{exact:true}).fill(source);await backgrounds.getByRole('button',{name:'Use image',exact:true}).click();
-      const cropDialog=page.getByRole('dialog',{name:'Position tile background',exact:true});await expect(cropDialog).toBeVisible();await cropDialog.getByRole('button',{name:'Save background',exact:true}).click();await expect(cropDialog).toHaveCount(0);
+      const tileBackground=page.getByRole('region',{name:'Tile background',exact:true});await tileBackground.getByRole('button',{name:'Update image',exact:true}).click();const backgrounds=page.getByRole('dialog',{name:'Update tile background',exact:true});await backgrounds.getByLabel('Tile background image path',{exact:true}).fill(source);await backgrounds.getByRole('button',{name:'Use image',exact:true}).click();
+      const cropDialog=page.getByRole('region',{name:'Position tile background',exact:true});await expect(cropDialog).toBeVisible();await cropDialog.getByRole('button',{name:'Save background',exact:true}).click();await expect(cropDialog).toHaveCount(0);
       await expect.poll(async()=>!!(await games()).catalogue.find(game=>game.id===target.id)?.background).toBe(true);
-      await backgrounds.getByRole('button',{name:'Position image',exact:true}).click();await cropDialog.getByLabel('Background crop zoom',{exact:true}).focus();await cropDialog.getByLabel('Background crop zoom',{exact:true}).press('End');await cropDialog.getByRole('button',{name:'Save background',exact:true}).click();await expect(cropDialog).toHaveCount(0);
+      await tileBackground.getByRole('button',{name:'Update image',exact:true}).click();await expect(cropDialog.getByRole('button',{name:'Resize tile crop bottom right',exact:true})).toBeVisible();await cropDialog.getByRole('button',{name:'Resize tile crop bottom right',exact:true}).press('ArrowLeft');await cropDialog.getByRole('button',{name:'Save background',exact:true}).click();await expect(cropDialog).toHaveCount(0);
       assert.ok((await games()).catalogue.find(game=>game.id===target.id)?.background?.crop.width<1);
     }
     await unlink(source);await page.reload();assert.ok((await games()).catalogue.find(game=>game.id===gameId).background.image.startsWith('data:image/jpeg;base64,'));
@@ -64,10 +64,10 @@ test('custom games, backgrounds and installed library imports use the actual nat
     const invalidImage=resolve(artifacts,'invalid-image.jpg');await writeFile(invalidImage,'not an image');
     const invalid=await invoke({command:'game_background_save',gameId,path:invalidImage});assert.equal(invalid.ok,false);
     assert.deepEqual((await games()).catalogue.find(game=>game.id===gameId).background,originalBackground);
-    await uiDetails(name);await page.getByRole('region',{name:'Tile background',exact:true}).getByRole('button',{name:'Reset to default',exact:true}).click();
+    await uiDetails(name);await page.getByRole('region',{name:'Tile background',exact:true}).getByRole('button',{name:'Update image',exact:true}).click();await page.getByRole('dialog',{name:'Update tile background',exact:true}).getByRole('button',{name:'Reset to default',exact:true}).click();
     await expect.poll(async()=>(await games()).catalogue.find(game=>game.id===gameId)?.background??null).toBeNull();
     assert.ok((await games()).catalogue.find(game=>game.id==='dcs').background,'Reset preserves another game sharing the same image.');
-    await uiDetails('DCS World');await page.getByRole('region',{name:'Tile background',exact:true}).getByRole('button',{name:'Reset to default',exact:true}).click();
+    await uiDetails('DCS World');await page.getByRole('region',{name:'Tile background',exact:true}).getByRole('button',{name:'Update image',exact:true}).click();await page.getByRole('dialog',{name:'Update tile background',exact:true}).getByRole('button',{name:'Reset to default',exact:true}).click();
     await expect.poll(async()=>(await games()).catalogue.find(game=>game.id==='dcs')?.background??null).toBeNull();
     evidence.checks.push('Invalid image keeps the previous background; reset works for built-in/custom games and preserves shared assets.');
     await nav.getByRole('button',{name:'Profiles',exact:true}).click();await page.getByRole('button',{name:'Add profile',exact:true}).click();
@@ -79,9 +79,9 @@ test('custom games, backgrounds and installed library imports use the actual nat
     assert.deepEqual(document.eligibility.gameIds,[gameId]);assert.equal(document.resources.filter(resource=>resource.kind==='game').length,0);
     for(const [newName,path] of [[`${name} renamed`,fixtureB],[name,fixtureA]]){
       await uiDetails((await games()).catalogue.find(game=>game.id===gameId).name);
-      await page.getByRole('button',{name:'Edit',exact:true}).click();
-      const edit=page.getByRole('dialog',{name:'Edit game',exact:true});await edit.getByLabel('Custom game name',{exact:true}).fill(newName);await edit.getByLabel('Custom game executable',{exact:true}).fill(path);await edit.getByRole('button',{name:'Save game',exact:true}).click();
-      await expect(edit).toHaveCount(0);await expect(page.getByRole('heading',{name:newName,exact:true})).toBeVisible();
+      await page.getByLabel('Game name',{exact:true}).fill(newName);await page.getByLabel('Game name',{exact:true}).press('Enter');await expect.poll(async()=>(await games()).catalogue.find(game=>game.id===gameId)?.name).toBe(newName);
+      await page.getByLabel('Game executable',{exact:true}).fill(path);await page.getByLabel('Game executable',{exact:true}).press('Enter');await expect.poll(async()=>(await games()).catalogue.find(game=>game.id===gameId)?.executable?.replace(/^\\\\\?\\/,'')).toBe(path);
+      await expect(page.getByRole('heading',{name:newName,exact:true})).toBeVisible();
       assert.equal((await games()).catalogue.find(game=>game.name===newName)?.id,gameId);
       assert.deepEqual((await native({command:'profile_get',id:profileId})).profiles.document.eligibility.gameIds,[gameId]);
     }

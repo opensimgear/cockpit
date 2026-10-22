@@ -189,13 +189,15 @@ impl GamesRuntime {
                     .ok_or("Give this game a name.")?
                     .trim()
                     .to_owned();
-                let executable = selected_executable(
-                    self,
-                    &id,
-                    request
-                        .get("executable")
-                        .ok_or("Choose an executable or explicit null.")?,
-                )?;
+                let executable = match request.get("executable") {
+                    Some(value) => selected_executable(self, &id, value)?,
+                    None => next
+                        .custom_games
+                        .get(&id)
+                        .ok_or("Choose an executable or explicit null.")?
+                        .executable
+                        .clone(),
+                };
                 unique_executable(&catalogue, &id, executable.as_deref())?;
                 let previous = next.custom_games.get(&id).cloned();
                 next.custom_games.insert(

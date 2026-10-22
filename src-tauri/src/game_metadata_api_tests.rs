@@ -88,6 +88,24 @@ fn added(runtime: &GamesRuntime) -> String {
 }
 
 #[test]
+fn inline_name_edits_preserve_missing_executables_and_cannot_rename_builtins() {
+    let (runtime, directory) = fixture();
+    let path = executable(directory.path(),"Renamed.exe");
+    runtime.request(&json!({"command":"game_custom_save","name":"Original","executable":path})).unwrap();
+    let id = added(&runtime);
+    let previous = saved(&runtime).custom_games[&id].executable.clone();
+    fs::remove_file(&path).unwrap();
+    runtime.request(&json!({"command":"game_custom_save","gameId":id,"name":"Inline name"})).unwrap();
+    let updated = saved(&runtime);
+    assert_eq!(updated.custom_games[&id].name,"Inline name");
+    assert_eq!(updated.custom_games[&id].executable,previous);
+    assert_eq!(runtime.inner.installations.load().unwrap().unwrap(),updated);
+    for request in [json!({"command":"game_custom_save","gameId":"dcs","name":"Renamed"}),json!({"command":"game_custom_save","gameId":id,"name":""})] {
+        assert!(runtime.request(&request).is_err());assert_eq!(saved(&runtime),updated);
+    }
+}
+
+#[test]
 fn preview_crop_save_is_durable_and_rejected_edits_keep_the_previous_background() {
     let (runtime, directory) = fixture();
     let source = artwork(directory.path());

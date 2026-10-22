@@ -1,6 +1,7 @@
 import type {GameCrop} from './games';
 export const TILE_ASPECT=16/9;
 export const MAX_CROP_ZOOM=8;
+export type CropCorner='nw'|'ne'|'sw'|'se';
 const clamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
 export function maximumCrop(width:number,height:number):GameCrop {
   if(!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0)throw new Error('The image has no usable dimensions.');
@@ -25,10 +26,15 @@ export function zoomCrop(crop:GameCrop,zoom:number,width:number,height:number):G
   return boundedCrop({x:crop.x+(crop.width-w)/2,y:crop.y+(crop.height-h)/2,width:w,height:h},width,height);
 }
 export function resizeCrop(crop:GameCrop,dx:number,dy:number,width:number,height:number):GameCrop {
+  return resizeCropCorner(crop,dx,dy,width,height,'se');
+}
+export function resizeCropCorner(crop:GameCrop,dx:number,dy:number,width:number,height:number,corner:CropCorner):GameCrop {
   const max=maximumCrop(width,height),ratio=width/height/TILE_ASPECT;
-  const limit=Math.min(max.width,1-crop.x,(1-crop.y)/ratio);
-  const w=clamp(crop.width+(dx+dy*ratio)/(1+ratio*ratio),max.width/MAX_CROP_ZOOM,limit);
-  return{x:crop.x,y:crop.y,width:w,height:w*ratio};
+  const sx=corner.endsWith('e')?1:-1,sy=corner.startsWith('s')?1:-1;
+  const anchorX=sx>0?crop.x:crop.x+crop.width,anchorY=sy>0?crop.y:crop.y+crop.height;
+  const limit=Math.min(max.width,sx>0?1-anchorX:anchorX,(sy>0?1-anchorY:anchorY)/ratio);
+  const w=clamp(crop.width+(sx*dx+sy*dy*ratio)/(1+ratio*ratio),max.width/MAX_CROP_ZOOM,limit),h=w*ratio;
+  return{x:Math.max(0,sx>0?anchorX:anchorX-w),y:Math.max(0,sy>0?anchorY:anchorY-h),width:w,height:h};
 }
 /** The source image retains its own aspect ratio; only its viewport is cropped. */
 export function cropImageStyle(crop?:GameCrop):string {

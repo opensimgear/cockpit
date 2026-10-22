@@ -26,8 +26,11 @@ block or vehicle tabs. Keyboard/mouse **Context scoped** output follows the
 verified foreground game; focus or process loss releases its contributions.
 Manual profile mode and automatic matching/conflict behavior are unchanged.
 
-Use **Edit** to rename an entry or move its executable. Its identity and
-saved profile references stay stable. **Remove** unregisters a custom game and
+Edit a custom game's name directly in its heading. The single **Game executable**
+field and **Browse** button change the executable for any game. Inline fields
+save on Enter or leaving the field; Escape discards an unfinished change.
+Built-in game names cannot be edited. The game's identity and saved profile
+references stay stable. **Remove** unregisters a custom game and
 keeps referencing profiles readable as unavailable, so their context can be
 reassigned. Deactivate the affected profile before changing its registration;
 registration edits also wait for an in-flight activation or launch to finish.
@@ -37,7 +40,8 @@ An unavailable game never turns scoped output into global output.
 
 Use **Manage categories** in the games list or a game's details to add, rename
 or delete categories. Assign one category in any game's details, or when adding
-or editing a custom game. **Filter games by category** shows all games, a chosen
+a custom game. The category selector shares the **Installation** card with the
+tile preview and executable controls. **Filter games by category** shows all games, a chosen
 category or only uncategorized games, alongside the installed/supported filter.
 
 Category names and assignments are saved locally. Renaming keeps assignments;
@@ -47,18 +51,20 @@ manager leaves the saved list unchanged. Custom games retain a separate
 
 ## Tile backgrounds
 
-Every game's details includes **Tile background**. Choose **From disk** to browse
+Every game's **Installation** card includes a tile preview with **Update image**
+underneath. It opens the image form with the current image ready for positioning.
+Choose **From disk** to browse
 to a PNG, JPEG or WebP image (or paste its path), or **From URL** to enter an HTTP
-or HTTPS image URL. **Use image** opens a preview without replacing the saved
-background. **Position image** reopens the editor for existing or bundled art.
+or HTTPS image URL. **Use image** loads the image into the editor inside the same
+form without replacing the saved background.
 
 The popup shows the complete image and a frame matching the tile's 16:9 shape.
-Drag the frame to move it, drag its corner to resize, or use **Zoom**. Arrow keys
+Drag the frame to move it or drag any of its four corners to resize. Arrow keys
 also move/resize the focused control; Shift uses larger steps. The image keeps
 its aspect ratio and the entire frame stays within its bounds. **Fit image**
 restores the largest crop that fits. **Save background** commits the image and
 crop together; **Cancel** leaves the current background unchanged.
-**Reset to default** returns to bundled artwork, imported client artwork or a
+**Reset to default**, beside **From URL**, returns to bundled artwork, imported client artwork or a
 neutral title background.
 
 Cockpit copies a bounded thumbnail into its application storage. Moving the

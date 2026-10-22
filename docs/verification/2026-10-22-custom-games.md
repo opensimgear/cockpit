@@ -211,3 +211,27 @@ no errors or warnings, game/provider/launch suites pass, and both production
 builds pass with the existing import/chunk-size notices. The final native review
 build also succeeds. These checks supersede the initial build-space failure and
 stale development/debugging sessions encountered during this follow-up.
+
+## Inline game details and image form follow-up
+
+The Installation card now contains the tile and Update image button on the left,
+with one inline executable field, Browse and category controls on the right.
+The Edit action is removed. Custom names save inline on Enter/blur and Escape
+discards a draft; built-in names remain read-only. Name-only metadata updates
+preserve the registered executable even if its file has moved or disappeared.
+
+Update image opens one form with disk/URL loading and the current image's crop
+editor inline. Reset to default sits beside From URL. Position current image
+and the zoom slider are removed. All four corner handles resize the frame while
+anchoring the opposite corner, keeping the tile aspect ratio and image bounds.
+
+The rebuilt running native Cockpit passes the updated background acceptance in
+5.73 seconds with no page errors, including all four pointer-driven handles,
+disk/URL loading, cancellation, persistence, built-in reset, inline fields and
+the shared card layout. Category assignment/configuration/filtering acceptance
+also passes in 2.60 seconds. Screenshots and evidence are refreshed under
+`.research/game-background-native/`. The metadata suite passes 8/8 (including
+rename with a missing executable), frontend provider/launch/crop tests pass
+20/20, checks report zero errors/warnings, and both frontend builds pass.
+The native build succeeds after removing generated worktree build caches to
+recover disk space. Hardware validation remains deferred.

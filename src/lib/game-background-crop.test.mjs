@@ -9,7 +9,16 @@ test('portrait, landscape and square crop frames preserve tile shape inside ever
     for(const zoom of [1,2,8,100,-1])for(const dx of [-100,0,.3,100])for(const dy of [-100,0,.3,100]){
       const frame=crop.moveCrop(crop.zoomCrop(initial,zoom,w,h),dx,dy,w,h);within(frame,w,h);
       within(crop.resizeCrop(frame,dx,dy,w,h),w,h);
+      for(const corner of ['nw','ne','sw','se'])within(crop.resizeCropCorner(frame,dx,dy,w,h,corner),w,h);
     }
+  }
+});
+test('each dragged corner keeps its opposite corner anchored',()=>{
+  const frame=crop.zoomCrop(crop.maximumCrop(1600,900),2,1600,900);
+  for(const corner of ['nw','ne','sw','se']){
+    const changed=crop.resizeCropCorner(frame,.05,.05,1600,900,corner);
+    const anchor=box=>[corner.endsWith('e')?box.x:box.x+box.width,corner.startsWith('s')?box.y:box.y+box.height];
+    assert.deepEqual(anchor(changed),anchor(frame));within(changed,1600,900);
   }
 });
 test('zoom retains the selected center until image bounds require a clamp and reset fits the whole available tile',()=>{

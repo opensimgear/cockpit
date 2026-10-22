@@ -41,8 +41,8 @@ test('custom registration, artwork and profile context survive a native app rest
       const all=page.getByRole('button',{name:'All games',exact:true});if(await all.isVisible())await all.click();
       await page.getByRole('button',{name:'Open Custom restart acceptance details',exact:true}).click();
       const relocated=resolve('.research/custom-games-native/game-b/CustomGame.exe');
-      await page.getByLabel('Game executable path',{exact:true}).fill(relocated);
-      await page.getByRole('button',{name:'Use this path',exact:true}).click();
+      await page.getByLabel('Game executable',{exact:true}).fill(relocated);
+      await page.getByLabel('Game executable',{exact:true}).press('Enter');
       await expect.poll(async()=>(await games()).catalogue.find(item=>item.id===game.id)?.executable?.replaceAll('\\','/').endsWith('/game-b/CustomGame.exe')).toBe(true);
       assert.deepEqual((await native({command:'profile_get',id:evidence.profileId})).profiles.document.eligibility.gameIds,[game.id]);
       assert.deepEqual((await games()).catalogue.find(item=>item.id===game.id).background,evidence.background);

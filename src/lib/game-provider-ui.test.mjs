@@ -66,10 +66,21 @@ test('successful custom and builtin installation saves adopt the exact canonical
 test('custom games expose matching profiles, metadata and background editing without telemetry setup or vehicle controls',()=>{
   const id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Custom game',provider:null,custom:true,installed:false,launchSupported:false};
   const html=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,request:noRequest}}).body;
-  for(const label of ['Edit','Remove','Matching profiles','Tile background','Reset to default','Bindings and profile activation','Game executable path'])assert.ok(html.includes(label),label);
+  for(const label of ['Game name','Remove','Matching profiles','Tile background','Update image','Bindings and profile activation','Game executable'])assert.ok(html.includes(label),label);
+  assert.ok(!html.includes('Game executable path'));assert.ok(!/>Edit<\/button>/.test(html));assert.equal((html.match(/aria-label="Game executable"/g)??[]).length,1);
   for(const absent of ['Integration setup','Install integration','Native telemetry not verified','Current aircraft','Current car'])assert.ok(!html.includes(absent),absent);
   const list=render(GamesPanel,{props:{status:state(g),busy:false,request:noRequest}}).body;
   for(const label of ['Add game','Import from library','Custom game','Choose executable'])assert.ok(list.includes(label),label);
+});
+
+test('inline custom names save only the name and reject invalid names or builtin edits',async()=>{
+  let handlers;const calls=[],id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Old name',custom:true,installed:false,manualPath:'C:\\Missing\\Game.exe',launchSupported:false};
+  const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({initializeGame,saveName,setName(value){nameDraft=value;},get notice(){return notice;}});</script>'),receive:value=>handlers=value});
+  render(Panel,{props:{status:state(g),selectedGameId:id,busy:false,request:async value=>{calls.push(JSON.parse(JSON.stringify(value)));return state({...g,name:value.name});}}}).body;
+  handlers.initializeGame(g);handlers.setName('New name');await handlers.saveName(g);assert.deepEqual(calls,[{command:'game_custom_save',gameId:id,name:'New name'}]);
+  handlers.setName(' ');await handlers.saveName(g);assert.equal(calls.length,1);assert.match(handlers.notice,/game name/);
+  handlers.setName('Builtin rename');await handlers.saveName(supportedGames[0]);assert.equal(calls.length,1);
+  const builtin=render(GamesPanel,{props:{status:state(game('dcs')),selectedGameId:'dcs',busy:false,request:noRequest}}).body;assert.ok(!builtin.includes('aria-label="Game name"'));
 });
 
 test('missing custom executables retain their saved path in details and relocation dialogs',async()=>{
