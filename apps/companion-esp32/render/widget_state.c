@@ -1,5 +1,21 @@
 #include "widget_state.h"
 #include <math.h>
+#include <string.h>
+
+void osg_widget_runtime_context(const osg_runtime *runtime, size_t index, uint64_t now, osg_widget_state_context *out) {
+    memset(out, 0, sizeof(*out)); out->now_ms = now;
+    if (!runtime || !runtime->panel || index >= runtime->panel->widget_count) return;
+    const osg_widget *widget = &runtime->panel->widgets[index];
+    if (widget->kind != OSG_COMPONENT || !widget->component || !widget->component->definition) return;
+    out->connected = runtime->connected; out->enabled = true;
+    out->pressed = runtime->active == (int)index && widget->component->definition->interaction != OSG_INTERACTION_NAVIGATE;
+    for (unsigned p = 0; p < widget->component->definition->output_count; p++) {
+        const unsigned slot = widget->component->outputs[p].slot;
+        if (slot >= OSG_MAX_WIDGETS) continue;
+        const osg_sample *sample = &runtime->samples[slot];
+        if (sample->received) out->outputs[p] = (osg_widget_sample_view){sample, sample->simulator};
+    }
+}
 
 static const osg_sample *sample(const osg_widget_state_context *context, int index) {
     return context && index >= 0 && index < OSG_WIDGET_SOURCE_PORTS ? context->outputs[index].value : NULL;

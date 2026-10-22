@@ -36,7 +36,7 @@ export async function exportPanel(serialized, target = { width: 800, height: 480
     const output = d.ui.feedbackWidgets.find(f => f.id === w.feedbackIds[0]);
     const c = w.config;
     const style = { foreground: '#dce7ef', background: '#152532', accent: '#83e3c2', ...w.style };
-    return { w, b, page, line: '{ ' + [text(w.id, 'widget ID', 64), text(w.controlIds[0] ?? output.channelId, 'reference', 64), text(w.feedbackIds[0] ?? '', 'output ID', 64), text(w.label, 'label'), text(c.prefix ?? '', 'prefix'), text(c.suffix ?? '', 'suffix'), text(c.unit ?? '', 'unit', 32), kind[w.kind], page, c.precision ?? 0, '{ ' + Object.values(b).map(number).join(', ') + ' }', color(style.foreground), color(style.background), color(style.accent), number(c.min ?? 0), number(c.max ?? 1), "NULL", 0, 0].join(', ') + ' }' };
+    return { w, b, page, line: '{ ' + [text(w.id, 'widget ID', 64), text(w.controlIds[0] ?? output.channelId, 'reference', 64), text(w.feedbackIds[0] ?? '', 'output ID', 64), text(w.label, 'label'), text(c.prefix ?? '', 'prefix'), text(c.suffix ?? '', 'suffix'), text(c.unit ?? '', 'unit', 32), kind[w.kind], page, c.precision ?? 0, '{ ' + Object.values(b).map(number).join(', ') + ' }', color(style.foreground), color(style.background), color(style.accent), number(c.min ?? 0), number(c.max ?? 1), "NULL", 0, 0, "NULL"].join(', ') + ' }' };
   });
   for (let i = 0; i < widgets.length; i++) for (let j = 0; j < i; j++) {
     const a = widgets[i], b = widgets[j];

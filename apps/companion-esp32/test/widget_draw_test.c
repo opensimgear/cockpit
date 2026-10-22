@@ -1,4 +1,5 @@
 #include "widget_draw.h"
+#include "widget_source.h"
 #include "cJSON.h"
 #include <assert.h>
 #include <math.h>

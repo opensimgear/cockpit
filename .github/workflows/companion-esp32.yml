@@ -29,7 +29,9 @@ jobs:
       - name: Waveshare driver fault injection and coverage
         run: python3 apps/companion-esp32/test/waveshare.py
       - name: Native firmware sanitizers, coverage and preview
-        run: python3 apps/companion-esp32/test/run.py
+        run: |
+          node scripts/widget-input-fixtures.mjs --check
+          python3 apps/companion-esp32/test/run.py
       - name: Locked LVGL shared-source states, partial buffers, failure recovery and coverage
         run: |
           node scripts/widget-draw-fixtures.mjs --check

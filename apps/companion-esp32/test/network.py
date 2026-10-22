@@ -12,17 +12,18 @@ for pattern in ("wire-test-*.gcda", "client-test-*.gcda", "input-test-*.gcda", "
     for counter in OUT.glob(pattern):
         counter.unlink()
 flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-g", "-fsanitize=address,undefined", "--coverage", "-DCJSON_NESTING_LIMIT=24", "-DCJSON_CIRCULAR_LIMIT=2048"]
-includes = ["test/include", "core", "network", "third_party/cjson", "test"]
+includes = ["test/include", "core", "network", "render", "third_party/cjson", "test"]
 flags += ["-I" + str(APP / p) for p in includes]
-common = ["core/companion.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
+environment = {**os.environ, "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"}
+common = ["core/companion.c", "core/widget.c", "render/widget_state.c", "network/input.c", "network/json.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
 for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c"), ("serial-wire-test", "serial_wire_test.c")):
     serial = [str(APP / "network/serial_json.c")] if binary in ("client-test", "serial-wire-test") else []
     subprocess.run([*flags, *[str(APP / p) for p in common], *serial, str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
     with (OUT / (binary + ".log")).open("w") as log:
-        subprocess.run([str(OUT / binary), str(APP / "test/live-publication.json")], check=True, cwd=ROOT, stdout=log)
+        subprocess.run([str(OUT / binary), str(APP / "test/live-publication.json")], check=True, cwd=ROOT, stdout=log, env=environment)
     print(binary, "passed")
 subprocess.run([*flags, str(APP / "test/pixels_test.c"), "-o", str(OUT / "pixels-test")], check=True, cwd=ROOT)
-subprocess.run([str(OUT / "pixels-test")], check=True, cwd=ROOT)
+subprocess.run([str(OUT / "pixels-test")], check=True, cwd=ROOT, env=environment)
 subprocess.run(["gcov", "-j", "-b", "-c", "wire-test-json.gcno", "wire-test-publication.gcno", "wire-test-settings.gcno", "client-test-client_test.gcno", "serial-wire-test-serial_json.gcno", "input-test-input.gcno", "pixels-test-pixels_test.gcno"], check=True, cwd=OUT, stdout=subprocess.DEVNULL)
 report = {}
 for module, artifact in (("json", "wire-test-json"), ("publication", "wire-test-publication"), ("settings", "wire-test-settings"), ("client", "client-test-client_test"), ("serial_json", "serial-wire-test-serial_json"), ("input", "input-test-input"), ("pixels", "pixels-test-pixels_test")):

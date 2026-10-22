@@ -1,4 +1,5 @@
 #include "widget_state.h"
+#include "widget_source.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

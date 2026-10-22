@@ -76,9 +76,35 @@ Renderer tests include prepared-image alpha, vertical gauges, allocation budget
 rejection, unsupported glyphs, board failure and recovery. ASan/UBSan pass, with
 100% line/function and 85.61% branch coverage for `widget_draw.c`.
 
-The decoder and renderer are compiled into firmware but are not yet connected to live
-publication adoption. The existing schema-2 decoder, resource negotiation,
-feedback/input path, image cache and raster main loop are unchanged. Integration
+`core/widget.h` now separates resolved runtime types from JSON and LVGL. A
+component binding pins its definition and maps each output ID/channel to one of
+32 bounded feedback slots. Multiple ports no longer depend on widget indices.
+Samples own up to 120 UTF-16 units of UTF-8 and retain receive validity and
+simulator origin independently of provenance. The existing versioned feedback
+envelope maps those ports and validates a whole immutable frame before a second
+bounded pass commits it. This removes runtime-sized stack copies while keeping
+failed frames atomic, duplicate counters inert and unbound aliases untouched.
+
+The existing interaction/lease queue now carries boolean and numeric values.
+Momentary, toggle and selector interactions share its ordering, neutral baseline,
+epochs and failure handling. Pointer cancellation releases the current component
+owner; unrelated latched values remain. Fresh enable-gate loss neutralizes that
+widget, and Stop, page/publication changes and source loss neutralize the source.
+Local page navigation grants no gameplay input authority. Rendering does not
+enqueue gameplay events.
+
+The actual shared browser/Android controller generates 51 deterministic trace
+steps, with 24 ordered changes, consumed by `test/component_test.c`. Tests also
+exercise bipolar numeric queue entries, invalid port bindings, full-frame
+rollback, origin checks, duplicate/delta snapshots, UTF-8 limits and independent
+freshness damage. Fatal ASan/UBSan checks pass. Core runtime coverage is 100%
+lines/functions and 78.86% branches; portable widget contracts are 100%
+lines/functions and 75.90% branches. A native runtime snapshot is 17,456 bytes;
+this is not an MCU heap or task-stack qualification.
+
+The decoder, component model and renderer are compiled into firmware but are not
+yet connected to live schema-3 publication adoption. The schema-2 decoder,
+resource negotiation, image cache and raster main loop remain. Integration
 must still apply full-document/source byte limits, bind logical IDs/assets,
 preflight supported font glyphs, select board-specific memory limits and connect
 dynamic state without changing ownership, neutral baselines or leases. Browser

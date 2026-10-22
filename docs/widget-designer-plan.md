@@ -201,10 +201,31 @@ asset/image-cache transfer and board fences; the generic A/B target-content
 infrastructure remains available where prepared assets require it.
 
 The remaining work must connect source admission and LVGL drawing to complete
-panel snapshots, typed component inputs/feedback, capability/resource
+panel snapshots and the extended typed input/feedback model, capability/resource
 negotiation, main-loop adoption and same-firmware data updates. Rich S3 limits and
 lower-memory Sunton limits must be explicit and independent of browser/Android
 authoring. Preserve existing lease/baseline/cancellation and source-confirmation
 rules. Full publishing, all-core-widget parity, Android software build checks and
 assembled native Cockpit acceptance are still required; physical validation is
 deferred only as stated above.
+
+The firmware core now represents component bindings with independent typed
+output slots and UTF-8 samples. Its existing queue carries boolean/numeric
+momentary, toggle and selector changes; neutral baselines use each declared
+fallback. Pointer cancellation, enable-gate expiry and navigation match 51 steps
+and 24 ordered changes from the actual shared browser/Android controller.
+Feedback admission uses two bounded passes with no full-runtime stack staging,
+preserving atomic rejection, output identity and simulator provenance. Tests
+cover duplicate/delta snapshots, invalid bindings, bipolar queue values, UTF-8
+boundaries and precise per-port freshness damage. Core, wire/client, serial,
+leases and image-cache regressions pass with fatal ASan/UBSan. Core coverage is
+100% lines/functions and 78.86% branches; portable widget contracts are 100%
+lines/functions and 75.90% branches. The native snapshot size is 17,456 bytes.
+Full schema-3 document/asset admission and main-loop adoption are still pending.
+The actual native Cockpit import/edit/preview/save/reload checks pass again at
+`.research/widgets-native-ui/1792629243717/`. Both real LVGL sanitizer harnesses
+pass against this model change; all 103 copied source/fixture files match the
+worktree, recorded in `.research/lvgl-native/widget-draw-source-hashes.json`.
+
+Source-renderer commit `e680b81` passes all six ESP32 software/cross-build jobs in
+[CI run 39697413581](https://github.com/opensimgear/cockpit/actions/runs/39697413581).

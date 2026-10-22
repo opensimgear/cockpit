@@ -1,4 +1,5 @@
 #include "wire.h"
+#include "widget.h"
 #include <string.h>
 #include <math.h>
 
@@ -133,6 +134,39 @@ bool osg_open_identity(const cJSON *v, const char *host, const char *companion, 
     return osg_copy(s->client,sizeof(s->client),osg_string(v,"clientId")) && osg_copy(s->session,sizeof(s->session),osg_string(v,"sessionId")) &&
         osg_copy(s->generation,sizeof(s->generation),osg_string(v,"generation")) && osg_copy(s->publication,sizeof(s->publication),publication) && osg_copy(s->instance,sizeof(s->instance),instance);
 }
+static bool feedback_sample(const cJSON *item, uint64_t now, bool modern, osg_sample *sample) {
+    const char *unit = osg_string(item, "unit"), *source = osg_string(item, "sourceKind"), *provenance = osg_string(item, "provenance");
+    const double age = number(item, "sourceAgeMs");
+    if (!unit || !*unit || strlen(unit) > 32 || !isfinite(age) || age < 0 || age > 86400000 || floor(age) != age || (!same(source, "host") && !same(source, "simulator") && !same(source, "script"))) return false;
+    const char *provenances[] = {"requested", "local", "host-accepted", "host-submitted", "game-confirmed"};
+    int prov = 0; while (prov < 5 && !same(provenance, provenances[prov])) prov++;
+    if (prov == 5 || (prov == 4 && !same(source, "simulator"))) return false;
+    const cJSON *value = get(item, "value"); const bool has_value = value && !cJSON_IsNull(value);
+    *sample = (osg_sample){.available = has_value, .received = true, .simulator = same(source, "simulator"), .provenance = (osg_provenance)prov, .source_age_ms = (uint32_t)age, .received_ms = now};
+    const char *status = modern ? osg_string(item, "status") : "fresh";
+    if (same(status, "fresh")) { if (!has_value) return false; }
+    else if (same(status, "unknown")) { if (has_value) return false; sample->source_status = OSG_FEEDBACK_UNKNOWN; }
+    else if (same(status, "disconnected")) { if (has_value) return false; sample->source_status = OSG_FEEDBACK_DISCONNECTED; }
+    else if (same(status, "stale")) sample->source_status = OSG_FEEDBACK_STALE;
+    else return false;
+    if (has_value) {
+        if (cJSON_IsBool(value)) { sample->kind = OSG_BOOL; sample->boolean = cJSON_IsTrue(value); }
+        else if (cJSON_IsNumber(value)) { sample->kind = OSG_NUMBER; sample->number = value->valuedouble; }
+        else if (cJSON_IsString(value)) { sample->kind = OSG_STRING; if (!osg_copy(sample->text, sizeof(sample->text), value->valuestring)) return false; }
+        else return false;
+    }
+    return true;
+}
+static bool output_match(const osg_panel *panel, size_t slot, const cJSON *item, osg_output_contract *out) {
+    return osg_panel_output(panel, slot, out) && same(out->channel, osg_string(item, "channelId")) && same(out->id, osg_string(item, "outputId"));
+}
+static bool sample_contract(osg_runtime *r, const osg_output_contract *out, const cJSON *item, const osg_sample *sample) {
+    const char *unit = osg_string(item, "unit"); const cJSON *range = get(item, "range");
+    if (out->has_unit && !same(unit, out->unit && !osg_widget_text_blank(out->unit) ? out->unit : "ratio")) return false;
+    if (out->has_range) { if (number(range, "min") != out->min || number(range, "max") != out->max) return false; }
+    else if (range) return false;
+    return !sample->available || (r->connected && osg_feedback_valid(r->panel, out->channel, sample));
+}
 static bool feedback_envelope(const cJSON *frame, osg_live_session *session, osg_runtime *r, uint64_t now) {
     if(number(frame,"version")!=1 || !same(osg_string(frame,"type"),"feedback") ||
        !same(osg_string(frame,"clientId"),session->client) || !same(osg_string(frame,"sessionId"),session->session) ||
@@ -147,13 +181,10 @@ static bool feedback_envelope(const cJSON *frame, osg_live_session *session, osg
     if(snapshot){
         const cJSON *list=get(frame,"bindings");if(!size(list,0,OSG_MAX_WIDGETS))return false;
         for(const cJSON *b=list->child;b;b=b->next){
-            size_t index=0;
-            while(index<r->panel->widget_count){const osg_widget *w=&r->panel->widgets[index];
-                if(w->kind!=OSG_BUTTON&&same(w->reference,osg_string(b,"channelId"))&&same(w->output_id,osg_string(b,"outputId")))break;
-                index++;
-            }
-            if(index==r->panel->widget_count)return false;
-            for(size_t j=0;j<binding_count;j++)if(same(r->panel->widgets[bindings[j]].reference,r->panel->widgets[index].reference))return false;
+            size_t index=0; osg_output_contract output;
+            while(index<OSG_MAX_WIDGETS&&!output_match(r->panel,index,b,&output))index++;
+            if(index==OSG_MAX_WIDGETS)return false;
+            for(size_t j=0;j<binding_count;j++){osg_output_contract before;if(!osg_panel_output(r->panel,bindings[j],&before)||same(before.channel,output.channel))return false;}
             bindings[binding_count++]=(uint8_t)index;
         }
     }else{
@@ -161,52 +192,30 @@ static bool feedback_envelope(const cJSON *frame, osg_live_session *session, osg
         binding_count=session->binding_count;memcpy(bindings,session->feedback_bindings,binding_count);
     }
     const cJSON *values=get(frame,"values");if(!size(values,0,binding_count)||(snapshot&&(size_t)cJSON_GetArraySize(values)!=binding_count))return false;
-    osg_runtime staged=*r;if(snapshot)memset(staged.samples,0,sizeof(staged.samples));
+    /* Validate the immutable frame completely before applying anything. Two
+     * bounded passes need one sample on the stack, not a runtime-sized staging
+     * copy. No callback, allocation or input event occurs during validation. */
     bool seen[OSG_MAX_WIDGETS]={false};
     for(const cJSON *item=values->child;item;item=item->next){
-        size_t binding=0;
-        while(binding<binding_count){const osg_widget *w=&r->panel->widgets[bindings[binding]];
-            if(same(w->reference,osg_string(item,"channelId"))&&same(w->output_id,osg_string(item,"outputId")))break;
-            binding++;
-        }
+        size_t binding=0;osg_output_contract output;
+        while(binding<binding_count&&!output_match(r->panel,bindings[binding],item,&output))binding++;
         if(binding==binding_count||seen[binding])return false;
-        seen[binding]=true;const size_t index=bindings[binding];const osg_widget *w=&r->panel->widgets[index];
-        const char *unit=osg_string(item,"unit"),*source=osg_string(item,"sourceKind"),*provenance=osg_string(item,"provenance"),*status=osg_string(item,"status");
-        const double age=number(item,"sourceAgeMs");
-        if(!unit||!*unit||strlen(unit)>32||!isfinite(age)||age<0||age>86400000||floor(age)!=age||
-           (!same(source,"host")&&!same(source,"simulator")&&!same(source,"script")))return false;
-        const char *provenances[]={"requested","local","host-accepted","host-submitted","game-confirmed"};
-        int prov=0;while(prov<5&&!same(provenance,provenances[prov]))prov++;
-        if(prov==5||(prov==4&&!same(source,"simulator")))return false;
-        const bool numeric=w->kind==OSG_NUMERIC||w->kind==OSG_GAUGE;const cJSON *range=get(item,"range");
-        if(numeric){if(!same(unit,*w->unit?w->unit:"ratio")||number(range,"min")!=w->min||number(range,"max")!=w->max)return false;}
-        else if(range)return false;
-        const cJSON *value=get(item,"value");const bool has_value=value&&!cJSON_IsNull(value);
-        osg_sample sample={.available=has_value,.provenance=(osg_provenance)prov,.source_age_ms=(uint32_t)age,.received_ms=now};
-        if(same(status,"fresh")){if(!has_value)return false;}
-        else if(same(status,"unknown")){if(has_value)return false;sample.source_status=OSG_FEEDBACK_UNKNOWN;}
-        else if(same(status,"disconnected")){if(has_value)return false;sample.source_status=OSG_FEEDBACK_DISCONNECTED;}
-        else if(same(status,"stale"))sample.source_status=OSG_FEEDBACK_STALE;
-        else return false;
-        if(has_value){
-            if(cJSON_IsBool(value)){sample.kind=OSG_BOOL;sample.boolean=cJSON_IsTrue(value);}
-            else if(cJSON_IsNumber(value)){sample.kind=OSG_NUMBER;sample.number=value->valuedouble;}
-            else if(cJSON_IsString(value)){sample.kind=OSG_STRING;if(!osg_copy(sample.text,sizeof(sample.text),value->valuestring))return false;}
-            else return false;
-            /* Validate every alias, but commit only the explicitly bound output. */
-            if(!osg_feedback(&staged,w->reference,&sample,now))return false;
-            sample=staged.samples[index];
-            for(size_t j=0;j<r->panel->widget_count;j++)if(j!=index&&same(r->panel->widgets[j].reference,w->reference))staged.samples[j]=snapshot?(osg_sample){0}:r->samples[j];
-        }
-        staged.samples[index]=sample;
+        seen[binding]=true;osg_sample sample;
+        if(!feedback_sample(item,now,true,&sample)||!sample_contract(r,&output,item,&sample))return false;
     }
     if(session->feedback_envelope&&generation==session->binding_generation){
         if(sequence<session->feedback_sequence)return false;
         if(sequence==session->feedback_sequence)return true;
     }
-    memcpy(r->samples,staged.samples,sizeof(r->samples));
+    if(snapshot)memset(r->samples,0,sizeof(r->samples));
+    for(const cJSON *item=values->child;item;item=item->next){
+        size_t binding=0;osg_output_contract output;osg_sample sample;
+        while(binding<binding_count&&!output_match(r->panel,bindings[binding],item,&output))binding++;
+        (void)feedback_sample(item,now,true,&sample);r->samples[bindings[binding]]=sample;
+    }
     memcpy(session->feedback_bindings,bindings,binding_count);session->binding_count=(uint8_t)binding_count;
     session->feedback_seen=true;session->feedback_envelope=true;session->feedback_sequence=sequence;session->binding_generation=generation;
+    osg_tick(r,now);
     return true;
 }
 bool osg_ack(const cJSON *v, osg_live_session *session, const char *sequence, osg_runtime *r, uint64_t now) {
@@ -222,29 +231,17 @@ bool osg_ack(const cJSON *v, osg_live_session *session, const char *sequence, os
     if (!size(values,0,OSG_MAX_WIDGETS) || !osg_counter(cJSON_GetStringValue(seq),&feedback) ||
         (session->feedback_seen && feedback < session->feedback_sequence)) return false;
     if (session->feedback_seen && feedback == session->feedback_sequence) return true;
-    osg_runtime copy = *r;
+    /* Legacy array feedback has no output identity and remains limited to the
+     * existing fixed-widget protocol. Components require the versioned envelope. */
+    for(size_t i=0;i<r->panel->widget_count;i++)if(r->panel->widgets[i].kind==OSG_COMPONENT)return false;
     for (const cJSON *item = values->child; item; item=item->next) {
-        const char *channel = osg_string(item,"channelId"), *provenance = osg_string(item,"provenance"), *source = osg_string(item,"sourceKind");
-        const cJSON *value = get(item,"value");
-        const char *unit=osg_string(item,"unit");
-        const double age = number(item,"sourceAgeMs");
-        if (!osg_stable_id(channel) || !isfinite(age) || age < 0 || age > 86400000 || floor(age) != age ||
-            (!same(source,"simulator") && !same(source,"host") && !same(source,"script")) || !unit || !*unit || strlen(unit)>32) return false;
+        const char *channel = osg_string(item,"channelId"),*unit=osg_string(item,"unit");osg_sample sample;
+        if(!osg_stable_id(channel)||!feedback_sample(item,now,false,&sample)||!r->connected||!osg_feedback_valid(r->panel,channel,&sample))return false;
         for (const cJSON *prev=values->child;prev!=item;prev=prev->next) if (same(channel,osg_string(prev,"channelId"))) return false;
-        osg_sample sample = {.available=true,.source_age_ms=(uint32_t)age};
-        const char *provenances[]={"requested","local","host-accepted","host-submitted","game-confirmed"};
-        int index=0; while(index<5&&!same(provenance,provenances[index])) index++;
-        if(index==5) return false;
-        sample.provenance=(osg_provenance)index;
-        if(cJSON_IsBool(value)){sample.kind=OSG_BOOL;sample.boolean=cJSON_IsTrue(value);}
-        else if(cJSON_IsNumber(value)){sample.kind=OSG_NUMBER;sample.number=value->valuedouble;}
-        else if(cJSON_IsString(value)){sample.kind=OSG_STRING;if(!osg_copy(sample.text,sizeof(sample.text),value->valuestring))return false;}
-        else return false;
         const cJSON *range=get(item,"range");
         if(range){double min=number(range,"min"),max=number(range,"max");if(sample.kind!=OSG_NUMBER||!isfinite(min)||!isfinite(max)||min>=max||sample.number<min||sample.number>max)return false;}
         for(size_t i=0;i<r->panel->widget_count;i++){const osg_widget *w=&r->panel->widgets[i];if((w->kind==OSG_NUMERIC||w->kind==OSG_GAUGE)&&same(w->reference,channel)&&!same(w->unit,unit))return false;}
-        if(!osg_feedback(&copy,channel,&sample,now))return false;
     }
-    memcpy(r->samples,copy.samples,sizeof(r->samples));
+    for(const cJSON *item=values->child;item;item=item->next){osg_sample sample;(void)feedback_sample(item,now,false,&sample);(void)osg_feedback(r,osg_string(item,"channelId"),&sample,now);}
     session->feedback_seen=true;session->feedback_sequence=feedback;return true;
 }

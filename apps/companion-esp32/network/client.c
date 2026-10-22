@@ -1,6 +1,7 @@
 #include "platform.h"
 #include "firmware.h"
 #include "input.h"
+#include "widget.h"
 #include "serial.h"
 #include "serial_json.h"
 #include "esp_timer.h"
@@ -184,14 +185,14 @@ static bool preparation_heartbeat(void){
 }
 static bool load_images(osg_image *image,unsigned slot){
     loading_owner=slot;load_interrupted=false;detail="Checking saved images";operation_phase("checking-cache");update_screen();
-    osg_runtime layout={.panel=&image->panel,.display=ui.runtime->display};size_t total=0;
+    size_t total=0;
     unsigned assets[OSG_MAX_WIDGETS]={0};bool acquired[OSG_MAX_WIDGETS]={false},cached[OSG_MAX_WIDGETS]={false};
     /* The caller has fenced the inactive panel against the renderer. Keep the
      * displayed owner's pins until it is itself safely reusable on a later switch. */
     if(!osg_pixels_panel_begin(slot))return cache_failure();
     for(size_t i=0;i<image->panel.widget_count;i++){
         osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
-        layout.page=w->page;int x,y,width,height;osg_widget_rect(&layout,i,&x,&y,&width,&height);
+        int x,y,width,height;osg_panel_widget_rect(&image->panel,i,ui.runtime->display.width,ui.runtime->display.height,&x,&y,&width,&height);
         if(width<1||height<1||width>800||height>800)return image_failure("image-dimensions","Invalid image dimensions",false);
         if(!osg_hash_id(image->image_hashes[i]))return image_failure("image-identity","Invalid image content identity",false);
         w->image_width=(uint16_t)width;w->image_height=(uint16_t)height;
@@ -322,7 +323,8 @@ static void arm(const cJSON *command){
     operation_phase("awaiting-neutral");report("arming");
     cJSON *v=session_message("baseline","0"),*values=cJSON_AddObjectToObject(v,"values"),*reply=NULL;
     for(size_t i=0;i<ui.runtime->panel->widget_count;i++){
-        const osg_widget *w=&ui.runtime->panel->widgets[i];if(w->kind==OSG_BUTTON)cJSON_AddBoolToObject(values,w->reference,false);
+        const osg_widget *w=&ui.runtime->panel->widgets[i];osg_value_kind kind;double fallback;
+        if(osg_widget_input(w,&kind,&fallback)){if(kind==OSG_BOOL)cJSON_AddBoolToObject(values,w->reference,false);else cJSON_AddNumberToObject(values,w->reference,fallback);}
     }
     /* The host may accept even if the ACK is lost. Every failure below closes
      * this connection; this baseline is never retried or silently replayed. */
@@ -470,7 +472,7 @@ static void advance(void){
             v=session_message("input",sequence);cJSON *changes=cJSON_AddArrayToObject(v,"changes");
             for(size_t i=0;i<count;i++){
                 cJSON *change=cJSON_CreateObject();cJSON_AddStringToObject(change,"controlId",ui.runtime->panel->widgets[edges[i].widget].reference);
-                cJSON_AddBoolToObject(change,"value",edges[i].down);cJSON_AddItemToArray(changes,change);
+                if(edges[i].kind==OSG_BOOL)cJSON_AddBoolToObject(change,"value",edges[i].down);else cJSON_AddNumberToObject(change,"value",edges[i].number);cJSON_AddItemToArray(changes,change);
             }
             const uint64_t started=millis();
             ok=request(v,&reply,400)&&acknowledgement(reply,sequence,started);

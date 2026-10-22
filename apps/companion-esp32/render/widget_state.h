@@ -1,6 +1,6 @@
 #ifndef OSG_WIDGET_STATE_H
 #define OSG_WIDGET_STATE_H
-#include "widget_source.h"
+#include "widget.h"
 
 /* Borrowed, already identity/type/unit/range-validated feedback for one draw
  * snapshot. The publication/session layer maps logical IDs to definition ports.
@@ -12,6 +12,7 @@ typedef struct {
     uint64_t now_ms;
     bool connected, enabled, pressed;
 } osg_widget_state_context;
+void osg_widget_runtime_context(const osg_runtime *, size_t widget, uint64_t now_ms, osg_widget_state_context *);
 
 osg_widget_state osg_widget_state_resolve(const osg_widget_component *, const osg_widget_state_context *);
 const osg_sample *osg_widget_current_sample(const osg_widget_state_context *, int output);
