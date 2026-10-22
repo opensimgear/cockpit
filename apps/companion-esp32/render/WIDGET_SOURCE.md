@@ -49,7 +49,8 @@ The existing RGB565-plus-alpha image-cache format is accepted through a pinned
 bitmap lookup callback. Missing assets, unsupported text and strip/resource
 limits fail with the affected layer; they are never silently omitted.
 
-Alpha layers use one partial ARGB8888 strip, limited to eight rows and 1,024
+Alpha layers use one partial ARGB8888 strip, limited to four firmware rows
+(eight in the full native harness) and 1,024
 columns, with an explicit memory check. That strip is drained before the next
 allocation. TinyTTF bitmaps likewise remain owned until their queued image tasks
 finish: LVGL's no-OS `wait_for_finish` alone does not drain queued tasks. Empty
@@ -132,14 +133,13 @@ The original default limits remain until a caller opts in. Rejection reports
 the exact field, required and available document/arena/layer/component/image or
 JSON resource count. Syntax and publication-identity failures remain distinct.
 
-Candidate admission and the component model are compiled into firmware but are
-not yet connected to live schema-3 adoption. The main loop now uses the LVGL
-whole-panel compositor described below; the active delivery decoder still
-accepts schema 2. Integration must still fence/reuse candidate banks, invoke
-bitmap preparation and display-task candidate checks, and negotiate board source
-budgets without changing ownership, neutral baselines or leases. Page backgrounds
-currently fail explicitly. Browser and Android source authoring limits remain
-independent of these device budgets.
+Live assigned publications now use common schema-2/schema-3 admission, the
+fenced candidate banks, existing bitmap preparation and display-task font/asset
+checks. The main loop uses the LVGL whole-panel compositor described below.
+Board capability negotiation and Cockpit's assignment enablement remain open;
+its current UI validator still rejects portable component assignment. Page
+backgrounds fail explicitly. Browser and Android source authoring limits remain
+independent of device budgets.
 
 Portable layer artwork now uses the existing authenticated `image-chunk` path
 with an optional `layerId`. The host resolves only that layer in the instance's
@@ -182,7 +182,7 @@ input components, while navigation and read-only components remain enabled.
 The 51-step integration oracle checks 765 appearances in addition to its input
 trace. Independent adapter tests cover bound/unbound output slots and simulator
 origin; all 1,274 projection cases pass with 100% line/function and 88.37% branch
-coverage. The bank API still awaits live main-loop adoption.
+coverage. The live bank handoff is described below.
 
 `render/panel_draw.c` now connects the existing runtime to LVGL in the firmware
 main loop. It draws mixed fixed widgets and portable components in source order,
@@ -228,4 +228,36 @@ retry without starting a transport request or granting input. Fault tests compil
 the actual ESP-platform paths for both memory domains and verify failure/retry,
 single reservation and pool size. Serial tests assemble and verify a 40 KiB
 reply using the host's existing 2 KiB chunks; the compact reply budget rejects
-the same transfer explicitly. Candidate scene banks still await live adoption.
+the same transfer explicitly.
+
+Firmware engine `2026.10.22.1` adopts assigned source through those banks. The
+network task compiles and prepares one inactive bank, then enters a distinct
+disarmed preparation phase. The display task borrows that exact generation,
+checks every authored appearance/page and reports an owned result. Cancelled or
+late results cannot activate newer data; cache pins and storage identities stay
+protected until the borrow fence clears. Only the checked candidate can become
+the runtime, still awaiting a completed draw/present, healthy released touch and
+the existing acknowledged neutral baseline before input activation.
+
+Rich targets bound candidate arenas to 192 KiB/128 total layers/32 components,
+64 KiB source and 128-pixel fonts. Compact targets use 16 KiB arenas, 24 total
+layers/eight components, 16 KiB source and 48-pixel fonts. These are explicit
+engine budgets, not measured physical support claims or shared authoring limits.
+Native fault tests cover cancellation, active-byte preservation, stale results,
+heartbeat liveness, budget failure, diagnostics and recovery. Two distinct
+portable compositions (two versus three layers/revisions) pass through the same
+client binary as data and retain logical control IDs and ordered input. This
+protocol harness uses a simulated host; actual dev Cockpit transport acceptance
+and capability negotiation are still required.
+
+Failed replacements retain the previous panel disarmed with an error banner.
+Page changes cancel input and reconnect safely when needed; a successful reopen
+preserves a page only by stable page ID within the same assigned instance/UI.
+No preflight result, cached scene or page selection restores authority.
+
+Preparation heartbeats continue using `checking-cache` through the font/resource
+check, preserving the host's initial feedback snapshot. `rendering` begins only
+after adoption. Structured diagnostics are bounded and checked by the host's
+existing operation validator; unknown fields, oversized identities and invalid
+resource counts are rejected. They identify the exact item/layer/field and
+required/available counts in Cockpit without creating control authority.

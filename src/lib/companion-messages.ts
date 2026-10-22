@@ -8,7 +8,11 @@ function operationMessage(value:unknown):CompanionMessage|undefined {
   if(!value||typeof value!=='object')return;
   const operation=value as CompanionOperation;
   const labels:Record<string,string>={opening:'Opening panel','checking-cache':'Checking cached images',downloading:'Preparing panel images',rendering:'Rendering panel','awaiting-neutral':'Waiting for the display and released touch'};
-  if(operation.phase==='failed')return {source:'connection',kind:'error',message:`${operation.message||'The screen could not load the panel'}${operation.errorCode?` (${operation.errorCode})`:''}. ${operation.retryable?'Check the connection and retry.':'Check the panel and companion before retrying.'}`};
+  if(operation.phase==='failed'){
+    const diagnostic=operation.diagnostic;
+    const context=diagnostic?` · ${[diagnostic.widget||diagnostic.definition,diagnostic.layer,diagnostic.field].filter(Boolean).join(' / ')}: ${diagnostic.required} required, ${diagnostic.available} available`:'';
+    return {source:'connection',kind:'error',message:`${operation.message||'The screen could not load the panel'}${operation.errorCode?` (${operation.errorCode})`:''}${context}. ${operation.retryable?'Check the connection and retry.':'Check the panel and companion before retrying.'}`};
+  }
   if(!labels[operation.phase])return;
   let message=operation.phase==='downloading'?labels.downloading:operation.message||labels[operation.phase];
   const total=operation.totalBytes??0,completed=operation.completedBytes??0;

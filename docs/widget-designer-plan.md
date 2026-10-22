@@ -14,7 +14,7 @@ GameGlass reference; no external artwork or Star Citizen provider is included.
 | --- | --- | --- |
 | W0 #113 | Strict versioned definitions, instances, layers, properties, ports, states, identity, capability contracts and LVGL feasibility | In progress |
 | W1 #114 | Shared browser/Android composition renderer, input semantics, freshness and parity fixtures | Renderer implemented; qualification pending |
-| W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Drawing feasibility implemented; integration pending |
+| W2 #115 | Pinned LVGL runtime, target compilation, board capability negotiation, existing USB/WSS delivery and same-firmware updates | Runtime/source delivery integrated; capability negotiation and actual host acceptance pending |
 | W3 #116 | Layer/state editor, immutable library revisions, reusable independent instances, complete illuminated-switch workflow | Authoring implemented; device workflow pending |
 | W4 #117 | Original control/instrument catalog, library bundles, publishing/reconciliation, example panel and runtime updates | Pending |
 | W5 #118 | Running native dev Cockpit acceptance, automated/native/build checks, documentation and software parity evidence | Pending |
@@ -374,3 +374,48 @@ service's image decoder dependencies. Atomic fix `035b414` adds exactly those
 eight locked packages without unrelated upgrades. The corrected Android build
 is running in [mobile CI 39707088010](https://github.com/opensimgear/cockpit/actions/runs/39707088010).
 Authentication qualification gates remain independent in #55/#56.
+
+Memory correction `37adc97` passes all six ESP32 jobs in
+[CI run 39707393926](https://github.com/opensimgear/cockpit/actions/runs/39707393926).
+Sunton now links: application 0x18a930 bytes (23% app-partition headroom),
+143,996 static DRAM bytes with 36,740 bytes left in that linker region, and
+100,307 IRAM bytes. These are linker measurements, not free runtime heap or
+physical timing. [Mobile CI 39707088010](https://github.com/opensimgear/cockpit/actions/runs/39707088010)
+also passes shared checks and produces the `mobile-android` APK artifact and iOS
+simulator bundle. Native authentication/physical qualification gates are retained.
+
+The live firmware client now uses common schema-2/schema-3 source admission and
+lazy fenced scene banks. It prepares cached images before a distinct disarmed
+preflight phase, which the display task checks using a generation-bound ticket.
+Late results cannot activate a cancelled/replaced candidate or clear another
+reader's fence. Failed replacements preserve the prior scene disarmed with a
+visible owned diagnostic/banner. Reconnect preserves local page selection only
+by stable page ID within the same assigned instance/UI; page navigation cancels
+input and reconnects for a fresh baseline when necessary.
+
+The native client suite passes active-byte preservation, held-reader cancellation,
+stale preflight completions, heartbeat liveness, failed budgets and stable-page
+recovery. The same client binary also admits two portable compositions as data
+(two and three layers/revisions), retaining logical IDs and existing ordered
+input/baseline behavior. This is a protocol harness with a simulated host; actual
+Cockpit USB/WSS software-target acceptance remains. Source profiles currently
+bound rich arenas to 192 KiB/128 layers/32 instances and compact arenas to
+16 KiB/24 layers/eight instances. Font caps are 128 and 48 respectively. Capability
+advertising and Cockpit assignment enablement are still pending.
+
+Current client sanitizer coverage is 96.66% lines, 96.23% functions and 73.92%
+branches. The real LVGL compositor also passes font-budget/zero-write failures,
+and actual dev Cockpit import/edit/pointer/save/reload acceptance passes again at
+`.research/widgets-native-ui/1792633913735/`. Engine operations are versioned as
+`2026.10.22.1`. Complete cross-platform acceptance and remaining authoring/catalog
+requirements are still open; the goal remains active.
+
+Candidate preflight keeps reporting the existing `checking-cache` preparation
+phase while checking font/resource caches. The host therefore preserves its
+initial feedback snapshot until the admitted runtime starts rendering. The
+native host regression now explicitly covers this second preparation phase
+after image download. Structured widget/definition/layer/field and budget
+diagnostics are validated as bounded, assignment-bound operation metadata and
+shown in Cockpit errors. All 116 native host tests and 12 message-presenter tests
+pass; Cockpit and browser Svelte checks report zero errors/warnings. The updated
+native dev host was rebuilt through the worktree's Tauri launch configuration.

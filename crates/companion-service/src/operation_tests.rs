@@ -127,14 +127,15 @@ fn preparation_heartbeats_preserve_the_initial_rendered_panel_feedback_snapshot(
     let secret = paired(&hub,"screen"); let publication = publish(&hub,fixture());
     assign(&hub,"screen","instance",&publication.publication_hash);
     let open = connect(&hub,"connection",&secret,"instance");
-    for (sequence,phase) in [("1","checking-cache"),("2","downloading")] {
+    // The final cache phase also covers display-task font/resource preflight.
+    for (sequence,phase) in [("1","checking-cache"),("2","downloading"),("3","checking-cache")] {
         let mut heartbeat=frame(&open,"heartbeat",sequence);
         heartbeat["operation"]=operation(&open,phase);
         let ack=wire(&hub,"connection",heartbeat);
         assert_eq!(ack["ok"],true);
         assert!(ack["feedback"].is_null(),"Preparation ACKs cannot consume the initial snapshot");
     }
-    let mut heartbeat=frame(&open,"heartbeat","3");
+    let mut heartbeat=frame(&open,"heartbeat","4");
     heartbeat["operation"]=operation(&open,"rendering");
     let ack=wire(&hub,"connection",heartbeat);
     assert_eq!(ack["ok"],true);

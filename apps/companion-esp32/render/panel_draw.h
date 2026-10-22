@@ -15,6 +15,7 @@ typedef struct {
     osg_runtime *frame;
     lv_layer_t *layer;
     uint64_t now_ms;
+    unsigned max_font_size; /* Target profile; initialized to shared maximum. */
     osg_panel_draw_diagnostic diagnostic;
 } osg_panel_draw;
 

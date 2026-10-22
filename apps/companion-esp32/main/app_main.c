@@ -37,6 +37,7 @@ void app_main(void) {
     if(!buffer||!osg_panel_draw_init(&renderer,board,buffer,bytes)) {
         ESP_LOGE("companion","LVGL display pool/buffer allocation failed (%u buffer bytes)",(unsigned)bytes);free(buffer);return;
     }
+    renderer.max_font_size=osg_workspace_rich()?128:48;
     if (!osg_init(&runtime, &osg_demo_panel, osg_raster_display(&renderer.diagnostic_font, board.width, board.height), NULL, NULL)) {
         ESP_LOGE("companion", "Unsupported panel/display profile"); return;
     }
@@ -48,6 +49,19 @@ void app_main(void) {
     char last_hash[72]={0};bool retry_full=false;
     for (;;) {
         uint64_t now=(uint64_t)(esp_timer_get_time()/1000);
+        osg_scene_ticket ticket;const osg_panel *candidate=osg_network_candidate_begin(&ticket);
+        if(candidate){
+            xSemaphoreTake(mutex,portMAX_DELAY);osg_display display=runtime.display;xSemaphoreGive(mutex);
+            osg_panel_source_diagnostic diagnostic={0};
+            bool accepted=osg_init(&drawing,candidate,display,NULL,NULL);
+            if(!accepted){diagnostic.code=OSG_PANEL_SOURCE_INVALID;memcpy(diagnostic.field,"runtime.layout",sizeof("runtime.layout"));}
+            else if(!(accepted=osg_panel_draw_check(&renderer,&drawing,now,true))){
+                diagnostic.code=renderer.diagnostic.code==OSG_WIDGET_DRAW_BUDGET?OSG_PANEL_SOURCE_BUDGET:OSG_PANEL_SOURCE_UNSUPPORTED;
+                memcpy(diagnostic.widget,renderer.diagnostic.widget,sizeof(diagnostic.widget));memcpy(diagnostic.layer,renderer.diagnostic.layer,sizeof(diagnostic.layer));
+                memcpy(diagnostic.field,renderer.diagnostic.field,sizeof(diagnostic.field));diagnostic.required=renderer.diagnostic.required;diagnostic.available=renderer.diagnostic.available;
+            }
+            osg_network_candidate_finish(ticket,accepted,&diagnostic);
+        }
         xSemaphoreTake(mutex,portMAX_DELAY);
         osg_damage damage=osg_render_damage(&runtime,&drawing,now,last_render);
         if(retry_full||strcmp(last_hash,runtime.panel->publication_hash))damage.full=true;

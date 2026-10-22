@@ -6,6 +6,7 @@ export interface CompanionOperation {
   phase:'opening'|'checking-cache'|'downloading'|'rendering'|'awaiting-neutral'|'ready'|'failed';
   completedBytes?:number; totalBytes?:number; cacheHits?:number; cacheMisses?:number;
   errorCode?:string; retryable?:boolean; message?:string;
+  diagnostic?:{widget:string;definition:string;layer:string;field:string;required:number;available:number};
 }
 export interface CompanionHostState {
   panelSaved?: {panelId:string;publicationHash:string};

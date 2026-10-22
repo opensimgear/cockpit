@@ -138,3 +138,14 @@ Firmware 2026.10.20.1 adds the shared flash image cache and structured panel pro
 Firmware 2026.10.20.2 preserves partial USB records across idle polling and protocol requests. A status probe interrupted by a heartbeat no longer makes the heartbeat parse a truncated JSON record and stop the panel.
 
 Firmware 2026.10.21.1 keeps an authenticated, unassigned screen on **No panel assigned** while it checks for assignments. A new panel still opens automatically, and a failed connection or authentication still displays its failure.
+
+Engine 2026.10.22.1 adds common schema-2/schema-3 source admission and LVGL panel
+rendering. Candidates are prepared in fenced immutable banks and checked by the
+display task before adoption. Failed replacements keep the previous panel
+disarmed with a diagnostic banner. A changed page reconnects safely when needed
+and is preserved by stable page ID for the same assigned instance/UI; every
+activation still requires a completed draw, released healthy touch and the
+existing neutral baseline. Cockpit capability negotiation/assignment enablement
+for portable widgets remains in feature #112; see
+[runtime source details](render/WIDGET_SOURCE.md). Matching partition tables are
+required for the larger application partition. Physical qualification is pending.

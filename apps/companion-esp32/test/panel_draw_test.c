@@ -72,7 +72,7 @@ static void mixed_order(void) {
     osg_widget_group broken[]={group,{"empty","Empty",0,0},{"other","Other",1,15}};
     osg_panel_metadata extra={broken,3};osg_panel extra_panel=panel;extra_panel.metadata=&extra;runtime.panel=&extra_panel;full();
     broken[0].label="\xf0\x9f\x9b\xa9";count=writes;assert(!osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100)&&writes==count&&!strcmp(draw.diagnostic.field,"group.label"));
-    extra_panel.metadata=NULL;full();
+    extra_panel.metadata=NULL;strcpy(runtime.screen_message,"Panel budget exceeded: previous panel retained disarmed");full();assert(pixels[479*800+799]==0x3146);runtime.screen_message[0]=0;
 }
 static void catalog(const cJSON *fixture,const char *directory) {
     const cJSON *cases=cJSON_GetObjectItemCaseSensitive(fixture,"cases");
@@ -113,6 +113,8 @@ static void preflight(void) {
     assert(draw.diagnostic.code==OSG_WIDGET_DRAW_TEXT&&!strcmp(draw.diagnostic.widget,"dynamic-instance")&&!strcmp(draw.diagnostic.layer,"value"));
     char unit[241];for(unsigned i=0;i<120;i++){unit[2*i]=(char)0xc3;unit[2*i+1]=(char)0xa9;}unit[240]=0;
     layer.unit=unit;runtime.samples[0].number=42;assert(osg_panel_draw_check(&draw,&runtime,100,true));full();
+    draw.max_font_size=16;count=writes;assert(!osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100)&&writes==count);
+    assert(draw.diagnostic.code==OSG_WIDGET_DRAW_BUDGET&&!strcmp(draw.diagnostic.field,"fontSize")&&draw.diagnostic.required==22&&draw.diagnostic.available==16);draw.max_font_size=128;
     runtime.samples[0].kind=OSG_STRING;strcpy(runtime.samples[0].text,"\xf0\x9f\x9b\xa9");count=writes;
     assert(!osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100)&&writes==count);
     layer.output=-1;layer.paints[OSG_WIDGET_WARNING].text="\xf0\x9f\x9b\xa9";

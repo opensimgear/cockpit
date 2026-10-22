@@ -67,7 +67,10 @@ bool osg_panel_draw_check(osg_panel_draw *draw, const osg_runtime *frame, uint64
             for(unsigned state=0;state<OSG_WIDGET_SOURCE_STATES;state++) {
                 if(!all_states&&state!=current)continue;
                 if(!layer->paints[state].visible||layer->paints[state].opacity<=0)continue;
-                if(layer->kind==OSG_LAYER_TEXT&&!text_check(draw,widget->id,layer,&context,state))return false;
+                if(layer->kind==OSG_LAYER_TEXT){
+                    if(layer->font_size>draw->max_font_size)return fail(draw,OSG_WIDGET_DRAW_BUDGET,widget->id,layer->id,"fontSize",layer->font_size,draw->max_font_size);
+                    if(!text_check(draw,widget->id,layer,&context,state))return false;
+                }
                 if(layer->kind==OSG_LAYER_IMAGE&&layer->asset_id&&*layer->asset_id) {
                     osg_widget_bitmap bitmap;const unsigned w=(unsigned)lround(layer->bounds.width*lv_area_get_width(&box)),h=(unsigned)lround(layer->bounds.height*lv_area_get_height(&box));
                     if(!osg_widget_bound_bitmap((void *)binding,layer->asset_id,w,h,&bitmap))return fail(draw,OSG_WIDGET_DRAW_ASSET,widget->id,layer->id,"asset",0,0);
@@ -143,12 +146,16 @@ static bool paint(void *context,lv_layer_t *layer) {
             } else osg_render_widget(frame,i,draw->now_ms);
             if(!ok)fail(draw,diagnostic.code,widget->id,diagnostic.layer,"draw",diagnostic.required,diagnostic.available);
         }
+        if(ok&&frame->screen_message[0]){
+            fill(draw,0,original.height-22,original.width,22,0x3146);
+            text(draw,6,original.height-18,original.width-12,15,frame->screen_message,0xffe0);
+        }
     }
     frame->display=original;draw->layer=NULL;return ok;
 }
 bool osg_panel_draw_init(osg_panel_draw *draw,osg_board board,void *buffer,size_t bytes) {
     if(!draw)return false;
-    memset(draw,0,sizeof(*draw));draw->diagnostic_font.context=draw;draw->diagnostic_font.write=diagnostic_pixels;
+    memset(draw,0,sizeof(*draw));draw->max_font_size=128;draw->diagnostic_font.context=draw;draw->diagnostic_font.write=diagnostic_pixels;
     return osg_lvgl_init(&draw->backend,board,buffer,bytes);
 }
 void osg_panel_draw_destroy(osg_panel_draw *draw) {

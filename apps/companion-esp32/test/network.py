@@ -15,7 +15,7 @@ flags = [os.environ.get("CC", "gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
 includes = ["test/include", "core", "network", "render", "third_party/cjson", "test"]
 flags += ["-I" + str(APP / p) for p in includes]
 environment = {**os.environ, "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"}
-common = ["core/companion.c", "core/widget.c", "render/widget_state.c", "network/input.c", "network/json.c", "network/workspace.c", "network/publication.c", "network/settings.c", "third_party/cjson/cJSON.c"]
+common = ["core/companion.c", "core/widget.c", "render/widget_state.c", "render/widget_source.c", "network/input.c", "network/json.c", "network/workspace.c", "network/publication.c", "network/panel_source.c", "network/scene_bank.c", "network/settings.c", "third_party/cjson/cJSON.c"]
 for binary, test in (("wire-test", "wire_test.c"), ("client-test", "client_test.c"), ("input-test", "input_test.c"), ("serial-wire-test", "serial_wire_test.c")):
     serial = [str(APP / "network/serial_json.c")] if binary in ("client-test", "serial-wire-test") else []
     subprocess.run([*flags, *[str(APP / p) for p in common], *serial, str(APP / "test" / test), "-lm", "-lcrypto", "-o", str(OUT / binary)], check=True, cwd=ROOT)
