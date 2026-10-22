@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./system-inventory', './system-topology', './system-device-icons']);
+const modules = await loadModules(['./system-inventory', './system-topology', './system-device-icons', './canvas-navigation']);
 const { systemStateLabel } = modules.get('./system-inventory');
 const file = new URL('./SystemTopology.svelte', import.meta.url), source = await readFile(file, 'utf8');
 const { js } = compile(source, { filename: file.pathname, generate: 'server' }), exports = {};

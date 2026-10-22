@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
+  import { canvasNavigation, canvasWheelNavigation } from './canvas-navigation';
   import { systemDeviceIcon } from './system-device-icons';
   import { systemDeviceSubtext, systemStateLabel, type SystemComponent } from './system-inventory';
   import { systemTopology, topologyFit, topologyInitialView, topologyZoom, TOPOLOGY_NODE_WIDTH, type TopologyView } from './system-topology';
@@ -31,13 +32,14 @@
   function zoom(multiplier: number, point = { x: width / 2, y: height / 2 }) { view = topologyZoom(view, multiplier, point); }
   function wheel(event: WheelEvent) {
     event.preventDefault();
-    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1;
-    if (!event.ctrlKey && !event.metaKey) {
-      view = { ...view, x: view.x - event.deltaX * unit, y: view.y - event.deltaY * unit };
+    const navigation = canvasWheelNavigation($canvasNavigation.wheelAction, event, height);
+    if (!navigation.zoom) {
+      view = { ...view, x: view.x - navigation.deltaX, y: view.y - navigation.deltaY };
       return;
     }
+    if (!navigation.deltaY) return;
     const bounds = viewport.getBoundingClientRect();
-    zoom(Math.exp(-event.deltaY * unit * 0.0015), { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+    zoom(navigation.multiplier, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
   }
   function pointerDown(event: PointerEvent) {
     if (event.button !== 0 || (event.target instanceof Element && event.target.closest('button, .connection-port'))) return;
@@ -60,8 +62,8 @@
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
       view = { ...view, x: view.x + (event.key === 'ArrowLeft' ? 50 : event.key === 'ArrowRight' ? -50 : 0), y: view.y + (event.key === 'ArrowUp' ? 50 : event.key === 'ArrowDown' ? -50 : 0) };
-    } else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoom(1.25); }
-    else if (event.key === '-') { event.preventDefault(); zoom(0.8); }
+    } else if (event.key === '+' || event.key === '=') { event.preventDefault(); zoom(1.2); }
+    else if (event.key === '-') { event.preventDefault(); zoom(1 / 1.2); }
     else if (event.key === 'Home' || event.key.toLowerCase() === 'f') { event.preventDefault(); fit(); }
   }
   function reveal(componentId: string) {
@@ -94,9 +96,9 @@
     <div class="topology-tools" aria-label="Topology view controls">
       <button class="topology-fit" type="button" onclick={fit} aria-label="Fit all components" title="Fit all components"><Icon name="fit" size={16}/></button>
       <div class="topology-zoom">
-        <button type="button" onclick={() => zoom(0.8)} aria-label="Zoom out" title="Zoom out">−</button>
+        <button type="button" onclick={() => zoom(1 / 1.2)} aria-label="Zoom out" title="Zoom out">−</button>
         <output aria-label="Topology zoom">{Math.round(view.zoom * 100)}%</output>
-        <button type="button" onclick={() => zoom(1.25)} aria-label="Zoom in" title="Zoom in">+</button>
+        <button type="button" onclick={() => zoom(1.2)} aria-label="Zoom in" title="Zoom in">+</button>
       </div>
     </div>
   </div>
@@ -105,7 +107,7 @@
   </div>
   <!-- A focusable region provides keyboard panning; its nodes remain native buttons. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="topology-viewport" class:dragging bind:this={viewport} role="region" aria-label="Connection graph. Scroll, drag background or use arrow keys to pan; Ctrl or Cmd plus scroll, or plus and minus keys to zoom; Home to fit. Tab to select a component." tabindex="0" onwheel={wheel} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onlostpointercapture={pointerUp} onkeydown={keyboard}>
+  <div class="topology-viewport" class:dragging bind:this={viewport} role="region" aria-label={`Connection graph. Mouse wheel ${$canvasNavigation.wheelAction==='zoom'?'zooms':'pans'}; Ctrl or Cmd plus scroll ${$canvasNavigation.wheelAction==='zoom'?'pans':'zooms'}. Drag background or use arrow keys to pan; plus and minus keys to zoom; Home to fit. Tab to select a component.`} tabindex="0" onwheel={wheel} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp} onlostpointercapture={pointerUp} onkeydown={keyboard}>
     <div class="topology-world" style:width={`${graph.width}px`} style:height={`${graph.height}px`} style:transform={`translate(${view.x}px, ${view.y}px) scale(${view.zoom})`}>
       {#if graph.offline}<div class="offline-zone" style:left={`${graph.offline.x}px`} style:top={`${graph.offline.y}px`} style:width={`${graph.offline.width}px`} style:height={`${graph.offline.height}px`}><strong>Disconnected <span>{graph.offline.count}</span></strong></div>{/if}
       {#each graph.rows as row (row.id)}<div class="bus-label" data-bus-id={row.id} title={row.label} style:left={`${row.x + 48}px`} style:top={`${row.y}px`} style:width={`${row.width - 48}px`}><Icon name={protocolIcons[row.transport]} size={14} /><strong>{row.label}</strong><span>{row.count} {row.count === 1 ? 'device' : 'devices'}</span></div>{/each}
@@ -131,7 +133,7 @@
     </div>
     {#if components.length === 0}<p class="topology-empty">No components match the current filters.</p>{/if}
   </div>
-  <p class="topology-help">One row per protocol; gateways have their own device rows. Select a device to inspect all routes. Scroll or drag to pan · Ctrl/Cmd + scroll to zoom · Fit to show all. Disconnected devices remain unwired on the right.</p>
+  <p class="topology-help">One row per protocol; gateways have their own device rows. Select a device to inspect all routes. Drag to pan · Mouse wheel {$canvasNavigation.wheelAction==='zoom'?'zooms':'pans'} · Ctrl/Cmd + wheel {$canvasNavigation.wheelAction==='zoom'?'pans':'zooms'} · Fit to show all. Disconnected devices remain unwired on the right.</p>
 </section>
 
 <style>

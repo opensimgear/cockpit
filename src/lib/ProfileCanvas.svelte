@@ -12,7 +12,7 @@
   import {canvasRouteNodes,canvasPreviewRoutes,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
   import {profileReshapeWireSegment,profileSetWireRoute,profileInsertWireHandle,profileMoveWireHandle,profileRemoveWireHandle,profileWireHandleOnRoute}from'./profile-wire-layout';
   import {canvasStyling}from'./canvas-styling';
-  import {canvasNavigation}from'./canvas-navigation';
+  import {canvasNavigation,canvasWheelNavigation}from'./canvas-navigation';
   import {inputAvailability}from'./profile-input-availability';
   import {processingSummary} from './profile-processing';
   import type{CompileDiagnostic}from'./profile-compilation';
@@ -365,9 +365,9 @@
   }
   function wheel(event:WheelEvent) {
     event.preventDefault();if(segmentDrag)return;bundlePicker=null;
-    const zoomWheel=($canvasNavigation.wheelAction==='zoom')!==!!(event.ctrlKey||event.metaKey);
-    if(zoomWheel){if(!event.deltaY)return;const rect=stage.getBoundingClientRect();view=canvasZoom(view,event.deltaY<0?1.1:1/1.1,{x:event.clientX-rect.left,y:event.clientY-rect.top});}
-    else view=canvasPan(view,{x:-event.deltaX,y:-event.deltaY});
+    const navigation=canvasWheelNavigation($canvasNavigation.wheelAction,event,stage.clientHeight);
+    if(navigation.zoom){if(!navigation.deltaY)return;const rect=stage.getBoundingClientRect();view=canvasZoom(view,navigation.multiplier,{x:event.clientX-rect.left,y:event.clientY-rect.top});}
+    else view=canvasPan(view,{x:-navigation.deltaX,y:-navigation.deltaY});
   }
   function keyboard(event:KeyboardEvent) {
     if(event.key==='Escape'&&bundlePicker){event.preventDefault();bundlePicker=null;stage?.focus({preventScroll:true});return;}

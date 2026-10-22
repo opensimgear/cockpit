@@ -46,7 +46,7 @@
   <section class="panel preferences-panel canvas-settings" aria-label="Canvas navigation">
     <div class="panel-heading"><h2>Canvas</h2></div>
     <div class="preference-row">
-      <div><strong>Mouse wheel</strong><p id="canvas-wheel-help">Choose the mouse wheel action on profile canvases. Hold Ctrl/⌘ to reverse the action. Changes are saved automatically.</p></div>
+      <div><strong>Mouse wheel</strong><p id="canvas-wheel-help">Choose the mouse wheel action on canvases. Hold Ctrl/⌘ to reverse the action. Changes are saved automatically.</p></div>
       <label class="style-field"><span class="field-label">Mouse wheel</span><select aria-label="Canvas mouse wheel" aria-describedby="canvas-wheel-help" value={$canvasNavigation.wheelAction} onchange={event => setWheelAction(event.currentTarget.value as CanvasWheelAction)}><option value="pan">Scroll (pan)</option><option value="zoom">Zoom</option></select></label>
     </div>
     {#if $canvasNavigation.storageError}<div class="preference-row"><p class="storage-error" role="alert">{$canvasNavigation.storageError}</p></div>{/if}

@@ -378,6 +378,19 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       finally { await page.keyboard.up(modifier); }
       await expect.poll(async () => (await graphTransform()).zoom).toBeGreaterThan(beforeZoom.zoom);
     }
+    await page.evaluate(async()=>{const source=await(await fetch('/src/lib/SystemTopology.svelte')).text();const module=source.match(/from "([^"\n]*canvas-navigation\.ts[^"\n]*)"/)[1];const {setWheelAction}=await import(module);setWheelAction('zoom');});
+    await expect(graphViewport).toHaveAttribute('aria-label',/Mouse wheel zooms/);
+    const beforePreferredZoom=await graphTransform();await page.mouse.wheel(0,-120);
+    await expect.poll(async()=>(await graphTransform()).zoom).toBeGreaterThan(beforePreferredZoom.zoom);
+    assert.ok(Math.abs((await graphTransform()).zoom/beforePreferredZoom.zoom-1.1)<0.00001,'Both canvases use the same wheel zoom step.');
+    for(const modifier of ['Control','Meta']){
+      const beforePan=await graphTransform();await page.keyboard.down(modifier);
+      try{await page.mouse.wheel(0,120);}finally{await page.keyboard.up(modifier);}
+      await expect.poll(async()=>Math.abs((await graphTransform()).y-beforePan.y+120)<0.001).toBe(true);
+      assert.equal((await graphTransform()).zoom,beforePan.zoom);
+    }
+    await page.evaluate(async()=>{const source=await(await fetch('/src/lib/SystemTopology.svelte')).text();const module=source.match(/from "([^"\n]*canvas-navigation\.ts[^"\n]*)"/)[1];const {setWheelAction}=await import(module);setWheelAction('pan');});
+    await expect(graphViewport).toHaveAttribute('aria-label',/Mouse wheel pans/);
     await graph.getByRole('button', { name: 'Fit all components', exact: true }).click();
     const fitControl=graph.getByRole('button',{name:'Fit all components',exact:true});
     await expect(fitControl.locator('svg')).toBeVisible();

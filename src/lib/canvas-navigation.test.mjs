@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
 
-const { createCanvasNavigationStore, canvasNavigation, CANVAS_NAVIGATION_STORAGE_KEY } = (await loadModules(['./canvas-navigation'])).get('./canvas-navigation');
+const { createCanvasNavigationStore, canvasNavigation, canvasWheelNavigation, CANVAS_NAVIGATION_STORAGE_KEY } = (await loadModules(['./canvas-navigation'])).get('./canvas-navigation');
 const plain = value => JSON.parse(JSON.stringify(value));
 function current(store) { let value; store.subscribe(next => { value = next; })(); return plain(value); }
 function memory(saved = null) {
@@ -59,4 +59,18 @@ test('subscribers receive immutable snapshots and can unsubscribe', () => {
   const unsubscribe = store.subscribe(value => { assert.equal(Object.isFrozen(value), true); seen.push(plain(value)); });
   store.setWheelAction('zoom'); unsubscribe(); store.setWheelAction('pan');
   assert.deepEqual(seen, [{ wheelAction: 'pan', storageError: null }, { wheelAction: 'zoom', storageError: null }]);
+});
+
+test('shared canvas wheel actions reverse with either modifier and normalize pixel, line and page scrolling', () => {
+  for (const action of ['pan','zoom']) for (const modifier of [{},{ctrlKey:true},{metaKey:true},{ctrlKey:true,metaKey:true}]) {
+    for (const [deltaMode,unit] of [[0,1],[1,16],[2,500]]) {
+      const event={ctrlKey:false,metaKey:false,deltaX:2,deltaY:-3,deltaMode,...modifier};
+      const navigation=canvasWheelNavigation(action,event,500);
+      assert.equal(navigation.zoom,(action==='zoom')!==!!(event.ctrlKey||event.metaKey));
+      assert.equal(navigation.deltaX,2*unit);assert.equal(navigation.deltaY,-3*unit);
+      assert.equal(navigation.multiplier,1.1);
+    }
+  }
+  assert.equal(canvasWheelNavigation('zoom',{deltaX:0,deltaY:1},500).multiplier,1/1.1);
+  assert.equal(canvasWheelNavigation('zoom',{deltaX:5,deltaY:0},500).multiplier,1);
 });

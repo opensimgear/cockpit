@@ -45,3 +45,14 @@ export function createCanvasNavigationStore(storage?: CanvasNavigationStorage | 
 
 export const canvasNavigation = createCanvasNavigationStore();
 export const setWheelAction = canvasNavigation.setWheelAction;
+
+/** Shared wheel intent for interactive canvases; modifiers reverse the preference. */
+export function canvasWheelNavigation(action: CanvasWheelAction, event: Pick<WheelEvent, 'ctrlKey'|'metaKey'|'deltaMode'|'deltaX'|'deltaY'>, pageHeight: number) {
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? pageHeight : 1;
+  return {
+    zoom: (action === 'zoom') !== !!(event.ctrlKey || event.metaKey),
+    deltaX: event.deltaX * unit,
+    deltaY: event.deltaY * unit,
+    multiplier: event.deltaY === 0 ? 1 : event.deltaY < 0 ? 1.1 : 1 / 1.1,
+  };
+}
