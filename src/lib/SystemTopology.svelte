@@ -92,10 +92,12 @@
   <div class="topology-heading">
     <div><strong>Current system connections</strong><span>{components.length} components · {graph.connectionCount} current connections{graph.nodes.some(node => node.context) ? ' · upstream context included' : ''}</span></div>
     <div class="topology-tools" aria-label="Topology view controls">
-      <button type="button" onclick={() => zoom(0.8)} aria-label="Zoom out" title="Zoom out">−</button>
-      <span aria-live="off">{Math.round(view.zoom * 100)}%</span>
-      <button type="button" onclick={() => zoom(1.25)} aria-label="Zoom in" title="Zoom in">+</button>
-      <button type="button" onclick={fit} aria-label="Fit all components" title="Fit all components">Fit</button>
+      <button class="topology-fit" type="button" onclick={fit} aria-label="Fit all components" title="Fit all components"><Icon name="fit" size={16}/></button>
+      <div class="topology-zoom">
+        <button type="button" onclick={() => zoom(0.8)} aria-label="Zoom out" title="Zoom out">−</button>
+        <output aria-label="Topology zoom">{Math.round(view.zoom * 100)}%</output>
+        <button type="button" onclick={() => zoom(1.25)} aria-label="Zoom in" title="Zoom in">+</button>
+      </div>
     </div>
   </div>
   <div class="topology-legend" aria-label="Connection legend">
@@ -137,10 +139,13 @@
   .topology-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
   .topology-heading strong { display: block; font-size: 12px; font-weight: 550; }
   .topology-heading div > span { display: block; font-size: 10px; color: var(--muted); margin-top: 6px; }
-  .topology-tools { display: flex; align-items: center; gap: 4px; }
-  .topology-tools button { padding: 7px 10px; background: var(--subtle); border: 1px solid var(--line); border-radius: 4px; font-size: 12px; color: var(--soft); }
-  .topology-tools button:hover { color: var(--accent); border-color: var(--accent); }
-  .topology-tools > span { min-width: 42px; text-align: center; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .topology-tools { display: flex; align-items: center; gap: 8px; }
+  .topology-fit { display:grid;place-items:center;flex-shrink:0;width:32px;height:32px;padding:0;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--soft);cursor:pointer; }
+  .topology-fit:hover { background:var(--surface-raised);color:var(--text); }
+  .topology-tools button:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
+  .topology-zoom { display:flex;align-items:center;border:1px solid var(--line);border-radius:6px; }
+  .topology-zoom button { width:30px;height:30px;padding:0;border:0;background:transparent;color:var(--soft);font-size:16px;cursor:pointer; }
+  .topology-zoom output { min-width:44px;text-align:center;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums; }
   .topology-legend { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px 18px; color: var(--muted); font-size: 9px; border-bottom: 1px solid var(--faint-line); }
   .topology-legend span { display: flex; align-items: center; gap: 6px; }
   .topology-legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid var(--accent); }

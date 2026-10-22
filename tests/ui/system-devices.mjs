@@ -379,6 +379,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       await expect.poll(async () => (await graphTransform()).zoom).toBeGreaterThan(beforeZoom.zoom);
     }
     await graph.getByRole('button', { name: 'Fit all components', exact: true }).click();
+    const fitControl=graph.getByRole('button',{name:'Fit all components',exact:true});
+    await expect(fitControl.locator('svg')).toBeVisible();
+    const fitBounds=await fitControl.boundingBox(),zoomBounds=await graph.locator('.topology-zoom').boundingBox();
+    assert.equal(fitBounds.width,32);assert.equal(fitBounds.height,32);assert.ok(fitBounds.x+fitBounds.width<zoomBounds.x);
+    await expect(graph.getByLabel('Topology zoom',{exact:true})).toHaveText(/^[0-9]+%$/);
+    await expect(graph.locator('.topology-zoom')).toHaveCSS('border-radius','6px');
     const graphIds = await graph.locator('[data-component-id]').evaluateAll(nodes => nodes.map(node => node.dataset.componentId).filter(id => id !== 'host').sort());
     assert.deepEqual(graphIds, listIds);
     await expect(graph.locator('.topology-edges text')).toHaveCount(0);
