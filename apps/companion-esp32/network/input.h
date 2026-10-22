@@ -27,6 +27,8 @@ void osg_input_bind(osg_input *, osg_runtime *, bool touch_capable, uint64_t now
 void osg_input_cancel(osg_input *, osg_input_fault);
 void osg_input_poll(osg_input *, bool valid, bool down, int x, int y, uint64_t now);
 void osg_input_render(osg_input *, const osg_panel *, bool finished, bool success, uint64_t now);
+/* A completed display write renews progress, never arming or completing a frame. */
+void osg_input_render_progress(osg_input *, const osg_panel *, uint64_t now);
 bool osg_input_monitor(osg_input *, uint64_t now);
 bool osg_input_can_arm(const osg_input *, uint64_t now);
 bool osg_input_prepare(osg_input *, uint64_t now, uint64_t *epoch);

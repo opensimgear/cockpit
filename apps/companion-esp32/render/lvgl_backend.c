@@ -9,6 +9,7 @@ static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
     const int width = lv_area_get_width(area), height = lv_area_get_height(area);
     if (!backend->rendering || area->x1 < 0 || area->y1 < 0 || area->x2 >= backend->board.width || area->y2 >= backend->board.height || width <= 0 || height <= 0 ||
         !backend->board.write(backend->board.context, area->x1, area->y1, width, height, (const uint16_t *)pixels)) backend->failed = true;
+    if(!backend->failed&&backend->progress)backend->progress(backend->progress_context);
     backend->flushes++;
     lv_display_flush_ready(display);
 }

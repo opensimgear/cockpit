@@ -32,3 +32,5 @@ void vTaskDelay(unsigned);
 int spi_bus_initialize(int,const spi_bus_config_t *,int);
 int spi_bus_add_device(int,const spi_device_interface_config_t *,spi_device_handle_t *);
 int spi_device_polling_transmit(spi_device_handle_t,spi_transaction_t *);
+
+#define SPI_DMA_CH_AUTO 3

@@ -63,5 +63,17 @@ int main(void){
     osg_input_poll(&input,true,false,0,0,104);osg_input_render(&input,&osg_demo_panel,true,true,105);assert(!osg_input_can_arm(&input,106));
     osg_input_render(&input,&another,true,true,107);assert(osg_input_can_arm(&input,108));
     assert(osg_input_prepare(&input,108,&epoch));assert(osg_input_commit(&input,epoch,108,108));assert(!osg_input_peek(&input,edges,16,&n,&epoch,800));
+    /* Long partial-buffer refreshes remain healthy only while real display
+     * writes, touch polling and host acknowledgements keep progressing. */
+    setup();arm(102);osg_input_render(&input,runtime.panel,false,true,103);
+    for(uint64_t now=203;now<2204;now+=100){input.last_ack_ms=now;osg_input_poll(&input,true,false,0,0,now);osg_input_render_progress(&input,runtime.panel,now);assert(osg_input_monitor(&input,now)&&runtime.armed&&input.rendering);}
+    uint64_t progress=input.render_start_ms;
+    osg_panel stale=osg_demo_panel;osg_input_render_progress(&input,&stale,progress+1);assert(input.render_start_ms==progress);
+    input.last_ack_ms=input.last_poll_ms=progress+600;
+    osg_input_render_progress(&input,runtime.panel,progress+600);
+    assert(input.fault==OSG_INPUT_DISPLAY_FAILED&&!runtime.armed&&input.render_start_ms==progress);
+    osg_input_render_progress(&input,runtime.panel,progress+601);assert(input.mode==OSG_INPUT_BLOCKED);
+    setup();input.display_ready=false;osg_input_render(&input,runtime.panel,false,true,102);osg_input_render_progress(&input,runtime.panel,103);assert(!input.display_ready&&!runtime.armed);
+    osg_input_render(&input,runtime.panel,true,true,104);progress=input.render_start_ms;osg_input_render_progress(&input,runtime.panel,105);assert(input.render_start_ms==progress);
     puts("Live queue, baseline races, liveness guards, cancellation and fresh rearm checks passed");return 0;
 }

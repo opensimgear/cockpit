@@ -70,6 +70,11 @@ void osg_input_render(osg_input *q, const osg_panel *panel, bool finished, bool 
     if (panel == q->runtime->panel) q->display_ready = success;
     if (!success && active(q)) osg_input_cancel(q, OSG_INPUT_DISPLAY_FAILED);
 }
+void osg_input_render_progress(osg_input *q,const osg_panel *panel,uint64_t now) {
+    if(!q->rendering||panel!=q->render_panel||panel!=q->runtime->panel)return;
+    /* A late write must not conceal an expired display/touch/host lease. */
+    if(osg_input_monitor(q,now))q->render_start_ms=now;
+}
 bool osg_input_can_arm(const osg_input *q, uint64_t now) {
     if (q->mode != OSG_INPUT_DISARMED || !q->touch_capable || !q->touch_valid || !q->display_ready ||
         !q->runtime->connected || q->runtime->pointer_down || q->runtime->await_release || q->epoch >= UINT64_MAX - 1 ||

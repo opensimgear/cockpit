@@ -15,7 +15,7 @@
 #endif
 #define WIDTH 480
 #define HEIGHT 320
-typedef struct {spi_device_handle_t lcd,pen;SemaphoreHandle_t mutex;uint8_t pixels[64];bool failed;} sunton;
+typedef struct {spi_device_handle_t lcd,pen;SemaphoreHandle_t mutex;uint8_t pixels[1024];bool failed;} sunton;
 static sunton hardware;
 static bool transfer(spi_device_handle_t device,const void *tx,void *rx,size_t bytes){
     spi_transaction_t t={.length=bytes*8,.tx_buffer=tx,.rx_buffer=rx};
@@ -25,7 +25,7 @@ static bool command(sunton *b,uint8_t cmd,const uint8_t *data,size_t bytes){
     gpio_set_level(2,0);if(!transfer(b->lcd,&cmd,NULL,1))return false;
     gpio_set_level(2,1);return !bytes||transfer(b->lcd,data,NULL,bytes);
 }
-/* ESP32 without DMA has a 64-byte SPI FIFO; split even a full raster span. */
+/* Bound each synchronous DMA transfer so touch can share the SPI bus. */
 static bool write_pixels(void *context,int x,int y,int w,int h,const uint16_t *pixels){
     sunton *b=context;
     if(b->failed||!pixels||x<0||y<0||w<=0||h<=0||w>WIDTH-x||h>HEIGHT-y)return false;
@@ -35,7 +35,7 @@ static bool write_pixels(void *context,int x,int y,int w,int h,const uint16_t *p
     bool ok=command(b,0x2a,col,4)&&command(b,0x2b,row,4)&&command(b,0x2c,NULL,0);
     size_t left=(size_t)w*h;
     while(ok&&left){
-        size_t n=left>32?32:left;
+        size_t n=left>sizeof(b->pixels)/2?sizeof(b->pixels)/2:left;
         for(size_t i=0;i<n;i++){b->pixels[i*2]=(uint8_t)(pixels[i]>>8);b->pixels[i*2+1]=(uint8_t)pixels[i];}
         ok=transfer(b->lcd,b->pixels,NULL,n*2);pixels+=n;left-=n;
     }
@@ -88,8 +88,8 @@ bool osg_board_init(osg_board *out){
     gpio_config_t irq={.pin_bit_mask=1ULL<<36,.mode=GPIO_MODE_INPUT};
     if(gpio_config(&irq)!=ESP_OK)return false;
     b->mutex=xSemaphoreCreateMutex();if(!b->mutex)return false;
-    spi_bus_config_t bus={.mosi_io_num=13,.miso_io_num=12,.sclk_io_num=14,.quadwp_io_num=-1,.quadhd_io_num=-1,.max_transfer_sz=64};
-    if(spi_bus_initialize(SPI2_HOST,&bus,SPI_DMA_DISABLED)!=ESP_OK)return false;
+    spi_bus_config_t bus={.mosi_io_num=13,.miso_io_num=12,.sclk_io_num=14,.quadwp_io_num=-1,.quadhd_io_num=-1,.max_transfer_sz=1024};
+    if(spi_bus_initialize(SPI2_HOST,&bus,SPI_DMA_CH_AUTO)!=ESP_OK)return false;
     spi_device_interface_config_t lcd={.clock_speed_hz=24000000,.mode=0,.spics_io_num=15,.queue_size=1};
     spi_device_interface_config_t pen={.clock_speed_hz=2000000,.mode=0,.spics_io_num=33,.queue_size=1};
     if(spi_bus_add_device(SPI2_HOST,&lcd,&b->lcd)!=ESP_OK||spi_bus_add_device(SPI2_HOST,&pen,&b->pen)!=ESP_OK||!init_lcd(b))return false;

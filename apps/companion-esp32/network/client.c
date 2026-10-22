@@ -480,8 +480,8 @@ static void advance(void){
         if(!healthy||render_failed){
             if(render_failed||fault==OSG_INPUT_DISPLAY_FAILED){
                 disconnected();state=PANEL_ERROR;
-                detail=render_failed?"Panel could not render correctly":"Display refresh exceeded the input safety deadline";
-                if(!render_failed){operation.diagnostic.code=OSG_PANEL_SOURCE_BUDGET;osg_copy(operation.diagnostic.field,sizeof(operation.diagnostic.field),"display.refreshMs");operation.diagnostic.required=millis()-input.render_start_ms;operation.diagnostic.available=OSG_TOUCH_LEASE_MS;}
+                detail=render_failed?"Panel could not render correctly":"Display stopped making progress before the input safety deadline";
+                if(!render_failed){operation.diagnostic.code=OSG_PANEL_SOURCE_BUDGET;osg_copy(operation.diagnostic.field,sizeof(operation.diagnostic.field),"display.progressGapMs");operation.diagnostic.required=millis()-input.render_start_ms;operation.diagnostic.available=OSG_TOUCH_LEASE_MS;}
                 operation_failed("render-failed",true);next_request=millis();report("panel-render-failed");return;
             }
             fail("input-cancelled-or-lease-expired-reconnect-required");
@@ -734,6 +734,11 @@ void osg_network_touch(bool valid,bool down,int x,int y){
     bool was_armed=ui.runtime->armed,was_arming=ui.runtime->arming;int previous=ui.runtime->active;
     osg_input_poll(&input,valid,down,x,y,millis());
     if(was_armed!=ui.runtime->armed||was_arming!=ui.runtime->arming||previous!=ui.runtime->active)*ui.dirty=true;
+    xSemaphoreGive(ui.mutex);
+}
+void osg_network_render_progress(const osg_panel *panel){
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    osg_input_render_progress(&input,panel,millis());
     xSemaphoreGive(ui.mutex);
 }
 void osg_network_render(const osg_panel *panel,bool finished,bool success){

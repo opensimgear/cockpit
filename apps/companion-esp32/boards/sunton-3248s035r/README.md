@@ -2,7 +2,7 @@
 
 Profile: sunton-3248s035r. The supplied photos match the yellow 3.5-inch ESP32-WROOM-32 board with the populated XPT2046 resistive controller and four-wire resistive overlay. This profile is for the R variant, not the GT911 capacitive C variant or the smaller 2.8-inch CYD.
 
-The native display is 320×480; the adapter exposes 480×320 landscape. ESP32 target, 4 MB DIO/40 MHz flash, no PSRAM. Only ESP-IDF v5.5.2 is used. It streams RGB565 to the ST7796 over SPI2 with a 64-byte conversion buffer (the non-DMA ESP32 SPI FIFO limit) and no full-screen framebuffer.
+The native display is 320×480; the adapter exposes 480×320 landscape. ESP32 target, 4 MB DIO/40 MHz flash, no PSRAM. Only ESP-IDF v5.5.2 is used. It streams RGB565 to the ST7796 over SPI2 with a bounded 1 KiB conversion buffer and synchronous DMA transfers and no full-screen framebuffer.
 
 ## Cockpit installation
 

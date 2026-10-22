@@ -20,6 +20,7 @@ static osg_runtime runtime, drawing;
 static osg_panel_draw renderer;
 static bool dirty=true;
 static const osg_panel *drawing_panel;
+static void render_progress(void *context){osg_network_render_progress(((osg_runtime *)context)->panel);}
 static void touch_task(void *context){
     osg_board *board=context;
     for(;;){bool down=false;int x=0,y=0;bool valid=board->touch(board->context,&down,&x,&y);
@@ -40,6 +41,7 @@ void app_main(void) {
         ESP_LOGE("companion","LVGL display pool/buffer allocation failed (%u buffer bytes)",(unsigned)bytes);free(buffer);return;
     }
     renderer.max_font_size=(unsigned)osg_render_profile_limits()->font_size;
+    renderer.backend.progress=render_progress;renderer.backend.progress_context=&drawing;
     if (!osg_init(&runtime, &osg_demo_panel, osg_raster_display(&renderer.diagnostic_font, board.width, board.height), NULL, NULL)) {
         ESP_LOGE("companion", "Unsupported panel/display profile"); return;
     }

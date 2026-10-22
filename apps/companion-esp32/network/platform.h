@@ -33,4 +33,5 @@ void osg_network_start(osg_network_ui);
 void osg_network_status(const char *request_id);
 void osg_network_touch(bool valid, bool down, int x, int y);
 void osg_network_render(const osg_panel *, bool finished, bool success);
+void osg_network_render_progress(const osg_panel *);
 #endif

@@ -15,6 +15,10 @@ typedef struct {
     lv_obj_t *surface;
     osg_lvgl_paint paint;
     void *paint_context;
+    /* Synchronous notification after a successful board write; the frame and
+     * presentation fence still need to complete before display readiness. */
+    void (*progress)(void *);
+    void *progress_context;
     bool failed, rendering;
     uint32_t flushes;
 } osg_lvgl_backend;

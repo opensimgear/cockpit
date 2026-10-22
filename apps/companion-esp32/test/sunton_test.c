@@ -4,7 +4,7 @@
 static bool fail_spi,fail_lock;
 static int irq=1,dc=1,z1=1000,z2=2000,raw_x=2050,raw_y=2050;
 static unsigned transmits,pixel_bytes,devices;
-static uint8_t last[512],cmd;
+static uint8_t last[1024],cmd;
 int gpio_config(const gpio_config_t *c){assert(c->pin_bit_mask);return ESP_OK;}
 int gpio_set_level(int pin,int value){if(pin==2)dc=value;return ESP_OK;}
 int gpio_get_level(int pin){assert(pin==36);return irq;}
@@ -13,7 +13,7 @@ int xSemaphoreTake(SemaphoreHandle_t h,unsigned ms){assert(h&&ms==100);return !f
 int xSemaphoreGive(SemaphoreHandle_t h){assert(h);return 1;}
 void vTaskDelay(unsigned ms){assert(ms==150||ms==120);}
 int spi_bus_initialize(int host,const spi_bus_config_t *c,int dma){
- assert(host==SPI2_HOST&&dma==SPI_DMA_DISABLED&&c->mosi_io_num==13&&c->miso_io_num==12&&c->sclk_io_num==14&&c->max_transfer_sz==64);return ESP_OK;
+ assert(host==SPI2_HOST&&dma==SPI_DMA_CH_AUTO&&c->mosi_io_num==13&&c->miso_io_num==12&&c->sclk_io_num==14&&c->max_transfer_sz==1024);return ESP_OK;
 }
 int spi_bus_add_device(int host,const spi_device_interface_config_t *c,spi_device_handle_t *out){
  assert(host==SPI2_HOST&&c->queue_size==1);
@@ -23,7 +23,7 @@ int spi_bus_add_device(int host,const spi_device_interface_config_t *c,spi_devic
 }
 int spi_device_polling_transmit(spi_device_handle_t device,spi_transaction_t *t){
  transmits++;if(fail_spi)return -1;
- assert(t->length%8==0&&t->length<=512);
+ assert(t->length%8==0&&t->length<=8192);
  const uint8_t *tx=t->tx_buffer;
  if(device==(void *)1){
   if(!dc){assert(t->length==8);cmd=tx[0];}
@@ -40,7 +40,9 @@ int main(void){
  assert(board.write(board.context,0,0,3,1,rgb));
  assert(pixel_bytes==6&&!memcmp(last,(uint8_t[]){0xf8,0,7,0xe0,0,0x1f},6));
  uint16_t stripe[100];for(unsigned i=0;i<100;i++)stripe[i]=0xffff;
- assert(board.write(board.context,0,0,100,1,stripe));assert(pixel_bytes==8);
+ assert(board.write(board.context,0,0,100,1,stripe));assert(pixel_bytes==200);
+ uint16_t strip[480*4];for(unsigned i=0;i<480*4;i++)strip[i]=rgb[i%3];
+ unsigned start=transmits;assert(board.write(board.context,0,0,480,4,strip));assert(transmits-start==9&&pixel_bytes==768);
  unsigned before=transmits;assert(!board.write(board.context,479,319,2,1,rgb));assert(transmits==before);
  bool down=true;int x=-1,y=-1;
  assert(board.touch(board.context,&down,&x,&y)&&!down);

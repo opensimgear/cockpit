@@ -10,6 +10,8 @@
 static uint16_t pixels[800 * 480];
 static uint16_t buffer[800 * 8] __attribute__((aligned(64)));
 static unsigned writes, fences;
+static unsigned progress_writes;
+static void progress(void *context){assert(context==&progress_writes);progress_writes++;}
 static bool fail_write, fail_fence;
 static osg_widget_fonts fonts;
 static const cJSON *field(const cJSON *node, const char *key) { return cJSON_GetObjectItemCaseSensitive(node, key); }
@@ -103,6 +105,7 @@ int main(int argc, char **argv) {
     osg_board board = {.width = 800, .height = 480, .write = write_pixels, .present = present}; osg_lvgl_backend backend;
     assert(!osg_lvgl_init(NULL, board, buffer, sizeof(buffer))); assert(!osg_lvgl_init(&backend, board, NULL, sizeof(buffer))); assert(!osg_lvgl_init(&backend, board, buffer, 1));
     assert(osg_lvgl_init(&backend, board, buffer, sizeof(buffer))); assert(!osg_lvgl_render(&backend, NULL, NULL));
+    backend.progress=progress;backend.progress_context=&progress_writes;
     font_limits();
     /* Empty damage must not present; a real absolute subregion must flush. */
     const lv_area_t subregion={120,100,199,131};unsigned no_op_writes=writes,no_op_fences=fences;
@@ -116,7 +119,8 @@ int main(int argc, char **argv) {
         for (size_t j = 0; j < sizeof(pixels) / sizeof(*pixels); j++) { unsigned char rgb[] = {(unsigned char)((pixels[j] >> 11) * 255 / 31), (unsigned char)(((pixels[j] >> 5) & 63) * 255 / 63), (unsigned char)((pixels[j] & 31) * 255 / 31)}; assert(fwrite(rgb, 1, 3, file) == 3); } fclose(file);
     }
     assert(hashes[0] != hashes[1] && hashes[0] != hashes[2] && hashes[2] != hashes[5] && hashes[5] != hashes[6]);
-    unsigned before = fences; fail_write = true; assert(!osg_lvgl_render(&backend, paint, cJSON_GetArrayItem(frames, 0))); assert(fences == before);
+    assert(progress_writes==writes&&progress_writes>0);
+    unsigned before = fences,progress_before=progress_writes; fail_write = true; assert(!osg_lvgl_render(&backend, paint, cJSON_GetArrayItem(frames, 0))); assert(fences == before&&progress_writes==progress_before);
     fail_write = false; fail_fence = true; assert(!osg_lvgl_render(&backend, paint, cJSON_GetArrayItem(frames, 0))); fail_fence = false;
     assert(!osg_lvgl_render(&backend, bad_paint, NULL)); assert(osg_lvgl_render(&backend, paint, cJSON_GetArrayItem(frames, 0)));
     assert(osg_lvgl_render(&backend, primitives, NULL));
