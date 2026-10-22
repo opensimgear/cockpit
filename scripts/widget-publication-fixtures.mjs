@@ -45,7 +45,7 @@ outputs.push([new URL('../examples/companion/shared-systems.bundle.json', import
 outputs.push([new URL('../examples/companion/shared-systems-complete.bundle.json', import.meta.url), await exportBundle(complete, []) + '\n']);
 for (const [url, contents] of outputs) {
   if (process.argv.includes('--check')) {
-    if (readFileSync(url, 'utf8') !== contents) throw new Error(`Widget fixture differs: ${fileURLToPath(url)}`);
+    if (readFileSync(url, 'utf8').replaceAll('\r\n', '\n') !== contents) throw new Error(`Widget fixture differs: ${fileURLToPath(url)}`);
   } else { mkdirSync(new URL('.', url), { recursive: true }); writeFileSync(url, contents); }
 }
 console.log(`${outputs.length} shared widget publication fixtures ${process.argv.includes('--check') ? 'verified' : 'written'}.`);
