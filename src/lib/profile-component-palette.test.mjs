@@ -6,6 +6,10 @@ import {compile} from 'svelte/compiler';
 import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import ts from 'typescript';
+import {loadModules} from './test-module-loader.mjs';
+
+const modules=await loadModules(['./profile-editor','./profile-palette','./profile-processing','./profile-companion-authoring']);
+const {PROCESSING_PRESETS}=modules.get('./profile-processing');
 
 const filename=new URL('./ProfileComponentPalette.svelte',import.meta.url);
 const {js}=compile(await readFile(filename,'utf8'),{filename:filename.pathname,generate:'server'});
@@ -13,8 +17,7 @@ const exports={};
 vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require(name){
   if(name==='svelte/internal/server')return server;
   if(name==='./Icon.svelte')return {default:()=>{}};
-  if(name==='./profile-editor')return {profileCategory:resource=>resource.resourceType};
-  if(name==='./profile-palette')return {PROFILE_PALETTE_MIME:'application/x-osg-profile-component'};
+  if(modules.has(name))return modules.get(name);
   throw new Error(`Unexpected palette import ${name}`);
 }},{filename:filename.pathname});
 const Palette=exports.default;
@@ -29,7 +32,15 @@ test('game integrations are managed by the saved context and never offered as pa
 });
 
 test('all independent component accordions start closed, with groups leading outputs and devices',()=>{
-  const html=body({inventory:[...props.inventory,{id:'module:1',name:'Module',resourceType:'osg-module',availability:'online',attributes:{}},{id:'companion:1',name:'Display',resourceType:'companion',availability:'online',attributes:{componentKind:'paired-companion'}}]}),labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);assert.deepEqual(labels,['Profile groups','Output components','Controllers','OSG devices','Companions']);assert.ok(!/<details[^>]*\bname=/.test(html));assert.ok(!/<details\b[^>]*\sopen(?:[\s=>])/.test(html));
+  const html=body({inventory:[...props.inventory,{id:'module:1',name:'Module',resourceType:'osg-module',availability:'online',attributes:{}},{id:'companion:1',name:'Display',resourceType:'companion',availability:'online',attributes:{componentKind:'paired-companion'}}]}),labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);assert.deepEqual(labels,['Profile groups','Transformation components','Companion panel components','Output components','Controllers','OSG devices','Companions']);assert.ok(!/<details[^>]*\bname=/.test(html));assert.ok(!/<details\b[^>]*\sopen(?:[\s=>])/.test(html));
+});
+
+test('palette renders every real transformation preset and enforces read-only and capacity limits',()=>{
+  for(const patch of [{},{disabled:true},{processingCount:256}]){
+    const html=body(patch),buttons=[...html.matchAll(/<button\b[^>]*data-processing-preset="([^"]+)"[^>]*>/g)];
+    assert.deepEqual(buttons.map(match=>match[1]),Array.from(PROCESSING_PRESETS,([id])=>id));
+    for(const [tag] of buttons)assert.equal(/\sdisabled(?:[\s=>])/.test(tag),!!patch.disabled||patch.processingCount===256);
+  }
 });
 
 test('groups list focuses and renames each frame, with removal explicitly preserving components',()=>{

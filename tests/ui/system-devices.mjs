@@ -127,6 +127,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     if (command !== 'gateway_request') throw Error(`Unexpected invocation: ${command}`);
     const request = clone(args.request); requests.push(request);
     const offset = request.offset ?? 0;
+    if (request.command === 'profile_activation_current') return result({ profileActivation: null });
+    if (request.command === 'profile_game_candidates') return result({ profiles: { gameId: request.gameId, profiles: [], preferredProfileId: null } });
+    if (request.command === 'profile_local_settings_get') return result({ localSettings: { scope: request.scope, gameId: request.gameId ?? null, revision: hash, settings: {}, profileSession: { owner } } });
     if (['profile_list', 'profile_status', 'profile_automatic_status'].includes(request.command)) return result({ profiles: listing });
     if (request.command === 'profile_runtime_topology') {
       const items = request.section === 'nodes'
@@ -218,8 +221,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(nav.getByRole('button', { name: 'Overview', exact: true })).toHaveClass(/\bcurrent\b/);
     await devicesNav.click();
     await expect(devicesNav.locator('.nav-count')).toHaveText('14');
-    await page.getByRole('button', { name: 'Manage HidHide', exact: true }).click();
-    assert.equal(hidHideOpens,1);
+    // Driver management moved to Settings > Outputs. Inventory inspection must
+    // neither offer a setup launcher nor open the external HidHide application.
+    await expect(page.getByRole('button', { name: 'Manage HidHide', exact: true })).toHaveCount(0);
+    assert.equal(hidHideOpens,0);
     await expect(nav.getByRole('button', { name: 'Gateways', exact: true })).toHaveCount(0);
     await expect(nav.getByRole('button', { name: 'Topology', exact: true })).toHaveCount(0);
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
@@ -527,7 +532,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await companionsNav.click();
     await expect(companionSettings).toHaveCount(0);
     await expect(companions.getByRole('button', { name: 'Edit Browser companion local draft', exact: true })).toBeVisible();
-    await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
+    await expect(panels.getByRole('button', { name: /^Edit Fixture panel$/ })).toBeVisible();
     await companions.getByRole('button', { name: 'Edit Browser companion local draft', exact: true }).click();
     await expect(companionName).toHaveValue('Browser companion local draft');
     const beforeBlank = companionUpdates().length;
@@ -539,13 +544,13 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.equal(browserClient.name, 'Browser companion local draft');
     fixture.failCompanionUpdate = true;
     await companionName.fill('Browser companion failed draft');
-    await expect(companionSettings.getByText(/Fixture companion autosave failed/)).toBeVisible();
+    await expect(companionSettings.getByRole('button', { name: /^Error: Fixture companion autosave failed/ })).toBeVisible();
     await expect(companionName).toHaveValue('Browser companion failed draft');
     assert.equal(browserClient.name, 'Browser companion local draft');
     fixture.failCompanionUpdate = false;
     await companionName.fill('Browser companion');
     await expect.poll(() => browserClient.name).toBe('Browser companion');
-    await expect(companionSettings.getByText(/Fixture companion autosave failed/)).toHaveCount(0);
+    await expect(companionSettings.getByRole('button', { name: /^Error: Fixture companion autosave failed/ })).toHaveCount(0);
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(companionSettings).toHaveCount(0);
@@ -572,7 +577,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(companionSettings).toHaveCount(0);
     // Tile edits have the same dedicated detail page as direct device links.
     // Returning from either editor restores both inventories without a save.
-    await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
+    await expect(panels.getByRole('button', { name: /^Edit Fixture panel$/ })).toBeVisible();
     const panelErrorClient=fixture.companions.host.clients.find(c=>c.companionId==='esp32-fixture');
     panelErrorClient.connected=true;panelErrorClient.panelError='Panel uses an unsupported background image.';
     await companions.getByRole('button', { name: 'Edit Known ESP32 companion renamed', exact: true }).click();
@@ -586,12 +591,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     const panelTile=panels.locator('.panel-tile-container').filter({hasText:'Fixture panel'});
     const listDelete=panelTile.getByRole('button',{name:'Delete Fixture panel',exact:true});
-    await page.mouse.move(0,0);await expect(listDelete).toHaveCSS('opacity','0');
+    await page.mouse.move(0,0);await expect(listDelete).toBeVisible();await expect(listDelete).toBeEnabled();
     await panelTile.hover();await expect(listDelete).toHaveCSS('opacity','1');
     await listDelete.click();await expect(deleteItemDialog).toContainText('Delete "Fixture panel" and its assets');await deleteItemDialog.getByRole('button',{name:'Cancel',exact:true}).click();
-    await expect(panels.getByRole('button',{name:/^Fixture panel/})).toBeVisible();
+    await expect(panels.getByRole('button',{name:/^Edit Fixture panel$/})).toBeVisible();
     await expect(panelEditor).toHaveCount(0);
-    await panels.getByRole('button', { name: /^Fixture panel/ }).click();
+    await panels.getByRole('button', { name: /^Edit Fixture panel$/ }).click();
     await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
     const panelProperties=panelEditor.getByRole('complementary',{name:'Widget properties',exact:true});
     await expect(panelProperties).toHaveCount(0);
@@ -644,6 +649,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await panelEditor.getByRole('button',{name:'Add viewport',exact:true}).click();await expect(viewportRows).toHaveCount(2);
     await expect(viewportRows.first().locator('.viewport-delete')).toBeDisabled();
     if(!await panelEditor.locator('summary').filter({hasText:/^Widgets$/}).evaluate(node=>node.parentElement.open))await panelEditor.getByText('Widgets',{exact:true}).click();
+    if(!await panelEditor.getByText('Basic controls',{exact:true}).evaluate(node=>node.parentElement.open))await panelEditor.getByText('Basic controls',{exact:true}).click();
     const paletteButton=panelEditor.locator('.palette').getByRole('button',{name:'Button',exact:true});
     await paletteButton.scrollIntoViewIfNeeded();
     await paletteButton.hover();
@@ -864,7 +870,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(leavePanelDialog).toBeVisible();await leavePanelDialog.getByRole('button',{name:'Discard and continue',exact:true}).click();
     await expect(panelEditor).toHaveCount(0);
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
-    await expect(panels.getByRole('button', { name: /^Fixture panel/ })).toBeVisible();
+    await expect(panels.getByRole('button', { name: /^Edit Fixture panel$/ })).toBeVisible();
     // Chromium's trusted side-button input exercises the browser's native
     // history path. Dispatching both press and release catches double handling
     // that would otherwise skip a section or leave the app at a boundary.
@@ -921,7 +927,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await historyStep('back'); await expect(panels).toBeVisible(); await expect(companionSettings).toHaveCount(0);
     await historyStep('forward'); await expect(companionName).toHaveValue('Browser companion');
     await companionsNav.click();
-    await panels.getByRole('button', { name: /^Fixture panel/ }).click();
+    await panels.getByRole('button', { name: /^Edit Fixture panel$/ }).click();
     await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
     await historyStep('back'); await expect(panels).toBeVisible(); await expect(panelEditor).toHaveCount(0);
     await historyStep('forward'); await expect(panelEditor.getByRole('heading', { name: 'Fixture panel', exact: true, level: 1 })).toBeVisible();
@@ -938,19 +944,21 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const profiles = page.getByRole('region', { name: 'Profiles', exact: true });
     await profilesNav.click();
     await profiles.getByRole('button', { name: 'Edit Default', exact: true }).click();
-    await expect(profiles.getByLabel('Profile name', { exact: true })).toHaveValue('Default');
+    await expect(profiles.getByRole('heading', { name: 'Default', exact: true, level: 1 })).toBeVisible();
     await historyStep('back'); await expect(profiles.getByRole('button', { name: 'Edit Default', exact: true })).toBeVisible();
-    await historyStep('forward'); await expect(profiles.getByLabel('Profile name', { exact: true })).toHaveValue('Default');
+    await historyStep('forward'); await expect(profiles.getByRole('heading', { name: 'Default', exact: true, level: 1 })).toBeVisible();
     await historyStep('back');
     await profiles.getByRole('button', { name: 'Add profile', exact: true }).click();
+    await profiles.getByRole('button', { name: 'Edit profile name', exact: true }).click();
     await profiles.getByLabel('Profile name', { exact: true }).fill('Navigation draft');
+    await profiles.getByLabel('Profile name', { exact: true }).press('Enter');
     const draftHistory = await browserHistory();
     const leaveProfile = page.getByRole('alertdialog', { name: 'Keep your unsaved changes?', exact: true });
     await sideButton('back');
     await expect(leaveProfile).toBeVisible();
     await leaveProfile.getByRole('button', { name: 'Keep editing', exact: true }).click();
     await expect.poll(async () => (await browserHistory()).currentIndex).toBe(draftHistory.currentIndex);
-    await expect(profiles.getByLabel('Profile name', { exact: true })).toHaveValue('Navigation draft');
+    await expect(profiles.getByRole('heading', { name: 'Navigation draft', exact: true, level: 1 })).toBeVisible();
     await sideButton('back'); await expect(leaveProfile).toBeVisible();
     await leaveProfile.getByRole('button', { name: 'Discard and continue', exact: true }).click();
     await expect(profiles.getByRole('button', { name: 'Edit Default', exact: true })).toBeVisible();
@@ -1105,7 +1113,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await waitForInventoryRefresh(); await list.click(); await search.fill('Stale HidHide');
     await devices.locator('[data-component-id="visibility:stale-hide"]').click();
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
-    await details.getByRole('button', { name: 'Manage HidHide', exact: true }).click(); assert.equal(hidHideOpens,2);
+    await expect(details.getByRole('button', { name: 'Manage HidHide', exact: true })).toHaveCount(0);
+    assert.equal(hidHideOpens,0);
     fixture.native.hiddenDevices = fixture.native.hiddenDevices.filter(device => device.id !== 'stale-hide');
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeEnabled({ timeout: 10_000 });
     await expect(details).toContainText('No configured HidHide rule');
@@ -1129,6 +1138,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(leavePanelDialog.getByRole('button',{name:'Save and continue',exact:true})).toHaveAttribute('title',/widget to page 0/);
     await leavePanelDialog.getByRole('button',{name:'Keep editing',exact:true}).click();
     if(!await panelEditor.locator('summary').filter({hasText:/^Widgets$/}).evaluate(node=>node.parentElement.open))await panelEditor.getByText('Widgets',{exact:true}).click();
+    if(!await panelEditor.getByText('Basic controls',{exact:true}).evaluate(node=>node.parentElement.open))await panelEditor.getByText('Basic controls',{exact:true}).click();
     await panelEditor.locator('.palette').getByRole('button',{name:'Text',exact:true}).click();
     for(const name of ['Preview','Save','Export'])await expect(panelEditor.getByRole('button',{name,exact:true})).toBeEnabled();
     await panelEditor.getByRole('button',{name:'Preview',exact:true}).click();await expect(panelEditor.getByRole('button',{name:'Stop preview',exact:true})).toBeEnabled();
