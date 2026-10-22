@@ -63,6 +63,7 @@ jobs:
             .research/lvgl-native/widget-draw-coverage.json
             .research/lvgl-native/panel-draw-coverage.json
             .research/lvgl-native/*.png
+            .research/lvgl-native/software-client-smoke.json
             .research/esp32-content-store-native/coverage.json
             .research/esp32-content-store-native/content-store-test.log
             .research/esp32-render-package-native/coverage.json

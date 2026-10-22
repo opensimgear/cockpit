@@ -297,3 +297,24 @@ the zero-area check before drawing; tiny read-only components otherwise reached
 the compositor with an empty pixel rectangle. The compact run peaks at 15,504
 LVGL pool bytes for this expanded suite. Actual free arena/cache resources and
 physical timing/stack budgets remain separate runtime/hardware checks.
+
+`test/software_client.c` links this same firmware client, immutable banks,
+ordered input controller and LVGL compositor to a local acceptance bridge. Its
+board/task APIs and bounded memory image cache are software adapters. It neither
+uses physical flash nor represents ESP-IDF/touch/DMA qualification. The bridge
+connects to the running dev Cockpit with normal certificate-verified WSS; it does
+not replace the native host, publication validator or session reducer.
+
+`tests/ui/widget-software-native.mjs` passes two live source compositions with one
+unchanged process/binary, independent instances, neutral baselines, real ordered
+touch events, pressed-versus-unknown feedback, held-touch replacement and rejected
+assignment retention. Prepared image pixels also use the existing host image
+protocol and cache-hit reconnect. Run the opt-in test with
+`OSG_WIDGETS_SOFTWARE_NATIVE=1`, `OSG_WIDGETS_SOFTWARE_BIN` pointing to the native
+Linux `software-client` binary, and the existing widget dev Cockpit on CDP 9232 /
+Vite 1422. On Windows the test launches that Linux path through WSL Ubuntu;
+`OSG_WIDGETS_WSL_DISTRO` selects another distribution. Supply the installed
+Playwright module through `OSG_PLAYWRIGHT_MODULE` when it is outside Node's normal
+resolution path. The regular native LVGL suite builds and sanitizer-smokes the
+target; `test/software_client.py --help` supports existing verified LVGL/font
+objects for local iteration.

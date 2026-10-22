@@ -127,3 +127,9 @@ for ppm in OUT.glob('*.ppm'):
     rows = b''.join(b'\0' + rgb[y * width * 3:(y + 1) * width * 3] for y in range(height))
     ppm.with_suffix('.png').write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
 print('Rendered states:', OUT)
+
+# Build/smoke the actual firmware + LVGL software target. Real Cockpit transport
+# acceptance is opt-in via tests/ui/widget-software-native.mjs, outside this CI
+# process; physical ESP32/native Android qualification remains separate.
+from software_client import build as build_software_client
+build_software_client(APP, OUT, flags, font_object, library)

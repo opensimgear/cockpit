@@ -492,3 +492,34 @@ Svelte diagnostics. New compatibility code has 100% line/function and 94.29%
 branch coverage; the C compositor has 100% line/function and 84.31% branch
 coverage. Full actual-Cockpit transport/software-engine acceptance, remaining
 catalog/designer criteria and final Android/release acceptance remain open.
+
+Compatibility commit `bf78b07` passes all six ESP32 jobs in
+[CI run 39712611017](https://github.com/opensimgear/cockpit/actions/runs/39712611017).
+Actual Cockpit transport acceptance now passes at
+`.research/widget-software-native/1792637446762/evidence.json`. An opt-in native
+test uses the running dev Cockpit's normal IPC/publication/assignment operations
+and authenticated certificate-verified WSS service. One unchanged C binary links
+the actual firmware client, source banks, input controller and LVGL compositor;
+only board/task/transport I/O and flash storage are supplied by software adapters.
+Its PID and binary hash remain unchanged across both compositions and reconnect.
+
+The first composition contains one reusable illuminated control; the second
+contains two independently bound instances plus an original prepared image.
+Both retain canonical source identity and complete frame presentation followed
+by a neutral baseline before input. Actual software touch press/release reaches
+the host in order and returns to unknown telemetry instead of inventing a
+confirmed active state. Holding touch through replacement keeps the new panel
+disarmed until release. A glyph-incompatible assignment is rejected while the
+previous panel stays armed and assigned. The host streams 17,280 prepared pixel
+bytes using 12 image requests; reconnect reuses one cached image with zero
+misses/downloads and establishes a new session/baseline. Test credentials and
+temporary publications are removed afterwards.
+
+The test is `tests/ui/widget-software-native.mjs`; build its target using
+`apps/companion-esp32/test/software_client.py` or the native LVGL suite, which now
+also sanitizer-smokes the software target and records `software-client-smoke.json`.
+This is software transport/render/input evidence. The adapter's bounded RAM image
+cache does not qualify durable flash behavior, ESP-IDF task scheduling, physical
+touch/DMA/stack budgets or Android native authentication. Those independent
+hardware/native gates remain unchanged. Remaining milestone/catalog/designer
+acceptance and final Android branch build still need a complete feature audit.
