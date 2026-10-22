@@ -64,7 +64,7 @@ print('LVGL module coverage:', report)
 # definitions and resolves live state/text/gauges inside the C renderer.
 for counter in OUT.glob('widget-draw-test-*.gcda'):
     counter.unlink()
-subprocess.run([os.environ.get('CC', 'gcc'), *flags, '--coverage', '-Wall', '-Wextra', '-Werror', *[str(APP / 'render' / (name + '.c')) for name in ['lvgl_backend', 'widget_fonts', 'widget_source', 'widget_state', 'widget_draw']], str(APP / 'test/widget_draw_test.c'), str(APP / 'third_party/cjson/cJSON.c'), str(font_object), str(library), '-lm', '-o', str(OUT / 'widget-draw-test')], check=True)
+subprocess.run([os.environ.get('CC', 'gcc'), *flags, '--coverage', '-Wall', '-Wextra', '-Werror', *[str(APP / 'render' / (name + '.c')) for name in ['lvgl_backend', 'widget_fonts', 'widget_source', 'widget_state', 'widget_draw']], str(APP / 'core/widget.c'), str(APP / 'test/widget_draw_test.c'), str(APP / 'third_party/cjson/cJSON.c'), str(font_object), str(library), '-lm', '-o', str(OUT / 'widget-draw-test')], check=True)
 subprocess.run([str(OUT / 'widget-draw-test'), str(APP / 'test/widget-draw.json'), str(OUT)], check=True, timeout=60, env=test_environment)
 subprocess.run(['gcov', '-j', '-b', '-c', 'widget-draw-test-widget_draw.gcno'], cwd=OUT, check=True, capture_output=True)
 coverage = json.loads(gzip.decompress((OUT / 'widget-draw-test-widget_draw.gcov.json.gz').read_bytes()))

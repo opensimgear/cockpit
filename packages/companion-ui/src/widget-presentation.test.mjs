@@ -63,6 +63,9 @@ test('text, indicator and gauge values never promote stale or requested state to
   assert.equal(widgetLayerText(text, view.outputs, 100), '50.0 %');
   assert.equal(widgetLayerText(text, view.outputs, 1100), 'STALE');
   assert.equal(widgetLayerText(text, {}, 100), '—');
+  for (const [value, expected] of [['a'.repeat(256), 'a'.repeat(120)], ['é'.repeat(256), 'é'.repeat(120)], ['😀'.repeat(128), '😀'.repeat(60)], ['a'.repeat(119) + '😀tail', 'a'.repeat(119)]]) {
+    assert.equal(widgetLayerText(text, { value: { ...view.outputs.value, value } }, 100), expected);
+  }
   assert.equal(widgetLayerText(view.layers[1], view.outputs, 100), 'LEVEL');
   assert.equal(widgetLayerText(gauge, view.outputs, 100), '');
   assert.equal(widgetGaugeFraction(gauge, view.outputs, 100), 0.5);

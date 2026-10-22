@@ -31,7 +31,10 @@ export function widgetLayerText(layer: WidgetLayer, samples: Record<string, Widg
   if (!layer.outputPort) return String(layer.text);
   const sample = samples[layer.outputPort], current = currentWidgetSample(sample, now);
   if (!current) return sample?.status === 'stale' || sample && sample.status === 'fresh' ? 'STALE' : '—';
-  return typeof current.value === 'number' ? `${current.value.toFixed(layer.precision ?? 0)}${layer.unit ? ` ${layer.unit}` : ''}` : String(current.value ?? '—').slice(0, 120);
+  if (typeof current.value === 'number') return `${current.value.toFixed(layer.precision ?? 0)}${layer.unit ? ` ${layer.unit}` : ''}`;
+  const text = String(current.value ?? '—'); let end = 0;
+  for (const character of text) { if (end + character.length > 120) break; end += character.length; }
+  return text.slice(0, end);
 }
 export function widgetGaugeFraction(layer: WidgetLayer, samples: Record<string, WidgetSample | undefined>, now: number): number {
   if (layer.kind !== 'gauge') return 0;

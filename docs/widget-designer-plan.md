@@ -283,3 +283,15 @@ unit check and admits at most 120 text units. Match the shared 120-unit display
 projection without silently dropping valid host samples. The overall feature
 and acceptance milestones remain unfinished; only physical validation is
 deferred.
+
+The feedback-limit mismatch is now corrected. Component text validates all 256
+UTF-16 units admitted by the host before retaining the shared 120-unit display
+prefix. Browser, Android and device projection all stop before splitting a
+Unicode code point. Unit metadata admits the shared 120-unit bound and validates
+UTF-8/blank content. Legacy fixed-widget text admission remains unchanged. The
+complete-source trace includes a 120-unit Unicode unit; tests cover 256-unit
+values, rejection at 257, invalid suffixes and surrogate-boundary display text.
+All shared UI tests/type checks, device/core/network/cache regressions and real
+LVGL sanitizer checks pass, including 1,357 exact shared text projections.
+Portable text helpers have 100% line/function and 77.22% branch coverage. Actual
+dev Cockpit acceptance passes at `.research/widgets-native-ui/1792631252789/`.

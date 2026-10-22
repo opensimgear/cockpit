@@ -65,7 +65,8 @@ static cJSON *ack_frame(const osg_runtime *r, unsigned widget, bool value) {
     cJSON_AddNumberToObject(f, "version", 1); cJSON_AddStringToObject(f, "type", "feedback"); cJSON_AddStringToObject(f, "clientId", "client"); cJSON_AddStringToObject(f, "sessionId", "session"); cJSON_AddStringToObject(f, "generation", "1"); cJSON_AddStringToObject(f, "publicationHash", r->panel->publication_hash); cJSON_AddStringToObject(f, "controllerInstanceId", "instance"); cJSON_AddStringToObject(f, "sequence", "1"); cJSON_AddStringToObject(f, "bindingGeneration", "1"); cJSON_AddStringToObject(f, "mode", "snapshot");
     cJSON *bindings = cJSON_AddArrayToObject(f, "bindings"), *b = cJSON_CreateObject(); cJSON_AddItemToArray(bindings, b); cJSON_AddStringToObject(b, "outputId", port->id); cJSON_AddStringToObject(b, "channelId", port->channel);
     cJSON *values = cJSON_AddArrayToObject(f, "values"), *v = cJSON_CreateObject(); cJSON_AddItemToArray(values, v); cJSON_AddStringToObject(v, "outputId", port->id); cJSON_AddStringToObject(v, "channelId", port->channel);
-    cJSON_AddBoolToObject(v, "value", value); cJSON_AddStringToObject(v, "status", "fresh"); cJSON_AddStringToObject(v, "unit", "ratio"); cJSON_AddStringToObject(v, "provenance", "game-confirmed"); cJSON_AddStringToObject(v, "sourceKind", "simulator"); cJSON_AddNumberToObject(v, "sourceAgeMs", 0); return ack;
+    const osg_widget_port *contract = &r->panel->widgets[widget].component->definition->outputs[0];
+    cJSON_AddBoolToObject(v, "value", value); cJSON_AddStringToObject(v, "status", "fresh"); cJSON_AddStringToObject(v, "unit", contract->has_unit && !osg_widget_text_blank(contract->unit) ? contract->unit : "ratio"); cJSON_AddStringToObject(v, "provenance", "game-confirmed"); cJSON_AddStringToObject(v, "sourceKind", "simulator"); cJSON_AddNumberToObject(v, "sourceAgeMs", 0); return ack;
 }
 static cJSON *value_at(cJSON *ack) { return cJSON_GetArrayItem(get(get(ack, "feedback"), "values"), 0); }
 static void feedback_checks(osg_runtime *r) {
@@ -111,10 +112,12 @@ static void feedback_checks(osg_runtime *r) {
     cJSON *delta = cJSON_Duplicate(good, true), *f = cJSON_GetObjectItemCaseSensitive(delta, "feedback");
     cJSON_ReplaceItemInObjectCaseSensitive(f, "sequence", cJSON_CreateString("2")); cJSON_ReplaceItemInObjectCaseSensitive(f, "mode", cJSON_CreateString("delta")); cJSON_DeleteItemFromObjectCaseSensitive(f, "bindings"); cJSON_ReplaceItemInObjectCaseSensitive(value_at(delta), "value", cJSON_CreateBool(false)); assert(osg_ack(delta, &s, "1", r, 600)); assert(!r->samples[slot].boolean); cJSON_Delete(delta);
     cJSON *utf8 = ack_frame(r, 14, true); f = cJSON_GetObjectItemCaseSensitive(utf8, "feedback"); cJSON_ReplaceItemInObjectCaseSensitive(f, "bindingGeneration", cJSON_CreateString("2"));
-    char value[243]; for (unsigned i = 0; i < 121; i++) { value[i * 2] = (char)0xc3; value[i * 2 + 1] = (char)0xa9; } value[240] = 0;
+    char value[515]; for (unsigned i = 0; i < 257; i++) { value[i * 2] = (char)0xc3; value[i * 2 + 1] = (char)0xa9; } value[240] = 0;
     cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "value", cJSON_CreateString(value)); assert(osg_ack(utf8, &s, "1", r, 700));
     const unsigned text_slot = r->panel->widgets[14].component->outputs[0].slot; assert(strlen(r->samples[text_slot].text) == 240 && !r->samples[slot].received);
-    value[240] = (char)0xc3; value[241] = (char)0xa9; value[242] = 0; cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "value", cJSON_CreateString(value)); cJSON_ReplaceItemInObjectCaseSensitive(f, "sequence", cJSON_CreateString("2")); assert(!osg_ack(utf8, &s, "1", r, 800));
+    value[240] = (char)0xc3; value[512] = 0; cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "value", cJSON_CreateString(value)); cJSON_ReplaceItemInObjectCaseSensitive(f, "sequence", cJSON_CreateString("2")); assert(osg_ack(utf8, &s, "1", r, 700)); assert(strlen(r->samples[text_slot].text) == 240);
+    value[512] = (char)0xc3; value[514] = 0; cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "value", cJSON_CreateString(value)); cJSON_ReplaceItemInObjectCaseSensitive(f, "sequence", cJSON_CreateString("3")); assert(!osg_ack(utf8, &s, "1", r, 800));
+    value[242] = 0; cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "value", cJSON_CreateString("Valid")); cJSON_ReplaceItemInObjectCaseSensitive(value_at(utf8), "unit", cJSON_CreateString(value)); assert(!osg_ack(utf8, &s, "1", r, 800));
     osg_runtime *previous = malloc(sizeof(*previous)); assert(previous); *previous = *r;
     assert(!osg_render_damage(r, previous, 1699, 700).widgets);
     assert(osg_render_damage(r, previous, 1700, 700).widgets == (UINT32_C(1) << 14));
@@ -165,6 +168,12 @@ static void binding_checks(osg_panel *panel, osg_widget *widgets) {
     metadata.group_count = 0; metadata.groups = NULL; assert(osg_panel_valid(panel)); panel->metadata = NULL;
     assert(!osg_widget_text_valid("\xc0\x80") && !osg_widget_text_valid("\xed\xa0\x80") && !osg_widget_text_valid("\xf4\x90\x80\x80") && !osg_widget_text_valid("\xe2\x82"));
     assert(osg_widget_text_valid("é —") && osg_widget_text_blank(" \xc2\xa0") && !osg_widget_text_blank("Text") && !osg_widget_text_blank(NULL));
+    char wire[1025], display[OSG_TEXT_BYTES]; memset(wire, 'A', 256); wire[256] = 0;
+    assert(osg_widget_feedback_text(wire, display, sizeof(display)) && strlen(display) == 120);
+    wire[256] = 'A'; wire[257] = 0; assert(!osg_widget_feedback_text(wire, display, sizeof(display)));
+    wire[200] = 1; wire[201] = 0; assert(!osg_widget_feedback_text(wire, display, sizeof(display)));
+    memset(wire, 'A', 119); memcpy(wire + 119, "😀tail", sizeof("😀tail")); assert(osg_widget_feedback_text(wire, display, sizeof(display)) && strlen(display) == 119);
+    assert(!osg_widget_feedback_text(NULL, display, sizeof(display)) && !osg_widget_feedback_text("text", NULL, 4) && !osg_widget_feedback_text("é", display, 2));
 }
 void component_tests(void) {
     cJSON *fixture = load("apps/companion-esp32/test/widget-input.json");

@@ -79,11 +79,15 @@ rejection, unsupported glyphs, board failure and recovery. ASan/UBSan pass, with
 `core/widget.h` now separates resolved runtime types from JSON and LVGL. A
 component binding pins its definition and maps each output ID/channel to one of
 32 bounded feedback slots. Multiple ports no longer depend on widget indices.
-Samples own up to 120 UTF-16 units of UTF-8 and retain receive validity and
+Samples own the shared display prefix of up to 120 UTF-16 units of UTF-8 and retain receive validity and
 simulator origin independently of provenance. The existing versioned feedback
 envelope maps those ports and validates a whole immutable frame before a second
 bounded pass commits it. This removes runtime-sized stack copies while keeping
 failed frames atomic, duplicate counters inert and unbound aliases untouched.
+Component text validates the entire host-supported 256-unit wire string before
+retaining that prefix. Browser/Android and device projection stop before
+splitting a Unicode code point at the display boundary. Unit metadata validates
+the full shared 120-unit bound; existing fixed-widget text rules remain.
 
 The existing interaction/lease queue now carries boolean and numeric values.
 Momentary, toggle and selector interactions share its ordering, neutral baseline,

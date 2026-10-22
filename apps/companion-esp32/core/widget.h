@@ -67,6 +67,9 @@ typedef struct {
 } osg_output_contract;
 
 bool osg_widget_text_valid(const char *);
+/* Validate the entire 256-unit wire value, then retain the shared 120-unit
+ * display prefix without splitting a Unicode code point. */
+bool osg_widget_feedback_text(const char *, char *, size_t capacity);
 bool osg_widget_text_blank(const char *);
 bool osg_widget_id_valid(const char *);
 bool osg_widget_input(const osg_widget *, osg_value_kind *, double *fallback);

@@ -28,7 +28,7 @@ add(gated, 10, 'page-0', .505); add(toggle, 11, 'page-0', .745); add(toggle, 12,
 const bipolar = structuredClone(componentDefinition(document, document.presentation.widgets[2])); bipolar.id = 'bipolar-selector';
 bipolar.inputs[0].axisMode = 'bipolar'; bipolar.inputs[0].fallback = -1;
 bipolar.interaction.options = [{ label: 'Reverse', value: -1 }, { label: 'Idle', value: 0 }, { label: 'Forward', value: 1 }]; add(bipolar, 13, 'page-1', .265);
-const text = structuredClone(componentDefinition(document, document.presentation.widgets[4])); text.id = 'portable-text'; text.outputs = [{ name: 'value', label: 'Text', kind: 'text' }];
+const text = structuredClone(componentDefinition(document, document.presentation.widgets[4])); text.id = 'portable-text'; text.outputs = [{ name: 'value', label: 'Text', kind: 'text', unit: 'é'.repeat(120) }];
 add(text, 14, 'page-1', .505);
 document.ui = normalizeToPortableUi(document); document = checked(document);
 const target = { id: 'trace-target', label: 'Logical trace controller', axes: [], buttons: 0, hats: 0 };

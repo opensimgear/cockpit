@@ -40,7 +40,7 @@ for (let i = 0; i < 256; i++) {
   const value = bytes.getFloat64(0); if (Math.abs(value) < 1e21) numbers.push(value);
 }
 for (const value of numbers) for (let precision = 0; precision <= 4; precision++) textCase(value, precision, precision % 2 ? '%' : '');
-for (const value of ['Sample', '', true, false]) textCase(value);
+for (const value of ['Sample', '', true, false, 'a'.repeat(256), 'é'.repeat(256), '😀'.repeat(128), 'a'.repeat(119) + '😀tail']) textCase(value);
 for (const status of ['unknown', 'stale', 'disconnected']) textCase(status === 'stale' ? 50 : null, 1, '%', status);
 textCase(50, 1, '%', 'fresh', 1000);
 const fixture = JSON.stringify({ formatVersion: 1, widgets, frames, textCases }) + '\n', path = 'apps/companion-esp32/test/widget-draw.json';

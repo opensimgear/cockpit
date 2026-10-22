@@ -6,9 +6,9 @@ bool osg_widget_id_valid(const char *s) {
     for (size_t i = 0; s[i]; i++) if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || (i && (s[i] == '_' || s[i] == '-')))) return false;
     return true;
 }
-bool osg_widget_text_valid(const char *value) {
+static bool text_scan(const char *value, unsigned maximum, size_t *prefix_bytes) {
     if (!value) return false;
-    const unsigned char *s = (const unsigned char *)value; unsigned units = 0;
+    const unsigned char *s = (const unsigned char *)value; unsigned units = 0; size_t prefix = 0;
     while (*s) {
         uint32_t code = *s++; unsigned extra;
         if (code < 0x80) extra = 0;
@@ -18,9 +18,17 @@ bool osg_widget_text_valid(const char *value) {
         else return false;
         for (unsigned i = 0; i < extra; i++) { if ((*s & 0xc0) != 0x80) return false; code = code << 6 | (*s++ & 0x3f); }
         if (code < 32 || (extra == 2 && code < 0x800) || (extra == 3 && code < 0x10000) || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff) return false;
-        units += code > 0xffff ? 2 : 1; if (units > 120) return false;
+        units += code > 0xffff ? 2 : 1; if (units > maximum) return false;
+        if (units <= 120) prefix = (size_t)(s - (const unsigned char *)value);
     }
+    if (prefix_bytes) *prefix_bytes = prefix;
     return true;
+}
+bool osg_widget_text_valid(const char *value) { return text_scan(value, 120, NULL); }
+bool osg_widget_feedback_text(const char *value, char *out, size_t capacity) {
+    size_t prefix;
+    if (!out || !text_scan(value, 256, &prefix) || prefix >= capacity) return false;
+    memcpy(out, value, prefix); out[prefix] = 0; return true;
 }
 bool osg_widget_input(const osg_widget *w, osg_value_kind *kind, double *fallback) {
     if (!w || !kind || !fallback) return false;

@@ -35,7 +35,7 @@ static osg_sample sample(const cJSON *v) {
     const cJSON *value = get(v, "value"); s.available = !cJSON_IsNull(value);
     if (cJSON_IsBool(value)) { s.kind = OSG_BOOL; s.boolean = cJSON_IsTrue(value); }
     else if (cJSON_IsNumber(value)) { s.kind = OSG_NUMBER; s.number = value->valuedouble; }
-    else if (cJSON_IsString(value)) { s.kind = OSG_STRING; assert(strlen(value->valuestring) < sizeof(s.text)); strcpy(s.text, value->valuestring); }
+    else if (cJSON_IsString(value)) { s.kind = OSG_STRING; assert(osg_widget_feedback_text(value->valuestring, s.text, sizeof(s.text))); }
     return s;
 }
 static bool paint(void *value, lv_layer_t *layer) {
