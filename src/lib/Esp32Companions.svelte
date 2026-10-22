@@ -141,7 +141,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
       <h4>Firmware</h4>
       <p>{hostState.firmwareSource==='development'?'Development firmware from this Cockpit build':'Firmware from published ESP32 companion releases'}</p>
       {#if hostState.firmwareError}<CompanionMessage kind="warning" message={hostState.firmwareError}/>{/if}
-      <button disabled={busy || installing || installOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for updates</button>
+      <div class="firmware-available"><span>Available <strong>{hostState.firmwareVersion??'Unknown'}</strong></span><button class="firmware-refresh" aria-label="Refresh available firmware" title="Refresh available firmware" disabled={busy || installing || installOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} /></button></div>
       {#if !port}
         <CompanionMessage message="Select a port to detect firmware"/>
       {:else if detecting}
@@ -208,6 +208,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
   {/if}
 </section>
 <style>
+ .firmware-available{display:flex;align-items:center;gap:8px}.firmware-refresh{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:4px;flex-shrink:0}
  .usb button.danger{background:#9b2430;border-color:#bc3441;color:#fff}.usb button.danger:hover{background:#b32b38;border-color:#e35d69}
  .firmware-install-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.firmware-progress{position:relative;flex:1;min-width:160px;height:36px;margin-left:auto;overflow:hidden;background:#101c27;border:1px solid #456170;border-radius:5px}.firmware-progress-fill{height:100%;background:#326c58;transition:width .2s}.firmware-progress span{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-weight:600}.connection-setup,.panel-setup{border-top:1px solid #344452;margin-top:24px;padding-top:4px}.connection-row label{flex:1;min-width:180px}.connection-setup .device-row{max-width:600px}
  .firmware-versions{display:grid;gap:6px;margin-top:12px}.firmware-versions p{margin:0}

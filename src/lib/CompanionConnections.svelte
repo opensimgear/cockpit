@@ -252,16 +252,15 @@
           <div class="firmware-copy">
             <dl class="firmware-versions">
               <div><dt>Current</dt><dd>{firmwareInfo(selected)?.version??'Unknown'}</dd></div>
-              {#if hostState.firmwareVersion}<div><dt>Available</dt><dd>{hostState.firmwareVersion}</dd></div>{/if}
+              <div><dt>Available</dt><dd class="firmware-version-value"><span>{hostState.firmwareVersion??'Unknown'}</span><button class="firmware-refresh" aria-label="Refresh available firmware" title="Refresh available firmware" disabled={busy || updating || updateOpen} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} /></button></dd></div>
             </dl>
             <p>{hostState.firmwareSource==='development'?'Development firmware from this Cockpit build':'Firmware from published ESP32 companion releases'}</p>
           </div>
-          {#if !updateOpen}
+          {#if !updateOpen && outdated(selected)}
             <div class="firmware-actions">
-              <button disabled={busy || updating} onclick={()=>action(async()=>{await send('companion_firmware_check');})}><Icon name="refresh" size={16} />Check for updates</button>
-              {#if outdated(selected)}<span class="firmware-update" title={firmwareUpdateDisabledReason || undefined} aria-label={firmwareUpdateDisabledReason || undefined}><button disabled={!!firmwareUpdateDisabledReason} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button></span>{/if}
+              <span class="firmware-update" title={firmwareUpdateDisabledReason || undefined} aria-label={firmwareUpdateDisabledReason || undefined}><button disabled={!!firmwareUpdateDisabledReason} onclick={()=>action(prepareUpdate)}><Icon name="download" size={16} />Update firmware</button></span>
             </div>
-          {:else}
+          {:else if updateOpen}
             <div class="firmware-update-details">
               <CompanionMessage message="Pairing and Wi-Fi settings are preserved. Keep this companion connected by USB throughout the update."/>
               <div class="firmware-actions"><button disabled={busy || updating || !updatePort || !updateProfile} onclick={()=>action(installUpdate)}><Icon name="download" size={16} />Install update</button>
@@ -289,6 +288,7 @@
   {:else}<div class="empty"><Icon name="monitor" size={30} /><h3>No companions paired</h3><p>Pair a browser, mobile device or ESP32 screen to get started.</p></div>{/if}
 </section>
 <style>
+  .firmware-version-value{display:flex;align-items:center;gap:8px}.firmware-version-value>span{min-width:0}.firmware-refresh{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:4px;flex-shrink:0}
   .tile-messages,.companion-status-messages,.firmware-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.tile-messages{position:absolute;right:12px;bottom:12px;flex-wrap:nowrap}.companion-status-messages{align-self:center}.firmware-heading h3{margin:0}
   .setting input[readonly],.setting input:disabled,.setting select:disabled{color:var(--muted);background:var(--input-bg);border-color:var(--faint-line);cursor:default}.setting:has(input[readonly]),.setting:has(input:disabled),.setting:has(select:disabled){color:var(--muted)}
   .screen-size-input{position:relative;min-width:0}.setting .screen-size-input input{box-sizing:border-box;width:100%;padding-right:42px}.screen-size-info{position:absolute;right:8px;top:0;bottom:0;display:flex;align-items:center}
