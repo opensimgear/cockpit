@@ -235,7 +235,7 @@ static bool component(compiler *c, const cJSON *v, osg_widget *w) {
     if(images) { binding->bitmaps=allocate(c,images*sizeof(*binding->bitmaps));if(!binding->bitmaps)return false; }
     for(unsigned l=0;l<d->layer_count;l++)if(d->layers[l].kind==OSG_LAYER_IMAGE&&*d->layers[l].asset_id) {
         const osg_widget_layer *layer=&d->layers[l];osg_bound_bitmap *bitmap=&binding->bitmaps[binding->bitmap_count++];
-        bitmap->asset_id=layer->asset_id;bitmap->hash=asset_hash(c,layer->asset_id);bitmap->bounds=layer->bounds;
+        bitmap->layer_id=layer->id;bitmap->asset_id=layer->asset_id;bitmap->hash=asset_hash(c,layer->asset_id);bitmap->bounds=layer->bounds;
     }
     c->bitmaps+=images;return c->error->code==OSG_PANEL_SOURCE_OK;
 }

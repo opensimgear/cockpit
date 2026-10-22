@@ -1118,13 +1118,18 @@ mod viewport_tests {
 impl Publication {
     /// Device-sized RGB565 + alpha, streamed separately from the immutable document.
     pub(crate) fn image_chunk(&self, widget_id:&str, width:u32, height:u32, offset:usize)->Result<Value,String>{
+        self.image_layer_chunk(widget_id,None,width,height,offset)
+    }
+    pub(crate) fn image_layer_chunk(&self, widget_id:&str, layer_id:Option<&str>, width:u32, height:u32, offset:usize)->Result<Value,String>{
         ensure(width>0 && height>0 && width<=800 && height<=800 && width as usize*height as usize<=800*480,"Image dimensions exceed the device budget.")?;
-        let key=format!("{widget_id}:{width}:{height}");
+        ensure(id(widget_id) && layer_id.is_none_or(id),"Invalid image identity.")?;
+        let key=format!("{widget_id}:{}:{width}:{height}",layer_id.unwrap_or(""));
         let mut cache=self.raster_cache.lock().map_err(|_|"Image cache unavailable.")?;
         if !cache.contains_key(&key){
             let doc:Value=serde_json::from_str(&self.canonical_document).map_err(|e|e.to_string())?;
-            let widget=doc["presentation"]["widgets"].as_array().and_then(|ws|ws.iter().find(|w|w["id"]==widget_id && w["kind"]=="image")).ok_or("Unknown image widget.")?;
-            let asset=self.assets.iter().find(|a|Some(a.asset_id.as_str())==widget["config"]["assetId"].as_str()).ok_or("Image widget has no asset.")?;
+            let widget=doc["presentation"]["widgets"].as_array().and_then(|ws|ws.iter().find(|w|w["id"]==widget_id)).ok_or("Unknown image widget.")?;
+            let asset_id=widgets::image_asset(&doc,widget,layer_id)?;
+            let asset=self.assets.iter().find(|a|a.asset_id==asset_id).ok_or("Image reference has no published asset.")?;
             let bytes=STANDARD.decode(&asset.base64).map_err(|e|e.to_string())?;
             let image=image::load_from_memory(&bytes).map_err(|_|"Image could not be decoded.")?.resize_exact(width,height,image::imageops::FilterType::Lanczos3).to_rgba8();
             let mut pixels=Vec::with_capacity(width as usize*height as usize*3);
@@ -1137,13 +1142,62 @@ impl Publication {
         // Keep the encoded image reply inside one bounded USB record. Larger
         // chunks require another base64 transfer layer and larger device allocations.
         let end=(offset+1536).min(pixels.len());
-        Ok(json!({"ok":true,"type":"image-chunk","widgetId":widget_id,"width":width,"height":height,"offset":offset,"total":pixels.len(),"base64":STANDARD.encode(&pixels[offset..end]),"publicationHash":self.publication_hash}))
+        let mut reply=json!({"ok":true,"type":"image-chunk","widgetId":widget_id,"width":width,"height":height,"offset":offset,"total":pixels.len(),"base64":STANDARD.encode(&pixels[offset..end]),"publicationHash":self.publication_hash});
+        if let Some(layer_id)=layer_id{reply["layerId"]=json!(layer_id);}
+        Ok(reply)
     }
 }
 
 #[cfg(test)]
-mod image_tests {
+pub(crate) mod image_tests {
     use super::*;
+    pub(crate) fn portable_artwork_upload() -> PublicationUpload {
+        let mut upload:PublicationUpload=serde_json::from_str(include_str!("../tests/fixtures/widgets-base.json")).unwrap();
+        let mut doc:Value=serde_json::from_str(&upload.canonical_document).unwrap();
+        upload.assets.clear();
+        for (id,color) in [("red-art",[255,0,0,128]),("green-art",[0,255,0,255])] {
+            let image=image::RgbaImage::from_pixel(4,4,image::Rgba(color));let mut out=std::io::Cursor::new(Vec::new());image.write_to(&mut out,image::ImageFormat::Png).unwrap();let bytes=out.into_inner();
+            doc["ui"]["assets"].as_array_mut().unwrap().push(json!({"id":id,"mime":"image/png","sha256":hash(&bytes),"sizeBytes":bytes.len()}));
+            upload.assets.push(AssetPayload{asset_id:id.into(),base64:STANDARD.encode(bytes)});
+        }
+        let id=doc["presentation"]["widgets"][0]["config"]["definitionId"].clone();
+        let definitions=doc["presentation"]["definitions"].as_array_mut().unwrap();
+        let definition=definitions.iter_mut().find(|d|d["id"]==id).unwrap();
+        definition["properties"].as_array_mut().unwrap().push(json!({"name":"art","label":"Artwork","type":"asset","default":"red-art"}));
+        for (id,asset) in [("artwork",json!({"property":"art"})),("secondary-art",json!("green-art"))] {
+            definition["layers"].as_array_mut().unwrap().push(json!({"id":id,"label":"Artwork","kind":"image","bounds":{"x":0.1,"y":0.1,"width":0.5,"height":0.5},"assetId":asset}));
+        }
+        let mut newer=definition.clone();newer["version"]=json!(2);newer["properties"].as_array_mut().unwrap().last_mut().unwrap()["default"]=json!("green-art");definitions.push(newer);
+        let mut second=doc["presentation"]["widgets"][0].clone();second["id"]=json!("second-artwork-widget");second["controlIds"]=json!(["second-artwork-input"]);second["feedbackIds"]=json!(["second-artwork-output"]);second["config"]["properties"]["art"]=json!("green-art");
+        doc["presentation"]["widgets"].as_array_mut().unwrap().push(second);
+        doc["ui"]["controls"].as_array_mut().unwrap().push(json!({"id":"second-artwork-input","kind":"button","label":"Second artwork"}));
+        doc["ui"]["feedbackWidgets"].as_array_mut().unwrap().push(json!({"id":"second-artwork-output","kind":"indicator","channelId":"second-artwork-channel","label":"Second artwork"}));
+        let target=doc["targets"][0]["id"].clone();doc["bindings"].as_array_mut().unwrap().push(json!({"controlId":"second-artwork-input","targetId":target,"kind":"button","index":3}));
+        let widgets=doc["presentation"]["widgets"].as_array().unwrap().clone();
+        for page in doc["ui"]["pages"].as_array_mut().unwrap() {
+            let mut items=Vec::new();
+            for widget in widgets.iter().filter(|w|w["pageId"]==page["id"]) {
+                for (field,kind) in [("controlIds","control"),("feedbackIds","feedback")] {
+                    for id in widget[field].as_array().unwrap() { items.push(json!({"kind":kind,"refId":id,"bounds":widget["bounds"]})); }
+                }
+            }
+            page["items"]=json!(items);
+        }
+        upload.canonical_document=serde_json_canonicalizer::to_string(&doc).unwrap();upload.publication_hash=format!("sha256:{}",hash(upload.canonical_document.as_bytes()));upload.capability_fingerprint=None;upload
+    }
+    #[test]
+    fn portable_image_layers_resolve_pinned_properties_and_keep_independent_rasters(){
+        let p=Publication::validate(portable_artwork_upload()).unwrap();let source=p.canonical_document.clone();
+        let read=|widget,layer|{let reply=p.image_layer_chunk(widget,Some(layer),2,3,0).unwrap();assert_eq!(reply["layerId"],layer);assert_eq!(reply["publicationHash"],p.publication_hash);STANDARD.decode(reply["base64"].as_str().unwrap()).unwrap()};
+        assert_eq!(read("widget-0","artwork"),vec![0,248,128].repeat(6));
+        assert_eq!(read("second-artwork-widget","artwork"),vec![224,7,255].repeat(6));
+        assert_eq!(read("widget-0","secondary-art"),vec![224,7,255].repeat(6));
+        assert_eq!(read("widget-0","artwork"),vec![0,248,128].repeat(6));assert_eq!(p.canonical_document,source);
+        for (widget,layer) in [("missing","artwork"),("widget-0","missing"),("widget-0","label"),("widget-0",""),("bad:id","artwork")] { assert!(p.image_layer_chunk(widget,Some(layer),1,1,0).is_err()); }
+        assert!(p.image_chunk("widget-0",1,1,0).is_err());
+        assert!(p.image_layer_chunk("widget-0",Some("artwork"),800,481,0).is_err());assert!(p.image_layer_chunk("widget-0",Some("artwork"),2,3,18).is_err());
+        let reply=p.image_layer_chunk("widget-0",Some("artwork"),144,80,0).unwrap();let wrapped=json!({"command":"serial-reply","linkId":"usb-0000000000000000","requestId":"18446744073709551614","frame":reply});assert!(serde_json::to_vec(&wrapped).unwrap().len()<=4096);
+    }
     #[test]
     fn image_widgets_publish_without_primitives_and_stream_effective_pixels(){
         let mut doc:Value=serde_json::from_str(include_str!("../tests/fixtures/c1-flight-publication.json")).map(|p:Value|serde_json::from_str(p["canonicalDocument"].as_str().unwrap()).unwrap()).unwrap();

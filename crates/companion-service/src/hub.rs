@@ -1182,14 +1182,19 @@ impl Hub {
                     );
                 }
                 if frame["type"]=="image-chunk" {
-                    exact(frame,&["type","sessionId","clientId","generation","publicationHash","widgetId","width","height","offset"],&["version","operation"])?;
+                    exact(frame,&["type","sessionId","clientId","generation","publicationHash","widgetId","width","height","offset"],&["version","operation","layerId"])?;
                     let session=inner.sessions.get_mut(field(frame,"sessionId")?).ok_or("Unknown session.")?;
                     ensure(session.connection==connection_id && session.companion_id==companion && frame["clientId"]==session.client_id && frame["generation"]==session.token.generation.to_string() && frame["publicationHash"]==session.token.publication_hash && !session.armed,"Image transfer requires the current disarmed session.")?;
                     if let Some(operation) = operation_for_session(frame, session)? { session.operation = Some(operation); }
                     session.last_seen=now;
                     let hash=session.token.publication_hash.clone();
                     let p=inner.publications.get(&hash).ok_or("Publication unavailable.")?;
-                    return p.image_chunk(field(frame,"widgetId")?,frame["width"].as_u64().filter(|n|*n<=800).ok_or("Invalid width.")? as u32,frame["height"].as_u64().filter(|n|*n<=800).ok_or("Invalid height.")? as u32,frame["offset"].as_u64().filter(|n|*n<4*1024*1024).ok_or("Invalid offset.")? as usize);
+                    let layer=frame.get("layerId").map(|value|value.as_str().ok_or("Invalid layer ID.")).transpose()?;
+                    let widget=field(frame,"widgetId")?;
+                    let width=frame["width"].as_u64().filter(|n|*n<=800).ok_or("Invalid width.")? as u32;
+                    let height=frame["height"].as_u64().filter(|n|*n<=800).ok_or("Invalid height.")? as u32;
+                    let offset=frame["offset"].as_u64().filter(|n|*n<4*1024*1024).ok_or("Invalid offset.")? as usize;
+                    return if layer.is_some(){p.image_layer_chunk(widget,layer,width,height,offset)}else{p.image_chunk(widget,width,height,offset)};
                 }
                 let mut reply =
                     self.session_frame(&mut inner, frame, connection_id, &companion, now)?;

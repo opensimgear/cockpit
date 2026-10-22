@@ -183,24 +183,45 @@ static bool preparation_heartbeat(void){
     if(!ok)return image_failure("preparation-heartbeat-failed",received?"Cockpit rejected panel preparation heartbeat":request_detail,true);
     return !image_cancelled();
 }
+typedef struct { const char *widget,*layer,*hash; const unsigned char **pixels; uint16_t width,height; } image_reference;
+static bool image_reference_add(image_reference *refs,size_t *count,const char *widget,const char *layer,const char *hash,int width,int height,const unsigned char **pixels){
+    if(*count>=OSG_MAX_WIDGETS)return image_failure("image-count","Panel has too many prepared image references",false);
+    if(width<1||height<1||width>800||height>800||(size_t)width*height>800*480)return image_failure("image-dimensions","Invalid image dimensions",false);
+    if(!osg_hash_id(hash))return image_failure("image-identity","Invalid image content identity",false);
+    refs[(*count)++]=(image_reference){widget,layer,hash,pixels,(uint16_t)width,(uint16_t)height};return true;
+}
+static bool same_image(const image_reference *a,const image_reference *b){return a->width==b->width&&a->height==b->height&&equal(a->hash,b->hash);}
 static bool load_images(osg_image *image,unsigned slot){
     loading_owner=slot;load_interrupted=false;detail="Checking saved images";operation_phase("checking-cache");update_screen();
-    size_t total=0;
+    size_t total=0,reference_count=0;image_reference refs[OSG_MAX_WIDGETS];
     unsigned assets[OSG_MAX_WIDGETS]={0};bool acquired[OSG_MAX_WIDGETS]={false},cached[OSG_MAX_WIDGETS]={false};
     /* The caller has fenced the inactive panel against the renderer. Keep the
      * displayed owner's pins until it is itself safely reusable on a later switch. */
     if(!osg_pixels_panel_begin(slot))return cache_failure();
     for(size_t i=0;i<image->panel.widget_count;i++){
-        osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
+        osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE&&w->kind!=OSG_COMPONENT)continue;
         int x,y,width,height;osg_panel_widget_rect(&image->panel,i,ui.runtime->display.width,ui.runtime->display.height,&x,&y,&width,&height);
-        if(width<1||height<1||width>800||height>800)return image_failure("image-dimensions","Invalid image dimensions",false);
-        if(!osg_hash_id(image->image_hashes[i]))return image_failure("image-identity","Invalid image content identity",false);
-        w->image_width=(uint16_t)width;w->image_height=(uint16_t)height;
+        if(w->kind==OSG_IMAGE){
+            if(!image_reference_add(refs,&reference_count,w->id,NULL,image->image_hashes[i],width,height,&w->pixels))return false;
+            w->image_width=(uint16_t)width;w->image_height=(uint16_t)height;
+        }else{
+            const osg_widget_binding *binding=w->component;
+            if(!binding||(binding->bitmap_count&&!binding->bitmaps))return image_failure("image-reference","Invalid widget image binding",false);
+            if(binding->bitmap_count>OSG_MAX_WIDGETS)return image_failure("image-count","Panel has too many prepared image references",false);
+            for(unsigned b=0;b<binding->bitmap_count;b++){
+                osg_bound_bitmap *bitmap=&binding->bitmaps[b];
+                if(!osg_stable_id(bitmap->layer_id)||!isfinite(bitmap->bounds.width)||!isfinite(bitmap->bounds.height)||bitmap->bounds.width<0||bitmap->bounds.height<0||bitmap->bounds.width>1||bitmap->bounds.height>1)return image_failure("image-reference","Invalid widget image layer",false);
+                const int bw=(int)lround(width*bitmap->bounds.width),bh=(int)lround(height*bitmap->bounds.height);
+                if(!image_reference_add(refs,&reference_count,w->id,bitmap->layer_id,bitmap->hash,bw,bh,&bitmap->pixels))return false;
+                bitmap->width=(uint16_t)bw;bitmap->height=(uint16_t)bh;
+            }
+        }
+    }
+    for(size_t i=0;i<reference_count;i++){
+        const image_reference *ref=&refs[i];
         bool alias=false;
-        for(size_t before=0;before<i;before++)if(image->widgets[before].kind==OSG_IMAGE&&
-            image->widgets[before].image_width==w->image_width&&image->widgets[before].image_height==w->image_height&&
-            equal(image->image_hashes[before],image->image_hashes[i])){alias=true;break;}
-        if(!alias)total+=(size_t)width*height*3;
+        for(size_t before=0;before<i;before++)if(same_image(&refs[before],ref)){alias=true;break;}
+        if(!alias)total+=(size_t)ref->width*ref->height*3;
         if(total>1200*1024)return image_failure("image-budget","Panel images exceed storage limit",false);
     }
     operation.total=total;operation.completed=0;operation.hits=operation.misses=0;
@@ -210,41 +231,39 @@ static bool load_images(osg_image *image,unsigned slot){
     if(!preparation_heartbeat())return false;
     /* Pin every existing candidate asset before reserving misses, so allocation
      * cannot evict a reusable image that occurs later in the new panel. */
-    for(unsigned pass=0;pass<2;pass++)for(size_t i=0;i<image->panel.widget_count;i++){
-        osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE||acquired[i])continue;
-        const size_t bytes=(size_t)w->image_width*w->image_height*3;
-        for(size_t before=0;before<i;before++)if(acquired[before]&&image->widgets[before].kind==OSG_IMAGE&&
-            image->widgets[before].image_width==w->image_width&&image->widgets[before].image_height==w->image_height&&
-            equal(image->image_hashes[before],image->image_hashes[i])){
+    for(unsigned pass=0;pass<2;pass++)for(size_t i=0;i<reference_count;i++){
+        const image_reference *ref=&refs[i];if(acquired[i])continue;
+        const size_t bytes=(size_t)ref->width*ref->height*3;
+        for(size_t before=0;before<i;before++)if(acquired[before]&&same_image(&refs[before],ref)){
             assets[i]=assets[before];cached[i]=cached[before];acquired[i]=true;break;
         }
         if(acquired[i])continue;
-        if(!pass&&!osg_pixels_contains(image->image_hashes[i],w->image_width,w->image_height,bytes))continue;
+        if(!pass&&!osg_pixels_contains(ref->hash,ref->width,ref->height,bytes))continue;
         if(image_cancelled())return false;
         if(pass&&!preparation_heartbeat())return false;
-        if(!osg_pixels_acquire(slot,image->image_hashes[i],w->image_width,w->image_height,bytes,&assets[i],&cached[i]))
+        if(!osg_pixels_acquire(slot,ref->hash,ref->width,ref->height,bytes,&assets[i],&cached[i]))
             return cache_failure();
         acquired[i]=true;
         if(cached[i]){operation.hits++;operation.completed+=bytes;}else operation.misses++;
     }
     static unsigned char chunk[6144];
-    for(size_t i=0;i<image->panel.widget_count;i++){
-        osg_widget *w=&image->widgets[i];if(w->kind!=OSG_IMAGE)continue;
-        const size_t bytes=(size_t)w->image_width*w->image_height*3;
+    for(size_t i=0;i<reference_count;i++){
+        const image_reference *ref=&refs[i];
+        const size_t bytes=(size_t)ref->width*ref->height*3;
         /* The same image may occur more than once in a panel. Once its first
          * widget finishes, later aliases map that entry without another transfer. */
-        if(!cached[i])for(size_t before=0;before<i;before++)if(image->widgets[before].kind==OSG_IMAGE&&assets[before]==assets[i]){
+        if(!cached[i])for(size_t before=0;before<i;before++)if(assets[before]==assets[i]){
             cached[i]=true;break;
         }
         for(size_t offset=0;!cached[i]&&offset<bytes;){
             if(image_cancelled())return false;
             detail="Downloading missing images";operation_phase("downloading");
             cJSON *v=session_message("image-chunk",NULL),*reply=NULL;
-            cJSON_AddStringToObject(v,"widgetId",w->id);cJSON_AddNumberToObject(v,"width",w->image_width);cJSON_AddNumberToObject(v,"height",w->image_height);cJSON_AddNumberToObject(v,"offset",(double)offset);
+            cJSON_AddStringToObject(v,"widgetId",ref->widget);if(ref->layer)cJSON_AddStringToObject(v,"layerId",ref->layer);cJSON_AddNumberToObject(v,"width",ref->width);cJSON_AddNumberToObject(v,"height",ref->height);cJSON_AddNumberToObject(v,"offset",(double)offset);
             bool received=request(v,&reply,3000);
-            bool ok=received&&cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok"))&&equal(osg_string(reply,"type"),"image-chunk")&&equal(osg_string(reply,"widgetId"),w->id)&&equal(osg_string(reply,"publicationHash"),session.publication);
+            bool ok=received&&cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok"))&&equal(osg_string(reply,"type"),"image-chunk")&&equal(osg_string(reply,"widgetId"),ref->widget)&&equal(osg_string(reply,"publicationHash"),session.publication)&&(ref->layer?equal(osg_string(reply,"layerId"),ref->layer):!cJSON_GetObjectItemCaseSensitive(reply,"layerId"));
             size_t count=0;const char *encoded=osg_string(reply,"base64");
-            ok=ok && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==(double)offset && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"total"))==(double)bytes && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"width"))==w->image_width && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"height"))==w->image_height && encoded && osg_platform_crypto.base64(encoded,chunk,sizeof(chunk),&count) && count && count<=bytes-offset && count%3==0;
+            ok=ok && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==(double)offset && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"total"))==(double)bytes && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"width"))==ref->width && cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"height"))==ref->height && encoded && osg_platform_crypto.base64(encoded,chunk,sizeof(chunk),&count) && count && count<=bytes-offset && count%3==0;
             cJSON_Delete(reply);if(!ok)return image_failure(received?"image-download-invalid":"image-download-failed",received?"Image download: Invalid image data":request_detail,!received);
             if(image_cancelled())return false;
             if(!osg_pixels_write(assets[i],offset,chunk,count))return cache_failure();
@@ -252,7 +271,7 @@ static bool load_images(osg_image *image,unsigned slot){
             static char progress[64];snprintf(progress,sizeof(progress),"Loading images %u%%",(unsigned)(operation.completed*100/total));detail=progress;update_screen();
             if(millis()-operation_reported>=500)report(phases[state]);
         }
-        w->pixels=osg_pixels_finish(assets[i]);if(!w->pixels)return cache_failure();
+        *ref->pixels=osg_pixels_finish(assets[i]);if(!*ref->pixels)return cache_failure();
     }
     return !image_cancelled();
 }

@@ -64,7 +64,7 @@ bool osg_store_load(osg_settings *s){if(load_ok)*s=saved_settings;return load_ok
 static unsigned forgets;
 bool osg_store_forget(void){forgets++;return store_ok;}
 static struct {char hash[72];unsigned width,height,pins;size_t bytes,written;bool complete;unsigned char *pixels;} pixel_store[128];
-static bool cache_fail,write_fail,finish_fail,image_request_ok=true;
+static bool cache_fail,write_fail,finish_fail,image_request_ok=true,wrong_image_layer;
 static const char *pixel_error="cache_io";
 static unsigned chunk_requests;
 void osg_pixels_panel_release(unsigned owner){for(unsigned i=0;i<128;i++){pixel_store[i].pins&=~(1u<<owner);if(!pixel_store[i].pins&&!pixel_store[i].complete){free(pixel_store[i].pixels);memset(&pixel_store[i],0,sizeof(pixel_store[i]));}}}
@@ -115,6 +115,7 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
         size_t width=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"width")),height=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"height")),offset=(size_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(v,"offset")),total=width*height*3,count=total-offset;if(count>6144)count=6144;
         unsigned char pixels[6144];memset(pixels,255,count);unsigned char encoded[8193];EVP_EncodeBlock(encoded,pixels,(int)count);
         cJSON_AddStringToObject(*out,"type","image-chunk");cJSON_AddStringToObject(*out,"widgetId",osg_string(v,"widgetId"));cJSON_AddStringToObject(*out,"publicationHash",session.publication);cJSON_AddNumberToObject(*out,"width",(double)width);cJSON_AddNumberToObject(*out,"height",(double)height);cJSON_AddNumberToObject(*out,"offset",(double)offset);cJSON_AddNumberToObject(*out,"total",(double)total);cJSON_AddStringToObject(*out,"base64",(char *)encoded);
+        if(osg_string(v,"layerId"))cJSON_AddStringToObject(*out,"layerId",wrong_image_layer?"other-layer":osg_string(v,"layerId"));
     }else if(!strcmp(type,"heartbeat")||!strcmp(type,"baseline")||!strcmp(type,"input")||!strcmp(type,"close")){
         if(!strcmp(type,"baseline")){baseline_requests++;assert(!mock_host_armed);assert(!strcmp(osg_string(v,"sequence"),"0"));cJSON *values=cJSON_GetObjectItemCaseSensitive(v,"values");assert(cJSON_IsObject(values)&&cJSON_GetArraySize(values)==1&&cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(values,"master")));mock_host_armed=true;mock_button=false;if(touch_during_baseline){osg_network_touch(true,true,100,100);osg_network_touch(true,false,0,0);}}
         if(!strcmp(type,"baseline")&&serial_during_baseline)mock_serial_input="{\"command\":\"stop\"}\n";
@@ -210,6 +211,37 @@ static void idle_assignment_screen_tests(void){
         advance();update_screen();assert(state==WAIT_ASSIGNMENT&&test_runtime.screen==OSG_SCREEN_NO_PANEL);
     }
     stop();
+}
+static void portable_image_tests(const unsigned char *protected_pixels,int protected_asset){
+    const char *a="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",*c="sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",*d="sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    osg_image candidate={0};candidate.panel=osg_demo_panel;candidate.panel.pages=candidate.pages;candidate.panel.widgets=candidate.widgets;candidate.panel.widget_count=2;candidate.panel.page_count=1;candidate.pages[0]=osg_demo_pages[0];
+    candidate.widgets[0]=osg_demo_widgets[0];candidate.widgets[0].kind=OSG_COMPONENT;
+    candidate.widgets[1]=osg_demo_widgets[0];candidate.widgets[1].kind=OSG_IMAGE;candidate.widgets[1].id="legacy-alias";candidate.image_hashes[1]=a;
+    osg_bound_bitmap bitmaps[3]={{.layer_id="artwork",.asset_id="art",.hash=a,.bounds={0,0,1,1}},{.layer_id="small-artwork",.asset_id="art",.hash=a,.bounds={0,0,.5,.5}},{.layer_id="other-artwork",.asset_id="other-art",.hash=c,.bounds={0,0,1,1}}};
+    osg_widget_binding binding={.bitmaps=bitmaps,.bitmap_count=3};candidate.widgets[0].component=&binding;
+    unsigned downloaded=chunk_requests;const int baselines=baseline_requests,inputs=input_requests;
+    assert(load_images(&candidate,0));assert(chunk_requests>downloaded&&operation.hits==1&&operation.misses==2&&operation.completed==operation.total);
+    assert(bitmaps[0].pixels==protected_pixels&&candidate.widgets[1].pixels==protected_pixels);
+    assert(bitmaps[0].width==360&&bitmaps[0].height==182&&bitmaps[1].width==180&&bitmaps[1].height==91&&bitmaps[2].pixels);
+    assert(pixel_store[protected_asset].pins==3&&protected_pixels[0]==255);
+    downloaded=chunk_requests;assert(load_images(&candidate,0));assert(chunk_requests==downloaded&&operation.hits==3&&operation.misses==0);
+    bitmaps[1].hash=d;wrong_image_layer=true;assert(!load_images(&candidate,0));assert(!strcmp(operation.error,"image-download-invalid")&&pixel_store[protected_asset].pins==2&&protected_pixels[0]==255);wrong_image_layer=false;
+    serial_during_image=true;assert(!load_images(&candidate,0)&&load_interrupted&&interrupted_command);serial_during_image=false;cJSON_Delete(interrupted_command);interrupted_command=NULL;
+    assert(pixel_store[protected_asset].pins==2&&protected_pixels[0]==255);
+    assert(load_images(&candidate,0));assert(bitmaps[1].pixels&&operation.completed==operation.total);
+    candidate.widgets[0].component=NULL;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));candidate.widgets[0].component=&binding;
+    binding.bitmaps=NULL;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));binding.bitmaps=bitmaps;
+    binding.bitmap_count=33;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-count"));binding.bitmap_count=3;
+    bitmaps[0].layer_id="bad:id";assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));bitmaps[0].layer_id="artwork";
+    const double invalid[]={NAN,INFINITY,-1,2};
+    for(unsigned i=0;i<4;i++){bitmaps[0].bounds.width=invalid[i];assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));bitmaps[0].bounds.width=1;bitmaps[0].bounds.height=invalid[i];assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-reference"));bitmaps[0].bounds.height=1;}
+    bitmaps[0].bounds.width=0;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-dimensions"));bitmaps[0].bounds.width=1;
+    bitmaps[0].hash="bad";assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-identity"));bitmaps[0].hash=a;
+    osg_bound_bitmap many[32];char layer_ids[32][16];for(unsigned i=0;i<32;i++){snprintf(layer_ids[i],sizeof(layer_ids[i]),"art-%u",i);many[i]=bitmaps[0];many[i].layer_id=layer_ids[i];}
+    binding.bitmaps=many;binding.bitmap_count=32;assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-count"));binding.bitmaps=bitmaps;binding.bitmap_count=2;
+    candidate.panel.widget_count=1;candidate.widgets[0].bounds=(osg_bounds){0,0,1,1};bitmaps[1].bounds=(osg_bounds){0,0,1,1};bitmaps[1].hash=d;
+    assert(!load_images(&candidate,0)&&!strcmp(operation.error,"image-budget"));
+    assert(pixel_store[protected_asset].pins==2&&protected_pixels[0]==255&&baseline_requests==baselines&&input_requests==inputs);
 }
 int main(int argc,char **argv){
     assert(argc==2);osg_json_init();char raw[OSG_REPLY_BYTES];FILE *f=fopen(argv[1],"rb");assert(f);size_t n=fread(raw,1,sizeof(raw),f);fclose(f);fixture=osg_json_parse(raw,n);assert(fixture);
@@ -387,6 +419,7 @@ int main(int argc,char **argv){
     pixel_error="cache_active_corrupt";assert(!cache_failure());assert(!operation.retryable&&strstr(detail,"restart the companion")&&active_pixels[0]==255);pixel_error="cache_io";
     image.panel.widget_count=0;cache_fail=true;assert(load_images(&image,0));assert(operation.total==0&&operation.completed==0);cache_fail=false;image.panel.widget_count=1;
     image.widgets[0].bounds.width=0;assert(!load_images(&image,0));assert(!strcmp(detail,"Invalid image dimensions"));
+    portable_image_tests(active_pixels,active_asset);
     idle_assignment_screen_tests();
     for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);
     cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;

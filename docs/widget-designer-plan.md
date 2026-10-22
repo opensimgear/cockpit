@@ -254,3 +254,32 @@ Both real LVGL harnesses and 1,274 shared state cases also pass with the new
 panel metadata ABI. All 107 native snapshot sources/fixtures match this worktree;
 hashes and the complete admission log are retained in
 `.research/esp32-panel-source-native/`.
+
+Portable image layers now reuse authenticated image-chunk delivery and the
+existing persistent cache, adding an optional layer identity. Host resolution is
+bound to the exact instance properties and pinned revision. Firmware verifies
+the echoed layer, prepares exact dimensions, deduplicates content/dimension
+aliases, pins cache hits before allocating misses and preserves active-owner
+pixels during failures/cancellation. The LVGL lookup is confined to prepared
+pixels in its instance binding. All 116 native host tests pass, including pinned
+artwork/independent instances and current-disarmed-session enforcement. The first
+host-suite attempt hit sandbox loopback/credential-storage restrictions; the
+authorized unrestricted retry passes. Device client/cache regressions pass with
+96.53% line, 74.43% branch and 97.78% function coverage. Real LVGL sanitizer
+coverage is 100% lines/functions and 86.42% branches for the renderer.
+
+The updated native host was rebuilt and the actual dev Cockpit acceptance passes
+at `.research/widgets-native-ui/1792630777228/`. Launch this app through
+`pnpm tauri dev --no-watch --config .research/widgets-dev.json`; a direct Cargo
+build/run missed the dev launch configuration and did not load the frontend.
+No other worktree application was restarted. Complete admission commit `0de7a95`
+passes [ESP32 CI run 39702180315](https://github.com/opensimgear/cockpit/actions/runs/39702180315).
+
+Remaining integration must invoke this preparation on fenced source candidate
+banks, select board-specific JSON/scene/LVGL budgets and connect the main drawing
+loop. Also audit feedback wire limits: the host admits 120 UTF-16 units for units
+and 256 for text, while the current device feedback path still has a 32-byte
+unit check and admits at most 120 text units. Match the shared 120-unit display
+projection without silently dropping valid host samples. The overall feature
+and acceptance milestones remain unfinished; only physical validation is
+deferred.

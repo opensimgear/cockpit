@@ -131,9 +131,29 @@ JSON resource count. Syntax and publication-identity failures remain distinct.
 Candidate admission, the component model and renderer are compiled into firmware
 but are not yet connected to live schema-3 adoption. The active schema-2 delivery
 path, resource negotiation, image cache and raster main loop remain. Integration
-must still fence/reuse candidate banks, prepare their bitmap references, preflight
+must still fence/reuse candidate banks, invoke bitmap preparation for their
+admitted bindings, preflight
 supported font glyphs, select board-specific memory limits and connect dynamic
 state without changing ownership, neutral baselines or leases. Group drawing and
 page-background support also remain to be integrated; page backgrounds currently
 fail explicitly. Browser and Android source authoring limits remain independent
 of these device budgets.
+
+Portable layer artwork now uses the existing authenticated `image-chunk` path
+with an optional `layerId`. The host resolves only that layer in the instance's
+pinned definition revision, using its resolved property overrides. Replies echo
+the layer ID; the firmware rejects a mismatched echo before writing the cache.
+The session must still be current and disarmed. No asset selection or request
+creates input authority. Existing legacy image requests retain their shape.
+
+The device preparation code collects component layers and legacy images into one
+bounded list. Content hash plus exact prepared dimensions remain the cache key,
+so aliases across layers/instances share pixels and differently sized uses stay
+distinct. Existing cached candidate images are pinned before allocating misses;
+the displayed owner's pins remain until its renderer fence permits release.
+Tests cover wrong-layer replies, cancellation, count/dimension/total-byte limits,
+immutable active pixels and progress totals. LVGL can look up prepared pixels
+only in the supplied instance binding, with exact asset/dimension matching.
+All 116 native host tests, device client/cache regressions, full-panel admission
+and both real LVGL sanitizer harnesses pass. This supplies the preparation path;
+it does not yet enable live schema-3 adoption or qualify physical hardware.

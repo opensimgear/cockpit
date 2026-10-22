@@ -3,6 +3,19 @@
 #include <stdio.h>
 #include <string.h>
 
+bool osg_widget_bound_bitmap(void *context, const char *asset_id, unsigned width, unsigned height, osg_widget_bitmap *out) {
+    if (!out) return false;
+    *out = (osg_widget_bitmap){0};
+    const osg_widget_binding *binding = context;
+    if (!binding || !asset_id || !width || !height || !binding->bitmaps || binding->bitmap_count > 32) return false;
+    for (unsigned i = 0; i < binding->bitmap_count; i++) {
+        const osg_bound_bitmap *bitmap = &binding->bitmaps[i];
+        if (bitmap->asset_id && !strcmp(bitmap->asset_id, asset_id) && bitmap->width == width && bitmap->height == height && bitmap->pixels) {
+            *out = (osg_widget_bitmap){bitmap->pixels, bitmap->width, bitmap->height}; return true;
+        }
+    }
+    return false;
+}
 static bool copy(char *out, size_t capacity, const char *value) {
     if (!out || !value || strlen(value) >= capacity) return false;
     memcpy(out, value, strlen(value) + 1); return true;

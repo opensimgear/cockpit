@@ -43,7 +43,7 @@ static void inspect(const osg_widget_arena *arena,const osg_image *image) {
             for(unsigned s=0;s<OSG_WIDGET_SOURCE_STATES;s++)if(layer->paints[s].text)owned_string(arena,layer->paints[s].text);
         }
         if(binding->bitmap_count)owned(arena,binding->bitmaps,binding->bitmap_count*sizeof(*binding->bitmaps));
-        for(unsigned b=0;b<binding->bitmap_count;b++) { const osg_bound_bitmap *bitmap=&binding->bitmaps[b];owned_string(arena,bitmap->asset_id);owned_string(arena,bitmap->hash);assert(osg_hash_id(bitmap->hash)&&!bitmap->pixels&&!bitmap->width&&!bitmap->height); }
+        for(unsigned b=0;b<binding->bitmap_count;b++) { const osg_bound_bitmap *bitmap=&binding->bitmaps[b];owned_string(arena,bitmap->layer_id);owned_string(arena,bitmap->asset_id);owned_string(arena,bitmap->hash);assert(osg_hash_id(bitmap->hash)&&!bitmap->pixels&&!bitmap->width&&!bitmap->height); }
     }
     assert(osg_init(&runtime,&image->panel,(osg_display){.width=800,.height=480,.fill=fill,.text=text},NULL,NULL));
     assert(!runtime.armed&&!runtime.connected&&runtime.await_release);

@@ -10,6 +10,8 @@ typedef struct { const unsigned char *pixels; uint16_t width, height; } osg_widg
 /* RGB565 little-endian plus alpha, reusing the verified device image cache.
  * The immutable bitmap stays pinned throughout the synchronous draw. */
 typedef bool (*osg_widget_bitmap_lookup)(void *, const char *asset_id, unsigned width, unsigned height, osg_widget_bitmap *);
+/* Lookup only prepared pixels in this immutable instance binding. */
+bool osg_widget_bound_bitmap(void *binding, const char *asset_id, unsigned width, unsigned height, osg_widget_bitmap *);
 typedef enum { OSG_WIDGET_DRAW_OK, OSG_WIDGET_DRAW_ARGUMENT, OSG_WIDGET_DRAW_BUDGET, OSG_WIDGET_DRAW_TEXT, OSG_WIDGET_DRAW_ASSET } osg_widget_draw_error;
 typedef struct { osg_widget_draw_error code; const char *layer; size_t required, available; } osg_widget_draw_diagnostic;
 

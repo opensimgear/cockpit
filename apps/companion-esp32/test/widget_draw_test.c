@@ -141,6 +141,20 @@ static void text_limits(void) {
     sample.kind = (osg_value_kind)8; assert(!osg_widget_layer_text(&layer, &context, OSG_WIDGET_NORMAL, out, sizeof(out)));
     layer.kind = OSG_LAYER_LINE; assert(!osg_widget_layer_text(&layer, &context, OSG_WIDGET_NORMAL, out, sizeof(out)));
 }
+static void prepared_bitmap_checks(void) {
+    const unsigned char pixels[] = {0,248,128,224,7,255};
+    osg_bound_bitmap bitmaps[] = {{.asset_id = "art", .width = 2, .height = 1, .pixels = pixels}, {.asset_id = "art", .width = 1, .height = 2, .pixels = pixels}};
+    osg_widget_binding binding = {.bitmaps = bitmaps, .bitmap_count = 2}; osg_widget_bitmap out;
+    assert(osg_widget_bound_bitmap(&binding,"art",2,1,&out) && out.pixels == pixels && out.width == 2 && out.height == 1);
+    assert(osg_widget_bound_bitmap(&binding,"art",1,2,&out) && out.width == 1 && out.height == 2);
+    assert(!osg_widget_bound_bitmap(&binding,"other",2,1,&out) && !out.pixels);
+    assert(!osg_widget_bound_bitmap(&binding,"art",1,1,&out)); bitmaps[0].pixels = NULL; assert(!osg_widget_bound_bitmap(&binding,"art",2,1,&out));
+    bitmaps[0].asset_id = NULL; assert(!osg_widget_bound_bitmap(&binding,"art",2,1,&out));
+    assert(!osg_widget_bound_bitmap(NULL,"art",2,1,&out)); assert(!osg_widget_bound_bitmap(&binding,NULL,2,1,&out));
+    assert(!osg_widget_bound_bitmap(&binding,"art",0,1,&out)); assert(!osg_widget_bound_bitmap(&binding,"art",2,0,&out));
+    assert(!osg_widget_bound_bitmap(&binding,"art",2,1,NULL)); binding.bitmap_count = 33; assert(!osg_widget_bound_bitmap(&binding,"art",2,1,&out)); binding.bitmap_count = 2;
+    binding.bitmaps = NULL; assert(!osg_widget_bound_bitmap(&binding,"art",2,1,&out));
+}
 static void ppm(const char *directory, const char *name) {
     char path[1024]; assert(snprintf(path, sizeof(path), "%s/source-%s.ppm", directory, name) < (int)sizeof(path)); FILE *f = fopen(path, "wb"); assert(f); fprintf(f, "P6\n800 480\n255\n");
     for (unsigned i = 0; i < 800 * 480; i++) { const uint16_t p = pixels[i]; const unsigned char rgb[] = {(unsigned char)((p >> 11) * 255 / 31), (unsigned char)(((p >> 5) & 63) * 255 / 63), (unsigned char)((p & 31) * 255 / 31)}; assert(fwrite(rgb, 1, 3, f) == 3); }
@@ -154,7 +168,7 @@ int main(int argc, char **argv) {
         assert(osg_widget_source_compile(get(w, "definition"), get(w, "properties"), assets, &arena, &components[i], NULL));
         positions[i] = (lv_area_t){(int32_t)lround(num(b, "x") * 800), (int32_t)lround(num(b, "y") * 480), (int32_t)lround((num(b, "x") + num(b, "width")) * 800) - 1, (int32_t)lround((num(b, "y") + num(b, "height")) * 480) - 1};
     }
-    cJSON_Delete(assets); text_cases(fixture); text_limits();
+    cJSON_Delete(assets); text_cases(fixture); text_limits(); prepared_bitmap_checks();
     osg_lvgl_backend backend; assert(osg_lvgl_init(&backend, (osg_board){.width = 800, .height = 480, .write = write_pixels}, buffer, sizeof(buffer)));
     for (const cJSON *frame = get(fixture, "frames")->child; frame; frame = frame->next) {
         assert(osg_lvgl_render(&backend, paint, (void *)frame)); ppm(argv[2], str(frame, "name"));

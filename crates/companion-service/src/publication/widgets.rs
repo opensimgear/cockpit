@@ -102,6 +102,26 @@ fn resolved<'a>(v: &'a Value, properties: &'a Value) -> &'a Value {
         .and_then(|name| properties.get(name))
         .unwrap_or(v)
 }
+/// Resolve artwork from this exact pinned instance, rather than letting a
+/// device select an arbitrary publication asset or another definition revision.
+pub(super) fn image_asset(document: &Value, widget: &Value, layer_id: Option<&str>) -> Result<String, String> {
+    if let Some(layer_id) = layer_id {
+        ensure(widget["kind"] == "component", "Image layers require a portable component.")?;
+        let config = &widget["config"];
+        let definition = document["presentation"]["definitions"].as_array()
+            .and_then(|definitions| definitions.iter().find(|d| d["id"] == config["definitionId"] && d["version"] == config["definitionVersion"]))
+            .ok_or("Unknown widget definition revision.")?;
+        let layer = definition["layers"].as_array().and_then(|layers| layers.iter().find(|l| l["id"] == layer_id && l["kind"] == "image"))
+            .ok_or("Unknown widget image layer.")?;
+        let assets = document["ui"]["assets"].as_array().ok_or("Missing publication assets.")?;
+        let values = properties(definition, &config["properties"], assets)?;
+        let asset = resolved(&layer["assetId"], &values).as_str().filter(|id| !id.is_empty()).ok_or("Widget image layer has no asset.")?;
+        Ok(asset.to_owned())
+    } else {
+        ensure(widget["kind"] == "image", "Portable image requests must identify their layer.")?;
+        widget["config"]["assetId"].as_str().filter(|id| !id.is_empty()).map(str::to_owned).ok_or_else(|| "Image widget has no asset.".into())
+    }
+}
 fn properties(definition: &Value, overrides: &Value, assets: &[Value]) -> Result<Value, String> {
     let definitions = definition["properties"]
         .as_array()

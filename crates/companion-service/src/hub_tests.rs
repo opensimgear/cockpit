@@ -999,3 +999,15 @@ fn device_images_are_external_sized_and_bound_to_the_authenticated_session(){
     assert_eq!(wire(&h,"other-link",request.clone())["ok"],false);
     request["generation"]=json!("2");assert_eq!(wire(&h,"screen-link",request)["ok"],false);
 }
+
+#[test]
+fn portable_image_layer_requests_keep_existing_session_and_input_authority_checks(){
+    let h=Hub::new("host".into(),Arc::new(Sink::default()));let token=paired(&h,"screen");let p=publish(&h,crate::publication::image_tests::portable_artwork_upload());assign(&h,"screen","instance",&p.publication_hash);
+    let open=connect(&h,"screen-link",&token,"instance");let mut request=frame(&open,"image-chunk","0");request.as_object_mut().unwrap().remove("sequence");
+    request["widgetId"]=json!("widget-0");request["layerId"]=json!("artwork");request["width"]=json!(2);request["height"]=json!(3);request["offset"]=json!(0);
+    let reply=wire(&h,"screen-link",request.clone());assert_eq!(reply["ok"],true,"{reply}");assert_eq!(reply["layerId"],"artwork");assert_eq!(reply["total"],18);
+    assert_eq!(wire(&h,"other-link",request.clone())["ok"],false);
+    for (key,value) in [("layerId",json!(null)),("layerId",json!("label")),("layerId",json!("missing")),("widgetId",json!("widget-1")),("generation",json!("2")),("publicationHash",json!("sha256:0000000000000000000000000000000000000000000000000000000000000000"))] { let mut bad=request.clone();bad[key]=value;assert_eq!(wire(&h,"screen-link",bad)["ok"],false); }
+    assert_eq!(baseline(&h,"screen-link",&open,&p)["ok"],true);
+    assert_eq!(wire(&h,"screen-link",request)["ok"],false,"Artwork must not bypass the armed-session restriction");
+}

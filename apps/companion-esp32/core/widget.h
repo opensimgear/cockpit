@@ -46,7 +46,7 @@ typedef struct {
 } osg_widget_component;
 typedef struct { const char *id, *channel; uint8_t slot; } osg_bound_output;
 typedef struct {
-    const char *asset_id, *hash;
+    const char *layer_id, *asset_id, *hash;
     osg_bounds bounds;
     const unsigned char *pixels;
     uint16_t width, height;
