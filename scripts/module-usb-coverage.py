@@ -27,6 +27,7 @@ TEST_FILTERS.extend(["profile_session_virtual::tests", "profile_session_host::ou
                      "gateways::recovery_transport::tests", "stm32::tests::recovery_transport"])
 TEST_FILTERS.append("profile_session_overrides::publication")
 MODULE_TEST_SOURCES = {
+    "window_persistence": [],
     "companion_panels": [],
     "system_inventory": [],
     "system_inventory_associations": [],
@@ -41,6 +42,8 @@ MODULES.extend(["system_inventory", "system_inventory_associations"])
 TEST_FILTERS.append("system_inventory")
 MODULES.append("companion_panels")
 TEST_FILTERS.append("companion_panels::tests")
+MODULES.append("window_persistence")
+TEST_FILTERS.append("window_persistence::tests")
 
 
 def source_stamp(paths, root):

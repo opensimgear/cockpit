@@ -28,6 +28,7 @@ pub struct DesktopState {
     tray_error: Option<String>,
     settings_error: Option<String>,
     minimized_handled: AtomicBool,
+    window_save: crate::window_persistence::SaveWorker,
 }
 
 fn read_preferences(path: &std::path::Path) -> Result<TrayPreferences, String> {
@@ -113,6 +114,13 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let loaded = read_preferences(&path);
     let settings_error = loaded.as_ref().err().cloned();
     let tray_error = create_tray(app).err().map(|e| e.to_string());
+    let handle=app.handle().clone();
+    let window_save=crate::window_persistence::SaveWorker::new(std::time::Duration::from_millis(300),move || {
+        let save_handle=handle.clone();
+        if let Err(error)=handle.run_on_main_thread(move || save_window_state(&save_handle)) {
+            eprintln!("Could not schedule window state save: {error}");
+        }
+    });
     app.manage(DesktopState {
         preferences: Mutex::new(loaded.unwrap_or_default()),
         path,
@@ -120,6 +128,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tray_error,
         settings_error,
         minimized_handled: AtomicBool::new(false),
+        window_save,
     });
     Ok(())
 }
@@ -189,6 +198,13 @@ pub fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     let Some(state) = window.try_state::<DesktopState>() else {
         return;
     };
+    match event {
+        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => state.window_save.changed(),
+        // Flush before destruction (or hiding to tray), while the live window
+        // can still provide its final size and maximized state to the plugin.
+        tauri::WindowEvent::CloseRequested { .. } => save_window_state(window.app_handle()),
+        _ => {},
+    }
     if !state.tray_available {
         return;
     }
@@ -203,6 +219,22 @@ pub fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         }
         _ => {}
     }
+}
+
+pub(crate) fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    use tauri_plugin_window_state::StateFlags;
+    StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
+}
+
+fn save_window_state(app: &tauri::AppHandle) {
+    use tauri_plugin_window_state::AppHandleExt;
+    if let Err(error)=app.save_window_state(window_state_flags()) {
+        eprintln!("Could not save window state: {error}");
+    }
+}
+
+pub(crate) fn shutdown(app: &tauri::AppHandle) {
+    if let Some(state)=app.try_state::<DesktopState>() { state.window_save.stop(); }
 }
 
 // Some platforms do not emit a resize event when minimizing. Check after native

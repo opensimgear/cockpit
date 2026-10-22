@@ -19,6 +19,7 @@ mod dcs_profile;
 mod dcs_physics;
 mod dcs_setup;
 mod desktop;
+mod window_persistence;
 mod game_discovery;
 mod game_activation;
 mod game_context;
@@ -291,9 +292,7 @@ pub fn run() {
             // Progress windows retain their own placement and visibility.
             .with_filter(|label| label == "main")
             .with_state_flags(
-                tauri_plugin_window_state::StateFlags::POSITION
-                    | tauri_plugin_window_state::StateFlags::SIZE
-                    | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                desktop::window_state_flags(),
             )
             .build(),
     );
@@ -358,6 +357,7 @@ pub fn run() {
             event,
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
+            desktop::shutdown(handle);
             handle.state::<profile_activation_window::ActivationWindowState>().shutdown();
             handle.state::<Arc<mcp::Server>>().shutdown();
             handle.state::<NativeGateway>().0.shutdown();
