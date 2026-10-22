@@ -1,3 +1,4 @@
+use crate::boot_wait::{begin_writing, wait_for_boot};
 use espflash::{
     connection::{Connection, ResetAfterOperation, ResetBeforeOperation},
     flasher::Flasher,
@@ -104,34 +105,44 @@ pub fn flash_firmware(
     state: &Arc<Mutex<Value>>,
 ) -> Result<(), String> {
     validate_firmware_for(target, firmware)?;
-    let info = serialport::available_ports()
-        .map_err(flash_error)?
-        .into_iter()
-        .find(|p| p.port_name == port)
-        .ok_or("Choose a connected USB device.")?;
-    let serialport::SerialPortType::UsbPort(info) = info.port_type else {
-        return Err("Choose a USB device.".into());
+    let mut expected_usb = None;
+    let connect = || {
+        let info = serialport::available_ports()
+            .map_err(flash_error)?
+            .into_iter()
+            .find(|p| p.port_name == port)
+            .ok_or("Choose a connected USB device.")?;
+        let serialport::SerialPortType::UsbPort(info) = info.port_type else {
+            return Err("Choose a USB device.".into());
+        };
+        let identity=(info.vid,info.pid,info.serial_number.clone());
+        if expected_usb.as_ref().is_some_and(|expected| expected!=&identity) {
+            return Err("The selected USB device changed. Select the companion again.".into());
+        }
+        expected_usb=Some(identity);
+        let serial = serialport::new(port, 115200)
+            .timeout(Duration::from_secs(3))
+            .open_native()
+            .map_err(flash_error)?;
+        let connection = Connection::new(
+            serial,
+            info,
+            ResetAfterOperation::HardReset,
+            if manual_boot { ResetBeforeOperation::NoReset } else { ResetBeforeOperation::DefaultReset },
+            115200,
+        );
+        Flasher::connect(
+            connection,
+            true,
+            true,
+            false,
+            Some(target.chip()),
+            Some(460800),
+        )
+        .map_err(|error|format!("bootloader-required:{}",flash_error(error)))
     };
-    let serial = serialport::new(port, 115200)
-        .timeout(Duration::from_secs(3))
-        .open_native()
-        .map_err(flash_error)?;
-    let connection = Connection::new(
-        serial,
-        info,
-        ResetAfterOperation::HardReset,
-        if manual_boot { ResetBeforeOperation::NoReset } else { ResetBeforeOperation::DefaultReset },
-        115200,
-    );
-    let mut flasher = Flasher::connect(
-        connection,
-        true,
-        true,
-        false,
-        Some(target.chip()),
-        Some(460800),
-    )
-    .map_err(|error|format!("bootloader-required:{}",flash_error(error)))?;
+    let waiting = state.lock().unwrap_or_else(|p|p.into_inner())["waitingForBoot"] == true;
+    let mut flasher = wait_for_boot(state, waiting, connect)?;
     // The original ESP32 ROM/stub has no GET_SECURITY_INFO command.
     // Read its security eFuses instead (same register layout as esptool).
     let secured = match target {
@@ -150,6 +161,7 @@ pub fn flash_firmware(
             "Automatic installation is unavailable on a secured or flash-encrypted board.".into(),
         );
     }
+    begin_writing(state)?;
     let segments: Vec<_> = firmware
         .iter()
         .filter(|s| writes_segment(state.lock().unwrap_or_else(|p|p.into_inner())["preserveSetup"]==true,s.offset))

@@ -1,4 +1,5 @@
 //! USB companion transport. Operator messages stay on the local side of Hub.
+mod boot_wait;
 mod flash;
 mod reconnect;
 mod recovery;
@@ -117,7 +118,7 @@ impl Manager {
             .clone();
         if flashing["flashing"] == true
             || flashing["flashFinished"] == true
-            || flashing["flashError"].is_string()
+            || flashing["flashError"].is_string() || flashing["flashCancelled"]==true
         {
             return flashing;
         }
@@ -232,7 +233,7 @@ impl Manager {
         }
         self.shutdown_port(port);
         *state =
-            json!({"connected":false,"flashing":true,"stage":"Installing firmware","progress":0,"preserveSetup":preserve});
+            json!({"connected":false,"flashing":true,"stage":if preserve {"Waiting for boot mode"} else {"Installing firmware"},"waitingForBoot":preserve,"progress":0,"preserveSetup":preserve});
         let progress = self.flash_state.clone();
         let port = port.to_owned();
         thread::spawn(move || {
@@ -246,14 +247,29 @@ impl Manager {
                     state["stage"] = json!("Firmware installed");
                 }
                 Err(error) => {
+                    if error=="cancelled" {
+                        state["flashCancelled"]=json!(true);
+                        state["waitingForBoot"]=json!(false);
+                        state["stage"]=json!("Firmware update cancelled");
+                        return;
+                    }
                     if error.starts_with("bootloader-required:"){
-                        state["flashWarning"]=json!("Could not connect to the bootloader. Hold BOOT, tap RESET while holding BOOT, release BOOT, then retry Install update. Keep the USB cable connected.");
+                        state["flashWarning"]=json!(if preserve {"Boot mode was not detected. Cancel this update, then choose Update firmware to try again."} else {"Could not connect to the bootloader. Hold BOOT, tap RESET while holding BOOT, release BOOT, then retry Install update. Keep the USB cable connected."});
                     }
                     state["flashError"] = json!(error.trim_start_matches("bootloader-required:"));
                     state["stage"] = json!("Firmware installation failed");
                 }
             }
         });
+        Ok(())
+    }
+    pub fn cancel_firmware_wait(&self)->Result<(),String>{
+        let mut state=self.flash_state.lock().unwrap_or_else(|p|p.into_inner());
+        if state["flashing"]!=true || state["waitingForBoot"]!=true {
+            return Err("Firmware is already being written or no update is waiting.".into());
+        }
+        state["cancelRequested"]=json!(true);
+        state["stage"]=json!("Cancelling firmware update");
         Ok(())
     }
     pub fn pairing_ports(&self, hub: &Hub, selected: Option<&str>) -> Result<Value, String> {
@@ -1035,6 +1051,18 @@ mod tests {
             changed[key]=value;
             assert!(!same_usb_candidate(&original,&changed));
         }
+    }
+    #[test]
+    fn firmware_cancel_only_accepts_the_boot_wait_and_retains_completion() {
+        let manager=Manager::default();
+        assert!(manager.cancel_firmware_wait().is_err());
+        *manager.flash_state.lock().unwrap()=json!({"flashing":true,"waitingForBoot":true});
+        manager.cancel_firmware_wait().unwrap();
+        assert_eq!(manager.status()["cancelRequested"],true);
+        manager.flash_state.lock().unwrap()["waitingForBoot"]=json!(false);
+        assert!(manager.cancel_firmware_wait().is_err());
+        *manager.flash_state.lock().unwrap()=json!({"flashing":false,"flashCancelled":true});
+        assert_eq!(manager.status()["flashCancelled"],true);
     }
     #[test]
     fn flash_errors_remain_available_for_the_installer_until_an_explicit_retry() {

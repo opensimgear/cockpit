@@ -176,6 +176,24 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       hiddenDevices: offset === 0 ? fixture.native.hiddenDevices : [], controllerAssociations: offset === 0 ? [] : fixture.native.controllerAssociations,
       nextOffset: offset === 0 ? fixture.native.hiddenDevices.length : null } });
     if (request.command === 'companion_status') return result({ companions: fixture.companions });
+    if (['companion_usb_ports','companion_usb_update_prepare'].includes(request.command)) {
+      fixture.companions.usbPorts=[{port:'COM-fixture-companion',name:'Fixture USB',vid:0x1a86,pid:0x7523}];
+      return result({companions:fixture.companions});
+    }
+    if(request.command==='companion_usb_flash'){
+      assert.equal(request.companion.companionId,'esp32-fixture');
+      fixture.companions.usb={connected:false,flashing:true,waitingForBoot:true,stage:'Waiting for boot mode',progress:0};
+      return result({companions:fixture.companions});
+    }
+    if(request.command==='companion_usb_flash_cancel'){
+      assert.equal(fixture.companions.usb.waitingForBoot,true);
+      fixture.companions.usb={connected:false,flashing:false,flashCancelled:true};
+      return result({companions:fixture.companions});
+    }
+    if(request.command==='companion_usb_connect'){
+      fixture.companions.usb={connected:true,port:'COM-fixture-companion'};
+      return result({companions:fixture.companions});
+    }
     if (request.command === 'companion_update') {
       const { companionId, name } = request.companion;
       const client = fixture.companions.host.clients.find(client => client.companionId === companionId);
@@ -554,6 +572,40 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await companionSettings.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await expect(companions.getByRole('button', { name: 'Edit Browser companion', exact: true })).toBeVisible();
     await expect(companionSettings).toHaveCount(0);
+    // The initial click starts the wait; boot detection needs no install click.
+    const beforeFirmware=clone(fixture.companions);
+    const espClient=fixture.companions.host.clients.find(c=>c.companionId==='esp32-fixture');
+    espClient.connected=true;
+    fixture.companions.firmwareVersion='2026.10.22.3';
+    fixture.companions.firmware={'esp32-fixture':{version:'2026.10.21.1',profile:'sunton-3248s035r'}};
+    await companions.getByRole('button',{name:'Edit Known ESP32 companion',exact:true}).click();
+    const firmware=companionSettings.getByRole('region',{name:'Firmware',exact:true});
+    await firmware.getByRole('button',{name:'Update firmware',exact:true}).click();
+    await expect(firmware).toContainText('Switch the device to boot mode');
+    await expect(firmware.getByRole('progressbar',{name:'Firmware update progress'})).toBeVisible();
+    assert.equal(await firmware.locator('.boot-instructions svg').count(),0);
+    await expect(firmware.getByRole('button',{name:'Install update',exact:true})).toHaveCount(0);
+    const cancelFirmware=firmware.getByRole('button',{name:'Cancel',exact:true});
+    await expect(cancelFirmware).toBeEnabled();
+    const barBounds=await firmware.getByRole('progressbar').boundingBox(),cancelBounds=await cancelFirmware.boundingBox();
+    assert.ok(cancelBounds.x>barBounds.x+barBounds.width);
+    await cancelFirmware.click();
+    await expect(firmware.locator('.firmware-update-details')).toHaveCount(0);
+    await firmware.getByRole('button',{name:'Update firmware',exact:true}).click();
+    await expect(cancelFirmware).toBeEnabled();
+    fixture.companions.usb={connected:false,flashing:true,waitingForBoot:false,stage:'Installing firmware',progress:42};
+    await expect(firmware.getByRole('progressbar')).toHaveAttribute('value','42');
+    await expect(cancelFirmware).toBeDisabled();
+    assert.equal(requests.filter(r=>r.command==='companion_usb_flash').length,2);
+    fixture.companions.usb={connected:false,flashing:false,flashFinished:true,progress:100};
+    fixture.companions.firmware['esp32-fixture'].version='2026.10.22.3';
+    await expect(firmware.locator('.firmware-update-details')).toHaveCount(0);
+    await companionSettings.getByRole('button',{name:'Back to Companions',exact:true}).click();
+    Object.assign(espClient,beforeFirmware.host.clients.find(c=>c.companionId===espClient.companionId));
+    fixture.companions.usb=beforeFirmware.usb;
+    delete fixture.companions.firmware;
+    delete fixture.companions.firmwareVersion;
+    delete fixture.companions.usbPorts;
     await devicesNav.click();
     await devices.locator('[data-component-id="companion:esp32-fixture"]').click();
     await expect(deviceConnections).toContainText('USB');

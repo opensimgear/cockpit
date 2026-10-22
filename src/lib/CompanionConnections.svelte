@@ -47,6 +47,7 @@
     const result=await send('companion_usb_update_prepare',{companionId:selectedId});
     updatePort=result.usbPorts?.length===1?result.usbPorts[0].port:'';
     updateOpen=true;
+    await installUpdate();
   }
   async function installUpdate(){
     await send('companion_usb_flash',{companionId:selectedId,port:updatePort,profile:updateProfile});
@@ -103,6 +104,9 @@
         pendingCompanionId = '';
         if (client) edit(client, false);
         else notify('This companion is no longer paired with Cockpit.', 'error');
+      }
+      if(updating && hostState.usb?.flashCancelled){
+        updating=false;await send('companion_usb_connect',{port:updatePort});updateOpen=false;
       }
       if(updating && hostState.usb?.flashError){updating=false;notify(hostState.usb.flashWarning??hostState.usb.flashError,hostState.usb.flashWarning?'warning':'error');}
       if(updating && hostState.usb?.flashFinished){
@@ -262,10 +266,17 @@
             </div>
           {:else if updateOpen}
             <div class="firmware-update-details">
-              <CompanionMessage message="Pairing and Wi-Fi settings are preserved. Keep this companion connected by USB throughout the update."/>
-              <div class="firmware-actions"><button disabled={busy || updating || !updatePort || !updateProfile} onclick={()=>action(installUpdate)}><Icon name="download" size={16} />Install update</button>
-                <button class="danger" disabled={busy || updating} onclick={()=>action(async()=>{if(updatePort)await send('companion_usb_connect',{port:updatePort});updateOpen=false;})}><Icon name="close" size={16} />Cancel</button></div>
-              {#if updating}<div class="firmware-heading"><CompanionMessage message={hostState.usb?.stage||'Updating firmware…'}/><span>{hostState.usb?.progress??0}%</span></div>{/if}
+              <p class="boot-instructions">Switch the device to boot mode: hold BOOT, tap RESET while holding BOOT, then release BOOT. Keep the USB cable connected. The upgrade starts automatically. Pairing and Wi-Fi settings are preserved.</p>
+              <div class="firmware-progress-row">
+                <div class="firmware-progress">
+                  <span>{hostState.usb?.stage || 'Preparing firmware update...'}</span>
+                  <progress aria-label="Firmware update progress" max="100" value={hostState.usb?.waitingForBoot ? undefined : hostState.usb?.progress ?? 0}></progress>
+                </div>
+                <button class="danger" disabled={busy || (updating && (!hostState.usb?.waitingForBoot || hostState.usb?.cancelRequested))} onclick={()=>action(async()=>{
+                  if(updating) await send('companion_usb_flash_cancel');
+                  else {if(updatePort)await send('companion_usb_connect',{port:updatePort});updateOpen=false;}
+                })}>Cancel</button>
+              </div>
             </div>
           {/if}
         </section>
@@ -294,7 +305,7 @@
   .screen-size-input{position:relative;min-width:0}.setting .screen-size-input input{box-sizing:border-box;width:100%;padding-right:42px}.screen-size-info{position:absolute;right:8px;top:0;bottom:0;display:flex;align-items:center}
   .companion-heading-copy{min-width:0}.companion-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px 16px}.companion-title h1{min-width:0}.companion-title .connection-state{display:inline-block;white-space:nowrap}.companion-title .connection-state>span{display:inline-block;vertical-align:middle;margin-right:6px}.firmware-update{display:inline-flex}.firmware-update:has(button:disabled){cursor:not-allowed}.firmware-update button:disabled{pointer-events:none}
   .back-companions{background:transparent;border:0;color:var(--accent);padding:6px 0;margin-bottom:18px;font-size:10px}.back-companions:hover{background:transparent;text-decoration:underline}.settings-panel{padding:21px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.settings-panel .settings-columns{margin-top:0}.page-heading h1{overflow-wrap:anywhere}.page-heading .connection-state{flex-shrink:0}@media(max-width:650px){.page-heading{align-items:flex-start;flex-wrap:wrap}.settings-panel{padding:16px}}
-  .firmware-settings{display:flex;flex-direction:column;align-items:flex-start;gap:18px}.firmware-copy{display:grid;gap:12px;max-width:100%;overflow-wrap:anywhere}.firmware-copy p{margin:0;max-width:42ch}.firmware-versions{display:grid;gap:8px;margin:0;font-size:13px;line-height:1.6}.firmware-versions>div{display:grid;grid-template-columns:72px minmax(0,1fr);gap:14px;align-items:baseline}.firmware-versions dt{color:var(--muted)}.firmware-versions dd{margin:0;color:var(--text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.firmware-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;max-width:100%}.firmware-actions button,.firmware-update{max-width:100%}.firmware-update-details{display:grid;justify-items:start;gap:14px;width:100%;min-width:0;padding-top:18px;border-top:1px solid var(--line,#344452)}
+  .firmware-settings{display:flex;flex-direction:column;align-items:flex-start;gap:18px}.firmware-copy{display:grid;gap:12px;max-width:100%;overflow-wrap:anywhere}.firmware-copy p{margin:0;max-width:42ch}.firmware-versions{display:grid;gap:8px;margin:0;font-size:13px;line-height:1.6}.firmware-versions>div{display:grid;grid-template-columns:72px minmax(0,1fr);gap:14px;align-items:baseline}.firmware-versions dt{color:var(--muted)}.firmware-versions dd{margin:0;color:var(--text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.firmware-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;max-width:100%}.firmware-actions button,.firmware-update{max-width:100%}.boot-instructions{margin:0}.firmware-progress-row{display:flex;align-items:center;gap:16px;width:100%}.firmware-progress{display:grid;gap:8px;flex:1;min-width:0}.firmware-progress progress{width:100%;accent-color:var(--accent)}.firmware-update-details{display:grid;justify-items:start;gap:14px;width:100%;min-width:0;padding-top:18px;border-top:1px solid var(--line,#344452)}
   .settings-columns{display:grid;gap:28px;margin-top:18px}.settings-columns.with-firmware{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.identity-settings{min-width:0}.identity-settings .setting:first-child{margin-top:0}.firmware-settings{min-width:0;border-left:1px solid var(--line,#344452);padding-left:28px}.firmware-settings h3{margin-top:0}@media(max-width:800px){.settings-columns.with-firmware{grid-template-columns:1fr}.firmware-settings{border-left:0;border-top:1px solid var(--line,#344452);padding-left:0;padding-top:20px}}
   .browser-link{width:100%;display:grid;gap:18px}.browser-link p{margin:0}.browser-link input{width:100%;font:inherit;padding:10px;background:var(--surface-raised);color:var(--text);border:1px solid var(--line,#344452);border-radius:6px}.browser-link .pair-actions{justify-content:flex-start;margin:0;gap:12px}
   .tile-open{display:block;width:100%;padding:0 0 16px;border:0;background:transparent;text-align:left}.tile-open:hover{background:transparent}.tile-open:focus-visible{outline:2px solid var(--accent,#64caba);outline-offset:8px}.setting{display:grid;gap:7px;font-size:13px;margin:18px 0;max-width:480px}.setting input,.setting select{min-width:0;box-sizing:border-box;width:100%;font:inherit;padding:10px;border:1px solid var(--line,#344452);border-radius:6px;color:var(--text);background:var(--surface-raised)}.danger{background:#9b2430;border-color:#bc3441;color:#fff}.danger:hover{background:#b32b38;border-color:#e35d69}

@@ -574,6 +574,10 @@ impl Runtime {
                 services.usb.release_port(ports[0]["port"].as_str().ok_or("USB port is unavailable.")?);
                 Ok(json!({"usbPorts":ports,"usb":services.usb.status()}))
             }
+            "companion_usb_flash_cancel" => {
+                services.usb.cancel_firmware_wait()?;
+                Ok(json!({"usb":services.usb.status()}))
+            }
             "companion_usb_flash" => {
                 let _setup = services.usb_setup.lock().unwrap_or_else(|p| p.into_inner());
                 let (profile,target)=match payload["profile"].as_str() {
@@ -1270,6 +1274,7 @@ mod tests {
     fn usb_operator_requests_require_a_current_selection_and_ready_device() {
         let runtime = runtime();
         let before = call(&runtime, "companion_status", json!({})).unwrap();
+        assert!(call(&runtime,"companion_usb_flash_cancel",json!({})).unwrap_err().contains("no update is waiting"));
         // With no paired clients this only enumerates ports; it cannot probe a UART.
         let ports = call(&runtime, "companion_usb_ports", json!({})).unwrap();
         assert!(ports["usbPorts"].is_array());
