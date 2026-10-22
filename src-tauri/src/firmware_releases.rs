@@ -1,4 +1,7 @@
 //! Operator-requested firmware acquisition. Ordinary status reads never use the network.
+#[cfg(test)]
+#[path="local_firmware.rs"]
+mod local_firmware;
 use osg_companion_serial::{FirmwareSegment, FirmwareTarget, OwnedFirmwareSegment};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -41,6 +44,7 @@ fn target(board: &str) -> Result<FirmwareTarget, String> {
         _ => Err("Choose a supported board profile.".into()),
     }
 }
+fn local_version(board:&str)->Option<&'static str>{match board{"waveshare-lcd7-s3"=>WAVESHARE_FIRMWARE_VERSION,"sunton-3248s035r"=>SUNTON_FIRMWARE_VERSION,_=>None}}
 fn embedded(board: &str) -> &'static [FirmwareSegment<'static>] {
     match board { "waveshare-lcd7-s3" => WAVESHARE_FIRMWARE, "sunton-3248s035r" => SUNTON_FIRMWARE, _ => &[] }
 }
@@ -194,11 +198,12 @@ impl Resolver {
         let development = cfg!(debug_assertions);
         let version = if development { LOCAL_FIRMWARE_VERSION } else { state.release.as_ref().map(|release| release.version.as_str()) };
         let profiles: Vec<_> = BOARDS.iter().map(|(id, name)| {
-            let available = if development { !embedded(id).is_empty() } else { state.error.is_none() && state.release.as_ref().is_some_and(|release| release.assets.contains_key(*id)) };
+            let profile_version=if development {local_version(id)}else{version};
+            let available = if development { profile_version.is_some() && !embedded(id).is_empty() } else { state.error.is_none() && state.release.as_ref().is_some_and(|release| release.assets.contains_key(*id)) };
             let error = if development && !available { Some("Local development firmware has not been built for this board.") }
                 else if !development && state.checked && state.error.is_none() && !available { Some("This board's firmware asset is missing from the latest release.") }
                 else { state.error.as_deref() };
-            json!({"id":id,"name":name,"available":available,"version":version,"source":source(development),"error":error})
+            json!({"id":id,"name":name,"available":available,"version":profile_version,"source":source(development),"error":error})
         }).collect();
         json!({"firmwareSource":source(development),"firmwareChecked":development || state.checked,"firmwareVersion":version,"firmwareError":state.error,"firmwareProfiles":profiles})
     }
@@ -223,7 +228,7 @@ impl Resolver {
         if cfg!(debug_assertions) {
             let local = embedded(board);
             if local.is_empty() { return Err("Build and stage local development firmware for this board first.".into()); }
-            if let Some(version) = LOCAL_FIRMWARE_VERSION { reject_downgrade(installed, version)?; }
+            if let Some(version) = local_version(board) { reject_downgrade(installed, version)?; }
             osg_companion_serial::validate_firmware_for(target(board)?, local)?;
             return Ok(local.iter().map(|segment| OwnedFirmwareSegment { offset: segment.offset, bytes: segment.bytes.to_vec() }).collect());
         }
@@ -361,7 +366,7 @@ mod tests {
         assert!(metadata["firmwareError"].is_null());
         if cfg!(debug_assertions) {
             assert_eq!(metadata["firmwareChecked"],true);
-            assert!(LOCAL_FIRMWARE_VERSION.is_some());
+            for profile in metadata["firmwareProfiles"].as_array().unwrap(){assert_eq!(profile["version"],json!(local_version(profile["id"].as_str().unwrap())));assert_eq!(profile["available"],profile["version"].is_string()&&!embedded(profile["id"].as_str().unwrap()).is_empty());}
             assert_eq!(metadata["firmwareVersion"],json!(LOCAL_FIRMWARE_VERSION));
         } else {
             assert!(LOCAL_FIRMWARE_VERSION.is_none());

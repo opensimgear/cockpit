@@ -43,7 +43,7 @@ def main():
     if not options.service_only:
         # Profile publication, authoring and lifecycle tests call this host from
         # other modules. Measure those real integrations as well as its unit tests.
-        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion_host.rs"]))
+        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/local_firmware.rs"]))
     summary = {}
     for name, manifest, selection, sources in targets:
         artifacts = run(["cargo", "test", "--locked", "--lib", "--no-run", "--message-format=json", "--manifest-path", manifest], root, environment)

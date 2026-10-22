@@ -24,6 +24,7 @@ jobs:
           node scripts/widget-compatibility-fixtures.mjs --check
           python3 apps/companion-esp32/test/network.py
           python3 apps/companion-esp32/test/storage.py
+          python3 -m unittest discover -s scripts -p "test_package_companion_firmware.py" -v
           python3 apps/companion-esp32/test/workspace.py
           python3 apps/companion-esp32/test/serial.py
           python3 -m unittest discover -s apps/companion-esp32/test -p "provision_test.py" -v

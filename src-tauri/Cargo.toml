@@ -13,6 +13,8 @@ name = "osg_cockpit"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+serde_json = "1"
+sha2 = "0.10"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
