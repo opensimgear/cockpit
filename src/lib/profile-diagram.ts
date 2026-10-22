@@ -7,7 +7,7 @@ export { diagramRouteQuality } from './profile-diagram-lanes';
 type Edge = DeepReadonly<Pick<ProfileBinding, 'from' | 'to'>>;
 export type DiagramPoint = { x:number; y:number };
 export type DiagramNode = {id:string;position:DiagramPoint;width?:number;height?:number;inputAnchors?:Readonly<Record<string,DiagramPoint>>;outputAnchors?:Readonly<Record<string,DiagramPoint>>};
-export type DiagramRouteOptions = {style?:ProfileWireStyle;cornerRadius?:number;wireRoutes?:readonly DeepReadonly<ProfileWireRoute>[]};
+export type DiagramRouteOptions = {style?:ProfileWireStyle;cornerRadius?:number;clearance?:number;wireRoutes?:readonly DeepReadonly<ProfileWireRoute>[]};
 type Box = {left:number;right:number;top:number;bottom:number};
 
 /** The side of each footer is the single attachment shared by all its signals. */
@@ -281,17 +281,18 @@ export function diagramRoutes(nodes:readonly DiagramNode[],bindings:readonly Dee
 }
 function routeDiagram(nodes:readonly DiagramNode[], bindings:readonly DeepReadonly<ProfileBinding>[],width:number,height:number,options:DiagramRouteOptions={},retained:readonly DiagramRoute[]=[]):DiagramRoute[]{
   const requestedRadius=Number.isFinite(options.cornerRadius)?Math.max(0,options.cornerRadius!):24;
-  const expanded=options.style==='orthogonal'?Math.max(20,Math.ceil(requestedRadius*(1-Math.SQRT1_2))+1):20;
+  const minimumClearance=Number.isFinite(options.clearance)?Math.max(20,options.clearance!):20;
+  const expanded=options.style==='orthogonal'?Math.max(minimumClearance,Math.ceil(requestedRadius*(1-Math.SQRT1_2))+1):minimumClearance;
   const expandedBoxes=nodes.map(node=>({left:node.position.x-expanded,right:node.position.x+(node.width??width)+expanded,top:node.position.y-expanded,bottom:node.position.y+(node.height??height)+expanded}));
   // Wide corners can claim more room in spacious layouts. Existing tight
   // layouts keep their channels and cap rounding instead of hiding wires.
   const crowded=expandedBoxes.some((a,index)=>expandedBoxes.slice(index+1).some(b=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top));
-  const clearance=crowded?20:expanded,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
+  const clearance=crowded?minimumClearance:expanded,laneSpacing=20, byId=new Map(nodes.map(node=>[node.id,node]));
   const saved=new Map(options.wireRoutes?.map(route=>[route.bindingId,route.points])??[]);
   const savedHandles=new Map(options.wireRoutes?.map(route=>[route.bindingId,('handles' in route?route.handles:[]) as readonly DiagramPoint[]])??[]);
   const generated=new Set(options.wireRoutes?.filter(route=>route.automatic).map(route=>route.bindingId)??[]),automaticGuides=new Set<string>();
   const boxes=nodes.map(node=>({left:node.position.x-clearance,right:node.position.x+(node.width??width)+clearance,top:node.position.y-clearance,bottom:node.position.y+(node.height??height)+clearance}));
-  const manualBoxes=nodes.map(node=>({left:node.position.x-20,right:node.position.x+(node.width??width)+20,top:node.position.y-20,bottom:node.position.y+(node.height??height)+20}));
+  const manualBoxes=nodes.map(node=>({left:node.position.x-minimumClearance,right:node.position.x+(node.width??width)+minimumClearance,top:node.position.y-minimumClearance,bottom:node.position.y+(node.height??height)+minimumClearance}));
   const blockBoxes=nodes.map(node=>({left:node.position.x,right:node.position.x+(node.width??width),top:node.position.y,bottom:node.position.y+(node.height??height)}));
   const valid=bindings.filter(binding=>byId.has(binding.from.nodeId)&&byId.has(binding.to.nodeId));
   const parallel=new Map<string,string[]>();
@@ -611,7 +612,7 @@ export function createDiagramRouter(maxEntries=4):typeof diagramRoutes {
   const cache=new Map<string,Snapshot>(),limit=Math.max(1,Math.min(16,Math.floor(maxEntries)||1));
   let latest:Snapshot|undefined;
   return (nodes,bindings,width,height,options={})=>{
-    const settings=JSON.stringify([width,height,options.style??'smooth',options.cornerRadius??24,options.wireRoutes]);
+    const settings=JSON.stringify([width,height,options.style??'smooth',options.cornerRadius??24,options.clearance??20,options.wireRoutes]);
     const nodeKeys=nodes.map(node=>[node.id,node.position.x,node.position.y,node.width??width,node.height??height,node.inputAnchors,node.outputAnchors]);
     const bindingKeys=bindings.map(binding=>[binding.id,binding.from.nodeId,binding.from.portId,binding.to.nodeId,binding.to.portId]);
     const key=JSON.stringify([settings,nodeKeys,bindingKeys]);

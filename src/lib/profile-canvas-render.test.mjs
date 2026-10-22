@@ -111,3 +111,12 @@ test('a dense 73-route drag regenerates only incident paths and performs no full
 test('temporarily absent endpoints retain their existing paths without mutating the routing cache',()=>{
   const {nodes,routes}=setup();assert.equal(canvasPreviewRoutes(frozen(routes),nodes.filter(row=>row.id!=='a'),100,100,'smooth'),routes);
 });
+
+test('overview routes have distinct input anchors on the device border through drag previews',async()=>{
+  const {canvasOverviewRouteNodes}=(await loadModules(['./profile-canvas-render'])).get('./profile-canvas-render');
+  const nodes=[{id:'a',position:{x:0,y:0},height:184,width:288},{id:'b',position:{x:0,y:300},height:184,width:288},{id:'target',position:{x:600,y:100},height:184,width:288}];
+  const bindings=[{id:'a-target',from:{nodeId:'a'},to:{nodeId:'target'}},{id:'b-target',from:{nodeId:'b'},to:{nodeId:'target'}}];
+  const result=canvasOverviewRouteNodes(nodes,bindings),anchors=result[2].inputAnchors;
+  assert.equal(anchors['a-target'].x,600);assert.equal(anchors['b-target'].x,600);assert.equal(anchors['b-target'].y-anchors['a-target'].y,24);
+  assert.ok(Object.values(anchors).every(p=>p.y>100&&p.y<284));assert.equal(nodes[2].inputAnchors,undefined);
+});

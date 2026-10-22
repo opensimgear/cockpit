@@ -150,3 +150,42 @@ test('captured preflight inventory metadata invalidates on disconnect, contract/
   for(const change of [resource=>resource.capabilityRevision=`sha256:${'2'.repeat(64)}`,resource=>resource.attributes.providerSetupRevision='changed',resource=>resource.connections.push({scope:'scope',key:'key',route:{id:'route',transport:'usb',providerGeneration:'new-boot',attributes:{},baselineReady:false,writable:false,priority:1}})]){const changed=plain(original);change(changed);assert.notEqual(graph.graphInventorySignature([changed]),snapshot);}
   const unrelated=inventory('another-native-resource');assert.notEqual(graph.graphInventorySignature([original,unrelated]),snapshot);assert.equal(graph.graphInventorySignature([original,unrelated]),graph.graphInventorySignature([unrelated,original]));const relabeled=plain(original);relabeled.name='Cosmetic name';assert.equal(graph.graphInventorySignature([relabeled]),snapshot);
 });
+
+function transferFixture(){
+  const value=draft();value.document.resources[1].ports.push(port('other','input'));value.document.processingNodes=[processing('first'),processing('second')];
+  value.document.bindings=[{id:'enter',from:endpoint('source','button'),to:endpoint('first','in')},{id:'middle',from:endpoint('first','out'),to:endpoint('second','in')},{id:'terminal',from:endpoint('second','out'),to:endpoint('target','value')},{id:'other-row',from:endpoint('source','button'),to:endpoint('target','other')}];return value;
+}
+test('lane drag moves a stage within its row and preserves the terminal route identity',()=>{
+  const value=transferFixture(),before=plain(value),moved=graph.graphTransferProcessing(value,'terminal','second','terminal','first');
+  assert.equal(moved.document.bindings.find(b=>b.id==='enter').to.nodeId,'second');
+  assert.equal(moved.document.bindings.find(b=>b.id==='terminal').from.nodeId,'first');
+  assert.equal(moved.document.processingNodes.length,2);assert.deepEqual(plain(value),before);
+  assert.deepEqual(plain(graph.graphTransferProcessing(value,'terminal','first','terminal','first')),before);
+  assert.deepEqual(plain(graph.graphTransferProcessing(value,'terminal','first','terminal','second')),before);
+});
+test('cross-row drops make an independent stage and leave source bindings and settings untouched',()=>{
+  const value=transferFixture(),copied=graph.graphTransferProcessing(value,'terminal','second','other-row',null),copy=copied.document.processingNodes.find(n=>!['first','second'].includes(n.id));
+  assert.ok(copy);assert.notEqual(copy.id,'second');assert.match(copy.name,/copy/);assert.deepEqual(plain(copy.operation),plain(value.document.processingNodes[1].operation));
+  for(const id of ['enter','middle','terminal'])assert.deepEqual(plain(copied.document.bindings.find(b=>b.id===id)),plain(value.document.bindings.find(b=>b.id===id)));
+  copy.operation.kind='not';assert.equal(value.document.processingNodes[1].operation.kind,'identity');
+  assert.equal(profileDocumentError(copied.document),'');
+});
+test('reordering one shared lane copies its shared prefix without rewiring other consumers',()=>{
+  const value=transferFixture();value.document.bindings=value.document.bindings.filter(b=>b.id!=='other-row');value.document.bindings.push({id:'shared-row',from:endpoint('first','out'),to:endpoint('target','other')});
+  const result=graph.graphTransferProcessing(value,'terminal','second','terminal','first');
+  assert.deepEqual(plain(result.document.bindings.find(b=>b.id==='shared-row')),plain(value.document.bindings.find(b=>b.id==='shared-row')));
+  assert.deepEqual(plain(result.document.bindings.find(b=>b.id==='enter')),plain(value.document.bindings.find(b=>b.id==='enter')));
+  assert.equal(result.document.processingNodes.length,3);assert.equal(profileDocumentError(result.document),'');
+  assert.notEqual(result.document.bindings.find(b=>b.id==='terminal').from.nodeId,'first');
+});
+test('stale, branched, or incompatible transformation drops leave the graph unchanged',()=>{
+  const value=transferFixture(),before=plain(value);
+  assert.throws(()=>graph.graphTransferProcessing(value,'missing','first','terminal',null),/current transformation/);
+  assert.throws(()=>graph.graphTransferProcessing(value,'terminal','first','terminal','missing'),/current insertion/);
+  value.document.processingNodes[0].inputs.push(port('extra','input'));
+  assert.throws(()=>graph.graphTransferProcessing(value,'terminal','first','other-row',null),/Branched/);
+  assert.throws(()=>graph.graphTransferProcessing(value,'terminal','second','terminal',null),/linear chain/);
+  value.document.processingNodes[0].inputs.pop();assert.deepEqual(plain(value),before);
+  value.document.processingNodes[1].inputs[0].contract=state(number());
+  assert.throws(()=>graph.graphTransferProcessing(value,'terminal','second','other-row',null));
+});

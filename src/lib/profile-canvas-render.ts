@@ -14,6 +14,17 @@ export function canvasRouteNodes(nodes:readonly CanvasNode[]):DiagramNode[] {
   }:{})}));
 }
 
+/** Overview bundles enter a device independently instead of merging at its footer. */
+export function canvasOverviewRouteNodes(nodes:DiagramNode[],bindings:readonly {id:string;from:{nodeId:string};to:{nodeId:string}}[]):DiagramNode[]{
+  const byId=new Map(nodes.map(node=>[node.id,node]));
+  return nodes.map(node=>{
+    const incoming=bindings.filter(binding=>binding.to.nodeId===node.id).sort((a,b)=>(byId.get(a.from.nodeId)?.position.y??0)-(byId.get(b.from.nodeId)?.position.y??0)||a.id.localeCompare(b.id));
+    if(!incoming.length)return node;
+    const height=node.height??184,gap=Math.min(24,(height-40)/Math.max(1,incoming.length-1));
+    return {...node,inputAnchors:{...node.inputAnchors,...Object.fromEntries(incoming.map((binding,index)=>[binding.id,{x:node.position.x,y:node.position.y+height-20-(incoming.length-index-1)*gap}]))}};
+  });
+}
+
 const equal=(a:DiagramPoint,b:DiagramPoint)=>a.x===b.x&&a.y===b.y;
 function previewCubicPath(path:string,startDelta:DiagramPoint,endDelta:DiagramPoint):string|null {
   const number=/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi;

@@ -9,7 +9,7 @@
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH } from './profile-editor';
   import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
   import { createDiagramRouter, diagramPendingPath, diagramRoutes, diagramSegmentLine } from './profile-diagram';
-  import {canvasRouteNodes,canvasPreviewRoutes,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
+  import {canvasRouteNodes,canvasOverviewRouteNodes,canvasPreviewRoutes,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
   import {profileReshapeWireSegment,profileSetWireRoute,profileInsertWireHandle,profileMoveWireHandle,profileRemoveWireHandle,profileWireHandleOnRoute}from'./profile-wire-layout';
   import {canvasStyling}from'./canvas-styling';
   import {canvasNavigation,canvasWheelNavigation}from'./canvas-navigation';
@@ -19,7 +19,7 @@
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
@@ -34,7 +34,7 @@
     dropComponent?:(component:ProfilePaletteComponent,position:CanvasPoint)=>void;endPaletteDrag?:()=>void;
     discoveredPorts?:Record<string,readonly DeepReadonly<ProfilePort>[]>;discoveryBusy?:readonly string[];discoveryErrors?:Record<string,string>;
     connectionPanel?:Snippet;connectionOpen?:boolean;closeConnectionPanel?:()=>void;
-    transformSettings?:Snippet<[CanvasNode]>;insertTransform?:(bindingId:string)=>void;
+    transformSettings?:Snippet<[CanvasNode]>;insertTransform?:(bindingId:string)=>void;transferTransform?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;
   } = $props();
   let stage: HTMLDivElement;
   let inspectorPanel=$state.raw<HTMLElement|undefined>();
@@ -73,7 +73,7 @@
   const overviewBundles=$derived(signalOverview(committedDocument));
   const overviewById=$derived(new Map(overviewBundles.map(bundle=>[bundle.id,bundle])));
   const overviewBundle=$derived(overviewById.get(overviewBundleId));
-  const routingBindings=$derived(overview?overviewBundles.map(bundle=>bundle.binding):committedDocument.bindings);
+  const routingBindings=$derived(overview?overviewBundles.map(bundle=>({...bundle.binding,to:{...bundle.binding.to,portId:bundle.id}})):committedDocument.bindings);
   const maximumRoutes=$derived(Math.max(1,...overviewBundles.map(bundle=>bundle.lanes.length)));
   const nodes = $derived(visibleDocument===committedDocument?committedNodes:allNodes.filter(node=>!overview||!node.processing));
   const nodesById=$derived(new Map(nodes.map(node=>[node.id,node])));
@@ -83,9 +83,9 @@
   const renderedNodes = $derived(nodes.map(node => node.id === dragged?.id ? { ...node, position: dragged.position } : node));
   const wireStyle=$derived($canvasStyling.arrowStyle);
   const cornerRadius=$derived($canvasStyling.cornerRadius);
-  const committedRouteNodes=$derived(canvasRouteNodes(committedNodes));
-  const routeNodes=$derived(canvasRouteNodes(renderedNodes));
-  const committedRoutes=$derived(router(committedRouteNodes,routingBindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:overview?undefined:committedDocument.editor.wireRoutes}));
+  const committedRouteNodes=$derived(overview?canvasOverviewRouteNodes(canvasRouteNodes(committedNodes),routingBindings):canvasRouteNodes(committedNodes));
+  const routeNodes=$derived(overview?canvasOverviewRouteNodes(canvasRouteNodes(renderedNodes),routingBindings):canvasRouteNodes(renderedNodes));
+  const committedRoutes=$derived(router(committedRouteNodes,routingBindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:overview?undefined:committedDocument.editor.wireRoutes,clearance:overview?36:undefined}));
   const routes=$derived.by(()=>{
     if(segmentPreview&&segmentDrag){const preview=diagramRoutes(routeNodes,visibleDocument.bindings.filter(binding=>binding.id===segmentDrag!.bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:visibleDocument.editor.wireRoutes})[0];return preview?committedRoutes.map(route=>route.binding.id===preview.binding.id?preview:route):committedRoutes;}
     return dragged||groupPreview?canvasPreviewRoutes(committedRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius):committedRoutes;
@@ -417,7 +417,7 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
     <div class="canvas-stage" data-view={overview?'overview':'detailed'} class:node-dragging={!!dragged||!!groupPreview} class:wire-blocked={!!wireRejectedReason||segmentBlocked} class:segment-dragging={!!segmentDrag} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={scheduleMove} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
       {#if layoutError}<p class="canvas-layout-error port-error" role="alert">{layoutError}</p>{/if}
-      <div class="canvas-world" style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
+      <div class="canvas-world" class:route-focused={!!overviewBundleId||!!selectedEdgeId} style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
         {#if palettePreview&&paletteDrag}
           <div class="palette-drop-preview" role="img" aria-label="Component drop preview" data-component-kind={paletteDrag.component.kind} data-preview-x={palettePreview.x} data-preview-y={palettePreview.y} style={`left:${palettePreview.x}px;top:${palettePreview.y}px;width:${paletteSize.width}px;height:${paletteSize.height}px`}>
             <div class="preview-heading"><span class="block-category">{paletteDrag.category}</span><strong title={paletteDrag.name}>{paletteDrag.name}</strong></div>
@@ -500,7 +500,7 @@
           {@const blockOutputs=blockPorts(node,'output')}
           {@const discovering=discoveryBusy.includes(node.id)}
           {@const size=canvasNodeSize(node)}
-          <article data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${size.width}px;height:${size.height}px`} aria-label={`${node.name} · ${node.category}`}>
+          <article class:route-related={overviewBundle?node.id===overviewBundle.binding.from.nodeId||node.id===overviewBundle.binding.to.nodeId:routes.some(route=>route.binding.id===selectedEdgeId&&(node.id===route.binding.from.nodeId||node.id===route.binding.to.nodeId))} data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${size.width}px;height:${size.height}px`} aria-label={`${node.name} · ${node.category}`}>
             {#if node.processing}
               <button class="block-heading transform-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">Transform</span><strong title={node.name}>{node.name}</strong></button>
               <div class="transform-summary" title={node.processing.draft?'Needs input · '+processingSummary(node.processing):processingSummary(node.processing)}><span class:pending={!!node.processing.draft}>{node.processing.draft?'Needs input · ':''}{processingSummary(node.processing)}</span>{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
@@ -513,6 +513,7 @@
                 </div>
               </div>
             {:else}
+            {#if overview}{#each Object.entries(routeNodes.find(routeNode=>routeNode.id===node.id)?.inputAnchors??{}) as [id,anchor] (id)}<span class="overview-input" class:muted={!!overviewBundleId&&overviewBundleId!==id} style:top={`${anchor.y-node.position.y}px`} title="Route input"></span>{/each}{/if}
             <button class="block-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">{node.category}</span><strong>{node.name}</strong>{#if !overview}<code>{node.id}</code>{/if}</button>
             <div class="block-body"><span class="block-state">{canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if !overview&&node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if !overview&&node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
             <div class="block-port-groups">
@@ -559,7 +560,7 @@
     {/if}
   {#if overview&&(overviewBundle||showTransforms)}
     <div class="canvas-lanes-panel" transition:slideLanes>
-    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes insertionPending={!!pendingOverviewDrop} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} insert={id=>{if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,id,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes insertionPending={!!pendingOverviewDrop} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target);}} disconnect={disconnectConnection} {readOnly}/>{/key}
     </div>
   {/if}
   </div>
@@ -568,6 +569,8 @@
 </section>
 
 <style>
+  .canvas-world.route-focused .signal-edge:not(.selected):not(.drop-target){opacity:.12}.canvas-world.route-focused .resource-block:not(.route-related),.canvas-world.route-focused .editor-group-frame{opacity:.2;filter:saturate(.2)}.overview-input{position:absolute;left:0;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;border:1px solid var(--accent);background:var(--surface);pointer-events:none;z-index:4}.overview-input.muted{opacity:.15}
+
   .signal-edge.overview-edge.selected{stroke:var(--text);filter:drop-shadow(0 0 4px var(--accent));}.signal-edges marker path.selected{fill:var(--text);}
   .canvas-lanes-panel{position:absolute;inset:auto 0 0;z-index:6;max-height:65%;overflow:auto;overscroll-behavior:contain;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -10px 24px #0002;}
   .signal-trunk{pointer-events:none;fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.signal-trunk.highlighted{stroke:#e0bd7e;stroke-width:4}.signal-trunk.drop-target{stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent))}.signal-trunk-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer;outline:none!important}.signal-trunk-hit:hover,.signal-trunk-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none!important}

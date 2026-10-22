@@ -1,3 +1,4 @@
+import {signalOverview} from './profile-signal-overview';
 import { profileAssignmentsError, profileDocumentError, type DeepReadonly, type ProfileBinding, type ProfileControllerLayout, type ProfileDocument, type ProfileEndpoint, type ProfileLocalAssignment, type ProfilePort, type ProfilePortContract, type ProfileProcessingNode, type ProfileScalarSchema, type ProfileVirtualOutput } from './profiles';
 import { resourcePortError, type ObservedResourcePort, type ResourceSummary } from './profile-inventory';
 import { desktopActionLabel, desktopActionPort, type ProfileDesktopOutput } from './profile-desktop';
@@ -204,6 +205,39 @@ export function graphReorderProcessing(value: DeepReadonly<ProfileGraphDraft>, o
   let from=clone<ProfileEndpoint>(enter[0].from);
   for(let i=0;i<orderedNodeIds.length;i++){const node=next.document.processingNodes.find(node=>node.id===orderedNodeIds[i])!;next.document.bindings.push({id:ids[i],from,to:{nodeId:node.id,portId:node.inputs[0].id}});from={nodeId:node.id,portId:node.outputs[0].id};}
   next.document.bindings.push({id:ids.at(-1)!,from,to:clone(exit[0].to)});return checked(next);
+}
+/** Move within one linear lane; copying into another lane never shares settings. */
+export function graphTransferProcessing(value:DeepReadonly<ProfileGraphDraft>,sourceLaneId:string,nodeId:string,targetLaneId:string,beforeNodeId:string|null):ProfileGraphDraft{
+  const lanes=[...new Map(signalOverview(value.document).flatMap(bundle=>bundle.lanes).map(lane=>[lane.id,lane])).values()];
+  const source=lanes.find(lane=>lane.id===sourceLaneId),target=lanes.find(lane=>lane.id===targetLaneId);
+  const node=value.document.processingNodes.find(node=>node.id===nodeId);
+  if(!source||!target||!node||!source.transforms.includes(nodeId))throw new Error('Choose a current transformation and signal row.');
+  if(node.inputs.length!==1||node.outputs.length!==1)throw new Error('Branched transformations need their input routes edited individually.');
+  if(beforeNodeId&&!target.transforms.includes(beforeNodeId))throw new Error('Choose a current insertion point in the target chain.');
+  if(source.id!==target.id){
+    const boundary=beforeNodeId?value.document.bindings.filter(binding=>target.bindingIds.includes(binding.id)&&binding.to.nodeId===beforeNodeId):value.document.bindings.filter(binding=>binding.id===target.id);
+    if(boundary.length!==1)throw new Error('Choose a single-input insertion point.');
+    const copy=clone<ProfileProcessingNode>(node);copy.id=graphFreshId(value.document,'transform');copy.name=label(`${node.name} copy`);
+    return graphInsertProcessing(value,boundary[0].id,copy,copy.inputs[0].id,copy.outputs[0].id);
+  }
+  if(beforeNodeId===nodeId)return graphDraft(value);
+  if(target.sources.length!==1||target.transforms.some(id=>{const stage=value.document.processingNodes.find(node=>node.id===id)!;return stage.inputs.length!==1||stage.outputs.length!==1;}))throw new Error('Reorder a linear chain; edit branched input routes individually.');
+  const order=target.transforms.filter(id=>id!==nodeId),position=beforeNodeId?order.indexOf(beforeNodeId):order.length;order.splice(position,0,nodeId);
+  if(order.every((id,index)=>id===target.transforms[index]))return graphDraft(value);
+  const sharedThrough=Math.max(-1,...target.transforms.flatMap((id,index)=>value.document.bindings.some(binding=>binding.from.nodeId===id&&!target.bindingIds.includes(binding.id))?[index]:[]));
+  if(sharedThrough<0)return graphReorderProcessing(value,order);
+  // Copy shared upstream stages before rewiring this lane, retaining other consumers.
+  const next=graphDraft(value),shared=new Set(target.transforms.slice(0,sharedThrough+1)),ids=new Map<string,string>();
+  next.document.bindings=next.document.bindings.filter(binding=>!target.bindingIds.includes(binding.id)||shared.has(binding.to.nodeId));
+  const scope=target.transforms.map(id=>nodeTab(value.document,id)).find(Boolean)??nodeTab(value.document,target.destination.nodeId);
+  for(const id of target.transforms){
+    if(!shared.has(id)){ids.set(id,id);continue;}
+    const copy=clone<ProfileProcessingNode>(value.document.processingNodes.find(node=>node.id===id)!);copy.id=graphFreshId(next.document,'transform');ids.set(id,copy.id);scopeNewNode(next.document,copy.id,scope);next.document.processingNodes.push(copy);
+  }
+  let from=clone(target.sources[0]);
+  for(const oldId of target.transforms){const stage=next.document.processingNodes.find(node=>node.id===ids.get(oldId))!;next.document.bindings.push({id:graphFreshId(next.document,'route'),from,to:{nodeId:stage.id,portId:stage.inputs[0].id}});from={nodeId:stage.id,portId:stage.outputs[0].id};}
+  next.document.bindings.push({id:target.id,from,to:clone(target.destination)});
+  return graphReorderProcessing(checked(next),order.map(id=>ids.get(id)!));
 }
 export function graphVirtualPorts(layout: DeepReadonly<ProfileControllerLayout>): ProfilePort[] {
   if(layout.buttons.length>128||layout.axes.length>16||layout.hats.length>4||layout.buttons.length+layout.axes.length+layout.hats.length>128||layout.buttons.length+layout.axes.length+layout.hats.length===0)throw new Error('Choose 1–128 total virtual controls, at most 16 axes and four hats.');
