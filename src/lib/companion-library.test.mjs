@@ -31,11 +31,12 @@ test('an empty store loads an empty local library without writing or activating 
 test('widget revisions share atomic storage and survive independent panel saves and compaction', async () => {
   const storage = memory(), store = new CompanionLibraryStore(storage);
   const widgets = { bundleVersion: 1, library: { formatVersion: 1, definitions: createWidgetCatalog() }, manifest: [], assets: [] };
+  const expectedWidgets = copy(widgets);
   const saved = await store.saveWidgets(widgets); assert.deepEqual(saved.widgets, widgets);
   widgets.library.definitions[0].title = 'Caller mutation';
   await store.save(snapshot('Panel')); assert.equal((await store.load()).widgets.library.definitions[0].title, 'Illuminated button');
-  await store.compact([]); assert.equal((await store.load()).widgets.library.definitions.length, 10);
-  await store.deletePanel('draft-0', []); assert.equal((await store.load()).widgets.library.definitions.length, 10);
+  await store.compact([]); assert.deepEqual((await store.load()).widgets, expectedWidgets);
+  await store.deletePanel('draft-0', []); assert.deepEqual((await store.load()).widgets, expectedWidgets);
   const before = copy(storage.value); storage.fail = true;
   await assert.rejects(store.saveWidgets({ ...widgets, library: { formatVersion: 1, definitions: [] } }), /Atomic write/);
   assert.deepEqual(storage.value, before);
