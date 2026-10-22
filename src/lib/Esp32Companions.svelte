@@ -51,7 +51,7 @@
   const identifiedBoard=$derived(selectedDevice && hostState.firmwareProfiles?.some(p=>p.id===device?.boardProfile)?device?.boardProfile:undefined);
   const installedVersion=$derived(selectedDevice?device?.firmwareVersion:undefined);
   const firmwareCurrent=$derived(!detecting && !!hostState.firmwareVersion && firmwareMeetsAvailable(installedVersion,hostState.firmwareVersion) && device?.boardProfile===profile);
-  const pairDisabledReason=$derived(!port?'Choose a USB device first.':detecting?'Wait for firmware detection to finish.':installing?'Wait for the firmware installation to finish.':installOpen?'Finish or cancel the firmware installation first.':busy?'Wait for the current operation to finish.':!profile?'Choose the Board / Screen model first.':!selectedDevice?'Install the current firmware and wait for the device to respond.':!firmwareCurrent?'Update the device firmware before pairing.':!name.trim()?'Enter a screen name.':mode==='wifi' && !ssid.trim()?'Choose or enter a Wi-Fi network.':selectedHash?(publications.find(panel=>panel.publicationHash===selectedHash)?panelScreenReason(publications.find(panel=>panel.publicationHash===selectedHash)!,screenSize):'Choose an available panel.'):'');
+  const pairDisabledReason=$derived(!port?'Choose a USB device first.':detecting?'Wait for firmware detection to finish.':installing?'Wait for the firmware installation to finish.':installOpen?'Finish or cancel the firmware installation first.':busy?'Wait for the current operation to finish.':!profile?'Choose the Board / Screen model first.':!selectedDevice?'Install the current firmware and wait for the device to respond.':!firmwareCurrent?'Update the device firmware before pairing.':!name.trim()?'Enter a screen name.':mode==='wifi' && !ssid.trim()?'Choose or enter a Wi-Fi network.':selectedHash?(publications.find(panel=>panel.publicationHash===selectedHash)?panelScreenReason(publications.find(panel=>panel.publicationHash===selectedHash)!,screenSize,device?.firmwareVersion,device?.renderProfile):'Choose an available panel.'):'');
   const firmwareProgress=$derived(Math.max(0,Math.min(100,Math.round(transport?.progress??0))));
   async function selectPort(value:string){
     if(value!==port)profile='';
@@ -108,7 +108,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
     try {
       const panel=publications.find(p=>p.publicationHash===selectedHash);
       if(selectedHash && !panel)throw new Error('Choose an available panel.');
-      if(panel){const reason=panelScreenReason(panel,screenSize);if(reason)throw new Error(reason);}
+      if(panel){const reason=panelScreenReason(panel,screenSize,device?.firmwareVersion,device?.renderProfile);if(reason)throw new Error(reason);}
       if(panel)await sendPublication(panel,send);
       await send('companion_usb_provision', { mode, name: companionId ? initialName : name, ssid, password, keepWifiPassword:!passwordChanged && savedPassword && ssid===savedSsid, publicationHash: selectedHash, ...(companionId?{companionId}:{}) });
       step = 4;
@@ -196,7 +196,7 @@ prefilledPort='';password='';passwordChanged=false;savedPassword=false;savedSsid
       <h4>Panel setup</h4>
       <label>Panel<select bind:value={selectedHash} disabled={busy || installing}>
         <option value="">Assign a panel later</option>
-        {#each publications as panel}<option value={panel.publicationHash} title={panelScreenReason(panel,screenSize)} disabled={!!panelScreenReason(panel,screenSize)}>{panel.document.ui.title}{panelScreenReason(panel,screenSize)?' · Not compatible':''}</option>{/each}
+        {#each publications as panel}<option value={panel.publicationHash} title={panelScreenReason(panel,screenSize,device?.firmwareVersion,device?.renderProfile)} disabled={!!panelScreenReason(panel,screenSize,device?.firmwareVersion,device?.renderProfile)}>{panel.document.ui.title}{panelScreenReason(panel,screenSize,device?.firmwareVersion,device?.renderProfile)?' · Not compatible':''}</option>{/each}
       </select></label>
       <CompanionMessage message={screenSize?`Screen size: ${screenSize.width} × ${screenSize.height} px. Panels must match this size on every page.`:'Connect the screen to identify its size before assigning a panel.'}/>
     </section>

@@ -9,7 +9,7 @@
   import { ProfilesClient } from './profiles';
   import { latestSavedPanels } from './companion-library';
   import { sendPublication, type CompanionCommand, type CompanionHostState } from './companions';
-  import { companionScreenSize, panelScreenReason, knownPanelScreenChoices, panelScreenSizeReason, PANEL_SCREEN_MIN, PANEL_SCREEN_MAX } from './companion-screen';
+  import { companionPanelReason, knownPanelScreenChoices, panelScreenSizeReason, PANEL_SCREEN_MIN, PANEL_SCREEN_MAX } from './companion-screen';
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import {
     newDocument, createDesignerHistory, applyDesignerCommand, applyPixelDesignerCommand, undoDesigner, redoDesigner, DESIGNER_LIMITS,
@@ -87,10 +87,8 @@
   const newPanelReason=$derived(!newPanelName.trim()?'Enter a panel name.':!chosenPanelScreen?'Choose a companion with a known screen size, or select Custom.':panelScreenSizeReason(chosenPanelScreen.width,chosenPanelScreen.height));
   const page = $derived(document.ui.pages.find(p => p.id === pageId) ?? document.ui.pages[0]);
   const emptyPageNumbers = $derived(document.ui.pages.flatMap((page,index)=>document.presentation.widgets.some(widget=>widget.pageId===page.id)?[]:[index]));
-  const espAssigned=$derived(panelAssignments(draftId).some(i=>(hostState.host?.clients??[]).some(c=>c.companionId===i.companionId&&c.kind==='esp32')));
-  const espRestriction='This panel is assigned to an ESP32 screen. Image widgets are supported; groups and button icons are not supported by its firmware.';
-  const assignedEspError=$derived((hostState.host?.clients??[]).filter(c=>c.kind==='esp32'&&panelAssignments(draftId).some(i=>i.companionId===c.companionId)).map(c=>panelScreenReason({document} as Publication,companionScreenSize(hostState,String(c.companionId)),hostState.firmware?.[String(c.companionId)]?.version??'unknown')).find(Boolean)??'');
-  const panelInvalidReason = $derived(emptyPageNumbers.length ? `Add at least one widget to ${emptyPageNumbers.length===1?'page':'pages'} ${emptyPageNumbers.join(', ')} before previewing, saving or exporting.` : espAssigned?assignedEspError:'');
+  const assignedTargetError=$derived((hostState.host?.clients??[]).filter(c=>panelAssignments(draftId).some(i=>i.companionId===c.companionId)).map(c=>companionPanelReason({document} as Publication,hostState,String(c.companionId))).find(Boolean)??'');
+  const panelInvalidReason = $derived(emptyPageNumbers.length ? `Add at least one widget to ${emptyPageNumbers.length===1?'page':'pages'} ${emptyPageNumbers.join(', ')} before previewing, saving or exporting.` : '');
   const widget = $derived(document.presentation.widgets.find(w => w.id === selected[0]));
   const reusableDefinition = $derived(widget ? componentDefinition(document, widget) : undefined);
   const viewport = $derived(document.presentation.viewports.find(v => v.pageId === page.id)!);
@@ -593,7 +591,7 @@
       <div class="accordion-add"><button class="action" disabled={preview || regions.length >= 32} onclick={addViewport}><Icon name="plus" size={16} />Add viewport</button></div>
       </div></details>
       <details class="editor-accordion" open><summary>Widgets</summary><div class="accordion-content">
-      <p class="hint">Add to {activeViewport.label}</p>{#if espAssigned}<p class="hint">{espRestriction}</p>{/if}
+      <p class="hint">Add to {activeViewport.label}</p>{#if assignedTargetError}<p class="hint">Companion update: {assignedTargetError} You can keep designing, previewing and exporting this panel.</p>{/if}
       <details class="shared-widget-library" open><summary>Reusable widget library</summary><div class="shared-widget-list">{#each availableWidgets as definition}<div><button disabled={preview || busy} title={`Add ${definition.title}, version ${definition.version}`} onclick={() => addLibraryWidget(definition)}>{definition.title}</button><button class="edit-library-widget" aria-label={`Edit design ${definition.title}`} title="Edit widget design" disabled={preview || busy} onclick={() => editWidgetDefinition(definition)}>✎</button></div>{/each}</div><div class="widget-library-actions"><button disabled={preview || busy} onclick={() => editWidgetDefinition()}>Create widget</button><button disabled={busy} onclick={() => widgetImportInput?.click()}>Import widgets</button><button disabled={busy} onclick={() => void exportWidgets()}>Export widgets</button></div><input hidden type="file" accept="application/json,.json" bind:this={widgetImportInput} aria-label="Import widget library" onchange={e => { void importWidgetFile(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} /></details>
       <details><summary>Basic controls</summary><div class="palette">{#each widgetPresets as preset}<button disabled={preview} draggable={!preview} title="Click to add to the selected viewport, or drag into a viewport" ondragstart={event=>{if(!event.dataTransfer)return;event.dataTransfer.setData('application/x-osg-widget',preset.kind);event.dataTransfer.effectAllowed='copy';paletteDragging=true;draggedWidget=preset.title;select([]);}} ondragend={()=>{paletteDragging=false;draggedWidget='';}} onclick={() => addPaletteWidget(preset.kind)}>{preset.title}</button>{/each}</div></details>
       </div></details>
@@ -636,7 +634,7 @@
         <button disabled={selected.length < 2} aria-label="Align horizontal" title="Align horizontal" onclick={() => command({ type: 'align', ids: selected, edge: 'center-y' })}><Icon name="align-horizontal" size={18}/></button>
         <button disabled={selected.length < 2} aria-label="Align bottom" title="Align bottom" onclick={() => command({ type: 'align', ids: selected, edge: 'bottom' })}><Icon name="align-bottom" size={18}/></button>
         </div><div class="layout-toolset" role="group" aria-label="Widget grouping">
-        <button disabled={selected.length < 2 || espAssigned} aria-label="Group" title={espAssigned?espRestriction:'Group'} onclick={() => command({ type: 'add-group', pageId: page.id, label: 'Group', widgetIds: selected })}><Icon name="group" size={18}/></button>
+        <button disabled={selected.length < 2} aria-label="Group" title="Group" onclick={() => command({ type: 'add-group', pageId: page.id, label: 'Group', widgetIds: selected })}><Icon name="group" size={18}/></button>
         <button disabled={!widget?.groupId} aria-label="Ungroup" title="Ungroup" onclick={() => widget?.groupId && command({ type: 'ungroup', id: widget.groupId })}><Icon name="ungroup" size={18}/></button>
         </div>
       </div>
@@ -674,7 +672,7 @@
           {:else if typeof value === 'string' && key !== 'buttonMode' && key !== 'iconAssetId' && key !== 'assetId'}<label>{key}<input value={value} onchange={e => configPatch(key,e.currentTarget.value)} /></label>{/if}
         {/each}
         {#if widget.kind === 'image'}<label>Image asset<select aria-label="Image asset" value={widget.config.assetId ?? ''} onchange={e=>configPatch('assetId',e.currentTarget.value || undefined)}><option value="">None</option>{#each document.ui.assets as asset,index}<option value={asset.id}>Image {index+1}</option>{/each}</select></label><button class="action" onclick={()=>patch({bounds:{...activeViewport.bounds}})}>Fill viewport</button>{/if}
-        {#if widget.kind === 'button' || widget.kind === 'icon'}<label>Icon image<select value={widget.config.iconAssetId ?? ''} onchange={e => { const config = { ...widget!.config } as Record<string,unknown>; if(e.currentTarget.value) config.iconAssetId = e.currentTarget.value; else delete config.iconAssetId; patch({ config } as Partial<DesignerWidget>); }}><option value="">None</option>{#each document.ui.assets as asset}<option value={asset.id} disabled={espAssigned}>{asset.id}</option>{/each}</select></label>{/if}
+        {#if widget.kind === 'button' || widget.kind === 'icon'}<label>Icon image<select value={widget.config.iconAssetId ?? ''} onchange={e => { const config = { ...widget!.config } as Record<string,unknown>; if(e.currentTarget.value) config.iconAssetId = e.currentTarget.value; else delete config.iconAssetId; patch({ config } as Partial<DesignerWidget>); }}><option value="">None</option>{#each document.ui.assets as asset}<option value={asset.id}>{asset.id}</option>{/each}</select></label>{/if}
         <details><summary>Advanced behavior</summary><label>Validated configuration<textarea rows="8" bind:value={configText}></textarea></label><button onclick={() => { try { patch({ config: JSON.parse(configText) }); } catch (e) { error = String(e); } }}>Apply behavior</button></details>
         {/if}
         <button onclick={() => { command({ type: 'duplicate-widget', id: widget!.id }); select([document.presentation.widgets.at(-1)!.id]); }}>Duplicate widget</button>

@@ -129,12 +129,64 @@ static void preflight(void) {
     runtime.page=1;assert(!osg_panel_draw_check(&draw,&runtime,100,true));runtime.page=0;
     draw.backend.rendering=true;assert(!osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100));osg_panel_draw_destroy(&draw);assert(draw.backend.display);draw.backend.rendering=false;
 }
+static void compatibility(const cJSON *fixture) {
+    unsigned accepted=0,rejected_text=0;
+    const cJSON *cases=cJSON_GetObjectItemCaseSensitive(fixture,"cases"),*profiles=cJSON_GetObjectItemCaseSensitive(fixture,"profiles");
+    for(const cJSON *item=cases->child;item;item=item->next) {
+        const cJSON *issues=cJSON_GetObjectItemCaseSensitive(item,"issues"),*profile=cJSON_GetArrayItem(profiles,cJSON_GetObjectItemCaseSensitive(item,"profile")->valueint);
+        const cJSON *limits=cJSON_GetObjectItemCaseSensitive(profile,"limits");
+        const char *name=osg_string(item,"name"),*canonical=osg_string(item,"canonicalDocument");
+        bool check_text=false,check_zero=false;
+        for(const cJSON *issue=issues->child;issue;issue=issue->next) {
+            const char *field=osg_string(issue,"field");
+            if(!strcmp(field,"text.glyphs")||!strcmp(field,"group.label")||!strcmp(field,"fontSize"))check_text=true;
+            if(!strcmp(field,"geometry.minimumPixels"))check_zero=true;
+        }
+        if(issues->child&&!check_text&&!check_zero)continue;
+        size_t capacity=(size_t)cJSON_GetObjectItemCaseSensitive(limits,"sceneBytes")->valueint;
+        unsigned char *memory=malloc(capacity);assert(memory);
+        osg_widget_arena arena={.data=memory,.capacity=capacity,.max_layers=(size_t)cJSON_GetObjectItemCaseSensitive(limits,"totalLayers")->valueint,.max_components=(size_t)cJSON_GetObjectItemCaseSensitive(limits,"components")->valueint};
+        osg_panel_source_limits source_limits={.document_bytes=(size_t)cJSON_GetObjectItemCaseSensitive(limits,"documentBytes")->valueint,.bitmap_references=32,.width=800,.height=480};
+        assert(osg_json_configure((size_t)cJSON_GetObjectItemCaseSensitive(limits,"jsonBytes")->valueint,(size_t)cJSON_GetObjectItemCaseSensitive(limits,"replyBytes")->valueint,(size_t)cJSON_GetObjectItemCaseSensitive(limits,"jsonNodes")->valueint));
+        char hash[72];assert(sha(canonical,strlen(canonical),hash));cJSON *publication=cJSON_CreateObject();assert(publication);
+        assert(cJSON_AddStringToObject(publication,"canonicalDocument",canonical)&&cJSON_AddStringToObject(publication,"publicationHash",hash)&&cJSON_AddArrayToObject(publication,"assets"));
+        osg_scene *scene=NULL;osg_panel_source_diagnostic error;
+        bool admitted=osg_panel_source_compile(publication,hash,(osg_crypto){.sha256=sha},&source_limits,&arena,&scene,&error);
+        if(!admitted)fprintf(stderr,"compatibility %s: source field=%s required=%zu available=%zu\n",name,error.field,error.required,error.available);
+        assert(admitted);cJSON_Delete(publication);
+        void *prepared[32]={0};unsigned count=0;
+        for(size_t i=0;i<scene->panel.widget_count;i++) {
+            osg_widget *widget=&scene->widgets[i];int x,y,width,height;osg_panel_widget_rect(&scene->panel,i,800,480,&x,&y,&width,&height);
+            if(widget->kind==OSG_IMAGE){
+                assert(count<32&&width>0&&height>0);prepared[count]=calloc((size_t)width*height,3);assert(prepared[count]);widget->pixels=prepared[count++];widget->image_width=(uint16_t)width;widget->image_height=(uint16_t)height;
+            }else if(widget->kind==OSG_COMPONENT){
+                for(unsigned b=0;b<widget->component->bitmap_count;b++){
+                    osg_bound_bitmap *bitmap=&widget->component->bitmaps[b];bitmap->width=(uint16_t)lround(width*bitmap->bounds.width);bitmap->height=(uint16_t)lround(height*bitmap->bounds.height);
+                    assert(count<32&&bitmap->width&&bitmap->height);prepared[count]=calloc((size_t)bitmap->width*bitmap->height,3);assert(prepared[count]);bitmap->pixels=prepared[count++];
+                }
+            }
+        }
+        memset(&runtime,0,sizeof(runtime));runtime.panel=&scene->panel;runtime.display=display();runtime.active=-1;draw.max_font_size=(uint8_t)cJSON_GetObjectItemCaseSensitive(limits,"fontSize")->valueint;
+        unsigned previous=writes;bool ready=osg_panel_draw_check(&draw,&runtime,100,true);
+        if(check_text||check_zero){assert(!ready&&writes==previous);rejected_text++;}
+        else {
+            if(!ready)fprintf(stderr,"compatibility %s: preflight field=%s widget=%s layer=%s\n",name,draw.diagnostic.field,draw.diagnostic.widget,draw.diagnostic.layer);
+            assert(ready);for(size_t page=0;page<scene->panel.page_count;page++){runtime.page=(uint8_t)page;full();}accepted++;
+        }
+        for(unsigned i=0;i<count;i++)free(prepared[i]);
+        free(memory);
+        assert(!runtime.armed&&!runtime.connected);
+    }
+    draw.max_font_size=128;
+    printf("Shared target oracle: %u accepted source panels render, %u glyph/font/zero-area failures reject before writes\n",accepted,rejected_text);
+}
 int main(int argc,char **argv) {
-    assert(argc==3);osg_board board={.width=800,.height=480,.write=write_pixels,.present=present};
+    assert(argc==3||argc==4);osg_board board={.width=800,.height=480,.write=write_pixels,.present=present};
     assert(!osg_panel_draw_init(NULL,board,buffer,sizeof(buffer)));assert(osg_panel_draw_init(&draw,board,buffer,sizeof(buffer)));
     assert(!osg_panel_draw_check(NULL,NULL,0,true));assert(!osg_panel_draw_check(&draw,NULL,0,true));
     assert(!osg_panel_draw_render(NULL,NULL,(osg_damage){.full=true},0));
     cJSON *fixture=load(argv[1]);catalog(fixture,argv[2]);cJSON_Delete(fixture);mixed_order();preflight();
+    if(argc==4){fixture=load(argv[3]);compatibility(fixture);cJSON_Delete(fixture);}
     lv_mem_monitor_t memory;lv_mem_monitor(&memory);assert(memory.free_size&&memory.free_biggest_size);
     printf("LVGL pool=%u bytes; peak-used=%u; free=%u; biggest-free=%u; strips<=%u rows\n",(unsigned)LV_MEM_SIZE,(unsigned)memory.max_used,(unsigned)memory.free_size,(unsigned)memory.free_biggest_size,OSG_WIDGET_DRAW_ROWS);
     osg_panel_draw_destroy(NULL);osg_panel_draw_destroy(&draw);osg_panel_draw_destroy(&draw);

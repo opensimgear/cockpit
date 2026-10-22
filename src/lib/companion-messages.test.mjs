@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { companionMessages } from './companion-messages.ts';
 
+test('conflicting renderer reports surface without claiming a panel or transport',()=>{
+  assert.deepEqual(companionMessages({}, {renderProfileError:'Active connections report conflicting renderer profiles.',connectionStatus:'Loading panel'}),[
+    {source:'connection',kind:'error',message:'Active connections report conflicting renderer profiles.'},
+  ]);
+});
+
 test('portable panel diagnostics identify the instance layer and exact target budget',()=>{
   const operation={instanceId:'panel',publicationHash:'hash',phase:'failed',errorCode:'panel-budget',retryable:false,message:'Panel font limit',diagnostic:{widget:'master-widget',definition:'button',layer:'caption',field:'fontSize',required:128,available:48}};
   const message=companionMessages({}, {operation})[0];

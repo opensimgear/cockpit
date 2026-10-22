@@ -5,6 +5,9 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 use std::{collections::BTreeSet, sync::OnceLock};
+mod compatibility;
+pub use compatibility::RenderCompatibilityIssue;
+pub(crate) use compatibility::check_document;
 
 fn manifest() -> &'static Value {
     static VALUE: OnceLock<Value> = OnceLock::new();

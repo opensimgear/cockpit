@@ -58,7 +58,9 @@ bool osg_panel_draw_check(osg_panel_draw *draw, const osg_runtime *frame, uint64
         if(widget->kind!=OSG_COMPONENT)continue;
         const osg_widget_binding *binding=widget->component;const osg_widget_component *definition=binding?binding->definition:NULL;
         if(!definition||!definition->width||!definition->height)return fail(draw,OSG_WIDGET_DRAW_ARGUMENT,widget->id,NULL,"definition",0,0);
-        lv_area_t box=area(frame,i);const double sx=(double)lv_area_get_width(&box)/definition->width,sy=(double)lv_area_get_height(&box)/definition->height;
+        lv_area_t box=area(frame,i);
+        if(lv_area_get_width(&box)<1||lv_area_get_height(&box)<1)return fail(draw,OSG_WIDGET_DRAW_ARGUMENT,widget->id,NULL,"geometry.minimumPixels",1,0);
+        const double sx=(double)lv_area_get_width(&box)/definition->width,sy=(double)lv_area_get_height(&box)/definition->height;
         if(sx>32||sy>32)return fail(draw,OSG_WIDGET_DRAW_BUDGET,widget->id,NULL,"scale",(size_t)ceil(fmax(sx,sy)),32);
         osg_widget_state_context context;osg_widget_runtime_context(frame,i,now,&context);
         const unsigned current=(unsigned)osg_widget_state_resolve(definition,&context);

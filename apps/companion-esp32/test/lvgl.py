@@ -83,7 +83,7 @@ for counter in OUT.glob('panel-draw-test-*.gcda'):
     counter.unlink()
 panel_sources = ['core/companion.c', 'core/widget.c', 'core/raster.c', 'render/lvgl_backend.c', 'render/lvgl_pool.c', 'render/widget_fonts.c', 'render/widget_source.c', 'render/widget_state.c', 'render/widget_draw.c', 'render/panel_draw.c', 'network/json.c', 'network/workspace.c', 'network/panel_source.c', 'third_party/cjson/cJSON.c', 'test/panel_draw_test.c']
 subprocess.run([os.environ.get('CC', 'gcc'), *flags, '-I' + str(APP / 'network'), '--coverage', '-Wall', '-Wextra', '-Werror', *[str(APP / p) for p in panel_sources], str(font_object), str(library), '-lm', '-lcrypto', '-o', str(OUT / 'panel-draw-test')], check=True)
-subprocess.run([str(OUT / 'panel-draw-test'), str(APP / 'test/panel-source.json'), str(OUT)], check=True, timeout=60, env=test_environment)
+subprocess.run([str(OUT / 'panel-draw-test'), str(APP / 'test/panel-source.json'), str(OUT), str(APP / 'test/widget-compatibility.json')], check=True, timeout=60, env=test_environment)
 subprocess.run(['gcov', '-j', '-b', '-c', 'panel-draw-test-panel_draw.gcno'], cwd=OUT, check=True, capture_output=True)
 coverage = json.loads(gzip.decompress((OUT / 'panel-draw-test-panel_draw.gcov.json.gz').read_bytes()))
 module = next(f for f in coverage['files'] if f['file'].endswith('/panel_draw.c'))
@@ -113,7 +113,7 @@ with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as pool:
 compact_library = compact_objects / 'liblvgl.a'
 subprocess.run(['ar', 'rcs', str(compact_library), *map(str, compact_compiled)], check=True)
 subprocess.run([os.environ.get('CC', 'gcc'), *compact_flags, '-I' + str(APP / 'network'), '-Wall', '-Wextra', '-Werror', *[str(APP / p) for p in panel_sources], str(font_object), str(compact_library), '-lm', '-lcrypto', '-o', str(OUT / 'panel-draw-compact-test')], check=True)
-subprocess.run([str(OUT / 'panel-draw-compact-test'), str(APP / 'test/panel-source.json'), str(OUT)], check=True, timeout=60, env=test_environment)
+subprocess.run([str(OUT / 'panel-draw-compact-test'), str(APP / 'test/panel-source.json'), str(OUT), str(APP / 'test/widget-compatibility.json')], check=True, timeout=60, env=test_environment)
 
 
 def chunk(kind, data):

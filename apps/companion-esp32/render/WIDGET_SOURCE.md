@@ -280,3 +280,20 @@ They describe content capability only and cannot grant input/session authority
 or physical qualification. Actual C reports match the common manifest in both
 memory profiles, including all 176 JSON-allocation failure sites without leaks.
 Assignment enablement and actual Cockpit transport acceptance remain open.
+
+Target-aware assignment is now enabled for complete validated engine reports.
+The host checks retained publication source against the reported compact/rich
+limits before native assignment and session open, while the firmware keeps its
+own immutable source admission, cache preparation and frame preflight. A live
+connection missing a report cannot use an offline cached engine; conflicting
+connections reject before session creation. Legacy ESP32 connections cannot
+open portable components/groups without reporting a compatible engine.
+
+The common 36-case TypeScript/Rust target oracle preserves canonical source.
+All 14 statically accepted sources also render through the actual C/LVGL panel
+compositor under both pool sizes. Seven unsupported glyph, font-size or zero
+pixel component cases reject with no board writes. Engine `2026.10.22.3` adds
+the zero-area check before drawing; tiny read-only components otherwise reached
+the compositor with an empty pixel rectangle. The compact run peaks at 15,504
+LVGL pool bytes for this expanded suite. Actual free arena/cache resources and
+physical timing/stack budgets remain separate runtime/hardware checks.

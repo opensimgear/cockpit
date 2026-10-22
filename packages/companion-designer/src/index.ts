@@ -8,3 +8,4 @@ export * from "./widget-model.ts";
 export * from "./widget-catalog.ts";
 export * from "./widget-editor.ts";
 export * from "./render-profiles.ts";
+export * from "./render-compatibility.ts";

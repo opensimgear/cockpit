@@ -30,7 +30,9 @@ export function companionMessages(state:CompanionHostState,client:Record<string,
   const assigned=(state.host?.instances??[]).filter(instance=>instance.companionId===id);
   const operation=client.operation??(usb?.connected&&usb.device?.operation&&assigned.some(instance=>instance.instanceId===usb.device?.operation?.instanceId&&instance.publicationHash===usb.device?.operation?.publicationHash)?usb.device.operation:undefined);
   const progress=operationMessage(operation);
-  if(recovery)messages.push({source:'connection',kind:'warning',message:recovery});
+  const renderError=text(client,'renderProfileError');
+  if(renderError)messages.push({source:'connection',kind:'error',message:renderError});
+  else if(recovery)messages.push({source:'connection',kind:'warning',message:recovery});
   else if(progress)messages.push(progress);
   else if(panelError)messages.push({source:'connection',kind:'error',message:`Panel error. ${panelError}`});
   else if(connection&&connection!=='No panel assigned')messages.push({source:'connection',kind:usb?.device?.status==='error'?'error':usb?.device?.status==='offline'?'warning':'info',message:connection});

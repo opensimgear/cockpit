@@ -231,6 +231,12 @@ impl Hub {
         ensure(id(companion)&&inner.record.credentials.iter().any(|item|item.companion_id==companion),"Unknown companion installation.")?;
         Self::connection_render_profile(&inner,companion)
     }
+    /// Static target diagnostics for a retained, already admitted publication.
+    /// Availability and final frame preflight are still checked by the renderer.
+    pub fn publication_renderer_issues(&self,hash:&str,profile:&Value)->Result<Vec<crate::render_profile::RenderCompatibilityIssue>,String>{
+        let document=self.publication_document(hash)?;
+        crate::render_profile::check_document(&document,profile)
+    }
     pub fn new(host_id: String, sink: Arc<dyn SourceSink>) -> Self {
         Self::from_record(
             Record {
@@ -1170,6 +1176,18 @@ impl Hub {
                         "Session identity budget exhausted.",
                     )?;
                     let p=inner.publications.get(&assignment.publication_hash).ok_or("Assigned publication is unavailable; republish its immutable revision.")?.clone();
+                    // Bound this exact connection, not another connection's or
+                    // an offline cached renderer. No profile grants authority.
+                    let profile=Self::connection_render_profile(&inner,&companion)?;
+                    if let Some(profile)=profile{
+                        let document=serde_json::from_str(&p.canonical_document).map_err(|_|"Invalid retained publication.")?;
+                        if let Some(issue)=crate::render_profile::check_document(&document,&profile)?.first(){return Err(issue.message.clone());}
+                    }else if inner.record.credentials.iter().any(|credential|credential.companion_id==companion&&credential.kind=="esp32"){
+                        let document:Value=serde_json::from_str(&p.canonical_document).map_err(|_|"Invalid retained publication.")?;
+                        ensure(!document["presentation"]["widgets"].as_array().is_some_and(|widgets|widgets.iter().any(|widget|widget["kind"]=="component"))
+                            && !document["presentation"]["groups"].as_array().is_some_and(|groups|!groups.is_empty()),
+                            "This ESP32 connection has not reported a compatible widget renderer. Update its firmware and reconnect.")?;
+                    }
                     let session_id = uuid::Uuid::new_v4().to_string();
                     ensure(
                         inner.used_sessions.insert(session_id.clone()),

@@ -1,4 +1,4 @@
-import { companionScreenSize, panelScreenReason } from './companion-screen.ts';
+import { companionPanelReason } from './companion-screen.ts';
 import type { Publication } from '../../packages/companion-designer/src/index.ts';
 import { sendPublication, stableCompanionId, type CompanionSend, type CompanionHostState } from './companions.ts';
 
@@ -16,8 +16,8 @@ export async function synchronizePanel(panel: Publication, previousHashes: strin
     if(selected!==undefined && !(state.host?.clients ?? []).some(c => c.companionId===companionId)) throw new Error('The selected companion is no longer paired.');
     if(!owned.some(i => i.companionId===companionId) && instances.filter(i => i.companionId===companionId).length>1) throw new Error('This companion has multiple controller assignments. Disconnect its extra assignments before assigning a panel.');
   }
-  for(const id of desired)if(!profileOwnedCompanions.has(id)&&state.host?.clients?.some(c=>c.companionId===id&&c.kind==='esp32')){
-    const reason=panelScreenReason(panel,companionScreenSize(state,id),state.firmware?.[id]?.version??'unknown');if(reason)throw new Error(reason);
+  for(const id of desired)if(!profileOwnedCompanions.has(id)){
+    const reason=companionPanelReason(panel,state,id);if(reason)throw new Error(reason);
   }
   const published=await sendPublication(panel,send);
   if(published.panelSaveApplication?.state==='failed')throw new Error(published.panelSaveApplication.error??'The panel was saved, but its active profile could not be updated.');

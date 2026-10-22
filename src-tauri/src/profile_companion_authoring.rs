@@ -63,18 +63,25 @@ impl Runtime {
         if let Ok(file)=std::fs::File::open(metadata.directory.join("companion-firmware.json")){
             let _=file.take(65537).read_to_end(&mut bytes);
         }
-        let firmware=if bytes.len()<=65536 {serde_json::from_slice::<serde_json::Value>(&bytes).ok().filter(serde_json::Value::is_object)}else{None}.unwrap_or(serde_json::json!({}));
+        let mut firmware=if bytes.len()<=65536 {serde_json::from_slice::<serde_json::Value>(&bytes).ok().filter(serde_json::Value::is_object)}else{None}.unwrap_or(serde_json::json!({}));
         let devices=self.services.get().and_then(|services|services.as_ref().ok()).map(|services|services.usb.statuses()).unwrap_or_default();
-        let document=hub.publication_document(publication)?;
-        Ok(hub.resource_companions().into_iter().map(|companion|{
-            let reason=if companion.kind=="esp32"{
-                let current=devices.iter().find(|usb|usb["connected"]==true&&usb["device"]["companionId"]==companion.companion_id);
-                let profile=current.and_then(|usb|usb["device"]["boardProfile"].as_str()).or_else(||firmware[&companion.companion_id]["profile"].as_str());
-                match profile.and_then(super::screen_dimensions){
-                    Some(size)=>super::validate_screen_document(&document,size).err(),
-                    None=>Some("Connect this ESP32 screen by USB to identify its screen size before assigning a panel.".into()),
-                }
-            }else{None};
+        let _=hub.publication_document(publication)?;
+        let companions=hub.resource_companions();
+        let clients=companions.iter().map(|companion|{
+            let (profile,error)=match hub.render_profile(&companion.companion_id){Ok(profile)=>(profile,None),Err(error)=>(None,Some(error))};
+            serde_json::json!({"companionId":companion.companion_id,"kind":companion.kind,"connected":companion.connected,"renderProfile":profile,"renderProfileError":error})
+        }).collect::<Vec<_>>();
+        let mut state=serde_json::json!({"clients":clients});
+        super::describe_usb_presence(&mut state,&devices);
+        for usb in &devices{if usb["connected"]==true&&usb["ready"]==true{if let Some(id)=usb["device"]["companionId"].as_str(){
+            // A current observation replaces stale board/version metadata even
+            // when the new firmware does not advertise an LVGL engine.
+            firmware[id]=serde_json::json!({"version":usb["device"]["firmwareVersion"],"profile":usb["device"]["boardProfile"]});
+        }}}
+        Ok(companions.into_iter().map(|companion|{
+            let client=state["clients"].as_array().and_then(|clients|clients.iter().find(|client|client["companionId"]==companion.companion_id)).cloned()
+                .unwrap_or(serde_json::json!({"companionId":companion.companion_id,"kind":companion.kind}));
+            let reason=super::validate_target_panel(hub,publication,&client,&firmware[&companion.companion_id]).err();
             PanelCompatibility {companion_id:companion.companion_id,compatible:reason.is_none(),reason}
         }).collect())
     }

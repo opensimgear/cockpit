@@ -2,7 +2,24 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { newDocument, publishDocument } from '../../packages/companion-designer/src/index.ts';
 import { createCompanionSettingsAutosave, saveCompanionSettings } from './companion-settings.ts';
-import { boardScreenSize, companionScreenSize, panelScreenReason } from './companion-screen.ts';
+import { boardScreenSize, companionScreenSize, panelScreenReason, companionPanelReason, companionRenderTarget } from './companion-screen.ts';
+import {readFile} from 'node:fs/promises';
+
+test('reported renderer profiles unlock shared source while browser and Android keep their own capabilities',async()=>{
+  const fixture=JSON.parse(await readFile(new URL('../../apps/companion-esp32/test/widget-compatibility.json',import.meta.url)));
+  const profiles=JSON.parse(await readFile(new URL('../../apps/companion-esp32/test/render-profiles.json',import.meta.url))).valid;
+  const panel={document:JSON.parse(fixture.cases[0].canonicalDocument)};
+  const state={host:{clients:[{companionId:'screen',kind:'esp32',connected:true,renderProfile:profiles[1],screen:profiles[1].screen}]},firmware:{screen:{version:profiles[1].firmwareVersion,profile:profiles[1].boardProfile,renderProfile:profiles[1]}}};
+  assert.equal(companionPanelReason(panel,state,'screen'),'');
+  state.host.clients[0].renderProfile=profiles[0];assert.match(companionPanelReason(panel,state,'screen'),/documentBytes/);
+  delete state.host.clients[0].renderProfile;assert.ok(companionPanelReason(panel,state,'screen'));
+  state.host.clients[0].connected=false;assert.equal(companionPanelReason(panel,state,'screen'),'');
+  state.firmware.screen.version='older';assert.equal(companionRenderTarget(state,'screen').profile,undefined);
+  state.host.clients[0].renderProfileError='Conflicting profiles';assert.equal(companionPanelReason(panel,state,'screen'),'Conflicting profiles');
+  delete state.host.clients[0].renderProfileError;
+  for(const kind of ['browser','android']){state.host.clients[0].kind=kind;assert.equal(companionPanelReason(panel,state,'screen'),'');}
+  state.host.clients[0].renderProfile={};assert.match(companionPanelReason(panel,state,'screen'),/Invalid renderer/);
+});
 
 test('ESP screen matching uses saved dimensions and checks every page', async () => {
   const h = host();

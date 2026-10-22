@@ -21,6 +21,7 @@ jobs:
       - name: Network protocol, live input, lease and provisioning checks
         run: |
           node scripts/widget-profile-fixtures.mjs --check
+          node scripts/widget-compatibility-fixtures.mjs --check
           python3 apps/companion-esp32/test/network.py
           python3 apps/companion-esp32/test/storage.py
           python3 apps/companion-esp32/test/workspace.py

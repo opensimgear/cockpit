@@ -458,3 +458,37 @@ preview, immutable library editing and native save/reload at
 `.research/widgets-native-ui/1792635916120/`. Windows socket/DPAPI tests require
 the normal local execution context; their sandbox-only failures do not reproduce
 there. Firmware cross-build validation of this metadata change is still pending.
+
+Capability commit `70d4092` passes all six ESP32 jobs in
+[CI run 39711314412](https://github.com/opensimgear/cockpit/actions/runs/39711314412).
+Target checks now consume actual renderer reports in companion settings, direct
+assignment, USB pairing, native profile authoring and authenticated session open.
+Matching offline metadata is predictive only: a connected device without a
+report cannot inherit a cached newer engine, and conflicting reports block new
+sessions before any input lease is created. Legacy screens retain their existing
+checks. Browser and Android companions without a bounded firmware report keep
+their shared renderer capabilities.
+
+The common target oracle has 36 cases covering compact/rich budgets, letterbox
+and inset geometry, local touch areas, all authored states, pinned font glyphs,
+prepared image dimensions/aliases, bindings and unsupported legacy operations.
+TypeScript and Rust produce identical structured diagnostics without changing
+source bytes. All 14 statically accepted panels also admit and render with the
+real C/LVGL compositor in both the 96 KiB and 32 KiB pool builds. Seven glyph,
+font-size or zero-area failures reject before board writes. Engine
+`2026.10.22.3` adds the corresponding zero-area candidate preflight guard.
+These are software checks; final device memory/cache availability is still
+checked by fenced candidate preparation and no physical qualification is implied.
+
+ESP32 assignments no longer disable grouping or block browser preview/export
+in the designer. Incompatible target updates retain the prior assignment and
+report a diagnostic; the authored panel can still be saved locally. The rebuilt
+dev Cockpit passes catalog import, actual pointer preview, independent immutable
+library revisions and native save/reload at
+`.research/widgets-native-ui/1792636724827/`. Validation also passes 121 service
+tests, two ESP32 host checks, 18 native host tests, eight passive profile-authoring
+tests, 39 focused designer/settings/message tests, and zero Cockpit/browser
+Svelte diagnostics. New compatibility code has 100% line/function and 94.29%
+branch coverage; the C compositor has 100% line/function and 84.31% branch
+coverage. Full actual-Cockpit transport/software-engine acceptance, remaining
+catalog/designer criteria and final Android/release acceptance remain open.

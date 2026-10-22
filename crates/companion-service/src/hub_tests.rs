@@ -141,6 +141,27 @@ fn renderer_reports_follow_authenticated_connections_and_never_grant_input(){
     let desktop=paired(&hub,"legacy");assert_eq!(wire(&hub,"desktop",json!({"type":"auth","token":desktop,"renderProfile":profile}))["ok"],true);
     let status=operator(&hub,json!({"command":"companion_status"}));assert_eq!(status["clients"][0]["kind"],"desktop");assert_eq!(status["instances"],json!([]));
 }
+#[test]
+fn source_open_checks_this_connections_renderer_before_creating_a_session(){
+    let fixtures:Value=serde_json::from_str(include_str!("../../../apps/companion-esp32/test/widget-compatibility.json")).unwrap();
+    let item=fixtures["cases"].as_array().unwrap().iter().find(|item|item["name"]=="rich catalog").unwrap();
+    let canonical=item["canonicalDocument"].as_str().unwrap().to_owned();
+    let hub=Hub::new("host".into(),Arc::new(NullSourceSink));let token=paired_kind(&hub,"screen","esp32");
+    let publication=publish(&hub,PublicationUpload{publication_hash:format!("sha256:{}",crate::publication::hash(canonical.as_bytes())),canonical_document:canonical,capability_fingerprint:None,assets:vec![]});
+    assign(&hub,"screen","panel",&publication.publication_hash);
+    let auth=|connection:&str,profile:Value|wire(&hub,connection,json!({"type":"auth","token":token,"renderProfile":profile}));
+    assert_eq!(auth("compact",crate::render_profile::test_profile(false))["ok"],true);
+    let failed=wire(&hub,"compact",json!({"type":"open","instanceId":"panel"}));assert_eq!(failed["ok"],false);assert!(failed["error"].as_str().unwrap().contains("documentBytes"));
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["instances"][0]["connected"],false);hub.disconnect_connection("compact",hub.now_ms());
+    assert_eq!(wire(&hub,"legacy",json!({"type":"auth","token":token}))["ok"],true);
+    assert_eq!(wire(&hub,"legacy",json!({"type":"open","instanceId":"panel"}))["ok"],false);assert_eq!(operator(&hub,json!({"command":"companion_status"}))["instances"][0]["connected"],false);
+    assert_eq!(auth("rich",crate::render_profile::test_profile(true))["ok"],true);
+    assert_eq!(wire(&hub,"rich",json!({"type":"open","instanceId":"panel"}))["ok"],false); // mixed missing report
+    hub.disconnect_connection("legacy",hub.now_ms());
+    assert_eq!(wire(&hub,"rich",json!({"type":"open","instanceId":"panel"}))["ok"],true);
+    let status=operator(&hub,json!({"command":"companion_status"}));assert_eq!(status["instances"][0]["connected"],true);assert_eq!(status["instances"][0]["armed"],false);
+    assert_eq!(operator(&hub,json!({"command":"companion_status"}))["instances"][0]["publicationHash"],publication.publication_hash);
+}
 fn publish(h: &Hub, p: PublicationUpload) -> Publication {
     let result = Publication::validate(p.clone()).unwrap();
     let mut command = serde_json::to_value(p).unwrap();
