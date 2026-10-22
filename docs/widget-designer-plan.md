@@ -419,3 +419,12 @@ diagnostics are validated as bounded, assignment-bound operation metadata and
 shown in Cockpit errors. All 116 native host tests and 12 message-presenter tests
 pass; Cockpit and browser Svelte checks report zero errors/warnings. The updated
 native dev host was rebuilt through the worktree's Tauri launch configuration.
+
+The rebuilt actual Cockpit workflow passes at
+`.research/widgets-native-ui/1792634219454/`. Source-integration CI exposed an
+unnecessary renderer dependency in the generic platform header, breaking the
+standalone storage harness. The display candidate API now has its own
+`network/candidate.h`; storage, serial and full client/protocol regressions pass
+again locally. The source-engine MCU run is
+[39708656734](https://github.com/opensimgear/cockpit/actions/runs/39708656734);
+the header correction requires a fresh run before claiming full CI success.

@@ -3,6 +3,7 @@
 #include "board.h"
 #include "panel.h"
 #include "platform.h"
+#include "candidate.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"

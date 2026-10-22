@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "candidate.h"
 #include "workspace.h"
 #include "firmware.h"
 #include "input.h"

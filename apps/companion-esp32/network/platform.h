@@ -2,7 +2,6 @@
 #define OSG_PLATFORM_H
 #include "settings.h"
 #include "workspace.h"
-#include "scene_bank.h"
 #include "pixel_cache.h"
 #include "esp_transport.h"
 #include "freertos/FreeRTOS.h"
@@ -34,8 +33,4 @@ void osg_network_start(osg_network_ui);
 void osg_network_status(const char *request_id);
 void osg_network_touch(bool valid, bool down, int x, int y);
 void osg_network_render(const osg_panel *, bool finished, bool success);
-/* Display-task candidate handoff. begin pins the candidate in drawing_panel;
- * finish releases that fence and only publishes a generation-matching result. */
-const osg_panel *osg_network_candidate_begin(osg_scene_ticket *);
-void osg_network_candidate_finish(osg_scene_ticket, bool, const osg_panel_source_diagnostic *);
 #endif
