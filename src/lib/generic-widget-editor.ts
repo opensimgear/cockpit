@@ -2,6 +2,18 @@
 export interface SourceHistory<T> { past: T[]; present: T; future: T[] }
 const HISTORY_LIMIT = 80;
 
+export type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+export interface SelectionBounds { x: number; y: number; width: number; height: number }
+/** Opposite edges stay anchored; corner resizing intentionally leaves the axes independent. */
+export function resizeSelection(bounds: SelectionBounds, handle: ResizeHandle, dx: number, dy: number): SelectionBounds {
+  let { x, y, width, height } = bounds;
+  if (handle.includes('w')) { x = Math.min(bounds.x + dx, bounds.x + bounds.width - 1); width = bounds.x + bounds.width - x; }
+  if (handle.includes('e')) width = Math.max(1, bounds.width + dx);
+  if (handle.includes('n')) { y = Math.min(bounds.y + dy, bounds.y + bounds.height - 1); height = bounds.y + bounds.height - y; }
+  if (handle.includes('s')) height = Math.max(1, bounds.height + dy);
+  return { x, y, width, height };
+}
+
 export type LayerPlacement = 'before' | 'after' | 'inside' | 'root';
 
 /** Move complete subtrees, rejecting cycles and nesting beyond the source depth limit. */

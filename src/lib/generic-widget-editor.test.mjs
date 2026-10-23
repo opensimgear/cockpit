@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sourceIdentity, createSourceHistory, editSource, undoSource, redoSource, CompilationFence, moveLayer } from './generic-widget-editor.ts';
+import { sourceIdentity, createSourceHistory, editSource, undoSource, redoSource, CompilationFence, moveLayer, resizeSelection } from './generic-widget-editor.ts';
+
+test('eight resize handles keep opposite edges fixed, allow nonuniform corners and clamp crossed edges', () => {
+  const original = { x: 10, y: 20, width: 100, height: 50 };
+  for (const [handle, expected] of Object.entries({nw:[20,25,90,45],n:[10,25,100,45],ne:[10,25,110,45],e:[10,20,110,50],se:[10,20,110,55],s:[10,20,100,55],sw:[20,20,90,55],w:[20,20,90,50]})) {
+    const resized = resizeSelection(original, handle, 10, 5);
+    assert.deepEqual(Object.values(resized), expected, handle);
+    if (handle.includes('w')) assert.equal(resized.x + resized.width, original.x + original.width);
+    if (handle.includes('n')) assert.equal(resized.y + resized.height, original.y + original.height);
+  }
+  assert.notEqual(resizeSelection(original, 'se', 20, 5).width / 55, 2);
+  assert.deepEqual(resizeSelection(original, 'nw', 200, 200), { x:109, y:69, width:1, height:1 });
+  assert.deepEqual(resizeSelection(original, 'se', -200, -200), { x:10, y:20, width:1, height:1 });
+  assert.deepEqual(original, { x:10, y:20, width:100, height:50 });
+});
 
 test('layer drops reorder siblings in both directions and keep nested groups intact', () => {
   const nodes = [{ id: 'a' }, { id: 'group', children: [{ id: 'c' }, { id: 'd' }, { id: 'e' }] }, { id: 'b' }];
