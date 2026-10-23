@@ -23,7 +23,7 @@ test('running Cockpit: content widget editor and shared States/Signals canvas co
   const fitted=()=>editor.locator('.viewport').evaluate(element=>{const v=element.getBoundingClientRect();return [...element.querySelectorAll('article')].every(card=>{const c=card.getBoundingClientRect();return c.left>=v.left+20&&c.top>=v.top+20&&c.right<=v.right-20&&c.bottom<=v.bottom-20;});});
   const wheel=async(ctrlKey=false)=>{await editor.locator('.viewport').dispatchEvent('wheel',{deltaY:80,deltaX:20,deltaMode:0,ctrlKey,bubbles:true,cancelable:true});};
   try{
-    await page.evaluate(async()=>{await(await import('/src/lib/companion-startup.ts')).restoreCompanionPanels();});await page.reload();await open();assert.equal(await page.locator('dialog[open]').count(),0);
+    await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});await page.reload();await open();assert.equal(await page.locator('dialog[open]').count(),0);
     assert.equal(await page.getByRole('region',{name:'Widgets',exact:true}).count(),0,'Library is replaced by the editor');
     assert.equal(await editor.evaluate(el=>getComputedStyle(el).position),'static');
     for(const mode of ['States','Signals']){
@@ -56,8 +56,8 @@ test('running Cockpit: content widget editor and shared States/Signals canvas co
     await page.evaluate(()=>{window.confirm=()=>false;});await editor.getByRole('button',{name:'Back',exact:true}).click();assert.equal(await editor.isVisible(),true);
     await page.evaluate(()=>{window.confirm=()=>true;});await editor.getByRole('button',{name:'Back',exact:true}).click();assert.equal(await editor.count(),0);
     assert.deepEqual(errors,[]);
-  }finally{
-    await page.evaluate(async values=>{for(const [i,key]of ['osg-canvas-navigation','osg-canvas-styling'].entries())values[i]===null?localStorage.removeItem(key):localStorage.setItem(key,values[i]);},preferences);
-    await page.evaluate(async()=>{await(await import('/src/lib/companion-startup.ts')).restoreCompanionPanels();});await page.reload();await open();await select('States');await page.evaluate(async()=>{await(await import('/src/lib/companion-startup.ts')).restoreCompanionPanels();});await browser.close();
+  }catch(error){console.error(error);throw error;}finally{
+    try{await page.evaluate(async values=>{for(const [i,key]of ['osg-canvas-navigation','osg-canvas-styling'].entries())values[i]===null?localStorage.removeItem(key):localStorage.setItem(key,values[i]);},preferences);
+    await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});await page.reload();await open();await select('States');await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});}finally{await browser.close();}
   }
 });
