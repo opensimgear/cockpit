@@ -17,8 +17,9 @@ test('running Cockpit: plain source persistence, appearances, graph wiring, layo
   const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',dialog=>dialog.accept());
   const request=async(command,companion={})=>{const reply=await page.evaluate(request=>window.__TAURI_INTERNALS__.invoke('gateway_request',{request}),command.startsWith('widget_')?{command,clientId:'state-signal-qualification'}:{command,companion,clientId:'state-signal-qualification'});assert.equal(reply.ok,true,reply.error??command);return reply.state;};
   let browser,companionId,instanceId;
+  const restored=()=>page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});
   try{
-    await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();
+    await restored();await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();await restored();
     await page.getByRole('button',{name:'Edit design Toggle',exact:true}).waitFor();
     const library=(await request('widget_library_get')).widgetLibrary.definitions;
     const latest=library.find(s=>s.id==='toggle');assert.ok(latest);assert.equal('formatVersion'in latest,false);assert.equal('revision'in latest,false);assert.ok(latest.design.owners.some(o=>o.signal==='requested'));
@@ -54,11 +55,11 @@ test('running Cockpit: plain source persistence, appearances, graph wiring, layo
     let bundle;for(let i=0;i<100;i++){const files=(await readdir(downloads)).filter(f=>f.endsWith('.json'));if(files.length){bundle=JSON.parse(await readFile(resolve(downloads,files[0]),'utf8'));break;}await page.waitForTimeout(100);}assert.ok(bundle,'Compiled export did not finish');await verifyCompiledBundle(bundle);await session.detach();
     assert.equal('scene'in bundle.artifact,false);assert.equal('design'in bundle.artifact,false);
     await dialog.getByRole('button',{name:'Save',exact:true}).click();await dialog.waitFor({state:'hidden'});
-    await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();await page.getByRole('button',{name:'Edit design Toggle',exact:true}).click();await tab('States');assert.ok(await dialog.locator('[data-graph-node="on"]').count());await dialog.getByRole('button',{name:'Back',exact:true}).click();
+    await restored();await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();await page.getByRole('button',{name:'Edit design Toggle',exact:true}).click();await tab('States');assert.ok(await dialog.locator('[data-graph-node="on"]').count());await dialog.getByRole('button',{name:'Back',exact:true}).click();
     // Publish exactly the UI-exported artifact through the real native gateway.
     const publication=await createCompiledPanel({id:'state-signal-review',title:'State editor capsule',viewports:[{pageId:'main',title:'Main',width:640,height:480,background:'#193c52'}]},[{id:'capsule',label:'Toggle',pageId:'main',bounds:{x:0,y:0,width:bundle.artifact.width/640,height:bundle.artifact.height/480},bundle}]);
     const companionRequest=async(command,payload)=>{const state=await request(command,payload);return state.companions??state;};
-    await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});
+    await restored();
     await sendPublication(publication,companionRequest,{saveAsLatest:false});const beforeClients=new Set((await companionRequest('companion_status')).host.clients.map(c=>c.companionId));
     browser=await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL??'msedge'});const context=await browser.newContext({viewport:{width:1000,height:800}}),companion=await context.newPage();const offer=await companionRequest('companion_pair_offer',{kind:'browser'});await companion.goto(offer.pairing.browserUrl,{waitUntil:'domcontentloaded'});
     for(let i=0;i<100;i++){companionId=(await companionRequest('companion_status')).host.clients.find(c=>!beforeClients.has(c.companionId))?.companionId;if(companionId)break;await page.waitForTimeout(100);}assert.ok(companionId);
