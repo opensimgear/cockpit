@@ -7,18 +7,26 @@ certificates, listener settings and unrelated profile data remain separate.
 ESP32 pairing remains paused and compiled widgets cannot be assigned to ESP32.
 That implementation belongs to feature #161 in Backlog.
 
-The proposed next authoring feature is the
-[state and signal-flow editor](widget-state-signal-editor-plan.md), retaining
-this layer designer and using the capsule Toggle as its pilot. That plan does
-not describe functionality already available in the application.
+The [state and signal-flow editor](widget-state-signal-editor-plan.md) extends
+this layer designer. Toggle is the only shipped pilot; numeric gauges and three-state
+components are qualification fixtures.
 
 ## Authoring and publishing
 
 Open **Companions → Widgets**. Edit Toggle or choose **New** for a blank design.
-The six workspaces are:
+The editor opens in the main content area; Back returns to the library or the
+panel draft that opened it. States and Signals share the profile editor toolbar:
+ELK Auto-layout, Fit all, zoom, background panning, and the global wheel/arrow
+preferences in Settings. Layout stays outside compiled source identity.
+
+The workspaces are:
 
 - **Design**: shapes, paths, text, imported images, groups, transforms and typed
   parameters. Source preview shows editable geometry.
+- **States**: arrange state cards, choose the initial state, connect transitions,
+  edit guards, map owned values to states, and configure motion and sound.
+- **Signals**: inspect profile input/output flow, add typed transformations,
+  wire named expression inputs and bind presentation properties.
 - **Data**: typed local/input/feedback signals, bounded visual domains and named
   ports. Controller inputs emit to Cockpit; feedback ports receive simulator data.
 - **Behavior**: named states in independent regions, events, typed guards,
@@ -30,12 +38,20 @@ The six workspaces are:
   stimuli, quality, requested outputs and behavior state inspection.
 
 Compile before Try, export or save. Any source, parameter, size or media-preference
-edit invalidates the result immediately. Cancellation and revision fences discard
-late results. Undo restores source, and still requires compilation. Saved revisions
-are immutable; editing a saved source creates a new revision.
+edit invalidates the result immediately. Cancellation fences discard late results.
+Undo restores source and still requires compilation. Graph layout is stored separately
+and does not invalidate assets. Saving replaces the current widget by its stable ID.
+There is no source revision history, format discriminator or backward-compatible
+reader. The native library is simply `{ "definitions": [source] }`; panel instances
+refer to `sourceId`. Imports use the same schema. A source edit invalidates saved
+compiled panel assets that depend on it, so those panels must be compiled again.
 
 In **Panels**, create a panel and add a source from the palette. Drag, resize or
-enter exact pixel placement, set per-instance parameters, then compile the panel.
+enter exact pixel placement, set per-instance parameters and the current page's
+Background color, then compile the panel. Page colors persist through export,
+import, compiled Try and browser delivery. Widget surfaces and previews are
+transparent; only authored artwork contributes pixels. Blank widgets start with
+an unfilled shape. The panel color shows through empty widget space.
 The source preview is labeled. **Try** uses complete compiled widget surfaces;
 its input stays in the local simulator. Select browser companions and **Save**
 to publish and update their assignments. Export includes editable panel/source
@@ -47,7 +63,25 @@ or local input does not count as game confirmation.
 
 ## Contracts and execution
 
-`packages/widget-compiler` owns source format 2 and the off-device compiler.
+`packages/widget-compiler` owns the plain authoring schema and the off-device compiler.
+The optional `design` object contains `nodes`, `owners`, `appearances` and `effects`.
+`lowerWidgetDesign` expands acyclic typed expression references, generates owned-value
+writes and profile emissions, resolves appearance overrides and derives numeric motion
+endpoints before the existing compiler runs. Source hashes cover the entire authored
+document. Native admission checks the same contracts independently.
+
+In Design, choose Base or a state appearance. Base is inherited by every state;
+a state edit patches properties by stable layer ID. Groups, ordering and layer
+structure remain global. Deletion and duplication update all appearance and motion
+references together. Reset override restores inheritance; Apply to base promotes the
+selected layer's patches. More-specific combined appearances override simpler ones;
+independent regions writing the same property require an explicit combination.
+Advanced expressions remain editable through the existing forms.
+
+An owner maps each state to a local value and optionally a profile command. The
+compiler emits the target literal, preserving the reducer's pre-event snapshot
+semantics. Other actions cannot write that same owned signal or command. Pure graph
+cycles, unknown references, type mismatches and out-of-range values are rejected.
 `packages/widget-runtime` owns the bounded behavior, raster artifact and panel
 contracts and player. Source is data: executable scripts, HTML, remote asset URLs
 and arbitrary runtime code are rejected.
@@ -117,6 +151,9 @@ the session and require a neutral baseline before resuming.
   including the new widget coverage gate.
 - `python scripts/companion-coverage.py`: native independent admission, service,
   source library and cutover coverage.
+- `node --test --test-force-exit tests/ui/widget-state-signal-native.mjs`: capsule
+  state appearances, graph wiring, layout identity, compiled traces, save/reopen and
+  browser raster playback using the running native Cockpit.
 - `pnpm widgets:native:ui`: the actual running dev Cockpit at CDP 9222 and the
   production browser companion. Records screenshots, exact finished-pixel checks,
   interaction, optional media, cache and rendering evidence under `.research/`.

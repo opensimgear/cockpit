@@ -7,9 +7,6 @@ import {compile} from 'svelte/compiler';
 import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
-import * as designer from '../../packages/companion-designer/src/index.ts';
-import {latestSavedPanels} from './companion-library.ts';
-import * as companionScreen from './companion-screen.ts';
 import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./ui-settings-guard','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
@@ -103,22 +100,4 @@ test('header badges show authoritative selection mode and applied ownership with
  const pending=header(view(stopped()),{profileMode:null,profileModeStale:true});assert.ok(pending.includes('Mode unavailable'));assert.ok(!pending.includes('Manual'));assert.ok(!pending.includes('Automatic'));
  const staleMode=header(view(running()),{profileMode:'automatic',profileModeStale:true,profileModeError:'Native policy read failed.'});assert.ok(staleMode.includes('Mode unavailable'));assert.ok(staleMode.includes('Native policy read failed.'));assert.ok(!staleMode.includes('Automatic'));assert.ok(staleMode.includes('Applied saved rig'));
  for(const state of ['faulted','recovery-needed','transitioning']){const html=header(view({...stopped(),state}));assert.ok(!html.includes('Stopped'));assert.ok(html.includes({faulted:'Faulted','recovery-needed':'Recovery needed',transitioning:'Activating…'}[state]));}
-});
-
-async function companionCompactor(send){
- const filename=new URL('./CompanionDesigner.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureCompactor({compactSnapshots,setStore(next){store=next;}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'});let handlers;
- const Designer=evaluate(js.code,filename.pathname,name=>{
-  if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name.endsWith('.svelte'))return{default:()=>{}};if(modules.has(name))return modules.get(name);
-  if(name==='./companion-screen')return companionScreen;if(name==='@opensimgear/companion-designer')return designer;if(name==='@opensimgear/companion-ui')return{PanelCanvas:()=>{}};
-  if(name==='./companion-library')return{latestSavedPanels};
-  if(name==='./gateway')return{gatewayRequest:send};if(name==='./companions')return{sendPublication:noRequest};if(name==='./panel-actions')return{synchronizePanel:noRequest,removePanelAssignments:noRequest};if(name==='./companion-startup')return{restoreCompanionPanels:noRequest};if(name==='./firmware-widgets')return{firmwareWidgetPresets:[],simplifyFirmwareWidgets:document=>({document,removed:0})};throw new Error(`Unexpected compactor dependency ${name}`);
- },{crypto:{randomUUID:()=>id},captureCompactor(value){handlers=value;}});render(Designer,{props:{openSettings:noRequest}}).body;return handlers;
-}
-test('actual panel compaction preserves everything when unified publication references are missing, corrupt or unavailable; valid native references pin retained revisions',async()=>{
- const a=hash,b=`sha256:${'b'.repeat(64)}`,c=`sha256:${'c'.repeat(64)}`,calls=[],compactions=[];let native;
- const handler=await companionCompactor(async request=>{calls.push(plain(request));if(request.command==='profile_companion_references')return{profiles:{publicationReferences:native}};if(request.command==='companion_prune')return{companions:{}};throw new Error(`Unexpected compaction request ${request.command}`);});handler.setStore({async compact(pins){compactions.push([...pins]);return{library:{schemaVersion:1,drafts:[]},publications:{}};}});
- for(const value of [undefined,{schemaVersion:1,libraryFingerprint:a,hashes:[b,a]},{schemaVersion:1,libraryFingerprint:a,hashes:[a],permission:true}]){native=value;await handler.compactSnapshots({host:{instances:[{publicationHash:c}]}});assert.equal(compactions.length,0);assert.ok(calls.every(c=>c.command==='profile_companion_references'));}
- calls.length=0;native={schemaVersion:1,libraryFingerprint:a,hashes:[a,b]};await handler.compactSnapshots({host:{instances:[{publicationHash:c}]}});assert.deepEqual(new Set(compactions[0]),new Set([a,b,c]));assert.deepEqual(calls.map(c=>c.command),['profile_companion_references','companion_prune']);assert.deepEqual(new Set(calls[1].companion.hashes),new Set([a,b,c]));
- calls.length=0;await handler.compactSnapshots({host:{instances:[]}},true);assert.equal(compactions.length,1);assert.deepEqual(calls.map(c=>c.command),['profile_companion_references','companion_prune']);
- calls.length=0;await handler.compactSnapshots({host:{instances:[]}},false,['deleted-panel']);assert.deepEqual(calls[1].companion.panelIds,['deleted-panel'],'Deleted panels remain in the native pruning scope after their local draft and snapshots are removed.');
 });

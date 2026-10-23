@@ -1,3 +1,4 @@
+import { lowerWidgetDesign } from './design.ts';
 import { BEHAVIOR_LIMITS, evaluateExpression, validateBehaviorDefinition, type Expression, type Scalar } from '../../widget-runtime/src/behavior.ts';
 import { canonicalWidget, decodeWidgetBase64, validatePcmWave } from '../../widget-runtime/src/artifact.ts';
 import type { CompileOptions, VisualNode, VisualValue, WidgetParameter, WidgetSource } from './types.ts';
@@ -39,11 +40,19 @@ function validateValue(value:unknown,parameters:Set<string>,signals:Set<string>,
   else if(v.op==='clamp'){exactSource(v,['op','value','min','max']);for(const key of ['value','min','max'])child(v[key]);}
   else{assertSource(v.op==='if','Unsupported visual expression');exactSource(v,['op','condition','then','else']);for(const key of ['condition','then','else'])child(v[key]);}
 }
-/** Strict replacement schema. Old widget libraries deliberately fail this validator. */
+/** Single source schema. Authoring data is lowered before bounded runtime admission. */
 export function validateWidgetSource(input:unknown):{ok:true;value:WidgetSource}|{ok:false;error:string}{
   try{
-    const serialized=JSON.stringify(input);assertSource(serialized&&new TextEncoder().encode(serialized).length<=SOURCE_LIMITS.bytes,'Widget source exceeds byte budget');const s=exactSource(JSON.parse(serialized),['formatVersion','id','revision','title','size','parameters','behavior','visualDomains','inputs','outputs','hitRegions','scene'],['motions','sounds','assets']);
-    assertSource(s.formatVersion===2,'Unsupported widget source format; recreate legacy widgets');sourceId(s.id);sourceNumber(s.revision,1,65535,true);sourceText(s.title);assertSource(s.title.trim(),'Widget title required');exactSource(s.size,['width','height']);sourceNumber(s.size.width,16,2048,true);sourceNumber(s.size.height,16,2048,true);
+    const serialized=JSON.stringify(input);assertSource(serialized&&new TextEncoder().encode(serialized).length<=SOURCE_LIMITS.bytes,'Widget source exceeds byte budget');
+    const source=exactSource(JSON.parse(serialized),['id','title','size','parameters','behavior','visualDomains','inputs','outputs','hitRegions','scene'],['design','motions','sounds','assets']) as WidgetSource;
+    const checked=validateExecutableSource(lowerWidgetDesign(source));assertSource(checked.ok,checked.ok?'':checked.error);return {ok:true,value:source};
+  }catch(e){return {ok:false,error:e instanceof Error?e.message:'Invalid widget source'};}
+}
+/** Strict replacement schema. Old widget libraries deliberately fail this validator. */
+function validateExecutableSource(input:unknown):{ok:true;value:WidgetSource}|{ok:false;error:string}{
+  try{
+    const serialized=JSON.stringify(input);assertSource(serialized&&new TextEncoder().encode(serialized).length<=SOURCE_LIMITS.bytes,'Widget source exceeds byte budget');const s=exactSource(JSON.parse(serialized),['id','title','size','parameters','behavior','visualDomains','inputs','outputs','hitRegions','scene'],['motions','sounds','assets']);
+    sourceId(s.id);sourceText(s.title);assertSource(s.title.trim(),'Widget title required');exactSource(s.size,['width','height']);sourceNumber(s.size.width,16,2048,true);sourceNumber(s.size.height,16,2048,true);
     const checked=validateBehaviorDefinition(s.behavior);assertSource(checked.ok,checked.ok?'':checked.error);const behavior=checked.value;const signals=new Set(behavior.signals.map(signal=>signal.id)),regions=new Set(behavior.regions.map(region=>region.id)),parameters=new Set<string>();
     for(const parameter of sourceList(s.parameters,SOURCE_LIMITS.parameters)){
       exactSource(parameter,['id','label','type','default'],['min','max']);sourceId(parameter.id);sourceText(parameter.label);assertSource(!parameters.has(parameter.id)&&!signals.has(parameter.id),'Duplicate parameter/signal ID');parameters.add(parameter.id);assertSource(['text','color','number','boolean'].includes(parameter.type),'Unsupported parameter type');if(parameter.type==='number'){sourceNumber(parameter.min,-1e9,1e9);sourceNumber(parameter.max,-1e9,1e9);assertSource(parameter.min<parameter.max,'Invalid parameter range');}else assertSource(parameter.min===undefined&&parameter.max===undefined,'Unexpected parameter range');validateParameter(parameter,parameter.default);
@@ -137,4 +146,4 @@ export function sourceToSvg(source:WidgetSource,context:SceneContext):string{
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${source.size.width} ${source.size.height}" preserveAspectRatio="none">${source.scene.map(node).join('')}</svg>`;
 }
-export function checkedSource(source:WidgetSource,options:CompileOptions):WidgetSource{const checked=validateWidgetSource(source);assertSource(checked.ok,checked.ok?'':checked.error);resolvedParameters(checked.value,options.parameters);return checked.value;}
+export function checkedSource(source:WidgetSource,options:CompileOptions):WidgetSource{const checked=validateWidgetSource(source);assertSource(checked.ok,checked.ok?'':checked.error);resolvedParameters(checked.value,options.parameters);return lowerWidgetDesign(checked.value,options.parameters);}

@@ -25,7 +25,7 @@ export interface CompiledPanelDocument {
   };
   presentation: {
     format: 'compiled-raster-v1';
-    viewports: { pageId: string; width: number; height: number }[];
+    viewports: { pageId: string; width: number; height: number; background?: string }[];
     widgets: PanelWidget[];
     artifacts: { hash: string; artifact: CompiledWidgetArtifact }[];
   };
@@ -140,7 +140,8 @@ export function validateCompiledPanelDocument(input: unknown, capabilities: Widg
     ensure(p.format === 'compiled-raster-v1', 'Unsupported compiled panel presentation');
     const viewports = list(p.viewports, pages.length, pages.length), viewPages = new Set<string>();
     for (const viewport of viewports) {
-      object(viewport, ['pageId', 'width', 'height']); ensure(pages.some(page => page.id === viewport.pageId) && !viewPages.has(viewport.pageId), 'Invalid viewport page'); viewPages.add(viewport.pageId);
+      object(viewport, ['pageId', 'width', 'height'], ['background']);
+      if(Object.hasOwn(viewport,'background'))ensure(typeof viewport.background==='string'&&/^#[0-9a-fA-F]{6}$/.test(viewport.background),'Invalid panel background color'); ensure(pages.some(page => page.id === viewport.pageId) && !viewPages.has(viewport.pageId), 'Invalid viewport page'); viewPages.add(viewport.pageId);
       integer(viewport.width, 320, 8192); integer(viewport.height, 320, 8192);
     }
     const artifacts = list(p.artifacts, 1, 192), hashes = new Set<string>(), artifactAssets = new Map<string, CompiledAssetDescriptor>();
@@ -202,7 +203,7 @@ export async function verifyCompiledPanelPublication(input: unknown, capabilitie
   for (const entry of document.presentation.artifacts) await verifyCompiledBundle({ artifact: entry.artifact, artifactHash: entry.hash, assets: payloads.filter(payload => entry.artifact.assets.some(asset => asset.id === payload.assetId)) }, capabilities);
   return { document, assets: structuredClone(payloads), publicationHash: publication.publicationHash, capabilityFingerprint: publication.capabilityFingerprint };
 }
-export async function createCompiledPanel(options: { id: string; title: string; viewports: { pageId: string; title: string; width: number; height: number }[] }, placements: PanelPlacement[], capabilities: WidgetCapabilities = BROWSER_WIDGET_CAPABILITIES): Promise<CompiledPanelPublication> {
+export async function createCompiledPanel(options: { id: string; title: string; viewports: { pageId: string; title: string; width: number; height: number; background?: string }[] }, placements: PanelPlacement[], capabilities: WidgetCapabilities = BROWSER_WIDGET_CAPABILITIES): Promise<CompiledPanelPublication> {
   const artifacts = new Map<string, CompiledWidgetArtifact>(), descriptors = new Map<string, CompiledAssetDescriptor>(), payloads = new Map<string, CompiledAssetPayload>();
   const controls: PanelControl[] = [], feedbackWidgets: PanelFeedback[] = [], widgets: PanelWidget[] = [], bindings: CompiledPanelDocument['bindings'] = [];
   let buttons = 0, axes = 0;

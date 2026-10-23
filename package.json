@@ -12,7 +12,7 @@
     "widgets:check": "pnpm --filter @opensimgear/widget-runtime check && pnpm --filter @opensimgear/widget-compiler check && node packages/widget-compiler/scripts/native-source-fixtures.mjs --check && node packages/widget-compiler/scripts/image-codec-fixtures.mjs --check",
     "widgets:test": "pnpm --filter @opensimgear/widget-runtime test && pnpm --filter @opensimgear/widget-compiler test && node --test src/lib/compiled-companion-library.test.mjs src/lib/generic-widget-editor.test.mjs",
     "widgets:coverage": "pnpm --filter @opensimgear/widget-runtime coverage && pnpm --filter @opensimgear/widget-compiler coverage && node --experimental-test-coverage --test-coverage-include=src/lib/compiled-companion-library.ts --test-coverage-include=src/lib/generic-widget-editor.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/compiled-companion-library.test.mjs src/lib/generic-widget-editor.test.mjs",
-    "widgets:native:ui": "node --test --test-force-exit tests/ui/generic-widget-designer-native.mjs",
+    "widgets:native:ui": "node --test --test-concurrency=1 --test-force-exit tests/ui/generic-widget-designer-native.mjs tests/ui/widget-state-signal-native.mjs tests/ui/widget-graph-canvas-native.mjs",
     "tauri": "tauri",
     "ui:dev": "vite --host 127.0.0.1",
     "ui:build": "pnpm browser:build && vite build",

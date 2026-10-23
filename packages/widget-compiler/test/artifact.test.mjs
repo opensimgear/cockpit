@@ -1,6 +1,7 @@
+import {behaviorToggleSource as createToggleSource} from './behavior-toggle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {compileWidget,createToggleSource,createPcmSoundFixture} from '../src/index.ts';
+import {compileWidget,createPcmSoundFixture} from '../src/index.ts';
 import {ARTIFACT_LIMITS,BROWSER_WIDGET_CAPABILITIES,canonicalWidget,createCompiledPixelDecoder,decodeCompiledFrame,decodeWidgetBase64,encodeWidgetBase64,validateCompiledArtifact,validatePcmWave,validateWidgetCapabilities,verifyCompiledBundle,widgetDigest} from '../../widget-runtime/src/artifact.ts';
 import {clone,tinySource,wave} from './fixtures.mjs';
 

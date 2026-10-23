@@ -1,7 +1,5 @@
 {
-  "formatVersion": 2,
-  "id": "toggle-v2",
-  "revision": 1,
+  "id": "toggle",
   "title": "Toggle",
   "size": {
     "width": 240,
@@ -118,40 +116,6 @@
         ],
         "transitions": [
           {
-            "id": "request",
-            "from": "ready",
-            "event": "activate",
-            "guard": {
-              "ref": "available"
-            },
-            "actions": [
-              {
-                "type": "set",
-                "signal": "requested",
-                "value": {
-                  "op": "not",
-                  "value": {
-                    "ref": "requested"
-                  }
-                }
-              },
-              {
-                "type": "emit",
-                "port": "toggle",
-                "value": {
-                  "op": "not",
-                  "value": {
-                    "ref": "requested"
-                  }
-                }
-              },
-              {
-                "type": "cue",
-                "cue": "click"
-              }
-            ]
-          },
-          {
             "id": "press",
             "from": "ready",
             "event": "press",
@@ -193,6 +157,46 @@
                 "value": {
                   "literal": false
                 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "requested-state",
+        "initial": "off",
+        "states": [
+          "off",
+          "on"
+        ],
+        "transitions": [
+          {
+            "id": "turn-on",
+            "from": "off",
+            "to": "on",
+            "event": "activate",
+            "guard": {
+              "ref": "available"
+            },
+            "actions": [
+              {
+                "type": "cue",
+                "cue": "click"
+              }
+            ]
+          },
+          {
+            "id": "turn-off",
+            "from": "on",
+            "to": "off",
+            "event": "activate",
+            "guard": {
+              "ref": "available"
+            },
+            "actions": [
+              {
+                "type": "cue",
+                "cue": "click"
               }
             ]
           }
@@ -309,18 +313,7 @@
         {
           "id": "thumb-halo",
           "kind": "ellipse",
-          "x": {
-            "op": "if",
-            "condition": {
-              "ref": "requested"
-            },
-            "then": {
-              "literal": 151
-            },
-            "else": {
-              "literal": 25
-            }
-          },
+          "x": 25,
           "y": 49,
           "width": 62,
           "height": 62,
@@ -332,18 +325,7 @@
         {
           "id": "thumb",
           "kind": "ellipse",
-          "x": {
-            "op": "if",
-            "condition": {
-              "ref": "requested"
-            },
-            "then": {
-              "literal": 157
-            },
-            "else": {
-              "literal": 31
-            }
-          },
+          "x": 31,
           "y": 55,
           "width": 50,
           "height": 50,
@@ -354,18 +336,7 @@
         {
           "id": "thumb-highlight",
           "kind": "ellipse",
-          "x": {
-            "op": "if",
-            "condition": {
-              "ref": "requested"
-            },
-            "then": {
-              "literal": 164
-            },
-            "else": {
-              "literal": 38
-            }
-          },
+          "x": 38,
           "y": 62,
           "width": 36,
           "height": 36,
@@ -444,126 +415,93 @@
       }
     }
   ],
-  "motions": [
-    {
-      "id": "on",
-      "from": {
-        "requested": false
-      },
-      "to": {
-        "requested": true
-      },
-      "durationMs": 160,
-      "fps": 30,
-      "interruption": "reverse",
-      "tracks": [
-        {
-          "node": "thumb",
-          "property": "x",
-          "keyframes": [
-            {
-              "at": 0,
-              "value": 31
-            },
-            {
-              "at": 1,
-              "value": 157
-            }
-          ],
-          "easing": "ease-in-out"
-        },
-        {
-          "node": "thumb-halo",
-          "property": "x",
-          "keyframes": [
-            {
-              "at": 0,
-              "value": 25
-            },
-            {
-              "at": 1,
-              "value": 151
-            }
-          ],
-          "easing": "ease-in-out"
-        },
-        {
-          "node": "thumb-highlight",
-          "property": "x",
-          "keyframes": [
-            {
-              "at": 0,
-              "value": 38
-            },
-            {
-              "at": 1,
-              "value": 164
-            }
-          ],
-          "easing": "ease-in-out"
-        }
-      ]
-    },
-    {
-      "id": "off",
-      "from": {
-        "requested": true
-      },
-      "to": {
-        "requested": false
-      },
-      "durationMs": 160,
-      "fps": 30,
-      "interruption": "reverse",
-      "tracks": [
-        {
-          "node": "thumb",
-          "property": "x",
-          "keyframes": [
-            {
-              "at": 0,
-              "value": 157
-            },
-            {
-              "at": 1,
-              "value": 31
-            }
-          ],
-          "easing": "ease-in-out"
-        },
-        {
-          "node": "thumb-halo",
-          "property": "x",
-          "keyframes": [
-            {
-              "at": 0,
-              "value": 151
-            },
-            {
-              "at": 1,
-              "value": 25
-            }
-          ],
-          "easing": "ease-in-out"
-        },
-        {
-          "node": "thumb-highlight",
-          "property": "x",
-          "keyframes": [
-            {
-              "at": 0,
-              "value": 164
-            },
-            {
-              "at": 1,
-              "value": 38
-            }
-          ],
-          "easing": "ease-in-out"
-        }
-      ]
-    }
-  ],
+  "motions": [],
   "sounds": [],
-  "assets": []
+  "assets": [],
+  "design": {
+    "nodes": [],
+    "owners": [
+      {
+        "region": "requested-state",
+        "signal": "requested",
+        "values": {
+          "off": false,
+          "on": true
+        },
+        "port": "toggle"
+      }
+    ],
+    "appearances": [
+      {
+        "id": "off",
+        "regions": {
+          "requested-state": "off"
+        },
+        "layers": {}
+      },
+      {
+        "id": "on",
+        "regions": {
+          "requested-state": "on"
+        },
+        "layers": {
+          "thumb-halo": {
+            "x": 151
+          },
+          "thumb": {
+            "x": 157
+          },
+          "thumb-highlight": {
+            "x": 164
+          }
+        }
+      }
+    ],
+    "effects": [
+      {
+        "region": "requested-state",
+        "transition": "turn-on",
+        "durationMs": 160,
+        "fps": 30,
+        "properties": [
+          {
+            "node": "thumb",
+            "property": "x"
+          },
+          {
+            "node": "thumb-halo",
+            "property": "x"
+          },
+          {
+            "node": "thumb-highlight",
+            "property": "x"
+          }
+        ],
+        "easing": "ease-in-out",
+        "interruption": "reverse"
+      },
+      {
+        "region": "requested-state",
+        "transition": "turn-off",
+        "durationMs": 160,
+        "fps": 30,
+        "properties": [
+          {
+            "node": "thumb",
+            "property": "x"
+          },
+          {
+            "node": "thumb-halo",
+            "property": "x"
+          },
+          {
+            "node": "thumb-highlight",
+            "property": "x"
+          }
+        ],
+        "easing": "ease-in-out",
+        "interruption": "reverse"
+      }
+    ]
+  }
 }

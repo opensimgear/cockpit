@@ -238,8 +238,8 @@ impl Tools {
         };
         match name {
             "widgets_list" => forward("widgets_list", &["offset","limit"], Some("widgetLibrary")),
-            "widget_get" => forward("widget_get", &["id","version"], Some("widgetLibrary")),
-            "widget_save" => forward("widget_save", &["bundle","expectedVersion"], Some("widgetSaved")),
+            "widget_get" => forward("widget_get", &["id"], Some("widgetLibrary")),
+            "widget_save" => forward("widget_save", &["bundle"], Some("widgetSaved")),
             "operation_status" => Ok(self
                 .ledger
                 .lock()

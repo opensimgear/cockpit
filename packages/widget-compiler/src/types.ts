@@ -59,12 +59,27 @@ export interface WidgetSourceAsset {
   id: string; mime: 'image/png' | 'image/jpeg' | 'image/webp' | 'audio/wav'; base64: string;
 }
 export interface WidgetSource {
-  formatVersion: 2; id: string; revision: number; title: string;
+  id: string; title: string;
   size: { width: number; height: number }; parameters: WidgetParameter[];
   behavior: BehaviorDefinition; visualDomains: VisualDomain[];
   inputs: WidgetPort[]; outputs: WidgetPort[]; hitRegions: WidgetHitRegion[];
   scene: VisualNode[]; motions?: WidgetMotion[]; sounds?: WidgetSound[];
   assets?: WidgetSourceAsset[];
+  /** Optional authoring graph. Runtime behavior/scene are produced by lowering. */
+  design?: WidgetDesign;
+}
+export type SignalDomain = {type:'boolean'} | {type:'number';min:number;max:number} | {type:'enum';values:string[]};
+/** References to other nodes are typed value wires; event wires are transitions. */
+export interface SignalNode { id:string; label:string; domain:SignalDomain; expression:Expression }
+export interface StateOwner { region:string; signal:string; values:Record<string,Scalar>; port?:string }
+export interface StateAppearance { id:string; regions:Record<string,string>; layers:Record<string,Record<string,VisualValue>> }
+export interface TransitionEffect {
+  region:string; transition:string; durationMs:number; fps:number;
+  easing?:MotionTrack['easing']; interruption?:WidgetMotion['interruption'];
+  properties:{node:string;property:string}[]; cue?:string;
+}
+export interface WidgetDesign {
+  nodes:SignalNode[]; owners:StateOwner[]; appearances:StateAppearance[]; effects:TransitionEffect[];
 }
 export interface CompileOptions {
   parameters?: Record<string, Scalar>; width?: number; height?: number;

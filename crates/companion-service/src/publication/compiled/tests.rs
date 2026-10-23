@@ -290,3 +290,27 @@ fn compiled_media_validation_accepts_baked_motion_and_pcm_then_rejects_unsupport
     resize_manifest(&mut invalid);
     assert!(artifact::validate(&invalid, &bytes, &caps).is_err());
 }
+
+#[test]
+fn panel_background_accepts_only_hex_colors_without_changing_capabilities() {
+    let original = Publication::validate(fixture()).unwrap();
+    let mut doc = document(&fixture());
+    doc["presentation"]["viewports"][0]["background"] = json!("#19aBcD");
+    let changed = Publication::validate(rehash(fixture(), doc.clone())).unwrap();
+    assert_eq!(
+        changed.capability_fingerprint,
+        original.capability_fingerprint
+    );
+    for invalid in [
+        json!("red"),
+        json!("#123"),
+        json!("#12345678"),
+        json!("#gg1234"),
+        json!("url(x)"),
+        json!(42),
+        Value::Null,
+    ] {
+        doc["presentation"]["viewports"][0]["background"] = invalid;
+        assert!(Publication::validate(rehash(fixture(), doc.clone())).is_err());
+    }
+}

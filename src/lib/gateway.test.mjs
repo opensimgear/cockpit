@@ -19,11 +19,11 @@ test('shared widget reads and saves bypass slow inventory and retain their own w
  const inventory=deferred(),write=deferred(),api=transport({invokeResults:async(_command,request)=>{
   if(request.command==='ports')await inventory.promise;
   if(request.command==='widget_save')await write.promise;
-  return {ok:true,state:{widgetLibrary:{bundleVersion:1}}};
+  return {ok:true,state:{widgetLibrary:{definitions:[]}}};
  }});
  const blocked=api.gatewayRequest({command:'ports'});await tick();
  await api.gatewayRequest({command:'widget_library_get'});
- const saving=api.gatewayRequest({command:'widget_save',expectedVersion:null,bundle:{bundleVersion:1}});await tick();
+ const saving=api.gatewayRequest({command:'widget_save',bundle:{definitions:[]}});await tick();
  const reading=api.gatewayRequest({command:'widget_library_get'});await tick();
  assert.deepEqual(api.calls.map(call=>call.args.request.command),['ports','widget_library_get','widget_save']);
  await api.gatewayRequest({command:'profile_stop'});

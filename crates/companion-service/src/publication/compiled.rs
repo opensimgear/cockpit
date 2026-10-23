@@ -212,7 +212,18 @@ fn panel(
     let viewports = list(&p["viewports"], pages.len(), pages.len())?;
     let mut views = BTreeSet::new();
     for viewport in viewports {
-        object(viewport, &["pageId", "width", "height"], &[])?;
+        object(viewport, &["pageId", "width", "height"], &["background"])?;
+        if let Some(background) = viewport.get("background") {
+            let color = background
+                .as_str()
+                .ok_or("Invalid panel background color.")?;
+            ensure(
+                color.len() == 7
+                    && color.starts_with('#')
+                    && color[1..].bytes().all(|b| b.is_ascii_hexdigit()),
+                "Invalid panel background color.",
+            )?;
+        }
         ensure(
             views.insert(stable(&viewport["pageId"])?)
                 && pages.iter().any(|page| page["id"] == viewport["pageId"]),

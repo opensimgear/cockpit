@@ -65,7 +65,7 @@
   <section class="panel preferences-panel arrows-settings" aria-label="Arrow styling">
     <div class="panel-heading"><h2>Arrows</h2></div>
     <div class="preference-row">
-      <div><strong>Arrow style</strong><p id="arrow-style-help">Choose how connections are drawn on every profile canvas. Changes are saved automatically.</p></div>
+      <div><strong>Arrow style</strong><p id="arrow-style-help">Choose how connections are drawn on every canvas. Changes are saved automatically.</p></div>
       <label class="style-field"><span class="field-label">Arrow style</span><select aria-label="Arrow style" aria-describedby="arrow-style-help" value={$canvasStyling.arrowStyle} onchange={event => setArrowStyle(event.currentTarget.value as CanvasArrowStyle)}><option value="smooth">Fully smooth (Bézier)</option><option value="orthogonal">Horizontal / vertical</option></select></label>
     </div>
     <div class="preference-row">

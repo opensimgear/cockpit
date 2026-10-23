@@ -1,10 +1,11 @@
+import {behaviorToggleSource as createToggleSource} from './behavior-toggle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   BROWSER_WIDGET_CAPABILITIES, clearWidgetCompileCache, compileWidget,
   createLinearGaugeFixture, createPcmSoundFixture, createRadialGaugeFixture,
-  createThreeStateFixture, createToggleSource, createWidgetCompileCoordinator,
+  createThreeStateFixture,  createWidgetCompileCoordinator,
   decodeCompiledFrame, encodePixelTile, preflightWidget, sampleMotionTrack,
   sourceToSvg, validateWidgetSource, verifyCompiledBundle, widgetDigest,
 } from '../src/index.ts';

@@ -4,3 +4,4 @@ export * from './compiler.ts';
 export * from './images.ts';
 export * from './seeds.ts';
 export { BROWSER_WIDGET_CAPABILITIES, verifyCompiledBundle, decodeCompiledFrame, canonicalWidget, widgetDigest } from '../../widget-runtime/src/artifact.ts';
+export * from './design.ts';

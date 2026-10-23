@@ -40,7 +40,7 @@ def main():
             raise SystemExit("Install llvm-tools-preview for the pinned Rust toolchain.")
     targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "profile", "profile_owned", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
     targets[0][3].extend(root / f"crates/companion-service/src/publication/{name}.rs"
-                         for name in ["compiled", "compiled/artifact", "compiled/behavior", "widget_source"])
+                         for name in ["compiled", "compiled/artifact", "compiled/behavior", "widget_source", "widget_design"])
     targets.append(("serial", root / "crates/companion-serial/Cargo.toml", "", [root / "crates/companion-serial/src/boot_wait.rs"]))
     if not options.service_only:
         # Profile publication, authoring and lifecycle tests call this host from

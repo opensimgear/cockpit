@@ -1,5 +1,7 @@
 //! Native admission for editable generic widget sources. These never deploy to a player.
 use super::*;
+#[path = "widget_design.rs"]
+mod design;
 
 fn string(value: &Value, max: usize) -> Result<&str, String> {
     let s = value.as_str().ok_or("Expected widget source text.")?;
@@ -324,12 +326,13 @@ pub(super) fn source(source: &Value) -> Result<(), String> {
         serde_json::to_vec(source).map_err(|e| e.to_string())?.len() <= 1024 * 1024,
         "Widget source exceeds byte budget.",
     )?;
+    if source.get("design").is_some() {
+        return self::source(&design::lower(source)?);
+    }
     object(
         source,
         &[
-            "formatVersion",
             "id",
-            "revision",
             "title",
             "size",
             "parameters",
@@ -342,12 +345,7 @@ pub(super) fn source(source: &Value) -> Result<(), String> {
         ],
         &["motions", "sounds", "assets"],
     )?;
-    ensure(
-        source["formatVersion"] == 2,
-        "Unsupported widget source format; recreate legacy widgets.",
-    )?;
     stable(&source["id"])?;
-    integer(&source["revision"], 1, 65535)?;
     text(&source["title"])?;
     object(&source["size"], &["width", "height"], &[])?;
     let width = integer(&source["size"]["width"], 16, 2048)? as f64;
@@ -727,25 +725,13 @@ pub(super) fn bundle(bundle: &Value) -> Result<(), String> {
         serde_json::to_vec(bundle).map_err(|e| e.to_string())?.len() <= 8 * 1024 * 1024,
         "Generic source library exceeds budget.",
     )?;
-    object(bundle, &["bundleVersion", "library"], &[])?;
-    ensure(
-        bundle["bundleVersion"] == 2,
-        "Legacy widget imports are retired; create generic widget sources.",
-    )?;
-    object(&bundle["library"], &["formatVersion", "definitions"], &[])?;
-    ensure(
-        bundle["library"]["formatVersion"] == 2,
-        "Unsupported generic widget library.",
-    )?;
-    let mut revisions = BTreeSet::new();
-    for definition in list(&bundle["library"]["definitions"], 0, 256)? {
+    object(bundle, &["definitions"], &[])?;
+    let mut ids = BTreeSet::new();
+    for definition in list(&bundle["definitions"], 0, 256)? {
         source(definition)?;
         ensure(
-            revisions.insert((
-                definition["id"].as_str().unwrap(),
-                definition["revision"].as_u64().unwrap(),
-            )),
-            "Duplicate source revision.",
+            ids.insert(definition["id"].as_str().unwrap()),
+            "Duplicate source ID.",
         )?;
     }
     Ok(())
@@ -761,7 +747,7 @@ mod tests {
         .unwrap()
     }
     fn wrapped(source: Value) -> Value {
-        json!({"bundleVersion":2,"library":{"formatVersion":2,"definitions":[source]}})
+        json!({"definitions":[source]})
     }
     #[test]
     fn generated_toggle_source_and_library_pass_native_admission() {
@@ -770,10 +756,10 @@ mod tests {
         bundle(&wrapped(source)).unwrap();
     }
     #[test]
-    fn legacy_imports_duplicate_revisions_and_untrusted_fields_fail() {
+    fn duplicate_ids_and_untrusted_fields_fail() {
         assert!(bundle(&json!({"bundleVersion":1,"library":{"formatVersion":1,"definitions":[]},"manifest":[],"assets":[]})).is_err());
         let mut duplicate = wrapped(seed());
-        duplicate["library"]["definitions"]
+        duplicate["definitions"]
             .as_array_mut()
             .unwrap()
             .push(seed());
@@ -787,8 +773,8 @@ mod tests {
             ("/behavior/signals/0/initial", json!(1)),
             ("/inputs/0/id", json!("missing-emit")),
             ("/hitRegions/0/width", json!(99999)),
-            ("/motions/0/tracks/0/property", json!("draw")),
-            ("/motions/0/from/requested", json!(2)),
+            ("/design/effects/0/properties/0/property", json!("draw")),
+            ("/design/owners/0/values/on", json!(2)),
         ] {
             let mut source = seed();
             let (parent, key) = path.rsplit_once('/').unwrap();

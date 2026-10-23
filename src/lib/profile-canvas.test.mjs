@@ -127,3 +127,12 @@ test('compact transforms size to named rows and use their actual bounds for fit 
   assert.equal(canvasGroups(canvasSaveGroup(legacy,'Compact',['transform','second']),canvasNodes(legacy,[],[]))[0].width,564);
 });
 test('typed port labels preserve units, unknowns, ordered arguments and game settings identity metadata',()=>{assert.equal(scalarLabel({type:'integer',min:0,max:100,unit:'ft'}),'integer 0…100 ft');assert.equal(scalarLabel({type:'number',min:0,max:1,unit:null}),'number 0…1');assert.match(scalarLabel({type:'text',maxBytes:50,encoding:'utf8'}),/50 bytes/);assert.equal(scalarLabel({type:'enum',values:['off','on']}),'enum · off / on');assert.equal(scalarLabel({type:'rgb'}),'rgb');assert.match(portContractLabel({delivery:'state',schema:{type:'boolean'},freshnessMs:500,fallback:null}),/fallback unknown/);assert.match(portContractLabel({delivery:'state',schema:{type:'boolean'},freshnessMs:500,fallback:false}),/fallback false/);assert.match(portContractLabel({delivery:'event',schema:{type:'boolean'}}),/^event/);assert.match(portContractLabel({delivery:'action',semantics:'one-shot',parameters:[]}),/no arguments/);assert.match(portContractLabel({delivery:'invocation',semantics:'setter',parameters:[{id:'value',name:'Value',schema:{type:'boolean'}}]}),/Value: boolean/);for(const gameId of ['dcs','assetto-corsa-rally','x-plane-11','x-plane-12'])assert.equal(canvasGameId({observation:{attributes:{gameId}}}),gameId);assert.equal(canvasGameId({name:'DCS',observation:{attributes:{gameId:'other'}}}),null);assert.equal(canvasGameId({name:'DCS'}),null);});
+
+
+test('fit includes measured widget cards of different sizes and ignores invalid size overrides',()=>{
+ const nodes=[{position:{x:100,y:50},width:210,height:225},{position:{x:650,y:500},width:210,height:310}];
+ const view=canvasFit(nodes,900,600);
+ for(const node of nodes){assert.ok(node.position.x*view.zoom+view.x>=31);assert.ok(node.position.y*view.zoom+view.y>=31);assert.ok((node.position.x+node.width)*view.zoom+view.x<=869);assert.ok((node.position.y+node.height)*view.zoom+view.y<=569);}
+ const {canvasNodeSize}=modules.get('./profile-canvas');
+ for(const size of [{width:NaN,height:20},{width:20,height:Infinity},{width:0,height:20},{width:20,height:-1},{width:210}])assert.deepEqual(plain(canvasNodeSize(size)),{width:PROFILE_BLOCK_WIDTH,height:PROFILE_BLOCK_HEIGHT});
+});

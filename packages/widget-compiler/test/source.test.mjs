@@ -1,6 +1,7 @@
+import {behaviorToggleSource as createToggleSource} from './behavior-toggle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createToggleSource, createLinearGaugeFixture, createThreeStateFixture, createPcmSoundFixture, compileWidget, expressionRefs, imageDimensions, resolvedParameters, resolveVisualValue, sourceToSvg, validateWidgetSource } from '../src/index.ts';
+import {  createLinearGaugeFixture, createThreeStateFixture, createPcmSoundFixture, compileWidget, expressionRefs, imageDimensions, resolvedParameters, resolveVisualValue, sourceToSvg, validateWidgetSource } from '../src/index.ts';
 import { clone,tinySource,rasterPng } from './fixtures.mjs';
 function rejected(change,base=createToggleSource()){const input=clone(base);change(input);const result=validateWidgetSource(input);assert.equal(result.ok,false,JSON.stringify(input));return result.error;}
 

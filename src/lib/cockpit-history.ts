@@ -1,5 +1,5 @@
 export type CockpitView = 'overview' | 'devices' | 'device' | 'profiles' | 'companions' | 'games' | 'activity' | 'debug' | 'preferences';
-export type CompanionPage = { kind: 'main' } | { kind: 'companion' | 'panel'; id: string };
+export type CompanionPage = { kind: 'main' } | { kind: 'companion' | 'panel' | 'widget'; id: string };
 export interface CockpitRoute {
   view: CockpitView;
   componentId?: string;
@@ -26,7 +26,7 @@ export function cockpitRoute(value: unknown): CockpitRoute | null {
     const page = input.companion as CompanionPage;
     if (!page || typeof page !== 'object') return null;
     if (page.kind === 'main') route.companion = { kind: 'main' };
-    else if ((page.kind === 'companion' || page.kind === 'panel') && id(page.id)) route.companion = { kind: page.kind, id: page.id };
+    else if ((page.kind === 'companion' || page.kind === 'panel' || page.kind === 'widget') && id(page.id)) route.companion = { kind: page.kind, id: page.id };
     else return null;
   }
   return route;

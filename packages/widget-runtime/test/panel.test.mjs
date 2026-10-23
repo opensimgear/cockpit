@@ -151,3 +151,11 @@ test('panel validation rejects malformed structure, dangling ports, incorrect di
   assert.equal(validateCompiledPanelDocument(null).ok, false);
   assert.equal(validateCompiledPanelDocument(panel.document, { ...BROWSER_WIDGET_CAPABILITIES, maxResidentBytes: 768 }).ok, false);
 });
+
+
+test('per-page background is validated, hashed, and does not change control capabilities',async()=>{
+ const original=await fixture(),next=await fixture();next.document.presentation.viewports[0].background='#19aBcD';await resign(next);
+ assert.equal(validateCompiledPanelDocument(next.document).ok,true);await verifyCompiledPanelPublication(next);
+ assert.notEqual(next.publicationHash,original.publicationHash);assert.equal(next.capabilityFingerprint,original.capabilityFingerprint);
+ for(const color of ['red','#fff','#12345678','url(x)',null,42,'#gg1122']){const invalid=structuredClone(next.document);invalid.presentation.viewports[0].background=color;assert.equal(validateCompiledPanelDocument(invalid).ok,false,String(color));}
+});
