@@ -94,11 +94,9 @@ impl Runtime {
         let mut next = state.settings.clone();
         edit(&mut next)?;
         next.validate()?;
+        let next_epoch = state.epoch.checked_add(1).ok_or("Automatic profile control epoch exhausted.")?;
         self.store.save(&next)?;
-        state.epoch = state
-            .epoch
-            .checked_add(1)
-            .ok_or("Automatic profile control epoch exhausted.")?;
+        state.epoch = next_epoch;
         state.settings = next;
         state.conflicts.clear();
         state.status = if state.settings.mode == SelectionMode::Manual {

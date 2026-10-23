@@ -185,7 +185,7 @@ mod tests {
     }
     #[test]
     fn explicit_reset_retains_database_evidence_and_never_rewrites_legacy_sources() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_directory();
         let source = dir.path().join("library.json");
         let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
         std::fs::write(&source, b"corrupt legacy document").unwrap();
@@ -225,7 +225,7 @@ mod tests {
     }
     #[test]
     fn import_preserves_source_validates_before_receipt_and_ignores_stale_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_directory();
         let source = dir.path().join("library.json");
         let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
         let store = repository(&db, source.clone());
@@ -246,7 +246,7 @@ mod tests {
     }
     #[test]
     fn stale_reader_cannot_overwrite_a_new_save_and_failed_validation_does_not_advance() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_directory();
         let source = dir.path().join("library.json");
         let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
         let a = repository(&db, source.clone());
@@ -269,7 +269,7 @@ mod tests {
     }
     #[test]
     fn corrupt_and_future_database_documents_do_not_default_or_fallback() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_directory();
         let source = dir.path().join("library.json");
         let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
         for (version, payload, revision) in [

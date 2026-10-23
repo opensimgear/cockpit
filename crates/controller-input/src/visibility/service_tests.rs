@@ -51,7 +51,7 @@ impl Adapter for Fixture {
 #[test]
 fn native_windows_readiness_keeps_explicit_visibility_settings_inert() {
     let (registry, id) = inventory();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let service = Service::new(Some(temp.path().into()), registry);
     let status = service.request(&json!({"command":"controller_visibility_status","sourceId":id})).unwrap();
     assert_eq!(status["visibility"]["qualified"], super::super::capabilities::WINDOWS_NATIVE_OUTPUTS);
@@ -60,7 +60,7 @@ fn native_windows_readiness_keeps_explicit_visibility_settings_inert() {
     assert_eq!(status["visibility"]["global"]["inspected"], false);
     assert_eq!(status["visibility"]["selfAccess"]["status"], "not-requested");
     assert!(!service.active());
-    assert!(temp.path().read_dir().unwrap().next().is_none());
+    assert_eq!(temp.path().read_dir().unwrap().map(|entry|entry.unwrap().file_name()).collect::<Vec<_>>(),vec![std::ffi::OsString::from("cockpit.sqlite3")]);
     if super::super::capabilities::WINDOWS_NATIVE_OUTPUTS {
         assert!(status["visibility"]["reason"].as_str().unwrap().starts_with("Windows vJoy output and HidHide are available."));
     }
@@ -69,7 +69,7 @@ fn native_windows_readiness_keeps_explicit_visibility_settings_inert() {
 fn startup_self_access_guard_preserves_pending_standalone_game_and_invalid_journals() {
     use super::super::policy::{tests::{capture, selected}, Plan, Policy};
     let (registry, _) = inventory();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let mut service = Service::new(Some(temp.path().into()), registry);
     service.startup_self_access(); // cfg(test) ordinary startup must remain inert.
     assert_eq!(service.self_access_status().status, "not-requested");
@@ -97,7 +97,7 @@ fn startup_self_access_guard_preserves_pending_standalone_game_and_invalid_journ
 #[test]
 fn default_status_and_saved_intent_are_inert_without_optional_dependencies() {
     let (registry, id) = inventory();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let mut service = Service::new(Some(temp.path().into()), registry.clone());
     service.qualified = false; // Exercise the default gate independently of the dev opt-in.
     service.platform = super::super::capabilities::Platform::Windows;
@@ -107,7 +107,7 @@ fn default_status_and_saved_intent_are_inert_without_optional_dependencies() {
         .unwrap();
     assert_eq!(status["visibility"]["enabled"], false);
     assert_eq!(status["visibility"]["qualified"], false);
-    assert!(temp.path().read_dir().unwrap().next().is_none());
+    assert_eq!(temp.path().read_dir().unwrap().map(|entry|entry.unwrap().file_name()).collect::<Vec<_>>(),vec![std::ffi::OsString::from("cockpit.sqlite3")]);
     let inspected = service
         .request(&json!({"command":"controller_visibility_inspect"}))
         .unwrap();
@@ -146,7 +146,7 @@ fn default_status_and_saved_intent_are_inert_without_optional_dependencies() {
 #[test]
 fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
     let (registry, id) = inventory();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let state = Arc::new(Mutex::new(state()));
     let shared = state.clone();
     let mut service = Service::new(Some(temp.path().into()), registry.clone());
@@ -224,7 +224,7 @@ fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
 #[test]
 fn corrupt_recovery_and_preferences_are_reported_without_startup_replay() {
     let (registry, _) = inventory();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     std::fs::write(temp.path().join("controller-visibility.json"), b"invalid").unwrap();
     std::fs::write(
         temp.path().join("controller-visibility-session.json"),
@@ -246,7 +246,7 @@ fn unix_capabilities_save_without_driver_access_and_never_broaden() {
         (Platform::Macos, "macos-iohid"),
     ] {
         let (registry, id) = inventory_for(backend);
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_directory();
         let control = super::super::suppression::Control::default();
         let mut service =
             Service::new(Some(dir.path().into()), registry).with_suppression(control.clone());
@@ -312,7 +312,7 @@ fn isolated_launch_is_independent_gated_and_owned_by_the_service() {
         }
     }
     let (registry, id) = inventory_for("linux-evdev");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let mut service = Service::new(Some(dir.path().into()), registry.clone());
     let request = json!({"command":"controller_visibility_launch","sourceIds":[id],"launch":{"launchKind":"direct-child","executable":"/opt/app/game","directory":"/opt/app","arguments":[]}});
     service.platform = super::super::capabilities::Platform::Macos;
@@ -326,7 +326,7 @@ fn isolated_launch_is_independent_gated_and_owned_by_the_service() {
         false
     );
     assert!(service.request(&request).unwrap_err().contains("disabled"));
-    assert!(dir.path().read_dir().unwrap().next().is_none());
+    assert_eq!(dir.path().read_dir().unwrap().map(|entry|entry.unwrap().file_name()).collect::<Vec<_>>(),vec![std::ffi::OsString::from("cockpit.sqlite3")]);
     let mut invalid = request.clone();
     invalid["pid"] = json!(12);
     assert!(service

@@ -184,7 +184,7 @@ fn graph_and_assignment_validation_are_one_atomic_boundary() {
     let document = draft();
     let pins = assignments(&document);
     save(&mut service, &document, Value::Null, pins.clone()).unwrap();
-    let before = std::fs::read(temp.path().join("library.json")).unwrap();
+    let before = super::tests::saved_library(temp.path());
     for bad in [
         json!(null),
         json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[]}]),
@@ -198,7 +198,7 @@ fn graph_and_assignment_validation_are_one_atomic_boundary() {
         edit.name = "Never commit half".into();
         assert!(save(&mut service, &edit, json!(1), bad).is_err());
         assert_eq!(
-            std::fs::read(temp.path().join("library.json")).unwrap(),
+            super::tests::saved_library(temp.path()),
             before
         );
         assert_eq!(service.library.encode().unwrap(), before);
@@ -223,7 +223,7 @@ fn disk_failure_and_read_only_library_never_publish_half_an_editor_save() {
     let mut document = draft();
     let pins = assignments(&document);
     save(&mut service, &document, Value::Null, pins.clone()).unwrap();
-    let before = std::fs::read(temp.path().join("library.json")).unwrap();
+    let before = super::tests::saved_library(temp.path());
     let status = service.status();
     service.store = Some(Store::new(PathBuf::from("../blocked-editor-store")));
     document.name = "Never published".into();
@@ -231,19 +231,20 @@ fn disk_failure_and_read_only_library_never_publish_half_an_editor_save() {
     assert_eq!(service.library.encode().unwrap(), before);
     assert_eq!(service.status(), status);
     assert_eq!(
-        std::fs::read(temp.path().join("library.json")).unwrap(),
+        super::tests::saved_library(temp.path()),
         before
     );
     let fresh = draft();
     assert!(save(&mut service, &fresh, Value::Null, assignments(&fresh)).is_err());
     assert!(service.compile_source(&fresh.id).is_err());
-    std::fs::write(temp.path().join("library.json"), b"{corrupt").unwrap();
+    let db=osg_persistence::Database::for_source(&temp.path().join("library.json")).unwrap();
+    db.commit(&[osg_persistence::Change{domain:"profiles",key:"library",format_version:2,expected_revision:db.revision("profiles","library").unwrap(),payload:Some(b"{corrupt")}]).unwrap();
     let mut blocked = Service::new(Some(temp.path().to_owned()));
     assert!(save(&mut blocked, &fresh, Value::Null, json!([]))
         .unwrap_err()
         .contains("read-only"));
     assert_eq!(
-        std::fs::read(temp.path().join("library.json")).unwrap(),
+        super::tests::saved_library(temp.path()),
         b"{corrupt"
     );
 }

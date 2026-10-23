@@ -477,3 +477,14 @@ pub fn snapshot(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn test_directory()->tempfile::TempDir {
+    let parent=std::env::temp_dir();
+    #[cfg(unix)]
+    let parent=parent.canonicalize().expect("canonical OS temporary directory");
+    tempfile::tempdir_in(parent).expect("isolated persistence fixture")
+}
+
+#[cfg(feature = "test-support")]
+pub mod test_support;

@@ -2,8 +2,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fs::{File, OpenOptions},
-    io::{Read, Write},
     path::PathBuf,
 };
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,99 +71,28 @@ impl Preferences {
         Ok(())
     }
 }
-fn read(path: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
-    match std::fs::symlink_metadata(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.to_string()),
-        Ok(m) if !m.is_file() || m.file_type().is_symlink() || m.len() > 1_048_576 => {
-            return Err("Visibility settings must be a bounded regular file.".into())
-        }
-        Ok(_) => {}
-    }
-    let mut bytes = vec![];
-    File::open(path)
-        .map_err(|e| e.to_string())?
-        .take(1_048_577)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() > 1_048_576 {
-        return Err("Visibility settings are oversized.".into());
-    }
-    Ok(Some(bytes))
-}
 pub struct Settings {
-    pub value: Preferences,
-    pub error: Option<String>,
-    path: Option<PathBuf>,
-    expected: Option<Vec<u8>>,
+    pub value:Preferences,
+    pub error:Option<String>,
+    store:Option<osg_persistence::Repository<Preferences>>,
 }
 impl Settings {
-    pub fn new(path: Option<PathBuf>) -> Self {
-        let loaded = path
-            .as_ref()
-            .map_or(Ok(None), |p| read(p))
-            .and_then(|bytes| {
-                let value = bytes.as_ref().map_or(Ok(Preferences::default()), |b| {
-                    serde_json::from_slice::<Preferences>(b).map_err(|e| e.to_string())
-                })?;
-                value.validate()?;
-                Ok((value, bytes))
-            });
+    pub fn new(path:Option<PathBuf>)->Self {
+        let storage=path.map(|path| {
+            let db=osg_persistence::Database::for_source(&path)?;
+            osg_persistence::Repository::new(db,"controllers","visibility",1,Some(path),1_048_576,Preferences::validate)
+        }).transpose();
+        let loaded=storage.as_ref().map_err(Clone::clone).and_then(|store|store.as_ref().map_or(Ok(Preferences::default()),|store|store.load().map(|value|value.unwrap_or_default())));
         match loaded {
-            Ok((value, expected)) => Self {
-                value,
-                error: None,
-                path,
-                expected,
-            },
-            Err(error) => Self {
-                value: Preferences::default(),
-                error: Some(error),
-                path,
-                expected: None,
-            },
+            Ok(value)=>Self {value,error:None,store:storage.ok().flatten()},
+            Err(error)=>Self {value:Preferences::default(),error:Some(error),store:storage.ok().flatten()},
         }
     }
-    pub fn save(&mut self, value: Preferences) -> Result<(), String> {
+    pub fn save(&mut self,value:Preferences)->Result<(),String> {
         value.validate()?;
-        if self.error.is_some() {
-            return Err(
-                "Repair existing visibility settings before saving; they were preserved.".into(),
-            );
-        }
-        if let Some(path) = &self.path {
-            let parent = path.parent().ok_or("Invalid settings path.")?;
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            let lock_path = path.with_extension("lock");
-            if std::fs::symlink_metadata(&lock_path)
-                .is_ok_and(|m| !m.is_file() || m.file_type().is_symlink())
-            {
-                return Err("Invalid settings lock file.".into());
-            }
-            let lock = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .read(true)
-                .open(lock_path)
-                .map_err(|e| e.to_string())?;
-            lock.try_lock()
-                .map_err(|_| "Visibility settings are being edited in another Cockpit.")?;
-            if read(path)? != self.expected {
-                return Err("Visibility settings changed elsewhere; reload before editing.".into());
-            }
-            let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
-            if bytes.len() > 1_048_576 {
-                return Err("Visibility settings exceed their bound.".into());
-            }
-            let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-            file.write_all(&bytes).map_err(|e| e.to_string())?;
-            file.as_file().sync_all().map_err(|e| e.to_string())?;
-            file.persist(path).map_err(|e| e.to_string())?;
-            self.expected = Some(bytes);
-        }
-        self.value = value;
-        Ok(())
+        if self.error.is_some() {return Err("Repair existing visibility settings before saving; they were preserved.".into());}
+        if let Some(store)=&self.store {store.save(&value)?;}
+        self.value=value;Ok(())
     }
 }
 #[cfg(test)]

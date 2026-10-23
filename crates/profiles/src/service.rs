@@ -142,7 +142,7 @@ impl Service {
                     );
                 }
                 let library = Library::default();
-                self.persist(&library)?;
+                if let Some(store)=&self.store {store.reset(&library)?;}
                 self.library = library;
                 self.session = Session::default();
                 self.read_only = false;

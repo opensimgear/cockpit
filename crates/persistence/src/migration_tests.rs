@@ -2,7 +2,7 @@ use super::*;
 use crate::{Change, APPLICATION_ID, SCHEMA_VERSION};
 
 fn setup() -> (tempfile::TempDir, Database) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
     (dir, db)
 }
@@ -225,7 +225,7 @@ fn source_checksum_corruption_prevents_cutover_and_has_no_receipt() {
 
 #[test]
 fn schema_one_upgrade_and_failed_migration_are_transactional() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let path = dir.path().join("v1.sqlite3");
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection

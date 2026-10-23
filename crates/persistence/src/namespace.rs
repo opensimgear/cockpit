@@ -75,7 +75,7 @@ mod tests {
     use super::*;
     #[test]
     fn explicit_roots_share_authority_and_other_namespaces_remain_isolated() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_directory();
         let a = dir.path().join("native");
         let b = dir.path().join("desktop");
         let database = dir.path().join("state/cockpit.sqlite3");

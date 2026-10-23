@@ -5,6 +5,9 @@ edition = "2021"
 rust-version = "1.90"
 license-file = "../../LICENSE"
 
+[features]
+test-support = []
+
 [dependencies]
 rusqlite = { version = "=0.40.2", features = ["bundled", "backup", "limits"] }
 serde = { version = "1", features = ["derive"] }

@@ -6,6 +6,19 @@ pub fn database_path() -> PathBuf {
         .unwrap_or_else(|| config_path().with_file_name("cockpit.sqlite3"))
 }
 
+pub(crate) fn initialize(additional_roots:&[PathBuf])->Result<osg_persistence::Database,String> {
+    let anchor=config_path();
+    let mut roots=vec![anchor.parent().ok_or("Invalid configuration namespace.")?.to_path_buf()];
+    if let Some(retained)=std::env::var_os("OSG_GAMES_CONFIG") {
+        let path=PathBuf::from(retained);
+        roots.push(path.parent().ok_or("Invalid retained games namespace.")?.to_path_buf());
+    }
+    roots.extend_from_slice(additional_roots);
+    let database=database_path();
+    osg_persistence::register_namespace(&roots,&database)?;
+    osg_persistence::Database::open(database)
+}
+
 pub fn config_path() -> PathBuf {
     if let Some(path) = std::env::var_os("OSG_DCS_BIOS_CONFIG") {
         return PathBuf::from(path);

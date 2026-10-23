@@ -795,8 +795,8 @@ fn failed_manual_pin_storage_inhibits_automatic_events_after_explicit_selection(
     fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
     mode(&fixture.manager, "automatic");
     let id = create(&fixture.manager, "Manual choice");
-    std::fs::remove_file(&path).unwrap();
-    std::fs::create_dir(&path).unwrap();
+    let database=osg_persistence::Database::for_source(&path).unwrap();
+    let _blocked=osg_persistence::test_support::hold_writer(&database).unwrap();
     assert_eq!(
         request(
             &fixture.manager,
@@ -842,10 +842,9 @@ fn legacy_stop_migration_preserves_the_old_intent_until_both_writes_succeed() {
         let path = fixture.directory.path().join("automatic.json");
         fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
         mode(&fixture.manager, "automatic");
-        if fail_pin {
-            std::fs::remove_file(&path).unwrap();
-            std::fs::create_dir(&path).unwrap();
-        } else {
+        let database=osg_persistence::Database::for_source(&path).unwrap();
+        let blocked=if fail_pin {Some(osg_persistence::test_support::hold_writer(&database).unwrap())} else {None};
+        if !fail_pin {
             fixture.manager.profile_session.lock().unwrap().fail_journal_saves(true);
         }
         fixture.manager.restore_automatic_selection();
@@ -853,7 +852,7 @@ fn legacy_stop_migration_preserves_the_old_intent_until_both_writes_succeed() {
         assert!(owner(&fixture.manager).is_none());
         let saved: Value = serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
         assert_eq!(saved["paused"], true);
-        if fail_pin { std::fs::remove_dir(&path).unwrap(); }
+        drop(blocked);
         fixture.manager.profile_session.lock().unwrap().fail_journal_saves(false);
         fixture.manager.restore_automatic_selection();
         assert_eq!(Store::new(Some(path)).load().unwrap().unwrap().mode, SelectionMode::Manual);

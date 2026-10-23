@@ -2,26 +2,18 @@ use super::*;
 use crate::new_document;
 
 #[test]
-fn fresh_library_round_trips_and_replace_failures_preserve_old_bytes() {
-    let temp = crate::test_directory();
-    let store = Store::new(temp.path().join("profiles-v2"));
-    assert!(store.load().unwrap().is_none());
-    let original = Library::default();
-    store.save(&original).unwrap();
-    let before = std::fs::read(store.root.join("library.json")).unwrap();
-    let mut edited = original.clone();
-    edited.profiles.push(new_document("New profile").unwrap());
-    assert!(store
-        .save_with(&edited, |_, _| Err("simulated replacement failure".into()))
-        .is_err());
-    assert_eq!(
-        std::fs::read(store.root.join("library.json")).unwrap(),
-        before
-    );
-    assert_eq!(store.load().unwrap().unwrap().profiles.len(), 1);
+fn sqlite_library_round_trips_and_stale_saves_preserve_the_committed_document() {
+    let temp=crate::test_directory();let root=temp.path().join("profiles-v2");
+    let store=Store::new(root.clone());assert!(store.load().unwrap().is_none());
+    let original=Library::default();store.save(&original).unwrap();
+    let stale=Store::new(root.clone());stale.load().unwrap();
+    let mut edited=original.clone();edited.profiles.push(new_document("New profile").unwrap());
     store.save(&edited).unwrap();
-    assert_eq!(store.load().unwrap().unwrap().profiles.len(), 2);
-    assert_eq!(std::fs::read_dir(&store.root).unwrap().count(), 1);
+    assert!(stale.save(&original).unwrap_err().contains("conflict"));
+    assert_eq!(Store::new(root.clone()).load().unwrap().unwrap().profiles.len(),2);
+    assert!(!root.join("library.json").exists());
+    std::fs::create_dir_all(&root).unwrap();std::fs::write(root.join("library.json"),b"stale corrupt source").unwrap();
+    assert_eq!(Store::new(root).load().unwrap().unwrap().profiles.len(),2);
 }
 
 #[test]
@@ -39,7 +31,7 @@ fn malformed_unknown_and_oversize_envelopes_are_rejected() {
         .unwrap()
         .set_len(MAX_LIBRARY_BYTES as u64 + 1)
         .unwrap();
-    assert!(store.load().unwrap_err().contains("17 MiB"));
+    assert!(store.load().unwrap_err().contains("size limit"));
 }
 
 #[test]

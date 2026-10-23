@@ -204,7 +204,7 @@ fn read_only_native_enumeration_and_denial() {
     let paths = platform.paths().unwrap();
     assert!(paths.len() <= 1024);
     assert!(platform.open("/nonexistent").is_err());
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let node = temp.path().join("not-input");
     std::fs::write(&node, b"").unwrap();
     platform.paths.insert(

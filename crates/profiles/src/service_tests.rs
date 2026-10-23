@@ -1,3 +1,6 @@
+pub(super) fn saved_library(root:&std::path::Path)->Vec<u8> {
+    osg_persistence::Database::for_source(&root.join("library.json")).unwrap().read("profiles","library").unwrap().unwrap().payload
+}
 use super::*;
 use crate::store::LocalAssignment;
 use crate::{Resource, ResourceKind};
@@ -31,13 +34,13 @@ fn saved_companion_references_follow_all_documents_without_editor_or_runtime_eff
         document["companionAssignments"] = json!([{"resourceId":"panel","publicationHash":format!("sha256:{}",letter.to_string().repeat(64))}]);
         saved.push(service.request(&json!({"command":"profile_save","document":document,"expectedRevision":1})).unwrap()["document"].clone());
     }
-    let bytes = std::fs::read(root.join("library.json")).unwrap();
+    let bytes = saved_library(&root);
     let status = service.status();
     let references = service.request(&json!({"command":"profile_companion_references"})).unwrap()["publicationReferences"].clone();
     assert_eq!(references["schemaVersion"], 1);
     assert_eq!(references["hashes"], json!([format!("sha256:{}","a".repeat(64)),format!("sha256:{}","b".repeat(64))]));
     assert_eq!(references["libraryFingerprint"].as_str().unwrap().len(), 71);
-    assert_eq!(std::fs::read(root.join("library.json")).unwrap(), bytes);
+    assert_eq!(saved_library(&root), bytes);
     assert_eq!(service.status(), status);
     service.request(&json!({"command":"profile_select","id":saved[0]["id"],"selectionSource":"manual"})).unwrap();
     assert_eq!(service.companion_references().unwrap(), references);
@@ -82,9 +85,9 @@ fn saved_panel_refresh_updates_all_followers_and_legacy_hashes_atomically_once()
     assert_eq!(service.document(&other).unwrap().revision, 2);
     assert_eq!(service.document(&other).unwrap().companion_assignments[0].panel_id.as_deref(), Some("panel-other"));
     assert_eq!(service.status(), status); // No editor selection or runtime authority changes.
-    let saved = std::fs::read(root.join("library.json")).unwrap();
+    let saved = saved_library(&root);
     assert!(service.refresh_companion_panel("panel-one", &latest, &std::collections::BTreeSet::from([old])).unwrap().is_empty());
-    assert_eq!(std::fs::read(root.join("library.json")).unwrap(), saved);
+    assert_eq!(saved_library(&root), saved);
     let restarted = Service::new(Some(root));
     for id in [&stable, &legacy, &current, &other] { assert_eq!(restarted.document(id).unwrap(), service.document(id).unwrap()); }
     assert_eq!(service.companion_references().unwrap()["hashes"], json!([format!("sha256:{}", "a".repeat(64)), latest]));
@@ -99,7 +102,7 @@ fn saved_panel_refresh_preserves_every_profile_on_storage_or_revision_failure() 
     let second = save_panel_profile(&mut service, "Second", Some("panel-one"), &old);
     let aliases = std::collections::BTreeSet::from([old]);
     let original = serde_json::to_value(&service.library).unwrap();
-    std::fs::remove_file(root.join("library.json")).unwrap(); std::fs::create_dir(root.join("library.json")).unwrap();
+    service.store=Some(Store::new(PathBuf::from("../blocked-sqlite-store")));
     assert!(service.refresh_companion_panel("panel-one", &latest, &aliases).is_err());
     assert_eq!(serde_json::to_value(&service.library).unwrap(), original);
     service.library.profiles.iter_mut().find(|document|document.id == second).unwrap().revision = MAX_REVISION;
@@ -367,8 +370,7 @@ fn failed_persistence_keeps_memory_revision_and_document_unchanged() {
     let root = temp.path().join("profiles-v2");
     let mut service = Service::new(Some(root.clone()));
     let document = create(&mut service, "Flight");
-    std::fs::remove_file(root.join("library.json")).unwrap();
-    std::fs::create_dir(root.join("library.json")).unwrap();
+    service.store=Some(Store::new(PathBuf::from("../blocked-sqlite-store")));
     assert!(service.request(&json!({"command":"profile_rename","id":document["id"],"name":"Unsaved","expectedRevision":1})).is_err());
     assert_eq!(
         service
@@ -434,7 +436,7 @@ fn exact_local_assignments_are_atomic_revisioned_and_never_portable() {
         .request(&json!({"command":"profile_assignments_get","id":DEFAULT_PROFILE_ID}))
         .unwrap();
     assert_eq!(read["assignments"], json!(assignments));
-    let before = std::fs::read(root.join("library.json")).unwrap();
+    let before = saved_library(&root);
     for replacement in [
         json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[]}]),
         json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[{"profilePortId":"missing","observedPortId":"button:0","expectedContractHash":format!("sha256:{}","a".repeat(64))}]}]),
@@ -443,7 +445,7 @@ fn exact_local_assignments_are_atomic_revisioned_and_never_portable() {
         json!([{"resourceId":"panel","sourceId":"native:opaque","ports":[],"token":"invented"}]),
     ] {
         assert!(restarted.request(&json!({"command":"profile_assignments_save","id":DEFAULT_PROFILE_ID,"expectedRevision":3,"assignments":replacement})).is_err());
-        assert_eq!(std::fs::read(root.join("library.json")).unwrap(), before);
+        assert_eq!(saved_library(&root), before);
         assert_eq!(
             restarted
                 .compile_source(DEFAULT_PROFILE_ID)

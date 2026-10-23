@@ -3511,6 +3511,7 @@ dependencies = [
  "evdev",
  "iohidmanager",
  "libc",
+ "osg-persistence",
  "serde",
  "serde_json",
  "sha2",
@@ -3586,6 +3587,7 @@ name = "osg-profiles"
 version = "0.1.0"
 dependencies = [
  "osg-mapping",
+ "osg-persistence",
  "serde",
  "serde_json",
  "sha2",

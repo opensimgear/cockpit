@@ -28,6 +28,43 @@ pub(crate) fn fixture(path: &str, serial: Option<&str>) -> Definition {
     }
 }
 #[test]
+fn committed_metadata_retains_input_reports_and_new_discoveries_received_during_save() {
+    let mut registry=Registry::default();let id=registry.connect(fixture("first",None)).unwrap();
+    let before=registry.clone();let mut staged=before.clone();staged.update(&id,"Saved wheel","wheelbase").unwrap();
+    registry.report(&id,1,&BTreeMap::from([(0,1),(1,123)])).unwrap();
+    let added=registry.connect(fixture("new-during-save",None)).unwrap();
+    let live=registry.inspect(&id,0).unwrap();
+    registry.commit_metadata(&before,&staged);
+    let committed=registry.inspect(&id,0).unwrap();
+    assert_eq!(committed["controls"],live["controls"]);
+    assert_eq!(committed["source"]["name"],"Saved wheel");
+    assert!(registry.inspect(&added,0).is_ok());assert!(registry.dirty);
+}
+
+#[test]
+fn metadata_reassignment_cannot_restore_a_device_that_disconnected_during_save() {
+    let mut registry=Registry::default();let remembered=registry.connect(fixture("old",None)).unwrap();registry.disconnect(&remembered);
+    let observed=registry.connect(fixture("new",None)).unwrap();
+    let before=registry.clone();let mut staged=before.clone();staged.reassign(&remembered,&observed).unwrap();
+    registry.disconnect(&observed);registry.commit_metadata(&before,&staged);
+    assert_eq!(registry.inspect(&remembered,0).unwrap()["source"]["online"],false);
+    assert!(registry.inspect(&observed,0).is_err());
+    assert!(registry.stream_snapshot(&[remembered]).is_err());
+}
+
+#[test]
+fn failed_controller_commit_keeps_the_previous_visible_metadata() {
+    let dir=crate::test_directory();let path=dir.path().join("controllers.json");
+    let service=ControllerService::new(Some(path.clone()),false);
+    let id=service.registry.lock().unwrap().connect(fixture("a",None)).unwrap();
+    service.request(&json!({"command":"controller_list"})).unwrap();
+    let other=ControllerService::new(Some(path),false);
+    other.request(&json!({"command":"controller_update","sourceId":id,"name":"Other client","role":"panel"})).unwrap();
+    let before=service.registry.lock().unwrap().inspect(&id,0).unwrap();
+    assert!(service.request(&json!({"command":"controller_update","sourceId":id,"name":"Rejected edit","role":"wheelbase"})).unwrap_err().contains("conflict"));
+    assert_eq!(service.registry.lock().unwrap().inspect(&id,0).unwrap(),before);
+}
+#[test]
 fn inventory_snapshot_keeps_identical_devices_and_offline_descriptors_isolated() {
     let mut registry = Registry::default();
     let first = registry.connect(fixture("first", None)).unwrap();
@@ -217,7 +254,7 @@ fn inventory_bounds_and_settings_validation() {
 }
 #[test]
 fn settings_persist_and_import_cannot_start_capture() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let path = dir.path().join("controllers.json");
     let service = ControllerService::new(Some(path.clone()), false);
     let id = service
@@ -229,7 +266,8 @@ fn settings_persist_and_import_cannot_start_capture() {
     assert!(service
         .request(&json!({"command":"controller_list"}))
         .is_ok());
-    assert!(path.exists());
+    assert!(!path.exists());
+    assert!(path.with_file_name("cockpit.sqlite3").exists());
     service
         .request(
             &json!({"command":"controller_update","sourceId":id,"name":"Wheel","role":"wheelbase"}),
@@ -258,7 +296,8 @@ fn settings_persist_and_import_cannot_start_capture() {
         .request(&json!({"command":"controller_list"}))
         .is_err());
     service.shutdown();
-    std::fs::write(&path, b"corrupt").unwrap();
+    let db=osg_persistence::Database::for_source(&path).unwrap();
+    db.commit(&[osg_persistence::Change{domain:"controllers",key:"identities",format_version:1,expected_revision:db.revision("controllers","identities").unwrap(),payload:Some(b"corrupt")}]).unwrap();
     let invalid = ControllerService::new(Some(path.clone()), false);
     assert!(invalid.status()["diagnostic"]
         .as_str()
@@ -273,14 +312,14 @@ fn settings_persist_and_import_cannot_start_capture() {
     assert!(invalid
         .request(&json!({"command":"controller_list"}))
         .is_ok());
-    assert_eq!(std::fs::read(&path).unwrap(), b"corrupt");
-    std::fs::write(&path, vec![b' '; MAX_SETTINGS as usize + 1]).unwrap();
+    assert_eq!(db.read("controllers","identities").unwrap().unwrap().payload,b"corrupt");
+    db.commit(&[osg_persistence::Change{domain:"controllers",key:"identities",format_version:1,expected_revision:db.revision("controllers","identities").unwrap(),payload:Some(&vec![b' ';MAX_SETTINGS as usize+1])}]).unwrap();
     let oversized = ControllerService::new(Some(path), false);
     assert!(!oversized.storage_valid);
 }
 #[test]
 fn service_reassignment_and_write_errors_are_explicit() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let parent = dir.path().join("file");
     std::fs::write(&parent, b"x").unwrap();
     let s = ControllerService::new(Some(parent.join("controllers.json")), false);
@@ -308,14 +347,16 @@ fn service_reassignment_and_write_errors_are_explicit() {
         )
         .is_ok());
     let path = dir.path().join("valid").join("controllers.json");
-    let s = ControllerService::new(Some(path), false);
+    let s = ControllerService::new(Some(path.clone()), false);
     let id = s
         .registry
         .lock()
         .unwrap()
         .connect(fixture("x", None))
         .unwrap();
-    std::fs::write(dir.path().join("valid"), b"block").unwrap();
+    let other=ControllerService::new(Some(path),false);
+    other.registry.lock().unwrap().connect(fixture("other",None)).unwrap();
+    other.request(&json!({"command":"controller_list"})).unwrap();
     assert!(s
         .request(
             &json!({"command":"controller_update","sourceId":id,"name":"Test","role":"controller"})

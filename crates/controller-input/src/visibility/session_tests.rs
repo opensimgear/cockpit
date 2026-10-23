@@ -32,7 +32,7 @@ fn plan() -> Plan {
 }
 #[test]
 fn retained_inspection_errors_and_journal_edits_never_stop_or_rewrite_the_session() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("inspect.json");
     let state = Arc::new(Mutex::new(state()));
     let source = observed();
@@ -81,7 +81,7 @@ fn retained_inspection_errors_and_journal_edits_never_stop_or_rewrite_the_sessio
 }
 #[test]
 fn fresh_capture_is_required_and_standalone_stop_or_drop_restores() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("v.json");
     let state = Arc::new(Mutex::new(state()));
     let source = observed();
@@ -151,7 +151,7 @@ fn fresh_capture_is_required_and_standalone_stop_or_drop_restores() {
 #[test]
 fn reconnect_path_changes_capture_loss_and_owner_loss_restore_without_reapply() {
     for reason in 0..5 {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_directory();
         let state = Arc::new(Mutex::new(state()));
         let source = observed();
         let mut session = Session::start(
@@ -201,7 +201,7 @@ fn source_bounds_and_external_policy_conflicts_never_broaden_cleanup() {
     let mut other = source.clone();
     other.id = uuid::Uuid::new_v4().to_string();
     assert!(validate_sources(&[source.clone()], &[other], false).is_err());
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let state = Arc::new(Mutex::new(state()));
     let mut session = Session::start(
         Driver(state.clone()),

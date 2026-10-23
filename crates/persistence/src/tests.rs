@@ -1,7 +1,7 @@
 use super::*;
 
 fn setup() -> (tempfile::TempDir, Database) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
     (dir, db)
 }

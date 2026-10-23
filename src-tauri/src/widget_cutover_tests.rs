@@ -287,10 +287,10 @@ fn widget_cutover_removes_only_obsolete_companion_profile_mappings_and_inventory
         serde_json::to_value(&inventory.resources[1]).unwrap(),
         serde_json::to_value(&inventory_before.resources[1]).unwrap()
     );
-    let bytes = fs::read(root.path().join("profiles-v2/library.json")).unwrap();
+    let bytes = osg_profiles::store::Store::new(root.path().join("profiles-v2")).load().unwrap().unwrap().encode().unwrap();
     assert!(profiles(&directory).unwrap().is_none());
     assert_eq!(
-        fs::read(root.path().join("profiles-v2/library.json")).unwrap(),
+        osg_profiles::store::Store::new(root.path().join("profiles-v2")).load().unwrap().unwrap().encode().unwrap(),
         bytes
     );
     assert_files(&directory, &files);
@@ -307,11 +307,11 @@ fn widget_cutover_records_completion_last_and_retries_partial_work_idempotently(
     )
     .is_err());
     assert!(!directory.join(PROFILE_MARKER).exists());
-    let first = fs::read(root.path().join("profiles-v2/library.json")).unwrap();
+    let first = osg_profiles::store::Store::new(root.path().join("profiles-v2")).load().unwrap().unwrap().encode().unwrap();
     profiles(&directory).unwrap();
     assert!(directory.join(PROFILE_MARKER).is_file());
     assert_eq!(
-        fs::read(root.path().join("profiles-v2/library.json")).unwrap(),
+        osg_profiles::store::Store::new(root.path().join("profiles-v2")).load().unwrap().unwrap().encode().unwrap(),
         first
     );
     let library = osg_profiles::store::Store::new(root.path().join("profiles-v2"))

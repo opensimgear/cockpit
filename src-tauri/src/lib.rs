@@ -33,6 +33,12 @@ mod game_telemetry_inspection;
 mod game_vehicles;
 mod games;
 pub mod gateways;
+
+/// Initialize shared native persistence before constructing source workers.
+/// The browser development service uses the same namespace as desktop/MCP.
+pub fn initialize_persistence(additional_roots:&[std::path::PathBuf])->Result<osg_persistence::Database,String> {
+    config_paths::initialize(additional_roots)
+}
 mod hid_names;
 mod system_inventory;
 mod local_gateway;
@@ -321,7 +327,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            app.manage(osg_persistence::Database::open(config_paths::database_path())?);
+            app.manage(initialize_persistence(&[app.path().app_config_dir()?])?);
             let gateway = Arc::new(gateways::GatewayManager::new());
             gateway.start_automatic();
             app.manage(mcp::Server::native(gateway.clone()));
