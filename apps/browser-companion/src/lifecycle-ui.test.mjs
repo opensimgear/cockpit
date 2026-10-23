@@ -10,6 +10,7 @@ import * as svelte from 'svelte';
 import { BROWSER_WIDGET_CAPABILITIES } from '../../../packages/widget-runtime/src/artifact.ts';
 import { createOrderedInputQueue } from '../../companion/src/lib/input-queue.ts';
 import * as feedbackApi from './feedback.ts';
+import * as resolutionApi from './panel-resolution.ts';
 import * as credentials from './transport.ts';
 const appSource=await readFile(new URL('./App.svelte',import.meta.url),'utf8');
 const hash='sha256:'+'a'.repeat(64),assignment={instanceId:'instance',publicationHash:hash,name:'Compiled controls'};
@@ -48,7 +49,7 @@ function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,re
    if(name==='../../../packages/companion-ui/src/CompiledPanel.svelte')return{default(){}};if(name==='../../../packages/widget-runtime/src/artifact.ts')return{BROWSER_WIDGET_CAPABILITIES};
    if(name==='../../../packages/companion-ui/src/compiled-surface.ts')return{prepareCompiledSurfaces:async()=>{if(++preparations>failPreparationAfter)throw new RangeError('Candidate Canvas allocation failed');if(holdPreparation)await new Promise(resolve=>finishPreparation=resolve);return{retained:{pixels:[0,248,255],disposed:false,dispose(){this.disposed=true;this.pixels=[];}}};},disposeCompiledSurfaces:surfaces=>{for(const surface of Object.values(surfaces??{}))surface.dispose();}};
    if(name==='./compiled-cache')return{browserCompiledCacheStore:()=>({}),createCompiledAssetCache:()=>({haveAssets:async()=>['b'.repeat(64)],save:async()=>{},verifyDelivery:async()=>{if(rejectPanel||++verifications>rejectPanelAfter)throw Error('Unsupported compiled widget');if(holdVerification)await new Promise(resolve=>finishVerification=resolve);return publication;}})};
-   if(name==='../../companion/src/lib/input-queue')return{createOrderedInputQueue};if(name==='./transport')return{...credentials,BrowserTransport:Socket};if(name==='./feedback')return feedbackApi;throw Error(name);
+   if(name==='../../companion/src/lib/input-queue')return{createOrderedInputQueue};if(name==='./transport')return{...credentials,BrowserTransport:Socket};if(name==='./feedback')return feedbackApi;if(name==='./panel-resolution')return resolutionApi;throw Error(name);
   },
  });render(exports.default).body;cleanup=mount();
  return{handlers,sockets,storage,async focus(v){focused=v;window.dispatchEvent(new Event(v?'focus':'blur'));await flush();},async visibility(v){document.visibilityState=v;document.dispatchEvent(new Event('visibilitychange'));await flush();},async pagehide(){window.dispatchEvent(new Event('pagehide'));await flush();},async pageshow(){window.dispatchEvent(new Event('pageshow'));await flush();},async tick(){for(const cb of intervals.values())cb();await flush();},close(){cleanup();},finishVerification(){finishVerification();},finishPreparation(){finishPreparation();}};
