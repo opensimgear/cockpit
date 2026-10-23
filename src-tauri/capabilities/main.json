@@ -6,6 +6,7 @@
     "main"
   ],
   "permissions": [
+    "allow-persistence-status",
     "allow-gateway-request",
     "allow-mcp-settings-get",
     "allow-mcp-settings-update",

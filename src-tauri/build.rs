@@ -50,6 +50,7 @@ fn main() {
 
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "persistence_status",
             "gateway_request",
             "mcp_settings_get",
             "mcp_settings_update",

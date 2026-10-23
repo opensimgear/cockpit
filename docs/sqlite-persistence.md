@@ -6,7 +6,7 @@ games #128 and the compiled widget publication format. Work is isolated in
 
 This is the inventory and implementation contract. Entries below describe the
 required destination, not a claim that every owner has already been converted.
-Acceptance evidence lives in `docs/verification/2026-10-23-sqlite.md`.
+Acceptance evidence lives in `docs/verification/2026-10-24-sqlite.md`.
 
 ## Namespace and authority
 

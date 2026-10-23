@@ -1,6 +1,11 @@
 //! Shared application path anchor. No configuration or runtime is loaded here.
 use std::path::PathBuf;
 
+pub fn database_path() -> PathBuf {
+    std::env::var_os("OSG_SQLITE_DATABASE").map(PathBuf::from)
+        .unwrap_or_else(|| config_path().with_file_name("cockpit.sqlite3"))
+}
+
 pub fn config_path() -> PathBuf {
     if let Some(path) = std::env::var_os("OSG_DCS_BIOS_CONFIG") {
         return PathBuf::from(path);

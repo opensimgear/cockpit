@@ -18,6 +18,7 @@ sha2 = "0.10"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+osg-persistence = { path = "../crates/persistence" }
 osg-profiles = { path = "../crates/profiles" }
 osg-companion-serial = { path = "../crates/companion-serial" }
 osg-companion-service = { path = "../crates/companion-service" }

@@ -3,6 +3,7 @@ mod game_artwork;
 mod game_library;
 mod retained_game_companions;
 mod config_paths;
+mod persistence;
 mod mcp;
 mod mcp_credentials;
 mod mcp_tools;
@@ -320,6 +321,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            app.manage(osg_persistence::Database::open(config_paths::database_path())?);
             let gateway = Arc::new(gateways::GatewayManager::new());
             gateway.start_automatic();
             app.manage(mcp::Server::native(gateway.clone()));
@@ -329,6 +331,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            persistence::persistence_status,
             gateway_request,
             mcp::mcp_settings_get,
             mcp::mcp_settings_update,
