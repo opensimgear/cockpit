@@ -7,6 +7,7 @@ fn widget_tasks_use_native_validation_persistence_and_mutation_ledger(){
     let tools=Tools::new(Arc::new(GatewayManager::mcp_test_manager()));
     let guide=tools.read_resource("cockpit://guide/widgets",CLIENT);
     let mut bundle=guide["data"]["example"].clone();bundle["library"]["definitions"][0]["id"]=json!("mcp-native-widget");
+    bundle["library"]["definitions"][0]["version"]=json!(1);
     let args=json!({"operationId":operation(),"expectedVersion":null,"bundle":bundle});
     let saved=tools.call("widget_save",args.clone(),CLIENT);assert_eq!(saved["ok"],true,"{saved}");
     assert_eq!(tools.call("widget_save",args,CLIENT),saved);

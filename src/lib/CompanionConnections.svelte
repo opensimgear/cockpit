@@ -6,7 +6,6 @@
   import { companionMessages } from './companion-messages';
   import { newPairingConnected } from './companion-pairing';
   import { invoke } from '@tauri-apps/api/core';
-  import Esp32Companions from './Esp32Companions.svelte';
   import { gatewayRequest } from './gateway';
   import { notify } from './notifications';
   import { type CompanionCommand, type CompanionHostState } from './companions';
@@ -197,12 +196,12 @@
     <section class="pair-form" aria-label="Pair companion">
       <div class="form-heading"><h3>Pair a companion</h3><button class="danger" disabled={busy} onclick={() => action(cancel)}><Icon name="close" size={16} />Cancel</button></div>
       <fieldset disabled={busy || !!pairing}><legend>Companion type</legend><div class="types">
-        {#each [{id:'browser',name:'Browser',description:'Any browser on your network'}, {id:'mobile',name:'Mobile',description:'Scan a QR code or enter a code'}, {id:'esp32',name:'ESP32',description:'Connect by USB to install and pair'}] as type}
-          <label class:chosen={kind===type.id}><input type="radio" name="companion-type" value={type.id} checked={kind===type.id} onchange={() => {kind=type.id as typeof kind;browserOfferAttempted=false;}} /><Icon name={icon(type.id)} size={24} /><strong>{type.name}</strong><span>{type.description}</span></label>
+        {#each [{id:'browser',name:'Browser',description:'Any browser on your network'}, {id:'mobile',name:'Mobile',description:'Scan a QR code or enter a code'}, {id:'esp32',name:'ESP32',description:'Pairing is temporarily unavailable.'}] as type}
+          <label class:chosen={kind===type.id} class:unavailable={type.id==='esp32'}><input type="radio" name="companion-type" value={type.id} checked={kind===type.id} disabled={type.id==='esp32'} onchange={() => {kind=type.id as typeof kind;browserOfferAttempted=false;}} /><Icon name={icon(type.id)} size={24} /><strong>{type.name}</strong><span>{type.description}</span></label>
         {/each}
       </div></fieldset>
       {#if kind === 'esp32'}
-        <Esp32Companions {publications} />
+        <p>ESP32 pairing is temporarily unavailable.</p>
       {:else if kind}
         {#if !pairing}
           <p>{kind==='browser'?(busy?'Creating pairing link…':'Open the pairing link in any browser on your network. That browser pairs automatically and remembers this Cockpit host.'):'Open the mobile companion and scan the QR code generated here. You can also use the eight-character code.'}</p>
@@ -320,9 +319,10 @@
         {#if messages.length}<div class="tile-messages">{#each messages as message (message.source)}<CompanionMessage message={message.message} kind={message.kind}/>{/each}</div>{/if}
       </article>
     {/each}</div>
-  {:else}<div class="empty"><Icon name="monitor" size={30} /><h3>No companions paired</h3><p>Pair a browser, mobile device or ESP32 screen to get started.</p></div>{/if}
+  {:else}<div class="empty"><Icon name="monitor" size={30} /><h3>No companions paired</h3><p>Pair a browser or mobile device to get started.</p></div>{/if}
 </section>
 <style>
+  .types label.unavailable{opacity:.55;cursor:not-allowed}
   .firmware-version-value{display:flex;align-items:center;gap:8px}.firmware-version-value>span{min-width:0}.firmware-refresh{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:4px;flex-shrink:0}
   .tile-messages,.firmware-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.tile-messages{position:absolute;right:12px;bottom:12px;flex-wrap:nowrap}.companion-status-messages{display:grid;gap:8px;margin:0 0 18px;min-width:0}.companion-notice{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--line,#344452);border-left:3px solid var(--accent,#64caba);border-radius:6px;background:var(--surface,#14212c);font-size:13px;line-height:1.5;overflow-wrap:anywhere}.companion-notice strong{font-size:12px}.companion-notice.error{border-color:#ff899366;background:color-mix(in srgb,#ff8993 8%,var(--surface,#14212c))}.companion-notice.error strong{color:#ff8993}.companion-notice.warning{border-color:#efc26966;background:color-mix(in srgb,#efc269 8%,var(--surface,#14212c))}.companion-notice.warning strong{color:#efc269}.firmware-heading h3{margin:0}
   .setting input[readonly],.setting input:disabled,.setting select:disabled{color:var(--muted);background:var(--input-bg);border-color:var(--faint-line);cursor:default}.setting:has(input[readonly]),.setting:has(input:disabled),.setting:has(select:disabled){color:var(--muted)}

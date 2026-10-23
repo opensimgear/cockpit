@@ -445,6 +445,14 @@ impl Runtime {
         let owner = request["clientId"]
             .as_str()
             .ok_or("Missing local operator identity.")?;
+        // Pause new ESP32 pairing while its replacement renderer is deferred.
+        // Saved screens can still use their existing connection settings flow.
+        if (command == "companion_pair_offer" && payload["kind"] == "esp32")
+            || (command == "companion_usb_provision"
+                && payload["companionId"].as_str().is_none_or(|id| id.trim().is_empty()))
+        {
+            return Err("ESP32 pairing is temporarily unavailable.".into());
+        }
         match command {
             "companion_publish_begin" => {
                 let expected = payload["size"]
@@ -668,9 +676,6 @@ impl Runtime {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_err(|_| "System clock is invalid.")?
                     .as_millis() as u64;
-                let offer = services
-                    .hub
-                    .command(&json!({"command":"companion_pair_offer","kind":"esp32"}))?;
                 let status = services.usb.status();
                 let host = services
                     .hub
@@ -678,7 +683,7 @@ impl Runtime {
                 let existing = status["device"]["companionId"].as_str().filter(|id| {
                     host["clients"]
                         .as_array()
-                        .is_some_and(|rows| rows.iter().any(|c| c["companionId"] == *id))
+                        .is_some_and(|rows| rows.iter().any(|c| c["companionId"] == *id && c["kind"] == "esp32"))
                 });
                 let id = if let Some(selected) = payload["companionId"].as_str() {
                     if existing != Some(selected) {
@@ -693,6 +698,9 @@ impl Runtime {
                     }
                     uuid::Uuid::new_v4().to_string()
                 };
+                let offer = services
+                    .hub
+                    .command(&json!({"command":"companion_pair_offer","kind":"esp32"}))?;
 
                 let mut record = if mode == "wifi" {
                     let ssid = payload["ssid"]
@@ -1269,6 +1277,22 @@ mod tests {
             .is_err());
         assert!(runtime.services.get().is_none());
     }
+    #[test]
+    fn new_esp32_pairing_is_rejected_without_starting_services() {
+        let runtime = runtime();
+        for (command, payload) in [
+            ("companion_pair_offer", json!({"kind":"esp32"})),
+            ("companion_usb_provision", json!({})),
+            ("companion_usb_provision", json!({"companionId":""})),
+            ("companion_usb_provision", json!({"companionId":"  "})),
+            ("companion_usb_provision", json!({"companionId":null})),
+            ("companion_usb_provision", json!({"companionId":123})),
+        ] {
+            assert_eq!(call(&runtime, command, payload).unwrap_err(), "ESP32 pairing is temporarily unavailable.");
+            assert!(runtime.services.get().is_none());
+            assert!(runtime.metadata.get().is_none());
+        }
+    }
     #[cfg(windows)]
     #[test]
     fn usb_operator_requests_require_a_current_selection_and_ready_device() {
@@ -1316,7 +1340,7 @@ mod tests {
         }
         assert_eq!(
             call(&runtime, "companion_usb_provision", json!({
-                "name":"Never provisioned","mode":"serial"
+                "companionId":"saved-screen","name":"Never provisioned","mode":"serial"
             })).unwrap_err(),
             "Wait for the USB device to be ready."
         );
@@ -1432,6 +1456,9 @@ mod tests {
             .unwrap()
             .starts_with("wss://127.0.0.1:"));
         let services = runtime.services().unwrap();
+        assert_eq!(call(&runtime, "companion_pair_offer", json!({"kind":"esp32"})).unwrap_err(), "ESP32 pairing is temporarily unavailable.");
+        assert_eq!(call(&runtime, "companion_usb_provision", json!({"mode":"serial"})).unwrap_err(), "ESP32 pairing is temporarily unavailable.");
+        // Rejected ESP32 setup must leave the active non-ESP32 offer usable.
         let pending=services.hub.handle_wire(json!({"type":"pair","version":1,"secret":pairing["secret"],"companionId":"test-installation","name":"Desktop panel"}),"root-test-peer",services.hub.now_ms());
         assert_eq!(pending["type"], "pair-pending");
         call(

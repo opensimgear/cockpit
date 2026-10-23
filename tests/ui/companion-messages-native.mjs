@@ -19,6 +19,14 @@ test('native companion messages use independent severity icons and accessible fu
   const companions = page.getByRole('region', { name: 'Companions', exact: true });
   const details = page.getByRole('region', { name: 'Companion settings', exact: true });
   const messageButtons = container => container.getByRole('button', { name: /^(Info|Warning|Error): / });
+  const request = (command, companion = {}) => page.evaluate(({ command, companion }) =>
+    window.__TAURI_INTERNALS__.invoke('gateway_request', { request: { command, companion, clientId: 'companion-messages-native' } }), { command, companion });
+  async function membership() {
+    const reply = await request('companion_status');
+    assert.equal(reply.ok, true, reply.error ?? 'Native companion status failed.');
+    const host = reply.state.companions.host;
+    return { clients: host.clients.map(client => client.companionId).sort(), instances: host.instances.map(instance => instance.instanceId).sort() };
+  }
   async function tooltipFor(button) {
     const id = await button.getAttribute('aria-describedby');
     assert.ok(id?.trim(), 'Message icons must describe an actual full-text tooltip.');
@@ -90,25 +98,33 @@ test('native companion messages use independent severity icons and accessible fu
     await details.getByRole('button', { name: 'Back to Companions', exact: true }).click();
     await companions.getByRole('button', { name: 'Pair', exact: true }).click();
     const pairing = companions.getByRole('region', { name: 'Pair companion', exact: true });
-    await pairing.getByRole('radio', { name: /^ESP32/ }).check();
-    const setup = pairing.getByRole('region', { name: 'ESP32 companion setup', exact: true });
-    await expect(setup).toBeVisible();
-    const setupIcons = messageButtons(setup);
-    await expect.poll(() => setupIcons.count()).toBeGreaterThan(0);
-    // USB detection can remove a transient hint between individual locator reads.
-    const setupLabels = await setupIcons.evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')));
-    for (const label of setupLabels) assert.match(label, /^(Info|Warning|Error): .+/);
-    const setupMessages = setupLabels.map(label => label.replace(/^(Info|Warning|Error): /, ''));
-    assert.ok(setupMessages.includes('Choose a USB device'));
-    assert.ok(setupMessages.includes('Select a port to detect firmware'));
-    const setupMessage = await checkTooltip(setupIcons.first(), 'esp32-setup-message.png');
-    await expect(setup.getByRole('button', { name: 'Pair device', exact: true })).toBeDisabled();
+    const esp32 = pairing.getByRole('radio', { name: /^ESP32/ });
+    await expect(esp32).toBeVisible();
+    await expect(esp32).toBeDisabled();
+    await expect(pairing.getByText(/pairing (?:is )?temporarily unavailable\.?/i)).toBeVisible();
+    await expect(pairing.getByRole('radio', { name: /^Browser/ })).toBeEnabled();
+    await expect(pairing.getByRole('radio', { name: /^Mobile/ })).toBeEnabled();
+    await expect(pairing.getByRole('region', { name: 'ESP32 companion setup', exact: true })).toHaveCount(0);
+    await page.screenshot({ path: resolve(artifacts, 'esp32-pairing-paused.png'), fullPage: true });
+    const before = await membership(), rejectedCommands = [];
+    for (const [command, companion] of [
+      ['companion_pair_offer', { kind: 'esp32' }],
+      ['companion_usb_provision', {}],
+      ['companion_usb_provision', { companionId: '' }],
+    ]) {
+      const reply = await request(command, companion);
+      assert.equal(reply.ok, false, `${command} must reject new ESP32 pairing.`);
+      assert.equal(reply.error, 'ESP32 pairing is temporarily unavailable.');
+      rejectedCommands.push({ command, error: reply.error });
+    }
+    assert.deepEqual(await membership(), before, 'Rejected pairing requests must preserve paired clients and instances.');
+    checks.push('ESP32 pairing is visibly disabled while Browser and Mobile remain available; direct native pairing and new USB provisioning are rejected without changing saved companion membership');
     await pairing.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(pairing).toHaveCount(0);
     await expect(companions.getByRole('heading', { name: 'Companions', exact: true })).toBeVisible();
-    checks.push('Pair → ESP32 setup shows icon-only status and firmware hints with full-text tooltips; cancellation returns to the list without selecting USB, scanning, installing or pairing');
+    checks.push('Cancelling the pairing chooser returns to the list without mounting ESP32 setup, selecting USB, scanning, installing or pairing');
     assert.deepEqual(errors, []);
-    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, readOnly: true, actualListIconCount: count, message, detailMessage, setupMessage, setupMessages, checks, errors }, null, 2) + '\n');
+    await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, readOnly: true, actualListIconCount: count, message, detailMessage, rejectedCommands, preservedMembership: before, checks, errors }, null, 2) + '\n');
   } catch (error) {
     await page.screenshot({ path: resolve(artifacts, 'failure.png'), fullPage: true }); throw error;
   } finally { await browser.close(); }
