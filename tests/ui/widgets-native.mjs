@@ -63,6 +63,11 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     await evaluate(`document.querySelector('[aria-label="Panel name"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
     await until(`document.querySelector('.panel-title-button')?.textContent.trim()===${JSON.stringify(panelName)}`, 'Panel rename did not commit');
     assert.equal(await evaluate(`document.querySelectorAll('.widget-artwork').length`), widgetCount);
+    const proportions = await evaluate(`Array.from(document.querySelectorAll('.component-widget'),widget=>{const body=widget.querySelector('.widget-body').getBoundingClientRect(),svg=widget.querySelector('svg').viewBox.baseVal,hit=widget.querySelector('.component-hit')?.getBoundingClientRect();return {ratio:body.width/body.height,authored:svg.width/svg.height,hitInside:!hit||(hit.left>=body.left-.1&&hit.top>=body.top-.1&&hit.right<=body.right+.1&&hit.bottom<=body.bottom+.1)};})`);
+    for (const item of proportions) {
+      assert.ok(Math.abs(item.ratio-item.authored)<.005, 'Resized instances must retain the widget design proportions');
+      assert.ok(item.hitInside, 'The interactive area must stay inside the fitted artwork');
+    }
     assert.equal(await evaluate(`document.documentElement.scrollWidth>innerWidth`), false);
     assert.equal(await evaluate(`document.querySelectorAll('.component-widget [data-layer-id]').length`), layerCount);
     await screenshot('shared-catalog');
@@ -80,6 +85,11 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
     assert.equal(await evaluate(`document.querySelector('[data-definition-id="osg-illuminated-button"] [data-widget-state]').getAttribute('data-widget-state')`), 'unknown');
     checks.push('Actual pointer capture emits two momentary transitions and returns to unknown feedback without inventing confirmation.');
     await click('Stop preview');
+    if (process.env.OSG_WIDGETS_GEOMETRY_ONLY === '1') {
+      await screenshot('proportional-artwork');
+      console.log(JSON.stringify({ directory, checks, proportions }));
+      return;
+    }
     await evaluate(`document.querySelector('[aria-label^="Edit design Illuminated button"]').click()`);
     await until(`!!document.querySelector('dialog.widget-designer[open]')`, 'Widget editor did not open');
     // Repeated acceptance runs retain immutable revisions. Remove only this

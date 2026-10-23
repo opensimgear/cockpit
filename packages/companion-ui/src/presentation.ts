@@ -46,6 +46,14 @@ export function viewportWidgetBounds(bounds: Bounds, from: Bounds, to: Bounds): 
 }
 
 export type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
+
+/** Fit authored artwork and its hit area together without changing proportions. */
+export function fittedWidgetBounds(width:number,height:number,size:{width:number;height:number}):Bounds {
+  if(width<=0||height<=0)return {x:0,y:0,width:1,height:1};
+  const scale=Math.min(width/size.width,height/size.height);
+  const w=size.width*scale/width,h=size.height*scale/height;
+  return {x:(1-w)/2,y:(1-h)/2,width:w,height:h};
+}
 /** Move the dragged edges while leaving the opposite corner fixed. */
 export function resizedCornerBounds(bounds:Bounds,dx:number,dy:number,grid:{columns:number;rows:number;snap:boolean},corner:ResizeCorner):Bounds {
   const snap=(value:number,steps:number)=>grid.snap?Math.round(value*steps)/steps:value;

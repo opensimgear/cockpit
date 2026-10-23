@@ -287,15 +287,16 @@ pub(crate) fn check_document(
         let inset = &viewport["safeInsets"];
         let scale = (number(&profile["screen"]["width"]) / number(&viewport["width"]))
             .min(number(&profile["screen"]["height"]) / number(&viewport["height"]));
-        let width = number(&widget["bounds"]["width"])
+        let mut width = number(&widget["bounds"]["width"])
             * (1.0 - number(&inset["left"]) - number(&inset["right"]))
             * number(&viewport["width"])
             * scale;
-        let height = number(&widget["bounds"]["height"])
+        let mut height = number(&widget["bounds"]["height"])
             * (1.0 - number(&inset["top"]) - number(&inset["bottom"]))
             * number(&viewport["height"])
             * scale;
-        let (pw, ph) = (width.floor() as usize, height.floor() as usize);
+        let (mut pw, mut ph) = (width.floor() as usize, height.floor() as usize);
+        let mut artwork = [0.0, 0.0, 1.0, 1.0];
         let config = &widget["config"];
         let mut hit = [0.0, 0.0, 1.0, 1.0];
         let mut interactive = widget["kind"] == "button";
@@ -307,6 +308,22 @@ pub(crate) fn check_document(
                         && definition["version"] == config["definitionVersion"]
                 })
                 .ok_or("Missing admitted definition.")?;
+            let fit = (width / number(&definition["size"]["width"]))
+                .min(height / number(&definition["size"]["height"]));
+            let w = number(&definition["size"]["width"]) * fit;
+            let h = number(&definition["size"]["height"]) * fit;
+            if width > 0.0 && height > 0.0 {
+                artwork = [
+                    (1.0 - w / width) / 2.0,
+                    (1.0 - h / height) / 2.0,
+                    w / width,
+                    h / height,
+                ];
+            }
+            width = w;
+            height = h;
+            pw = w.floor() as usize;
+            ph = h.floor() as usize;
             hit = ["x", "y", "width", "height"].map(|field| number(&definition["hitArea"][field]));
             interactive = definition["interaction"]["kind"] != "none";
             check.definition = Some(string(&definition["id"]).into());
@@ -492,6 +509,12 @@ pub(crate) fn check_document(
         }
         // Keep the firmware's single-pointer overlap rule, using local hit
         // areas after its safe-inset transform. Decorative components may overlap.
+        hit = [
+            artwork[0] + hit[0] * artwork[2],
+            artwork[1] + hit[1] * artwork[3],
+            hit[2] * artwork[2],
+            hit[3] * artwork[3],
+        ];
         let usable_x = 1.0 - number(&inset["left"]) - number(&inset["right"]);
         let usable_y = 1.0 - number(&inset["top"]) - number(&inset["bottom"]);
         let bounds = [

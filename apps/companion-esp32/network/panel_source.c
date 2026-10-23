@@ -184,7 +184,8 @@ static bool widget_bounds(compiler *c, const cJSON *v, osg_widget *w, const osg_
     if(w->kind==OSG_BUTTON||(w->kind==OSG_COMPONENT&&w->component->definition->interaction!=OSG_INTERACTION_NONE)) {
         const osg_bounds hit=w->kind==OSG_COMPONENT?w->component->definition->hit_area:(osg_bounds){0,0,1,1};
         const double scale=fmin((double)c->limits->width/image->pages[p].width,(double)c->limits->height/image->pages[p].height);
-        const double width=floor(w->bounds.width*image->pages[p].width*scale*hit.width),height=floor(w->bounds.height*image->pages[p].height*scale*hit.height);
+        const osg_bounds artwork=osg_widget_artwork_bounds(w,&image->pages[p]);
+        const double width=floor(artwork.width*image->pages[p].width*scale*hit.width),height=floor(artwork.height*image->pages[p].height*scale*hit.height);
         if(width<44||height<44)return fail(c,OSG_PANEL_SOURCE_UNSUPPORTED,"hitArea.minimum44Pixels");
     }
     return true;

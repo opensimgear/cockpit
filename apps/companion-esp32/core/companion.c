@@ -30,8 +30,19 @@ static bool hash_valid(const char *s) {
 static bool interactive(const osg_widget *w) {
     return w->kind == OSG_BUTTON || (w->kind == OSG_COMPONENT && w->component && w->component->definition && w->component->definition->interaction != OSG_INTERACTION_NONE);
 }
-static osg_bounds hit_bounds(const osg_widget *w) {
+osg_bounds osg_widget_artwork_bounds(const osg_widget *w, const osg_page *page) {
     osg_bounds b = w->bounds;
+    if (w->kind == OSG_COMPONENT && w->component && w->component->definition && w->component->definition->width && w->component->definition->height) {
+        const osg_widget_component *d = w->component->definition;
+        const double scale = fmin(b.width * page->width / d->width, b.height * page->height / d->height);
+        const double width = d->width * scale / page->width, height = d->height * scale / page->height;
+        b.x += (b.width - width) / 2; b.y += (b.height - height) / 2;
+        b.width = width; b.height = height;
+    }
+    return b;
+}
+static osg_bounds hit_bounds(const osg_panel *p, const osg_widget *w) {
+    osg_bounds b = osg_widget_artwork_bounds(w, &p->pages[w->page]);
     if (w->kind == OSG_COMPONENT) {
         const osg_bounds h = w->component->definition->hit_area;
         b.x += b.width * h.x; b.y += b.height * h.y; b.width *= h.width; b.height *= h.height;
@@ -85,7 +96,7 @@ bool osg_panel_valid(const osg_panel *p) {
             if (!strcmp(w->id, v->id) || (input && osg_widget_input(v, &before_kind, &before_fallback) && !strcmp(w->reference, v->reference))) return false;
             /* Initial single-pointer subset rejects overlapping touch targets. */
             const bool portable = w->kind == OSG_COMPONENT || v->kind == OSG_COMPONENT;
-            const osg_bounds a = portable ? hit_bounds(v) : v->bounds, touch = portable ? hit_bounds(w) : b;
+            const osg_bounds a = portable ? hit_bounds(p, v) : v->bounds, touch = portable ? hit_bounds(p, w) : b;
             if (w->page == v->page && (portable ? interactive(w) && interactive(v) : w->kind != OSG_IMAGE && v->kind != OSG_IMAGE && (w->kind == OSG_BUTTON || v->kind == OSG_BUTTON)) &&
                 touch.x < a.x + a.width && a.x < touch.x + touch.width && touch.y < a.y + a.height && a.y < touch.y + touch.height) return false;
         }
@@ -150,8 +161,8 @@ static void panel_geometry(const osg_panel *panel, const osg_widget *w, osg_boun
     *width = (int)floor(bounds.width * pw); *height = (int)floor(bounds.height * ph);
 }
 static void geometry_bounds(const osg_runtime *r, const osg_widget *w, osg_bounds bounds, int *x, int *y, int *width, int *height) { panel_geometry(r->panel, w, bounds, r->display.width, r->display.height, x, y, width, height); }
-void osg_panel_widget_rect(const osg_panel *p, size_t i, uint16_t dw, uint16_t dh, int *x, int *y, int *width, int *height) { panel_geometry(p, &p->widgets[i], p->widgets[i].bounds, dw, dh, x, y, width, height); }
-static void geometry(const osg_runtime *r, const osg_widget *w, int *x, int *y, int *width, int *height) { geometry_bounds(r, w, w->bounds, x, y, width, height); }
+void osg_panel_widget_rect(const osg_panel *p, size_t i, uint16_t dw, uint16_t dh, int *x, int *y, int *width, int *height) { panel_geometry(p, &p->widgets[i], osg_widget_artwork_bounds(&p->widgets[i], &p->pages[p->widgets[i].page]), dw, dh, x, y, width, height); }
+static void geometry(const osg_runtime *r, const osg_widget *w, int *x, int *y, int *width, int *height) { geometry_bounds(r, w, osg_widget_artwork_bounds(w, &r->panel->pages[w->page]), x, y, width, height); }
 static bool change(osg_runtime *r, size_t index, double value) {
     if (r->requested[index] == value) return true;
     if (!edge(r, index, value)) { osg_disarm(r); return false; }
@@ -188,7 +199,7 @@ void osg_touch(osg_runtime *r, bool down, int x, int y) {
     if (r->await_release) return;
     if (r->active >= 0) {
         const osg_widget *w = &r->panel->widgets[r->active];
-        int bx, by, bw, bh; geometry_bounds(r, w, hit_bounds(w), &bx, &by, &bw, &bh);
+        int bx, by, bw, bh; geometry_bounds(r, w, hit_bounds(r->panel, w), &bx, &by, &bw, &bh);
         if (x < bx || y < by || x >= bx + bw || y >= by + bh) { if (w->kind == OSG_COMPONENT) cancel_widget(r, (size_t)r->active); else osg_disarm(r); }
         return;
     }
@@ -199,7 +210,7 @@ void osg_touch(osg_runtime *r, bool down, int x, int y) {
         if (w->page != r->page || !interactive(w)) continue;
         const osg_widget_component *d = w->kind == OSG_COMPONENT ? w->component->definition : NULL;
         if (!r->armed && (!d || d->interaction != OSG_INTERACTION_NAVIGATE || r->screen != OSG_SCREEN_PANEL)) continue;
-        int bx, by, bw, bh; geometry_bounds(r, w, hit_bounds(w), &bx, &by, &bw, &bh);
+        int bx, by, bw, bh; geometry_bounds(r, w, hit_bounds(r->panel, w), &bx, &by, &bw, &bh);
         if (bw < 44 || bh < 44 || x < bx || y < by || x >= bx + bw || y >= by + bh) continue;
         if (d) {
             osg_widget_state_context context; osg_widget_runtime_context(r, i - 1, r->now_ms, &context);

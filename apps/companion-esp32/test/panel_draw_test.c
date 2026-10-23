@@ -30,7 +30,10 @@ static cJSON *load(const char *path) {
 }
 static osg_display display(void) { return (osg_display){.width=800,.height=480}; }
 static void full(void) {
-    osg_display original=runtime.display;assert(osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100));
+    osg_display original=runtime.display;
+    bool rendered=osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100);
+    if(!rendered)fprintf(stderr,"full: code=%d widget=%s layer=%s field=%s required=%zu available=%zu\n",draw.diagnostic.code,draw.diagnostic.widget,draw.diagnostic.layer,draw.diagnostic.field,draw.diagnostic.required,draw.diagnostic.available);
+    assert(rendered);
     assert(!memcmp(&original,&runtime.display,sizeof(original))&&!draw.frame&&!draw.layer);
 }
 static void mixed_order(void) {
@@ -67,7 +70,7 @@ static void mixed_order(void) {
     runtime.screen=OSG_SCREEN_ERROR;full();runtime.screen=OSG_SCREEN_PANEL;
     fail_write=true;assert(!osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100));fail_write=false;
     fail_present=true;assert(!osg_panel_draw_render(&draw,&runtime,(osg_damage){.full=true},100));fail_present=false;full();
-    definitions[0].width=1;assert(!osg_panel_draw_check(&draw,&runtime,100,true)&&!strcmp(draw.diagnostic.field,"scale"));definitions[0].width=200;
+    definitions[0].width=1;definitions[0].height=1;assert(!osg_panel_draw_check(&draw,&runtime,100,true)&&!strcmp(draw.diagnostic.field,"scale"));definitions[0].width=200;definitions[0].height=120;
     widgets[0].component=NULL;assert(!osg_panel_draw_check(&draw,&runtime,100,true));widgets[0].component=&bindings[0];
     osg_widget_group broken[]={group,{"empty","Empty",0,0},{"other","Other",1,15}};
     osg_panel_metadata extra={broken,3};osg_panel extra_panel=panel;extra_panel.metadata=&extra;runtime.panel=&extra_panel;full();

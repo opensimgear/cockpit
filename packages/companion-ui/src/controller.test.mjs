@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { axisPosition, axisValue, createPreviewController, fallbackValue } from './controller.ts';
-import { feedbackPresentation, movedBounds, resizedBounds, safeAssetUrl, viewportWidgetBounds } from './presentation.ts';
+import { feedbackPresentation, fittedWidgetBounds, movedBounds, resizedBounds, safeAssetUrl, viewportWidgetBounds } from './presentation.ts';
+
+test('widget artwork keeps its authored proportions in resized instances',()=>{
+  const size={width:200,height:128};
+  for(const [width,height] of [[144,80],[80,144],[200,128],[288,160]]){
+    const fit=fittedWidgetBounds(width,height,size);
+    assert.ok(Math.abs(fit.width*width/(fit.height*height)-200/128)<1e-10);
+    assert.ok(Math.abs(fit.x*2+fit.width-1)<1e-10);
+    assert.ok(Math.abs(fit.y*2+fit.height-1)<1e-10);
+    assert.ok(fit.width<=1&&fit.height<=1);
+  }
+  assert.deepEqual(fittedWidgetBounds(0,80,size),{x:0,y:0,width:1,height:1});
+  assert.deepEqual(fittedWidgetBounds(80,0,size),{x:0,y:0,width:1,height:1});
+});
 const base = { pageId:'page',label:'Widget',bounds:{x:0,y:0,width:.2,height:.2},feedbackIds:[] };
 function doc(widgets, controls) {
   return {schemaVersion:2,ui:{schemaVersion:1,id:'test',title:'Test',controls,pages:[{id:'page',title:'Page',items:[]}],feedbackWidgets:[],assets:[]},presentation:{widgets:widgets.map(widget=>({...base,...widget})),groups:[],viewports:[{pageId:'page',width:1000,height:800}],grid:{columns:24,rows:16,snap:true}},targets:[],bindings:[]};

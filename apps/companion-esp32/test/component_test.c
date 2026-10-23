@@ -179,6 +179,20 @@ static void binding_checks(osg_panel *panel, osg_widget *widgets) {
     assert(!osg_widget_feedback_text(NULL, display, sizeof(display)) && !osg_widget_feedback_text("text", NULL, 4) && !osg_widget_feedback_text("é", display, 2));
 }
 void component_tests(void) {
+    const osg_page page = {.width=480,.height=320};
+    const osg_widget_component definition = {.width=200,.height=128};
+    const osg_widget_binding binding = {.definition=&definition};
+    osg_widget fitted = {.kind=OSG_COMPONENT,.bounds={.1,.2,.3,.25},.component=&binding};
+    osg_bounds artwork = osg_widget_artwork_bounds(&fitted,&page);
+    assert(fabs(artwork.width*480/(artwork.height*320)-200.0/128)<1e-10);
+    assert(fabs(artwork.x+artwork.width/2-(.1+.3/2))<1e-10);
+    assert(fabs(artwork.y+artwork.height/2-(.2+.25/2))<1e-10);
+    fitted.bounds=(osg_bounds){.1,.2,.1,.5};
+    artwork=osg_widget_artwork_bounds(&fitted,&page);
+    assert(fabs(artwork.width*480/(artwork.height*320)-200.0/128)<1e-10);
+    fitted.component=NULL;
+    artwork=osg_widget_artwork_bounds(&fitted,&page);
+    assert(artwork.x==fitted.bounds.x&&artwork.y==fitted.bounds.y&&artwork.width==fitted.bounds.width&&artwork.height==fitted.bounds.height);
     cJSON *fixture = load("apps/companion-esp32/test/widget-input.json");
     unsigned char *memory = malloc(192 * 1024); assert(memory); osg_widget_arena arena = {.data = memory, .capacity = 192 * 1024, .max_layers = 128, .max_components = 32};
     cJSON *publication = cJSON_CreateObject(); assert(publication);

@@ -3,7 +3,7 @@
   import type { Bounds } from '@opensimgear/companion-contracts';
   import { boundsContain, boundsOverlap, viewportRegions, type DesignerDocument, type DesignerWidget } from '@opensimgear/companion-designer';
   import { axisPosition, createPreviewController, type PreviewController, type PreviewSnapshot, type PointerData, type PreviewChange } from './controller.ts';
-  import { feedbackPresentation, movedBounds, resizedBounds, resizedCornerBounds, type ResizeCorner, safeAssetUrl, viewportWidgetBounds, type FeedbackSamples } from './presentation.ts';
+  import { feedbackPresentation, fittedWidgetBounds, movedBounds, resizedBounds, resizedCornerBounds, type ResizeCorner, safeAssetUrl, viewportWidgetBounds, type FeedbackSamples } from './presentation.ts';
   import WidgetView from './WidgetView.svelte';
   import GroupOutline from './GroupOutline.svelte';
   import { componentDefinition, componentPresentation } from './widget-presentation.ts';
@@ -46,7 +46,7 @@
   onMount(() => {
     local = createPreviewController(document, { onchange: (changes, reason) => onchange?.(changes, reason) });
     oncontroller?.(controller ?? local);
-    const observer = new ResizeObserver(() => { contentWidth = content.clientWidth; contentHeight = content.clientHeight; });
+    const observer = new ResizeObserver(() => { const rect = content.getBoundingClientRect(); contentWidth = rect.width; contentHeight = rect.height; });
     observer.observe(content);
     const timer = setInterval(() => { now = performance.now(); if (engine?.snapshot().armed) engine.tick(now); }, 20);
     return () => { observer.disconnect(); clearInterval(timer); engine?.disarm('Renderer unmounted'); };
@@ -293,12 +293,13 @@
       {@const size = dimensions(widget)}
       {@const bounds = shownBounds(widget)}
       {@const composition = componentPresentation(document, widget, feedback, now, { pressed: previewState.pressedWidgetIds?.includes(widget.id), enabled: mode === 'edit' || widget.controlIds.length === 0 || previewState.armed, requested: mode === 'preview' ? Boolean(previewState.values[widget.controlIds[0]]) : undefined })}
+      {@const artwork = composition ? fittedWidgetBounds(bounds.width * contentWidth, bounds.height * contentHeight, composition.definition.size) : null}
       <section class="widget" class:component-widget={widget.kind === 'component'} class:image-widget={widget.kind === 'image'} class:selected={selectedIds.includes(widget.id)} class:output={widget.feedbackIds.length > 0} class:feedback-unavailable={widget.kind !== 'component' && widget.feedbackIds.length > 0 && !display.available} class:touch-warning={mode === 'edit' && size.small} class:outside-viewport={mode === 'edit' && !widgetFits(bounds)}
         data-widget-id={widget.id} data-definition-id={composition?.definition.id} data-definition-version={composition?.definition.version}
         style:left={`${bounds.x * 100}%`} style:top={`${bounds.y * 100}%`} style:width={`${bounds.width * 100}%`} style:height={`${bounds.height * 100}%`}
         style:color={widget.style?.foreground ?? '#dce7ef'} style:background={widget.style?.background ?? '#152532'} style:--widget-accent={widget.style?.accent ?? '#83e3c2'} aria-label={mode === 'edit' ? `${widget.label}, ${size.width} by ${size.height} pixels${size.small ? ", below 44 pixel touch target" : ""}` : widget.label}>
         {#if widget.kind !== 'image' && widget.kind !== 'component'}<header><span>{widget.label}</span><small>{widget.kind}</small></header>{/if}
-        <div class="widget-body" inert={mode === 'edit' || (widget.controlIds.length > 0 && !previewState.armed)}>
+        <div class="widget-body" style={artwork ? `left:${artwork.x*100}%;top:${artwork.y*100}%;width:${artwork.width*100}%;height:${artwork.height*100}%` : undefined} inert={mode === 'edit' || (widget.controlIds.length > 0 && !previewState.armed)}>
           {#if widget.kind === 'component' && composition}
             <WidgetView definition={composition.definition} layers={composition.layers} state={composition.state} samples={composition.outputs} {assets} {now} />
             {#if composition.confirmation}<small class="toggle-confirmation" aria-live="polite">{composition.confirmation}</small>{/if}
@@ -356,7 +357,7 @@
 .widget.image-widget{z-index:1;padding:0;border:0;border-radius:0;background:transparent!important}.image-content{width:100%;height:100%;object-fit:fill;pointer-events:none}.image-widget .widget-body[inert]{opacity:1}
 .resize-corner{position:absolute;width:12px;height:12px;margin:0;padding:0!important;background:transparent!important;border:0!important;border-radius:0!important;z-index:6;touch-action:none}.resize-corner::after{content:'';position:absolute;width:6px;height:6px;border:1px solid #83e3c2;background:#18342d;opacity:.65}.resize-corner:hover::after,.resize-corner:focus-visible::after{opacity:1;background:#83e3c2}.resize-corner.nw{top:0;left:0;cursor:nwse-resize}.resize-corner.ne{top:0;right:0;cursor:nesw-resize}.resize-corner.sw{bottom:0;left:0;cursor:nesw-resize}.resize-corner.se{bottom:0;right:0;cursor:nwse-resize}.resize-corner.nw::after{top:2px;left:2px}.resize-corner.ne::after{top:2px;right:2px}.resize-corner.sw::after{bottom:2px;left:2px}.resize-corner.se::after{bottom:2px;right:2px}
   .widget.component-widget{border:0;border-radius:0;padding:0;background:transparent!important;filter:none!important}
-  .component-widget .widget-body{position:relative;width:100%;height:100%;display:block}
+  .component-widget .widget-body{position:absolute;width:100%;height:100%;display:block}
   .component-widget .widget-body[inert]{opacity:1}
   .widget .component-hit{position:absolute;padding:0;background:transparent!important;border:0!important;border-radius:0;touch-action:none}
   .widget .component-hit:disabled{cursor:default}

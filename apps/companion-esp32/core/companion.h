@@ -78,6 +78,8 @@ typedef struct {
 } osg_runtime;
 
 bool osg_panel_valid(const osg_panel *panel);
+/* Center reusable artwork in its instance while preserving authored proportions. */
+osg_bounds osg_widget_artwork_bounds(const osg_widget *, const osg_page *);
 bool osg_init(osg_runtime *, const osg_panel *, osg_display, osg_input_sink, void *);
 void osg_disarm(osg_runtime *);
 bool osg_preview_arm(osg_runtime *);

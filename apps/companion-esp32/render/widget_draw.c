@@ -153,11 +153,20 @@ bool osg_widget_draw(lv_layer_t *target, const osg_widget_component *component, 
         }
         /* A narrow damaged rectangle can contain many rows in the same LVGL
          * pixel buffer. Bound alpha strips independently of that outer clip. */
-        for(int32_t row=visible.y1;row<=visible.y2;row+=OSG_WIDGET_DRAW_ROWS) {
-            const lv_area_t clip={visible.x1,row,visible.x2,LV_MIN(visible.y2,row+OSG_WIDGET_DRAW_ROWS-1)};
+        for(int32_t row=visible.y1;row<=visible.y2;) {
+            const uint8_t opacity = (uint8_t)lround(paint->opacity * 255);
+            size_t strip_rows=OSG_WIDGET_DRAW_ROWS;
+            if(opacity<255) {
+                lv_mem_monitor_t memory;lv_mem_monitor(&memory);
+                const size_t minimum=columns*4+8192;
+                if(memory.free_biggest_size<minimum)return error(diagnostic,OSG_WIDGET_DRAW_BUDGET,layer->id,minimum,memory.free_biggest_size);
+                /* Fitting artwork can change its scan width by a pixel. Keep
+                 * the same memory reserve by shortening an alpha strip. */
+                strip_rows=LV_MIN(strip_rows,(memory.free_biggest_size-8192)/(columns*4));
+            }
+            const lv_area_t clip={visible.x1,row,visible.x2,LV_MIN(visible.y2,row+(int32_t)strip_rows-1)};
             const size_t rows=(size_t)lv_area_get_height(&clip);
             lv_layer_t *draw = target;
-            const uint8_t opacity = (uint8_t)lround(paint->opacity * 255);
             if (opacity < 255) {
                 lv_mem_monitor_t memory; lv_mem_monitor(&memory); const size_t required = columns * rows * 4 + 8192;
                 if (memory.free_biggest_size < required) return error(diagnostic, OSG_WIDGET_DRAW_BUDGET, layer->id, required, memory.free_biggest_size);
@@ -196,6 +205,7 @@ bool osg_widget_draw(lv_layer_t *target, const osg_widget_component *component, 
                 while (target->draw_task_head) lv_draw_dispatch();
             }
             if (!ok) return error(diagnostic, OSG_WIDGET_DRAW_TEXT, layer->id, 0, 0);
+            row+=(int32_t)rows;
             }
     }
     return true;

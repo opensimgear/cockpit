@@ -77,12 +77,17 @@ export function renderCompatibility(input:DesignerDocument, report:unknown):Rend
     identity={widget:widget.id};
     const viewport=document.presentation.viewports.find(viewport=>viewport.pageId===widget.pageId)!;
     const inset=viewport.safeInsets, scale=Math.min(p.screen.width/viewport.width,p.screen.height/viewport.height);
-    const width=widget.bounds.width*(1-(inset?.left??0)-(inset?.right??0))*viewport.width*scale;
-    const height=widget.bounds.height*(1-(inset?.top??0)-(inset?.bottom??0))*viewport.height*scale;
-    const pixelWidth=Math.floor(width),pixelHeight=Math.floor(height);
+    let width=widget.bounds.width*(1-(inset?.left??0)-(inset?.right??0))*viewport.width*scale;
+    let height=widget.bounds.height*(1-(inset?.top??0)-(inset?.bottom??0))*viewport.height*scale;
+    let pixelWidth=Math.floor(width),pixelHeight=Math.floor(height);
+    let artwork:Bounds={x:0,y:0,width:1,height:1};
     let hit:Bounds={x:0,y:0,width:1,height:1},interactive=widget.kind==='button';
     if(widget.kind==='component'){
       const definition=definitions.find(d=>d.id===widget.config.definitionId&&d.version===widget.config.definitionVersion)!;
+      const fit=Math.min(width/definition.size.width,height/definition.size.height);
+      const w=definition.size.width*fit,h=definition.size.height*fit;
+      if(width>0&&height>0)artwork={x:(1-w/width)/2,y:(1-h/height)/2,width:w/width,height:h/height};
+      width=w;height=h;pixelWidth=Math.floor(w);pixelHeight=Math.floor(h);
       hit=definition.hitArea;interactive=definition.interaction.kind!=='none';
       identity.definition=definition.id;components++;totalLayers+=definition.layers.length;
       over('components',components,limits.components);over('layers',totalLayers,limits.totalLayers);
@@ -141,6 +146,7 @@ export function renderCompatibility(input:DesignerDocument, report:unknown):Rend
     // Match the firmware's single-pointer admission, including local hit areas.
     // Read-only component artwork may overlap; legacy button geometry retains
     // its existing stricter rule. Compare after the same safe-inset transform.
+    hit={x:artwork.x+hit.x*artwork.width,y:artwork.y+hit.y*artwork.height,width:hit.width*artwork.width,height:hit.height*artwork.height};
     const usableX=1-(inset?.left??0)-(inset?.right??0),usableY=1-(inset?.top??0)-(inset?.bottom??0);
     const bounds={x:(inset?.left??0)+widget.bounds.x*usableX+widget.bounds.width*usableX*hit.x,y:(inset?.top??0)+widget.bounds.y*usableY+widget.bounds.height*usableY*hit.y,width:widget.bounds.width*usableX*hit.width,height:widget.bounds.height*usableY*hit.height};
     const overlap=touchAreas.find(other=>{
