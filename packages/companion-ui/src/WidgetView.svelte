@@ -14,11 +14,17 @@
   const y = (layer: WidgetLayer) => layer.bounds.y * definition.size.height;
   const width = (layer: WidgetLayer) => layer.bounds.width * definition.size.width;
   const height = (layer: WidgetLayer) => layer.bounds.height * definition.size.height;
+  // SVG strokes straddle the shape boundary. Keep that outer half inside the
+  // layer clip, while text and raster content retain their authored crop.
+  const strokePadding = (layer: WidgetLayer) =>
+    layer.kind === 'rectangle' || layer.kind === 'ellipse' ? Number(layer.strokeWidth ?? 0) / 2 :
+    layer.kind === 'line' ? Number(layer.strokeWidth ?? 1) / 2 :
+    layer.kind === 'gauge' && layer.orientation === 'radial' ? Number(layer.strokeWidth ?? 6) / 2 : 0;
 </script>
 
 <svg class="widget-artwork" viewBox={`0 0 ${definition.size.width} ${definition.size.height}`} preserveAspectRatio="none" role="img" aria-label={`${definition.title}: ${state}`} data-widget-state={state}>
   <metadata>Font licenses: {sansLicense} {monoLicense}</metadata>
-  <defs>{#each layers as layer}<clipPath id={`${uid}-${layer.id}`}><rect x={x(layer)} y={y(layer)} width={width(layer)} height={height(layer)} /></clipPath>{/each}</defs>
+  <defs>{#each layers as layer}{@const padding = strokePadding(layer)}<clipPath id={`${uid}-${layer.id}`}><rect x={x(layer) - padding} y={y(layer) - padding} width={width(layer) + padding * 2} height={height(layer) + padding * 2} /></clipPath>{/each}</defs>
   {#each layers as layer (layer.id)}
     {#if layer.visible !== false}
       <g opacity={Number(layer.opacity ?? 1)} clip-path={`url(#${uid}-${layer.id})`} data-layer-id={layer.id}>

@@ -42,6 +42,22 @@ test('the actual browser renders image widgets without unsupported-widget errors
  assert.equal(Object.keys(h.handlers.controls.values).length,panel.ui.controls.length);
 });
 
+test('shared artwork clips include complete shape strokes while preserving text and image crops',()=>{
+ const WidgetView=load(widgetSource,'WidgetView.svelte',{'./presentation.ts':presentation,'./widget-presentation.ts':widgets,'./widget-fonts.ts':fonts});
+ const definition=designer.createWidgetCatalog().find(d=>d.id==='osg-capsule-toggle-horizontal');
+ for(const state of ['normal','pressed','active']){
+  const layers=designer.resolveWidgetLayers(definition,{},state);
+  layers.push(...['ellipse','line','text','image','gauge'].map((kind,index)=>({id:`crop-${kind}`,label:kind,kind,bounds:{x:.2,y:.25,width:.4,height:.5},...(index<2?{strokeWidth:10}:{}),...(kind==='text'?{text:'TEST',font:'sans',fontSize:24,align:'center'}:{}),...(kind==='gauge'?{orientation:'radial',outputPort:'value',min:0,max:1}:{}),...(kind==='image'?{assetId:'picture'}:{})})));
+  const html=render(WidgetView,{props:{definition,layers,state}}).body;
+  const crop=id=>{const match=html.match(new RegExp(`<clipPath id="[^"]*-${id}"><rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"`));assert.ok(match,id);return match.slice(1).map(Number);};
+  const track=layers.find(l=>l.id==='track'),half=Number(track.strokeWidth)/2;
+  assert.deepEqual(crop('track'),[36-half,56-half,128+half*2,56+half*2]);
+  for(const kind of ['ellipse','line'])assert.deepEqual(crop(`crop-${kind}`),[35,27,90,74]);
+  for(const kind of ['text','image'])assert.deepEqual(crop(`crop-${kind}`),[40,32,80,64]);
+  assert.deepEqual(crop('crop-gauge'),[37,29,86,70]);
+ }
+});
+
 test('browser capsule artwork keeps a dimmed thumb without feedback and while disconnected',()=>{
  for(const definition of designer.createWidgetCatalog().filter(d=>d.id.startsWith('osg-capsule-toggle-'))){
   const document=designer.applyDesignerCommand(designer.createDesignerHistory(designer.newDocument()),{type:'add-component',definition}).present;
