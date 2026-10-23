@@ -1,29 +1,53 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sourceIdentity, createSourceHistory, editSource, undoSource, redoSource, CompilationFence, moveSiblingLayer } from './generic-widget-editor.ts';
+import { sourceIdentity, createSourceHistory, editSource, undoSource, redoSource, CompilationFence, moveLayer } from './generic-widget-editor.ts';
 
 test('layer drops reorder siblings in both directions and keep nested groups intact', () => {
   const nodes = [{ id: 'a' }, { id: 'group', children: [{ id: 'c' }, { id: 'd' }, { id: 'e' }] }, { id: 'b' }];
-  assert.equal(moveSiblingLayer(nodes, 'a', 'b', true), true);
+  assert.equal(moveLayer(nodes, 'a', 'b', 'after'), true);
   assert.deepEqual(nodes.map(node => node.id), ['group', 'b', 'a']);
-  assert.equal(moveSiblingLayer(nodes, 'a', 'group'), true);
+  assert.equal(moveLayer(nodes, 'a', 'group'), true);
   assert.deepEqual(nodes.map(node => node.id), ['a', 'group', 'b']);
   const children = nodes[1].children;
-  assert.equal(moveSiblingLayer(nodes, 'c', 'e', true), true);
+  assert.equal(moveLayer(nodes, 'c', 'e', 'after'), true);
   assert.deepEqual(children.map(node => node.id), ['d', 'e', 'c']);
-  assert.equal(moveSiblingLayer(nodes, 'group', 'b', true), true);
+  assert.equal(moveLayer(nodes, 'group', 'b', 'after'), true);
   assert.equal(nodes[2].children, children);
   const unchanged = structuredClone(nodes);
-  for (const [id, target, after] of [['missing', 'a'], ['a', 'missing'], ['group', 'c'], ['c', 'group'], ['a', 'a'], ['a', 'b'], ['group', 'b', true]]) {
-    assert.equal(moveSiblingLayer(nodes, id, target, after), false);
+  for (const [id, target, placement] of [['missing', 'a'], ['a', 'missing'], ['group', 'c'], ['a', 'a'], ['a', 'b'], ['group', 'b', 'after']]) {
+    assert.equal(moveLayer(nodes, id, target, placement), false);
     assert.deepEqual(nodes, unchanged);
   }
   const history = createSourceHistory(nodes);
   const next = structuredClone(nodes);
-  moveSiblingLayer(next, 'group', 'a');
+  moveLayer(next, 'group', 'a');
   const edited = editSource(history, next);
   assert.deepEqual(undoSource(edited).present, nodes);
   assert.deepEqual(redoSource(undoSource(edited)).present, next);
+});
+
+test('layer drops change parents, support empty groups and scene, and reject invalid ancestry without mutation', () => {
+  const nodes = [{ id: 'a' }, { id: 'left', children: [{ id: 'nested', children: [{ id: 'child' }] }] }, { id: 'empty', children: [] }];
+  assert.equal(moveLayer(nodes, 'a', 'empty', 'inside'), true);
+  assert.deepEqual(nodes[1].children.map(n => n.id), ['a']);
+  assert.equal(moveLayer(nodes, 'nested', 'a', 'before'), true);
+  assert.deepEqual(nodes[1].children.map(n => n.id), ['nested', 'a']);
+  const unchanged = structuredClone(nodes);
+  for (const [id, target, placement] of [['nested', 'child', 'inside'], ['empty', 'child', 'after'], ['a', 'child', 'inside'], ['a', 'a', 'inside'], ['a', 'missing', 'inside']]) {
+    assert.equal(moveLayer(nodes, id, target, placement), false);
+    assert.deepEqual(nodes, unchanged);
+  }
+  assert.equal(moveLayer(nodes, 'child', 'left', 'inside'), true);
+  assert.equal(moveLayer(nodes, 'child', '', 'root'), true);
+  assert.equal(nodes.at(-1).id, 'child');
+  assert.equal(moveLayer(nodes, 'child', '', 'root'), false);
+  const before = structuredClone(nodes);
+  assert.equal(moveLayer(nodes, 'left', 'nested', 'inside', 1), false);
+  assert.deepEqual(nodes, before);
+  let history = createSourceHistory(nodes);
+  const next = structuredClone(nodes);moveLayer(next, 'child', 'nested', 'inside');history = editSource(history, next);
+  assert.deepEqual(undoSource(history).present, nodes);
+  assert.deepEqual(redoSource(undoSource(history)).present, next);
 });
 
 test('source history is immutable, bounded and clears redo after a branch', () => {

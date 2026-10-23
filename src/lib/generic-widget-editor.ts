@@ -2,23 +2,30 @@
 export interface SourceHistory<T> { past: T[]; present: T; future: T[] }
 const HISTORY_LIMIT = 80;
 
-/** Reorder siblings without reparenting a layer or separating a group from its children. */
-export function moveSiblingLayer<T extends { id: string; children?: T[] }>(nodes: T[], id: string, targetId: string, after = false): boolean {
-  function siblings(list: T[], key: string): T[] | undefined {
-    if (list.some(node => node.id === key)) return list;
+export type LayerPlacement = 'before' | 'after' | 'inside' | 'root';
+
+/** Move complete subtrees, rejecting cycles and nesting beyond the source depth limit. */
+export function moveLayer<T extends { id: string; children?: T[] }>(nodes: T[], id: string, targetId: string, placement: LayerPlacement = 'before', maxDepth = 8): boolean {
+  function locate(list: T[], key: string, depth = 0): { list: T[]; node: T; index: number; depth: number } | undefined {
+    const index = list.findIndex(node => node.id === key);
+    if (index >= 0) return { list, node: list[index], index, depth };
     for (const node of list) {
-      const found = node.children && siblings(node.children, key);
+      const found = node.children && locate(node.children, key, depth + 1);
       if (found) return found;
     }
   }
-  const list = siblings(nodes, id);
-  if (!list || list !== siblings(nodes, targetId) || id === targetId) return false;
-  const from = list.findIndex(node => node.id === id);
-  let to = list.findIndex(node => node.id === targetId) + Number(after);
-  if (from < to) to--;
-  if (from === to) return false;
-  const [node] = list.splice(from, 1);
-  list.splice(to, 0, node);
+  const source = locate(nodes, id), target = locate(nodes, targetId);
+  if (!source || placement !== 'root' && (!target || id === targetId || source.node.children && locate(source.node.children, targetId))) return false;
+  if (placement === 'inside' && !target!.node.children) return false;
+  const list = placement === 'root' ? nodes : placement === 'inside' ? target!.node.children! : target!.list;
+  const depth = placement === 'root' ? 0 : target!.depth + Number(placement === 'inside');
+  const subtreeDepth = (node: T): number => node.children ? 1 + Math.max(0, ...node.children.map(subtreeDepth)) : 0;
+  if (depth + subtreeDepth(source.node) > maxDepth) return false;
+  let index = placement === 'root' || placement === 'inside' ? list.length : target!.index + Number(placement === 'after');
+  if (source.list === list && source.index < index) index--;
+  if (source.list === list && source.index === index) return false;
+  source.list.splice(source.index, 1);
+  list.splice(index, 0, source.node);
   return true;
 }
 
