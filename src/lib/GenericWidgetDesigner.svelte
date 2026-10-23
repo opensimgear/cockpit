@@ -48,7 +48,7 @@
   let selection = $state<{ bounds:SelectionBounds;transform:string;handles:{id:ResizeHandle;x:number;y:number}[];handleWidth:number;handleHeight:number }>();
   let hoveredSelection=$state(false),resizing=$state(false);
   const selectedBounds = $derived(selection?.bounds);
-  let drag: { pointer:number;x:number;y:number;clientX:number;clientY:number;moved:boolean;toLocal:DOMMatrix;original:SelectionBounds;bounds:SelectionBounds;node:VisualNode;handle?:ResizeHandle;history:SourceHistory<WidgetSource> } | undefined;
+  let drag: { pointer:number;x:number;y:number;clientX:number;clientY:number;moved:boolean;toLocal:DOMMatrix;original:SelectionBounds;bounds:SelectionBounds;node:VisualNode;handle?:ResizeHandle;clickSelection?:string;history:SourceHistory<WidgetSource> } | undefined;
   const compileIdentity = () => sourceIdentity({source:history.present,width:targetWidth,height:targetHeight,motion,audio:audioEnabled});
   function flatten(nodes:VisualNode[],depth=0,collapsed?:ReadonlySet<string>):{node:VisualNode;depth:number}[]{return nodes.flatMap(node=>[{node,depth},...(node.kind==='group'&&!collapsed?.has(node.id)?flatten(node.children,depth+1,collapsed):[])]);}
   function parentGroups(nodes:VisualNode[],nodeId:string):string[]|undefined{for(const node of nodes){if(node.id===nodeId)return [];if(node.kind==='group'){const parents=parentGroups(node.children,nodeId);if(parents)return [node.id,...parents];}}}
@@ -107,10 +107,28 @@
   function dropLayer(event:DragEvent,id:string){event.preventDefault();if(layerDrop?.id===id&&draggedLayer)reorderLayer(draggedLayer,id,layerDrop.placement);endLayerDrag();}
   function layerKey(event:KeyboardEvent,id:string){if(!event.altKey||!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const list=listFor(draft.scene,id),index=list?.findIndex(node=>node.id===id)??-1;if(event.key==='ArrowLeft'){const parent=layerList.find(entry=>entry.node.kind==='group'&&entry.node.children.some(node=>node.id===id));if(parent)reorderLayer(id,parent.node.id,'after');}else if(event.key==='ArrowRight'){const previous=list?.[index-1];if(previous?.kind==='group')reorderLayer(id,previous.id,'inside');}else{const after=event.key==='ArrowDown',target=list?.[index+(after?1:-1)];if(target)reorderLayer(id,target.id,after?'after':'before');}}
   function duplicateLayer(nodeId:string){if(saving)return;const original=layerList.find(entry=>entry.node.id===nodeId)?.node;if(!original)return;const copy=structuredClone(original);const rename=(node:VisualNode)=>{node.id=id('layer');if(node.kind==='group')node.children.forEach(rename);};rename(copy);copy.label=(copy.label??copy.kind)+' copy';mutate(next=>listFor(next.scene,nodeId)?.push(copy));selected=copy.id;}
-  function selectFromCanvas(event:PointerEvent){if(saving||!stage||event.button!==0)return;const hit=document.elementsFromPoint(event.clientX,event.clientY).find(element=>stage!.contains(element)&&!element.closest('.selection,.resize-handles')&&element.closest('[data-source-layer-id]'));const nodeId=hit?.closest('[data-source-layer-id]')?.getAttribute('data-source-layer-id')??'';selected=nodeId;hoveredSelection=!!nodeId;const node=layerList.find(entry=>entry.node.id===nodeId)?.node;if(node)begin(event,undefined,node);}
+  function selectFromCanvas(event:PointerEvent){
+    if(saving||!stage||event.button!==0)return;
+    const hit=document.elementsFromPoint(event.clientX,event.clientY).find(element=>stage!.contains(element)&&!element.closest('.selection,.resize-handles')&&element.closest('[data-source-layer-id]'));
+    const nodeId=hit?.closest('[data-source-layer-id]')?.getAttribute('data-source-layer-id')??'';
+    const group=layer?.kind==='group'?layer:undefined;
+    if(group&&(hit?renderedLayer(stage,group.id)?.contains(hit):(event.target as Element).closest('.selection'))){
+      // Delay child selection until release so a drag moves the selected group.
+      begin(event,undefined,group);if(drag&&nodeId&&nodeId!==group.id)drag.clickSelection=nodeId;return;
+    }
+    selected=nodeId;hoveredSelection=!!nodeId;const node=layerList.find(entry=>entry.node.id===nodeId)?.node;if(node)begin(event,undefined,node);
+  }
   function hoverSelection(event:PointerEvent){if(!stage||!layer||!selectedBounds){hoveredSelection=false;return;}const matrix=renderedLayer(stage,layer.id)?.getScreenCTM();if(!matrix){hoveredSelection=false;return;}const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(matrix.inverse()),mx=5/Math.hypot(matrix.a,matrix.b),my=5/Math.hypot(matrix.c,matrix.d),box=selectedBounds;hoveredSelection=point.x>=box.x-mx&&point.x<=box.x+box.width+mx&&point.y>=box.y-my&&point.y<=box.y+box.height+my;}
-  function finishDrag(event:PointerEvent){drag=undefined;resizing=false;hoverSelection(event);}
-  function begin(event:PointerEvent,handle?:ResizeHandle,node=layer){if(saving||!node||!stage||event.button!==0||!handle&&(!('x'in node)||isExpression(node.x)||isExpression(node.y)))return;const element=renderedLayer(stage,node.id),toLocal=element?.getScreenCTM()?.inverse();if(!element||!toLocal||![toLocal.a,toLocal.b,toLocal.c,toLocal.d,toLocal.e,toLocal.f].every(Number.isFinite))return;const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(toLocal),box=element.getBBox();event.preventDefault();event.stopPropagation();resizing=!!handle;drag={pointer:event.pointerId,x:point.x,y:point.y,clientX:event.clientX,clientY:event.clientY,moved:false,toLocal,original:{x:'x'in node?numeric(node.x):box.x,y:'y'in node?numeric(node.y):box.y,width:'width'in node?numeric(node.width):box.width,height:'height'in node?numeric(node.height):box.height},bounds:{x:box.x,y:box.y,width:box.width,height:box.height},node,handle,history};stage.setPointerCapture(event.pointerId);}
+  function finishDrag(event:PointerEvent){const clickSelection=drag&&!drag.moved?drag.clickSelection:undefined;drag=undefined;resizing=false;if(clickSelection)selected=clickSelection;hoverSelection(event);}
+  function begin(event:PointerEvent,handle?:ResizeHandle,node=layer){
+    if(saving||!node||!stage||event.button!==0||!handle&&node.kind!=='group'&&(!('x'in node)||isExpression(node.x)||isExpression(node.y)))return;
+    const element=renderedLayer(stage,node.id);
+    // Group translation is expressed in its parent's space, before its own rotation/scale.
+    const coordinates=!handle&&node.kind==='group'?element?.parentElement as SVGGraphicsElement|null:element;
+    const toLocal=coordinates?.getScreenCTM()?.inverse();
+    if(!element||!toLocal||![toLocal.a,toLocal.b,toLocal.c,toLocal.d,toLocal.e,toLocal.f].every(Number.isFinite))return;
+    const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(toLocal),box=element.getBBox();event.preventDefault();event.stopPropagation();resizing=!!handle;drag={pointer:event.pointerId,x:point.x,y:point.y,clientX:event.clientX,clientY:event.clientY,moved:false,toLocal,original:{x:'x'in node?numeric(node.x):box.x,y:'y'in node?numeric(node.y):box.y,width:'width'in node?numeric(node.width):box.width,height:'height'in node?numeric(node.height):box.height},bounds:{x:box.x,y:box.y,width:box.width,height:box.height},node,handle,history};stage.setPointerCapture(event.pointerId);
+  }
   function adjusted(value:unknown,amount:number,operation:'add'|'mul',fallback=0):unknown{if(amount===(operation==='add'?0:1))return value??fallback;return isExpression(value)?{op:operation,left:value,right:{literal:amount}}:operation==='add'?numeric(value,fallback)+amount:numeric(value,fallback)*amount;}
   function resizePatch(current:NonNullable<typeof drag>,dx:number,dy:number):Record<string,unknown>{
     const node=current.node,box=current.bounds,geometry='width'in node&&'height'in node;
@@ -122,7 +140,8 @@
     return{transform:{...transform,scaleX:adjusted(transform.scaleX,fx,'mul',1),scaleY:adjusted(transform.scaleY,fy,'mul',1),translateX:adjusted(transform.translateX,Math.cos(angle)*tx-Math.sin(angle)*ty,'add'),translateY:adjusted(transform.translateY,Math.sin(angle)*tx+Math.cos(angle)*ty,'add')}};
   }
   function move(event:PointerEvent){if(saving||!drag||drag.pointer!==event.pointerId)return;if(!drag.moved&&Math.hypot(event.clientX-drag.clientX,event.clientY-drag.clientY)<3)return;drag.moved=true;const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(drag.toLocal),dx=point.x-drag.x,dy=point.y-drag.y;const original=drag.original;
-    history=drag.history;patchNode(drag.handle?resizePatch(drag,dx,dy):{x:Math.round(original.x+dx),y:Math.round(original.y+dy)});
+    const transform=drag.node.transform??{};
+    history=drag.history;patchNode(drag.handle?resizePatch(drag,dx,dy):drag.node.kind==='group'?{transform:{...transform,translateX:adjusted(transform.translateX,Math.round(dx),'add'),translateY:adjusted(transform.translateY,Math.round(dy),'add')}}:{x:Math.round(original.x+dx),y:Math.round(original.y+dy)});
   }
   function undo(){if(saving)return;history=undoSource(history);invalidate();}function redo(){if(saving)return;history=redoSource(history);invalidate();}
   function keyboard(event:KeyboardEvent){if(!dialog?.open||saving)return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?redo():undo();}else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='y'){event.preventDefault();redo();}}
