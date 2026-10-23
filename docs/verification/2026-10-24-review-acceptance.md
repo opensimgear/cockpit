@@ -74,7 +74,23 @@ empty held/possible-held sets and complete Stop cleanup with no owners or runs.
 The Q check uses no companion or live script. A script-based setup was rejected
 by the existing native qualification gate and was not counted as a pass.
 
-Physical-keyboard overlap, higher-integrity/session transitions, the remaining
+The user confirmed native tray **Stop keyboard and mouse output** leaves
+**No profile active** and remains stopped for ten seconds.
+
+The physical-first overlap check used the actual right VKB trigger → Q-hold
+profile, scoped to a receive-only native window. Physical Q-down preceded one
+injected Q-down/up pair. The injected Q-up occurred before physical Q release;
+physical repeat resumed 15 ms later with the receiver previous-down bit cleared.
+This observes an interruption in the shared Windows key stream, not independent
+physical ownership. It is not an uninterrupted-overlap pass. Stop then left no
+held/possible-held controls, owners or runs, with cleanup complete and no
+uncertainty. In the reverse order, physical Q-up cleared the previous-down
+state while the joystick remained held; its later injected release arrived with
+previous-down already clear. Both observed orders match the shared-OS-state
+limitation in #97. See [redacted receiver evidence](2026-10-24-physical-keyboard-overlap.json).
+
+Other keys/layouts and physical-overlap combinations, higher-integrity/session
+transitions, the remaining
 game focus/deactivation checks, optional-driver-free deployment and installed-
 release checks are not established here. Keep their review gates open until observed. The historical
 debug-only production-gate assumption is superseded by current Windows code;

@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-24",
+  "environment": "Running Windows development Cockpit; dedicated receive-only native window",
+  "source": "VKBsim Gladiator EVO R, Button 1",
+  "mapping": "Direct physical button → Q hold (HID 20), exact receiver application scope",
+  "authority": "User performed both physical keyboard/joystick sequences; receiver marker separates Cockpit events from physical events.",
+  "physicalFirst": {
+    "events": [
+      {
+        "afterUs": 0,
+        "direction": "down",
+        "origin": "physical",
+        "previousDown": false
+      },
+      {
+        "afterUs": 3281000,
+        "direction": "down",
+        "origin": "cockpit",
+        "previousDown": true
+      },
+      {
+        "afterUs": 3500000,
+        "direction": "up",
+        "origin": "cockpit",
+        "previousDown": true
+      },
+      {
+        "afterUs": 3515000,
+        "direction": "down",
+        "origin": "physical",
+        "previousDown": false
+      },
+      {
+        "afterUs": 7140000,
+        "direction": "up",
+        "origin": "physical",
+        "previousDown": true
+      }
+    ],
+    "physicalDownEvents": 202,
+    "repeatResumedAfterInjectedReleaseUs": 15000,
+    "cleanup": {
+      "state": "stopped",
+      "held": [],
+      "possibleHeld": [],
+      "owners": [],
+      "runs": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    }
+  },
+  "joystickFirst": {
+    "events": [
+      {
+        "afterUs": 0,
+        "direction": "down",
+        "origin": "cockpit",
+        "previousDown": false
+      },
+      {
+        "afterUs": 1344000,
+        "direction": "down",
+        "origin": "physical",
+        "previousDown": true
+      },
+      {
+        "afterUs": 1469000,
+        "direction": "up",
+        "origin": "physical",
+        "previousDown": true
+      },
+      {
+        "afterUs": 5203000,
+        "direction": "up",
+        "origin": "cockpit",
+        "previousDown": false
+      }
+    ],
+    "cleanup": {
+      "state": "stopped",
+      "held": [],
+      "possibleHeld": [],
+      "owners": [],
+      "runs": [],
+      "cleanupComplete": true,
+      "uncertain": false
+    }
+  },
+  "conclusion": "Both sequences demonstrate the documented shared Windows key-state limitation. Neither proves uninterrupted independent physical ownership. No GetAsyncKeyState ownership inference was used.",
+  "limitations": [
+    "Q only on the current keyboard/layout; other keys and layouts are not inferred.",
+    "Receiver observations are distinct from native submission acknowledgements and game behavior.",
+    "Higher-integrity, lock/sleep, clean driver-free installation and installed-release qualification remain open."
+  ]
+}
