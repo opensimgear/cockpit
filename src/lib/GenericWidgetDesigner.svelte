@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import GenericExpression from './GenericExpression.svelte';
   import GenericSceneNode from './GenericSceneNode.svelte';
@@ -36,8 +36,9 @@
   const designState = $derived.by(()=>{try{return createBehaviorState(draft.behavior);}catch{return {values:Object.fromEntries(draft.behavior.signals.map(s=>[s.id,s.initial])),regions:Object.fromEntries(draft.behavior.regions.map(r=>[r.id,r.initial]))};}});
   const designValues = $derived({...parameterValues,...designState.values,...designOverrides});
   const previewRegions = $derived({...designState.regions,...designRegions});
-  const selectedBounds = $derived(bounds(layer));
-  let drag: { pointer:number;x:number;y:number;original:{x:number;y:number;width:number;height:number};resize:boolean;history:SourceHistory<WidgetSource> } | undefined;
+  let selection = $state<{ bounds: { x:number;y:number;width:number;height:number }; transform:string }>();
+  const selectedBounds = $derived(selection?.bounds);
+  let drag: { pointer:number;x:number;y:number;toLocal:DOMMatrix;original:{x:number;y:number;width:number;height:number};resize:boolean;history:SourceHistory<WidgetSource> } | undefined;
   const compileIdentity = () => sourceIdentity({source:history.present,width:targetWidth,height:targetHeight,motion,audio:audioEnabled});
   function flatten(nodes:VisualNode[],depth=0):{node:VisualNode;depth:number}[]{return nodes.flatMap(node=>[{node,depth},...(node.kind==='group'?flatten(node.children,depth+1):[])]);}
   function listFor(nodes:VisualNode[],id:string):VisualNode[]|undefined {if(nodes.some(node=>node.id===id))return nodes;for(const node of nodes)if(node.kind==='group'){const found=listFor(node.children,id);if(found)return found;}return undefined;}
@@ -49,7 +50,27 @@
   function expr(value:unknown):Expression{return value&&typeof value==='object'?value as Expression:{literal:typeof value==='string'||typeof value==='number'||typeof value==='boolean'?value:0};}
   function isExpression(value:unknown){return !!value&&typeof value==='object';}
   function numeric(value:unknown,fallback=0){try{const result=isExpression(value)?evaluateExpression(value as Expression,{values:designValues,regions:previewRegions}):value;return typeof result==='number'&&Number.isFinite(result)?result:fallback;}catch{return fallback;}}
-  function bounds(node:VisualNode|undefined){if(!node||!('x' in node))return undefined;return {x:numeric(node.x),y:numeric(node.y),width:'width'in node?numeric(node.width):node.kind==='line'?numeric(node.x2)-numeric(node.x):80,height:'height'in node?numeric(node.height):node.kind==='line'?numeric(node.y2)-numeric(node.y):28};}
+  function renderedLayer(svg:SVGSVGElement,nodeId:string){return [...svg.querySelectorAll<SVGGElement>('[data-source-layer-id]')].find(element=>element.dataset.sourceLayerId===nodeId);}
+  $effect(()=>{
+    const svg=stage,node=layer,design=tab==='Design';
+    draft;designValues;previewRegions;
+    if(!svg||!node||!design){selection=undefined;return;}
+    let active=true;
+    const measure=()=>{
+      if(!active)return;
+      try{
+        const element=renderedLayer(svg,node.id),screen=svg.getScreenCTM(),nodeScreen=element?.getScreenCTM();
+        if(!element||!screen||!nodeScreen){selection=undefined;return;}
+        const box=element.getBBox(),matrix=screen.inverse().multiply(nodeScreen);
+        if(![box.x,box.y,box.width,box.height,matrix.a,matrix.b,matrix.c,matrix.d,matrix.e,matrix.f].every(Number.isFinite)||(!box.width&&!box.height)){selection=undefined;return;}
+        selection={bounds:{x:box.x,y:box.y,width:box.width,height:box.height},transform:`matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})`};
+      }catch{selection=undefined;}
+    };
+    void tick().then(measure);
+    void document.fonts.ready.then(measure);
+    document.fonts.addEventListener('loadingdone',measure);
+    return()=>{active=false;document.fonts.removeEventListener('loadingdone',measure);};
+  });
   function addLayer(){const key=id('layer'),base={id:key,label:newKind,fill:'#72d8ca',stroke:'#b4e1e0',strokeWidth:0};let node:VisualNode;
     if(newKind==='group')node={...base,kind:'group',children:[]};
     else if(newKind==='text')node={...base,kind:'text',x:20,y:40,text:'Label',font:'sans',fontSize:24};
@@ -62,8 +83,8 @@
   function removeLayer(){mutate(next=>{const list=listFor(next.scene,selected);if(list)list.splice(list.findIndex(node=>node.id===selected),1);});selected=layerList[0]?.node.id??'';}
   function reorderLayer(delta:number){mutate(next=>{const list=listFor(next.scene,selected);if(!list)return;const i=list.findIndex(node=>node.id===selected),j=Math.max(0,Math.min(list.length-1,i+delta));const [node]=list.splice(i,1);list.splice(j,0,node);});}
   function duplicateLayer(){if(!layer)return;const copy=structuredClone(layer);const rename=(node:VisualNode)=>{node.id=id('layer');if(node.kind==='group')node.children.forEach(rename);};rename(copy);copy.label=(copy.label??copy.kind)+' copy';mutate(next=>listFor(next.scene,selected)?.push(copy));selected=copy.id;}
-  function begin(event:PointerEvent,resize:boolean){if(saving||!selectedBounds||!layer||event.button!==0||!('x'in layer)||isExpression(layer.x)||isExpression(layer.y))return;event.preventDefault();drag={pointer:event.pointerId,x:event.clientX,y:event.clientY,original:selectedBounds,resize,history};(event.currentTarget as Element).setPointerCapture(event.pointerId);}
-  function move(event:PointerEvent){if(saving||!drag||drag.pointer!==event.pointerId)return;const rect=stage!.getBoundingClientRect(),dx=(event.clientX-drag.x)*draft.size.width/rect.width,dy=(event.clientY-drag.y)*draft.size.height/rect.height;const original=drag.original;
+  function begin(event:PointerEvent,resize:boolean){if(saving||!selectedBounds||!layer||!stage||event.button!==0||!('x'in layer)||isExpression(layer.x)||isExpression(layer.y))return;const toLocal=renderedLayer(stage,layer.id)?.getScreenCTM()?.inverse();if(!toLocal||![toLocal.a,toLocal.b,toLocal.c,toLocal.d,toLocal.e,toLocal.f].every(Number.isFinite))return;const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(toLocal);event.preventDefault();drag={pointer:event.pointerId,x:point.x,y:point.y,toLocal,original:{x:numeric(layer.x),y:numeric(layer.y),width:'width'in layer?numeric(layer.width):0,height:'height'in layer?numeric(layer.height):0},resize,history};(event.currentTarget as Element).setPointerCapture(event.pointerId);}
+  function move(event:PointerEvent){if(saving||!drag||drag.pointer!==event.pointerId)return;const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(drag.toLocal),dx=point.x-drag.x,dy=point.y-drag.y;const original=drag.original;
     history=drag.history;patchNode(drag.resize?{width:Math.max(1,Math.round(original.width+dx)),height:Math.max(1,Math.round(original.height+dy))}:{x:Math.round(original.x+dx),y:Math.round(original.y+dy)});
   }
   function undo(){if(saving)return;history=undoSource(history);invalidate();}function redo(){if(saving)return;history=redoSource(history);invalidate();}
@@ -102,7 +123,7 @@
       <details><summary>Preview presentation</summary><div class="two">{#each draft.behavior.regions as region}<label>{region.id}<select value={previewRegions[region.id]} onchange={e=>designRegions={...designRegions,[region.id]:e.currentTarget.value}}>{#each region.states as state}<option value={state}>{state}</option>{/each}</select></label>{/each}{#each draft.visualDomains as domain}{@const signal=draft.behavior.signals.find(s=>s.id===domain.signal)}{#if signal}<label>{signal.id}{#if signal.type==='number'}<input type="number" min={signal.min} max={signal.max} value={Number(designValues[signal.id])} onchange={e=>designOverrides={...designOverrides,[signal.id]:e.currentTarget.valueAsNumber}}/>{:else}<select value={String(designValues[signal.id])} onchange={e=>designOverrides={...designOverrides,[signal.id]:scalar(signal,e.currentTarget.value)}}>{#each (signal.type==='boolean'?[false,true]:signal.values) as value}<option value={String(value)}>{String(value)}</option>{/each}</select>{/if}</label>{/if}{/each}</div></details>
       <svg bind:this={stage} viewBox={`0 0 ${draft.size.width} ${draft.size.height}`} aria-label="Source design canvas" style:aspect-ratio={`${draft.size.width}/${draft.size.height}`}>
       {#each draft.scene as node (node.id)}<GenericSceneNode {node} values={designValues} regions={previewRegions} assets={draft.assets}/>{/each}
-      {#if selectedBounds && layer}<g class="selection"><rect x={selectedBounds.x} y={selectedBounds.y} width={Math.max(1,selectedBounds.width)} height={Math.max(1,selectedBounds.height)} fill="transparent" stroke="#96ddce" stroke-width="1" vector-effect="non-scaling-stroke" onpointerdown={e=>begin(e,false)} onpointermove={move} onpointerup={()=>drag=undefined} onpointercancel={()=>drag=undefined} role="presentation"/>{#if 'width'in layer}<rect x={selectedBounds.x+selectedBounds.width-4} y={selectedBounds.y+selectedBounds.height-4} width="8" height="8" fill="#96ddce" stroke="#183b3c" onpointerdown={e=>begin(e,true)} onpointermove={move} onpointerup={()=>drag=undefined} onpointercancel={()=>drag=undefined} role="presentation"/>{/if}</g>{/if}
+      {#if selectedBounds && layer}<g class="selection" transform={selection?.transform}><rect x={selectedBounds.x} y={selectedBounds.y} width={Math.max(1,selectedBounds.width)} height={Math.max(1,selectedBounds.height)} fill="transparent" stroke="#96ddce" stroke-width="1" stroke-dasharray="4 3" vector-effect="non-scaling-stroke" onpointerdown={e=>begin(e,false)} onpointermove={move} onpointerup={()=>drag=undefined} onpointercancel={()=>drag=undefined} role="presentation"/>{#if 'width'in layer}<rect x={selectedBounds.x+selectedBounds.width-4} y={selectedBounds.y+selectedBounds.height-4} width="8" height="8" fill="#96ddce" stroke="#183b3c" onpointerdown={e=>begin(e,true)} onpointermove={move} onpointerup={()=>drag=undefined} onpointercancel={()=>drag=undefined} role="presentation"/>{/if}</g>{/if}
     </svg><p class="hint">Select a primitive to move or resize it. Expressions can bind geometry, paint and transforms to finite data.</p></main>
     <aside aria-label="Layer properties">{#if layer}<h3>{layer.kind}</h3><label>Name<input value={layer.label??''} onchange={e=>patchNode({label:e.currentTarget.value})}/></label>
       {#each ['x','y','width','height','x2','y2','radius','fontSize'] as field}{#if field in layer}<div class="property"><label>{field}{#if !isExpression(nodeValue(field))}<input aria-label={`Layer ${field}`} type="number" value={Number(nodeValue(field))} onchange={e=>patchNode({[field]:e.currentTarget.valueAsNumber})}/>{/if}</label><button title={`Bind ${field}`} aria-label={`Bind ${field}`} onclick={()=>patchNode({[field]:isExpression(nodeValue(field))?numeric(nodeValue(field)):{ref:references[0]??''}})}><Icon name="link" size={14}/></button></div>{#if isExpression(nodeValue(field))}<GenericExpression value={expr(nodeValue(field))} {references} regions={regionIds} label={field} onchange={v=>patchNode({[field]:v})}/>{/if}{/if}{/each}
