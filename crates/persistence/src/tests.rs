@@ -291,7 +291,10 @@ fn safe_bounded_snapshots_and_path_failures() {
     assert_eq!(snapshot(&path, 4).unwrap().unwrap(), b"1234");
     assert!(Database::open("relative.sqlite3").is_err());
     assert!(Database::open(dir.path()).is_err());
-    assert!(Database::open(dir.path().join("../escape.sqlite3")).is_err());
+    // Windows PathBuf::push may normalize traversal when its base has a verbatim
+    // prefix. Exercise the actual API input string, before any caller-side join.
+    let traversal=PathBuf::from(format!("{}{}..{}escape.sqlite3",dir.path().display(),std::path::MAIN_SEPARATOR,std::path::MAIN_SEPARATOR));
+    assert!(Database::open(traversal).is_err());
     assert!(Database::open(path.join("blocked/cockpit.sqlite3")).is_err());
     assert!(snapshot(dir.path(), 100).is_err());
 }
