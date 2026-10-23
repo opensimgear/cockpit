@@ -22,7 +22,7 @@ test('reusable widgets import, edit, preview and persist in the native Cockpit',
   const click = label => until(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>(b.getAttribute('aria-label')??b.textContent.trim())===${JSON.stringify(label)});if(!b||b.disabled)return false;b.click();return true;})()`, 'Missing enabled button ' + label);
   const change = (selector, value) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing field '+${JSON.stringify(selector)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   const run = Date.now(), directory = '.research/widgets-native-ui/' + run, checks = [], panelName = 'Shared systems ' + run;
-  const bundlePath=process.env.OSG_WIDGETS_BUNDLE??'examples/companion/shared-systems.bundle.json';
+  const bundlePath=process.env.OSG_WIDGETS_BUNDLE??'tests/fixtures/legacy-companion/shared-systems.bundle.json';
   const source = JSON.parse(await readFile(bundlePath, 'utf8')),widgetCount=source.document.presentation.widgets.length;
   const layerCount = source.document.presentation.widgets.reduce((sum, widget) => sum + source.document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion).layers.length, 0);
   await mkdir(directory, { recursive: true });

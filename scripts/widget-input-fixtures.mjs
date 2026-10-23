@@ -4,7 +4,7 @@ import { normalizeToPortableUi, checked, canonical } from '../packages/companion
 import { componentDefinition, componentPresentation } from '../packages/companion-ui/src/widget-presentation.ts';
 import { createPreviewController } from '../packages/companion-ui/src/controller.ts';
 
-const bundle = await importBundle(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
+const bundle = await importBundle(await readFile('tests/fixtures/legacy-companion/shared-systems.bundle.json', 'utf8'));
 let document = structuredClone(bundle.document);
 document.ui.id = 'shared-input-traces'; document.ui.title = 'Shared input traces';
 document.ui.pages.push({ id: 'page-1', title: 'Second page', items: [] });

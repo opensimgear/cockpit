@@ -565,13 +565,13 @@ mod tests {
         upload.canonical_document = serde_json_canonicalizer::to_string(&doc).unwrap();
         upload.publication_hash = format!("sha256:{}", hash(upload.canonical_document.as_bytes()));
         upload.capability_fingerprint = None;
-        Publication::validate(upload)
+        Publication::validate_legacy_test_fixture(upload)
     }
     #[test]
     fn shared_widget_native_admission_matches_actual_typescript_publications() {
-        let base = Publication::validate(fixture("base")).unwrap();
-        let styling = Publication::validate(fixture("styling")).unwrap();
-        let behavior = Publication::validate(fixture("behavior")).unwrap();
+        let base = Publication::validate_legacy_test_fixture(fixture("base")).unwrap();
+        let styling = Publication::validate_legacy_test_fixture(fixture("styling")).unwrap();
+        let behavior = Publication::validate_legacy_test_fixture(fixture("behavior")).unwrap();
         assert_eq!(base.ui_id, "shared-systems");
         assert_eq!(base.controls.len(), 3);
         assert_eq!(base.capability_fingerprint, styling.capability_fingerprint);
@@ -580,7 +580,7 @@ mod tests {
             styling.capability_fingerprint,
             behavior.capability_fingerprint
         );
-        let complete = Publication::validate(fixture("complete")).unwrap();
+        let complete = Publication::validate_legacy_test_fixture(fixture("complete")).unwrap();
         assert_eq!(complete.ui_id, "shared-systems-complete");
         let document: Value = serde_json::from_str(&complete.canonical_document).unwrap();
         assert_eq!(
@@ -605,7 +605,7 @@ mod tests {
     }
     #[test]
     fn selector_captions_are_styling_but_option_values_change_capabilities() {
-        let base = Publication::validate(fixture("base")).unwrap();
+        let base = Publication::validate_legacy_test_fixture(fixture("base")).unwrap();
         let captions = mutate(|doc| {
             doc["presentation"]["definitions"][2]["interaction"]["options"][1]["label"] =
                 json!("Another caption")

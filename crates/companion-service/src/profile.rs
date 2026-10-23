@@ -98,6 +98,7 @@ impl Hub {
         let (companion_id, current_identity) = current_identity(&inner, instance)?;
         let publication = inner.publications.get(desired)
             .ok_or("The desired immutable companion panel is not retained; publish it before applying this profile.")?;
+        Self::validate_assignment_target(&inner,&companion_id,publication)?;
         let revision = self.record_revision.load(Ordering::Acquire);
         let identity_fingerprint = format!(
             "sha256:{}",
@@ -147,6 +148,7 @@ impl Hub {
             .publications
             .get(&proof.publication_hash)
             .ok_or("The prepared immutable panel is no longer retained.")?;
+        Self::validate_assignment_target(inner,&proof.companion_id,publication)?;
         ensure(
             publication.capability_fingerprint == proof.capability_fingerprint
                 && publication.definition(&proof.instance_id) == proof.definition,

@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { importBundle, createWidgetCatalog, validateWidgetDefinition, resolveWidgetProperties, resolveWidgetLayers, WIDGET_STATES } from '../packages/companion-designer/src/index.ts';
 
 // Independent TypeScript oracle for device-side source admission and resolution.
-const { document } = await importBundle(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
+const { document } = await importBundle(await readFile('tests/fixtures/legacy-companion/shared-systems.bundle.json', 'utf8'));
 const bounds = { x: .1, y: .1, width: .8, height: .8 };
 const custom = {
   formatVersion: 1, id: 'all-source-fields', version: 7, title: 'All source fields', size: { width: 320, height: 240 },

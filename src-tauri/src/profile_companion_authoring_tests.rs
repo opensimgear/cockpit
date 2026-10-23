@@ -11,8 +11,8 @@ fn publish(hub:&Hub,changed:bool)->Publication {
         upload.publication_hash=format!("sha256:{:x}",Sha256::digest(upload.canonical_document.as_bytes()));
         upload.capability_fingerprint=None;
     }
-    let publication=Publication::validate(upload.clone()).unwrap();
-    let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");hub.command(&command).unwrap();publication
+    let publication=Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
+    let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");crate::retain_companion_test_fixture(&hub,&command).unwrap();publication
 }
 fn fixture()->(Runtime,Hub,Publication,Publication,tempfile::TempDir) {
     let directory=crate::test_directory();
@@ -56,8 +56,8 @@ fn publish_zero_control_panel(hub:&Hub,feedback_only:bool)->Publication {
     }
     upload.canonical_document=serde_json::to_string(&document).unwrap();
     upload.publication_hash=format!("sha256:{:x}",Sha256::digest(upload.canonical_document.as_bytes()));upload.capability_fingerprint=None;
-    let publication=Publication::validate(upload.clone()).unwrap();
-    let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");hub.command(&command).unwrap();publication
+    let publication=Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
+    let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");crate::retain_companion_test_fixture(&hub,&command).unwrap();publication
 }
 #[test]
 fn zero_control_panels_do_not_block_catalogue_and_inspect_real_feedback_or_empty_ports() {
@@ -95,7 +95,7 @@ fn catalogue_compatibility_matches_paired_screen_size_and_device_support_without
     for viewport in document["presentation"]["viewports"].as_array_mut().unwrap(){viewport["width"]=json!(480);viewport["height"]=json!(320);}
     let canonical=serde_json::to_string(&document).unwrap();
     let hash=format!("sha256:{:x}",Sha256::digest(canonical.as_bytes()));
-    hub.command(&json!({"command":"companion_publish","canonicalDocument":canonical,"publicationHash":hash,"assets":[]})).unwrap();
+    crate::retain_companion_test_fixture(&hub,&json!({"canonicalDocument":canonical,"publicationHash":hash,"assets":[]})).unwrap();
     let catalogue=runtime.profile_authoring_catalogue().unwrap();
     let panel=catalogue.panels.iter().find(|panel|panel.publication_hash==hash).unwrap();
     let row=|id:&str|panel.compatibility.iter().find(|row|row.companion_id==id).unwrap();

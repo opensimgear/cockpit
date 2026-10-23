@@ -10,9 +10,9 @@
   import { notify } from './notifications';
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { createCompanionSettingsAutosave } from './companion-settings';
-  import type { Publication } from '@opensimgear/companion-designer';
+  import type { CompanionPublication } from './companions';
   import { companionScreenSize, companionPanelReason, companionRenderTarget } from './companion-screen';
-  let { publications = [], openSettings, initialCompanionId = '', onViewChange, onNavigate, active = true }: { publications?: Publication[]; openSettings: () => void; initialCompanionId?: string; onViewChange?: (detailsOpen: boolean) => void; onNavigate?: (companionId: string | null) => void; active?: boolean } = $props();
+  let { publications = [], openSettings, initialCompanionId = '', onViewChange, onNavigate, active = true }: { publications?: CompanionPublication[]; openSettings: () => void; initialCompanionId?: string; onViewChange?: (detailsOpen: boolean) => void; onNavigate?: (companionId: string | null) => void; active?: boolean } = $props();
   let hostState = $state.raw<CompanionHostState>({});
   let pendingCompanionId = $state(untrack(() => initialCompanionId));
   let disposed = false;

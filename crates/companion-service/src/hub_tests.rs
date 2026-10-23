@@ -15,6 +15,8 @@ mod profile_tests;
 mod operation_tests;
 #[path = "profile_latest_tests.rs"]
 mod profile_latest_tests;
+#[path = "compiled_hub_tests.rs"]
+mod compiled_hub_tests;
 
 #[derive(Default)]
 struct Sink {
@@ -163,7 +165,9 @@ fn source_open_checks_this_connections_renderer_before_creating_a_session(){
     assert_eq!(operator(&hub,json!({"command":"companion_status"}))["instances"][0]["publicationHash"],publication.publication_hash);
 }
 fn publish(h: &Hub, p: PublicationUpload) -> Publication {
-    let result = Publication::validate(p.clone()).unwrap();
+    let compiled=serde_json::from_str::<Value>(&p.canonical_document).unwrap()["schemaVersion"]==4;
+    let result = if compiled{Publication::validate(p.clone())}else{Publication::validate_legacy_test_fixture(p.clone())}.unwrap();
+    if !compiled{h.retain_legacy_test_fixture(p).unwrap();return result;}
     let mut command = serde_json::to_value(p).unwrap();
     command["command"] = json!("companion_publish");
     operator(h, command);
@@ -211,7 +215,7 @@ fn input(open: &Value, p: &Publication, sequence: &str) -> Value {
 
 #[test]
 fn native_publication_matches_actual_c1_canonical_bytes_and_capability_fingerprint() {
-    let p = Publication::validate(fixture()).unwrap();
+    let p = Publication::validate_legacy_test_fixture(fixture()).unwrap();
     assert!(p.controls.len() > 4);
     assert!(p
         .definition("instance-a")
@@ -225,13 +229,13 @@ fn native_publication_matches_actual_c1_canonical_bytes_and_capability_fingerpri
     .unwrap();
     assert!(mixed.canonical_document.contains("1e-7"));
     assert!(mixed.canonical_document.contains("0.000001"));
-    Publication::validate(mixed).unwrap();
+    Publication::validate_legacy_test_fixture(mixed).unwrap();
     let mut bad = fixture();
     bad.canonical_document.push(' ');
-    assert!(Publication::validate(bad).is_err());
+    assert!(Publication::validate_legacy_test_fixture(bad).is_err());
     let mut bad = fixture();
     bad.capability_fingerprint = Some("sha256:".to_owned() + &"0".repeat(64));
-    assert!(Publication::validate(bad).is_err());
+    assert!(Publication::validate_legacy_test_fixture(bad).is_err());
 }
 #[test]
 fn malformed_publications_and_shape_confusion_fail_before_source_registration() {
@@ -254,14 +258,14 @@ fn malformed_publications_and_shape_confusion_fail_before_source_registration() 
         Box::new(|d| d["targets"][0]["buttons"] = json!(0)),
     ];
     for case in cases {
-        assert!(Publication::validate(mutated(case)).is_err());
+        assert!(Publication::validate_legacy_test_fixture(mutated(case)).is_err());
     }
     let mut p = fixture();
     p.assets.push(AssetPayload {
         asset_id: "absent".into(),
         base64: "YQ==".into(),
     });
-    assert!(Publication::validate(p).is_err());
+    assert!(Publication::validate_legacy_test_fixture(p).is_err());
 }
 #[test]
 fn native_publication_checks_assets_digests_dimensions_and_static_raster_containers() {
@@ -273,9 +277,9 @@ fn native_publication_checks_assets_digests_dimensions_and_static_raster_contain
         asset_id: "image-a".into(),
         base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
     }];
-    assert!(Publication::validate(p.clone()).is_ok());
+    assert!(Publication::validate_legacy_test_fixture(p.clone()).is_ok());
     p.assets[0].base64 = "YQ==".into();
-    assert!(Publication::validate(p).is_err());
+    assert!(Publication::validate_legacy_test_fixture(p).is_err());
 }
 
 #[test]
@@ -285,14 +289,14 @@ fn native_publication_matches_designer_viewport_target_and_utf16_text_boundaries
             d["presentation"]["viewports"][0]["safeInsets"] =
                 json!({"top":0,"right":right,"bottom":0,"left":left});
         });
-        assert_eq!(Publication::validate(upload).is_ok(), valid);
+        assert_eq!(Publication::validate_legacy_test_fixture(upload).is_ok(), valid);
     }
-    assert!(Publication::validate(mutated(|d| {
+    assert!(Publication::validate_legacy_test_fixture(mutated(|d| {
         d["presentation"]["viewports"][0]["safeInsets"] =
             json!({"top":0.25,"right":0,"bottom":0.25,"left":0});
     }))
     .is_err());
-    assert!(Publication::validate(mutated(|d| {
+    assert!(Publication::validate_legacy_test_fixture(mutated(|d| {
         d["targets"]
             .as_array_mut()
             .unwrap()
@@ -306,7 +310,7 @@ fn native_publication_matches_designer_viewport_target_and_utf16_text_boundaries
         ("line\nbreak".into(), false),
     ] {
         let upload = mutated(|d| d["ui"]["title"] = json!(text));
-        assert_eq!(Publication::validate(upload).is_ok(), valid);
+        assert_eq!(Publication::validate_legacy_test_fixture(upload).is_ok(), valid);
         for (kind, key) in [("text", "prefix"), ("numeric", "unit"), ("gauge", "unit")] {
             let upload = mutated(|d| {
                 let widget = d["presentation"]["widgets"]
@@ -317,7 +321,7 @@ fn native_publication_matches_designer_viewport_target_and_utf16_text_boundaries
                     .unwrap();
                 widget["config"][key] = json!(text);
             });
-            assert_eq!(Publication::validate(upload).is_ok(), valid, "{kind}.{key}");
+            assert_eq!(Publication::validate_legacy_test_fixture(upload).is_ok(), valid, "{kind}.{key}");
         }
     }
 }
@@ -340,7 +344,7 @@ fn native_publication_caps_the_complete_decoded_asset_set() {
                 base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
             })
             .collect();
-        assert_eq!(Publication::validate(upload).is_ok(), valid);
+        assert_eq!(Publication::validate_legacy_test_fixture(upload).is_ok(), valid);
     }
 }
 

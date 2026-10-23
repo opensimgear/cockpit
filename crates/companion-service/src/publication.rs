@@ -1,10 +1,15 @@
-use crate::{AxisMode, InputValue, SourceControl, SourceDefinition, SourceKind};
+use crate::{AxisMode, SourceControl, SourceDefinition, SourceKind};
+#[cfg(any(test, feature="legacy-test-fixtures"))]
+use crate::InputValue;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(any(test, feature = "legacy-test-fixtures"))]
 mod widgets;
+mod widget_source;
+pub(crate) mod compiled;
 
 pub const DOCUMENT_BYTES: usize = 1024 * 1024;
 pub const ASSET_BYTES: usize = 2 * 1024 * 1024;
@@ -32,6 +37,7 @@ pub struct PublicationUpload {
 #[serde(rename_all = "camelCase")]
 pub struct Publication {
     #[serde(skip)]
+    #[cfg(any(test,feature="legacy-test-fixtures"))]
     raster_cache: std::sync::Arc<std::sync::Mutex<BTreeMap<String, std::sync::Arc<Vec<u8>>>>>,
     pub canonical_document: String,
     pub publication_hash: String,
@@ -126,6 +132,7 @@ fn integer(v: &Value, min: u64, max: u64) -> Result<u64, String> {
     )?;
     Ok(n)
 }
+#[cfg(any(test,feature="legacy-test-fixtures"))]
 fn style(v: &Value) -> Result<(), String> {
     for c in object(v, &[], &["foreground", "background", "accent"])?.values() {
         let c = c.as_str().ok_or("Invalid color.")?;
@@ -137,12 +144,14 @@ fn style(v: &Value) -> Result<(), String> {
     Ok(())
 }
 #[derive(Clone, Copy)]
+#[cfg(any(test,feature="legacy-test-fixtures"))]
 struct Bounds {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
 }
+#[cfg(any(test,feature="legacy-test-fixtures"))]
 impl Bounds {
     fn contains(self, other: Self) -> bool {
         const EPSILON: f64 = 1e-9;
@@ -157,6 +166,7 @@ impl Bounds {
             && (self.y + self.height).min(other.y + other.height) - self.y.max(other.y) > EPSILON
     }
 }
+#[cfg(any(test,feature="legacy-test-fixtures"))]
 fn bounds(v: &Value, message: &str) -> Result<Bounds, String> {
     object(v, &["x", "y", "width", "height"], &[])?;
     let x = number(&v["x"], 0., 1.)?;
@@ -189,6 +199,11 @@ impl Publication {
         self.canonical_document.len() + self.assets.iter().map(|a| a.base64.len()).sum::<usize>()
     }
     pub fn validate(upload: PublicationUpload) -> Result<Self, String> {
+        let doc=Self::validated_document(&upload)?;
+        ensure(doc["schemaVersion"]==4,"Only compiled raster publications are supported. Rebuild this panel in the widget designer.")?;
+        compiled::validate(upload,doc)
+    }
+    fn validated_document(upload:&PublicationUpload)->Result<Value,String>{
         ensure(
             upload.canonical_document.len() <= DOCUMENT_BYTES
                 && digest_id(&upload.publication_hash),
@@ -206,13 +221,21 @@ impl Publication {
             &["schemaVersion", "ui", "presentation", "targets", "bindings"],
             &[],
         )?;
-        ensure(doc["schemaVersion"] == 2 || doc["schemaVersion"] == 3, "Unsupported designer schema.")?;
         let canonical = serde_json_canonicalizer::to_vec(&doc)
             .map_err(|_| "Cannot canonicalize publication.")?;
         ensure(
             canonical == upload.canonical_document.as_bytes(),
             "Publication must use canonical validated JSON.",
         )?;
+        Ok(doc)
+    }
+    /// Retired source parsing exists only for explicit transport/storage fixture harnesses.
+    /// The public validator and Hub publication command never call this function.
+    #[cfg(any(test, feature = "legacy-test-fixtures"))]
+    #[doc(hidden)]
+    pub fn validate_legacy_test_fixture(upload:PublicationUpload)->Result<Self,String>{
+        let doc=Self::validated_document(&upload)?;
+        ensure(doc["schemaVersion"]==2||doc["schemaVersion"]==3,"Expected a retired publication test fixture.")?;
         let ui = &doc["ui"];
         object(
             ui,
@@ -595,6 +618,7 @@ impl Publication {
     }
 }
 
+#[cfg(any(test, feature = "legacy-test-fixtures"))]
 fn validate_config(w: &Value, controls: &[SourceControl], assets: &[Value]) -> Result<(), String> {
     let c = &w["config"];
     let kind = w["kind"].as_str().unwrap();
@@ -865,6 +889,7 @@ fn validate_raster(bytes: &[u8], mime: &str) -> Result<u64, String> {
 }
 
 
+#[cfg(any(test,feature="legacy-test-fixtures"))]
 fn validate_source_assets(manifest: &Value, payloads: &[AssetPayload]) -> Result<(), String> {
     let assets = list(manifest, 0, 64)?;
     let mut ids = BTreeSet::new();
@@ -922,39 +947,7 @@ fn validate_source_assets(manifest: &Value, payloads: &[AssetPayload]) -> Result
 
 /// Validate portable widget library sources without publishing or assigning a panel.
 pub fn validate_widget_bundle(bundle: &Value) -> Result<(), String> {
-    ensure(
-        serde_json::to_vec(bundle).map_err(|e| e.to_string())?.len() <= BUNDLE_BYTES,
-        "Widget bundle exceeds budget.",
-    )?;
-    object(
-        bundle,
-        &["bundleVersion", "library", "manifest", "assets"],
-        &[],
-    )?;
-    ensure(
-        bundle["bundleVersion"] == 1,
-        "Unsupported widget bundle version.",
-    )?;
-    object(&bundle["library"], &["formatVersion", "definitions"], &[])?;
-    ensure(
-        bundle["library"]["formatVersion"] == 1,
-        "Unsupported widget library version.",
-    )?;
-    ensure(
-        serde_json::to_vec(&bundle["library"])
-            .map_err(|e| e.to_string())?
-            .len()
-            <= DOCUMENT_BYTES,
-        "Widget library exceeds budget.",
-    )?;
-    let payloads: Vec<AssetPayload> =
-        serde_json::from_value(bundle["assets"].clone()).map_err(|_| "Invalid widget assets.")?;
-    validate_source_assets(&bundle["manifest"], &payloads)?;
-    widgets::definitions(
-        &bundle["library"]["definitions"],
-        list(&bundle["manifest"], 0, 64)?,
-    )?;
-    Ok(())
+    widget_source::bundle(bundle)
 }
 
 #[cfg(test)]
@@ -1012,7 +1005,7 @@ mod viewport_tests {
     fn validate(document: Value) -> Result<Publication, String> {
         let canonical_document = serde_json_canonicalizer::to_string(&document).unwrap();
         let publication_hash = format!("sha256:{}", hash(canonical_document.as_bytes()));
-        Publication::validate(PublicationUpload {
+        Publication::validate_legacy_test_fixture(PublicationUpload {
             canonical_document,
             publication_hash,
             capability_fingerprint: None,
@@ -1166,6 +1159,11 @@ impl Publication {
     pub(crate) fn image_chunk(&self, widget_id:&str, width:u32, height:u32, offset:usize)->Result<Value,String>{
         self.image_layer_chunk(widget_id,None,width,height,offset)
     }
+    #[cfg(not(any(test,feature="legacy-test-fixtures")))]
+    pub(crate) fn image_layer_chunk(&self,_widget_id:&str,_layer_id:Option<&str>,_width:u32,_height:u32,_offset:usize)->Result<Value,String>{
+        Err("Layer image streaming was retired. Load the compiled pixel asset closure.".into())
+    }
+    #[cfg(any(test,feature="legacy-test-fixtures"))]
     pub(crate) fn image_layer_chunk(&self, widget_id:&str, layer_id:Option<&str>, width:u32, height:u32, offset:usize)->Result<Value,String>{
         ensure(width>0 && height>0 && width<=800 && height<=800 && width as usize*height as usize<=800*480,"Image dimensions exceed the device budget.")?;
         ensure(id(widget_id) && layer_id.is_none_or(id),"Invalid image identity.")?;
@@ -1233,7 +1231,7 @@ pub(crate) mod image_tests {
     }
     #[test]
     fn portable_image_layers_resolve_pinned_properties_and_keep_independent_rasters(){
-        let p=Publication::validate(portable_artwork_upload()).unwrap();let source=p.canonical_document.clone();
+        let p=Publication::validate_legacy_test_fixture(portable_artwork_upload()).unwrap();let source=p.canonical_document.clone();
         let read=|widget,layer|{let reply=p.image_layer_chunk(widget,Some(layer),2,3,0).unwrap();assert_eq!(reply["layerId"],layer);assert_eq!(reply["publicationHash"],p.publication_hash);STANDARD.decode(reply["base64"].as_str().unwrap()).unwrap()};
         assert_eq!(read("widget-0","artwork"),vec![0,248,128].repeat(6));
         assert_eq!(read("second-artwork-widget","artwork"),vec![224,7,255].repeat(6));
@@ -1254,7 +1252,7 @@ pub(crate) mod image_tests {
         let bitmap=image::RgbaImage::from_pixel(8,8,image::Rgba([255,0,0,128]));let mut png=std::io::Cursor::new(Vec::new());bitmap.write_to(&mut png,image::ImageFormat::Png).unwrap();let bytes=png.into_inner();
         doc["ui"]["assets"]=json!([{"id":"picture","mime":"image/png","sha256":hash(&bytes),"sizeBytes":bytes.len()}]);
         let canonical_document=serde_json_canonicalizer::to_string(&doc).unwrap();
-        let p=Publication::validate(PublicationUpload{publication_hash:format!("sha256:{}",hash(canonical_document.as_bytes())),canonical_document,capability_fingerprint:None,assets:vec![AssetPayload{asset_id:"picture".into(),base64:STANDARD.encode(bytes)}]}).unwrap();
+        let p=Publication::validate_legacy_test_fixture(PublicationUpload{publication_hash:format!("sha256:{}",hash(canonical_document.as_bytes())),canonical_document,capability_fingerprint:None,assets:vec![AssetPayload{asset_id:"picture".into(),base64:STANDARD.encode(bytes)}]}).unwrap();
         let chunk=p.image_chunk("image-widget",2,3,0).unwrap();assert_eq!(chunk["total"],18);
         let pixels=STANDARD.decode(chunk["base64"].as_str().unwrap()).unwrap();assert_eq!(pixels,vec![0,248,128].repeat(6));
         assert_eq!(p.image_chunk("image-widget",1,1,0).unwrap()["total"],3);

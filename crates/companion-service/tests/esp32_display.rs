@@ -16,7 +16,7 @@ fn esp32_display_publication_pairing_feedback_and_revoke_without_input() {
     let sink = Arc::new(Recorder::default());
     let hub = Hub::new("embedded-host".into(), sink.clone());
     let hash = fixture["publicationHash"].clone();
-    hub.command(&json!({"command":"companion_publish","canonicalDocument":fixture["canonicalDocument"],"publicationHash":hash,"capabilityFingerprint":fixture["capabilityFingerprint"],"assets":[]})).unwrap();
+    hub.retain_legacy_test_fixture(serde_json::from_value(json!({"canonicalDocument":fixture["canonicalDocument"],"publicationHash":hash,"capabilityFingerprint":fixture["capabilityFingerprint"],"assets":[]})).unwrap()).unwrap();
     let offer = hub.command(&json!({"command":"companion_pair_offer"})).unwrap();
     let pending = hub.handle_wire(json!({"type":"pair","secret":offer["secret"],"companionId":"esp32-screen","name":"Generic ESP32 screen"}), "embedded-connection", hub.now_ms());
     assert_eq!(pending["type"], "pair-pending");
@@ -96,7 +96,7 @@ fn esp32_live_touch_baseline_ordering_isolated_lease_and_fresh_reconnect() {
     let sink = Arc::new(LiveRecorder::default());
     let hub = Hub::new("live-host".into(), sink.clone());
     let hash = fixture["publicationHash"].clone();
-    hub.command(&json!({"command":"companion_publish","canonicalDocument":fixture["canonicalDocument"],"publicationHash":hash,"capabilityFingerprint":fixture["capabilityFingerprint"],"assets":[]})).unwrap();
+    hub.retain_legacy_test_fixture(serde_json::from_value(json!({"canonicalDocument":fixture["canonicalDocument"],"publicationHash":hash,"capabilityFingerprint":fixture["capabilityFingerprint"],"assets":[]})).unwrap()).unwrap();
     let (token, first) = pair_live(&hub, "first-screen", "first-connection", "first-panel", &hash);
     let (_, second) = pair_live(&hub, "second-screen", "second-connection", "second-panel", &hash);
     let base = hub.now_ms();

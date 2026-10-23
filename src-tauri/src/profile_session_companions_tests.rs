@@ -72,10 +72,10 @@ impl Fixture {
             "../../crates/companion-service/tests/fixtures/c1-flight-publication.json"
         ))
         .unwrap();
-        let publication = Publication::validate(upload.clone()).unwrap();
+        let publication = Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
         let mut command = serde_json::to_value(upload).unwrap();
         command["command"] = json!("companion_publish");
-        hub.command(&command).unwrap();
+        crate::retain_companion_test_fixture(&hub,&command).unwrap();
         hub.command(&json!({"command":"companion_assign","instanceId":"instance","companionId":"screen","publicationHash":publication.publication_hash})).unwrap();
         let ports = crate::profile_resource_ports::companion(
             &native_definition(publication.definition("instance")).unwrap(),

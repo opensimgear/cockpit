@@ -1,26 +1,38 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { PanelCanvas, createPreviewController, fallbackValue, type FeedbackSamples } from '@opensimgear/companion-ui';
-  import { flightTemplate, type DesignerDocument } from '@opensimgear/companion-designer';
-  import { verifyPublishedPayload } from '../../companion/src/lib/companion-cache';
+  import CompiledPanel from '../../../packages/companion-ui/src/CompiledPanel.svelte';
+  import {prepareCompiledSurfaces,disposeCompiledSurfaces,type PreparedCompiledSurfaces} from '../../../packages/companion-ui/src/compiled-surface.ts';
+  import { BROWSER_WIDGET_CAPABILITIES } from '../../../packages/widget-runtime/src/artifact.ts';
+  import type { CompiledPanelPublication } from '../../../packages/widget-runtime/src/panel.ts';
+  import type { AudioAvailability } from '../../../packages/widget-runtime/src/player.ts';
+  import { createCompiledAssetCache, browserCompiledCacheStore } from './compiled-cache';
   import { createOrderedInputQueue } from '../../companion/src/lib/input-queue';
   import { BrowserTransport, readCredential, saveCredential, clearCredential, type Credential } from './transport';
-  import { createBrowserFeedback, type FeedbackIdentity } from './feedback';
+  import { createBrowserFeedback, type FeedbackIdentity, type FeedbackSamples } from './feedback';
   let credential=$state<Credential|null>(null), error=$state(''), warning=$state(''), status=$state('Connecting…');
-  let panel=$state<DesignerDocument|null>(null), pageId=$state(''), assets=$state<Record<string,string>>({});
+  let panel=$state<CompiledPanelPublication|null>(null), pageId=$state('');
+  let panelView=$state<{reset:()=>void;suspend:()=>void;enableAudio:()=>Promise<void>}>();
+  let panelSurfaces=$state.raw<PreparedCompiledSurfaces>(),viewRevision=$state(0);
+  let preparing:AbortController|undefined;
+  let muted=$state(false);
+  let audioAvailability=$state<AudioAvailability>('locked');
+  let cache=createCompiledAssetCache(browserCompiledCacheStore());
   let assignments=$state<{instanceId:string;publicationHash:string;name:string}[]>([]), selected=$state('');
   let panelError=$state(false);
   let active=$state(false), name=$state('Browser companion'), secret=$state(''), fullscreen=$state(false);
   let feedback=$state<FeedbackSamples>({}), feedbackNotice=$state('');
+  let suppressFeedbackCues=$state(true);
   const feedbackView=createBrowserFeedback();
   let installPrompt=$state<any>(null), installHelp=$state(false), owner=$state(false);
-  let connection:BrowserTransport|null=null, epoch=0, session:Record<string,any>|null=null, sequence=0, heartbeat=0, resyncSequence=0;
+  let connection:BrowserTransport|null=null, epoch=0, sequence=0, heartbeat=0, resyncSequence=0; let session=$state.raw<Record<string,any>|null>(null);
   let connecting=$state(false);
   let disposed=false, pageHidden=false, nextAttempt=0, lastTick=performance.now();
+  let handlingRuntimeError=false;
   const visible=()=>!pageHidden&&document.visibilityState==='visible';
   const focused=()=>visible()&&document.hasFocus();
   const current=(socket:BrowserTransport,version:number)=>version===epoch&&!disposed&&owner&&visible()&&connection===socket;
-  const controller=createPreviewController(flightTemplate,{onchange:(changes)=>{if(active&&focused())queue.enqueue(epoch,changes);}});
+  function emitOutput(change:{controlId:string;value:boolean|number}){if(active&&focused())queue.enqueue(epoch,[change]);}
+  async function availableAssets(){try{return await cache.haveAssets();}catch(e){warning='Compiled asset cache unavailable; receiving fresh content.';let stored:string|undefined;cache=createCompiledAssetCache({read:async()=>stored,write:async value=>{stored=value;}});return [];}}
   const queue=createOrderedInputQueue(async(version,changes)=>{
     if(version!==epoch || !active || !connection || !session || !focused())throw new Error('Input session stopped');
     await connection.request(frame('input',{sequence:String(++sequence),changes}));
@@ -30,15 +42,22 @@
     return {version:1,type,clientId:session.clientId,sessionId:session.sessionId,generation:session.generation,publicationHash:session.publicationHash,...rest};
   }
   function stop(reason:string) {
-    epoch++; active=false;panelError=false;queue.stop();controller.disarm(reason);session=null;
-    feedbackView.disconnect();feedback=feedbackView.snapshot();
+    epoch++;preparing?.abort();preparing=undefined;active=false;panelError=false;queue.stop();panelView?.suspend();session=null;
+    feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
+  }
+  function runtimeError(message:string){
+    error=message;
+    if(handlingRuntimeError)return;
+    handlingRuntimeError=true;
+    try{stop('Compiled player error · controls released');nextAttempt=performance.now()+2000;}
+    finally{handlingRuntimeError=false;}
   }
   function consume(reply:Record<string,any>,version:number){
     if(version!==epoch||disposed||!visible()||!session||!panel||!reply.feedback)return;
-    if(feedbackView.accept(session as FeedbackIdentity,reply.feedback,panel.ui,performance.now(),reply.type==='feedback-resync'))feedback=feedbackView.snapshot();
+    if(feedbackView.accept(session as FeedbackIdentity,reply.feedback,panel.document.ui,performance.now(),reply.type==='feedback-resync')){suppressFeedbackCues=reply.feedback.mode==='snapshot'||reply.type==='feedback-resync';feedback=feedbackView.snapshot();}
   }
-  function resetFeedback(){feedbackView.reset();feedback={};feedbackNotice='Visual state cleared locally. Controls are unchanged.';}
+  function resetFeedback(){feedbackView.reset();feedback={};suppressFeedbackCues=true;feedbackNotice='Visual state cleared locally. Controls are unchanged.';}
   async function resyncFeedback(){
     if(!connection||!session||!active)return;
     const version=epoch;
@@ -47,32 +66,37 @@
   }
   async function loadAssigned(socket:BrowserTransport, version:number, rows:typeof assignments){
     if(!current(socket,version))return;
+    active=false;queue.stop();panelView?.suspend();
     assignments=rows;
     if(!rows.some(a=>a.instanceId===selected))selected=rows[0]?.instanceId??'';
     const assignment=rows.find(a=>a.instanceId===selected);
     if(!assignment || !visible()){status=assignment?'Connected · panel paused while inactive':'Connected · assign a panel in Cockpit';return;}
-    const opened=await socket.request({type:'open',instanceId:assignment.instanceId,publicationHash:assignment.publicationHash});
+    const haveAssets=await availableAssets();if(!current(socket,version))return;
+    const opened=await socket.request({type:'open',instanceId:assignment.instanceId,publicationHash:assignment.publicationHash,widgetCapabilities:BROWSER_WIDGET_CAPABILITIES,haveAssets});
     const p=opened.publication;
-    let verified;
-    try{verified=await verifyPublishedPayload({...p,document:JSON.parse(p.canonicalDocument)});}
+    let verified,candidate:PreparedCompiledSurfaces|undefined;const controller=new AbortController();preparing=controller;
+    try{
+      verified=await cache.verifyDelivery(p);if(!current(socket,version))return;
+      if(opened.publicationHash!==assignment.publicationHash || verified.publicationHash!==assignment.publicationHash)throw new Error('Panel assignment changed during delivery');
+      candidate=await prepareCompiledSurfaces(verified,{signal:controller.signal});
+    }
     catch(e){
       if(!current(socket,version))return;
-      session=opened;heartbeat=0;panel=null;assets={};panelError=true;active=false;
-      controller.disarm('Panel error');queue.stop();feedbackView.clear();feedback={};
+      session=opened;heartbeat=0;panelError=true;active=false;
+      panelView?.suspend();queue.stop();feedbackView.clear();feedback={};
       status='Connected · panel error';error=String(e instanceof Error?e.message:e);return;
-    }
-    if(!current(socket,version))return;
-    if(opened.publicationHash!==assignment.publicationHash || verified.publicationHash!==assignment.publicationHash)throw new Error('Panel assignment changed during delivery');
-    panel=verified.document;pageId=panel.ui.pages.some(p=>p.id===pageId)?pageId:panel.ui.pages[0].id;
-    assets=Object.fromEntries(verified.assets.map(a=>[a.assetId,'data:'+panel!.ui.assets.find(m=>m.id===a.assetId)!.mime+';base64,'+a.base64]));
-    controller.setDocument(panel);
-    panelError=false;session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};feedbackNotice='';
-    await tick();if(!current(socket,version))return;
-    const values=Object.fromEntries(panel.ui.controls.map(c=>[c.id,fallbackValue(c)]));
+    }finally{if(preparing===controller)preparing=undefined;}
+    if(!current(socket,version)){disposeCompiledSurfaces(candidate);return;}
+    const previousSurfaces=panelSurfaces;panelSurfaces=candidate;viewRevision++;
+    panel=verified;pageId=panel.document.ui.pages.some(p=>p.id===pageId)?pageId:panel.document.ui.pages[0].id;
+    void cache.save(verified).catch(()=>warning='Compiled visuals are active; durable cache storage is unavailable.');
+
+    panelError=false;session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};suppressFeedbackCues=true;feedbackNotice='';
+    await tick();disposeCompiledSurfaces(previousSurfaces);if(!current(socket,version))return;
+    const values=Object.fromEntries(panel.document.ui.controls.map(control=>[control.id,control.kind==='button'?false:control.fallback]));
     await socket.request(frame('baseline',{sequence:'0',values}));
     if(!current(socket,version))return;
-    if(focused()){controller.arm();queue.start();}
-    else{controller.disarm('Controls paused while unfocused');queue.stop();}
+    if(focused())queue.start();else queue.stop();
     active=true;status=focused()?'Connected · panel active':'Connected · feedback active · controls paused';error='';
   }
   async function connect(){
@@ -185,26 +209,26 @@
       initialize();await new Promise<void>(resolve=>releaseOwner=resolve);
     }).catch(e=>error=String(e));
     else initialize();
-    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed');clearInterval(timer);window.removeEventListener('blur',blurred);window.removeEventListener('pagehide',pageHiding);window.removeEventListener('pageshow',pageShowing);window.removeEventListener('focus',gainedFocus);document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
+    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed');disposeCompiledSurfaces(panelSurfaces);clearInterval(timer);window.removeEventListener('blur',blurred);window.removeEventListener('pagehide',pageHiding);window.removeEventListener('pageshow',pageShowing);window.removeEventListener('focus',gainedFocus);document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
   });
 </script>
 
 <div class="shell" class:fullscreen>
-  <header><strong>OpenSimGear <span>Companion</span></strong><div><button onclick={install}>Install app</button><button onclick={toggleFullscreen}>{fullscreen?'Exit fullscreen':'Fullscreen'}</button></div></header>
+  <header><strong>OpenSimGear <span>Companion</span></strong><div><button onclick={install}>↓ Install app</button><button onclick={toggleFullscreen}>⛶ {fullscreen?'Exit fullscreen':'Fullscreen'}</button></div></header>
   {#if installHelp}<p class="help">Use your browser menu → Install app or Add to home screen. If installation is unavailable, bookmark this page for quick access. Keep using this browser profile to retain pairing.</p>{/if}
   {#if !credential}
     <section class="pair"><h1>Browser companion</h1>
       {#if !owner}<p>{status}</p>{/if}
-      {#if secret}<p>Pairing this browser with Cockpit automatically. Pairing is remembered in this browser profile.</p><label>Companion name<input bind:value={name} maxlength="80" /></label><button disabled={connecting||!name.trim()} onclick={pair}>Pair with Cockpit</button>
+      {#if secret}<p>Pairing this browser with Cockpit automatically. Pairing is remembered in this browser profile.</p><label>Companion name<input bind:value={name} maxlength="80" /></label><button disabled={connecting||!name.trim()} onclick={pair}>⇄ Pair with Cockpit</button>
       {:else}<p>In Cockpit, choose Companions → Pair → Browser and open the pairing link.</p>{/if}
     </section>
   {:else}
     <div class="toolbar"><span class:active={active||panelError}>{status}</span>
       {#if assignments.length>1}<label>Panel<select value={selected} onchange={e=>{stop('Switching panel');selected=e.currentTarget.value;nextAttempt=0;}}>{#each assignments as a}<option value={a.instanceId}>{a.name}</option>{/each}</select></label>{/if}
-      {#if panel && panel.ui.pages.length>1}<label>Page<select value={pageId} onchange={e=>changedPage(e.currentTarget.value)}>{#each panel.ui.pages as page}<option value={page.id}>{page.title}</option>{/each}</select></label>{/if}
+      {#if panel && panel.document.ui.pages.length>1}<label>Page<select value={pageId} onchange={e=>changedPage(e.currentTarget.value)}>{#each panel.document.ui.pages as page}<option value={page.id}>{page.title}</option>{/each}</select></label>{/if}
     </div>
-    {#if panel}<main class:inactive={!active}><PanelCanvas document={panel} {pageId} {assets} {controller} {feedback} /></main>
-      <div class="toolbar"><span>Visuals: requested, host accepted, host submitted and game confirmed are separate states.</span><button onclick={resetFeedback}>Clear visual state</button><button onclick={resyncFeedback} disabled={!active}>Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
+    {#if panel}<main class:inactive={!active}>{#key viewRevision}<CompiledPanel bind:this={panelView} publication={panel} prepared={panelSurfaces} {pageId} {feedback} {suppressFeedbackCues} {muted} interactive={active&&focused()} onoutput={emitOutput} onerror={runtimeError} onaudio={value=>audioAvailability=value}/>{/key}</main>
+      <div class="toolbar"><span>Visuals: requested, host accepted, host submitted and game confirmed are separate states.</span><button onclick={resetFeedback}>↻ Clear visual state</button>{#if panel.document.presentation.artifacts.some(entry=>entry.artifact.sounds.length>0)}<label><input type="checkbox" bind:checked={muted}/>Mute</label><button onclick={()=>void panelView?.enableAudio()} disabled={audioAvailability==="unsupported"||audioAvailability==="muted"}>♪ Enable sound</button><span role="status">Audio: {audioAvailability}</span>{/if}<button onclick={resyncFeedback} disabled={!active}>↻ Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
     {:else}<section class="empty"><h1>{status}</h1><p>{panelError?'Edit and save this panel in Cockpit to retry.':'Choose a panel for this companion in Cockpit. It will appear here automatically.'}</p></section>{/if}
   {/if}
   {#if warning && !error}<aside role="alert">{warning}<button aria-label="Dismiss notification" onclick={()=>warning=''}>×</button></aside>{/if}
@@ -212,5 +236,5 @@
 </div>
 <style>
   :global(body){margin:0;background:#111a22;color:#e1eaf0;font-family:system-ui,sans-serif}:global(*){box-sizing:border-box}.shell{min-height:100dvh;padding:20px}header,.toolbar,header>div{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}header{padding-bottom:20px;border-bottom:1px solid #344452}header span{color:#64caba}button,input,select{font:inherit;border:1px solid #344452;border-radius:7px;padding:10px 14px;background:#1a2935;color:#e1eaf0}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}button:hover{border-color:#64caba}label{display:flex;align-items:center;gap:10px}.pair,.empty{max-width:620px;margin:60px auto;padding:25px;border:1px solid #344452;border-radius:10px}.pair label{margin:25px 0}.toolbar{padding:16px 0;font-size:14px;color:#9aafbf}.toolbar .active{color:#64caba}main{max-width:1600px;margin:auto}.inactive{opacity:.55;pointer-events:none}.help{color:#9aafbf;font-size:14px;line-height:1.6}aside{position:fixed;right:20px;bottom:20px;max-width:500px;padding:16px;border:1px solid #e9b75c;background:#1a2935;border-radius:8px;box-shadow:0 8px 30px #0008;display:flex;align-items:center;gap:12px;z-index:100}aside button{padding:3px 9px}
-  .shell.fullscreen{height:100dvh;min-height:0;padding:0;overflow:hidden}.shell.fullscreen>:not(main){display:none}.shell.fullscreen main{width:100%;height:100%;max-width:none;margin:0}.shell.fullscreen main :global(.panel-canvas){height:100%;min-height:0;border:0;border-radius:0;aspect-ratio:auto!important}
+  .shell.fullscreen{height:100dvh;min-height:0;padding:0;overflow:hidden}.shell.fullscreen>:not(main){display:none}.shell.fullscreen main{width:100%;height:100%;max-width:none;margin:0}.shell.fullscreen main :global(.compiled-panel){height:100%;min-height:0;border:0;border-radius:0;aspect-ratio:auto!important}
 </style>

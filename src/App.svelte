@@ -12,7 +12,7 @@
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import DebugPanel from './lib/DebugPanel.svelte';
   import HeaderStatus from './lib/HeaderStatus.svelte';
-  import CompanionDesigner from './lib/CompanionDesigner.svelte';
+  import CompanionDesigner from './lib/CompiledCompanionDesigner.svelte';
   import Icon from './lib/Icon.svelte';
   import DeviceIllustration from './lib/DeviceIllustration.svelte';
   import RuntimeEditor from './lib/RuntimeEditor.svelte';

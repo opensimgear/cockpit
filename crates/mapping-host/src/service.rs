@@ -55,6 +55,8 @@ pub struct Service {
     panels: Mutex<Option<Arc<dyn crate::panels::Provider>>>,
     companions: Mutex<Option<Arc<crate::companions::CompanionProvider>>>,
     companion_blueprints: Mutex<Option<companion_runs::BlueprintProvider>>,
+    #[cfg(any(test,feature="legacy-test-fixtures"))]
+    legacy_companion_fixtures: AtomicBool,
     companion_runs: Arc<Mutex<companion_runs::Manager>>,
     root: Option<PathBuf>,
     inspector: Inspector,
@@ -138,6 +140,8 @@ impl Service {
             panels: Mutex::new(None),
             companions: Mutex::new(None),
             companion_blueprints: Mutex::new(None),
+            #[cfg(any(test,feature="legacy-test-fixtures"))]
+            legacy_companion_fixtures: AtomicBool::new(false),
             companion_runs,
             settings: Mutex::new(settings),
             router,
@@ -177,10 +181,19 @@ impl Service {
         *self.companions.lock().unwrap_or_else(|p| p.into_inner()) = Some(provider);
     }
     pub fn set_companion_blueprint_provider(&self, provider: companion_runs::BlueprintProvider) {
+        #[cfg(any(test,feature="legacy-test-fixtures"))]
+        self.legacy_companion_fixtures.store(false,Ordering::Release);
         *self
             .companion_blueprints
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = Some(provider);
+    }
+    /// Explicit fixture-only initialization; ordinary providers always require compiled publications.
+    #[cfg(any(test,feature="legacy-test-fixtures"))]
+    #[doc(hidden)]
+    pub fn set_legacy_companion_fixture_blueprints(&self,provider:companion_runs::BlueprintProvider){
+        self.set_companion_blueprint_provider(provider);
+        self.legacy_companion_fixtures.store(true,Ordering::Release);
     }
     fn companion_provider(&self) -> Result<Arc<crate::companions::CompanionProvider>, String> {
         self.companions

@@ -93,6 +93,7 @@ pub struct FeedbackDescriptor {
     pub range: Option<FeedbackRange>,
 }
 pub fn feedback_descriptors(document: &Value) -> Result<Vec<FeedbackDescriptor>, String> {
+    if document["schemaVersion"] == 4 { return crate::publication::compiled::feedback_descriptors(document); }
     let feedback = document["ui"]["feedbackWidgets"]
         .as_array()
         .filter(|v| v.len() <= 64)

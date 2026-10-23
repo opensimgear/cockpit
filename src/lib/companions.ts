@@ -1,5 +1,7 @@
 import { canonical, type Publication } from '../../packages/companion-designer/src/index.ts';
 import type { RenderProfile } from '../../packages/companion-designer/src/render-profiles.ts';
+import type { CompiledPanelPublication } from '../../packages/widget-runtime/src/panel.ts';
+export type CompanionPublication = Publication | CompiledPanelPublication;
 
 export type CompanionCommand = 'companion_firmware_check' | 'companion_usb_update_prepare' | 'companion_browser_certificate' | 'companion_update' | 'companion_pair_cancel' | 'companion_usb_flash_cancel' | 'companion_usb_flash' | 'companion_prune' | 'companion_unassign' | 'companion_usb_ports' | 'companion_usb_status' | 'companion_usb_connect' | 'companion_usb_disconnect' | 'companion_usb_scan' | 'companion_usb_provision' | 'companion_usb_reconnect' | 'companion_usb_arm' | 'companion_usb_disarm' | 'companion_usb_forget' | 'companion_status' | 'companion_enable' | 'companion_disable' | 'companion_pair_offer' | 'companion_approve' | 'companion_revoke' | 'companion_assign' | 'companion_disconnect' | 'companion_takeover' | 'companion_publish_begin' | 'companion_publish_chunk' | 'companion_publish_commit' | 'companion_publish_abort';
 export interface CompanionOperation {
@@ -31,7 +33,7 @@ export interface CompanionHostState {
 export type CompanionSend = (command: CompanionCommand, payload?: Record<string, unknown>) => Promise<CompanionHostState>;
 
 /** Committing a saved panel lets native code refresh profiles that use it. */
-export async function sendPublication(publication: Publication, send: CompanionSend, options:{saveAsLatest?:boolean}={}): Promise<CompanionHostState> {
+export async function sendPublication(publication: CompanionPublication, send: CompanionSend, options:{saveAsLatest?:boolean}={}): Promise<CompanionHostState> {
   const bytes = new TextEncoder().encode(JSON.stringify({ canonicalDocument: canonical(publication.document), publicationHash: publication.publicationHash, assets: publication.assets }));
   if (bytes.length > 13 * 1024 * 1024) throw new Error('Published panel exceeds the native upload budget.');
   const result = await send('companion_publish_begin', { size: bytes.length });

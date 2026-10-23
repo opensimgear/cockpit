@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { importBundle, publishDocument, validateDesignerDocument, normalizeToPortableUi, canonical } from '../packages/companion-designer/src/index.ts';
 
-const { document: catalog } = await importBundle(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
+const { document: catalog } = await importBundle(await readFile('tests/fixtures/legacy-companion/shared-systems.bundle.json', 'utf8'));
 const input = JSON.parse(await readFile('apps/companion-esp32/test/widget-input.json', 'utf8')).document;
 const legacy = JSON.parse(JSON.parse(await readFile('apps/companion-esp32/test/live-publication.json', 'utf8')).canonicalDocument);
 const mixed = structuredClone(legacy); mixed.schemaVersion = 3; mixed.presentation.definitions = structuredClone(catalog.presentation.definitions);
@@ -32,7 +32,7 @@ display.presentation.widgets = display.presentation.widgets.filter(w => w.contro
 display.ui.feedbackWidgets = display.ui.feedbackWidgets.filter(f => display.presentation.widgets.some(w => w.feedbackIds.includes(f.id))); display.ui = normalizeToPortableUi(display);
 
 const documents = [catalog, input, mixed, editorial, display, legacy];
-documents.push((await importBundle(await readFile('examples/companion/shared-systems-complete.bundle.json','utf8'))).document);
+documents.push((await importBundle(await readFile('tests/fixtures/legacy-companion/shared-systems-complete.bundle.json','utf8'))).document);
 const cases = [];
 for (const document of documents) {
   const result = validateDesignerDocument(document); if (!result.ok) throw Error(result.error);

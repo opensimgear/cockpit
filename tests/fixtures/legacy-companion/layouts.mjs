@@ -1,7 +1,7 @@
-/** Reproducible public panel bundles; no host, credentials or output activation. */
+/** Test-only retired panel bundles; no host, credentials or output activation. */
 import { writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { checked, normalizeToPortableUi, exportBundle } from '../../packages/companion-designer/src/index.ts';
+import { checked, normalizeToPortableUi, exportBundle } from '../../../packages/companion-designer/src/index.ts';
 
 function panel(id, title, pageTitles, axes) {
   const document = {

@@ -11,6 +11,8 @@ on:
       - 'packages/companion-contracts/**'
       - 'packages/companion-designer/**'
       - 'packages/companion-ui/**'
+      - 'packages/widget-runtime/**'
+      - 'packages/widget-compiler/**'
       - 'crates/**'
       - '!crates/companion-platform/**'
       - 'apps/companion-esp32/network/firmware.h'

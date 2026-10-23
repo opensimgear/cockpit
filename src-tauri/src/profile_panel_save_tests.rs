@@ -1,7 +1,7 @@
 fn save_panel_upload(manager:&GatewayManager,title:&str,latest:bool)->Value{
     use sha2::{Digest,Sha256};
-    let mut upload:osg_companion_service::PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
-    upload.canonical_document=upload.canonical_document.replace("Flight instruments",title);
+    let mut upload:osg_companion_service::PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
+    upload.canonical_document=upload.canonical_document.replace("\"title\":\"Toggle\"",&format!("\"title\":{}",serde_json::to_string(title).unwrap()));
     upload.publication_hash=format!("sha256:{:x}",Sha256::digest(upload.canonical_document.as_bytes()));upload.capability_fingerprint=None;
     let bytes=serde_json::to_vec(&json!({"canonicalDocument":upload.canonical_document,"publicationHash":upload.publication_hash,"assets":upload.assets})).unwrap();
     let started=request(manager,"companion_publish_begin",None,json!({"companion":{"size":bytes.len()}}));
@@ -25,7 +25,7 @@ fn saved_panel_commit_updates_inactive_profiles_and_archive_restore_does_not_rol
     let old=first["panelSaved"]["publicationHash"].as_str().unwrap();
     let document=panel_profile_document(old);let id=document.id.clone();
     let saved=request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":null,"assignments":[]}));
-    assert_eq!(saved["ok"],true,"{saved}");assert_eq!(saved["state"]["profiles"]["document"]["companionAssignments"][0]["panelId"],"flight-panel");
+    assert_eq!(saved["ok"],true,"{saved}");assert_eq!(saved["state"]["profiles"]["document"]["companionAssignments"][0]["panelId"],"toggle-native-fixture");
     let active=request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));assert_eq!(active["ok"],true,"{active}");
     let owner=active["state"]["profiles"]["profileSession"]["owner"].clone();
     let latest=save_panel_upload(&manager,"Latest saved view",true);
@@ -121,7 +121,7 @@ fn mcp_profile_reads_are_passive_and_changed_panel_drafts_require_another_previe
     // Model a retained library restored with its historical immutable panel.
     // It has not yet been opened by a UI reader that follows the saved panel.
     let mut document = panel_profile_document(original_hash);
-    document.companion_assignments[0].panel_id = Some("flight-panel".into());
+    document.companion_assignments[0].panel_id = Some("toggle-native-fixture".into());
     let id = document.id.clone();
     let before = manager.profiles.lock().unwrap().request(&json!({
         "command":"profile_draft_save", "document":document,

@@ -5,6 +5,11 @@ edition = "2021"
 rust-version = "1.90"
 license-file = "../../LICENSE"
 
+[features]
+# Explicit lower-level legacy fixture admission for transport/storage tests only.
+# Public publication validation and IPC remain compiled-only with this enabled.
+legacy-test-fixtures = []
+
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 serde = { version = "1", features = ["derive"] }
@@ -42,3 +47,4 @@ fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+osg-companion-service = { path = ".", features = ["legacy-test-fixtures"] }

@@ -11,7 +11,7 @@ use std::{
 };
 
 fn publication() -> Publication {
-    Publication::validate(
+    Publication::validate_legacy_test_fixture(
         serde_json::from_slice(include_bytes!(
             "../../companion-service/tests/fixtures/c1-flight-publication.json"
         ))
@@ -23,7 +23,7 @@ fn revised(p: &Publication, change: impl FnOnce(&mut Value)) -> Publication {
     let mut d: Value = serde_json::from_str(&p.canonical_document).unwrap();
     change(&mut d);
     let canonical_document = serde_json::to_string(&d).unwrap();
-    Publication::validate(PublicationUpload {
+    Publication::validate_legacy_test_fixture(PublicationUpload {
         publication_hash: format!("sha256:{}", osg_logic::worker::hash(&canonical_document)),
         canonical_document,
         capability_fingerprint: None,
@@ -142,7 +142,7 @@ impl Fixture {
         service.set_companion_provider(provider.clone());
         let publications = Arc::new(Mutex::new(BTreeMap::<String, Publication>::new()));
         let current = publications.clone();
-        service.set_companion_blueprint_provider(Arc::new(move |id| {
+        service.set_legacy_companion_fixture_blueprints(Arc::new(move |id| {
             current
                 .lock()
                 .unwrap()
@@ -398,7 +398,7 @@ fn preownership_clock_contention_waits_before_feeder_acquisition() {
     let calls = Arc::new(AtomicU64::new(0));
     let observed = calls.clone();
     let (send, receive) = mpsc::channel();
-    f.service.set_companion_blueprint_provider(Arc::new(move |id| {
+    f.service.set_legacy_companion_fixture_blueprints(Arc::new(move |id| {
         if observed.fetch_add(1, Ordering::Relaxed) == 1 {
             send.send(()).unwrap();
         }
@@ -1101,7 +1101,7 @@ fn stop_cancels_start_waiting_for_authority_before_resource_admission() {
     let gate = f.gate.clone();
     let p = publication();
     f.service
-        .set_companion_blueprint_provider(Arc::new(move |_| {
+        .set_legacy_companion_fixture_blueprints(Arc::new(move |_| {
             let (lock, cv) = &*gate;
             let mut g = lock.lock().unwrap();
             g.entered = true;

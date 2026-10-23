@@ -449,8 +449,8 @@ support does not qualify Linux/macOS host output backends (#48/#49).
 
 The [user guide](companion-guide.md) covers panel Save/import, pairing,
 profile-owned exact controls/feedback, readiness and retained cleanup.
-[Flight/button-box and axis/racing examples](../examples/companion/README.md) are
-portable designer imports; they contain no credentials or local assignments and
-do not connect or activate output when imported.
+The [generic Toggle source](../examples/companion/README.md) is the current designer
+example. Historical flight/racing bundles are isolated test fixtures and current
+publication/import APIs reject their retired formats.
 
 The [release matrix](companion-release-matrix.md) lists browser and Android/iOS clients, exact limits and pending qualification. No client target is release-qualified. Signed mobile updates remain #68; device/LAN/lifecycle, real game/feedback and measured load remain #55/#56/#59/#66/#67/#58. Feature #37 remains open.

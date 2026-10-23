@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn incompatible_fingerprint_is_preserved_without_blocking_panel_metadata(){
         let directory=crate::test_directory();
-        let mut upload:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        let mut upload:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
         upload.capability_fingerprint=Some(format!("sha256:{}","0".repeat(64)));
         let bytes=serde_json::to_vec(&vec![upload.clone()]).unwrap();
         fs::write(directory.path().join("companion-panels.json"),&bytes).unwrap();
@@ -144,16 +144,16 @@ mod tests {
     fn saved_panel_heads_reuse_stable_identity_and_can_return_to_an_existing_snapshot(){
         let directory=crate::test_directory();
         let hub=Hub::new("saved-panel-heads".into(),Arc::new(osg_companion_service::NullSourceSink));
-        let mut a:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        let mut a:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
         let publish=|upload:&PublicationUpload|{let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");hub.command(&command).unwrap();};
         publish(&a);mark_saved(&hub,directory.path(),&a.publication_hash).unwrap();
         let first=a.publication_hash.clone();
-        a.canonical_document=a.canonical_document.replace("Flight instruments","Latest flight instruments");
+        a.canonical_document=a.canonical_document.replace("\"title\":\"Toggle\"","\"title\":\"Latest Toggle\"");
         use sha2::{Digest,Sha256};
         a.publication_hash=format!("sha256:{:x}",Sha256::digest(a.canonical_document.as_bytes()));a.capability_fingerprint=None;
         publish(&a);mark_saved(&hub,directory.path(),&a.publication_hash).unwrap();
         let current=latest(&hub,directory.path()).unwrap();
-        assert_eq!(current.len(),1);assert_eq!(current[0].panel_id,"flight-panel");
+        assert_eq!(current.len(),1);assert_eq!(current[0].panel_id,"toggle-native-fixture");
         assert_eq!(current[0].publication_hash,a.publication_hash);assert_eq!(current[0].previous_hashes.len(),2);
         assert_eq!(hub.publication_summaries().len(),2,"Transport snapshots remain immutable and retained");
         mark_saved(&hub,directory.path(),&first).unwrap();
@@ -165,17 +165,17 @@ mod tests {
         use sha2::{Digest,Sha256};
         let directory=crate::test_directory();
         let hub=Hub::new("explicit-panel-heads".into(),Arc::new(osg_companion_service::NullSourceSink));
-        let original:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        let original:PublicationUpload=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
         let mut other=original.clone();
-        other.canonical_document=other.canonical_document.replace("flight-panel","other-panel");
+        other.canonical_document=other.canonical_document.replace("toggle-native-fixture","other-panel");
         other.publication_hash=format!("sha256:{:x}",Sha256::digest(other.canonical_document.as_bytes()));other.capability_fingerprint=None;
         for upload in [&original,&other] {
             let mut command=serde_json::to_value(upload).unwrap();command["command"]=json!("companion_publish");hub.command(&command).unwrap();
         }
-        assert_eq!(latest(&hub,directory.path()).unwrap().len(),2,"Legacy retained panels remain available to the catalogue");
+        assert_eq!(latest(&hub,directory.path()).unwrap().len(),2,"Compiled retained panels remain available to the catalogue");
         assert!(saved_heads(&hub,directory.path()).unwrap().is_empty());
         mark_saved(&hub,directory.path(),&original.publication_hash).unwrap();
-        assert_eq!(saved_heads(&hub,directory.path()).unwrap(),BTreeMap::from([("flight-panel".into(),original.publication_hash)]));
+        assert_eq!(saved_heads(&hub,directory.path()).unwrap(),BTreeMap::from([("toggle-native-fixture".into(),original.publication_hash)]));
     }
     #[test]
     fn saved_panel_heads_reject_oversized_storage_before_decoding(){
@@ -205,7 +205,7 @@ mod tests {
         let offer=first.command(&json!({"command":"companion_pair_offer"})).unwrap();
         let pending=first.handle_wire(json!({"type":"pair","version":1,"secret":offer["secret"],"companionId":"screen","name":"Screen"}),"peer",first.now_ms());
         first.command(&json!({"command":"companion_approve","requestId":pending["requestId"],"companionId":"screen"})).unwrap();
-        let mut upload:Value=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        let mut upload:Value=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
         upload["command"]=json!("companion_publish");first.command(&upload).unwrap();
         first.command(&json!({"command":"companion_assign","companionId":"screen","instanceId":"assigned","publicationHash":upload["publicationHash"]})).unwrap();
         save(&first,&directory).unwrap();
@@ -222,7 +222,7 @@ mod tests {
         let directory=std::env::temp_dir().join(format!("osg-panel-cache-{}",uuid::Uuid::new_v4()));
         let first=Hub::new("cache-test".into(),Arc::new(osg_companion_service::NullSourceSink));
         assert!(ready(&first).unwrap());
-        let mut upload:Value=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        let mut upload:Value=serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
         upload["command"]=json!("companion_publish");first.command(&upload).unwrap();
         save(&first,&directory).unwrap();
         save(&first,&directory).unwrap(); // Replacing an existing Windows cache is atomic.

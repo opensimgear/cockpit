@@ -2,7 +2,7 @@ use super::*;
 use crate::{Publication, PublicationUpload};
 use serde_json::json;
 fn publication() -> Publication {
-    Publication::validate(
+    Publication::validate_legacy_test_fixture(
         serde_json::from_str::<PublicationUpload>(include_str!(
             "../tests/fixtures/c1-flight-publication.json"
         ))
@@ -97,7 +97,7 @@ fn published_unit_limits_match_c1_utf16_and_always_allow_a_valid_sample() {
         let mut d: Value = serde_json::from_str(&p.canonical_document).unwrap();
         d["presentation"]["widgets"][9]["config"]["unit"] = json!(unit);
         let canonical = serde_json_canonicalizer::to_string(&d).unwrap();
-        let published = Publication::validate(PublicationUpload {
+        let published = Publication::validate_legacy_test_fixture(PublicationUpload {
             publication_hash: format!("sha256:{}", crate::publication::hash(canonical.as_bytes())),
             canonical_document: canonical,
             capability_fingerprint: None,
@@ -129,7 +129,7 @@ fn published_unit_limits_match_c1_utf16_and_always_allow_a_valid_sample() {
         d["presentation"]["widgets"][9]["config"]["unit"] = json!(unit);
         assert!(feedback_descriptors(&d).is_err());
         let canonical = serde_json_canonicalizer::to_string(&d).unwrap();
-        assert!(Publication::validate(PublicationUpload {
+        assert!(Publication::validate_legacy_test_fixture(PublicationUpload {
             publication_hash: format!("sha256:{}", crate::publication::hash(canonical.as_bytes())),
             canonical_document: canonical,
             capability_fingerprint: None,

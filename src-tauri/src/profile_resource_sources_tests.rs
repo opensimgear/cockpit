@@ -355,7 +355,7 @@ fn publication() -> osg_companion_service::Publication {
         "../../crates/companion-service/tests/fixtures/c1-flight-publication.json"
     ))
     .unwrap();
-    osg_companion_service::Publication::validate(upload).unwrap()
+    osg_companion_service::Publication::validate_legacy_test_fixture(upload).unwrap()
 }
 fn companion(
     publication: &osg_companion_service::Publication,

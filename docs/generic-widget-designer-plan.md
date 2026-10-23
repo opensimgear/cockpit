@@ -1,6 +1,13 @@
 # Generic widget designer with compiled visuals
 
-Status: proposed implementation plan. Date: 23 October 2026.
+Status: implementation plan. Date: 23 October 2026.
+
+The active browser feature is [#151](https://github.com/opensimgear/cockpit/issues/151).
+ESP32 work was split into [#161](https://github.com/opensimgear/cockpit/issues/161)
+and is in Backlog. ESP32 references below describe the future target architecture,
+not acceptance for the browser implementation. The only product seed is named
+**Toggle**. See [the current implementation guide](generic-widget-designer.md)
+for the concrete contracts and workflow.
 
 This is a deliberate replacement of the current widget system. The capsule
 toggle is the only product pilot. Existing widgets, saved widget definitions,

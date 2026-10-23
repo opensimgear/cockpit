@@ -80,7 +80,7 @@ timing cannot qualify a LAN performance claim.
 ## User and operator documentation
 
 - [Setup, designer, pairing, feedback, revocation and recovery guide](companion-guide.md).
-- [Importable flight/button-box and axis/racing examples](../examples/companion/README.md).
+- [Current generic Toggle source and authoring workflow](../examples/companion/README.md).
 - [Native companion development/build and protected-store behavior](../apps/companion/README.md).
 - [C6 validation record](verification/2026-10-16-companion-c6.md).
 

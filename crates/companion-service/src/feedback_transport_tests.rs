@@ -42,10 +42,8 @@ fn large_feedback_only_snapshots_native_resync_freshness_and_disconnected_peers_
         capability_fingerprint: None,
         assets: vec![],
     };
-    let p = Publication::validate(upload.clone()).unwrap();
-    let mut command = serde_json::to_value(upload).unwrap();
-    command["command"] = json!("companion_publish");
-    hub.command(&command).unwrap();
+    let p = Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
+    hub.retain_legacy_test_fixture(upload).unwrap();
     let bindings = p
         .feedback
         .iter()

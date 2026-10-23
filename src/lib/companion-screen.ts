@@ -1,6 +1,7 @@
 import { firmwarePanelReason } from './firmware-widgets.ts';
 import { renderCompatibility, validateRenderProfile, type RenderProfile, type Publication } from '../../packages/companion-designer/src/index.ts';
 import type { CompanionHostState } from './companions.ts';
+import type { CompanionPublication } from './companions.ts';
 
 export type ScreenSize = { width:number; height:number };
 export type PanelScreenChoice = ScreenSize & { id:string; name:string };
@@ -74,10 +75,14 @@ export function companionRenderTarget(state:CompanionHostState,id:string):{profi
   }
   return {};
 }
-export function companionPanelReason(panel:Publication,state:CompanionHostState,id:string):string{
+export function companionPanelReason(panel:CompanionPublication,state:CompanionHostState,id:string):string{
+  if(panel.document.schemaVersion===4){
+    if(state.host?.clients?.find(client=>client.companionId===id)?.kind==='esp32')return 'Compiled widgets are currently available for browser companions. ESP32 support is in the backlog.';
+    return '';
+  }
   const target=companionRenderTarget(state,id);
   if(target.error)return target.error;
   if(target.profile)return renderCompatibility(panel.document,target.profile)[0]?.message??'';
-  if(state.host?.clients?.find(client=>client.companionId===id)?.kind==='esp32')return panelScreenReason(panel,companionScreenSize(state,id),state.firmware?.[id]?.version??'unknown');
+  if(state.host?.clients?.find(client=>client.companionId===id)?.kind==='esp32')return panelScreenReason(panel as Publication,companionScreenSize(state,id),state.firmware?.[id]?.version??'unknown');
   return '';
 }

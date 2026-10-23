@@ -1,5 +1,6 @@
-import { validateFeedbackUpdate, type PortableUi } from '@opensimgear/companion-contracts';
-import type { FeedbackSamples } from '@opensimgear/companion-ui';
+import { validateFeedbackUpdate, type PortableUi, type FeedbackValue } from '@opensimgear/companion-contracts';
+export type FeedbackSamples = Record<string, FeedbackValue & { receivedAtMs: number }>;
+type FeedbackUi = Pick<PortableUi, 'feedbackWidgets'>;
 
 export type FeedbackIdentity = {clientId:string;sessionId:string;generation:string;controllerInstanceId:string;publicationHash:string};
 const fields = ['clientId','sessionId','generation','controllerInstanceId','publicationHash'] as const;
@@ -8,8 +9,10 @@ export function createBrowserFeedback() {
   let identity = '', generation = -1n, sequence = -1n, bindings = new Map<string,string>(), samples:FeedbackSamples = {}, clock = -1;
   return {
     snapshot:():FeedbackSamples=>structuredClone(samples),
-    accept(expected:FeedbackIdentity, input:unknown, ui:PortableUi, now:number, resync=false):boolean {
-      const checked=validateFeedbackUpdate(input,ui);
+    accept(expected:FeedbackIdentity, input:unknown, ui:FeedbackUi, now:number, resync=false):boolean {
+      // Feedback validation uses declared channel/type bindings only; compiled
+      // asset descriptors do not enter the legacy portable visual schema.
+      const checked=validateFeedbackUpdate(input,ui as PortableUi);
       if(!checked.ok)throw new Error(checked.error);
       const frame=checked.value;
       if(fields.some(key=>!expected[key]||frame[key]!==expected[key]))throw new Error('Feedback belongs to another panel session.');

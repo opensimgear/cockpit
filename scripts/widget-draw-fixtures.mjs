@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { importBundle, resolveWidgetLayers, resolveWidgetState } from '../packages/companion-designer/src/index.ts';
 import { widgetLayerText } from '../packages/companion-ui/src/widget-presentation.ts';
 
-const { document } = await importBundle(await readFile('examples/companion/shared-systems-complete.bundle.json', 'utf8'));
+const { document } = await importBundle(await readFile('tests/fixtures/legacy-companion/shared-systems-complete.bundle.json', 'utf8'));
 const position=index=>({x:.025+(index%4)*.24,y:.025+Math.floor(index/4)*.24,width:.22,height:.21});
 const widgets = document.presentation.widgets.map((widget,index) => ({ definition: document.presentation.definitions.find(d => d.id === widget.config.definitionId && d.version === widget.config.definitionVersion), properties: widget.config.properties, bounds: position(index) }));
 widgets.push({ ...widgets[0], properties: { label: 'SECOND', accent: '#ff765e' }, bounds: position(widgets.length) });

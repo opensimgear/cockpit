@@ -40,6 +40,15 @@ fn document() -> String {
     let value = json!({"schemaVersion":2,"ui":{"schemaVersion":1,"id":"panel","title":"Transport test","controls":[{"id":"press","kind":"button","label":"Press"}],"pages":[{"id":"page","title":"Main","items":[{"kind":"control","refId":"press","bounds":bounds}]}],"feedbackWidgets":[],"assets":[]},"presentation":{"widgets":[{"id":"widget","pageId":"page","label":"Press","bounds":bounds,"controlIds":["press"],"feedbackIds":[],"kind":"button","config":{"buttonMode":"momentary","pulseMs":0,"repeatMs":0}}],"groups":[],"viewports":[{"pageId":"page","width":800,"height":600}],"grid":{"columns":24,"rows":16,"snap":true}},"targets":[{"id":"logical","label":"Target","axes":[],"buttons":1,"hats":0}],"bindings":[{"controlId":"press","targetId":"logical","kind":"button","index":0}]});
     serde_json_canonicalizer::to_string(&value).unwrap()
 }
+// These tests exercise primitive transport/authentication independently from the retired renderer.
+fn retain_fixture(hub:&Hub,request:serde_json::Value){
+    hub.retain_legacy_test_fixture(crate::PublicationUpload{
+        canonical_document:request["canonicalDocument"].as_str().unwrap().into(),
+        publication_hash:request["publicationHash"].as_str().unwrap().into(),
+        capability_fingerprint:request["capabilityFingerprint"].as_str().map(str::to_owned),
+        assets:serde_json::from_value(request["assets"].clone()).unwrap(),
+    }).unwrap();
+}
 fn wait(mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(6);
     while !condition() {
@@ -77,7 +86,7 @@ fn real_wss_pair_approval_publication_input_ui_stall_and_sealed_restart() {
     assert!(status.enabled);
     let canonical = document();
     let publication_hash = tls::sha256(canonical.as_bytes());
-    hub.command(&json!({"command":"companion_publish","canonicalDocument":canonical,"publicationHash":publication_hash,"assets":[]})).unwrap();
+    retain_fixture(&hub,json!({"canonicalDocument":canonical,"publicationHash":publication_hash,"assets":[]}));
     let offer = hub
         .command(&json!({"command":"companion_pair_offer"}))
         .unwrap();
@@ -273,7 +282,7 @@ fn one_real_listener_routes_two_different_ui_and_two_instances_of_one_ui_indepen
     let race: serde_json::Value =
         serde_json::from_str(include_str!("../tests/fixtures/c1-racing-publication.json")).unwrap();
     for publication in [&flight, &race] {
-        hub.command(&json!({"command":"companion_publish","canonicalDocument":publication["canonicalDocument"],"publicationHash":publication["publicationHash"],"capabilityFingerprint":publication["capabilityFingerprint"],"assets":publication["assets"]})).unwrap();
+        retain_fixture(&hub,json!({"canonicalDocument":publication["canonicalDocument"],"publicationHash":publication["publicationHash"],"capabilityFingerprint":publication["capabilityFingerprint"],"assets":publication["assets"]}));
     }
     let mut clients = Vec::new();
     for (index, (instance, publication)) in [
@@ -479,7 +488,7 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     };
     assert_eq!(call(&mut socket,json!({"type":"presence"}))["ok"],false);
     let canonical=document();let hash=tls::sha256(canonical.as_bytes());
-    hub.command(&json!({"command":"companion_publish","canonicalDocument":canonical,"publicationHash":hash,"assets":[]})).unwrap();
+    retain_fixture(&hub,json!({"canonicalDocument":canonical,"publicationHash":hash,"assets":[]}));
     let offer=hub.command(&json!({"command":"companion_pair_offer","kind":"browser","autoApprove":true})).unwrap();
     let pending=call(&mut socket,json!({"type":"pair","secret":offer["secret"],"companionId":"browser-one","name":"Browser"}));
     let paired=call(&mut socket,json!({"type":"pair-status","secret":offer["secret"],"requestId":pending["requestId"]}));

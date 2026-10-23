@@ -1573,7 +1573,7 @@ mod tests {
                 capability_fingerprint: None,
                 assets,
             };
-            let publication = crate::Publication::validate(upload.clone()).unwrap();
+            let publication = crate::Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
             let (verified, primitives) = verify_publication(&serde_json::to_value(upload).unwrap()).unwrap();
             assert_eq!(verified["document"], document);
             assert!(primitives.is_empty());
@@ -1832,7 +1832,7 @@ mod tests {
         assert!(client
             .command(json!({"type":"feedback-resync","epoch":0}))
             .is_err());
-        let p = crate::Publication::validate(
+        let p = crate::Publication::validate_legacy_test_fixture(
             serde_json::from_str(include_str!("../tests/fixtures/c1-flight-publication.json"))
                 .unwrap(),
         )

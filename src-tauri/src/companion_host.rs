@@ -142,6 +142,9 @@ fn target_render_profile(client:&Value,firmware:&Value)->Result<Option<Value>,St
     Ok(None)
 }
 fn validate_target_panel(hub:&Hub,hash:&str,client:&Value,firmware:&Value)->Result<(),String>{
+    if hub.publication_document(hash)?["schemaVersion"]==4 {
+        return if client["kind"]=="esp32" {Err("Compiled widgets are currently available for browser companions. ESP32 support is in the backlog.".into())} else {Ok(())};
+    }
     if let Some(profile)=target_render_profile(client,firmware)?{
         if let Some(issue)=hub.publication_renderer_issues(hash,&profile)?.first(){return Err(issue.message.clone());}
         return Ok(());
@@ -178,6 +181,8 @@ struct Metadata {
 }
 pub struct Runtime {
     path: Option<PathBuf>,
+    cutover_notice: Option<String>,
+    cutover_error: Option<String>,
     stopped: AtomicBool,
     provider: Arc<CompanionProvider>,
     metadata: OnceLock<Metadata>,
@@ -192,8 +197,12 @@ impl Runtime {
         // Protected-store/TLS setup can require an OS credential service. Keep it
         // outside ordinary gateway startup; explicit companion operations and
         // captured-game recovery initialize the same retained state on demand.
+        let (cutover_notice,cutover_error)=match path.as_ref().map(|directory|crate::widget_cutover::profiles(directory)){
+            Some(Ok(notice))=>(notice,None),Some(Err(error))=>(None,Some(error)),None=>(None,None),
+        };
         Self {
             path,
+            cutover_notice,cutover_error,
             stopped: AtomicBool::new(false),
             provider,
             metadata: OnceLock::new(),
@@ -232,6 +241,7 @@ impl Runtime {
         });
     }
     fn metadata(&self, create: bool) -> Result<&Metadata, String> {
+        if let Some(error)=&self.cutover_error{return Err(format!("Widget reset could not finish; companion output remains disabled: {error}"));}
         if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
         if let Some(metadata) = self.metadata.get() { return Ok(metadata); }
         let _initialization = self.metadata_init.lock().unwrap_or_else(|p|p.into_inner());
@@ -246,7 +256,10 @@ impl Runtime {
             (Hub::new(format!("host-{}", uuid::Uuid::new_v4()), self.provider.clone()),
                 std::env::temp_dir().join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
-        let cache_warning=crate::companion_panels::restore_or_quarantine(&hub, &directory)?;
+        let cutover=crate::widget_cutover::panels(&hub,&directory)?;
+        let restored=crate::companion_panels::restore_or_quarantine(&hub, &directory)?;
+        let warnings=[self.cutover_notice.clone(),cutover,restored].into_iter().flatten().collect::<Vec<_>>();
+        let cache_warning=(!warnings.is_empty()).then(||warnings.join(" "));
         let _ = self.metadata.set(Metadata {hub, directory, cache_warning});
         Ok(self.metadata.get().expect("metadata initialized under its gate"))
     }
@@ -531,10 +544,10 @@ impl Runtime {
                 let object = value
                     .as_object_mut()
                     .ok_or("Panel upload must be an object.")?;
-                if object.len() != 3
-                    || !["canonicalDocument", "publicationHash", "assets"]
+                if !["canonicalDocument", "publicationHash", "assets"]
                         .iter()
                         .all(|k| object.contains_key(*k))
+                    || object.keys().any(|key| !["canonicalDocument", "publicationHash", "capabilityFingerprint", "assets"].contains(&key.as_str()))
                 {
                     return Err("Unexpected panel upload fields.".into());
                 }
@@ -902,7 +915,7 @@ mod tests {
         let fixtures:Value=serde_json::from_str(include_str!("../../apps/companion-esp32/test/widget-compatibility.json")).unwrap();
         let canonical=fixtures["cases"][0]["canonicalDocument"].as_str().unwrap();let hash=format!("sha256:{:x}",Sha256::digest(canonical.as_bytes()));
         let hub=Hub::new("host".into(),Arc::new(osg_companion_service::NullSourceSink));
-        hub.command(&json!({"command":"companion_publish","canonicalDocument":canonical,"publicationHash":hash,"assets":[]})).unwrap();
+        crate::retain_companion_test_fixture(&hub,&json!({"canonicalDocument":canonical,"publicationHash":hash,"assets":[]})).unwrap();
         let reports:Value=serde_json::from_str(include_str!("../../apps/companion-esp32/test/render-profiles.json")).unwrap();let profile=reports["valid"][1].clone();
         let firmware=json!({"version":profile["firmwareVersion"],"profile":profile["boardProfile"],"renderProfile":profile});
         let mut client=json!({"kind":"esp32","connected":true,"screen":{"width":800,"height":480},"renderProfile":profile});
@@ -1129,7 +1142,7 @@ mod tests {
     fn retained_profile_metadata_restores_descriptors_without_listener_or_tls_setup() {
         let directory = std::env::temp_dir().join(format!("osg-companion-metadata-retained-{}", uuid::Uuid::new_v4()));
         let hub = Hub::open(&directory, Arc::new(osg_companion_service::NullSourceSink)).unwrap();
-        let mut upload:Value = serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/c1-flight-publication.json")).unwrap();
+        let mut upload:Value = serde_json::from_str(include_str!("../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
         upload["command"] = json!("companion_publish");
         hub.command(&upload).unwrap();
         crate::companion_panels::save(&hub, &directory).unwrap();
@@ -1158,7 +1171,7 @@ mod tests {
         assert_eq!(std::fs::read(directory.join("companion-host-state.dpapi")).unwrap(), before);
         let mut names = std::fs::read_dir(&directory).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
         names.sort();
-        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json"]);
+        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json", "widget-panel-cutover-v4.json"]);
         runtime.shutdown();
         for name in names { std::fs::remove_file(directory.join(name)).unwrap(); }
         std::fs::remove_dir(directory).unwrap();
@@ -1469,7 +1482,7 @@ mod tests {
         .unwrap();
 
         let fixture: Value = serde_json::from_str(include_str!(
-            "../../crates/companion-service/tests/fixtures/c1-flight-publication.json"
+            "../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json"
         ))
         .unwrap();
         let upload = json!({"canonicalDocument":fixture["canonicalDocument"],"publicationHash":fixture["publicationHash"],"assets":fixture["assets"]});

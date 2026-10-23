@@ -1,5 +1,9 @@
 # Shared widget designer — feature #112
 
+Historical implementation record. Feature #151 replaces this source/catalogue
+with the [generic compiled widget designer](generic-widget-designer.md). The old
+bundles below are retained only under `tests/fixtures/legacy-companion`.
+
 Implementation branch: `feat/widgets-112`. Source worktree: `cockpit-widgets`.
 
 The accepted requirement is a single editable widget library and panel source for
@@ -539,7 +543,7 @@ Numeric-property commit `f9216fd` passes all six ESP32 jobs in
 The original catalog now also includes a standalone typed text instrument and
 an editable vector power icon. Its ring/stem illuminate only from fresh
 game-confirmed simulator feedback. The complete twelve-family bundle is
-`examples/companion/shared-systems-complete.bundle.json`; the established
+`tests/fixtures/legacy-companion/shared-systems-complete.bundle.json`; the established
 ten-widget example and its archived publication/capability hashes are unchanged.
 
 The complete catalog passes 121 native publication tests and two ESP32 host

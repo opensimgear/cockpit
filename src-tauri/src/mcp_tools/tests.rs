@@ -6,14 +6,33 @@ const CLIENT: &str = "authenticated-test-client";
 fn widget_tasks_use_native_validation_persistence_and_mutation_ledger(){
     let tools=Tools::new(Arc::new(GatewayManager::mcp_test_manager()));
     let guide=tools.read_resource("cockpit://guide/widgets",CLIENT);
+    assert_eq!(guide["data"]["formatVersion"],2);
+    assert_eq!(guide["data"]["example"]["library"]["definitions"][0]["title"],"Toggle");
     let mut bundle=guide["data"]["example"].clone();bundle["library"]["definitions"][0]["id"]=json!("mcp-native-widget");
-    bundle["library"]["definitions"][0]["version"]=json!(1);
+    bundle["library"]["definitions"][0]["revision"]=json!(1);
+    assert_eq!(bundle["bundleVersion"],2);
+    let behavior=&bundle["library"]["definitions"][0]["behavior"];
+    assert_eq!(behavior["signals"][0]["id"],"requested");
+    assert_eq!(behavior["signals"][0]["initial"],false);
+    assert_eq!(behavior["signals"][1]["source"],"feedback");
+    assert_eq!(behavior["signals"][1]["requireGameConfirmed"],true);
+    assert_eq!(behavior["outputs"][0]["neutral"],false);
     let args=json!({"operationId":operation(),"expectedVersion":null,"bundle":bundle});
     let saved=tools.call("widget_save",args.clone(),CLIENT);assert_eq!(saved["ok"],true,"{saved}");
     assert_eq!(tools.call("widget_save",args,CLIENT),saved);
     let stale=tools.call("widget_save",json!({"operationId":operation(),"expectedVersion":null,"bundle":bundle}),CLIENT);assert_eq!(stale["ok"],false);
     let got=tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT);assert_eq!(got["data"],bundle);
-    assert_eq!(tools.call("widgets_list",json!({}),CLIENT)["data"]["total"],15);
+    assert_eq!(tools.call("widgets_list",json!({}),CLIENT)["data"]["total"],2);
+    let mut next=bundle.clone();next["library"]["definitions"][0]["revision"]=json!(2);
+    let region=&mut next["library"]["definitions"][0]["behavior"]["regions"][0];
+    region["states"]=json!(["resting","engaged"]);region["initial"]=json!("resting");
+    for transition in region["transitions"].as_array_mut().unwrap(){transition["from"]=json!("*");}
+    let revised=tools.call("widget_save",json!({"operationId":operation(),"expectedVersion":1,"bundle":next}),CLIENT);assert_eq!(revised["ok"],true,"{revised}");
+    assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget","version":1}),CLIENT)["data"],bundle);
+    assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"],next);
+    let mut invalid=next.clone();invalid["library"]["definitions"][0]["revision"]=json!(3);invalid["library"]["definitions"][0]["scene"][0]=json!({"id":"bad","kind":"script","code":"alert(1)"});
+    assert_eq!(tools.call("widget_save",json!({"operationId":operation(),"expectedVersion":2,"bundle":invalid}),CLIENT)["ok"],false);
+    assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"],next);
     assert_eq!(tools.call("widget_save",json!({"bundle":bundle,"expectedVersion":null}),CLIENT)["error"]["code"],"invalid_arguments");
 }
 #[derive(Default)]

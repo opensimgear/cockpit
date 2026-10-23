@@ -61,10 +61,10 @@ fn fixture_with_sink(
         "../../crates/companion-service/tests/fixtures/c1-flight-publication.json"
     ))
     .unwrap();
-    let publication = Publication::validate(upload.clone()).unwrap();
+    let publication = Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
     let mut command = serde_json::to_value(upload).unwrap();
     command["command"] = json!("companion_publish");
-    hub.command(&command).unwrap();
+    crate::retain_companion_test_fixture(&hub,&command).unwrap();
     hub.command(&json!({"command":"companion_assign","instanceId":"instance","companionId":"screen","publicationHash":publication.publication_hash})).unwrap();
     (hub, publication, secret)
 }
@@ -180,10 +180,10 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
         Sha256::digest(upload.canonical_document.as_bytes())
     );
     upload.capability_fingerprint = None;
-    let desired = Publication::validate(upload.clone()).unwrap();
+    let desired = Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
     let mut command = serde_json::to_value(upload).unwrap();
     command["command"] = json!("companion_publish");
-    hub.command(&command).unwrap();
+    crate::retain_companion_test_fixture(&hub,&command).unwrap();
     assert_ne!(desired.publication_hash, publication.publication_hash);
     let mut candidate = Candidate { launch_preparation: false,
         document: osg_profiles::default_document(),
@@ -356,10 +356,10 @@ impl NativeFixture {
             Sha256::digest(upload.canonical_document.as_bytes())
         );
         upload.capability_fingerprint = None;
-        let desired = Publication::validate(upload.clone()).unwrap();
+        let desired = Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
         let mut command = serde_json::to_value(upload).unwrap();
         command["command"] = json!("companion_publish");
-        hub.command(&command).unwrap();
+        crate::retain_companion_test_fixture(&hub,&command).unwrap();
         let companions = Arc::new(crate::companion_host::Runtime::with_profile_metadata(
             hub.clone(),
             provider.clone(),

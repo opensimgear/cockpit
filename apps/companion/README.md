@@ -63,7 +63,8 @@ Mobile physical install, credential/permission and lifecycle checks remain open 
 ## C6 guides and release status
 
 Use the [companion user guide](../../docs/companion-guide.md) for setup, designer,
-pairing, feedback and recovery; start from the [portable example layouts](../../examples/companion/README.md).
+pairing, feedback and recovery. The [generic Toggle workflow](../../examples/companion/README.md)
+currently targets browser companions.
 The [release matrix](../../docs/companion-release-matrix.md) and
 `python scripts/companion-release-check.py` record the current blocked release
 state and pending native qualification. No browser/Android/iOS client

@@ -11,6 +11,18 @@ upstream library data or other separately licensed portions.
 - Local MCP uses the official Model Context Protocol Rust SDK, rmcp 3.6.0
   (Apache-2.0), from https://github.com/modelcontextprotocol/rust-sdk.
 - JavaScript dependencies are recorded in `package.json` and `pnpm-lock.yaml`.
+- The host widget compiler uses unmodified `@jsquash/png` 3.1.1,
+  `@jsquash/jpeg` 1.6.0 and `@jsquash/webp` 1.5.0 (Apache-2.0 package wrappers
+  with the additional upstream codec licenses preserved in
+  `public/licenses/jsquash/`). Their source is available at
+  https://github.com/jamsinclair/jSquash. This software is based in part on
+  the work of the Independent JPEG Group. These codecs validate source images
+  and normalize them to PNG in Cockpit; companions receive finished pixels.
+- The host widget compiler uses unmodified `@resvg/resvg-wasm` 2.6.2
+  (Mozilla Public License 2.0). Its source is available at
+  https://github.com/yisibl/resvg-js/tree/v2.6.2 and its complete upstream
+  license is distributed in `public/licenses/resvg/LICENSE.txt`. This compiler
+  runs in Cockpit; the companion receives compiled pixels.
 - Canvas Auto-layout uses unmodified elkjs 0.12.0 (Eclipse Public License 2.0),
   from https://github.com/kieler/elkjs. Its complete license is distributed in
   `public/licenses/elkjs/LICENSE.md` with the frontend assets.

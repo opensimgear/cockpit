@@ -17,91 +17,67 @@ A browser client does not select or qualify the host output backend. Use the [na
 
 Companion messages use information, warning and error icons on tiles, in settings and during setup. Hover an icon or focus it with the keyboard to read the full message. Press Escape to dismiss it.
 
-## Import an example and try it locally
+## Design a widget and try it locally
 
-1. Download [Flight button box](../examples/companion/flight-button-box.json) or [Racing axes](../examples/companion/axis-racing.json). These are portable panel bundles, without credentials or game bindings.
-2. In **Companions**, use **Import panel** in the Panels list and select the file.
-3. Choose **Save panel** to retain it. Check any unsupported-content or companion-update diagnostic before continuing.
-4. Choose **Preview locally**, try the controls, then **Stop preview**. No virtual controller or game input starts.
-5. Change pages or stop and check that controls return to their declared fallback. Feedback remains unknown until an explicit profile route supplies it.
+The current designer starts with **Toggle**. Import the editable
+[Toggle source](../examples/companion/generic-toggle.source.json) through
+**Companions → Widgets → Import**, or choose **New** for a blank source. Old fixed
+widget libraries and panel bundles were retired; their files are test fixtures.
 
-The [example notes](../examples/companion/README.md) describe control behavior, logical target shapes and suggested feedback sources. Importing a panel does not configure a simulator or acquire an output device.
+Open a widget to configure **Design**, **Data**, **Behavior**, **Motion** and
+**Sound**. Layers are editable authoring data. **Compile** produces complete
+pixel presentations for the chosen target dimensions and media preferences.
+**Try** runs that compiled result with separate input and feedback stimuli. No
+host controller or game input starts from Try. Editing invalidates the compiled
+result; compile again before Try, export or save.
+
+Toggle changes its requested value immediately. Its game confirmation and
+freshness remain independent. Unknown, stale and disconnected values have their
+own presentations. Only fresh simulator feedback can establish game confirmation.
+
+The artifact inspector shows source and parameter hashes, compiler/rasterizer,
+capability profile, sample counts and pixel error, resources and media fallbacks.
+Inspect at native target size. Motion and audio are optional; reduced motion or
+unavailable audio leave state and live numeric feedback available. Browser audio
+requires a user gesture, and suppressed cues are dropped.
+
+See the [generic designer guide](generic-widget-designer.md) for the source,
+behavior, compilation and device contracts. The [example notes](../examples/companion/README.md)
+walk through the single pilot. Importing source never configures a simulator or
+acquires an output device.
 
 ## Edit and save a panel
 
-The Panels list shows each panel's title above its preview, followed by page, widget and companion details. Use the card's **Duplicate panel** button to save an independent copy, including its assets, with fresh identities and no companion assignments.
+In **Panels**, choose **New** or open an existing card. Set its name and page
+size, add a source from the palette, then drag, resize or enter exact pixel bounds.
+Pages can have separate dimensions. Each instance pins an immutable source
+revision and exposes that source's parameters. **Edit design** creates a new
+revision and updates the selected instance after save.
 
-Choose **New panel**, enter a **Panel name**, then set **Initial screen size** to a companion with known dimensions or **Custom**. Custom width and height must be whole numbers from 320 to 8192 pixels. **Create panel** opens the editor at that size; choosing a companion here only initializes the size and does not assign it.
+Choose browser companions under **Assignments**, then **Compile** and **Try**
+the complete panel. Try inputs stay inside the local simulator. **Save** stores
+the source/layout and publishes a fixed compiled revision, updating the selected
+assignments. A failed remote update leaves the local save intact and reports its
+failure. **Export** includes the pinned sources, layout and verified compiled
+result; **Import** requires a fresh compile for the current target.
 
-You can also start from **Flight template**, **Racing template**, an imported panel or a saved Panels entry. Add supported widgets from the palette and edit their labels, positions and behavior. Inspect the intended viewport, rotation and pages. Small-target warnings need a layout adjustment and real-device review; a phone-sized preview is not touch qualification.
+The browser receives finished raster assets and bounded behavior. It does not
+render authoring layers or use system fonts. PNG/JPEG/WebP artwork is decoded and
+compiled on the host. External image URLs and executable source are unsupported.
+ESP32 deployment is paused and tracked separately in feature #161.
 
-Momentary buttons release with the pointer. Toggles retain requested state until toggled again or cancelled. Pulse/encoder controls emit bounded pulses. Spring sliders return to their configured fallback; latched controls retain their value until cancellation. Page/layout changes and lifecycle cancellation clear held inputs. Logical axes, buttons and hats describe portable controls, not an OS device or a vJoy slot. Check their range and fallback.
-
-**Save panel** retains the design and creates a fixed published copy internally; there is no separate Publish button. Select **Assigned companions** to update those assignments when saving. A failed companion update leaves the local save intact and reports the failure. **Export panel** creates a portable bundle without credentials, host trust, local output slots or game settings. Static PNG/JPEG/WebP assets travel inside it; external image URLs and animated assets are unsupported.
-
-Panel changes create a new publication hash. Input behavior, ranges, fallback and logical bindings also affect the capability fingerprint. A profile keeps its selected published panel; saving a newer panel does not rewrite that choice or its active graph. Active ownership may block an assignment change. Deactivate/recover the owner and explicitly reconcile the profile's instance and ports before saving a replacement panel choice.
-
-### Design and reuse widgets
-
-Open **Reusable widget library** in the panel editor. Start with the
-[Shared systems complete example](../examples/companion/shared-systems-complete.bundle.json),
-add a catalog entry, or select **Create widget**. Use the pencil beside a library
-entry to edit its design. The widget editor provides an ordered layer tree,
-shape/text/image/gauge layers, bounds, alignment, portable fonts, paint, hit area,
-state overrides, exposed properties, typed ports and undo/redo. Select a preview
-state to edit that state's overrides; **Reset state overrides** restores the
-base layer's appearance for that state.
-
-Link labels, colors, images or numeric fields to exposed properties so each
-instance can vary without copying its definition. Gauge ranges and other
-numeric property links must fit their declared bounds. A linked field stays
-read-only until unlinked; unlinking retains its resolved value. Input and
-feedback ports keep their types and provenance independent of layer styling.
-Only fresh game-confirmed simulator feedback can establish a confirmed active
-state. Touch, local preview and requested values alone cannot light it as
-confirmed.
-
-**Save to widget library** creates an immutable numbered revision. Existing
-panels keep their pinned revisions. Add the latest library entry for a new
-independent instance, or select an existing component and intentionally choose
-its **Library version** in Properties. Editing the selected instance's design
-saves a new library revision and updates that draft instance; save the panel to
-publish the change. Other instances retain their versions and separate control
-and feedback identities. **Export widgets** and **Import widgets** exchange
-portable library bundles with the assets they reference. **Export panel**
-includes the exact definitions pinned by its instances, allowing another
-installation to render the same panel without your local library.
-
-Cockpit preview, browser and Android share the composition renderer and control
-lifecycle. ESP32 renders the same portable source through LVGL. A connected
-ESP32 advertises its engine version, supported fonts, geometry and resource
-limits; assignment checks those capabilities before replacing its running
-panel. A rejected update preserves the prior assignment and explains the
-limitation. You can still edit, preview, export and save the full design locally.
-ESP32's single-pointer input requires separate interactive hit areas on each
-page. An overlap diagnostic identifies both affected widgets; move/resize the
-instances or adjust their local hit areas. Read-only component decoration may
-overlap controls, and controls on separate pages remain independent.
-Reduce instances/layers or choose a suitable target explicitly when necessary.
-Compatible source and artwork updates use the existing publication download
-and cache path without recompiling firmware. A new panel must render and acquire
-a fresh neutral baseline before its controls arm.
-
-### Multiple viewports on one screen
-
-Set **Companion screen** to the display's resolution, or enter its pixel width and height. The whole canvas represents that screen. Each page starts with one full-screen viewport; existing panels keep their layout.
-
-Select **Add viewport** to use free space or split the selected viewport. Select an area from the **Viewports** list or its canvas label. Drag the label to move it, drag its corner to resize it, or enter pixel bounds in **Properties**. Its widgets move and scale with the area. Viewports can touch edges; overlapping or out-of-screen edits show an error and preserve the previous layout.
-
-Select a viewport before adding widgets. A widget must fit entirely inside one viewport; dragging or editing it across an edge or gap is rejected. Move or delete an area's widgets before removing the viewport. Undo and redo cover viewport edits. **Preview locally** hides the editing guides; **Save panel** retains all areas as one panel for the assigned companion screen.
+Panel changes create a new publication hash. Input behavior, ranges, neutral
+values and logical bindings also affect the capability fingerprint. A profile
+keeps its captured published revision. Reconcile its instance and ports explicitly
+when changing that choice. Active ownership can block assignment changes.
 
 ## Pair and assign a companion
 
 For a desktop browser, follow [browser pairing](browser-companion.md): configure **Settings → Companion listener**, verify and trust its public certificate, then use **Companions → Pair → Browser**. Open the one-use pairing link in the intended browser. It expires after 60 seconds; keep it private. Cockpit does not change system trust or firewall rules. Loopback works only on the same computer.
 
-Choose an **Assigned panel** in the paired companion's settings and save, or select the companion under a panel's **Assigned companions** before **Save panel**. The host supplies distinct instance identities. A display name is not an identity or credential. The browser receives the assignment automatically and starts after its verified panel and fresh neutral input baseline are acknowledged. Focus/background loss or reconnect requires a new session and baseline; old gestures are not replayed.
+Choose an **Assigned panel** in the paired companion's settings and save, or select the companion under a panel's **Assignments** before **Save**. The host supplies distinct instance identities. A display name is not an identity or credential. The browser receives the assignment automatically and starts after its verified panel and fresh neutral input baseline are acknowledged. Focus/background loss or reconnect requires a new session and baseline; old gestures are not replayed.
 
-The native mobile shell retains its separate explicit Connect/Start lifecycle, but authentication remains gated. The host's **Mobile** pairing choice does not establish mobile qualification. Do not bypass that gate or certificate checks. ESP32 pairing and firmware remain shared device setup, independent of profile selection. See the [release matrix](companion-release-matrix.md) for each client.
+The native mobile shell retains its separate explicit Connect/Start lifecycle, but authentication remains gated. The host's **Mobile** pairing choice does not establish mobile qualification. Do not bypass that gate or certificate checks. ESP32 pairing is temporarily disabled; compiled ESP32 deployment is in Backlog. See the [release matrix](companion-release-matrix.md) for each client.
 
 ## Route controls through Profiles
 
@@ -156,7 +132,7 @@ Host restart retains paired authority, listener preferences and saved panel refe
 | Unified graph | 64 resources, 256 processing nodes, 512 bindings and 1024 graph ports; native virtual output supports at most 8 targets |
 | Panel document / import bundle | 1 MiB document / 13 MiB bundle |
 | Portable profile | 512 KiB; local resource assignments are separate |
-| Static raster assets | 2 MiB each, 8 MiB total; at most 8192 pixels per side, 16 megapixels per image and 32 megapixels total |
+| Compiled widget assets | 2 MiB each, 8 MiB total; 2048 pixels per widget dimension, 4096 frames, 64 MiB active + candidate memory |
 | Input | At most 64 changes/batch, 120 batches/second/client, 512 queued transitions/client |
 | Feedback | Up to 30 updates/second/client, latest-state coalescing |
 | Native mobile offline cache | 4 verified panels, 24 MiB total; no offline host input |

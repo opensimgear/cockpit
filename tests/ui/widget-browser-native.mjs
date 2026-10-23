@@ -67,7 +67,7 @@ test('the live browser companion shares an edited widget publication and isolate
   const require = createRequire(import.meta.url), { chromium } = require(process.env.OSG_PLAYWRIGHT_MODULE ?? 'playwright');
   const api = await native(), browsers = [], peers = [], wire = [[], []], errors = [];
   const directory = resolve('.research/widget-browser-native', String(Date.now())); await mkdir(directory, { recursive: true });
-  const bundleFile = process.env.OSG_WIDGETS_BUNDLE ?? 'examples/companion/shared-systems-complete.bundle.json';
+  const bundleFile = process.env.OSG_WIDGETS_BUNDLE ?? 'tests/fixtures/legacy-companion/shared-systems-complete.bundle.json';
   const imported = await importBundle(await readFile(bundleFile, 'utf8')), panel = await publishDocument(imported.document, imported.assets);
   const evidence = { actualNativeCockpit: true, actualBrowserApp: true, nativeMobileQualified: false, bundleFile: resolve(bundleFile), publicationHash: panel.publicationHash, capabilityFingerprint: panel.capabilityFingerprint, checks: [] };
   let createdListener = false, published = false, complete = false;

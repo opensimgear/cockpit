@@ -14,6 +14,7 @@ mod acr_windows;
 mod companion_host;
 mod firmware_releases;
 mod companion_panels;
+mod widget_cutover;
 mod actions;
 pub mod dcs_bios;
 mod dcs_profile;
@@ -82,6 +83,19 @@ pub(crate) fn test_directory() -> tempfile::TempDir {
     #[cfg(unix)]
     let parent = parent.canonicalize().expect("canonical native test temporary parent");
     tempfile::tempdir_in(parent).expect("native test temporary directory")
+}
+
+/// Explicit lower-level initialization for retired transport/profile test fixtures.
+/// Production IPC always uses Hub::command and accepts compiled publications only.
+#[cfg(test)]
+pub(crate) fn retain_companion_test_fixture(hub:&osg_companion_service::Hub,request:&serde_json::Value)->Result<serde_json::Value,String>{
+    let upload=osg_companion_service::PublicationUpload{
+        canonical_document:request["canonicalDocument"].as_str().ok_or("Missing fixture document")?.into(),
+        publication_hash:request["publicationHash"].as_str().ok_or("Missing fixture digest")?.into(),
+        capability_fingerprint:request["capabilityFingerprint"].as_str().map(str::to_owned),
+        assets:serde_json::from_value(request["assets"].clone()).map_err(|e|e.to_string())?,
+    };
+    hub.retain_legacy_test_fixture(upload)
 }
 
 use serde_json::Value;

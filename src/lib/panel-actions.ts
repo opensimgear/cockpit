@@ -1,9 +1,8 @@
 import { companionPanelReason } from './companion-screen.ts';
-import type { Publication } from '../../packages/companion-designer/src/index.ts';
-import { sendPublication, stableCompanionId, type CompanionSend, type CompanionHostState } from './companions.ts';
+import { sendPublication, stableCompanionId, type CompanionSend, type CompanionHostState, type CompanionPublication } from './companions.ts';
 
 /** Mutable panel identities use immutable transport snapshots internally. */
-export async function synchronizePanel(panel: Publication, previousHashes: string[], send: CompanionSend, selected?: string[]): Promise<CompanionHostState> {
+export async function synchronizePanel(panel: CompanionPublication, previousHashes: string[], send: CompanionSend, selected?: string[]): Promise<CompanionHostState> {
 
   let state = await send('companion_status');
   const hashes = new Set([panel.publicationHash,...previousHashes]);

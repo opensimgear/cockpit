@@ -406,12 +406,16 @@ impl Service {
             .clone()
             .ok_or("Companion publication service is unavailable.")?;
         let p = provider(id)?;
-        let p = Publication::validate(PublicationUpload {
+        let upload = PublicationUpload {
             canonical_document: p.canonical_document,
             publication_hash: p.publication_hash,
             capability_fingerprint: Some(p.capability_fingerprint),
             assets: p.assets,
-        })?;
+        };
+        #[cfg(any(test,feature="legacy-test-fixtures"))]
+        let p=if self.legacy_companion_fixtures.load(Ordering::Acquire){Publication::validate_legacy_test_fixture(upload)}else{Publication::validate(upload)}?;
+        #[cfg(not(any(test,feature="legacy-test-fixtures")))]
+        let p=Publication::validate(upload)?;
         let definition = self.companion_provider()?.definition(id)?;
         if definition.publication_hash != p.publication_hash {
             return Err(

@@ -34,6 +34,7 @@ fn reconstruct(inner: &Inner, reference: &AssignmentRef) -> Result<Assignment, S
         .publications
         .get(&reference.publication_hash)
         .ok_or("The immutable assignment panel is no longer retained.")?;
+    Hub::validate_assignment_target(inner,&reference.companion_id,publication)?;
     Ok(Assignment {
         instance_id: reference.instance_id.clone(),
         companion_id: reference.companion_id.clone(),
@@ -180,6 +181,7 @@ fn publication(inner: &Inner, assignment: &Assignment) -> Result<(), String> {
         .publications
         .get(&assignment.publication_hash)
         .ok_or("The immutable assignment panel is no longer retained.")?;
+    Hub::validate_assignment_target(inner,&assignment.companion_id,publication)?;
     ensure(
         publication.definition(&assignment.instance_id) == assignment.definition,
         "The immutable assignment source descriptor changed.",

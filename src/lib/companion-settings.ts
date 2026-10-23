@@ -1,12 +1,11 @@
-import type { Publication } from '../../packages/companion-designer/src/index.ts';
-import { sendPublication, stableCompanionId, type CompanionSend } from './companions.ts';
+import { sendPublication, stableCompanionId, type CompanionSend, type CompanionPublication } from './companions.ts';
 import { companionPanelReason } from './companion-screen.ts';
 
 export interface CompanionSettingsInput {
   companionId: string;
   name: string;
   panelHash: string;
-  publications: Publication[];
+  publications: CompanionPublication[];
   saveName?: boolean;
   savePanel?: boolean;
 }

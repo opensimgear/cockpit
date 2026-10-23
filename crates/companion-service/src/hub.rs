@@ -645,6 +645,25 @@ impl Hub {
         Ok(())
     }
 
+    fn retain_publication(inner:&mut Inner,p:Publication)->Result<Value,String>{
+        let existing=inner.publications.get(&p.publication_hash).map_or(0,Publication::bytes);
+        ensure(inner.publications.len()<32||existing>0,"Native publication budget exhausted.")?;
+        ensure(inner.publications.values().map(Publication::bytes).sum::<usize>()-existing+p.bytes()<=64*1024*1024,"Native publication bytes exceed 64 MiB.")?;
+        let summary=json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title});
+        inner.publications.insert(p.publication_hash.clone(),p);Ok(summary)
+    }
+    fn validate_assignment_target(inner:&Inner,companion:&str,publication:&Publication)->Result<(),String>{
+        let compiled=serde_json::from_str::<Value>(&publication.canonical_document).map_err(|_|"Invalid retained publication.")?["schemaVersion"]==4;
+        ensure(!compiled||!inner.record.credentials.iter().any(|credential|credential.companion_id==companion&&credential.kind=="esp32"),"Compiled widgets are currently supported by browser companions only.")
+    }
+    /// Explicit lower-level fixture insertion. This never relaxes the publication IPC contract.
+    #[cfg(any(test,feature="legacy-test-fixtures"))]
+    #[doc(hidden)]
+    pub fn retain_legacy_test_fixture(&self,upload:PublicationUpload)->Result<Value,String>{
+        let p=Publication::validate_legacy_test_fixture(upload)?;
+        let mut inner=self.inner.lock().unwrap_or_else(|p|p.into_inner());
+        Self::retain_publication(&mut inner,p)
+    }
     pub fn command(&self, request: &Value) -> Result<Value, String> {
         // Publication verification may hash assets; it runs before acquiring session state.
         let published = if request["command"] == "companion_publish" {
@@ -719,28 +738,7 @@ impl Hub {
             }
             "companion_publish" => {
                 let p = published.unwrap();
-                let existing = inner
-                    .publications
-                    .get(&p.publication_hash)
-                    .map_or(0, Publication::bytes);
-                ensure(
-                    inner.publications.len() < 32 || existing > 0,
-                    "Native publication budget exhausted.",
-                )?;
-                ensure(
-                    inner
-                        .publications
-                        .values()
-                        .map(Publication::bytes)
-                        .sum::<usize>()
-                        - existing
-                        + p.bytes()
-                        <= 64 * 1024 * 1024,
-                    "Native publication bytes exceed 64 MiB.",
-                )?;
-                let summary = json!({"publicationHash":p.publication_hash,"capabilityFingerprint":p.capability_fingerprint,"uiId":p.ui_id,"title":p.title});
-                inner.publications.insert(p.publication_hash.clone(), p);
-                Ok(summary)
+                Self::retain_publication(&mut inner,p)
             }
             "companion_prune" => {
                 let hashes=request["hashes"].as_array().filter(|a|a.len()<=100).ok_or("Invalid panel retention list.")?;
@@ -793,6 +791,7 @@ impl Hub {
                     .publications
                     .get(publication)
                     .ok_or("Publish the assigned panel before assignment.")?;
+                Self::validate_assignment_target(&inner,companion,p)?;
                 let assignment = Assignment {
                     instance_id: instance.into(),
                     companion_id: companion.into(),
@@ -1140,7 +1139,7 @@ impl Hub {
                     exact(
                         frame,
                         &["type", "instanceId"],
-                        &["version", "publicationHash", "takeover", "externalImages"],
+                        &["version", "publicationHash", "takeover", "externalImages", "widgetCapabilities", "haveAssets"],
                     )?;
                     let instance = field(frame, "instanceId")?;
                     let assignment = inner
@@ -1176,14 +1175,25 @@ impl Hub {
                         "Session identity budget exhausted.",
                     )?;
                     let p=inner.publications.get(&assignment.publication_hash).ok_or("Assigned publication is unavailable; republish its immutable revision.")?.clone();
+                    let document:Value=serde_json::from_str(&p.canonical_document).map_err(|_|"Invalid retained publication.")?;
+                    let compiled=document["schemaVersion"]==4;
+                    let cached_assets=if compiled{
+                        ensure(!inner.record.credentials.iter().any(|credential|credential.companion_id==companion&&credential.kind=="esp32"),"Compiled widgets are currently supported by browser companions only.")?;
+                        let capabilities=frame.get("widgetCapabilities").ok_or("This compiled panel requires widget capability negotiation.")?;
+                        crate::publication::compiled::check_capabilities(&p,capabilities)?;
+                        ensure(frame["externalImages"]!=true,"Compiled pixels must use the validated asset closure.")?;
+                        Some(if let Some(have)=frame.get("haveAssets"){crate::publication::compiled::cached_payloads(&p,have)?}else{p.assets.clone()})
+                    }else{
+                        if let Some(capabilities)=frame.get("widgetCapabilities"){crate::publication::compiled::validate_capabilities(capabilities)?;}
+                        ensure(frame.get("haveAssets").is_none(),"Asset cache negotiation requires a compiled panel.")?;
+                        None
+                    };
                     // Bound this exact connection, not another connection's or
                     // an offline cached renderer. No profile grants authority.
-                    let profile=Self::connection_render_profile(&inner,&companion)?;
+                    let profile=if compiled{None}else{Self::connection_render_profile(&inner,&companion)?};
                     if let Some(profile)=profile{
-                        let document=serde_json::from_str(&p.canonical_document).map_err(|_|"Invalid retained publication.")?;
                         if let Some(issue)=crate::render_profile::check_document(&document,&profile)?.first(){return Err(issue.message.clone());}
-                    }else if inner.record.credentials.iter().any(|credential|credential.companion_id==companion&&credential.kind=="esp32"){
-                        let document:Value=serde_json::from_str(&p.canonical_document).map_err(|_|"Invalid retained publication.")?;
+                    }else if !compiled&&inner.record.credentials.iter().any(|credential|credential.companion_id==companion&&credential.kind=="esp32"){
                         ensure(!document["presentation"]["widgets"].as_array().is_some_and(|widgets|widgets.iter().any(|widget|widget["kind"]=="component"))
                             && !document["presentation"]["groups"].as_array().is_some_and(|groups|!groups.is_empty()),
                             "This ESP32 connection has not reported a compatible widget renderer. Update its firmware and reconnect.")?;
@@ -1220,7 +1230,8 @@ impl Hub {
                         },
                     );
                     let mut publication=serde_json::to_value(&p).map_err(|e|e.to_string())?;
-                    if frame["externalImages"]==true{publication["assets"]=json!([]);}
+                    if let Some(assets)=cached_assets{publication["assets"]=json!(assets);}
+                    else if frame["externalImages"]==true{publication["assets"]=json!([]);}
                     return Ok(
                         json!({"ok":true,"type":"session-open","hostId":inner.record.host_id,"companionId":companion,"controllerInstanceId":instance,"clientId":client_id,"sessionId":session_id,"generation":"1","publicationHash":p.publication_hash,"publication":publication}),
                     );

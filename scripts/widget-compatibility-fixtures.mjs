@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {canonical,normalizeToPortableUi,renderCompatibility,validateDesignerDocument} from '../packages/companion-designer/src/index.ts';
 
-const catalog=JSON.parse(await readFile('examples/companion/shared-systems.bundle.json','utf8')).document;
-const complete=JSON.parse(await readFile('examples/companion/shared-systems-complete.bundle.json','utf8')).document;
+const catalog=JSON.parse(await readFile('tests/fixtures/legacy-companion/shared-systems.bundle.json','utf8')).document;
+const complete=JSON.parse(await readFile('tests/fixtures/legacy-companion/shared-systems-complete.bundle.json','utf8')).document;
 const legacy=JSON.parse(JSON.parse(await readFile('apps/companion-esp32/test/live-publication.json','utf8')).canonicalDocument);
 const profiles=JSON.parse(await readFile('apps/companion-esp32/test/render-profiles.json','utf8')).valid;
 function single(index=0,source=catalog){

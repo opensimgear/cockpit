@@ -37,10 +37,10 @@ fn setup() -> (Hub, Publication, String) {
         "../../crates/companion-service/tests/fixtures/c1-flight-publication.json"
     ))
     .unwrap();
-    let publication = Publication::validate(upload.clone()).unwrap();
+    let publication = Publication::validate_legacy_test_fixture(upload.clone()).unwrap();
     let mut request = serde_json::to_value(upload).unwrap();
     request["command"] = json!("companion_publish");
-    hub.command(&request).unwrap();
+    crate::retain_companion_test_fixture(&hub,&request).unwrap();
     assign(&hub, "panel-a", "installation-b", &publication);
     (hub, publication, token)
 }

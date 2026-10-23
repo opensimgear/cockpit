@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { newDocument, createDesignerHistory, applyDesignerCommand as apply, createWidgetCatalog, normalizeToPortableUi, publishDocument, exportBundle, exportWidgetBundle, canonical } from '../packages/companion-designer/src/index.ts';
 
-// Production authoring APIs produce fixtures consumed independently by Rust.
+// Retired authoring APIs produce test-only fixtures consumed independently by Rust.
 function panel(definitions, title, uiId) {
   const rowStep=.96/Math.ceil(definitions.length/4);
   let history = createDesignerHistory(newDocument(title));
@@ -28,7 +28,7 @@ function panel(definitions, title, uiId) {
   return document;
 }
 const catalog=createWidgetCatalog();
-// Keep the established ten-widget example and its archived source identities.
+// Keep historical protocol fixture identities stable within the test harness.
 const document=panel(catalog.slice(0,10),'Shared systems','shared-systems');
 const complete=panel(catalog,'Shared systems complete','shared-systems-complete');
 const history = createDesignerHistory(document);
@@ -38,14 +38,14 @@ const styled = apply(history, { type: 'update-component', id: first.id, definiti
 const behaviorDefinition = structuredClone(styledDefinition); behaviorDefinition.version = 3; behaviorDefinition.interaction.kind = 'toggle';
 const behavior = apply(styled, { type: 'update-component', id: first.id, definition: behaviorDefinition });
 const outputs = [];
-outputs.push([new URL('../examples/companion/builtin-widgets.widgets.json', import.meta.url), await exportWidgetBundle({bundleVersion:1,library:{formatVersion:1,definitions:catalog},manifest:[],assets:[]})+'\n']);
+outputs.push([new URL('../tests/fixtures/legacy-companion/builtin-widgets.widgets.json', import.meta.url), await exportWidgetBundle({bundleVersion:1,library:{formatVersion:1,definitions:catalog},manifest:[],assets:[]})+'\n']);
 for (const [name, doc] of [['base', document], ['styling', styled.present], ['behavior', behavior.present], ['complete',complete]]) {
   const p = await publishDocument(doc, []);
   outputs.push([new URL(`../crates/companion-service/tests/fixtures/widgets-${name}.json`, import.meta.url), JSON.stringify({ canonicalDocument: canonical(p.document), publicationHash: p.publicationHash, capabilityFingerprint: p.capabilityFingerprint, assets: p.assets }, null, 2) + '\n']);
 }
-outputs.push([new URL('../examples/companion/shared-systems.bundle.json', import.meta.url), await exportBundle(document, []) + '\n']);
-outputs.push([new URL('../examples/companion/shared-systems-complete.bundle.json', import.meta.url), await exportBundle(complete, []) + '\n']);
-outputs.push([new URL('../examples/companion/capsule-toggles.widgets.json', import.meta.url), await exportWidgetBundle({bundleVersion:1,library:{formatVersion:1,definitions:catalog.filter(d=>d.id.startsWith('osg-capsule-toggle-'))},manifest:[],assets:[]})+'\n']);
+outputs.push([new URL('../tests/fixtures/legacy-companion/shared-systems.bundle.json', import.meta.url), await exportBundle(document, []) + '\n']);
+outputs.push([new URL('../tests/fixtures/legacy-companion/shared-systems-complete.bundle.json', import.meta.url), await exportBundle(complete, []) + '\n']);
+outputs.push([new URL('../tests/fixtures/legacy-companion/capsule-toggles.widgets.json', import.meta.url), await exportWidgetBundle({bundleVersion:1,library:{formatVersion:1,definitions:catalog.filter(d=>d.id.startsWith('osg-capsule-toggle-'))},manifest:[],assets:[]})+'\n']);
 for (const [url, contents] of outputs) {
   if (process.argv.includes('--check')) {
     if (readFileSync(url, 'utf8').replaceAll('\r\n', '\n') !== contents) throw new Error(`Widget fixture differs: ${fileURLToPath(url)}`);

@@ -1,0 +1,122 @@
+# Generic widget designer
+
+Cockpit stores editable widget source and compiles finished visuals for browser
+companions. The shipped library starts with **Toggle**. Existing fixed widgets,
+saved panels and their endpoint mappings are deliberately reset; pairing, trusted
+certificates, listener settings and unrelated profile data remain separate.
+ESP32 pairing remains paused and compiled widgets cannot be assigned to ESP32.
+That implementation belongs to feature #161 in Backlog.
+
+## Authoring and publishing
+
+Open **Companions → Widgets**. Edit Toggle or choose **New** for a blank design.
+The six workspaces are:
+
+- **Design**: shapes, paths, text, imported images, groups, transforms and typed
+  parameters. Source preview shows editable geometry.
+- **Data**: typed local/input/feedback signals, bounded visual domains and named
+  ports. Controller inputs emit to Cockpit; feedback ports receive simulator data.
+- **Behavior**: named states in independent regions, events, typed guards,
+  explicit priorities, actions, output neutrals and bounded timers.
+- **Motion**: optional baked property/transform tracks between named appearances.
+  Numeric smoothing walks existing sampled frames.
+- **Sound**: optional bounded PCM16 WAV assets and cue policies.
+- **Try**: the current compiled artifact with independent input and feedback
+  stimuli, quality, requested outputs and behavior state inspection.
+
+Compile before Try, export or save. Any source, parameter, size or media-preference
+edit invalidates the result immediately. Cancellation and revision fences discard
+late results. Undo restores source, and still requires compilation. Saved revisions
+are immutable; editing a saved source creates a new revision.
+
+In **Panels**, create a panel and add a source from the palette. Drag, resize or
+enter exact pixel placement, set per-instance parameters, then compile the panel.
+The source preview is labeled. **Try** uses complete compiled widget surfaces;
+its input stays in the local simulator. Select browser companions and **Save**
+to publish and update their assignments. Export includes editable panel/source
+data and its validated compiled result; import requires a fresh target compile.
+
+The Toggle's thumb follows `requested` immediately. `confirmed` and `quality`
+are separate signals; the text below shows simulator confirmation. Host submission
+or local input does not count as game confirmation.
+
+## Contracts and execution
+
+`packages/widget-compiler` owns source format 2 and the off-device compiler.
+`packages/widget-runtime` owns the bounded behavior, raster artifact and panel
+contracts and player. Source is data: executable scripts, HTML, remote asset URLs
+and arbitrary runtime code are rejected.
+
+Panel schema 4 contains semantic endpoints, complete widget placements and
+hash-addressed `osg-raster-widget-1` artifacts. Each artifact contains finished
+16×16 RGB565 little-endian tiles with straight alpha, frame maps, static selectors,
+hit regions, behavior and optional frame sequences/audio. It contains no authoring
+layers, SVG, fonts or drawing commands. A tile is part of a finished appearance.
+The browser copies pixels; it does not draw the authoring scene.
+
+The compiler uses pinned resvg WASM and checked font bytes. Source, parameters,
+behavior, capability profile, compiler and rasterizer identities enter the cache
+contract. Assets and tiles carry SHA-256 hashes. Host and browser independently
+check schemas, exact asset closure, bytes, hashes, selectors, port domains,
+neutral values and resource arithmetic before activation. Saved draft admission
+also compares source and parameter hashes to prevent reusing an earlier result.
+
+The behavior reducer uses injected monotonic time. Each region selects at most
+one transition per event, with explicit priority. Guards and actions use the same
+pre-event snapshot; conflicting writes fail atomically. Feedback freshness includes
+source age and arrival age. Reset cancels timers, suppresses cues and emits declared
+neutral values. Presentation motion never delays or changes emitted controls.
+
+Numeric presentation signals declare finite samples, maximum pixel travel and
+accepted half-sample error. Raw validated values drive guards and thresholds.
+The new linear RPM, radial RPM and three-position fixtures demonstrate the same
+engine without widget-kind branches. They are test fixtures, outside the seed
+catalog. More independent appearance dimensions increase the finite state product;
+the compiler refuses an unbounded or over-budget family.
+
+## Target limits and media fallbacks
+
+Browser capability version 1 advertises the raster codec, dimensions, frames,
+payload bytes, resident budget, motion and supported audio formats. Initial hard
+limits are 2048 pixels per widget dimension, 4096 frames, 2 MiB per asset, 8 MiB
+aggregate binary assets, a 1 MiB panel manifest and the existing 13 MiB transfer
+envelope. Active plus candidate memory is checked against 64 MiB. Resource reports
+include encoded payload and manifest allowances, frame maps, two pixel surfaces,
+decode scratch and bounded concurrent audio decoding/playback; see the compiler
+README for exact arithmetic. Browser allocator overhead and actual rendering
+performance are qualified separately from these normative accounting values.
+
+Motion/audio preferences are compile inputs. Unsupported or disabled media are
+omitted and reported as fallbacks; static visuals remain mandatory. Disabling
+motion snaps to the current appearance while gauges still consume live values.
+The browser also honors reduced motion. Audio requires a real user gesture and
+reports availability separately from capability. Muted, hidden, disconnected or
+locked cues are dropped. Cooldown, stop-on-exit and a four-voice bound prevent
+unbounded playback; unlocking or reconnecting never replays old cues.
+
+The authenticated existing publication transfer carries immutable manifests and
+assets. Warm browsers advertise verified public asset hashes and receive missing
+payloads. The local cache grants no authority and is independently reverified.
+Steady operation sends semantic input/feedback and existing session heartbeats,
+without graphic updates. Blur, hiding, timing gaps, errors or lost authority stop
+the session and require a neutral baseline before resuming.
+
+## Verification
+
+- `pnpm check`: TypeScript, Svelte and generated native source parity corpus.
+- `pnpm widgets:coverage`: behavior/player/compiler/artifact/panel/source-store
+  tests, real WASM goldens and malformed imports, with 71% coverage gates.
+- `pnpm browser:test`: authentication, cache, lifecycle, feedback and compiled
+  pixel/semantic regression tests.
+- `pnpm companion:test`: shared contracts and existing input/session regressions,
+  including the new widget coverage gate.
+- `python scripts/companion-coverage.py`: native independent admission, service,
+  source library and cutover coverage.
+- `pnpm widgets:native:ui`: the actual running dev Cockpit at CDP 9222 and the
+  production browser companion. Records screenshots, exact finished-pixel checks,
+  interaction, optional media, cache and rendering evidence under `.research/`.
+
+Legacy source publication validation is isolated behind an explicit test-fixture
+feature for transport regression fixtures. The public admission and publication
+commands reject legacy schemas in every build, including tests. Normal production
+builds contain the compiled publication path only.

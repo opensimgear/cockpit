@@ -2,15 +2,15 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { exampleBundles, flightButtonBox, axisRacing } from './layouts.mjs';
-import { importBundle, exportBundle, publishDocument, createLibrary, saveDraft, openDraft, compareDesignerPublications } from '../../packages/companion-designer/src/index.ts';
-import { neutralValues, validateFeedbackValues } from '../../packages/companion-contracts/src/index.ts';
-import { createPreviewController } from '../../packages/companion-ui/src/controller.ts';
-import { feedbackPresentation } from '../../packages/companion-ui/src/presentation.ts';
+import { importBundle, exportBundle, publishDocument, createLibrary, saveDraft, openDraft, compareDesignerPublications } from '../../../packages/companion-designer/src/index.ts';
+import { neutralValues, validateFeedbackValues } from '../../../packages/companion-contracts/src/index.ts';
+import { createPreviewController } from '../../../packages/companion-ui/src/controller.ts';
+import { feedbackPresentation } from '../../../packages/companion-ui/src/presentation.ts';
 
 const widget = (document, key) => document.presentation.widgets.find(item => item.id === `${document.ui.id}-${key}-widget`);
 const input = (document, key) => `${document.ui.id}-${key}`;
 
-test('checked-in user imports exactly reproduce deterministic generators', async () => {
+test('retired transport fixtures exactly reproduce deterministic generators', async () => {
   const first = await exampleBundles(), second = await exampleBundles();
   assert.deepEqual(first, second);
   for (const [name, serialized] of first) {

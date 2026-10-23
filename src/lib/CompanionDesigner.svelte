@@ -177,7 +177,7 @@
     refreshingWidgets=true;
     const before=widgetBundle;
     try { const saved=(await gatewayRequest({command:'widget_library_get'})).widgetLibrary;
-      if (saved) {const merged=await mergeWidgetBundles(before,saved);if(!disposed && widgetBundle===before && !widgetEditorDefinition)widgetBundle=merged;}
+      if (saved?.bundleVersion===1) {const merged=await mergeWidgetBundles(before,saved);if(!disposed && widgetBundle===before && !widgetEditorDefinition)widgetBundle=merged;}
     } catch(e) { if(!disposed) error=`Cannot refresh widget library: ${String(e)}`; }
     finally { refreshingWidgets=false; }
   }
@@ -313,7 +313,7 @@
   }
   async function importWidgetFile(file?: File) {
     if (!file) return;
-    await operation(async () => { if (!store || file.size > DESIGNER_LIMITS.bundleBytes) throw new Error('Widget bundle exceeds its import budget or storage is not ready.'); const incoming = await importWidgetBundle(await file.text()); const merged = (await gatewayRequest({command:'widget_library_merge',bundle:incoming})).widgetLibrary!; const saved = await store.saveWidgets(merged); widgetBundle = saved.widgets!; message = 'Widget library imported. Existing panels keep their pinned versions.'; });
+    await operation(async () => { if (!store || file.size > DESIGNER_LIMITS.bundleBytes) throw new Error('Widget bundle exceeds its import budget or storage is not ready.'); const incoming = await importWidgetBundle(await file.text()); const merged = (await gatewayRequest({command:'widget_library_merge',bundle:incoming})).widgetLibrary! as WidgetLibraryBundle; const saved = await store.saveWidgets(merged); widgetBundle = saved.widgets!; message = 'Widget library imported. Existing panels keep their pinned versions.'; });
   }
   async function exportWidgets() {
     await operation(async () => { const data = await exportWidgetBundle(widgetBundle), url = URL.createObjectURL(new Blob([data], { type: 'application/json' })); const link = globalThis.document.createElement('a'); link.href = url; link.download = 'opensimgear-widgets.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
@@ -515,7 +515,7 @@
       store = new CompanionLibraryStore(indexedDbStorage()); const snapshot = await store.load();
       if (!alive) return; library = snapshot.library; publications = snapshot.publications;
       const localWidgets=snapshot.widgets ? {...snapshot.widgets,library:{...snapshot.widgets.library,definitions:includeBuiltinWidgets(snapshot.widgets.library.definitions)}} : widgetBundle;
-      widgetBundle=(await gatewayRequest({command:'widget_library_merge',bundle:localWidgets})).widgetLibrary!;
+      widgetBundle=(await gatewayRequest({command:'widget_library_merge',bundle:localWidgets})).widgetLibrary! as WidgetLibraryBundle;
       if(!alive)return;storageReady = true; resolveStorageLoad();
       await refreshCompanions();
       await restoreCompanionPanels();

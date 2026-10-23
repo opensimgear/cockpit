@@ -4,7 +4,7 @@ import { importBundle, resolveWidgetLayers } from '../packages/companion-designe
 import { componentDefinition, componentSamples, widgetLayerText, widgetIndicatorActive, widgetGaugeFraction } from '../packages/companion-ui/src/widget-presentation.ts';
 import { widgetTextLayout } from '../packages/companion-ui/src/widget-fonts.ts';
 
-const { document } = await importBundle(await readFile('examples/companion/shared-systems.bundle.json', 'utf8'));
+const { document } = await importBundle(await readFile('tests/fixtures/legacy-companion/shared-systems.bundle.json', 'utf8'));
 const states = ['normal', 'pressed', 'active', 'warning', 'disabled', 'unknown', 'stale', 'disconnected'];
 export const referenceViews = [];
 const frames = states.map(state => {

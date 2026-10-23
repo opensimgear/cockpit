@@ -1106,6 +1106,7 @@ dependencies = [
  "image",
  "keyring",
  "mdns-sd",
+ "osg-companion-service",
  "qrcode",
  "rcgen",
  "ring",
