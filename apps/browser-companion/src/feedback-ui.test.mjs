@@ -42,11 +42,26 @@ test('the actual browser renders image widgets without unsupported-widget errors
  assert.equal(Object.keys(h.handlers.controls.values).length,panel.ui.controls.length);
 });
 
+test('browser capsule artwork keeps a dimmed thumb without feedback and while disconnected',()=>{
+ for(const definition of designer.createWidgetCatalog().filter(d=>d.id.startsWith('osg-capsule-toggle-'))){
+  const document=designer.applyDesignerCommand(designer.createDesignerHistory(designer.newDocument()),{type:'add-component',definition}).present;
+  const unknown=harness('',document,{},{ok:true,type:'ack'}).html;
+  assert.ok(unknown.includes('data-layer-id="off-thumb"'),definition.id);
+  assert.ok(!unknown.includes('data-layer-id="on-thumb"'),definition.id);
+  const offline=harness("stop('Disconnected test')",document,{},{ok:true,type:'ack'}).html;
+  assert.ok(offline.includes('data-layer-id="off-thumb"'),definition.id);
+  assert.ok(!offline.includes('data-layer-id="on-thumb"'),definition.id);
+ }
+});
+
 test('the actual browser App renders every shared catalog family through the production composition renderer',async()=>{
  const{document}=JSON.parse(await readFile(new URL('../../../examples/companion/shared-systems-complete.bundle.json',import.meta.url),'utf8'));
  const h=harness('controller.setDocument(panel)',document,{},{ok:true,type:'ack'});
- assert.equal((h.html.match(/class="widget-artwork\b/g)??[]).length,12);
- for(const definition of document.presentation.definitions)assert.ok(h.html.includes(`data-definition-id="${definition.id}"`),definition.id);
+ const catalogIds=designer.createWidgetCatalog().map(definition=>definition.id).sort();
+ const components=document.presentation.widgets.filter(widget=>widget.kind==='component'&&widget.pageId===document.ui.pages[0].id);
+ assert.deepEqual(components.map(widget=>widget.config.definitionId).sort(),catalogIds,'the fixture must exercise every shared catalog family');
+ assert.deepEqual([...h.html.matchAll(/data-definition-id="([^"]+)"/g)].map(match=>match[1]).sort(),catalogIds,'every catalog family must reach the production renderer');
+ assert.equal((h.html.match(/class="widget-artwork\b/g)??[]).length,components.length);
  assert.ok(h.html.includes('data-layer-id="ring"'));assert.ok(h.html.includes('data-layer-id="value"'));
  assert.equal(Object.keys(h.handlers.controls.values).length,document.ui.controls.length);
 });

@@ -81,6 +81,6 @@ export function createWidgetCatalog(): WidgetDefinition[] {
 
 /** Saved designs retain their exact versions; new built-ins remain discoverable after updates. */
 export function includeBuiltinWidgets(definitions: WidgetDefinition[]): WidgetDefinition[] {
-  const retained = new Set(definitions.map(definition => definition.id));
-  return [...definitions, ...createWidgetCatalog().filter(definition => !retained.has(definition.id))];
+  return [...definitions, ...createWidgetCatalog().filter(builtin =>
+    !definitions.some(definition => definition.id === builtin.id && definition.version >= builtin.version))];
 }

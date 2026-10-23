@@ -15,11 +15,11 @@ export function createCapsuleToggle(vertical: boolean): WidgetDefinition {
     const y = vertical ? on ? 80 : 152 : 84;
     const side = on ? 'on' : 'off';
     for (const [part, diameter, opacity] of [['halo', 62, .035], ['glow', 52, .12], ['thumb', 44, .9], ['highlight', 34, .2]] as const) {
-      layers.push({ id: `${side}-${part}`, label: `${on ? 'On' : 'Off'} ${part}`, kind: 'ellipse', bounds: bounds(x - diameter / 2, y - diameter / 2, diameter, diameter), fill: { property: part === 'highlight' ? 'highlight' : 'accent' }, opacity, visible: !on, states: { normal: { visible: !on }, active: { visible: on }, pressed: { visible: false }, warning: { visible: false }, stale: { visible: false }, unknown: { visible: false }, disabled: { visible: false }, disconnected: { visible: false } } });
+      layers.push({ id: `${side}-${part}`, label: `${on ? 'On' : 'Off'} ${part}`, kind: 'ellipse', bounds: bounds(x - diameter / 2, y - diameter / 2, diameter, diameter), fill: { property: part === 'highlight' ? 'highlight' : 'accent' }, opacity, visible: !on, states: { normal: { visible: !on }, active: { visible: on }, pressed: { visible: !on, opacity: opacity * .7 }, warning: { visible: !on, opacity: opacity * .6 }, stale: { visible: !on, opacity: opacity * .4 }, unknown: { visible: !on, opacity: opacity * .4 }, disabled: { visible: !on, opacity: opacity * .4 }, disconnected: { visible: !on, opacity: opacity * .4 } } });
     }
   }
   return {
-    formatVersion: 1, id: `osg-capsule-toggle-${vertical ? 'vertical' : 'horizontal'}`, version: 1,
+    formatVersion: 1, id: `osg-capsule-toggle-${vertical ? 'vertical' : 'horizontal'}`, version: 2,
     title: `Capsule toggle · ${vertical ? 'Vertical' : 'Horizontal'}`, size: { width, height },
     properties: [
       { name: 'label', label: 'Title', type: 'text', default: vertical ? 'PWR' : 'GSAFE' },

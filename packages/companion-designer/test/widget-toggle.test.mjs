@@ -13,7 +13,12 @@ for(const vertical of [false,true])test(`${vertical?'vertical':'horizontal'} cap
   const a=off.find(l=>l.id==='off-thumb').bounds,b=on.find(l=>l.id==='on-thumb').bounds;
   assert.equal(a.width*definition.size.width,a.height*definition.size.height);
   assert.ok(vertical?a.y>b.y:a.x<b.x);
-  for(const state of ['pressed','warning','stale','unknown','disabled','disconnected'])assert.ok(resolveWidgetLayers(definition,{},state).filter(l=>l.id.endsWith('-thumb')).every(l=>l.visible===false),state);
+  for(const state of ['pressed','warning','stale','unknown','disabled','disconnected']){
+    const layers=resolveWidgetLayers(definition,{},state);
+    assert.equal(layers.find(l=>l.id==='off-thumb').visible,true,state);
+    assert.equal(layers.find(l=>l.id==='on-thumb').visible,false,state);
+    assert.ok(layers.find(l=>l.id==='off-thumb').opacity<off.find(l=>l.id==='off-thumb').opacity,state);
+  }
   const sample={status:'fresh',value:true,provenance:'game-confirmed',sourceKind:'simulator',sourceAgeMs:0,receivedAtMs:100};
   const context={connected:true,enabled:true,pressed:false,now:100,samples:{active:sample}};
   assert.equal(resolveWidgetState(definition,context),'active');
@@ -30,6 +35,18 @@ test('older saved libraries gain both variants without replacing custom or pinne
   assert.equal(includeBuiltinWidgets(updated).length,14);
   const custom=structuredClone(updated.at(-1));custom.version=4;custom.title='Custom vertical';
   assert.deepEqual(includeBuiltinWidgets([custom]).filter(d=>d.id===custom.id),[custom]);
+});
+
+test('saved capsule libraries expose the fixed revision while retaining pinned artwork',()=>{
+  const saved=[createCapsuleToggle(false),createCapsuleToggle(true)];
+  for(const definition of saved)definition.version=1;
+  const before=structuredClone(saved),updated=includeBuiltinWidgets(saved);
+  for(const definition of saved){
+    assert.deepEqual(updated.find(d=>d.id===definition.id&&d.version===1),definition);
+    assert.ok(updated.some(d=>d.id===definition.id&&d.version===2));
+  }
+  assert.deepEqual(saved,before);
+  assert.deepEqual(includeBuiltinWidgets(updated),updated);
 });
 
 test('both capsule variants publish and round-trip as editable portable widget definitions',async()=>{

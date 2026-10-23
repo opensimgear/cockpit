@@ -530,7 +530,7 @@
           ],
           "config": {
             "definitionId": "osg-capsule-toggle-horizontal",
-            "definitionVersion": 1,
+            "definitionVersion": 2,
             "properties": {}
           }
         },
@@ -553,7 +553,7 @@
           ],
           "config": {
             "definitionId": "osg-capsule-toggle-vertical",
-            "definitionVersion": 1,
+            "definitionVersion": 2,
             "properties": {}
           }
         }
@@ -2262,7 +2262,7 @@
         {
           "formatVersion": 1,
           "id": "osg-capsule-toggle-horizontal",
-          "version": 1,
+          "version": 2,
           "title": "Capsule toggle · Horizontal",
           "size": {
             "width": 200,
@@ -2460,22 +2460,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.0245
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.021
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 }
               }
             },
@@ -2502,22 +2508,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08399999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.072
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 }
               }
             },
@@ -2544,22 +2556,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.63
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.54
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 }
               }
             },
@@ -2586,22 +2604,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.13999999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.12
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 }
               }
             },
@@ -2628,22 +2652,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.0245
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.021
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 }
               }
             },
@@ -2670,22 +2700,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08399999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.072
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 }
               }
             },
@@ -2712,22 +2748,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.63
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.54
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 }
               }
             },
@@ -2754,22 +2796,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.13999999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.12
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 }
               }
             }
@@ -2778,7 +2826,7 @@
         {
           "formatVersion": 1,
           "id": "osg-capsule-toggle-vertical",
-          "version": 1,
+          "version": 2,
           "title": "Capsule toggle · Vertical",
           "size": {
             "width": 104,
@@ -2976,22 +3024,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.0245
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.021
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.014000000000000002
                 }
               }
             },
@@ -3018,22 +3072,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08399999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.072
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.048
                 }
               }
             },
@@ -3060,22 +3120,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.63
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.54
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.36000000000000004
                 }
               }
             },
@@ -3102,22 +3168,28 @@
                   "visible": false
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.13999999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.12
                 },
                 "stale": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": true,
+                  "opacity": 0.08000000000000002
                 }
               }
             },
@@ -3144,22 +3216,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.0245
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.021
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.014000000000000002
                 }
               }
             },
@@ -3186,22 +3264,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08399999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.072
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.048
                 }
               }
             },
@@ -3228,22 +3312,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.63
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.54
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.36000000000000004
                 }
               }
             },
@@ -3270,22 +3360,28 @@
                   "visible": true
                 },
                 "pressed": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.13999999999999999
                 },
                 "warning": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.12
                 },
                 "stale": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 },
                 "unknown": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 },
                 "disabled": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 },
                 "disconnected": {
-                  "visible": false
+                  "visible": false,
+                  "opacity": 0.08000000000000002
                 }
               }
             }
