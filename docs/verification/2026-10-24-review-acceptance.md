@@ -61,10 +61,21 @@ remains independent. The user also captured physical Right Arrow as HID 79 with
 no profile active, then observed it revert to HID 44. The delayed native UI test
 reproduced that defect before the fix: parent refreshes reset an equal-data draft.
 The editor now synchronizes only when authored endpoint content changes. The
-regression passes against the running Cockpit; physical retest is pending.
+regression passes against the running Cockpit. The user confirmed the physical
+retest: Right Arrow remains HID 79, left/right Ctrl remain HID 224/228, and
+main Enter passes with no active profile. Numpad Enter was unavailable on the
+user’s keyboard and was not marked passed.
 
-Physical-keyboard overlap, higher-integrity/session transitions, game-observed
-response, optional-driver-free deployment and installed-release checks are not
-established here. Keep their review gates open until observed. The historical
+In Assetto Corsa Rally, the user confirmed one E press changed HOME to RACING
+with no continued movement. A direct profile binding from the right VKB joystick
+Button 1 through a rising edge to a 120 ms Q tap changed RACING to HOME once;
+the user confirmed success. Native acknowledgements show press/release, then
+empty held/possible-held sets and complete Stop cleanup with no owners or runs.
+The Q check uses no companion or live script. A script-based setup was rejected
+by the existing native qualification gate and was not counted as a pass.
+
+Physical-keyboard overlap, higher-integrity/session transitions, the remaining
+game focus/deactivation checks, optional-driver-free deployment and installed-
+release checks are not established here. Keep their review gates open until observed. The historical
 debug-only production-gate assumption is superseded by current Windows code;
 these results do not imply the entire original release matrix passed.
