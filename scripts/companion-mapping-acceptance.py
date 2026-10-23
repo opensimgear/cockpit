@@ -24,6 +24,14 @@ spec.loader.exec_module(mapping)
 FRAME_BYTES = 16 * 1024
 TRANSFER_BYTES = 13 * 1024 * 1024
 PROTOCOL = "opensimgear-companion-v1"
+WIDGET_CAPABILITIES = json.loads((ROOT/'scripts/fixtures/compiled-widget-capabilities.json').read_text())
+
+
+def open_request(instance, publication):
+    request = dict(type='open', instanceId=instance, publicationHash=publication['publicationHash'])
+    if json.loads(publication['canonicalDocument'])['schemaVersion'] == 4:
+        request['widgetCapabilities'] = WIDGET_CAPABILITIES
+    return request
 
 
 def encoded_frame(value, opcode=1):
@@ -38,11 +46,13 @@ def encoded_frame(value, opcode=1):
 class Socket:
     def __init__(self, pairing):
         address = urlsplit(pairing["endpoint"])
-        assert address.scheme == "wss" and address.hostname == "127.0.0.1" and address.path == "/companion" and not address.query
+        assert address.scheme == "wss" and address.hostname and address.path == "/companion" and not address.query
         # Exact CA arrives over isolated private operator IPC; this simulated peer
         # is not evidence for the native client's separate out-of-band SPKI check.
         certificate = ssl.DER_cert_to_PEM_cert(base64.b64decode(pairing["caCertificate"], validate=True))
         context = ssl.create_default_context(cadata=certificate)
+        # Connect to the endpoint returned by native operator IPC. A running
+        # Cockpit may bind its LAN address rather than the loopback interface.
         self.socket = context.wrap_socket(socket.create_connection((address.hostname, address.port), timeout=3), server_hostname=address.hostname)
         self.buffer = bytearray()
         key = base64.b64encode(os.urandom(16)).decode()
@@ -155,7 +165,7 @@ class Peer:
 
     def _open_locked(self, instance, publication):
         self.baseline_session = None
-        result=self.socket.request(dict(type='open',instanceId=instance,publicationHash=publication['publicationHash']))
+        result=self.socket.request(open_request(instance,publication))
         assert result['ok'],result
         self.opened=result;self.sequence=self.heartbeat=0
         controls=json.loads(publication['canonicalDocument'])['ui']['controls']
@@ -358,8 +368,8 @@ def exact_readings(service,owner,model,values):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--service',type=Path,required=True);parser.add_argument('--output',type=Path);args=parser.parse_args()
-    flight=json.loads((ROOT/'crates/companion-service/tests/fixtures/c1-flight-publication.json').read_text())
-    racing=json.loads((ROOT/'scripts/fixtures/companion-racing-publication.json').read_text())
+    flight=json.loads((ROOT/'scripts/fixtures/compiled-flight-publication.json').read_text())
+    racing=json.loads((ROOT/'scripts/fixtures/compiled-racing-publication.json').read_text())
     # Installation identity must differ from the portable racing panel ID.
     configurations=[('flight-left',flight),('flight-right',flight),('racing-peer',racing)]
     evidence=dict(qualification=False,virtualReportsSent=False,driverLayoutsChanged=False,nativeClientPinQualification=False,physicalGameQualification=False,peers='three simulated peers on real loopback pinned-CA WSS',checks=[])
@@ -380,7 +390,7 @@ def main():
             owner=mapping.apply(service,saved)
             for peer,(_,publication) in zip(peers,configurations):peer.input(sample(publication))
             for instance,publication in configurations:wait_for(lambda:exact_readings(service,owner,models[instance],expected(publication)),f'Actual native typed values for {instance} did not arrive')
-            evidence['checks'].append('one real applied profile receives three isolated WSS sources and exact native button/axis/hat values through observed contract/hash pins')
+            evidence['checks'].append('one real applied profile receives three isolated compiled-panel WSS sources and exact native button/axis values through observed contract/hash pins')
             peers[0].end()
             wait_for(lambda:reading(service,owner,models['flight-left']['nodes']['button'])['status']!='known','Closed optional peer retained a Known graph input')
             assert exact_readings(service,owner,models['flight-right'],expected(flight))

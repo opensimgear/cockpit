@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "id": "browser-raster-v1",
+  "rasterFormats": [
+    "rgb565le-a8"
+  ],
+  "maxWidth": 2048,
+  "maxHeight": 2048,
+  "maxFrames": 4096,
+  "maxAssetBytes": 2097152,
+  "maxTotalBytes": 8388608,
+  "maxResidentBytes": 67108864,
+  "motion": true,
+  "audio": true,
+  "audioFormats": [
+    "wav-pcm16"
+  ]
+}

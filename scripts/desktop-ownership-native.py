@@ -92,7 +92,7 @@ class TransportPeer(companion.Peer):
 def replacement(publication):
     # Preserve the RFC8785 canonical number spellings in the fixture. Replacing
     # one string value leaves its canonical key order and other bytes intact.
-    old = '"title":"Flight instruments"'
+    old = '"title":"flight"'
     canonical = publication["canonicalDocument"]
     assert canonical.count(old) == 1
     canonical = canonical.replace(old, '"title":"Ownership replacement"')
@@ -244,7 +244,7 @@ def reopen_with_baseline_proof(peer, instance, publication):
     peer.paused.set()
     with peer.lock:
         assert peer.opened is None and peer.failure is None
-        opened = peer.socket.request(dict(type="open", instanceId=instance, publicationHash=publication["publicationHash"]))
+        opened = peer.socket.request(companion.open_request(instance, publication))
         assert opened["ok"], opened
         peer.instance, peer.publication, peer.opened = instance, publication, opened
         peer.sequence = peer.heartbeat = 0
@@ -282,7 +282,7 @@ def main():
     # Require the current operator-selected Manual state for this isolated test.
     assert before["session"]["selectionMode"] == "manual", "This acceptance preserves a Manual selection without authorizing automatic activation"
     settings_before = args.desktop_settings_file.read_bytes() if args.desktop_settings_file.exists() else None
-    original = json.loads((ROOT / "crates/companion-service/tests/fixtures/c1-flight-publication.json").read_text())
+    original = json.loads((ROOT / "scripts/fixtures/compiled-flight-publication.json").read_text())
     changed = replacement(original)
     instances = ["desktop-owner-" + key + "-" + uuid.uuid4().hex[:10] for key in ("a", "b")]
     configurations = [(instance, original) for instance in instances]
@@ -323,13 +323,15 @@ def main():
         assert mouse_edges(args.receiver) == [], "Receiver contains prior marked mouse messages"
         evidence["receiverPositioning"] = dict(initial=position_receiver(service, args.receiver, identity))
         captured = mapping.state(service, "profile_desktop_capture_application", "desktop")
-        application = captured["application"]
-        assert application["pid"] == identity["pid"] and os.path.normcase(application["path"]) == os.path.normcase(identity["executable"])
+        reference = captured['capturedApplicationReference']
+        assert captured['recentApplication'] == identity and reference
         # WebView JSON numbers cannot carry all FILETIME bits. The native file
         # preserves the exact u64 creation epoch which the host will consume.
-        captured_file = json.loads(args.desktop_settings_file.read_text())["application"]
+        captured_file = json.loads(args.desktop_settings_file.read_text())["applications"][reference]
         assert captured_file["pid"] == identity["pid"] and int(captured_file["epoch"]) == int(identity["created"]), captured_file
         mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
+        document['desktopOutputs'][0]['scope'] = dict(kind='application', applicationReference=reference)
+        saved = mapping.save(service, document, assignments, expected=saved['revision'])
         service.profiles("profile_stop")
         apply_attempted = True
         owner = mapping.apply(service, saved)

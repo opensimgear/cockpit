@@ -38,7 +38,13 @@ class FeedbackState:
         self.identity = {key: opened[key] for key in ['clientId', 'sessionId', 'generation', 'controllerInstanceId', 'publicationHash']}
         document = json.loads(publication['canonicalDocument'])
         self.outputs = {row['id']: row for row in document['ui']['feedbackWidgets']}
-        self.configs = {ref: widget.get('config', {}) for widget in document['presentation']['widgets'] for ref in widget['feedbackIds']}
+        if document['schemaVersion'] == 4:
+            artifacts = {entry['hash']: entry['artifact'] for entry in document['presentation']['artifacts']}
+            self.configs = {binding['feedbackId']: dict(min=port.get('min'), max=port.get('max'), unit=port.get('unit', 'state'))
+                for widget in document['presentation']['widgets'] for binding in widget['outputBindings']
+                for port in artifacts[widget['artifactHash']]['outputs'] if port['id'] == binding['portId']}
+        else:
+            self.configs = {ref: widget.get('config', {}) for widget in document['presentation']['widgets'] for ref in widget['feedbackIds']}
         self.bindings, self.values = {}, {}
         self.sequence = self.generation = -1
         self.modes = set()
@@ -63,7 +69,7 @@ class FeedbackState:
         kind = self.outputs[output]['kind']
         if kind == 'gauge':
             config = self.configs[output]
-            assert value['unit'] == (config['unit'] if config['unit'].strip() else 'ratio') and value.get('range') == {'min': config['min'], 'max': config['max']}
+            assert value['unit'] == (config['unit'] if config['unit'].strip() else 'ratio') and value.get('range') == {'min': config['min'], 'max': config['max']}, (value, config)
         else:
             assert 'range' not in value
         if 'value' in value:
@@ -159,7 +165,7 @@ class FeedbackPeer(c4.Peer):
 
     def _open_locked(self,instance,publication):
         self.baseline_session = None
-        result=self.socket.request(dict(type='open',instanceId=instance,publicationHash=publication['publicationHash']))
+        result=self.socket.request(c4.open_request(instance,publication))
         assert result['ok'],result
         self.opened=result;self.publication=publication;self.feedback=FeedbackState(result,publication)
         self.sequence=self.heartbeat=0
@@ -193,6 +199,8 @@ class FeedbackPeer(c4.Peer):
 
 def bounded_text_publication(original):
     document = json.loads(original['canonicalDocument'])
+    if document['schemaVersion'] == 4:
+        return json.loads((ROOT/'scripts/fixtures/compiled-bounded-feedback-publication.json').read_text())
     page = document['ui']['pages'][0]['id']
     widgets = [widget for widget in document['presentation']['widgets'] if widget['controlIds']]
     outputs = []
@@ -242,7 +250,8 @@ def feedback_profile(service,configurations,large=False):
             if kind=='boolean' and not large:
                 source=dict(nodeId=resource['id'],portId='button')
             else:
-                value=False if kind=='boolean' else ('L'*256 if large else 'Profile local') if kind=='text' else 42
+                compiled=json.loads(publication['canonicalDocument'])['schemaVersion']==4
+                value=False if kind=='boolean' else ('L'*(64 if compiled else 256) if large else 'local' if compiled else 'Profile local') if kind=='text' else 42
                 key=json.dumps([contract,value],sort_keys=True)
                 if key not in constants:
                     node=f'constant{index}-{len(constants)}';constants[key]=node
@@ -264,7 +273,7 @@ def local_fresh(value):return lambda sample:sample.get('value')==value and sampl
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--service',type=Path,required=True);parser.add_argument('--output',type=Path);args=parser.parse_args()
-    publication=json.loads((ROOT/'crates/companion-service/tests/fixtures/c1-flight-publication.json').read_text())
+    publication=json.loads((ROOT/'scripts/fixtures/compiled-flight-publication.json').read_text())
     evidence=dict(qualification=False,physicalGameQualification=False,mobileQualification=False,virtualReportsSent=False,driverLayoutsChanged=False,peers='two simulated peers over real loopback pinned-CA WSS',feedbackEvidence='actual native reducer local/host state; no simulator confirmation claim',checks=[])
     with tempfile.TemporaryDirectory(prefix='osg-profile-feedback-') as temporary:
         service=c4.mapping.Service(args.service.resolve(),Path(temporary).resolve());peers=[]
@@ -279,8 +288,8 @@ def main():
             saved=c4.mapping.save(service,document,assignments);owner=c4.mapping.apply(service,saved)
             for peer in peers:
                 peer.input([dict(controlId='flight-input-0',value=True)])
-                wait_sample(peer,0,local_fresh(True));wait_sample(peer,1,local_fresh('Profile local'));wait_sample(peer,2,local_fresh(42))
-                assert peer.snapshot()['flight-channel-2']['unit']=='%' and peer.snapshot()['flight-channel-2']['range']==dict(min=0,max=100)
+                wait_sample(peer,0,local_fresh(True));wait_sample(peer,1,local_fresh('local'));wait_sample(peer,2,local_fresh(42))
+                assert peer.snapshot()['flight-channel-2']['unit']=='state' and peer.snapshot()['flight-channel-2']['range']==dict(min=0,max=100)
             evidence['checks'].append('actual applied profile routes exact native input and typed local text/numeric feedback with original widget units/ranges over real WSS')
             before=peers[1].snapshot()
             with peers[1].lock:
@@ -309,7 +318,7 @@ def main():
             c4.wait_native_companions(service,large_configurations,peers)
             large,local,_=feedback_profile(service,large_configurations,large=True)
             large=c4.mapping.save(service,large,local);large_owner=c4.mapping.apply(service,large)
-            c4.wait_for(lambda:len(peers[0].snapshot())==64 and all(local_fresh('L'*256)(sample) for sample in peers[0].snapshot().values()),'64-channel applied feedback did not arrive')
+            c4.wait_for(lambda:len(peers[0].snapshot())==64 and all(local_fresh('L'*64)(sample) for sample in peers[0].snapshot().values()),'64-channel applied feedback did not arrive')
             assert c4.FRAME_BYTES<peers[0].max_feedback_bytes<=FEEDBACK_BYTES
             wait_sample(peers[1],2,local_fresh(42))
             evidence['checks'].append('64 real profile feedback ports exceed16KiB logically and use bounded chunked WSS without affecting the second peer')

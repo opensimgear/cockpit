@@ -1,0 +1,335 @@
+import type { WidgetSource } from '../types.ts';
+/** The sole shipped seed: a capsule with state-owned intent and independent confirmation. */
+export function createToggleSource():WidgetSource {
+  return {
+  "id": "toggle",
+  "title": "Toggle",
+  "size": { "width": 240, "height": 144 },
+  "parameters": [
+    { "id": "label", "label": "Title", "type": "text", "default": "TOGGLE" },
+    { "id": "accent", "label": "Thumb", "type": "color", "default": "#bde7ec" },
+    { "id": "background", "label": "Track", "type": "color", "default": "#252d30" },
+    { "id": "foreground", "label": "Text", "type": "color", "default": "#d2edf0" }
+  ],
+  "behavior": {
+    "version": 1,
+    "signals": [
+      { "id": "requested", "source": "local", "type": "boolean", "initial": false },
+      {
+        "id": "confirmed",
+        "source": "feedback",
+        "type": "boolean",
+        "initial": false,
+        "freshnessMs": 1000,
+        "qualitySignal": "quality",
+        "requireGameConfirmed": true
+      },
+      {
+        "id": "quality",
+        "source": "input",
+        "type": "enum",
+        "initial": "unknown",
+        "values": [
+          "fresh",
+          "unknown",
+          "stale",
+          "disconnected"
+        ]
+      },
+      { "id": "pressed", "source": "local", "type": "boolean", "initial": false },
+      { "id": "available", "source": "input", "type": "boolean", "initial": true }
+    ],
+    "events": [
+      { "id": "activate" },
+      { "id": "press" },
+      { "id": "release" },
+      { "id": "cancel" },
+      { "id": "feedback", "updates": [ "confirmed" ] },
+      { "id": "availability", "updates": [ "available" ] }
+    ],
+    "outputs": [
+      { "id": "toggle", "type": "boolean", "neutral": false }
+    ],
+    "regions": [
+      {
+        "id": "interaction",
+        "initial": "ready",
+        "states": [
+          "ready"
+        ],
+        "transitions": [
+          {
+            "id": "press",
+            "from": "ready",
+            "event": "press",
+            "guard": { "ref": "available" },
+            "actions": [
+              {
+                "type": "set",
+                "signal": "pressed",
+                "value": { "literal": true }
+              }
+            ]
+          },
+          {
+            "id": "release",
+            "from": "ready",
+            "event": "release",
+            "actions": [
+              {
+                "type": "set",
+                "signal": "pressed",
+                "value": { "literal": false }
+              }
+            ]
+          },
+          {
+            "id": "cancel",
+            "from": "ready",
+            "event": "cancel",
+            "actions": [
+              {
+                "type": "set",
+                "signal": "pressed",
+                "value": { "literal": false }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "requested-state",
+        "initial": "off",
+        "states": [
+          "off",
+          "on"
+        ],
+        "transitions": [
+          {
+            "id": "turn-on",
+            "from": "off",
+            "to": "on",
+            "event": "activate",
+            "guard": { "ref": "available" },
+            "actions": [
+              { "type": "cue", "cue": "click" }
+            ]
+          },
+          {
+            "id": "turn-off",
+            "from": "on",
+            "to": "off",
+            "event": "activate",
+            "guard": { "ref": "available" },
+            "actions": [
+              { "type": "cue", "cue": "click" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "visualDomains": [],
+  "inputs": [
+    { "id": "toggle", "label": "Toggle", "type": "boolean", "signal": "requested" }
+  ],
+  "outputs": [
+    { "id": "confirmation", "label": "Game confirmation", "type": "boolean", "signal": "confirmed" }
+  ],
+  "hitRegions": [
+    {
+      "id": "surface",
+      "x": 0,
+      "y": 0,
+      "width": 240,
+      "height": 144,
+      "events": { "press": "press", "release": "release", "activate": "activate", "cancel": "cancel" }
+    }
+  ],
+  "scene": [
+    {
+      "id": "title",
+      "kind": "text",
+      "x": 120,
+      "y": 27,
+      "text": { "ref": "label" },
+      "font": "sans",
+      "fontSize": 28,
+      "align": "center",
+      "fill": { "ref": "foreground" }
+    },
+    {
+      "id": "body",
+      "kind": "group",
+      "opacity": {
+        "op": "if",
+        "condition": { "ref": "available" },
+        "then": { "literal": 1 },
+        "else": { "literal": 0.4 }
+      },
+      "children": [
+        {
+          "id": "track-halo",
+          "kind": "rectangle",
+          "x": 23,
+          "y": 47,
+          "width": 194,
+          "height": 66,
+          "radius": 33,
+          "fill": "none",
+          "stroke": { "ref": "accent" },
+          "strokeWidth": 6,
+          "opacity": 0.08
+        },
+        {
+          "id": "track",
+          "kind": "rectangle",
+          "x": 24,
+          "y": 48,
+          "width": 192,
+          "height": 64,
+          "radius": 32,
+          "fill": { "ref": "background" },
+          "stroke": { "ref": "accent" },
+          "strokeWidth": {
+            "op": "if",
+            "condition": { "ref": "pressed" },
+            "then": { "literal": 3 },
+            "else": { "literal": 2 }
+          }
+        },
+        {
+          "id": "thumb-halo",
+          "kind": "ellipse",
+          "x": 25,
+          "y": 49,
+          "width": 62,
+          "height": 62,
+          "fill": { "ref": "accent" },
+          "opacity": 0.12
+        },
+        {
+          "id": "thumb",
+          "kind": "ellipse",
+          "x": 31,
+          "y": 55,
+          "width": 50,
+          "height": 50,
+          "fill": { "ref": "accent" }
+        },
+        {
+          "id": "thumb-highlight",
+          "kind": "ellipse",
+          "x": 38,
+          "y": 62,
+          "width": 36,
+          "height": 36,
+          "fill": "#ffffff",
+          "opacity": 0.12
+        }
+      ]
+    },
+    {
+      "id": "confirmation",
+      "kind": "text",
+      "x": 120,
+      "y": 135,
+      "text": {
+        "op": "if",
+        "condition": {
+          "op": "eq",
+          "left": { "ref": "quality" },
+          "right": { "literal": "fresh" }
+        },
+        "then": {
+          "op": "if",
+          "condition": { "ref": "confirmed" },
+          "then": { "literal": "Game: ON" },
+          "else": { "literal": "Game: OFF" }
+        },
+        "else": {
+          "op": "if",
+          "condition": {
+            "op": "eq",
+            "left": { "ref": "quality" },
+            "right": { "literal": "stale" }
+          },
+          "then": { "literal": "Game: stale" },
+          "else": {
+            "op": "if",
+            "condition": {
+              "op": "eq",
+              "left": { "ref": "quality" },
+              "right": { "literal": "disconnected" }
+            },
+            "then": { "literal": "Game: disconnected" },
+            "else": { "literal": "Game: unknown" }
+          }
+        }
+      },
+      "font": "mono",
+      "fontSize": 11,
+      "align": "center",
+      "fill": { "ref": "foreground" }
+    }
+  ],
+  "motions": [],
+  "sounds": [],
+  "assets": [],
+  "design": {
+    "nodes": [],
+    "owners": [
+      {
+        "region": "requested-state",
+        "signal": "requested",
+        "values": { "off": false, "on": true },
+        "port": "toggle"
+      }
+    ],
+    "appearances": [
+      {
+        "id": "off",
+        "regions": { "requested-state": "off" },
+        "layers": {}
+      },
+      {
+        "id": "on",
+        "regions": { "requested-state": "on" },
+        "layers": {
+          "thumb-halo": { "x": 151 },
+          "thumb": { "x": 157 },
+          "thumb-highlight": { "x": 164 }
+        }
+      }
+    ],
+    "effects": [
+      {
+        "region": "requested-state",
+        "transition": "turn-on",
+        "durationMs": 160,
+        "fps": 30,
+        "properties": [
+          { "node": "thumb", "property": "x" },
+          { "node": "thumb-halo", "property": "x" },
+          { "node": "thumb-highlight", "property": "x" }
+        ],
+        "easing": "ease-in-out",
+        "interruption": "reverse"
+      },
+      {
+        "region": "requested-state",
+        "transition": "turn-off",
+        "durationMs": 160,
+        "fps": 30,
+        "properties": [
+          { "node": "thumb", "property": "x" },
+          { "node": "thumb-halo", "property": "x" },
+          { "node": "thumb-highlight", "property": "x" }
+        ],
+        "easing": "ease-in-out",
+        "interruption": "reverse"
+      }
+    ]
+  }
+};
+}

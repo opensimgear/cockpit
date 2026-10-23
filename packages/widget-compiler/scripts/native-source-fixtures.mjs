@@ -46,4 +46,4 @@ const invalids=[
 ];
 for(const [name,change] of invalids){const source=createToggleSource();change(source);add(name,source);if(cases.at(-1).valid)throw new Error('Expected malformed fixture: '+name);}
 const output=JSON.stringify({formatVersion:1,cases},null,2)+'\n',path=new URL('../test/fixtures/native-sources.json',import.meta.url);
-if(process.argv.includes('--check')){if(readFileSync(path,'utf8')!==output)throw new Error('Native source fixtures are stale');}else{mkdirSync(new URL('../test/fixtures/',import.meta.url),{recursive:true});writeFileSync(path,output);}
+if(process.argv.includes('--check')){if(readFileSync(path,'utf8').replaceAll('\r\n','\n')!==output)throw new Error('Native source fixtures are stale');}else{mkdirSync(new URL('../test/fixtures/',import.meta.url),{recursive:true});writeFileSync(path,output);}

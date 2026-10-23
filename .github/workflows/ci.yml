@@ -67,6 +67,7 @@ jobs:
           pnpm companion:check
           pnpm companion:test
           node scripts/widget-publication-fixtures.mjs --check
+          node scripts/compiled-acceptance-fixtures.mjs --check
           node scripts/widget-lvgl-fixtures.mjs --check
           node scripts/widget-source-fixtures.mjs --check
           node scripts/widget-state-fixtures.mjs --check

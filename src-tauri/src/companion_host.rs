@@ -254,7 +254,11 @@ impl Runtime {
             (hub, path.clone())
         } else if create {
             (Hub::new(format!("host-{}", uuid::Uuid::new_v4()), self.provider.clone()),
-                std::env::temp_dir().join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
+                // macOS exposes its temporary directory through /var, which is
+                // a system symlink. Resolve that base before enforcing the
+                // cutover's no-linked-storage policy inside our own directory.
+                std::env::temp_dir().canonicalize().map_err(|error|error.to_string())?
+                    .join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
         let cutover=crate::widget_cutover::panels(&hub,&directory)?;
         let restored=crate::companion_panels::restore_or_quarantine(&hub, &directory)?;
