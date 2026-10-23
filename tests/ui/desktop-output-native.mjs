@@ -28,21 +28,30 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
   const name=`Native desktop authoring ${Date.now()}`;
   const createdNames=new Set([name,`${name} imported`,`${name} recording`]);
   try{
+    const discardPending=page.getByRole('alertdialog').getByRole('button',{name:'Discard and continue',exact:true});
+    if(await discardPending.isVisible().catch(()=>false))await discardPending.click();
     const openExport=page.locator('.library-dialog').getByRole('button',{name:'Close',exact:true});if(await openExport.count())await openExport.click();
     const nav=page.getByRole('button',{name:'Profiles',exact:true});
     if(await nav.count())await nav.click();
+    if(await discardPending.isVisible().catch(()=>false))await discardPending.click();
     const back=page.getByRole('button',{name:/Back to Profiles/});
     if(await back.count()){
       await back.click();const discard=page.getByRole('alertdialog').getByRole('button',{name:'Discard and continue',exact:true});if(await discard.count())await discard.click();
     }
     await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await page.getByRole('button',{name:'Edit profile name',exact:true}).click();
     await page.getByLabel('Profile name',{exact:true}).fill(name);
-    await page.getByLabel('Keyboard and mouse preset',{exact:true}).selectOption('key-hold');
-    await page.getByRole('button',{name:'Add keyboard and mouse',exact:true}).click();
+    await page.getByLabel('Profile name',{exact:true}).press('Enter');
+    const addDesktop=page.getByRole('button',{name:'Add keyboard and mouse',exact:true});
+    if(!await addDesktop.isVisible())await page.locator('details[aria-label="Output components"] > summary').click();
+    await addDesktop.click();
+    await page.locator('.resource-block.desktop .block-heading').click();
     const inspector=page.getByRole('region',{name:'Keyboard and mouse action editor'});
     await expect(inspector).toBeVisible();
     await inspector.getByRole('button',{name:'Capture a physical key',exact:true}).click();
     const picker=inspector.getByLabel('Physical key capture',{exact:true});
+    await expect(picker).toBeFocused();
+    await page.waitForTimeout(3500);
     await expect(picker).toBeFocused();
     const captureStop=(await native({command:'profile_status'})).profiles.profileSession;
     assert.equal(captureStop.state,'stopped','Native Stop must finish before the picker receives focus');
@@ -52,13 +61,17 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     await page.keyboard.press('ArrowRight');
     await expect(inspector.getByLabel('Physical key',{exact:true})).toHaveValue('79');
     await expect(picker).toHaveCount(0);
+    // Native inventory/status polling replaces the parent's equal graph data.
+    // Captured edits must remain available until Update desktop actions.
+    await page.waitForTimeout(6500);
+    await expect(inspector.getByLabel('Physical key',{exact:true})).toHaveValue('79');
     const captured=(await native({command:'profile_status'})).profiles.profileSession;
     assert.equal(captured.state,'stopped','Capturing a key must leave output stopped');
     assert.equal(captured.owner,null);
     assert.equal(captured.appliedSnapshot,null);
     await inspector.getByRole('button',{name:'Update desktop actions',exact:true}).click();
     await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByText('Profile saved.',{exact:true}).last()).toBeVisible();
+    await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByText(/^Profile saved\./).last()).toBeVisible();
     await page.getByRole('button',{name:/Back to Profiles/}).click();
     await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click();
     await page.getByRole('button',{name:'Export saved profile',exact:true}).click();
@@ -93,8 +106,10 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await page.getByRole('button',{name:`Edit ${recordingName}`,exact:true}).click();
     await page.getByRole('button',{name:'Debug',exact:true}).click();
-    await expect(page.getByRole('heading',{name:'Profile debug',exact:true})).toBeVisible();
-    await page.getByRole('button',{name:'Inspect draft preflight',exact:true}).click();
+    await expect(page.getByRole('region',{name:'Profile debug',exact:true})).toBeVisible();
+    await page.getByRole('tab',{name:'Profile inspection',exact:true}).click();
+    await page.getByRole('combobox',{name:'Debug profile',exact:true}).selectOption(recordingSaved.id);
+    await page.getByRole('button',{name:/^(Inspect draft preflight|Refresh preflight)$/}).click();
     const recordingUi=page.getByRole('region',{name:'Keyboard and mouse recording preview',exact:true});
     await expect(recordingUi).toBeVisible();
     await recordingUi.getByRole('button',{name:'Load captured source controls',exact:true}).click();

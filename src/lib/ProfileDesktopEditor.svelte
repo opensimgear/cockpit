@@ -7,7 +7,10 @@
   let{output,change}:{output:DeepReadonly<ProfileDesktopOutput>;change:(output:ProfileDesktopOutput)=>void}=$props();
   let draft=$state.raw<ProfileDesktopOutput>(JSON.parse(JSON.stringify(untrack(()=>output)))),error=$state(''),capture=$state(''),captureBusy=$state(false),captureEpoch=0;
   let picker=$state<HTMLInputElement|null>(null);
-  $effect(()=>{draft=JSON.parse(JSON.stringify(output));captureEpoch++;capture='';captureBusy=false;error='';});
+  // Inventory polling can replace equal parent data. Keep local edits and the
+  // active picker until the authored endpoint actually changes.
+  const authoredOutput=$derived(JSON.stringify(output));
+  $effect(()=>{draft=JSON.parse(authoredOutput);captureEpoch++;capture='';captureBusy=false;error='';});
   onDestroy(()=>{captureEpoch++;});
   const valid=$derived(draft.actions.every(definition=>desktopActionValid(definition.action))&&draft.actions.length>0);
   const kinds:DesktopAction['kind'][]=['key-hold','key-tap','chord','mouse-hold','mouse-click','wheel','pointer','repeat'];
