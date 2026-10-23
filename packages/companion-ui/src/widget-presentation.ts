@@ -17,14 +17,24 @@ export function componentSamples(document: DesignerDocument, widget: DesignerWid
     return [port.name, identity && (sample.status === 'unknown' || sample.status === 'disconnected' || typed && unit && range) ? sample : undefined];
   }));
 }
-export function componentPresentation(document: DesignerDocument, widget: DesignerWidget, samples: FeedbackSamples, now: number, options: { pressed?: boolean; enabled?: boolean; connected?: boolean } = {}) {
+export function componentPresentation(document: DesignerDocument, widget: DesignerWidget, samples: FeedbackSamples, now: number, options: { pressed?: boolean; enabled?: boolean; connected?: boolean; requested?: boolean } = {}) {
   const definition = componentDefinition(document, widget);
   if (!definition || widget.kind !== 'component') return undefined;
   const outputs = componentSamples(document, widget, definition, samples);
   const enabledSample = definition.state.enabledPort ? currentWidgetSample(outputs[definition.state.enabledPort], now) : undefined;
   const interactionEnabled = !definition.state.enabledPort || enabledSample?.value === true;
   const state = resolveWidgetState(definition, { connected: options.connected ?? true, enabled: options.enabled ?? true, pressed: options.pressed ?? false, now, samples: outputs });
-  return { definition, state, outputs, interactionEnabled, properties: resolveWidgetProperties(definition, widget.config.properties), layers: resolveWidgetLayers(definition, widget.config.properties, state) };
+  const requestedToggle = definition.interaction.kind === 'toggle' && options.requested !== undefined;
+  const artworkState = requestedToggle ? options.requested ? 'active' : 'normal' : state;
+  const confirmationSample = definition.state.confirmedPort ? outputs[definition.state.confirmedPort] : undefined;
+  const current = currentWidgetSample(confirmationSample, now);
+  const confirmed = current?.provenance === 'game-confirmed' && current.sourceKind === 'simulator' && typeof current.value === 'boolean';
+  const confirmation = !requestedToggle ? undefined
+    : options.connected === false || confirmationSample?.status === 'disconnected' ? 'Game: disconnected'
+    : confirmed ? `Game: ${current.value ? 'ON' : 'OFF'}`
+    : confirmationSample?.status === 'stale' || confirmationSample?.status === 'fresh' && !current ? 'Game: stale'
+    : 'Game: unknown';
+  return { definition, state, outputs, interactionEnabled, confirmation, properties: resolveWidgetProperties(definition, widget.config.properties), layers: resolveWidgetLayers(definition, widget.config.properties, artworkState) };
 }
 export function widgetLayerText(layer: WidgetLayer, samples: Record<string, WidgetSample | undefined>, now: number): string {
   if (layer.kind !== 'text') return '';

@@ -58,12 +58,13 @@ test('shared artwork clips include complete shape strokes while preserving text 
  }
 });
 
-test('browser capsule artwork keeps a dimmed thumb without feedback and while disconnected',()=>{
+test('browser capsule artwork keeps the requested OFF thumb and labels unconfirmed feedback separately',()=>{
  for(const definition of designer.createWidgetCatalog().filter(d=>d.id.startsWith('osg-capsule-toggle-'))){
   const document=designer.applyDesignerCommand(designer.createDesignerHistory(designer.newDocument()),{type:'add-component',definition}).present;
   const unknown=harness('',document,{},{ok:true,type:'ack'}).html;
   assert.ok(unknown.includes('data-layer-id="off-thumb"'),definition.id);
   assert.ok(!unknown.includes('data-layer-id="on-thumb"'),definition.id);
+  assert.ok(unknown.includes('Game: unknown'),definition.id);
   const offline=harness("stop('Disconnected test')",document,{},{ok:true,type:'ack'}).html;
   assert.ok(offline.includes('data-layer-id="off-thumb"'),definition.id);
   assert.ok(!offline.includes('data-layer-id="on-thumb"'),definition.id);

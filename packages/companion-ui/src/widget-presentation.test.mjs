@@ -30,6 +30,35 @@ test('capsule toggles latch their requested input while artwork follows confirme
   }
 });
 
+test('requested toggle artwork follows input immediately and simulator confirmation remains independent',()=>{
+ for(const index of [12,13]){
+  const {document,widget}=panel(index),engine=createPreviewController(document,{clock:()=>100});engine.arm();
+  const view=(samples={},now=100,extra={})=>componentPresentation(document,widget,samples,now,{requested:engine.snapshot().values[widget.controlIds[0]],...extra});
+  assert.equal(view().confirmation,'Game: unknown');
+  assert.ok(view().layers.find(l=>l.id==='off-thumb').visible);
+  engine.begin(1,widget.id);
+  assert.ok(view({},100,{pressed:true}).layers.find(l=>l.id==='on-thumb').visible);
+  engine.release(1);
+  assert.ok(view().layers.find(l=>l.id==='on-thumb').visible);
+  const off=feedback(document,widget,false),on=feedback(document,widget,true);
+  assert.equal(view(off).confirmation,'Game: OFF');
+  assert.ok(view(off).layers.find(l=>l.id==='on-thumb').visible);
+  assert.equal(view(on).confirmation,'Game: ON');
+  assert.equal(view(on,1100).confirmation,'Game: stale');
+  assert.equal(view(feedback(document,widget,true,{provenance:'requested',sourceKind:'host'})).confirmation,'Game: unknown');
+  assert.equal(view(feedback(document,widget,true,{status:'stale'})).confirmation,'Game: stale');
+  assert.equal(view(feedback(document,widget,true,{status:'disconnected'})).confirmation,'Game: disconnected');
+  assert.equal(view({},100,{connected:false}).confirmation,'Game: disconnected');
+  engine.begin(2,widget.id);engine.release(2);
+  assert.ok(view(on).layers.find(l=>l.id==='off-thumb').visible);
+  assert.equal(view(on).confirmation,'Game: ON');
+  engine.begin(3,widget.id);engine.release(3);engine.disarm();
+  assert.ok(view().layers.find(l=>l.id==='off-thumb').visible);
+ }
+ const {document,widget}=panel(0);
+ assert.equal(componentPresentation(document,widget,{},100,{requested:true}).confirmation,undefined);
+});
+
 test('one shared composition projection preserves identities and confirmed-state semantics', () => {
   const { document, widget, definition } = panel();
   const samples = feedback(document, widget);

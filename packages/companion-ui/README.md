@@ -22,4 +22,6 @@ Pointer cancellation/capture loss releases that pointer's controls without distu
 
 Feedback samples use the C0 typed `FeedbackValue` plus local `receivedAtMs`, indexed by channel ID. The canvas shows the supplied provenance/source and age, labels aging/stale/unavailable samples, and does not manufacture game confirmation from a local preview value. The preview has no real simulator feedback source.
 
+In panel preview and browser/mobile operation, reusable toggle artwork follows the controller's requested Boolean immediately. A separate `Game: ON/OFF` label reports fresh simulator confirmation; absent, expired, or disconnected feedback is labeled explicitly. Confirmation never changes the requested position, and requested/host feedback never counts as simulator confirmation. Disarming resets the requested artwork with the controller's neutral baseline. Widget-design editing still previews the authored artwork states independently.
+
 Run `pnpm --filter @opensimgear/companion-ui check` and `coverage`. Tests cover behavior, ordering, timer gaps, per-pointer ownership, nonzero fallback, latched state, lifecycle resets, feedback typing/freshness and raster URL boundaries. Native/mobile touch, suspend/resume, remote delivery and latency remain separate qualification work.

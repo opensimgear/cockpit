@@ -292,7 +292,7 @@
       {@const display = feedbackPresentation(widget, document.ui, feedback, now)}
       {@const size = dimensions(widget)}
       {@const bounds = shownBounds(widget)}
-      {@const composition = componentPresentation(document, widget, feedback, now, { pressed: previewState.pressedWidgetIds?.includes(widget.id), enabled: mode === 'edit' || widget.controlIds.length === 0 || previewState.armed })}
+      {@const composition = componentPresentation(document, widget, feedback, now, { pressed: previewState.pressedWidgetIds?.includes(widget.id), enabled: mode === 'edit' || widget.controlIds.length === 0 || previewState.armed, requested: mode === 'preview' ? Boolean(previewState.values[widget.controlIds[0]]) : undefined })}
       <section class="widget" class:component-widget={widget.kind === 'component'} class:image-widget={widget.kind === 'image'} class:selected={selectedIds.includes(widget.id)} class:output={widget.feedbackIds.length > 0} class:feedback-unavailable={widget.kind !== 'component' && widget.feedbackIds.length > 0 && !display.available} class:touch-warning={mode === 'edit' && size.small} class:outside-viewport={mode === 'edit' && !widgetFits(bounds)}
         data-widget-id={widget.id} data-definition-id={composition?.definition.id} data-definition-version={composition?.definition.version}
         style:left={`${bounds.x * 100}%`} style:top={`${bounds.y * 100}%`} style:width={`${bounds.width * 100}%`} style:height={`${bounds.height * 100}%`}
@@ -301,6 +301,7 @@
         <div class="widget-body" inert={mode === 'edit' || (widget.controlIds.length > 0 && !previewState.armed)}>
           {#if widget.kind === 'component' && composition}
             <WidgetView definition={composition.definition} layers={composition.layers} state={composition.state} samples={composition.outputs} {assets} {now} />
+            {#if composition.confirmation}<small class="toggle-confirmation" aria-live="polite">{composition.confirmation}</small>{/if}
             {#if composition.definition.interaction.kind !== 'none'}
               <button class="component-hit" aria-label={String(composition.properties.label ?? widget.label)} aria-pressed={composition.definition.interaction.kind === 'toggle' ? Boolean(previewState.values[widget.controlIds[0]]) : undefined}
                 disabled={!composition.interactionEnabled || widget.controlIds.length > 0 && !previewState.armed}
@@ -359,4 +360,5 @@
   .component-widget .widget-body[inert]{opacity:1}
   .widget .component-hit{position:absolute;padding:0;background:transparent!important;border:0!important;border-radius:0;touch-action:none}
   .widget .component-hit:disabled{cursor:default}
+  .toggle-confirmation{position:absolute;bottom:2px;left:0;width:100%;text-align:center;font-size:10px;line-height:1.2;color:#c3d0d8;pointer-events:none;z-index:1}
 </style>
