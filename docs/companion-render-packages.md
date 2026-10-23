@@ -1,5 +1,14 @@
 # Downloadable companion rendering — current feature plan
 
+> Next-generation direction (23 October 2026): the
+> [generic widget designer implementation plan](generic-widget-designer-plan.md)
+> replaces the widget-authoring/runtime direction below with a capsule-only pilot
+> and compiled raster visuals. Existing widgets need not be preserved. The
+> source-layer renderer described here remains the current implementation until
+> that plan's cutover; it is not the intended deployment contract for the new
+> designer. Existing transport, identity, lifecycle and hardware evidence remain
+> relevant.
+
 [Feature #69](https://github.com/opensimgear/cockpit/issues/69), reconciled on
 22 October 2026 with merged [#139](https://github.com/opensimgear/cockpit/pull/139)
 and shared-widget feature [#112](https://github.com/opensimgear/cockpit/issues/112).
