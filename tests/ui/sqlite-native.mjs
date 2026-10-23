@@ -20,7 +20,8 @@ test('native SQLite service is healthy through real Cockpit IPC', {
     await expect(page.getByRole('navigation', {name:'Main navigation'})).toBeVisible();
     const status = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('persistence_status'));
     assert.equal(status.healthy, true);
-    assert.equal(status.schemaVersion, 2);
+    assert.equal(status.schemaVersion, 3);
+    assert.equal(status.sqliteVersion, '3.53.2');
     assert.equal(status.journalMode, 'delete');
     assert.equal(status.synchronous, 'full');
     assert.equal(status.busyTimeoutMs, 250);
@@ -59,6 +60,8 @@ test('profile UI saves into SQLite and survives a complete native process restar
       await expect.poll(async()=>(await native({command:'profile_get',id:created.id})).profiles.document.name).toBe(name);
       const saved=(await native({command:'profile_get',id:created.id})).profiles.document;
       assert.equal(saved.revision,2);
+      const indexed=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('persistence_status'));
+      assert.equal(indexed.profileCount,(await native({command:'profile_list'})).profiles.profiles.length);
       await mkdir(resolve('.research/sqlite'),{recursive:true});
       await writeFile(evidencePath,JSON.stringify({processId:status.processId,document:saved},null,2));
     } else {

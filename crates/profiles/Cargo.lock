@@ -247,6 +247,7 @@ dependencies = [
 name = "osg-persistence"
 version = "0.1.0"
 dependencies = [
+ "libsqlite3-sys",
  "rusqlite",
  "serde",
  "serde_json",

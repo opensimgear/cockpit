@@ -45,6 +45,13 @@ An importer runs the same typed validator as its live owner. An import receipt
 stores origin, source, checksum, format and the bounded original snapshot in
 the same commit. Protected source snapshots are sealed ciphertext only.
 
+Schema 3 also maintains `profile_documents`, `profile_local_assignments`,
+`profile_game_references` and `profile_companion_references`. SQLite triggers
+maintain these ID/revision/reference indexes in the document transaction,
+including import and upgrade backfill. Assignment owners have foreign keys;
+missing external device/game/publication targets stay readable soft references.
+The validated portable library remains the source of document bytes and hashes.
+
 | Source / durable writer | SQLite domain/key | Validator and owner | Verification |
 | --- | --- | --- | --- |
 | `profiles-v2/library.json`; `profiles::store::Store` | `profiles/library` | `Library::validate`, document and local-port contracts; S3 | Default/UUID/hash/revision/assignment roundtrip, CRUD and stale saves |

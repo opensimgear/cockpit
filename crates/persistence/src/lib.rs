@@ -15,11 +15,14 @@ mod migration;
 pub use migration::{MigrationCapture, MigrationStatus, StagedSource};
 mod namespace;
 pub use namespace::register_namespace;
+mod profile_index;
+pub use profile_index::{ProfileIndex, ProfileReference};
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 pub const APPLICATION_ID: i64 = 0x4f534743;
 pub const MAX_PAYLOAD: usize = 128 * 1024 * 1024;
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(250);
+pub const SQLITE_RUNTIME_VERSION:&str="3.53.2";
 
 #[derive(Clone, Debug)]
 pub struct Database {
@@ -140,6 +143,9 @@ impl Database {
     }
 
     fn connection(&self) -> Result<Connection, String> {
+        if rusqlite::version()!=SQLITE_RUNTIME_VERSION {
+            return Err("Unsupported SQLite runtime. Use the pinned bundled Cockpit build.".into());
+        }
         check_path(&self.path, true)?;
         for suffix in ["-journal", "-wal", "-shm"] {
             let mut sidecar = self.path.as_os_str().to_os_string();
@@ -216,6 +222,10 @@ impl Database {
             }
             if version < 2 {
                 tx.execute_batch(include_str!("migration.sql"))
+                    .map_err(failure)?;
+            }
+            if version < 3 {
+                tx.execute_batch(include_str!("profile_indexes.sql"))
                     .map_err(failure)?;
             }
             tx.pragma_update(None, "application_id", APPLICATION_ID)
@@ -479,10 +489,12 @@ pub fn snapshot(path: &Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
 mod tests;
 
 #[cfg(test)]
-pub(crate) fn test_directory()->tempfile::TempDir {
-    let parent=std::env::temp_dir();
+pub(crate) fn test_directory() -> tempfile::TempDir {
+    let parent = std::env::temp_dir();
     #[cfg(unix)]
-    let parent=parent.canonicalize().expect("canonical OS temporary directory");
+    let parent = parent
+        .canonicalize()
+        .expect("canonical OS temporary directory");
     tempfile::tempdir_in(parent).expect("isolated persistence fixture")
 }
 
