@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PageHeader from './PageHeader.svelte';
   import Notification from './Notification.svelte';
   import Icon from './Icon.svelte';
   import { gameCleanupLabel, type GamesState } from './games';
@@ -20,7 +21,7 @@
   const contextLabel = $derived(!native ? 'Context status unavailable' : !native.owner ? 'No applied game context' : !native.owner.gameId ? 'Hardware-only profile' : selectedContext ? gameContextLabel(selectedContext) : 'Waiting for native game context');
 </script>
 
-<div class="page-heading"><div><div class="eyebrow">YOUR COCKPIT AT A GLANCE</div><h1>Overview</h1><p>Your detected games, active profile and connected hardware.</p></div><span class="quiet-tag">Native status</span></div>
+<PageHeader title="Overview" eyebrow="YOUR COCKPIT AT A GLANCE" subtitle="Your detected games, active profile and connected hardware.">{#snippet actions()}<span class="quiet-tag">Native status</span>{/snippet}</PageHeader>
 {#if games?.error || games?.cleanup?.error || inventoryError}<Notification message={String(games?.cleanup?.error || games?.error || inventoryError)} kind="error" />{/if}
 {#if profileState.statusError}<Notification message={profileState.statusError} kind="error" />{/if}
 {#if games?.cleanup && games.cleanup.phase !== 'idle'}<div class="cleanup-note"><strong>Previous owned setup · {gameCleanupLabel(games.cleanup)}</strong><p>This recovery record is separate from the applied profile.</p><button class="text-button" onclick={openGames}>Review cleanup <Icon name="chevron" size={13} /></button></div>{/if}

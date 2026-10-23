@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PageHeader from './PageHeader.svelte';
   import DesktopPreferences from './DesktopPreferences.svelte';
   import ProgressNotificationSettings from './ProgressNotificationSettings.svelte';
   import OutputSettings from './OutputSettings.svelte';
@@ -33,7 +34,7 @@
   }
 </script>
 
-<div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Settings</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
+<PageHeader title="Settings" eyebrow="MAKE IT YOURS" subtitle="A familiar cockpit, arranged around the way you work."/>
 
 <div class="settings-tabs" role="tablist" aria-label="Settings sections">
   {#each tabs as tab, index (tab.id)}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PageHeader from './PageHeader.svelte';
   import { onMount, tick, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
   import { systemDeviceIcon } from './system-device-icons';
@@ -50,7 +51,6 @@
     const target = mode === 'topology' ? '.topology-viewport' : `[data-component-id="${CSS.escape(selectedId)}"]`;
     inventoryElement?.querySelector<HTMLElement>(target)?.focus();
   }
-  function focusDetails(node: HTMLButtonElement) { node.focus(); }
   async function refresh(quiet = false) {
     if (!controller || busy || (quiet && refreshTask)) return;
     if (!quiet) busy = true;
@@ -129,7 +129,7 @@
 <section aria-label="System devices">
 {#if error}<Notification message={error} kind="error" />{/if}
 <div class="system-inventory" bind:this={inventoryElement} hidden={showingDetails}>
-<div class="page-heading inventory-heading"><div><div class="eyebrow">YOUR CONNECTED SYSTEM</div><h1>Devices</h1><p>Every known component, its current state, and how it connects.</p></div><button class="secondary-button cleanup-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}>Cleanup ({eligible.length})</button></div>
+<PageHeader title="Devices" eyebrow="YOUR CONNECTED SYSTEM" subtitle="Every known component, its current state, and how it connects.">{#snippet actions()}<button class="secondary-button cleanup-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}><Icon name="trash" size={14}/>Cleanup ({eligible.length})</button>{/snippet}</PageHeader>
 <div class="system-toolbar">
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
@@ -154,12 +154,12 @@
 </div>
 {#if selected && showingDetails}
   {@const companionId = selected.targets.find(target => target.kind === 'companion')?.id}
-  <div class="details-toolbar"><button class="text-button" use:focusDetails onclick={backToDevices}><Icon name="back" size={16} />Back to Devices</button></div>
   <section class="component-details" aria-label="Component details">
-    <div class="page-heading detail-heading">
-      <div class="detail-title"><span class="detail-icon" class:disconnected={selected.presence !== 'connected'}><Icon name={systemDeviceIcon(selected)} size={26} /></span><div><div class="eyebrow">DEVICE DETAILS</div><h1>{selected.name}</h1><p>{systemTypeLabels[selected.type]}{selected.role ? ` · ${selected.role}` : ''}</p></div></div>
-      <span class="connection-badge"><span class="status-dot" class:offline={selected.presence !== 'connected'}></span>{presenceLabels[selected.presence]}</span>
-    </div>
+    <PageHeader title={selected.name} eyebrow="DEVICE DETAILS" subtitle={`${systemTypeLabels[selected.type]}${selected.role ? ` · ${selected.role}` : ''}`} onback={backToDevices} backLabel="Back to Devices" focusBack>
+      {#snippet leading()}<span class="detail-icon" class:disconnected={selected.presence !== 'connected'}><Icon name={systemDeviceIcon(selected)} size={26} /></span>{/snippet}
+      {#snippet actions()}<span class="connection-badge"><span class="status-dot" class:offline={selected.presence !== 'connected'}></span>{presenceLabels[selected.presence]}</span>
+    {/snippet}
+    </PageHeader>
     <div class="component-actions">
       {#each selected.targets.filter(t => t.kind === 'module') as t}<button class="primary-button" onclick={() => openModule(t.gatewayId!, t.id)}>Configure device</button>{/each}
       {#if selected.type === 'companion' && companionId}<button class="secondary-button" onclick={() => openCompanions(companionId)}>Manage companion</button>{/if}
@@ -238,8 +238,8 @@
   .cleanup-spinner {display:inline-block;width:14px;height:14px;margin-right:8px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:cleanup-spin .8s linear infinite;vertical-align:middle}
   @keyframes cleanup-spin {to {transform:rotate(360deg)}}
   .system-inventory[hidden] {display:none}
-  .inventory-heading {align-items:center}.inventory-heading > div {min-width:0}.cleanup-button {flex-shrink:0}
-  .details-toolbar {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+  .cleanup-button {flex-shrink:0}
+
   .system-toolbar,.component-actions { display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px; }
   .mode-switch {display:flex;flex-shrink:0;height:38px;margin-left:auto;border:1px solid var(--line);border-radius:6px;overflow:hidden}
   .type-counts {display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--soft);margin-bottom:18px}
@@ -258,14 +258,14 @@
   .system-card.offline:hover {background:var(--surface);border-color:var(--muted)}
   .system-card.chosen {border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}.system-card:focus-visible {outline-offset:3px}
   .component-details { display: grid; gap: 20px; min-width: 0; }
-  .component-details > *, .detail-title > div { min-width: 0; }
-  .detail-heading { margin-bottom: 0; }
-  .detail-title { display: flex; align-items: center; gap: 16px; min-width: 0; }
-  .detail-title h1 { overflow-wrap: anywhere; }
-  .detail-title .eyebrow { margin-bottom: 8px; }
+  .component-details > * { min-width: 0; }
+
+
+
+
   .detail-icon { display: grid; place-items: center; flex-shrink: 0; width: 52px; height: 52px; border: 1px solid var(--line); border-radius: 10px; color: var(--accent); background: var(--accent-bg); }
   .detail-icon.disconnected { color: var(--muted); background: transparent; border-color: transparent; }
-  .detail-heading .connection-badge { flex-shrink: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+
   .component-details > .component-actions { margin: 0; gap: 10px; }
   .detail-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
   .detail-summary > .panel { min-width: 0; }
@@ -302,5 +302,5 @@
   @media(max-width:700px){.cleanup-dialog {width:calc(100vw - 32px)}.cleanup-heading {padding:20px}.cleanup-body {padding:0 20px 20px}.cleanup-actions {padding:20px}}
   @media(max-width:1000px){.detail-summary {grid-template-columns:minmax(0,1fr)}}
   @media(max-width:700px){.system-list {gap:12px}.system-card {padding:16px;min-height:172px}}
-  @media(max-width:520px){.detail-heading {flex-wrap:wrap;gap:14px}.detail-title {gap:10px}.detail-icon {width:40px;height:40px}.detail-body {padding:17px 15px}.connection-list li {padding:17px 15px}.detail-metadata > div {grid-template-columns:1fr;gap:3px}.identity-details > summary {padding:17px 15px}}
+  @media(max-width:520px){.detail-icon {width:40px;height:40px}.detail-body {padding:17px 15px}.connection-list li {padding:17px 15px}.detail-metadata > div {grid-template-columns:1fr;gap:3px}.identity-details > summary {padding:17px 15px}}
 </style>
