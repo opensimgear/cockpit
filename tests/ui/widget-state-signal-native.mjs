@@ -8,7 +8,7 @@ import {createCompiledPanel} from '../../packages/widget-runtime/src/panel.ts';
 import {sendPublication} from '../../src/lib/companions.ts';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 
-test('running Cockpit: plain source persistence, appearances, graph wiring, layout, compiled Try, save and browser delivery',{timeout:240000},async()=>{
+test('running Cockpit: plain source persistence, appearances, graph wiring, layout, compiled Preview, save and browser delivery',{timeout:240000},async()=>{
   const endpoint=process.env.OSG_GENERIC_CDP??(await(await fetch('http://127.0.0.1:9222/json/version')).json()).webSocketDebuggerUrl;
   const native=await chromium.connectOverCDP(endpoint,{noDefaults:true,timeout:15000});
   const page=native.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:1420'));
@@ -46,7 +46,7 @@ test('running Cockpit: plain source persistence, appearances, graph wiring, layo
     await dialog.locator(`[data-graph-node="${clamp}"] header`).click();await dialog.locator('.graph-editor aside').getByRole('button',{name:'Delete',exact:true}).click();
     await tab('States');await dialog.locator('.buildbar').getByRole('button',{name:'Compile',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.generic-designer .save-action button').disabled,undefined,{timeout:60000});
     const card=dialog.locator('[data-graph-node="off"] header');await card.focus();await page.keyboard.press('ArrowDown');assert.equal(await dialog.getByRole('button',{name:'Save',exact:true}).isEnabled(),true,'Layout must not invalidate compilation');
-    await page.screenshot({path:resolve(directory,'states.png')});await tab('Try');
+    await page.screenshot({path:resolve(directory,'states.png')});await tab('Preview');
     const result=key=>dialog.locator('.try-canvas dl>div').filter({has:page.locator('dt',{hasText:new RegExp('^'+key+'$')})}).locator('dd').innerText();
     await page.waitForTimeout(300);assert.equal(await result('requested'),'false');
     await dialog.locator('.compiled-widget button.compiled-hit').first().click();await page.waitForTimeout(200);assert.equal(await result('requested'),'true');assert.equal(await result('State · requested-state'),'on');assert.ok(await dialog.locator('.trace li').count());
