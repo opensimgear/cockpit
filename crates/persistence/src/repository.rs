@@ -120,6 +120,45 @@ impl<T: Serialize + DeserializeOwned> Repository<T> {
         *expected = Some(revisions[0]);
         Ok(())
     }
+
+    /// Explicit, confirmed domain reset. Preserve the previous database payload
+    /// as recovery evidence and leave legacy sources untouched. This cannot
+    /// replace a corrupt SQLite file or bypass a concurrent database revision.
+    pub fn reset(&self, value: &T) -> Result<(), String> {
+        (self.validate)(value)?;
+        let payload = serde_json::to_vec(value).map_err(|_| "Cannot encode reset document.")?;
+        if payload.len() > self.limit {
+            return Err("Reset document exceeds its size bound.".into());
+        }
+        let mut expected = self
+            .revision
+            .lock()
+            .map_err(|_| "Repository access failed.")?;
+        let (revision, previous) = self.database.read_with_revision(&self.domain, &self.key)?;
+        if expected.is_some_and(|expected| expected != revision) {
+            return Err("Persistence revision conflict. Reload before resetting.".into());
+        }
+        let archived_key = format!("{}:{}:{}", self.domain, self.key, revision);
+        let mut changes = vec![Change {
+            domain: &self.domain,
+            key: &self.key,
+            format_version: self.format_version,
+            expected_revision: revision,
+            payload: Some(&payload),
+        }];
+        if let Some(previous) = &previous {
+            changes.push(Change {
+                domain: "recovery/explicit-reset",
+                key: &archived_key,
+                format_version: previous.format_version,
+                expected_revision: 0,
+                payload: Some(&previous.payload),
+            });
+        }
+        let revisions = self.database.commit(&changes)?;
+        *expected = Some(revisions[0]);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -143,6 +182,46 @@ mod tests {
             validate,
         )
         .unwrap()
+    }
+    #[test]
+    fn explicit_reset_retains_database_evidence_and_never_rewrites_legacy_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("library.json");
+        let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
+        std::fs::write(&source, b"corrupt legacy document").unwrap();
+        let store = repository(&db, source.clone());
+        assert!(store.load().is_err());
+        store.reset(&serde_json::json!({"reset":true})).unwrap();
+        assert_eq!(store.load().unwrap().unwrap()["reset"], true);
+        assert_eq!(std::fs::read(&source).unwrap(), b"corrupt legacy document");
+        db.commit(&[Change {
+            domain: "profiles",
+            key: "library",
+            format_version: 1,
+            expected_revision: 1,
+            payload: Some(b"corrupt database document"),
+        }])
+        .unwrap();
+        let recovery = repository(&db, source.clone());
+        assert!(recovery.load().is_err());
+        recovery
+            .reset(&serde_json::json!({"recovered":true}))
+            .unwrap();
+        assert_eq!(
+            db.read("recovery/explicit-reset", "profiles:library:2")
+                .unwrap()
+                .unwrap()
+                .payload,
+            b"corrupt database document"
+        );
+        assert!(store
+            .reset(&serde_json::json!({"stale":true}))
+            .unwrap_err()
+            .contains("conflict"));
+        assert!(recovery.reset(&serde_json::json!([])).is_err());
+        assert!(recovery
+            .reset(&serde_json::json!({"long":"x".repeat(2048)}))
+            .is_err());
     }
     #[test]
     fn import_preserves_source_validates_before_receipt_and_ignores_stale_files() {

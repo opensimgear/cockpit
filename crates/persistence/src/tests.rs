@@ -218,9 +218,21 @@ fn rejects_future_schema_foreign_application_and_corruption_without_replacement(
 
     let foreign = dir.path().join("foreign.sqlite3");
     let unrelated = Connection::open(&foreign).unwrap();
-    unrelated.execute_batch("CREATE TABLE private_data(value TEXT); INSERT INTO private_data VALUES('original')").unwrap();
-    assert!(Database::open(&foreign).unwrap_err().contains("Unrecognized"));
-    assert_eq!(unrelated.query_row("SELECT value FROM private_data", [], |row| row.get::<_,String>(0)).unwrap(), "original");
+    unrelated
+        .execute_batch(
+            "CREATE TABLE private_data(value TEXT); INSERT INTO private_data VALUES('original')",
+        )
+        .unwrap();
+    assert!(Database::open(&foreign)
+        .unwrap_err()
+        .contains("Unrecognized"));
+    assert_eq!(
+        unrelated
+            .query_row("SELECT value FROM private_data", [], |row| row
+                .get::<_, String>(0))
+            .unwrap(),
+        "original"
+    );
 }
 
 #[test]

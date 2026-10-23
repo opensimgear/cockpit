@@ -11,8 +11,12 @@ use std::{
 
 mod repository;
 pub use repository::Repository;
+mod migration;
+pub use migration::{MigrationCapture, MigrationStatus, StagedSource};
+mod namespace;
+pub use namespace::register_namespace;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 pub const APPLICATION_ID: i64 = 0x4f534743;
 pub const MAX_PAYLOAD: usize = 128 * 1024 * 1024;
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(250);
@@ -202,12 +206,18 @@ impl Database {
                 .pragma_update(None, "journal_mode", "DELETE")
                 .map_err(failure)?;
         }
-        if version == 0 {
+        if version < SCHEMA_VERSION {
             let tx = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(failure)?;
-            tx.execute_batch(include_str!("schema.sql"))
-                .map_err(failure)?;
+            if version == 0 {
+                tx.execute_batch(include_str!("schema.sql"))
+                    .map_err(failure)?;
+            }
+            if version < 2 {
+                tx.execute_batch(include_str!("migration.sql"))
+                    .map_err(failure)?;
+            }
             tx.pragma_update(None, "application_id", APPLICATION_ID)
                 .map_err(failure)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)

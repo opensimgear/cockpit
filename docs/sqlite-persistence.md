@@ -65,7 +65,7 @@ the same commit. Protected source snapshots are sealed ciphertext only.
 | `companions/companion-panel-heads.json`; `save_heads` | `companions/heads` | panel/revision/hash head checks; S5 | Heads and publication/assignment references commit together |
 | `companions/companion-listener.json`; host listener operations | `companions/listener` | listener interface/port validation; S5 | Enable/disable/listener restart without premature success |
 | `companions/companion-firmware.json`; host firmware metadata | `companions/firmware` | board/profile/version validators; S5 | Firmware preference/assigned profiles and restart |
-| `widget-panel-cutover-v4.json`, cutover backup/receipt metadata | `migration/widget-cutover` | existing cutover manifest/hash checks; S5 | No old layout becomes an active panel; referenced snapshots retained |
+| `widget-panel-cutover-v4.json`, `widget-profile-cutover-v4.json`, cutover backup/receipt metadata | `migration/widget-cutover` | existing cutover manifest/hash checks; S5 | No old layout becomes an active panel; referenced snapshots retained |
 | `companion-host-state.dpapi`; `SealedFileStore` | `secrets/companion-host` ciphertext | native unseal then host record validation; S6 | Pairing/assignments/revoke/forget/reconnect; raw DB secret scan |
 | `companion-identity.dpapi`; TLS native identity store | `secrets/companion-identity` ciphertext | unseal/identity certificate validation; S6 | Same host ID/CA fingerprint; locked/corrupt key diagnostics |
 | `mcp-v1.json`; credential settings store | `security/mcp` | current settings/hash/scope validators; S6 | Real MCP client, port/enablement/revocation/concurrent revisions |

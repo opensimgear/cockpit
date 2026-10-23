@@ -15,7 +15,7 @@ test('native SQLite service is healthy through real Cockpit IPC', {
     assert.ok(page, 'The feature worktree dev Cockpit must be running.');
     const status = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('persistence_status'));
     assert.equal(status.healthy, true);
-    assert.equal(status.schemaVersion, 1);
+    assert.equal(status.schemaVersion, 2);
     assert.equal(status.journalMode, 'delete');
     assert.equal(status.synchronous, 'full');
     assert.equal(status.busyTimeoutMs, 250);
