@@ -128,7 +128,7 @@
   }
   function cancelCanvas(event:PointerEvent){if(canvasPress?.pointer===event.pointerId||drag?.pointer===event.pointerId){canvasPress=undefined;drag=undefined;resizing=false;hoveredSelection=false;}}
   function begin(event:PointerEvent,handle?:ResizeHandle,node=layer){
-    if(saving||!node||!stage||event.button!==0||!handle&&node.kind!=='group'&&(!('x'in node)||isExpression(node.x)||isExpression(node.y)))return;
+    if(saving||!node||!stage||event.button!==0||!handle&&node.kind!=='group'&&!('x'in node))return;
     const element=renderedLayer(stage,node.id);
     // Group translation is expressed in its parent's space, before its own rotation/scale.
     const coordinates=!handle&&node.kind==='group'?element?.parentElement as SVGGraphicsElement|null:element;
@@ -148,7 +148,9 @@
   }
   function move(event:PointerEvent){if(canvasPress?.pointer===event.pointerId&&Math.hypot(event.clientX-canvasPress.clientX,event.clientY-canvasPress.clientY)>=3)canvasPress.moved=true;if(saving||!drag||drag.pointer!==event.pointerId)return;if(!drag.moved&&Math.hypot(event.clientX-drag.clientX,event.clientY-drag.clientY)<3)return;drag.moved=true;const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(drag.toLocal),dx=point.x-drag.x,dy=point.y-drag.y;const original=drag.original;
     const transform=drag.node.transform??{};
-    history=drag.history;patchNode(drag.handle?resizePatch(drag,dx,dy):drag.node.kind==='group'?{transform:{...transform,translateX:adjusted(transform.translateX,Math.round(dx),'add'),translateY:adjusted(transform.translateY,Math.round(dy),'add')}}:{x:Math.round(original.x+dx),y:Math.round(original.y+dy)});
+    // Offset bindings from the drag's original source so preview states keep their relative positions.
+    const position=(value:unknown,initial:number,delta:number)=>isExpression(value)?adjusted(value,Math.round(delta),'add'):Math.round(initial+delta);
+    history=drag.history;patchNode(drag.handle?resizePatch(drag,dx,dy):drag.node.kind==='group'?{transform:{...transform,translateX:adjusted(transform.translateX,Math.round(dx),'add'),translateY:adjusted(transform.translateY,Math.round(dy),'add')}}:'x'in drag.node?{x:position(drag.node.x,original.x,dx),y:position(drag.node.y,original.y,dy)}:{});
   }
   function undo(){if(saving)return;history=undoSource(history);invalidate();}function redo(){if(saving)return;history=redoSource(history);invalidate();}
   function keyboard(event:KeyboardEvent){if(!dialog?.open||saving)return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?redo():undo();}else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='y'){event.preventDefault();redo();}}
