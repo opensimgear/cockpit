@@ -4,6 +4,7 @@
 
   const paths: Record<string, string[]> = {
     grid: ['M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'],
+    grip: ['M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01'],
     devices: ['M4 4h16v11H4zM8 21h8M12 15v6', 'M8 8h8M8 11h5'],
     activity: ['M2 12h4l3-8 6 16 3-8h4'],
     bug: ['M8 8h8v7a4 4 0 0 1-8 0V8ZM9 8V6a3 3 0 0 1 6 0v2M12 8v11', 'M5 5l3 3M19 5l-3 3M3 12h5M16 12h5M4 19l4-3M20 19l-4-3'],

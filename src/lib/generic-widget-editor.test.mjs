@@ -1,6 +1,30 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sourceIdentity, createSourceHistory, editSource, undoSource, redoSource, CompilationFence } from './generic-widget-editor.ts';
+import { sourceIdentity, createSourceHistory, editSource, undoSource, redoSource, CompilationFence, moveSiblingLayer } from './generic-widget-editor.ts';
+
+test('layer drops reorder siblings in both directions and keep nested groups intact', () => {
+  const nodes = [{ id: 'a' }, { id: 'group', children: [{ id: 'c' }, { id: 'd' }, { id: 'e' }] }, { id: 'b' }];
+  assert.equal(moveSiblingLayer(nodes, 'a', 'b', true), true);
+  assert.deepEqual(nodes.map(node => node.id), ['group', 'b', 'a']);
+  assert.equal(moveSiblingLayer(nodes, 'a', 'group'), true);
+  assert.deepEqual(nodes.map(node => node.id), ['a', 'group', 'b']);
+  const children = nodes[1].children;
+  assert.equal(moveSiblingLayer(nodes, 'c', 'e', true), true);
+  assert.deepEqual(children.map(node => node.id), ['d', 'e', 'c']);
+  assert.equal(moveSiblingLayer(nodes, 'group', 'b', true), true);
+  assert.equal(nodes[2].children, children);
+  const unchanged = structuredClone(nodes);
+  for (const [id, target, after] of [['missing', 'a'], ['a', 'missing'], ['group', 'c'], ['c', 'group'], ['a', 'a'], ['a', 'b'], ['group', 'b', true]]) {
+    assert.equal(moveSiblingLayer(nodes, id, target, after), false);
+    assert.deepEqual(nodes, unchanged);
+  }
+  const history = createSourceHistory(nodes);
+  const next = structuredClone(nodes);
+  moveSiblingLayer(next, 'group', 'a');
+  const edited = editSource(history, next);
+  assert.deepEqual(undoSource(edited).present, nodes);
+  assert.deepEqual(redoSource(undoSource(edited)).present, next);
+});
 
 test('source history is immutable, bounded and clears redo after a branch', () => {
   const source = { title: 'Toggle', layers: [{ x: 0 }] };

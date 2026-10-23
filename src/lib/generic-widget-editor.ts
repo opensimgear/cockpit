@@ -2,6 +2,26 @@
 export interface SourceHistory<T> { past: T[]; present: T; future: T[] }
 const HISTORY_LIMIT = 80;
 
+/** Reorder siblings without reparenting a layer or separating a group from its children. */
+export function moveSiblingLayer<T extends { id: string; children?: T[] }>(nodes: T[], id: string, targetId: string, after = false): boolean {
+  function siblings(list: T[], key: string): T[] | undefined {
+    if (list.some(node => node.id === key)) return list;
+    for (const node of list) {
+      const found = node.children && siblings(node.children, key);
+      if (found) return found;
+    }
+  }
+  const list = siblings(nodes, id);
+  if (!list || list !== siblings(nodes, targetId) || id === targetId) return false;
+  const from = list.findIndex(node => node.id === id);
+  let to = list.findIndex(node => node.id === targetId) + Number(after);
+  if (from < to) to--;
+  if (from === to) return false;
+  const [node] = list.splice(from, 1);
+  list.splice(to, 0, node);
+  return true;
+}
+
 /** Stable identity includes all authoring values, independently of property insertion order. */
 export function sourceIdentity(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(sourceIdentity).join(',') + ']';
