@@ -1,0 +1,170 @@
+# SQLite persistence (#140)
+
+Implementation baseline: `d4808b1` (main, 23 October 2026). This includes Custom
+games #128 and the compiled widget publication format. Work is isolated in
+`feature/sqlite-140`; the unrelated widget/ESP32 checkout is untouched.
+
+This is the inventory and implementation contract. Entries below describe the
+required destination, not a claim that every owner has already been converted.
+Acceptance evidence lives in `docs/verification/2026-10-23-sqlite.md`.
+
+## Namespace and authority
+
+One `cockpit.sqlite3` belongs to each Cockpit configuration namespace. The anchor
+is the parent of `config_paths::config_path()`; `OSG_DCS_BIOS_CONFIG` continues
+to choose an isolated namespace. An explicit `OSG_SQLITE_DATABASE` may choose
+an absolute database path. No database path may contain parent traversal or
+follow symlinks/reparse points. Database and backup files are private to the
+current OS user. A native standalone Companion uses its own application data
+directory and database, never a database on its remote Cockpit host.
+
+The existing second root (`app_config_dir`, including the dev application ID)
+is a migration source for desktop preferences/window geometry. The retained
+`OSG_GAMES_CONFIG` anchor remains an explicit migration source for game recovery
+and setup; its files do not become another database authority. Source discovery
+is limited to these known roots, configured overrides and declared leaf paths.
+Dev and packaged webview origins must each report their own snapshot. An origin
+that cannot read localStorage or IndexedDB is pending/error, never imported.
+
+After a domain's cutover receipt commits, SQLite is authoritative, including
+missing-record tombstones. Never fallback to a file or browser snapshot after
+a database failure. Rerunning migration or adding another origin cannot
+overwrite later edits. Original native/browser sources are retained until
+the application acknowledges the durable import; cleanup is an explicit later
+operation. Old binaries must not run against a cut-over namespace: their file
+writes cannot update the database. Downgrade requires stopping Cockpit and an
+explicit restore into a separate legacy namespace from the retained originals;
+database edits are not implicitly exported or merged into old formats.
+
+## Inventory
+
+`records(domain,key)` stores the existing validated/versioned JSON documents as
+BLOBs, with relational domain ownership, format version, optimistic revision
+and deletion tombstones. Domain identifiers below are stable repository names.
+An importer runs the same typed validator as its live owner. An import receipt
+stores origin, source, checksum, format and the bounded original snapshot in
+the same commit. Protected source snapshots are sealed ciphertext only.
+
+| Source / durable writer | SQLite domain/key | Validator and owner | Verification |
+| --- | --- | --- | --- |
+| `profiles-v2/library.json`; `profiles::store::Store` | `profiles/library` | `Library::validate`, document and local-port contracts; S3 | Default/UUID/hash/revision/assignment roundtrip, CRUD and stale saves |
+| `profile-resources-v1/inventory.json`; `resources_store::Store` | `resources/inventory` | `SavedRegistry::validate`; S3 | Offline restore, exact ports, no restored live owners |
+| `controllers.json`; controller service `flush` | `controllers/identities` | existing saved-controller validator/bounds; S3 | Fingerprints, names, role, reassignment and Forget |
+| `controller-visibility.json`; visibility settings | `controllers/visibility` | visibility `Config::validate`; S3 | Intent/revisions, concurrent edits, OS state remains observed |
+| `profiles-activation-v1.json`; `profile_automatic_store` | `profiles/selection` | `Settings::validate`, rule UUID/priorities; S3 | Manual/default, automatic rules, preferred launch profile |
+| `game-installations-v1.json`; `game_installations::Store` | `games/installations` | `Settings::validate`; S4 | Built-in/custom UUIDs, Steam/Epic source IDs, exact executable, categories |
+| Same game envelope's backgrounds/default backgrounds | same transaction as game registrations | artwork validation/hash/path/crop; S4 | Edit/crop/reset/remove/import and restart; references survive missing images |
+| `games.integration-setup.json`; `write_settings` | `games/setup` | connection/provider saved-record validators; S4 | DCS/AC/X-Plane settings/revisions, no implicit setup |
+| `game-vehicles-v1.json`; game vehicles store | `games/vehicles` | saved catalogue/vehicle validation; S4 | Retained selection/seen vehicles, offline catalogue |
+| `assetto-corsa-cars-v1.json`; AC car catalogue cache | `games/ac-cars` | current cache identity/version/bounds; S4 | Rescan, stable car IDs, stale observations |
+| `desktop-input-v1.json`; desktop settings | `outputs/desktop-preferences` | `Preferences`/native process-identity validator; S4 | Enablement/scope/application references and stale saves |
+| IndexedDB `opensimgear-cockpit-companion-designer`, `workspace/snapshot` | `designer/workspace` | `validateWorkspace`, compiled publications/source/asset hashes; S5 | Draft/source/publication order/assets, 64 MiB/20 drafts/100 revisions |
+| Legacy schema-1 designer snapshot; `companion-library.ts` | migration snapshot only; declared widget cutover applies | legacy library validator; S5 | Preserve archived snapshot; do not revive retired authoring |
+| `widgets-v1.json`; `widget_library::persist` | `widgets/library` | compiled widget bundle/source validation; S5 | User library/update/import/hash preservation |
+| `companions/companion-panels.json`; `companion_panels` | `companions/publications` | compiled publication validators, byte limits; S5 | Publish/archive/retention and interrupted publication |
+| `companions/companion-panel-heads.json`; `save_heads` | `companions/heads` | panel/revision/hash head checks; S5 | Heads and publication/assignment references commit together |
+| `companions/companion-listener.json`; host listener operations | `companions/listener` | listener interface/port validation; S5 | Enable/disable/listener restart without premature success |
+| `companions/companion-firmware.json`; host firmware metadata | `companions/firmware` | board/profile/version validators; S5 | Firmware preference/assigned profiles and restart |
+| `widget-panel-cutover-v4.json`, cutover backup/receipt metadata | `migration/widget-cutover` | existing cutover manifest/hash checks; S5 | No old layout becomes an active panel; referenced snapshots retained |
+| `companion-host-state.dpapi`; `SealedFileStore` | `secrets/companion-host` ciphertext | native unseal then host record validation; S6 | Pairing/assignments/revoke/forget/reconnect; raw DB secret scan |
+| `companion-identity.dpapi`; TLS native identity store | `secrets/companion-identity` ciphertext | unseal/identity certificate validation; S6 | Same host ID/CA fingerprint; locked/corrupt key diagnostics |
+| `mcp-v1.json`; credential settings store | `security/mcp` | current settings/hash/scope validators; S6 | Real MCP client, port/enablement/revocation/concurrent revisions |
+| Native Companion `companion-client.dpapi` | client DB `secrets/client` ciphertext | existing native client validation; S6 | Native upgrade, reconnect and forget/re-pair |
+| Native Companion IndexedDB `opensimgear-companion-publications` | client DB `client/publications` | existing verified publication/cache bounds; S6 | 4-entry/24 MiB cache, selected panel/page, offline reopen |
+| `osg-light`; `App.svelte` | `ui/theme` | boolean; S7 | Hydration before first render, cross-window/restart |
+| `osg-devices-mode`; `SystemDevices.svelte` | `ui/devices-mode` | list/topology enum; S7 | Mode survives restart |
+| `osg-canvas-navigation`; canvas navigation store | `ui/canvas-navigation` | wheel-action enum/version; S7 | Hydration, wheel controls, failed save |
+| `osg-canvas-styling`; canvas styling store | `ui/canvas-styling` | arrow style, bounded radius, collapse boolean; S7 | Canvas appearance/restart, stale cross-window edits |
+| `osg-system-inventory-v1`; `SystemInventoryRegistry::persist` | `inventory/remembered` | version/components/tombstone validators; S7 | First/last seen, Forget tombstones, refreshed provider authority |
+| App-config `desktop-preferences.json`; desktop `write_preferences` | `ui/tray` | `TrayPreferences`; S7 | Tray close/minimize, unavailable tray diagnostic |
+| App-config `profile-progress-preferences.json`; progress settings | `ui/progress` | schema and supported position enum; S7 | Progress position and restart |
+| App-config `window-state.json`; window-state plugin | `ui/windows` | bounded geometry/window labels/display validation; S7 | Coalesced move/resize, exit/restart/off-screen display removal |
+| `profile-session-v1.json`; profile session journal | `recovery/profile-session` | existing manifest/phase/owner validation; S8 | Intent/effect/receipt faults, Stop/restart/owner lock |
+| `profile-output-{session}-{generation}.json`; virtual output journal | `recovery/virtual/{owner}` | exact owner/generation/driver fingerprint validation; S8 | No output replay, neutral/cleanup receipts, second process |
+| `profile-desktop-{session}-{generation}.json`; desktop coordinator journal | `recovery/desktop/{owner}` | desktop session/process receipt validation; S8 | Crash/foreground/Stop recovery, no injector replay |
+| `controller-visibility-session.json`; visibility journal | `recovery/visibility` | existing session/owner/fingerprint validator; S8 | Explicit restoration only; lifetime OS lock retained |
+| `games.recovery.json`, `games.abandoned-UUID.json`; game cleanup/archive | `recovery/games/{owner}` | current installation/process/recovery schema; S8 | Exit/crash/external modification and abandoned evidence |
+| `setup-work/dcs-setup-journal.json`, `completed.json`, `restored.json` | `recovery/dcs-setup/{id}` | existing setup journal/hash/path validator; S8 | Intent and receipt boundaries; immutable backup bytes referenced |
+| `mappings/output-recovery.json`, `mappings/companion-recovery/instance-<32hex>.json` | `recovery/retired/{owner}` | cleanup-only legacy receipt validator; S8 | Block activation until explicit safe cleanup; preserve unknown evidence |
+
+Legacy `mappings/*.json`, `local-settings.json`, `companion-routes.json` and
+old captured DCS profile authoring stores are retired. The old mapping crate
+APIs remain for compatibility tests, never as native Cockpit configuration
+authority. Their cleanup evidence is separately enumerated above. Imported
+observations always begin offline/stale with no process, device or output owner.
+
+## Explicit external/file exceptions
+
+| Owner/data | Retained authority and reconciliation |
+| --- | --- |
+| OS keychain/Secret Service/Android Keystore | Protection keys stay in native service; only sealed BLOBs enter SQLite/import receipts/backups. Locked/missing keys produce errors without regeneration over old identity. |
+| Browser-only Companion bootstrap credentials/offline caches on other devices | Stay inside that browser's security origin; never represent Cockpit settings. No browser SQLite runtime. |
+| Device flash/NVS/calibration and gateway discovery advertisement files | Owned by hardware/gateway processes; Cockpit stores intent/references only, observes fresh state and never replays ambiguous mutations. |
+| Actual OS autostart, HidHide configuration, device access | OS/driver authority; record requested intent and checked receipts; display applied state only after OS verification. |
+| Elevated vJoy provisioning registry/journal | Elevated provisioning authority remains independent; SQLite stores references/reconciliation evidence, never substitutes a database writer lock for driver ownership. |
+| Game-side integration files and installer ownership markers | Managed with existing exact fingerprint/compensation checks; SQLite records desired settings and application lifecycle evidence. Game user files remain external. |
+| Managed images, immutable archived widget/setup snapshots | Bytes may remain immutable files; SQLite owns mutable metadata, references, retention and GC intent. Stage/fsync bytes before reference commit; cleanup only after unreferenced verification. |
+| Downloaded firmware archives, logs, generated exports, output audit traces | Reconstructible downloads or append-only diagnostics/user exports; not settings authority. Mutable firmware/listener selection metadata belongs in SQLite. |
+| `.lock` files | OS lifetime locks only, no variable settings. Keep process/session ownership independent of SQLite transaction lifetime. |
+
+## Service, durability and commit contracts
+
+`osg-persistence` pins rusqlite `0.40.2` with bundled SQLite `3.53.2`
+(`libsqlite3-sys 0.38.2` in the lockfile). Use the bundled build on all native
+platforms. `application_id=0x4f534743`, ordered transactional schema versions,
+STRICT tables, foreign keys on every connection and bounded payloads are required.
+Future schema/application IDs fail closed. Corrupt content never becomes an
+empty/default successful save.
+
+Use rollback journal `DELETE`, `synchronous=FULL` and a 250 ms busy timeout.
+Do not enable WAL by assuming APPDATA/XDG is local; redirected/network-backed
+configuration requires qualified OS locking and a supported filesystem. SQLite
+cannot guarantee storage-device/filesystem durability outside their contracts.
+There is no WAL checkpoint to lose on normal shutdown. Online backup uses the
+[SQLite Backup API](https://www.sqlite.org/backup.html); durability behavior is
+defined by [SQLite pragmas](https://www.sqlite.org/pragma.html).
+
+Database access runs on native command/storage workers, never in input/telemetry
+callbacks. Immediate transactions check every expected revision before committing
+related edits. Delete leaves a monotonically increasing tombstone to reject
+delete/recreate stale edits. Keep transactions short: snapshot/validate assets and
+observe OS effects outside the transaction. Update caches and broadcast changes
+only after commit. A failed commit leaves the previous durable and visible
+authoring state intact; live observations may still be displayed with diagnostics.
+
+Profile graph and local assignments commit as one validated document. Resource,
+selection and profile deletion/reassignment mutations share a multi-record commit
+when their references change together. Companion publication/archive/head and
+assignment changes similarly share a commit; sealed state must be prepared before
+the transaction. UI/MCP/worker callers use the same repositories/revisions.
+
+Recovery ordering remains intent commit, external effect, verified receipt
+commit, and explicit compensation where needed. Never hold a transaction across
+OS/USB/game/network waits. Startup loads recovery evidence before automatic
+selection; migration never starts output, launches games, un-hides controllers,
+revokes trust or republishes panels. Lifetime locks and process/generation proofs
+retain their existing semantics.
+
+Restore is an application operation: stop/quiesce output and reconcile current
+external effects, verify the backup database and a versioned/hash-checked asset
+manifest, preserve current data as a rollback snapshot, restore through SQLite,
+invalidate historical credential/session authority, then restart/hydrate. Historical
+trust is not fresh proof: reissue/re-pair unless freshness is independently proven.
+Never replay historical cleanup/output records. A raw file copy while a database
+is live is unsupported. Backups retain OS-bound ciphertext portability limits.
+
+## Delivery order and acceptance
+
+S0 freezes this inventory; S1 supplies the shared service and dedicated >=71%
+production coverage per module; S2 assembles validated native/webview staging and
+readiness. S3 profiles/controllers, S4 games, S5 designer/host and S7 preferences
+use that boundary; S6 completes protected/native-client state. S8 brings recovery
+owners over without changing their ownership protocols. S9 audits every writer,
+finishes backup/restore and runs assembled acceptance.
+
+Each converted owner needs golden import/reopen, stale-edit and failed-commit
+tests. Final verification includes clean/populated/blocked-origin migration,
+restart, stale source modification, second process/UI/MCP, interrupted migration
+and activation, Stop/recovery and backup/restore. Run native/frontend/build/package
+and all existing affected coverage gates before pushing. Record Windows live
+evidence separately from unexecuted macOS/Linux/mobile/physical qualification.
