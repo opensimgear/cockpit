@@ -1,6 +1,10 @@
 # Imported SVG widget creator — implementation plan
 
-Date: 23 October 2026. Status: proposed; implementation has not started.
+Date: 23 October 2026. Status: deferred by the user; implementation has not started.
+
+The current direction keeps the existing layer designer. See the
+[state and signal-flow editor plan](widget-state-signal-editor-plan.md).
+The import-first replacement below is retained as a historical proposal.
 
 ## Product decision
 

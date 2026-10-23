@@ -7,6 +7,11 @@ certificates, listener settings and unrelated profile data remain separate.
 ESP32 pairing remains paused and compiled widgets cannot be assigned to ESP32.
 That implementation belongs to feature #161 in Backlog.
 
+The proposed next authoring feature is the
+[state and signal-flow editor](widget-state-signal-editor-plan.md), retaining
+this layer designer and using the capsule Toggle as its pilot. That plan does
+not describe functionality already available in the application.
+
 ## Authoring and publishing
 
 Open **Companions → Widgets**. Edit Toggle or choose **New** for a blank design.
