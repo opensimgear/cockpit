@@ -1,4 +1,4 @@
-//! The new profile library has one bounded, atomically replaced envelope. It
+//! The profile library has one bounded, revisioned SQLite document. It
 //! never scans legacy profile locations or mutates driver-owned configuration.
 use crate::{default_document, validate_document, ProfileDocument, DEFAULT_PROFILE_ID};
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub use crate::{MAX_LIBRARY_BYTES, MAX_PROFILES};
-pub const LIBRARY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -19,7 +18,6 @@ pub struct LocalAssignment {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Library {
-    pub schema_version: u32,
     pub profiles: Vec<ProfileDocument>,
     pub local_assignments: BTreeMap<String, Vec<LocalAssignment>>,
 }
@@ -27,7 +25,6 @@ pub struct Library {
 impl Default for Library {
     fn default() -> Self {
         Self {
-            schema_version: LIBRARY_SCHEMA_VERSION,
             profiles: vec![default_document()],
             local_assignments: BTreeMap::new(),
         }
@@ -36,9 +33,6 @@ impl Default for Library {
 
 impl Library {
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != LIBRARY_SCHEMA_VERSION {
-            return Err("Unsupported profile library schema version.".into());
-        }
         if self.profiles.is_empty() || self.profiles.len() > MAX_PROFILES {
             return Err("A profile library must contain 1–32 profiles.".into());
         }

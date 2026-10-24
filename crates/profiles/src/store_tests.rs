@@ -58,9 +58,6 @@ fn malformed_unknown_and_oversize_envelopes_are_rejected() {
 #[test]
 fn library_enforces_default_uniqueness_and_count_bounds() {
     let mut library = Library::default();
-    library.schema_version = 1;
-    assert!(library.validate().is_err());
-    library.schema_version = 2;
     library.profiles.clear();
     assert!(library.validate().is_err());
     library.profiles.push(new_document("No default").unwrap());

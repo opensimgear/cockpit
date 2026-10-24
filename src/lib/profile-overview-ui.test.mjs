@@ -52,7 +52,7 @@ test('actual overview distinguishes hardware-only, awaiting-game, degradation an
  for(const state of ['faulted','recovery-needed','transitioning']){status={...stopped(),state,fault:state==='faulted'?'Native source continuity failed.':null};notifications.length=0;html=overview(view(status));assert.ok(!html.includes('No profile active'));if(status.fault)assert.ok(notifications.includes(status.fault));}
  html=overview({...view(running()),stale:true,statusError:'Current status unavailable.'});assert.ok(html.includes('Native status unavailable'));assert.ok(!html.includes('Applied saved rig'));assert.ok(!html.includes('Matching game context verified'));
  assert.ok(overview(view(null)).includes('Checking profile…'));
- const cleanup=games();cleanup.cleanup={phase:'recovery-needed',error:'A retained output receipt remains.'};html=overview(view(stopped()),{games:cleanup});assert.ok(html.includes('Previous owned setup'));assert.ok(html.includes('No profile active'));assert.ok(html.includes('Review cleanup'));
+ const cleanup=games();cleanup.cleanup={phase:'recovery-needed',error:'A retained output receipt remains.'};html=overview(view(stopped()),{games:cleanup});assert.ok(!html.includes('Previous owned setup'));assert.ok(html.includes('No profile active'));assert.ok(!html.includes('Review cleanup'));
 });
 
 test('device manual actions use the real native ownership block, with no retired binding inference or imaginary output acknowledgement',()=>{

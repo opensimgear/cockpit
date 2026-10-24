@@ -15,7 +15,7 @@
   import GameCategoriesDialog from './GameCategoriesDialog.svelte';
   import {filterGamesByCategory,customGameError} from './games';
   import {cropImageStyle} from './game-background-crop';
-  import {gameHasIntegration,isCustomGameId,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameExecutableName,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,gameCleanupLabel,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
+  import {gameHasIntegration,isCustomGameId,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameExecutableName,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,supportedGames,visibleGames,type Game,type GameId,type GameRequest,type GamesState} from './games';
   let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),onNavigate}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
     profiles?:DeepReadonly<ProfileSummary[]>;
@@ -25,10 +25,8 @@
   let response=$state<GamesState>(),initializedGameId=$state<GameId|''>('');
   let showAll=$state(false),pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
   let providerBusy=$state(false),customDialog=$state<'add'|null>(null),libraryDialog=$state(false),removeDialog=$state(false);
-  let recoveryDialog:HTMLDialogElement|undefined;
   let categoriesDialog=$state(false),categoryFilter=$state('');
   let nameDraft=$state(''),nameBase=$state('');
-  function attachRecoveryDialog(node:HTMLDialogElement){recoveryDialog=node;return()=>{recoveryDialog=undefined;};}
   const receivedStatus=$derived(status??response);
   const gameState:GamesState=$derived(receivedStatus??{catalogue:supportedGames});
   const categories=$derived(gameState.categories??{});
@@ -38,12 +36,10 @@
   const selectedArt=$derived(selected?resolveGameArtwork(selected):null);
   const selectedExecutablePath=$derived(gameDisplayPath(selected?.executable??selected?.manualPath));
   const selectedLiveLabel=$derived(selected?gameIntegrationLiveLabel(selected):'');
-  const cleanup=$derived(gameState.cleanup);
-  const occupied=$derived(!!cleanup&&!['idle','failed'].includes(cleanup.phase));
   const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up'));
-  const locked=$derived(busy||pending||occupied||setupRunning||providerBusy);
+  const locked=$derived(busy||pending||setupRunning||providerBusy);
   const integrationInstalled=$derived(selected?gameIntegrationInstalled(selected):false);
-  const setupBlocked=$derived(!receivedStatus?'Loading game status…':selected?gameIntegrationSetupBlockedReason(selected,cleanup,profileBlockedReason):'');
+  const setupBlocked=$derived(!receivedStatus?'Loading game status…':selected?gameIntegrationSetupBlockedReason(selected,profileBlockedReason):'');
   const folderError=$derived(selected?gameIntegrationTargetError(selected,integrationFolder):'');
   const setupDisabled=$derived(locked||!!setupBlocked||!!folderError);
   onMount(()=>{if(!status)void send({command:'game_get_state'});});
@@ -95,22 +91,10 @@
   async function integrationCommand(command:'game_integration_check'|'game_integration_setup'|'game_integration_cancel'|'game_integration_recover'|'game_integration_remove'){
     if(!selected||command==='game_integration_setup'&&setupDisabled)return;await send(gameIntegrationSetupRequest(selected,command,integrationFolder));
   }
-  async function keepCurrentSetup(){recoveryDialog?.close();await send({command:'game_abandon',preserveCurrentSetup:true});}
 </script>
 
 <section class="games-workspace" aria-label="Games">
-  {#if !receivedStatus}<p class="game-status-loading" role="status" aria-live="polite">Loading game status…</p>{:else if !cleanup}<Notification message="Native cleanup metadata is unavailable. Refresh game status before changing provider setup." kind="error" />{:else if cleanup.phase !== 'idle'}
-    <div class={['session-banner', { 'session-warning': ['failed', 'recovery-needed'].includes(cleanup.phase) }]} role="status" aria-live="polite">
-      <div class="session-icon"><Icon name={'refresh'} size={20} /></div>
-      <div class="session-copy"><strong>Previous owned setup recovery · {gameCleanupLabel(cleanup)}</strong><p>Existing saved session only. New launches use unified Profiles.<br />{gameState.catalogue.find(game => game.id === cleanup.gameId)?.name ?? 'Game session'}</p>
-        {#if cleanup.error}<Notification message={String(cleanup.error)} kind="error" />{/if}
-        {#if cleanup.steps?.length}<details><summary>Session progress</summary><ol>{#each cleanup.steps as step, index (index)}<li>{step}</li>{/each}</ol></details>{/if}
-      </div>
-      {#if cleanup.phase === 'recovery-needed' || cleanup.phase === 'failed'}<button class="secondary-button" disabled={busy || pending} onclick={() => send({ command: 'game_recover' })}><Icon name="refresh" size={14} /> Recover setup</button>
-      {/if}
-      {#if cleanup.phase === 'recovery-needed'}<button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.showModal()}><Icon name="check" size={14} />Keep current setup</button>{/if}
-    </div>
-  {/if}
+  {#if !receivedStatus}<p class="game-status-loading" role="status" aria-live="polite">Loading game status…</p>{/if}
   {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} kind="error" />{/if}
 
   {#if returnToEditor}<button class="text-button back-link" onclick={returnToEditor}><Icon name="back" size={14} /> {returnLabel ?? 'Return to profile'}</button>{/if}
@@ -152,7 +136,7 @@
               {:else if selected.integrationSetup?.recoveryNeeded}
                 <button class="secondary-button" disabled={locked||!!profileBlockedReason} onclick={()=>integrationCommand('game_integration_recover')}><Icon name="refresh" size={14}/>Recover integration setup</button>
               {:else if integrationInstalled}
-                <button class="secondary-button remove-integration" disabled={locked||!!profileBlockedReason||!cleanup||!selected.integrationSetup?.removable} title={selected.integrationSetup?.removalMessage} onclick={()=>integrationCommand('game_integration_remove')}><Icon name="trash" size={14}/>Remove integration</button>
+                <button class="secondary-button remove-integration" disabled={locked||!!profileBlockedReason||!selected.integrationSetup?.removable} title={selected.integrationSetup?.removalMessage} onclick={()=>integrationCommand('game_integration_remove')}><Icon name="trash" size={14}/>Remove integration</button>
                 <button class="secondary-button" disabled={setupDisabled} onclick={()=>integrationCommand('game_integration_setup')}><Icon name="refresh" size={14}/>Repair integration</button>
               {:else}
                 <button class="primary-button" disabled={setupDisabled} onclick={()=>integrationCommand('game_integration_setup')}><Icon name="download" size={14}/>Install integration</button>
@@ -186,7 +170,7 @@
             {/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
           {/if}
-          {#key selected.id}<GameProviderSettings game={selected} busy={busy||pending||occupied||setupRunning||!!profileBlockedReason} bind:userFolder={integrationFolder} request={saveSettings} onBusyChange={value=>{providerBusy=value;}} />{/key}
+          {#key selected.id}<GameProviderSettings game={selected} busy={busy||pending||setupRunning||!!profileBlockedReason} bind:userFolder={integrationFolder} request={saveSettings} onBusyChange={value=>{providerBusy=value;}} />{/key}
           {#if selectedLiveLabel}<div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{selectedLiveLabel}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>{/if}
         </section>
         {:else}<section class="panel custom-game-context"><div class="sidebar-title"><Icon name="gamepad" size={18}/><h3>Bindings and profile activation</h3></div><p>Set this game as a profile’s game context. Context scoped keyboard and mouse bindings work while its verified process is in front. Automatic mode activates a matching saved profile when the game runs.</p><p>{selected.executable?'This game uses process detection. No telemetry integration is needed.':'Choose its executable to enable process detection and scoped bindings.'}</p></section>{/if}
@@ -226,14 +210,7 @@
 {#if libraryDialog}<GameLibraryDialog request={send} close={()=>libraryDialog=false} imported={gameSaved}/>{/if}
 {#if removeDialog&&selected}<dialog class="launch-review" aria-labelledby="remove-game-title" oncancel={event=>{event.preventDefault();if(!pending)removeDialog=false;}} {@attach showDialog}><h2 id="remove-game-title">Remove {selected.name}?</h2><p class="review-description">Remove this game and its custom background from Cockpit. Your saved profiles stay available; profiles using this game will show an unavailable context until you select another game.</p>{#if notice}<p role="alert">{notice}</p>{/if}<div class="review-actions"><button class="secondary-button" disabled={pending} onclick={()=>removeDialog=false}>Cancel</button><button class="secondary-button destructive-button" disabled={locked} onclick={removeGame}><Icon name="trash" size={14}/>Remove game</button></div></dialog>{/if}
 
-<dialog class="launch-review" {@attach attachRecoveryDialog} aria-labelledby="recovery-review-title">
-  <div class="review-icon"><Icon name="alert" size={22} /></div>
-  <p class="game-kicker">Pending recovery</p>
-  <h2 id="recovery-review-title">Keep current setup?</h2>
-  <p class="review-description">This preexisting game-session record still needs explicit recovery.</p>
-  <p class="review-warning">Keeping the current setup releases game session ownership and archives the recovery record. Your hardware and integration settings stay as they are.</p>
-  <div class="review-actions"><button class="secondary-button" disabled={busy || pending} onclick={() => recoveryDialog?.close()}><Icon name="close" size={14} />Cancel</button><button class="primary-button" disabled={busy || pending} onclick={keepCurrentSetup}><Icon name="check" size={14} />Keep current setup</button></div>
-</dialog>
+
 
 <style>
   .installation-layout{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:24px;align-items:start;margin-top:20px}.installation-fields{display:grid;gap:16px;min-width:0}.game-heading-copy{flex:1}.game-name-input{width:100%;min-width:0;padding:3px 5px;margin:-4px -6px;box-sizing:border-box;border:1px solid transparent;border-radius:4px;background:transparent;color:inherit;font:inherit;font-weight:inherit;letter-spacing:inherit}.game-name-input:hover:enabled{border-color:var(--line)}.game-name-input:focus{outline:1px solid var(--accent);border-color:var(--accent);background:var(--surface)}.executable-input{flex:1;min-width:0;padding:11px 12px;box-sizing:border-box;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--text);font-family:ui-monospace,monospace;font-size:var(--game-detail-text-size)}.executable-row>button{flex-shrink:0}@media(max-width:800px){.installation-layout{grid-template-columns:1fr}.installation-layout>:first-child{max-width:400px}}
@@ -254,10 +231,8 @@
   .provider-readiness small {display:block;color:var(--muted);font-size:var(--game-detail-text-size);}
   .launch-review { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; width: 430px; max-width: calc(100% - 32px); padding: 28px; box-shadow: 0 20px 80px #0005; }
   .launch-review::backdrop { background: #0008; }
-  .review-icon { color: var(--accent); background: var(--accent-bg); display: grid; place-items: center; width: 46px; height: 46px; border-radius: 11px; margin-bottom: 19px; }
   .launch-review h2 {font-size:var(--game-detail-heading-size,14px);line-height:var(--game-detail-line-height,1.6);letter-spacing:-.3px;margin-top:8px;}
-  .review-description, .review-warning {font-size:var(--game-detail-text-size,12px);color:var(--muted);line-height:var(--game-detail-line-height,1.6);margin-top:14px;}
-  .review-warning { color: #c5a26e; padding: 13px; background: #b18b550a; border: 1px solid #b18b5540; border-radius: 6px; }
+  .review-description {font-size:var(--game-detail-text-size,12px);color:var(--muted);line-height:var(--game-detail-line-height,1.6);margin-top:14px;}
   .review-actions { display: flex; justify-content: end; gap: 10px; margin-top: 23px; }
   .review-actions button {font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);}
   .games-workspace {--game-detail-text-size:12px;--game-detail-heading-size:14px;--game-detail-line-height:1.6;padding-bottom:30px;}
@@ -358,17 +333,6 @@
   .setup-live .live-dot { margin-top: 4px; }
   .setup-live strong {font-size:var(--game-detail-text-size);font-weight:500;color:var(--soft);}
   .setup-live p {font-size:var(--game-detail-text-size);color:var(--muted);line-height:var(--game-detail-line-height);margin-top:7px;}
-  .session-banner { display: flex; align-items: center; gap: 13px; padding: 17px; background: var(--accent-bg); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 22px; }
-  .session-icon { color: var(--accent); }
-  .session-copy { flex: 1; min-width: 0; }
-  .session-copy strong { font-size: 12px; }
-  .session-copy p {color:var(--muted);font-size:var(--game-detail-text-size);margin-top:6px;line-height:var(--game-detail-line-height);}
-  .session-copy details {color:var(--soft);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:12px;}
-  .session-banner>button {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
-  .session-copy summary { cursor: pointer; }
-  .session-copy li { padding: 3px 0; }
-  .session-warning { background: #b18b550a; border-color: #b18b5560; }
-  .session-warning .session-icon { color: #c5a26e; }
   @media (hover: none) { .tile-launch {padding:0 20px 18px;} }
   @media (max-width: 600px) { .games-toolbar { align-items: start; }
   .toolbar-controls { width:100%;align-items:center;justify-content:flex-start;flex-direction:row;gap:12px; }
@@ -377,7 +341,6 @@
   .game-details-heading h2 {font-size:24px;}
   .game-detail-mark { width: 50px; height: 50px; }
   .detail-launch { margin-left: 0; width: 100%; }
-  .session-banner { flex-wrap: wrap; }
-  .session-banner > button { margin-left: 33px; } }
+  }
   @media (prefers-reduced-motion: reduce) { .game-tile, .tile-launch, .switch-track, .switch-track::after { transition: none; } }
 </style>

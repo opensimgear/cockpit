@@ -33,12 +33,11 @@ export type GameIntegrationContext = {
 export type GameVehicle = { id: string; name: string };
 export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car'; vehicles: GameVehicle[]; message?: string };
 export type Game = { id: GameId; name: string; categoryId?: string | null; provider?: GameProvider | null; custom?: boolean; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
-export type GameCleanup = { phase: 'idle' | 'restoring' | 'recovery-needed' | 'failed'; gameId?: GameId | null; retiredProfileId?: string | null; error?: string | null; steps?: string[]; recoveryArchive?: string | null };
 export type DetectedGame = { gameId: GameId; name: string };
-export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; libraryCandidates?: GameLibraryCandidate[]; libraryDiagnostics?: string[]; addedGameId?: GameId; manualInstallations?: Record<string, string>; cleanup?: GameCleanup; error?: string | null };
-export type GameCommandName = 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_custom_save' | 'game_custom_remove' | 'game_background_save' | 'game_library_scan' | 'game_library_import' | 'game_get_state' | 'game_scan' | 'game_installation' | 'game_recover' | 'game_abandon' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
+export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; libraryCandidates?: GameLibraryCandidate[]; libraryDiagnostics?: string[]; addedGameId?: GameId; manualInstallations?: Record<string, string>; error?: string | null };
+export type GameCommandName = 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_custom_save' | 'game_custom_remove' | 'game_background_save' | 'game_library_scan' | 'game_library_import' | 'game_get_state' | 'game_scan' | 'game_installation' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; name?: string; path?: string | null; positionX?: number; positionY?: number; candidateId?: string; executable?: string | null; preserveCurrentSetup?: boolean; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
+export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; name?: string; path?: string | null; positionX?: number; positionY?: number; candidateId?: string; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export const supportedGames: Game[] = [
   { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },
@@ -176,19 +175,12 @@ export function gameIntegrationSetupRequest(game: Game, command: 'game_integrati
   return { command, gameId: game.id, ...(game.id === 'dcs' && folder.trim() ? { userFolder: folder.trim() } : {}) };
 }
 
-export function gameIntegrationSetupBlockedReason(game: Game, cleanup: GameCleanup | undefined, profileBlockedReason: string): string {
+export function gameIntegrationSetupBlockedReason(game: Game, profileBlockedReason: string): string {
   if (!game.installed) return 'Install the game or select its executable first.';
   if (game.integrationSetup?.state === 'unsupported-platform') return game.integrationSetup.message;
   if (game.integrationSetup?.state === 'setting-up') return 'Integration setup is in progress.';
   if (game.integrationSetup?.recoveryNeeded) return 'Recover the interrupted setup before trying again.';
   if (game.id === 'dcs' && game.integrationSetup?.repairable === false) return game.integrationSetup.message;
-  if (!cleanup) return 'Native cleanup metadata is unavailable. Refresh game status before changing provider setup.';
-  if (!['idle', 'failed'].includes(cleanup.phase)) return 'Recover the previous owned setup before changing game integration.';
   if (profileBlockedReason) return profileBlockedReason;
   return '';
-}
-
-export function gameCleanupLabel(cleanup: GameCleanup): string {
-  const labels: Record<GameCleanup['phase'], string> = { idle: 'Nothing to restore', restoring: 'Restoring previous owned setup', 'recovery-needed': 'Recovery needed', failed: 'Cleanup failed' };
-  return labels[cleanup.phase];
 }

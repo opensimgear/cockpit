@@ -312,12 +312,10 @@ impl GatewayManager {
         let anchor = game_anchor.unwrap_or_else(crate::config_paths::config_path);
         let ui_preferences=crate::persistence::ui::Preferences::new(&anchor);
         let mut game_paths = crate::games::Paths::in_directory(anchor.parent().unwrap_or_else(|| std::path::Path::new(".")));
-        // Only locate separately retained setup/recovery evidence at an explicit
-        // old anchor. The obsolete game-profile configuration is never opened.
-        if let Some(retained_anchor) = std::env::var_os("OSG_GAMES_CONFIG").filter(|_|!isolated) {
-            let retained_anchor = std::path::PathBuf::from(retained_anchor);
-            game_paths.provider_setup = retained_anchor.with_extension("integration-setup.json");
-            game_paths.recovery = retained_anchor.with_extension("recovery.json");
+        // An explicit game namespace shares the current SQL provider settings.
+        if let Some(setup_anchor) = std::env::var_os("OSG_GAMES_CONFIG").filter(|_|!isolated) {
+            let setup_anchor = std::path::PathBuf::from(setup_anchor);
+            game_paths.provider_setup = setup_anchor.with_extension("integration-setup.json");
         }
         let games = Arc::new(crate::games::GamesRuntime::new(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform)));
         let resource_sessions = sessions.clone();
