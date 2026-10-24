@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 pub(crate) const SIGNALS_ID: &str = "00000000-0000-4000-8000-000000000100";
 pub(crate) const WORKSPACE_ID: &str = "00000000-0000-4000-8000-000000000101";
+pub(crate) const DCS_ID: &str = "f592a7b4-6f39-4267-a8f9-b46fbe4ff91a";
 
 fn example(id: &str, name: &str) -> ProfileDocument {
     let mut document = osg_profiles::default_document();
@@ -41,6 +42,12 @@ fn profiles() -> Result<Library, String> {
     library
         .profiles
         .extend([signals, example(WORKSPACE_ID, "Dev · Workspace")]);
+    let dcs: ProfileDocument = serde_json::from_str(include_str!(
+        "../../../examples/dcs-bios/feature-lab.profile.json"
+    ))
+    .map_err(|_| "Invalid development DCS profile.")?;
+    debug_assert_eq!(dcs.id, DCS_ID);
+    library.profiles.push(dcs);
     library.validate()?;
     Ok(library)
 }

@@ -19,7 +19,8 @@ test('fresh dev initialization seeds SQL once and restart preserves edits',{skip
   await mkdir(artifacts,{recursive:true});
   try{
     const list=(await native({command:'profile_list'})).profiles.profiles;
-    assert.equal(list.length,3);const demo=list.find(p=>p.id==='00000000-0000-4000-8000-000000000100');assert.ok(demo);
+    assert.equal(list.length,4);const demo=list.find(p=>p.id==='00000000-0000-4000-8000-000000000100');assert.ok(demo);
+    const dcs=list.find(p=>p.id==='f592a7b4-6f39-4267-a8f9-b46fbe4ff91a');assert.equal(dcs?.name,'DCS Feature Lab - AH-6J + F/A-18C');
     const runtime=(await native({command:'profile_status'})).profiles.profileSession;assert.equal(runtime.state,'stopped');assert.equal(runtime.owner,null);
     const rows=await records();assert.equal(rows.find(r=>r.domain==='development'&&r.key==='initialized').revision,1);
     assert.ok(rows.some(r=>r.domain==='widgets'&&r.key==='library'));

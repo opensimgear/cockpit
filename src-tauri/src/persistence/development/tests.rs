@@ -16,9 +16,9 @@ fn fresh_examples_are_persisted_without_runtime_or_security_authority() {
             .payload,
     )
     .unwrap();
-    assert_eq!(library.profiles.len(), 3);
+    assert_eq!(library.profiles.len(), 4);
     assert!(library.local_assignments.is_empty());
-    assert!(library.profiles.iter().all(|p| p.virtual_outputs.is_empty()
+    assert!(library.profiles.iter().filter(|p| p.id != DCS_ID).all(|p| p.virtual_outputs.is_empty()
         && p.desktop_outputs.is_empty()
         && p.visibility.is_empty()
         && p.overrides.is_empty()
@@ -33,7 +33,18 @@ fn fresh_examples_are_persisted_without_runtime_or_security_authority() {
             .len(),
         2
     );
-    assert_eq!(database.profile_index().unwrap().len(), 3);
+    let dcs = library.profiles.iter().find(|p| p.id == DCS_ID).unwrap();
+    assert_eq!(dcs.name, "DCS Feature Lab - AH-6J + F/A-18C");
+    assert_eq!(dcs.revision, 1);
+    assert_eq!(dcs.resources.len(), 7);
+    assert_eq!(dcs.processing_nodes.len(), 44);
+    assert_eq!(dcs.bindings.len(), 87);
+    assert_eq!(dcs.vehicle_tabs.len(), 2);
+    assert_eq!(dcs.virtual_outputs.len(), 2);
+    assert_eq!(dcs.desktop_outputs.len(), 1);
+    assert_eq!(dcs.visibility.len(), 1);
+    assert_eq!(dcs.companion_assignments.len(), 1);
+    assert_eq!(database.profile_index().unwrap().len(), 4);
     assert!(database.read("widgets", "library").unwrap().is_some());
     for (domain, key) in [
         ("secrets", "companion-host"),

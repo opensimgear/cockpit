@@ -1,4 +1,19 @@
-# MH-6J read-only CommonData
+# DCS examples
+
+## Feature Lab profile
+
+[feature-lab.profile.json](feature-lab.profile.json) restores the saved
+**DCS Feature Lab - AH-6J + F/A-18C** demo (archived revision 11, reset to revision 1
+for a fresh seed). It includes both aircraft tabs, controller processing, telemetry,
+virtual and desktop outputs, companion routes and the saved canvas layout.
+Debug builds include it in a fresh development database. Existing databases keep
+their saved contents; use **Profiles → Import profile** to add this document.
+Import creates a new profile identity without local hardware assignments or runtime
+ownership. The referenced companion publication and DCS setup are not included.
+The AH-6J tab demonstrates the original AH-6 catalogue; it does not qualify MH-6J
+commands for the distinct aircraft mod described below.
+
+## MH-6J read-only CommonData
 
 [MH6CommonData.lua](MH6CommonData.lua) adds the exact **MH-6J** aircraft identity to the checksum-pinned DCS-BIOS **0.11.7** runtime. It activates the existing CommonData telemetry module and a self-named module with no controls. It provides no cockpit commands and does not change the aircraft name received by Cockpit.
 

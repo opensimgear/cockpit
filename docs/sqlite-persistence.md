@@ -356,9 +356,18 @@ receive development sample data. Normal restarts keep newly saved SQL data.
 Debug builds seed the current SQLite layout before native workers start. One
 transaction writes the profile library, generic Toggle source and an unversioned
 development/initialized marker. The library contains protected Default,
-Dev · Signals and Dev · Workspace. Signals has two unbound logical devices and
+Dev · Signals, Dev · Workspace and DCS Feature Lab - AH-6J + F/A-18C. Signals has
+two unbound logical devices and
 a rising-edge connection for editing; it contains no live assignments, device
 outputs, visibility changes, pairing material or automatic activation.
+
+The DCS example is the recovered Feature Lab portable document in
+`examples/dcs-bios/feature-lab.profile.json`, with both aircraft tabs, 7 resources,
+44 processing nodes, 87 connections and its saved layout. Virtual/desktop output,
+visibility and companion selections remain editable profile declarations. Local
+hardware bindings, companion publications, game setup and runtime ownership are
+not seeded; import or seeding never activates the profile. Bind available resources
+and publish/select a companion panel before using those routes.
 
 The marker prevents reseeding on restart, so edits and deleted examples stay
 as saved. A failed/busy transaction writes none of the seed. An existing
@@ -426,8 +435,8 @@ confirmed:true. No tool accepts SQL, arbitrary domains or filesystem paths.
 There is no import or migration step. For a clean development start, exit every
 process using the namespace, select an empty configuration directory through
 `OSG_DCS_BIOS_CONFIG`, then launch a debug build. It seeds Default, Dev · Signals,
-Dev · Workspace and the Toggle source exactly once. Release builds skip these
-examples. Normal restarts preserve new SQL edits and deletions. Retired JSON,
+Dev · Workspace, DCS Feature Lab and the Toggle source exactly once. Release builds
+skip these examples. Normal restarts preserve new SQL edits and deletions. Retired JSON,
 localStorage and IndexedDB records never overwrite the database. A layout from a
 different development build requires another fresh namespace.
 
