@@ -337,33 +337,10 @@ impl Recovery {
             if let Some(output) = self.inspect(JournalId::Manual)? {
                 status.outputs.push(output);
             }
-            let parent = root.join("companion-recovery");
-            if !directory(&parent)? {
-                return Ok(());
-            }
-            let mut count = 0;
-            for entry in std::fs::read_dir(parent).map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let name = entry.file_name();
-                let Some(name) = name.to_str() else {
-                    return Err("Retained recovery has an unreadable filename.".into());
-                };
-                if !name.ends_with(".json") {
-                    continue;
-                }
-                count += 1;
-                if count > MAX_COMPANION_JOURNALS {
-                    return Err("More than 32 retained companion ownership journals require native inspection.".into());
-                }
-                let file = name
-                    .strip_suffix(".json")
-                    .filter(|file| companion_file(file))
-                    .ok_or(
-                        "An unknown companion recovery journal must be preserved for inspection.",
-                    )?;
-                if let Some(output) = self.inspect(JournalId::Companion { file: file.into() })? {
-                    status.outputs.push(output);
-                }
+            let anchor=root.join("companion-recovery/inventory.json");
+            for name in osg_persistence::Evidence::siblings(&anchor,"recovery-output",MAX_COMPANION_JOURNALS)? {
+                let file=name.strip_suffix(".json").filter(|file|companion_file(file)).ok_or("An unknown companion recovery journal must be preserved for inspection.")?;
+                if let Some(output)=self.inspect(JournalId::Companion{file:file.into()})?{status.outputs.push(output);}
             }
             Ok(())
         })();

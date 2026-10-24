@@ -2542,7 +2542,7 @@ mod tests {
         let (manager, provider) = setup();
         let mut manager=Arc::try_unwrap(manager).ok().unwrap();
         let root=tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("output-recovery.json"),b"malformed retained owner").unwrap();
+        osg_persistence::test_support::write_evidence(&root.path().join("output-recovery.json"),"recovery-output",Some(b"malformed retained owner")).unwrap();
         std::fs::write(root.path().join("local-settings.json"),b"obsolete config").unwrap();
         manager.retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().into()),false));
         let status=request(&manager,"profile_retired_recovery_status",None,json!({}));
@@ -2551,7 +2551,7 @@ mod tests {
         assert_eq!(reply["ok"],false);assert!(reply["error"].as_str().unwrap().contains("retained"));
         assert!(manager.guard_learning().unwrap_err().contains("retained"));
         assert_eq!(request(&manager,"profile_retired_recovery_acknowledge",None,json!({"reference":null}))["ok"],false);
-        assert_eq!(std::fs::read(root.path().join("output-recovery.json")).unwrap(),b"malformed retained owner");
+        assert_eq!(osg_persistence::test_support::read_evidence(&root.path().join("output-recovery.json"),"recovery-output").unwrap(),b"malformed retained owner");
         assert!(provider.adapters.lock().unwrap().is_empty());
         assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
     }
@@ -2572,13 +2572,13 @@ mod tests {
         let admission=manager.profile_admission.write().unwrap();
         gate.wait();
         let path=root.path().join("output-recovery.json");
-        std::fs::write(&path,b"interrupted legacy owner").unwrap();
+        osg_persistence::test_support::write_evidence(&path,"recovery-output",Some(b"interrupted legacy owner")).unwrap();
         drop(admission);
         let reply=pending.join().unwrap();assert_eq!(reply["ok"],false,"{reply}");
         assert!(reply["error"].as_str().unwrap().contains("retained"));
         assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
         assert!(provider.adapters.lock().unwrap().is_empty());
-        assert_eq!(std::fs::read(path).unwrap(),b"interrupted legacy owner");
+        assert_eq!(osg_persistence::test_support::read_evidence(&path,"recovery-output").unwrap(),b"interrupted legacy owner");
     }
     #[test]
     fn retired_provider_commands_cannot_cancel_or_reconfigure_a_unified_run() {

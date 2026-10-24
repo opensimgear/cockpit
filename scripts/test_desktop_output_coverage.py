@@ -21,15 +21,15 @@ class CoverageParserTests(unittest.TestCase):
             "crates/desktop-output/src/coordinator.rs").read_text(encoding="utf-8")
         lines = source.splitlines()
         methods = [number for number, line in enumerate(lines, 1)
-            if re.match(r"\s*(?:pub )?fn (?:send|submit|persist_inner)\(", line)]
-        self.assertEqual(len(methods), 3)
+            if re.match(r"\s*(?:pub )?fn (?:send|submit)\(", line)]
+        self.assertEqual(len(methods), 2)
         first_test = next(number for number, line in enumerate(lines, 1)
             if line.strip() == "#[cfg(test)]")
         self.assertTrue(all(number > first_test for number in methods))
         rows = "\n".join(["1|1|production", *[f"{number}|0|method" for number in methods]])
         counts = coverage.production_counts(source, rows)
         self.assertEqual(counts, {1: True, **dict.fromkeys(methods, False)})
-        self.assertEqual(sum(counts.values()) / len(counts), 0.25)
+        self.assertAlmostEqual(sum(counts.values()) / len(counts), 1/3)
         test_fields = [number for number, line in enumerate(lines, 1)
             if "persist_attempts: std::cell::Cell" in line]
         self.assertTrue(test_fields)

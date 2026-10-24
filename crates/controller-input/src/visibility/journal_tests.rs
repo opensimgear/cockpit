@@ -128,10 +128,10 @@ fn external_policy_or_journal_edits_are_never_overwritten() {
     assert!(restore(&mut driver, &mut store, &record.id).is_err());
     assert_eq!(driver.state, changed);
     assert_eq!(driver.calls, calls);
-    std::fs::write(&path, b"external edit").unwrap();
+    sql_write(&path, b"external edit").unwrap();
     assert!(store.read().is_err());
     assert!(store.write(&record).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), b"external edit");
+    assert_eq!(sql_read(&path).unwrap(), b"external edit");
 }
 #[test]
 fn malformed_records_pending_conflicts_and_invalid_files_refuse_recovery() {
@@ -139,9 +139,6 @@ fn malformed_records_pending_conflicts_and_invalid_files_refuse_recovery() {
     let path = temp.path().join("v.json");
     let mut store = Store::open(path.clone()).unwrap();
     let record = store.begin(plan()).unwrap();
-    let mut bad = record.clone();
-    bad.schema = 2;
-    assert!(bad.validate().is_err());
     let mut bad = record.clone();
     bad.id = "invalid".into();
     assert!(bad.validate().is_err());
@@ -163,9 +160,9 @@ fn malformed_records_pending_conflicts_and_invalid_files_refuse_recovery() {
     assert!(restore(&mut driver, &mut store, &pending.id).is_err());
     assert_eq!(driver.calls, 0);
     drop(store);
-    std::fs::write(&path, b"{}").unwrap();
+    sql_write(&path, b"{}").unwrap();
     assert!(Store::open(path.clone()).is_err());
-    std::fs::write(&path, vec![0; MAX_RECORD as usize + 1]).unwrap();
+    sql_write(&path, vec![0; MAX_RECORD as usize + 1]).unwrap();
     assert!(inspect(&path).is_err());
     assert!(inspect(temp.path()).is_err());
 }
@@ -219,3 +216,6 @@ fn process_exit_keeps_pending_intent_and_releases_file_ownership() {
     assert!(restore(&mut driver, &mut store, &record.id).unwrap().clean);
     assert_eq!(driver.state, state());
 }
+
+fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-visibility")}
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-visibility",Some(data.as_ref()))}

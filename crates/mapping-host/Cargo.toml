@@ -7,6 +7,7 @@ rust-version = "1.90"
 [features]
 legacy-test-fixtures = ["osg-companion-service/legacy-test-fixtures"]
 [dependencies]
+osg-persistence = { path = "../persistence" }
 osg-companion-service = { path = "../companion-service" }
 osg-logic = { path = "../logic" }
 osg-mapping = { path = "../mapping" }
@@ -19,4 +20,5 @@ uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 
 [dev-dependencies]
+osg-persistence = { path = "../persistence", features = ["test-support"] }
 osg-companion-service = { path = "../companion-service", features = ["legacy-test-fixtures"] }

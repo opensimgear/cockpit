@@ -219,7 +219,7 @@ fn explicit_restart_recovery_checks_output_owner_and_never_rearms() {
             .transition(osg_virtual_controller::output_journal::Phase::Confirmed)
             .unwrap();
         drop(store);
-        let before = std::fs::read(&path).unwrap();
+        let before = osg_persistence::test_support::read_evidence(&path,"recovery-output").unwrap();
         if matching {
             s.game_stop(&journal).unwrap();
             s.game_resume(&journal, true).unwrap();
@@ -228,7 +228,7 @@ fn explicit_restart_recovery_checks_output_owner_and_never_rearms() {
                 .game_stop(&journal)
                 .unwrap_err()
                 .contains("Another output owner"));
-            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(osg_persistence::test_support::read_evidence(&path,"recovery-output").unwrap(), before);
         }
         assert!(s.router.lock().unwrap().runtime.token().is_err());
         if matching {

@@ -621,9 +621,9 @@ fn startup_recovery_blocks_automatic_activation_without_replaying_then_explicit_
     manager.poll_automatic();
     assert!(owner(manager).is_some());
     let journal = fixture.directory.path().join("session.json");
-    let bytes = std::fs::read(&journal).unwrap();
+    let bytes = osg_persistence::test_support::read_evidence(&journal,"recovery-profile").unwrap();
     manager.profile_session.lock().unwrap().stop().unwrap();
-    std::fs::write(&journal, bytes).unwrap();
+    osg_persistence::test_support::write_evidence(&journal,"recovery-profile",Some(&bytes)).unwrap();
     let host = || {
         crate::profile_session_host::NativeProfileHost::new(
             manager.profile_resources.clone(),
@@ -821,46 +821,14 @@ fn failed_manual_pin_storage_inhibits_automatic_events_after_explicit_selection(
 }
 
 #[test]
-fn legacy_pause_is_migrated_to_durable_stop_before_automatic_startup() {
-    let mut fixture = Fixture::with_legacy_stop(true);
-    let path = fixture.directory.path().join("automatic.json");
-    fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
-    mode(&fixture.manager, "automatic");
-    fixture.manager.restore_automatic_selection();
-    fixture.manager.poll_automatic();
-    assert!(owner(&fixture.manager).is_none());
-    assert_eq!(fixture.manager.profile_automatic.view()["mode"], "manual");
-    assert_eq!(Store::new(Some(path)).load().unwrap().unwrap().mode, SelectionMode::Manual);
-    let saved: Value = serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
-    assert!(saved.get("paused").is_none());
-    ok(&fixture.manager, "profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
-    assert!(owner(&fixture.manager).is_some());
-}
-
-#[test]
-fn legacy_stop_migration_preserves_the_old_intent_until_both_writes_succeed() {
-    for fail_pin in [true, false] {
-        let mut fixture = Fixture::with_legacy_stop(true);
-        let path = fixture.directory.path().join("automatic.json");
-        fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
-        mode(&fixture.manager, "automatic");
-        let database=osg_persistence::Database::for_namespace(&path).unwrap();
-        let blocked=if fail_pin {Some(osg_persistence::test_support::hold_writer(&database).unwrap())} else {None};
-        if !fail_pin {
-            fixture.manager.profile_session.lock().unwrap().fail_journal_saves(true);
-        }
-        fixture.manager.restore_automatic_selection();
-        fixture.manager.poll_automatic();
-        assert!(owner(&fixture.manager).is_none());
-        let saved: Value = serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
-        assert_eq!(saved["paused"], true);
-        drop(blocked);
-        fixture.manager.profile_session.lock().unwrap().fail_journal_saves(false);
-        fixture.manager.restore_automatic_selection();
-        assert_eq!(Store::new(Some(path)).load().unwrap().unwrap().mode, SelectionMode::Manual);
-        let saved: Value = serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
-        assert!(saved.get("paused").is_none());
-    }
+fn retired_pause_json_cannot_change_the_current_sql_selection_policy() {
+    let mut fixture=Fixture::with_legacy_stop(true);
+    let path=fixture.directory.path().join("automatic.json");
+    fixture.manager.profile_automatic=Runtime::new(Some(path));
+    mode(&fixture.manager,"automatic");fixture.manager.restore_automatic_selection();
+    assert_eq!(fixture.manager.profile_automatic.view()["mode"],"automatic");
+    let retired:Value=serde_json::from_slice(&std::fs::read(fixture.directory.path().join("session.json")).unwrap()).unwrap();
+    assert_eq!(retired["paused"],true);
 }
 
 #[test]

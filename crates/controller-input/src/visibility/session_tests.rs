@@ -51,30 +51,30 @@ fn retained_inspection_errors_and_journal_edits_never_stop_or_rewrite_the_sessio
     )
     .unwrap();
     let active = state.lock().unwrap().clone();
-    let original = std::fs::read(&path).unwrap();
+    let original = sql_read(&path).unwrap();
     assert!(session
         .inspect::<()>(|_, _| Err("Read-only preparation rejected".into()))
         .unwrap_err()
         .contains("preparation rejected"));
     assert_eq!(*state.lock().unwrap(), active);
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(sql_read(&path).unwrap(), original);
     assert!(!session.record.clean);
     let mut edited = original.clone();
     edited.push(b' ');
     assert!(session
         .inspect::<()>(|_, _| {
-            std::fs::write(&path, &edited).unwrap();
+            sql_write(&path, &edited).unwrap();
             Ok(())
         })
         .unwrap_err()
         .contains("changed externally"));
     assert_eq!(*state.lock().unwrap(), active);
-    assert_eq!(std::fs::read(&path).unwrap(), edited);
+    assert_eq!(sql_read(&path).unwrap(), edited);
     assert!(session
         .inspect::<()>(|_, _| panic!("Do not inspect a changed journal"))
         .is_err());
-    std::fs::write(&path, original).unwrap();
-    session.stop().unwrap();
+    sql_write(&path, original).unwrap();
+    assert!(session.stop().is_err()); // Equal bytes at a new revision cannot revive this owner.
     assert!(session
         .inspect::<()>(|_, _| panic!("Do not inspect a stopped session"))
         .is_err());
@@ -223,3 +223,6 @@ fn source_bounds_and_external_policy_conflicts_never_broaden_cleanup() {
     drop(session);
     assert_eq!(*state.lock().unwrap(), external);
 }
+
+fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-visibility")}
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-visibility",Some(data.as_ref()))}

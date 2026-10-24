@@ -1215,14 +1215,9 @@ fn deleted_configuration_does_not_discard_orphaned_driver_ownership() {
         true
     );
     assert_eq!(saved["profile"]["id"], json!(c.profile.id));
-    std::fs::write(
-        f.service
-            .companion_runs
-            .lock()
-            .unwrap()
-            .journal("orphan")
-            .unwrap(),
-        b"corrupt journal",
+    osg_persistence::test_support::write_evidence(
+        &f.service.companion_runs.lock().unwrap().journal("orphan").unwrap(),
+        "recovery-output",Some(b"corrupt journal"),
     )
     .unwrap();
     *f.service.companion_runs.lock().unwrap() = Manager::new(Some(f._root.path().into()));

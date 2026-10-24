@@ -6,6 +6,7 @@ import {createRequire} from 'node:module';
 import {randomUUID} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {dirname,resolve} from 'node:path';
+import {recoveryRecord} from './sqlite-recovery-record.mjs';
 
 const enabled=process.env.OSG_PROFILE_OUTPUTS_NATIVE==='1';
 const artifacts=resolve('.research/profile-outputs-native');
@@ -109,11 +110,11 @@ test('native profile acquires and restores vJoy and HidHide, then owns a neutral
     // HidHide exposes one exclusive control handle. The owning native worker
     // verifies every mutation by driver readback before committing its position.
     // Inspect that exact committed owner rather than opening a competing handle.
-    const manifest=JSON.parse(await readFile(resolve(configRoot,'profile-session-v1.json'),'utf8'));
+    const manifest=(await recoveryRecord(resolve(configRoot,'cockpit.sqlite3'),'recovery-profile','profile-session-v1.json')).payload;
     assert.equal(manifest.active.owner.profileId,saved.id);
     const receipt=manifest.active.receipts.find(value=>value.kind==='controller-visibility');assert.ok(receipt);
     const visibilityJournalPath=resolve(configRoot,`game-visibility-${receipt.state.visibilityOwner}.json`);
-    const record=JSON.parse(await readFile(visibilityJournalPath,'utf8'));
+    const record=(await recoveryRecord(resolve(configRoot,'cockpit.sqlite3'),'recovery-visibility',visibilityJournalPath.slice(configRoot.length+1))).payload;
     const owningWorker=(await native({command:'controller_visibility_status',sourceId})).controllers.visibility.job;
     assert.equal(owningWorker.active,true);assert.equal(owningWorker.phase,'active');assert.equal(owningWorker.sessionId,record.id);
     assert.equal(record.clean,false);assert.equal(record.pending,null);assert.equal(record.restoring,false);

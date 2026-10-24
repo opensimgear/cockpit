@@ -417,7 +417,7 @@ fn restart_status_recovery_and_ambiguous_acknowledgement_never_resume_mapping() 
         .calls
         .iter()
         .any(|c| c == "submit:1:0"));
-    std::fs::write(&path, b"corrupt").unwrap();
+    osg_persistence::test_support::write_evidence(&path,"recovery-output",Some(b"corrupt")).unwrap();
     assert!(service
         .request(&json!({"command":"mapping_status"}))
         .unwrap()["outputRecovery"]["error"]

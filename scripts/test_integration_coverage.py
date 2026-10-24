@@ -45,6 +45,12 @@ class IntegrationCoverageTests(unittest.TestCase):
         self.assertEqual(lines[end], 'mod tests;')
 
 class ProductionBoundaryTests(unittest.TestCase):
+    def test_inline_test_fields_do_not_hide_later_journal_admissions(self):
+        source="struct Store {\n    #[cfg(test)]\n    fail_save: bool,\n}\nimpl Store {\n    fn save(&self) {}\n}\n"
+        excluded=coverage.test_only_lines(source)
+        self.assertIn(3,excluded)
+        self.assertNotIn(6,excluded)
+
     def test_test_only_imports_do_not_hide_production_functions(self):
         lines = ['use native::Reader;', '#[cfg(test)]', 'use native::{', '    Fake,', '};',
                  'fn production() {}', '#[cfg(test)]', 'mod tests {}']

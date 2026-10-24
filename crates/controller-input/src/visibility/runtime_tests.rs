@@ -232,7 +232,7 @@ fn retained_inspection_fences_source_policy_executable_journal_and_expiry_withou
     )
     .unwrap();
     let active = state.lock().unwrap().clone();
-    let initial = std::fs::read(&path).unwrap();
+    let initial = osg_persistence::test_support::read_evidence(&path,"recovery-visibility").unwrap();
     let initial_writes = writes.load(Ordering::Acquire);
     let make = || {
         let (reply, _) = mpsc::sync_channel(1);
@@ -298,7 +298,7 @@ fn retained_inspection_fences_source_policy_executable_journal_and_expiry_withou
         .contains("no longer owns"));
     assert_eq!(calls.load(Ordering::Acquire), before_calls);
     assert_eq!(*state.lock().unwrap(), active);
-    assert_eq!(std::fs::read(&path).unwrap(), initial);
+    assert_eq!(osg_persistence::test_support::read_evidence(&path,"recovery-visibility").unwrap(), initial);
     assert_eq!(writes.load(Ordering::Acquire), initial_writes);
     state
         .lock()
@@ -310,7 +310,7 @@ fn retained_inspection_fences_source_policy_executable_journal_and_expiry_withou
         .unwrap_err()
         .contains("driver policy changed"));
     assert_eq!(*state.lock().unwrap(), foreign);
-    assert_eq!(std::fs::read(&path).unwrap(), initial);
+    assert_eq!(osg_persistence::test_support::read_evidence(&path,"recovery-visibility").unwrap(), initial);
     assert_eq!(writes.load(Ordering::Acquire), initial_writes);
     // Only reset this injected backend to permit ordinary fixture teardown.
     *state.lock().unwrap() = active;

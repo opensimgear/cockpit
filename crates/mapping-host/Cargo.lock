@@ -1346,6 +1346,7 @@ name = "osg-desktop-output"
 version = "0.1.0"
 dependencies = [
  "osg-mapping",
+ "osg-persistence",
  "serde",
  "serde_json",
  "tempfile",
@@ -1385,6 +1386,7 @@ dependencies = [
  "osg-desktop-output",
  "osg-logic",
  "osg-mapping",
+ "osg-persistence",
  "osg-virtual-controller",
  "serde",
  "serde_json",
@@ -1409,6 +1411,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "osg-mapping",
+ "osg-persistence",
  "serde",
  "serde_json",
  "sha2",

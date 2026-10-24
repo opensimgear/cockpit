@@ -69,13 +69,13 @@ The portable library retains its document bytes and semantic hashes.
 | App-config `desktop-preferences.json`; desktop `write_preferences` | `ui/tray` | `TrayPreferences`; S7 | Tray close/minimize, unavailable tray diagnostic |
 | App-config `profile-progress-preferences.json`; progress settings | `ui/progress` | delivery and supported position enums; S7 | Progress position and restart |
 | App-config `window-state.json`; window-state plugin | `ui/windows` | fixed main-window geometry/display validation; S7 | Coalesced move/resize, exit/restart/off-screen display removal |
-| `profile-session-v1.json`; profile session journal | `recovery/profile-session` | existing manifest/phase/owner validation; S8 | Intent/effect/receipt faults, Stop/restart/owner lock |
-| `profile-output-{session}-{generation}.json`; virtual output journal | `recovery/virtual/{owner}` | exact owner/generation/driver fingerprint validation; S8 | No output replay, neutral/cleanup receipts, second process |
-| `profile-desktop-{session}-{generation}.json`; desktop coordinator journal | `recovery/desktop/{owner}` | desktop session/process receipt validation; S8 | Crash/foreground/Stop recovery, no injector replay |
-| `controller-visibility-session.json`; visibility journal | `recovery/visibility` | existing session/owner/fingerprint validator; S8 | Explicit restoration only; lifetime OS lock retained |
+| `profile-session-v1.json`; profile session journal | `recovery-profile/profile-session-v1.json` | existing manifest/phase/owner validation; S8 | Intent/effect/receipt faults, Stop/restart/owner lock |
+| `profile-output-{session}-{generation}.json`; virtual output journal | `recovery-output/profile-output-{session}-{generation}.json` | exact owner/generation/driver fingerprint validation; S8 | No output replay, neutral/cleanup receipts, second process |
+| `profile-desktop-{session}-{generation}.json`; desktop coordinator journal | `recovery-desktop/profile-desktop-{session}-{generation}.json` | desktop session/process receipt validation; S8 | Crash/foreground/Stop recovery, no injector replay |
+| `controller-visibility-session.json`; visibility journal | `recovery-visibility/controller-visibility-session.json` | existing session/owner/fingerprint validator; S8 | Explicit restoration only; lifetime OS lock retained |
 | `games.recovery.json`, `games.abandoned-UUID.json`; game cleanup/archive | `recovery/games/{owner}` | current installation/process/recovery schema; S8 | Exit/crash/external modification and abandoned evidence |
 | `setup-work/dcs-setup-journal.json`, `completed.json`, `restored.json` | `recovery/dcs-setup/{id}` | existing setup journal/hash/path validator; S8 | Intent and receipt boundaries; immutable backup bytes referenced |
-| `mappings/output-recovery.json`, `mappings/companion-recovery/instance-<32hex>.json` | `recovery/retired/{owner}` | cleanup-only legacy receipt validator; S8 | Block activation until explicit safe cleanup; preserve unknown evidence |
+| `mappings/output-recovery.json`, `mappings/companion-recovery/instance-<32hex>.json` | `recovery-output/mappings/{journal-anchor}` | cleanup-only legacy receipt validator; S8 | Block activation until explicit safe cleanup; preserve unknown evidence |
 
 Legacy `mappings/*.json`, `local-settings.json`, `companion-routes.json` and
 old captured DCS profile authoring stores are retired. The old mapping crate
@@ -318,3 +318,35 @@ MCP ui_preferences_get/save uses the same fixed owners, validators and revisions
 Windows edits describe next-start geometry; observed native gestures establish
 new current geometry. Remembered metadata is distinct from guarded device
 Forget/revoke operations. No SQL, filesystem path or protected key is accepted.
+
+## Lifecycle evidence: profile, output and visibility
+
+Profile manifests, virtual output, desktop output and persistent visibility
+evidence now commit only to SQLite. Their private envelopes have no schema
+version or Pause migration. Retired JSON files are ignored and left untouched.
+Keys retain namespace-relative native anchors; filenames in receipts are fixed
+identities, never caller-selected filesystem writes. Native registration keeps
+the application roots in one database. Standalone fixture roots remain isolated.
+
+The shared Evidence boundary checks both revision and exact payload under the
+writer transaction. Failed/busy commits leave the cached acknowledgement intact.
+Restoring identical bytes at a later revision cannot revive an old owner.
+Domain validators still verify phases, exact run/generation, driver bindings,
+process/application scope and recovery fingerprints. Corrupt or pending records
+block admission. Recovery sends only the existing guarded cleanup operations;
+loading a record never starts a worker or replays output.
+
+OS file locks remain separate, held across the live/recovery session and
+explicitly unlocked on Drop. Paths are checked before parent creation. SQL
+transactions finish before driver, helper or operating-system work. Desktop
+recovery rechecks its owner while holding its lifetime lock. Bounded SQL owner
+inventories replace filesystem scans in native cleanup, visibility startup and
+the standalone mapping host. Cleanup-only discovery does not load retired
+authoring configurations. Existing portal/MCP recovery routes use these stores.
+
+Old game cleanup/abandon archives and pre-profile mapping data will be discarded,
+without import or migration. The remaining S8 work covers new DCS setup operations.
+Supported restore, fresh authority epochs and the final writer inventory remain
+S9 work; this intermediate cutover does not claim all persistence is complete.
+Development initialization will seed a fresh database only; release builds will
+not receive development sample data. Normal restarts keep newly saved SQL data.

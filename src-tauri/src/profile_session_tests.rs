@@ -241,18 +241,16 @@ fn every_uncertain_activation_phase_is_compensated_and_never_replayed() {
     }
 }
 #[test]
-fn legacy_paused_journal_opens_stopped_and_new_save_drops_the_latch() {
-    let folder = temp();
-    let path = folder.path().join("session.json");
-    std::fs::write(&path, br#"{"schemaVersion":1,"paused":true,"active":null,"pending":null}"#).unwrap();
-    let (mut runtime, probe) = coordinator(Some(path.clone()));
-    assert_eq!(runtime.status().state, State::Stopped);
-    assert!(probe.lock().unwrap().calls.is_empty());
-    runtime.apply(candidate()).unwrap();
-    assert_eq!(runtime.status().state, State::Running);
-    runtime.stop().unwrap();
-    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert!(saved.get("paused").is_none());
+fn retired_json_is_ignored_and_new_sql_manifest_has_no_version_or_pause_latch() {
+    let folder=temp();let path=folder.path().join("session.json");
+    let retired=br#"{"schemaVersion":1,"paused":true,"active":null,"pending":null}"#;
+    std::fs::write(&path,retired).unwrap();
+    let (mut runtime,probe)=coordinator(Some(path.clone()));
+    assert_eq!(runtime.status().state,State::Stopped);assert!(probe.lock().unwrap().calls.is_empty());
+    runtime.apply(candidate()).unwrap();runtime.stop().unwrap();
+    let saved:Value=serde_json::from_slice(&sql_read(&path).unwrap()).unwrap();
+    assert!(saved.get("schemaVersion").is_none());assert!(saved.get("paused").is_none());
+    assert_eq!(std::fs::read(&path).unwrap(),retired);
 }
 
 #[test]
@@ -361,9 +359,9 @@ fn overlapping_owner_external_edits_and_corrupt_journals_preserve_evidence() {
         .iter()
         .all(|call| call == "revoke"));
     drop(second);
-    std::fs::write(&path, b"external").unwrap();
+    sql_write(&path, b"external").unwrap();
     assert!(runtime.stop().is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+    assert_eq!(sql_read(&path).unwrap(), b"external");
     drop(runtime);
     let (mut corrupt, probe) = coordinator(Some(path.clone()));
     assert_eq!(corrupt.status().state, State::RecoveryNeeded);
@@ -374,7 +372,7 @@ fn overlapping_owner_external_edits_and_corrupt_journals_preserve_evidence() {
         .calls
         .iter()
         .all(|call| call == "revoke"));
-    assert_eq!(std::fs::read(path).unwrap(), b"external");
+    assert_eq!(sql_read(&path).unwrap(), b"external");
 }
 #[test]
 fn independent_edits_are_guarded_and_emergency_stop_is_available() {
@@ -408,7 +406,7 @@ fn recovery_envelope_rejects_missing_fields_forged_phases_and_oversized_data() {
     let (mut runtime, _) = coordinator(Some(path.clone()));
     runtime.apply(candidate()).unwrap();
     drop(runtime);
-    let original: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let original: Value = serde_json::from_slice(&sql_read(&path).unwrap()).unwrap();
     let mut cases = vec![];
     let mut value = original.clone();
     value.as_object_mut().unwrap().remove("active");
@@ -436,7 +434,7 @@ fn recovery_envelope_rejects_missing_fields_forged_phases_and_oversized_data() {
     cases.push(value);
     for value in cases {
         let bytes = serde_json::to_vec(&value).unwrap();
-        std::fs::write(&path, &bytes).unwrap();
+        sql_write(&path, &bytes).unwrap();
         let (mut runtime, probe) = coordinator(Some(path.clone()));
         assert_eq!(runtime.status().state, State::RecoveryNeeded);
         assert!(runtime.recover().is_err());
@@ -446,32 +444,23 @@ fn recovery_envelope_rejects_missing_fields_forged_phases_and_oversized_data() {
             .calls
             .iter()
             .all(|call| call == "revoke"));
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(sql_read(&path).unwrap(), bytes);
     }
-    std::fs::write(&path, vec![b' '; 2 * 1024 * 1024 + 1]).unwrap();
+    sql_write(&path, vec![b' '; 2 * 1024 * 1024 + 1]).unwrap();
     let (mut runtime, _) = coordinator(Some(path.clone()));
     assert!(runtime.recover().is_err());
-    assert_eq!(std::fs::metadata(&path).unwrap().len(), 2 * 1024 * 1024 + 1);
+    assert_eq!(sql_read(&path).unwrap().len(), 2 * 1024 * 1024 + 1);
 }
 
 #[test]
-fn legacy_pause_does_not_bypass_owned_recovery_or_block_apply_after_cleanup() {
-    let folder = temp();
-    let path = folder.path().join("session.json");
-    let (mut runtime, _) = coordinator(Some(path.clone()));
-    runtime.apply(candidate()).unwrap();
-    drop(runtime);
-    let mut saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    saved["paused"] = serde_json::json!(true);
-    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
-    let (mut restarted, probe) = coordinator(Some(path));
-    assert_eq!(restarted.status().state, State::RecoveryNeeded);
-    assert!(probe.lock().unwrap().calls.is_empty());
-    assert!(restarted.apply(candidate()).is_err());
-    restarted.recover().unwrap();
-    assert_eq!(restarted.status().state, State::Stopped);
-    restarted.apply(candidate()).unwrap();
-    assert_eq!(restarted.status().state, State::Running);
+fn obsolete_fields_in_sql_evidence_are_rejected_without_effects() {
+    let folder=temp();let path=folder.path().join("session.json");
+    let (mut runtime,_)=coordinator(Some(path.clone()));runtime.apply(candidate()).unwrap();drop(runtime);
+    let mut saved:Value=serde_json::from_slice(&sql_read(&path).unwrap()).unwrap();
+    saved["paused"]=json!(true);sql_write(&path,serde_json::to_vec(&saved).unwrap()).unwrap();
+    let (mut restarted,probe)=coordinator(Some(path));
+    assert_eq!(restarted.status().state,State::RecoveryNeeded);assert!(restarted.recover().is_err());
+    assert!(probe.lock().unwrap().calls.iter().all(|call|call=="revoke"));
 }
 
 #[test]
@@ -652,3 +641,6 @@ fn visibility_handoff_source_is_passive_exact_active_provenance_and_never_pendin
     runtime.stop().unwrap();
     assert!(runtime.visibility_handoff_source().unwrap().is_none());
 }
+
+fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-profile")}
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-profile",Some(data.as_ref()))}

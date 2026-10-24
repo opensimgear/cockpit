@@ -146,4 +146,3 @@ pub(super) fn native_notification_geometry(child: &WebviewWindow) -> Option<Nati
         work_area: NativeWorkArea { x: area.position.x, y: area.position.y, width: area.size.width, height: area.size.height },
     })
 }
-

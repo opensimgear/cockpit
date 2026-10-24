@@ -75,6 +75,18 @@ fn namespace_path(source: &Path) -> Result<PathBuf, String> {
         Ok(root.join("cockpit.sqlite3"))
 }
 
+pub(crate) fn evidence_key(source: &Path) -> Result<String, String> {
+    crate::check_path(source,false)?;
+    let database=namespace_path(source)?;
+    let namespaces=NAMESPACES.get().map(|n|n.read().map_err(|_|"Persistence namespace access failed.")).transpose()?;
+    let registered=namespaces.as_ref().and_then(|n|n.iter().find(|(root,_)|source.starts_with(root)).map(|(root,_)|root.as_path()));
+    let root=registered.or_else(||database.parent()).ok_or("Invalid evidence namespace.")?;
+    let relative=source.strip_prefix(root).map_err(|_|"Evidence is outside its namespace.")?;
+    let key=relative.to_str().ok_or("Invalid evidence identity.")?.replace('\\',"/");
+    crate::identifier(&key)?;
+    Ok(key)
+}
+
 impl Database {
     pub fn for_namespace(source: &Path) -> Result<Self, String> {
         Self::open(namespace_path(source)?)

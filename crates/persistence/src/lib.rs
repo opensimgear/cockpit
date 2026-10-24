@@ -17,6 +17,8 @@ mod profile_index;
 pub use profile_index::{ProfileIndex, ProfileReference};
 mod observation;
 pub use observation::ObservationWriter;
+mod evidence;
+pub use evidence::Evidence;
 
 pub const APPLICATION_ID: i64 = 0x4f534743;
 pub const MAX_PAYLOAD: usize = 128 * 1024 * 1024;
@@ -51,6 +53,13 @@ pub struct RevisionCheck<'a> {
     pub domain:&'a str,
     pub key:&'a str,
     pub expected_revision:u64,
+}
+/// Recovery admissions fence both the revision and the exact evidence bytes.
+pub struct PayloadCheck<'a> {
+    pub domain: &'a str,
+    pub key: &'a str,
+    pub expected_revision: u64,
+    pub expected_payload: Option<&'a [u8]>,
 }
 
 fn failure(error: rusqlite::Error) -> String {
@@ -247,13 +256,23 @@ impl Database {
         self.commit_checked(changes,&[])
     }
     pub fn commit_checked(&self, changes:&[Change<'_>],checks:&[RevisionCheck<'_>])->Result<Vec<u64>,String>{
-        if changes.is_empty() || changes.len()+checks.len() > 1024 {
+        self.commit_exact(changes,checks,&[])
+    }
+    pub fn commit_exact(&self, changes:&[Change<'_>],checks:&[RevisionCheck<'_>],payloads:&[PayloadCheck<'_>])->Result<Vec<u64>,String>{
+        if changes.is_empty() || changes.len()+checks.len()+payloads.len() > 1024 {
             return Err("Invalid persistence transaction size.".into());
         }
         let mut connection = self.connection()?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failure)?;
+        for check in payloads {
+            identifier(check.domain)?;identifier(check.key)?;
+            if revision(&tx,check.domain,check.key)?!=check.expected_revision
+                || read_record(&tx,check.domain,check.key)?.as_ref().map(|r|r.payload.as_slice())!=check.expected_payload {
+                return Err("Recovery evidence changed externally; preserving it.".into());
+            }
+        }
         for check in checks {
             identifier(check.domain)?;identifier(check.key)?;
             if revision(&tx,check.domain,check.key)?!=check.expected_revision {

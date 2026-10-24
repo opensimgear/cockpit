@@ -55,7 +55,7 @@ impl Operations for Arc<Fake> {
         if self.0.lock().unwrap().replace_before_output {
             let mut replacement = expected.clone();
             replacement.token.generation.0 += 1;
-            std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+            sql_write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
         }
         let fake = self.clone();
         let factory: Factory = Arc::new(move || {
@@ -221,18 +221,18 @@ fn retained_inventory_finds_manual_and_companion_owners_without_route_configurat
 fn malformed_or_unrecognized_retained_ownership_blocks_without_mutation() {
     let (root, recovery, _) = setup();
     let path = root.path().join("output-recovery.json");
-    std::fs::write(&path, b"invalid journal").unwrap();
+    sql_write(&path, b"invalid journal").unwrap();
     assert!(recovery.status().required);
-    assert_eq!(std::fs::read(&path).unwrap(), b"invalid journal");
-    std::fs::remove_file(&path).unwrap();
+    assert_eq!(sql_read(&path).unwrap(), b"invalid journal");
+    osg_persistence::test_support::write_evidence(&path,"recovery-output",None).unwrap();
     let child = root.path().join("companion-recovery");
     std::fs::create_dir(&child).unwrap();
     std::fs::write(child.join("operator-notes.txt"), b"ignore").unwrap();
     assert!(!recovery.status().required);
-    std::fs::write(child.join("unknown.json"), b"preserve").unwrap();
+    sql_write(&child.join("unknown.json"), b"preserve").unwrap();
     assert!(recovery.status().diagnostics[0].contains("unknown companion"));
     assert_eq!(
-        std::fs::read(child.join("unknown.json")).unwrap(),
+        sql_read(&child.join("unknown.json")).unwrap(),
         b"preserve"
     );
 }
@@ -253,7 +253,7 @@ fn retained_paths_and_inventory_bounds_fail_closed() {
     for n in 0..=MAX_COMPANION_JOURNALS {
         record(root.path(), companion(n), Phase::Clean);
     }
-    assert!(recovery.status().diagnostics[0].contains("More than 32"));
+    assert!(recovery.status().diagnostics[0].contains("exceeds its bound"));
     let relative = Recovery {
         root: Some("relative".into()),
         ops: recovery.ops.clone(),
@@ -370,7 +370,7 @@ fn qualification_blocks_recovery_acknowledgement_and_provision_cleanup() {
     assert_eq!(recovery.acknowledge(&reference).unwrap_err(), QUALIFICATION);
     assert!(recovery.recover_provision(&provision()).is_err());
     assert_eq!(
-        std::fs::read(path).unwrap(),
+        sql_read(&path).unwrap(),
         serde_json::to_vec(&saved).unwrap()
     );
     assert_eq!(fake.0.lock().unwrap().spawned, 0);
@@ -554,7 +554,7 @@ fn nonregular_journal_lock_or_parent_traversal_never_opens_a_feeder() {
     assert!(recovery.capture_mapping_owner(&token().session).is_err());
     std::fs::remove_dir(&path).unwrap();
     let (path, saved) = record(root.path(), JournalId::Manual, Phase::Confirmed);
-    let original = std::fs::read(&path).unwrap();
+    let original = sql_read(&path).unwrap();
     let lock = path.with_extension("lock");
     std::fs::remove_file(&lock).unwrap();
     std::fs::create_dir(&lock).unwrap();
@@ -562,7 +562,7 @@ fn nonregular_journal_lock_or_parent_traversal_never_opens_a_feeder() {
     assert!(recovery
         .recover(&journal_ref(JournalId::Manual, &saved))
         .is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(sql_read(&path).unwrap(), original);
     assert_eq!(fake.0.lock().unwrap().spawned, 0);
     assert!(ordinary(&root.path().join("new/../output-recovery.json"), false).is_err());
     let file = root.path().join("file");
@@ -577,7 +577,7 @@ fn redirected_existing_ancestor_never_reads_or_mutates_the_retained_target() {
     let nested = real.join("nested");
     std::fs::create_dir(&nested).unwrap();
     let (path, saved) = record(&nested, JournalId::Manual, Phase::Confirmed);
-    let original = std::fs::read(&path).unwrap();
+    let original = sql_read(&path).unwrap();
     let alias = root.path().join("alias");
     #[cfg(unix)]
     std::os::unix::fs::symlink(&real, &alias).unwrap();
@@ -626,6 +626,9 @@ fn redirected_existing_ancestor_never_reads_or_mutates_the_retained_target() {
     }
     .guard_clear()
     .is_err());
-    assert_eq!(std::fs::read(path).unwrap(), original);
+    assert_eq!(sql_read(&path).unwrap(), original);
     assert_eq!(fake.0.lock().unwrap().spawned, 0);
 }
+
+fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-output")}
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-output",Some(data.as_ref()))}

@@ -1285,7 +1285,7 @@ impl Host for NativeProfileHost {
         if run.attempted.contains(&ApplyPhase::Acquire) {
             if run.receipts.iter().any(|r|r.kind=="desktop-output") {
                 let path = crate::config_paths::config_path().with_file_name(crate::profile_session_desktop::journal_name(&run.owner)?);
-                if path.exists() {
+                if osg_persistence::Evidence::inspect(&path,"recovery-desktop",osg_desktop_output::coordinator::MAX_JOURNAL_BYTES)?.is_some() {
                     let receipt=run.receipts.iter().find(|r|r.kind=="desktop-output").unwrap();
                     let scope:Option<osg_desktop_output::Scope>=serde_json::from_value(receipt.state["scope"].clone()).map_err(|_|"Malformed desktop scope receipt.")?;
                     let token=osg_mapping::engine::RunToken {session:run.owner.session.clone(),generation:Counter(run.owner.generation)};
@@ -1295,7 +1295,7 @@ impl Host for NativeProfileHost {
                         self.report_progress(&run.owner, "cleanup-recovering-desktop-bindings", "Releasing recorded keyboard and mouse bindings");
                         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) { state.desktop.take(); }
                         let preferences = crate::profile_desktop_settings::Settings::native();
-                        osg_desktop_output::Coordinator::recover_journal(preferences.value.enabled, crate::profile_desktop_settings::qualified(), path)?;
+                        osg_desktop_output::Coordinator::recover_owned_journal(preferences.value.enabled, crate::profile_desktop_settings::qualified(), path, &token, scope.as_ref())?;
                         self.last_desktop_status=json!({"state":"stopped","recovered":true,"nativeSubmission":"Explicit recovery releases recorded possible holds only; actions remain stopped."});
                     }
                 } else if run.attempted.contains(&ApplyPhase::Start) {

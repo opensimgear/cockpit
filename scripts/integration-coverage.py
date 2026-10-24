@@ -2,6 +2,7 @@
 """Run native tests and gate each integration production module at least 71% production line coverage."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -40,10 +41,18 @@ def production_end(lines):
     return len(lines) + 1
 
 
+def test_only_lines(source):
+    spec = importlib.util.spec_from_file_location('desktop_coverage_source', Path(__file__).with_name('desktop-output-coverage.py'))
+    parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(parser)
+    return parser.test_only_lines(source)
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     module_names = ['game_telemetry.rs', 'xplane.rs', 'xplane_installation.rs', 'games/telemetry/windows_source/mod.rs', 'games/telemetry/windows_source/platform.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'game_cleanup.rs', 'games/storage/installations.rs', 'game_discovery.rs', 'games/artwork/mod.rs', 'games/artwork/sources.rs', 'games/artwork/model.rs', 'game_library.rs', 'game_metadata_api.rs', 'companion_game_owner.rs', 'retained_game_companions.rs', 'persistence/paths.rs', 'profile_retired_game_io.rs', 'companion/storage/widgets.rs', 'companion/storage/workspace.rs', 'companion/storage/workspace_validation.rs', 'mcp_tools/workspace.rs', 'companion/storage/host_settings.rs', 'mcp_tools/host_settings.rs', 'mcp/server/mod.rs', 'mcp/server/auth.rs', 'mcp/server/credentials.rs', 'mcp/server/transport.rs', 'mcp/storage/credentials.rs', 'mcp_tools/integration_settings.rs']
+    module_names.extend(['profile_session_journal.rs', 'profile_retired_recovery.rs'])
     module_names.extend(['persistence/ui/mod.rs', 'persistence/ui/validation.rs', 'persistence/ui/window_writer.rs', 'persistence/ui/commands.rs', 'window_persistence.rs'])
     parser.add_argument('--module', action='append', choices=module_names, help='Focused local coverage; CI measures every module.')
     parser.add_argument('--test-filter', action='append', default=[])
@@ -111,9 +120,8 @@ def main():
             counts.setdefault(current, {})[int(match[1])] = float(match[2].rstrip('kMGT'))
     report = {}
     for source in sources:
-        lines = source.read_text(encoding='utf-8').splitlines()
-        end = production_end(lines)
-        measured = {line: count for line, count in counts.get(str(source.relative_to(root)), {}).items() if line < end}
+        excluded = test_only_lines(source.read_text(encoding='utf-8'))
+        measured = {line: count for line, count in counts.get(str(source.relative_to(root)), {}).items() if line not in excluded}
         if not measured:
             raise RuntimeError(f'No production coverage recorded for {source.name}.')
         covered = sum(count > 0 for count in measured.values())

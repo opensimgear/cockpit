@@ -88,10 +88,10 @@ fn startup_self_access_guard_preserves_pending_standalone_game_and_invalid_journ
     store.begin(plan).unwrap();
     assert!(service.self_access_guard().unwrap_err().contains("owner"));
     drop(store);
-    std::fs::write(&game, b"invalid").unwrap();
+    sql_write(&game, b"invalid").unwrap();
     assert!(service.self_access_guard().is_err());
-    std::fs::remove_file(&game).unwrap();
-    std::fs::write(path, b"invalid").unwrap();
+    osg_persistence::test_support::write_evidence(&game,"recovery-visibility",None).unwrap();
+    sql_write(path, b"invalid").unwrap();
     assert!(service.self_access_guard().is_err());
 }
 #[test]
@@ -227,8 +227,8 @@ fn corrupt_recovery_and_preferences_are_reported_without_startup_replay() {
     let temp = crate::test_directory();
     let db=osg_persistence::Database::for_namespace(&temp.path().join("controller-visibility.json")).unwrap();
     db.commit(&[osg_persistence::Change{domain:"controllers",key:"visibility",expected_revision:0,payload:Some(b"invalid")}]).unwrap();
-    std::fs::write(
-        temp.path().join("controller-visibility-session.json"),
+    sql_write(
+        &temp.path().join("controller-visibility-session.json"),
         b"invalid",
     )
     .unwrap();
@@ -377,3 +377,5 @@ fn isolated_launch_is_independent_gated_and_owned_by_the_service() {
     }
     assert!(!service.suppression.active());
 }
+
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-visibility",Some(data.as_ref()))}

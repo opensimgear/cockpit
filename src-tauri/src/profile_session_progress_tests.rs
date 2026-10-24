@@ -138,7 +138,7 @@ fn native_cleanup_progress_does_not_announce_restoration_after_receipt_validatio
     let journal = directory.path().join("invalid-cleanup-progress-session.json");
     let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), Some(journal.clone()));
     coordinator.apply(fixture.candidate(false)).unwrap();
-    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(journal).unwrap()).unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&osg_persistence::test_support::read_evidence(&journal,"recovery-profile").unwrap()).unwrap();
     let mut run: OwnedRun = serde_json::from_value(saved["active"].clone()).unwrap();
     drop(coordinator);
     run.receipts.push(Receipt {kind:"unknown-output".into(),resource_id:"unknown".into(),state:json!({})});

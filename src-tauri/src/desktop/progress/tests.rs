@@ -155,5 +155,3 @@ use super::*;
         assert!(!state.finish("old"));
         assert_eq!(state.snapshot().unwrap().delivery, ProgressDelivery::System);
     }
-
-

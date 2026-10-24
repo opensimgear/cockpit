@@ -3,14 +3,12 @@ use super::policy::{Plan, State};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Write},
     path::{Path, PathBuf},
 };
 const MAX_RECORD: u64 = 1_048_576;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Record {
-    pub schema: u32,
     pub id: String,
     pub plan: Plan,
     pub position: usize,
@@ -21,8 +19,7 @@ pub struct Record {
 impl Record {
     pub fn validate(&self) -> Result<Vec<State>, String> {
         let steps = self.plan.steps()?;
-        if self.schema != 1
-            || uuid::Uuid::parse_str(&self.id)
+        if uuid::Uuid::parse_str(&self.id)
                 .ok()
                 .map(|u| u.to_string())
                 .as_deref()
@@ -44,51 +41,27 @@ impl Record {
     }
 }
 fn bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(v) => v,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.to_string()),
-    };
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_RECORD {
-        return Err("Visibility journal must be a bounded regular file.".into());
-    }
-    let mut data = vec![];
-    File::open(path)
-        .map_err(|e| e.to_string())?
-        .take(MAX_RECORD + 1)
-        .read_to_end(&mut data)
-        .map_err(|e| e.to_string())?;
-    if data.len() as u64 > MAX_RECORD {
-        return Err("Visibility journal is oversized.".into());
-    }
-    Ok(Some(data))
+    osg_persistence::Evidence::inspect(path,"recovery-visibility",MAX_RECORD as usize)
 }
 pub fn inspect(path: &Path) -> Result<Option<Record>, String> {
-    bytes(path)?
-        .map(|data| {
-            let record: Record = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
-            record.validate()?;
-            Ok(record)
-        })
-        .transpose()
+    bytes(path)?.as_deref().map(decode).transpose()
+}
+fn decode(data:&[u8])->Result<Record,String>{
+    let record:Record=serde_json::from_slice(data).map_err(|e|e.to_string())?;
+    record.validate()?;Ok(record)
 }
 pub struct Store {
-    path: PathBuf,
-    expected: Option<Vec<u8>>,
+    evidence: osg_persistence::Evidence,
     _lock: File,
+}
+impl Drop for Store {
+    fn drop(&mut self){let _=self._lock.unlock();}
 }
 impl Store {
     pub fn open(path: PathBuf) -> Result<Self, String> {
-        let parent = path
-            .parent()
-            .ok_or("Invalid visibility journal location.")?;
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let lock_path = path.with_extension("lock");
-        if std::fs::symlink_metadata(&lock_path)
-            .is_ok_and(|m| !m.is_file() || m.file_type().is_symlink())
-        {
-            return Err("Invalid visibility lock file.".into());
-        }
+        osg_persistence::check_path(&path,false)?;
+        let lock_path=path.with_extension("lock");
+        osg_persistence::check_path(&lock_path,true)?;
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -98,19 +71,16 @@ impl Store {
             .map_err(|e| e.to_string())?;
         lock.try_lock()
             .map_err(|_| "Another Cockpit visibility owner is active.")?;
-        let expected = bytes(&path)?;
-        inspect(&path)?;
+        let evidence = osg_persistence::Evidence::open(&path,"recovery-visibility",MAX_RECORD as usize)?;
+        if let Some(data)=evidence.payload(){decode(data)?;}
         Ok(Self {
-            path,
-            expected,
+            evidence,
             _lock: lock,
         })
     }
     pub fn read(&self) -> Result<Option<Record>, String> {
-        if bytes(&self.path)? != self.expected {
-            return Err("Visibility journal changed externally; preserve it for recovery.".into());
-        }
-        inspect(&self.path)
+        self.evidence.verify()?;
+        self.evidence.payload().map(decode).transpose()
     }
     pub fn write(&mut self, record: &Record) -> Result<(), String> {
         record.validate()?;
@@ -119,24 +89,13 @@ impl Store {
         if data.len() as u64 > MAX_RECORD {
             return Err("Visibility journal exceeds its bound.".into());
         }
-        let mut temp = tempfile::NamedTempFile::new_in(self.path.parent().unwrap())
-            .map_err(|e| e.to_string())?;
-        temp.write_all(&data).map_err(|e| e.to_string())?;
-        temp.as_file().sync_all().map_err(|e| e.to_string())?;
-        temp.persist(&self.path).map_err(|e| e.to_string())?;
-        self.expected = Some(data);
-        #[cfg(unix)]
-        File::open(self.path.parent().unwrap())
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.evidence.write(&data)
     }
     pub fn begin(&mut self, plan: Plan) -> Result<Record, String> {
         if self.read()?.is_some_and(|r| !r.clean) {
             return Err("Restore the previous visibility session before starting another.".into());
         }
         let record = Record {
-            schema: 1,
             id: uuid::Uuid::new_v4().to_string(),
             plan,
             position: 0,

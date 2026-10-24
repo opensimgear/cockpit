@@ -301,8 +301,6 @@ impl GatewayManager {
         }
     }
     pub(super) fn restore_automatic_selection(&self) {
-        let legacy_stop = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).legacy_stop_requested();
-        if legacy_stop { self.profile_automatic.control("profile_stop"); }
         let (settings, _, read_only) = self.profile_automatic.config();
         if read_only {
             return;
@@ -317,15 +315,6 @@ impl GatewayManager {
             .request(&json!({"command":"profile_select","id":id,"selectionSource":"manual"}));
         let _ = profiles.request(&json!({"command":"profile_selection_mode","mode":settings.mode}));
         drop(profiles);
-        // There are no workers to stop at startup. Pin directly so a failed
-        // policy write cannot invoke Stop and drop the legacy journal first.
-        if legacy_stop && self.automatic_manual_pin(id).is_ok() {
-            let _ = self.profiles.lock().unwrap_or_else(|p| p.into_inner())
-                .request(&json!({"command":"profile_selection_mode","mode":"manual"}));
-            // Keep the old on-disk intent until Manual has committed. A failed
-            // pin or journal write is safely retried at the next startup.
-            let _ = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).complete_legacy_stop_migration();
-        }
     }
     pub(super) fn automatic_response(&self) -> Result<Value, String> {
         let mut response = self

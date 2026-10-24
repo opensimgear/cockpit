@@ -90,22 +90,10 @@ impl Service {
         let Some(parent) = self.path.as_ref().and_then(|p| p.parent()) else {
             return Ok(vec![]);
         };
-        let entries = match std::fs::read_dir(parent) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-            Err(e) => return Err(e.to_string()),
-        };
-        let mut owners = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let name = entry.file_name();
-            let Some(owner) = name
-                .to_str()
-                .and_then(|s| s.strip_prefix("game-visibility-"))
-                .and_then(|s| s.strip_suffix(".json"))
-            else {
-                continue;
-            };
+        let entries=osg_persistence::Evidence::siblings(&parent.join("inventory.json"),"recovery-visibility",1024)?;
+        let mut owners=Vec::new();
+        for name in entries {
+            let Some(owner)=name.strip_prefix("game-visibility-").and_then(|s|s.strip_suffix(".json")) else{continue};
             let path = self.game_path(owner)?;
             if journal::inspect(&path)?.is_some_and(|r| !r.clean) {
                 owners.push(owner.to_owned());

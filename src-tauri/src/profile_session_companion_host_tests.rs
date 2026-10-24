@@ -1035,7 +1035,7 @@ fn actual_host_acquires_desired_panel_reads_native_baseline_and_default_restores
         crate::profile_session::Coordinator::new(fixture.host(), Some(journal.clone()));
     let stamp = || {
         let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+            serde_json::from_slice(&osg_persistence::test_support::read_evidence(&journal,"recovery-profile").unwrap()).unwrap();
         saved["active"]["receipts"]
             .as_array()
             .unwrap()

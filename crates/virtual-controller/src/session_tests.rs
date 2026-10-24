@@ -115,7 +115,7 @@ fn handoff_proof_requires_the_same_live_confirmed_owner_without_sending_output()
         Some(path.clone()),
     )
     .unwrap();
-    let original = std::fs::read(&path).unwrap();
+    let original = sql_read(&path).unwrap();
     let proof = session.handoff_snapshot().unwrap().unwrap();
     assert_eq!(proof.token(), &run);
     assert_eq!(proof.process_id(), 73);
@@ -139,7 +139,7 @@ fn handoff_proof_requires_the_same_live_confirmed_owner_without_sending_output()
     assert!(session.handoff_snapshot().is_err());
     state.lock().unwrap().dead = false;
     assert!(proof.same_as(&session.handoff_snapshot().unwrap().unwrap()));
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(sql_read(&path).unwrap(), original);
     {
         let state = state.lock().unwrap();
         assert_eq!(state.spawned, 1);
@@ -216,7 +216,7 @@ fn handoff_rejects_changed_or_missing_confirmed_journal_without_mutation() {
     let mut session = Session::start_with_journal(
         factory, token(), vec![crate::vjoy::tests::binding()], Counter(0), Some(path.clone()),
     ).unwrap();
-    let original = std::fs::read(&path).unwrap();
+    let original = sql_read(&path).unwrap();
     let record = crate::output_journal::inspect(&path).unwrap().unwrap();
     let mut changed = vec![record.clone(); 3];
     changed[0].token.generation = Counter(record.token.generation.0 + 1);
@@ -225,17 +225,17 @@ fn handoff_rejects_changed_or_missing_confirmed_journal_without_mutation() {
     let mut candidates = vec![b"external".to_vec()];
     candidates.extend(changed.iter().map(|r| serde_json::to_vec(r).unwrap()));
     for bytes in candidates {
-        std::fs::write(&path, &bytes).unwrap();
+        sql_write(&path, &bytes).unwrap();
         assert!(session.handoff_snapshot().is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(sql_read(&path).unwrap(), bytes);
     }
-    std::fs::remove_file(&path).unwrap();
+    sql_delete(&path).unwrap();
     assert!(session.handoff_snapshot().is_err());
     assert!(!path.exists());
     assert!(matches!(state.lock().unwrap().messages.as_slice(), [Message::Start { .. }]));
     assert_eq!(state.lock().unwrap().spawned, 1);
-    std::fs::write(&path, original).unwrap();
-    session.stop().unwrap();
+    sql_write(&path, original).unwrap();
+    assert!(session.stop().is_err()); // Equal bytes at a newer revision remain foreign.
 }
 #[test]
 fn prepared_output_renews_without_reports_and_helper_loss_releases_it() {
@@ -547,12 +547,12 @@ fn lost_start_acknowledgement_and_external_storage_changes_never_guess_ownership
         Some(path.clone()),
     )
     .unwrap();
-    std::fs::write(&path, b"external").unwrap();
+    sql_write(&path, b"external").unwrap();
     assert!(session.stop().is_err());
     assert!(session.recovery_required());
     assert!(!session.active());
     assert!(session.recover().is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+    assert_eq!(sql_read(&path).unwrap(), b"external");
 }
 #[test]
 fn restart_recovery_sends_only_fallback_and_refuses_ambiguous_or_missing_records() {
@@ -594,19 +594,19 @@ fn exact_restart_recovery_rejects_changed_owner_binding_and_phase_before_opening
     store.transition(Phase::Confirmed).unwrap();
     let expected = store.record().unwrap().clone();
     drop(store);
-    let original = std::fs::read(&path).unwrap();
+    let original = sql_read(&path).unwrap();
     let mut changed = vec![expected.clone(); 4];
     changed[0].token.generation = Counter(2);
     changed[1].bindings[0].slot = 2;
     changed[2].phase = Phase::Releasing;
-    changed[3].schema = 2;
+    changed[3].token.session = uuid::Uuid::new_v4().to_string();
     for stale in changed {
         assert!(
             Session::recover_stored_exact(factory.clone(), path.clone(), &stale)
                 .unwrap_err()
                 .contains("complete retained output journal changed")
         );
-        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(sql_read(&path).unwrap(), original);
     }
     assert_eq!(state.lock().unwrap().spawned, 0);
     assert!(state.lock().unwrap().messages.is_empty());
@@ -651,3 +651,7 @@ fn exact_restart_recovery_never_opens_driver_while_another_session_owns_the_jour
         Phase::Confirmed
     );
 }
+
+fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-output")}
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-output",Some(data.as_ref()))}
+fn sql_delete(path:&std::path::Path)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-output",None)}
