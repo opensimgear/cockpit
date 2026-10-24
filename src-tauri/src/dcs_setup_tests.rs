@@ -229,7 +229,10 @@ fn interrupted_remove_uses_existing_recovery_journal() {
     )
     .unwrap();
     let receipts = completed_receipts(&target, &work).unwrap();
-    fs::rename(&receipts[0].1, work.join(JOURNAL)).unwrap();
+    recovery::Ledger::open(&work)
+        .unwrap()
+        .begin_removal(&receipts[0].2)
+        .unwrap();
     assert!(recovery_pending(&work));
     assert_eq!(recover(&work).unwrap()["restored"], true);
     assert!(!target.join("Scripts/DCS-BIOS").exists());
@@ -624,7 +627,7 @@ fn interrupted(s: &Scratch) -> (PathBuf, Value) {
     let after = with_loader(before).unwrap();
     fs::write(work.join(&id).join("Export.lua.before"), before).unwrap();
     fs::write(target.join("Scripts/Export.lua"), &after).unwrap();
-    let value = json!({"schemaVersion":1,"id":id,"target":target,"files":{},"exportBefore":hash(before),"exportAfter":hash(&after),"installModule":false,"createdScripts":false});
+    let value = json!({"id":id,"target":target,"files":{},"exportBefore":hash(before),"exportAfter":hash(&after),"installModule":false,"createdScripts":false,"version":VERSION,"archiveSha256":ARCHIVE_SHA256,"aircraftBefore":null,"aircraftAfter":null,"createdAircraftDir":false,"physicsBefore":null,"physicsAfter":hash(b"none"),"createdPhysicsDir":false});
     save_journal(&work, &value).unwrap();
     (target, value)
 }

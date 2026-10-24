@@ -74,7 +74,7 @@ The portable library retains its document bytes and semantic hashes.
 | `profile-desktop-{session}-{generation}.json`; desktop coordinator journal | `recovery-desktop/profile-desktop-{session}-{generation}.json` | desktop session/process receipt validation; S8 | Crash/foreground/Stop recovery, no injector replay |
 | `controller-visibility-session.json`; visibility journal | `recovery-visibility/controller-visibility-session.json` | existing session/owner/fingerprint validator; S8 | Explicit restoration only; lifetime OS lock retained |
 | `games.recovery.json`, `games.abandoned-UUID.json`; retired game cleanup/archive | Removed | Existing data is discarded; no import, restore or archive writer | Fresh startup ignores old journals; current profile recovery remains separate |
-| `setup-work/dcs-setup-journal.json`, `completed.json`, `restored.json` | `recovery/dcs-setup/{id}` | existing setup journal/hash/path validator; S8 | Intent and receipt boundaries; immutable backup bytes referenced |
+| `setup-work/dcs-setup-journal.json`, `completed.json`, `restored.json` | `recovery-dcs/games.integration-setup.setup-work/dcs-setup-journal.json` | current unversioned operation/hash/path validator; S8 | Intent and receipt boundaries; immutable backup bytes referenced |
 | `mappings/output-recovery.json`, `mappings/companion-recovery/instance-<32hex>.json` | `recovery-output/mappings/{journal-anchor}` | cleanup-only legacy receipt validator; S8 | Block activation until explicit safe cleanup; preserve unknown evidence |
 
 Legacy `mappings/*.json`, `local-settings.json`, `companion-routes.json` and
@@ -371,3 +371,7 @@ Pre-profile game cleanup, JSON archive writes and their portal controls are
 removed. Startup never opens old game journals, restores their hardware state
 or archives their data. Recovery for operations created by the current unified
 profile and setup services remains a separate current-data contract.
+
+## Current DCS setup receipts
+
+New DCS operations commit pending intent and completed/restored receipts into a bounded SQLite ledger. The operation holds its own OS lifetime lock and checks the exact SQL revision and bytes before external file changes. Backup script bytes remain immutable files, identified by the receipt UUID and verified digests. SQL append order determines reverse removal order; filesystem timestamps carry no authority. Old journal/completed/restored JSON files are ignored. There is no importer.

@@ -1,6 +1,7 @@
 //! Registry edits preserve portable profile references. Native process/session
 //! admission remains the authority for scoped output and automatic activation.
 use super::*;
+use std::fs;
 use crate::game_installations::{is_custom_id, CustomGame};
 
 /// Native-only proposal. File discovery and image decoding happen before the
