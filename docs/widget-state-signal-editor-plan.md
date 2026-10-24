@@ -175,7 +175,7 @@ Rules:
 ## Editor workspaces and visual conventions
 
 Retain **Design**, **Motion**, **Sound** and **Try**. Evolve **Data** into
-**Signal flow** and **Behavior** into **States**, retaining advanced inspectors for
+**Signals** and **Behavior** into **States**, retaining advanced inspectors for
 current capabilities. Do not remove a capability because it lacks a new node preset.
 
 Use the profile editor's application tokens, dotted canvas, compact node headers,
@@ -402,8 +402,12 @@ editing and behavior/media capabilities remain available.
   Shared profile controls provide ELK layout, fit, anchored zoom, background pan,
   global wheel behavior, and smooth/orthogonal arrows with global corner radius.
   Connection dots match profile sizing, border, hover fill and transform color.
-  The existing Data/Behavior forms remain the full inspector for port declarations,
-  arbitrary actions and timers. Graph cards do not create a second runtime.
+  All former Data/Behavior controls now live in contextual States/Signals inspectors.
+  Signals includes declarations, profile endpoints, output neutrals, feedback quality
+  and rendering samples. States includes events, timers, touch phases and complete
+  transition actions. Any-state and Stay transitions are visible and selectable.
+  Event connectors use diamonds/dashed wires; values retain circles. The two old
+  tabs are removed, while runtime and compiler remain unchanged.
 - `GenericWidgetDesigner.svelte`: Base/state layer editing, override reset/promotion,
   shared history, compiled Try and reducer transition traces.
 - Widget editing opens in the main content area without a modal or outer card.
@@ -412,6 +416,9 @@ editing and behavior/media capabilities remain available.
 - Plain source library, native/MCP save and panel source references are updated
   together. The current development data was rewritten directly; no migration code
   or old authoring schemas are shipped.
+- `tests/ui/widget-authoring-native.mjs`: native authoring, guard construction, all
+  action types, typed declarations, ports, rendering settings, timers/touch phases,
+  reference-safe rename, compilation and save/reopen through contextual inspectors.
 - `tests/ui/widget-state-signal-native.mjs`: running native Cockpit checks for state
   thumb drag, independent Off appearance, undo/redo, typed wire rejection, layout-only
   changes, real compiled traces, export, native save/reopen and trusted browser

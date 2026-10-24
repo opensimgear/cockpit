@@ -23,14 +23,16 @@ The workspaces are:
 
 - **Design**: shapes, paths, text, imported images, groups, transforms and typed
   parameters. Source preview shows editable geometry.
-- **States**: arrange state cards, choose the initial state, connect transitions,
-  edit guards, map owned values to states, and configure motion and sound.
-- **Signals**: inspect profile input/output flow, add typed transformations,
-  wire named expression inputs and bind presentation properties.
-- **Data**: typed local/input/feedback signals, bounded visual domains and named
-  ports. Controller inputs emit to Cockpit; feedback ports receive simulator data.
-- **Behavior**: named states in independent regions, events, typed guards,
-  explicit priorities, actions, output neutrals and bounded timers.
+- **States**: state cards in independent regions, initial states and owned values,
+  event cards with allowed updates, timers, and touch areas with press/release/
+  activate/cancel connectors. Select a transition wire to edit Any state or Stay,
+  priorities, guards and set/emit/cue/start-timer/cancel-timer actions. Motion and
+  sound remain available beside the selected transition.
+- **Signals**: typed local/input/feedback declarations, feedback freshness and
+  quality, named profile ports, output neutrals, rendering samples, transforms
+  and presentation bindings. Select a card for its complete contextual inspector.
+  State owner references link back to States. Event connectors are diamonds and
+  dashed wires; value connectors are circles. Data and Behavior have no separate tabs.
 - **Motion**: optional baked property/transform tracks between named appearances.
   Numeric smoothing walks existing sampled frames.
 - **Sound**: optional bounded PCM16 WAV assets and cue policies.
