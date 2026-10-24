@@ -129,13 +129,16 @@ use super::*;
             assert!(runtime.resource_instance_ids().is_err());
             assert!(runtime.resource_companions().is_err());
         }
-        std::fs::write(directory.path().join("companion-host-state.dpapi"), b"corrupt").unwrap();
+        let anchor=directory.path().join("companion-host-state.dpapi");
+        std::fs::write(&anchor,b"retired invalid file").unwrap();
+        crate::persistence::test_support::record(&anchor,"secrets","companion-host",b"corrupt");
         {
             let runtime = Runtime::new(Some(directory.path().into()), Arc::new(CompanionProvider::new(Arc::new(|| 1))));
             assert!(runtime.resource_instance_ids().is_err());
             assert!(runtime.resource_companions().is_err());
             assert!(runtime.services.get().is_none());
-            assert_eq!(std::fs::read(directory.path().join("companion-host-state.dpapi")).unwrap(), b"corrupt");
+            assert_eq!(osg_persistence::Database::for_namespace(&anchor).unwrap().read("secrets","companion-host").unwrap().unwrap().payload,b"corrupt");
+            assert_eq!(std::fs::read(&anchor).unwrap(),b"retired invalid file");
         }
     }
     #[test]
@@ -233,7 +236,8 @@ use super::*;
         // A saved listener is shared setup. Merely inspecting a profile must not
         // construct a server or attempt to bind this saved endpoint.
         std::fs::write(directory.join("companion-listener.json"), b"invalid listener configuration").unwrap();
-        let before = std::fs::read(directory.join("companion-host-state.dpapi")).unwrap();
+        let database=osg_persistence::Database::for_namespace(&directory.join("companion-host-state.dpapi")).unwrap();
+        let before = database.read("secrets","companion-host").unwrap().unwrap();
         let runtime = Runtime::new(Some(directory.clone()), Arc::new(CompanionProvider::new(Arc::new(|| 1))));
         let metadata = runtime.profile_metadata().unwrap();
         assert_eq!(metadata.host_id(), hub.host_id());
@@ -252,10 +256,11 @@ use super::*;
         assert_eq!(runtime.saved_panel_heads().unwrap()[&saved[0].panel_id], saved[0].publication_hash);
         assert_eq!(runtime.saved_panel_references().unwrap()[0].publication_hash, saved[0].publication_hash);
         assert!(runtime.services.get().is_none());
-        assert_eq!(std::fs::read(directory.join("companion-host-state.dpapi")).unwrap(), before);
+        assert_eq!(database.read("secrets","companion-host").unwrap().unwrap(), before);
+        assert!(database.read("secrets","companion-identity").unwrap().is_none());
         let mut names = std::fs::read_dir(&directory).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
         names.sort();
-        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json"]);
+        assert_eq!(names, ["cockpit.sqlite3", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json"]);
         runtime.shutdown();
         for name in names { std::fs::remove_file(directory.join(name)).unwrap(); }
         std::fs::remove_dir(directory).unwrap();
@@ -267,7 +272,8 @@ use super::*;
             std::env::temp_dir().join(format!("osg-companion-lazy-error-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&directory).unwrap();
         let path = directory.join("companion-host-state.dpapi");
-        std::fs::write(&path, b"preserve-unreadable-state").unwrap();
+        std::fs::write(&path,b"retired invalid file").unwrap();
+        crate::persistence::test_support::record(&path,"secrets","companion-host",b"preserve-unreadable-state");
         let runtime = Runtime::new(
             Some(directory.clone()),
             Arc::new(CompanionProvider::new(Arc::new(|| 1))),
@@ -275,9 +281,11 @@ use super::*;
         assert!(runtime.services.get().is_none());
         assert!(call(&runtime, "companion_status", json!({})).is_err());
         assert!(matches!(runtime.services.get(), Some(Err(_))));
-        assert_eq!(std::fs::read(&path).unwrap(), b"preserve-unreadable-state");
+        assert_eq!(osg_persistence::Database::for_namespace(&path).unwrap().read("secrets","companion-host").unwrap().unwrap().payload,b"preserve-unreadable-state");
+        assert_eq!(std::fs::read(&path).unwrap(),b"retired invalid file");
         runtime.shutdown();
         std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(directory.join("cockpit.sqlite3")).unwrap();
         std::fs::remove_dir(directory).unwrap();
     }
     #[test]

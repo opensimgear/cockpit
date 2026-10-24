@@ -1,3 +1,4 @@
+import {verifiedServerKey,redactDiagnostic} from './native/browser-trust.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -90,7 +91,9 @@ test('actual Cockpit panel builder compiles, saves and assigns its source layout
   await app.send('Page.reload',{ignoreCache:true});await app.until(`!!window.__TAURI_INTERNALS__&&!!document.querySelector('nav[aria-label="Main navigation"]')`,'Restarted native UI did not load');
   await app.evaluate(`window.__qualificationToasts=[];new MutationObserver(()=>{for(const node of document.querySelectorAll('[aria-label="Notifications"] .toast p'))if(!window.__qualificationToasts.includes(node.textContent))window.__qualificationToasts.push(node.textContent);}).observe(document.body,{childList:true,subtree:true});`);
   const host=await app.request('companion_status'),before=new Set(host.host.clients.map(c=>c.companionId));assert.ok(host.listener?.enabled);
-  browser=await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL??'msedge'});const context=await browser.newContext({viewport:{width:1280,height:900}}),page=await context.newPage();
+  const certificate=(await app.request('companion_browser_certificate')).certificatePem;
+  const spki=await verifiedServerKey(host.browserUrl,certificate);
+  browser=await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL??'msedge',args:['--ignore-certificate-errors-spki-list='+spki]});const context=await browser.newContext({viewport:{width:1280,height:900}}),page=await context.newPage();
   const offer=await app.request('companion_pair_offer',{kind:'browser'});await page.goto(offer.pairing.browserUrl,{waitUntil:'domcontentloaded'});
   for(let i=0;i<200;i++){companionId=(await app.request('companion_status')).host.clients.find(c=>!before.has(c.companionId))?.companionId;if(companionId)break;await pause(100);}assert.ok(companionId);await writeFile(join(directory,'ownership.json'),JSON.stringify({companionId,createdByThisRun:true},null,2));
   await app.send('Page.bringToFront');await app.click('Companions');
@@ -111,8 +114,8 @@ test('actual Cockpit panel builder compiles, saves and assigns its source layout
   checks.push('Normal Save publishes and assigns the compiled layout; real browser controls reach that native companion instance.');
   await page.screenshot({path:join(directory,'assigned-browser.png'),fullPage:true});await app.send('Page.bringToFront');const shot=await app.send('Page.captureScreenshot',{format:'png'});await writeFile(join(directory,'saved-panel-builder.png'),Buffer.from(shot.data,'base64'));
   await writeFile(join(directory,'evidence.json'),JSON.stringify({actualNativeCockpit:true,normalPanelAuthoring:true,actualProductionBrowser:true,name,publicationHash:hash,checks},null,2));console.log(JSON.stringify({directory,checks}));
- }catch(error){await writeFile(join(directory,'failure.json'),JSON.stringify({error:String(error),checks,companionId,instanceId,toasts:await app.evaluate('window.__qualificationToasts').catch(()=>null),body:await app.evaluate('document.body.innerText').catch(()=>null)},null,2));throw error;}
- finally{await browser?.close();if(companionId)await app.request('companion_revoke',{companionId}).catch(()=>{});await app.close();}
+ }catch(error){const safe=redactDiagnostic(String(error));await writeFile(join(directory,'failure.json'),redactDiagnostic(JSON.stringify({error:safe,checks,companionId,instanceId,toasts:await app.evaluate('window.__qualificationToasts').catch(()=>null),body:await app.evaluate('document.body.innerText').catch(()=>null)},null,2)));throw Error(safe);}
+ finally{await app.request('companion_pair_cancel').catch(()=>{});await browser?.close();if(companionId)await app.request('companion_revoke',{companionId}).catch(()=>{});await app.close();}
 });
 
 test('actual browser plays compiled Toggle, RPM and three-position fixtures with bounded render work',{timeout:240000},async()=>{

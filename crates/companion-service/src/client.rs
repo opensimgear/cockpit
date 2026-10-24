@@ -141,7 +141,7 @@ pub struct ClientRuntime {
 }
 impl ClientRuntime {
     pub fn open(data_dir: PathBuf) -> Result<Self, String> {
-        let storage = Arc::new(persistence::SealedFileStore::new(
+        let storage = Arc::new(persistence::SealedSqliteStore::new(
             data_dir.join("companion-client.dpapi"),
         ));
         Self::with_storage(data_dir, storage)
@@ -1697,18 +1697,22 @@ mod tests {
         client.command(json!({"type":"disconnect"})).unwrap();
         client.command(json!({"type":"forget"})).unwrap();
         assert_eq!(client.status().phase, "unpaired");
-        std::fs::write(directory.path().join("companion-client.dpapi"), b"invalid").unwrap();
+        let anchor=directory.path().join("companion-client.dpapi");
+        std::fs::write(&anchor,b"retired invalid file").unwrap();
+        let database=osg_persistence::Database::for_namespace(&anchor).unwrap();
+        database.commit(&[osg_persistence::Change{domain:"secrets",key:"companion-client",expected_revision:database.revision("secrets","companion-client").unwrap(),payload:Some(b"invalid")}]).unwrap();
         let reopened = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
         assert!(!reopened.status().authentication_available);
         if reopened.status().protected_store_available {
             assert_eq!(reopened.status().phase, "storage-error");
         }
         assert_eq!(
-            std::fs::read(directory.path().join("companion-client.dpapi")).unwrap(),
+            database.read("secrets","companion-client").unwrap().unwrap().payload,
             b"invalid"
         );
         reopened.command(json!({"type":"forget"})).unwrap();
-        assert!(!directory.path().join("companion-client.dpapi").exists());
+        assert!(database.read("secrets","companion-client").unwrap().is_none());
+        assert_eq!(std::fs::read(anchor).unwrap(),b"retired invalid file");
     }
     #[test]
     fn wrong_pin_is_rejected_before_even_an_invalid_endpoint_is_resolved() {

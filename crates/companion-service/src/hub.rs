@@ -1,5 +1,5 @@
 use crate::{
-    persistence::{SealedFileStore, StateStorage},
+    persistence::{SealedSqliteStore, StateStorage},
     publication::{digest_id, ensure, hash, id, label},
     *,
 };
@@ -252,7 +252,7 @@ impl Hub {
     }
     pub fn open(path: impl AsRef<Path>, sink: Arc<dyn SourceSink>) -> Result<Self, String> {
         Self::with_storage(
-            Arc::new(SealedFileStore::new(
+            Arc::new(SealedSqliteStore::new(
                 path.as_ref().join("companion-host-state.dpapi"),
             )),
             sink,
@@ -260,7 +260,7 @@ impl Hub {
     }
     /// Inspect retained local metadata without creating a host identity or store.
     pub fn open_existing(path: impl AsRef<Path>, sink: Arc<dyn SourceSink>) -> Result<Option<Self>, String> {
-        Self::with_existing_storage(Arc::new(SealedFileStore::new(
+        Self::with_existing_storage(Arc::new(SealedSqliteStore::new(
             path.as_ref().join("companion-host-state.dpapi"),
         )), sink)
     }

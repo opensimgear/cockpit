@@ -30,7 +30,7 @@ mod tests {
             }
             fn guarded(&self,_:Value,_:Value)->Value{panic!("Listener setup never enters output ownership")}
         }
-        let tools=Tools{backend:Arc::new(BackendFixture),ledger:Mutex::new(Default::default()),drafts:Mutex::new(vec![]),workspace_uploads:Mutex::new(vec![])};
+        let tools=Tools{backend:Arc::new(BackendFixture),ledger:Mutex::new(Default::default()),drafts:Mutex::new(vec![]),workspace_uploads:Mutex::new(vec![]),integration:OnceLock::new()};
         let client="listener-shape-test";
         assert_eq!(tools.call("companion_listener_get",json!({}),client)["data"]["settingsRevision"],7);
         let incomplete=tools.call("companion_listener_save",json!({"operationId":uuid::Uuid::new_v4().to_string(),"enabled":true,"expectedSettingsRevision":7}),client);assert_eq!(incomplete["error"]["code"],"invalid_arguments");

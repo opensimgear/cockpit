@@ -7,7 +7,9 @@ mod retained_game_companions;
 #[path="persistence/paths.rs"]
 mod config_paths;
 mod persistence;
+#[path="mcp/server/mod.rs"]
 mod mcp;
+#[path="mcp/storage/credentials.rs"]
 mod mcp_credentials;
 mod mcp_tools;
 #[path="companion/storage/widgets.rs"]
@@ -354,6 +356,7 @@ pub fn run() {
             mcp::mcp_settings_update,
             mcp::mcp_credential_create,
             mcp::mcp_credential_revoke,
+            mcp::mcp_credential_rotate,
             profile_activation_window::profile_activation_window_open,
             profile_activation_window::profile_activation_window_update,
             profile_activation_window::profile_activation_window_state,

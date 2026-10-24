@@ -2,7 +2,7 @@
 export type McpScope = 'read' | 'write';
 export type McpCredential = { id: string; name: string; scope: McpScope; createdAt: number };
 export type McpStatus = {
-  enabled: boolean; port: number; endpoint: string; running: boolean; error: string | null;
+  settingsRevision: number; enabled: boolean; port: number; endpoint: string; running: boolean; error: string | null;
   credentials: McpCredential[]; protocolVersions: string[];
   readOnly?: boolean;
 };
@@ -26,7 +26,7 @@ export function mcpPortError(port: number): string {
 }
 
 export function parseMcpStatus(value: unknown): McpStatus {
-  if (!object(value) || typeof value.enabled !== 'boolean' || typeof value.running !== 'boolean'
+  if (!object(value) || !Number.isSafeInteger(value.settingsRevision) || Number(value.settingsRevision) < 0 || typeof value.enabled !== 'boolean' || typeof value.running !== 'boolean'
     || typeof value.port !== 'number' || mcpPortError(value.port)
     || value.endpoint !== `http://127.0.0.1:${value.port}/mcp`
     || !(value.error === null || typeof value.error === 'string' && value.error.length <= 16_384)
@@ -37,7 +37,7 @@ export function parseMcpStatus(value: unknown): McpStatus {
     || value.running && !value.enabled) throw new Error('Cockpit returned invalid MCP settings. Refresh to read the current server state.');
   // Select public fields explicitly; secret-bearing responses never enter status.
   return {
-    enabled: value.enabled, port: value.port, endpoint: value.endpoint as string, running: value.running, error: value.error as string | null,
+    settingsRevision: value.settingsRevision as number, enabled: value.enabled, port: value.port, endpoint: value.endpoint as string, running: value.running, error: value.error as string | null,
     credentials: value.credentials.map(item => ({ id: item.id, name: item.name, scope: item.scope, createdAt: item.createdAt })),
     protocolVersions: [...value.protocolVersions] as string[],
     readOnly: value.readOnly === true,
@@ -102,14 +102,17 @@ export function createMcpSettings(send: McpInvoke, native: boolean, changed: (st
     epoch++;
     publish({ busy: 'settings', error: '', message: '' });
     try {
-      const status = readStatus(await send('mcp_settings_update', { settings: { enabled, port } }));
+      const status = readStatus(await send('mcp_settings_update', { settings: { enabled, port, expectedSettingsRevision: state.status!.settingsRevision } }));
       publish({ status, statusCurrent: true, message: status.error ? '' : 'MCP settings saved.' });
     } catch (error) { publish({ statusCurrent: false, error: `${failed(error)} Refresh to check whether the settings were saved before trying again.` }); }
     finally { publish({ busy: '' }); }
   }
 
-  async function issue(name: string, scope: McpScope): Promise<{ status: McpStatus; secret: McpSecret }> {
-    const result = await send('mcp_credential_create', { name, scope });
+  async function issue(name: string, scope: McpScope, replacementId?: string): Promise<{ status: McpStatus; secret: McpSecret }> {
+    const expectedSettingsRevision = state.status!.settingsRevision;
+    const result = replacementId
+      ? await send('mcp_credential_rotate', { id: replacementId, expectedSettingsRevision })
+      : await send('mcp_credential_create', { name, scope, expectedSettingsRevision });
     if (!object(result) || !credential(result.credential) || !text(result.token, 1024) || /\s/.test(result.token) || result.token.length < 32) throw new Error('Cockpit did not return a valid new credential. Refresh the credential list before creating another.');
     const status = readStatus(result.status), issued = result.credential;
     if (!status.credentials.some(item => item.id === issued.id && item.name === name && item.scope === scope)
@@ -135,7 +138,7 @@ export function createMcpSettings(send: McpInvoke, native: boolean, changed: (st
     epoch++;
     publish({ busy: `revoke:${id}`, error: '', message: '' });
     try {
-      const status = readStatus(await send('mcp_credential_revoke', { id }));
+      const status = readStatus(await send('mcp_credential_revoke', { id, expectedSettingsRevision: state.status!.settingsRevision }));
       if (status.credentials.some(item => item.id === id)) throw new Error('The credential is still present.');
       publish({ status, statusCurrent: true, secret: state.secret?.credential.id === id ? null : state.secret, message: 'Credential revoked. Its token can no longer connect.' });
     } catch (error) { publish({ error: `${failed(error)} Refresh to check whether access was revoked.` }); }
@@ -148,19 +151,12 @@ export function createMcpSettings(send: McpInvoke, native: boolean, changed: (st
     if (!original) return;
     epoch++;
     publish({ busy: `rotate:${id}`, error: '', message: '' });
-    let created = false;
     try {
-      const issued = await issue(original.name, original.scope);
-      if (disposed) return;
-      created = true;
-      publish({ status: issued.status, statusCurrent: true, secret: issued.secret });
-      const status = readStatus(await send('mcp_credential_revoke', { id }));
-      if (status.credentials.some(item => item.id === id)) throw new Error('The original credential is still present.');
-      publish({ status, statusCurrent: true, message: 'Replacement created and original credential revoked. Save the new token in your MCP client.' });
+      const issued = await issue(original.name, original.scope, id);
+      if (issued.status.credentials.some(item => item.id === id)) throw new Error('The original credential is still present.');
+      publish({ status: issued.status, statusCurrent: true, secret: issued.secret, message: 'Token replaced. Save the new token in your MCP client.' });
     } catch (error) {
-      publish({ error: created
-        ? `Replacement created, but revoking the original credential could not be confirmed. Save the replacement token, then refresh and revoke the original explicitly. ${failed(error)}`
-        : `${failed(error)} The original credential was not revoked. Refresh before trying again.` });
+      publish({ error: `${failed(error)} Refresh to reconcile credential replacement; it is not retried automatically.` });
     } finally { publish({ busy: '' }); }
   }
 

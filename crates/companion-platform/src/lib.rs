@@ -1,109 +1,63 @@
-//! Native Android Keystore bridge. No credential API is granted to JavaScript.
-use base64::{engine::general_purpose::STANDARD, Engine};
-pub const MAX_CREDENTIAL_BYTES: usize = 65_536;
-
-fn encode(bytes: &[u8]) -> Result<String, String> {
-    if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_BYTES {
-        return Err("Invalid native credential payload size".into());
-    }
+//! Native Android Keystore cryptography. SQLite owns all durable ciphertext.
+use base64::{engine::general_purpose::STANDARD,Engine};
+pub const MAX_CREDENTIAL_BYTES:usize=65_536;
+const MAX_CIPHER_BYTES:usize=MAX_CREDENTIAL_BYTES+29;
+fn encode(bytes:&[u8],limit:usize)->Result<String,String>{
+    if bytes.is_empty() || bytes.len()>limit{return Err("Invalid native protection payload size".into());}
     Ok(STANDARD.encode(bytes))
 }
-fn decode(encoded: Option<String>) -> Result<Option<Vec<u8>>, String> {
-    let Some(encoded) = encoded else {
-        return Ok(None);
-    };
-    if encoded.len() > MAX_CREDENTIAL_BYTES.div_ceil(3) * 4 {
-        return Err("Stored native credential exceeds budget".into());
-    }
-    let bytes = STANDARD
-        .decode(encoded)
-        .map_err(|_| "Invalid protected credential response")?;
-    if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_BYTES {
-        return Err("Invalid stored native credential size".into());
-    }
-    Ok(Some(bytes))
+fn decode(encoded:String,limit:usize)->Result<Vec<u8>,String>{
+    if encoded.len()>limit.div_ceil(3)*4{return Err("Native protection response exceeds budget".into());}
+    let bytes=STANDARD.decode(encoded).map_err(|_|"Invalid native protection response")?;
+    if bytes.is_empty() || bytes.len()>limit{return Err("Invalid native protection response size".into());}
+    Ok(bytes)
 }
-
-#[cfg(target_os = "android")]
+#[cfg(target_os="android")]
 mod android {
     use super::*;
-    use osg_companion_service::persistence::StateStorage;
+    use osg_companion_service::persistence::NativeSealer;
     use serde::Deserialize;
     use serde_json::json;
-    use tauri::{
-        plugin::{PluginHandle, TauriPlugin},
-        Manager, Runtime,
-    };
-
-    pub struct PlatformStore<R: Runtime>(PluginHandle<R>);
-    impl<R: Runtime> Clone for PlatformStore<R> {
-        fn clone(&self) -> Self {
-            Self(self.0.clone())
-        }
-    }
+    use tauri::{plugin::{PluginHandle,TauriPlugin},Manager,Runtime};
+    pub struct PlatformStore<R:Runtime>(PluginHandle<R>);
+    impl<R:Runtime> Clone for PlatformStore<R>{fn clone(&self)->Self{Self(self.0.clone())}}
     #[derive(Deserialize)]
-    struct ReadResponse {
-        data: Option<String>,
-    }
-    impl<R: Runtime> PlatformStore<R> {
-        fn call<T: serde::de::DeserializeOwned>(
-            &self,
-            command: &str,
-            payload: serde_json::Value,
-        ) -> Result<T, String> {
-            self.0
-                .run_mobile_plugin(command, payload)
-                .map_err(|error| format!("Android protected storage: {error}"))
+    struct Response{data:String}
+    impl<R:Runtime> PlatformStore<R>{
+        fn call<T:serde::de::DeserializeOwned>(&self,command:&str,payload:serde_json::Value)->Result<T,String>{
+            self.0.run_mobile_plugin(command,payload).map_err(|_|"Android protection is unavailable, locked or corrupt. Unlock the device or Forget host and pair again.".into())
         }
     }
-    impl<R: Runtime> StateStorage for PlatformStore<R> {
-        fn available(&self) -> Result<(), String> {
-            let _: serde_json::Value = self.call("probe", json!({}))?;
-            Ok(())
+    impl<R:Runtime> NativeSealer for PlatformStore<R>{
+        fn available(&self)->Result<(),String>{let _:serde_json::Value=self.call("probe",json!({}))?;Ok(())}
+        fn seal(&self,bytes:&[u8])->Result<Vec<u8>,String>{
+            let response:Response=self.call("seal",json!({"data":encode(bytes,MAX_CREDENTIAL_BYTES)?}))?;
+            decode(response.data,MAX_CIPHER_BYTES)
         }
-        fn read(&self) -> Result<Option<Vec<u8>>, String> {
-            let reply: ReadResponse = self.call("read", json!({}))?;
-            decode(reply.data)
-        }
-        fn write(&self, bytes: &[u8]) -> Result<(), String> {
-            let _: serde_json::Value = self.call("write", json!({"data": encode(bytes)?}))?;
-            Ok(())
-        }
-        fn delete(&self) -> Result<(), String> {
-            let _: serde_json::Value = self.call("delete", json!({}))?;
-            Ok(())
+        fn unseal(&self,bytes:&[u8])->Result<Vec<u8>,String>{
+            let response:Response=self.call("unseal",json!({"data":encode(bytes,MAX_CIPHER_BYTES)?}))?;
+            decode(response.data,MAX_CREDENTIAL_BYTES)
         }
     }
-    pub fn init<R: Runtime>() -> TauriPlugin<R> {
-        tauri::plugin::Builder::new("companion-platform")
-            .setup(|app, api| {
-                let handle = api.register_android_plugin(
-                    "org.opensimgear.companion.platform",
-                    "CompanionPlatformPlugin",
-                )?;
-                app.manage(PlatformStore(handle));
-                Ok(())
-            })
-            .build()
+    pub fn init<R:Runtime>()->TauriPlugin<R>{
+        tauri::plugin::Builder::new("companion-platform").setup(|app,api|{
+            let handle=api.register_android_plugin("org.opensimgear.companion.platform","CompanionPlatformPlugin")?;
+            app.manage(PlatformStore(handle));Ok(())
+        }).build()
     }
 }
-#[cfg(target_os = "android")]
-pub use android::{init, PlatformStore};
-
+#[cfg(target_os="android")]
+pub use android::{init,PlatformStore};
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn bridge_bounds_and_validates_credential_payloads() {
-        assert_eq!(decode(None).unwrap(), None);
-        for bytes in [vec![1], vec![0, 255, 128], vec![42; MAX_CREDENTIAL_BYTES]] {
-            assert_eq!(decode(Some(encode(&bytes).unwrap())).unwrap(), Some(bytes));
+    fn bridge_bounds_and_validates_plaintext_and_ciphertext_without_durable_storage(){
+        for limit in [MAX_CREDENTIAL_BYTES,MAX_CIPHER_BYTES]{
+            for bytes in [vec![1],vec![0,255,128],vec![42;limit]]{assert_eq!(decode(encode(&bytes,limit).unwrap(),limit).unwrap(),bytes);}
+            assert!(encode(&[],limit).is_err());assert!(encode(&vec![0;limit+1],limit).is_err());
+            assert!(decode("".into(),limit).is_err());assert!(decode("invalid==".into(),limit).is_err());
+            assert!(decode(STANDARD.encode(vec![0;limit+1]),limit).is_err());assert!(decode("A".repeat(limit*2),limit).is_err());
         }
-        assert!(encode(&[]).is_err());
-        assert!(encode(&vec![0; MAX_CREDENTIAL_BYTES + 1]).is_err());
-        assert!(decode(Some("".into())).is_err());
-        assert!(decode(Some("invalid==".into())).is_err());
-        assert!(decode(Some(STANDARD.encode(vec![0; MAX_CREDENTIAL_BYTES + 1]))).is_err());
-        assert!(decode(Some("A".repeat(MAX_CREDENTIAL_BYTES * 2))).is_err());
     }
 }

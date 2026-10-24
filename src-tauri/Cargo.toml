@@ -51,6 +51,7 @@ tokio-util = "0.7"
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 osg-persistence = { path = "../crates/persistence", features = ["test-support"] }
 osg-companion-service = { path = "../crates/companion-service", features = ["legacy-test-fixtures"] }
 

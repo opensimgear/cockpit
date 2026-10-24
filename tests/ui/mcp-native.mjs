@@ -29,11 +29,16 @@ async function nativePage() {
   await new Promise((resolve, reject) => { const timer = setTimeout(() => { socket.close(); reject(new Error('Native debugger connection timed out')); }, 8000); socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true }); socket.addEventListener('error', error => { clearTimeout(timer); reject(error); }, { once: true }); });
   socket.addEventListener('message', event => { const message = JSON.parse(event.data), task = pending.get(message.id); if (!task) return; clearTimeout(task.timer); pending.delete(message.id); message.error ? task.reject(new Error(message.error.message)) : task.resolve(message.result); });
   socket.addEventListener('close', () => { for (const task of pending.values()) { clearTimeout(task.timer); task.reject(new Error('Native debugger connection closed')); } pending.clear(); });
-  const send = (method, params = {}) => new Promise((resolve, reject) => { const id = ++sequence, timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out`)); }, 45000); pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params })); });
+  const send = (method, params = {}) => new Promise((resolve, reject) => { if(socket.readyState!==WebSocket.OPEN){reject(new Error('Native debugger connection is closed'));return;} const id = ++sequence, timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out`)); }, 45000); pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params })); });
   return {
     send,
     async evaluate(fn, ...args) { const reply = await send('Runtime.evaluate', { expression: `(${fn.toString()})(...${JSON.stringify(args)})`, awaitPromise: true, returnByValue: true }); if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text); return reply.result.value; },
     async invoke(command, args = {}) { return this.evaluate((command, args) => window.__TAURI_INTERNALS__.invoke(command, args), command, args); },
+    async invokeMcp(command,args={}) {
+      const current=await this.invoke('mcp_settings_get');
+      const request=command==='mcp_settings_update'?{settings:{...args.settings,expectedSettingsRevision:current.settingsRevision}}:{...args,expectedSettingsRevision:current.settingsRevision};
+      return this.invoke(command,request);
+    },
     async native(request) { const response = await this.invoke('gateway_request', { request: { ...request, clientId: 'mcp-native-acceptance-ui' } }); assert.equal(response.ok, true, response.error); return response.state; },
     close() { for (const task of pending.values()) clearTimeout(task.timer); socket.close(); },
   };
@@ -53,7 +58,7 @@ const mutation = args => ({ ...args, operationId: randomUUID() });
 
 test('real MCP client configures the same running dev Cockpit as its UI', { timeout: 360000 }, async () => {
   let page = await nativePage();
-  const credentials = [], clients = [], profiles = new Set(), evidence = { client: '@modelcontextprotocol/sdk 1.32.1', hardwareValidation: 'Deferred by user; this run verifies live desktop software.' };
+  const credentials = [], clients = [], profiles = new Set(), evidence = { client: '@modelcontextprotocol/sdk 1.32.1', hardwareValidation: 'Software acceptance; no physical-device qualification' };
   const artifacts = resolve('.research/mcp-native', String(Date.now())); await mkdir(artifacts, { recursive: true });
   let settings, writer, endpoint;
   try {
@@ -61,9 +66,9 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       && !!document.querySelector('nav[aria-label="Main navigation"]')), 'The native UI bridge did not finish startup');
     settings = await page.invoke('mcp_settings_get');
     await page.native({ command: 'profile_stop' });
-    const write = await page.invoke('mcp_credential_create', { name: 'Live acceptance writer', scope: 'write' }); credentials.push(write.credential.id);
-    const read = await page.invoke('mcp_credential_create', { name: 'Live acceptance reader', scope: 'read' }); credentials.push(read.credential.id);
-    const status = await page.invoke('mcp_settings_update', { settings: { enabled: true, port: settings.port } }); endpoint = status.endpoint;
+    const write = await page.invokeMcp('mcp_credential_create', { name: 'Live acceptance writer', scope: 'write' }); credentials.push(write.credential.id);
+    const read = await page.invokeMcp('mcp_credential_create', { name: 'Live acceptance reader', scope: 'read' }); credentials.push(read.credential.id);
+    const status = await page.invokeMcp('mcp_settings_update', { settings: { enabled: true, port: settings.port } }); endpoint = status.endpoint;
     await until(async () => (await page.invoke('mcp_settings_get')).running, 'Native MCP server did not start');
     writer = await connect(endpoint, write.token); clients.push(writer);
     const reader = await connect(endpoint, read.token); clients.push(reader);
@@ -73,6 +78,13 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     assert.ok(writeTools.some(tool => tool.name === 'profile_save_prepared')); assert.ok(!readTools.some(tool => tool.name === 'profile_create'));
     assert.ok(readTools.every(tool => tool.annotations.readOnlyHint));
     evidence.tools = { write: writeTools.length, read: readTools.length };
+    const integration=await ok(writer,'mcp_settings_get');assert.ok(Number.isSafeInteger(integration.settingsRevision));assert.doesNotMatch(JSON.stringify(integration),/osg_mcp_/);
+    const temporary=await ok(writer,'mcp_credential_create',mutation({name:'SDK-managed reader',scope:'read',expectedSettingsRevision:integration.settingsRevision}));credentials.push(temporary.credential.id);
+    const replaced=await ok(writer,'mcp_credential_rotate',mutation({id:temporary.credential.id,expectedSettingsRevision:temporary.status.settingsRevision}));credentials.splice(credentials.indexOf(temporary.credential.id),1);credentials.push(replaced.credential.id);
+    assert.ok(!replaced.status.credentials.some(c=>c.id===temporary.credential.id));await assert.rejects(()=>connect(endpoint,temporary.token));
+    const managed=await connect(endpoint,replaced.token);clients.push(managed);assert.ok((await managed.listTools()).tools.every(tool=>tool.annotations.readOnlyHint));
+    const revoked=await ok(writer,'mcp_credential_revoke',mutation({id:replaced.credential.id,expectedSettingsRevision:replaced.status.settingsRevision}));credentials.splice(credentials.indexOf(replaced.credential.id),1);assert.ok(!revoked.credentials.some(c=>c.id===replaced.credential.id));await assert.rejects(()=>managed.listTools());
+    evidence.integrationSettings={sameNativeRevision:true,credentialCreation:true,atomicReplacement:true,revocation:true,hashOnlyStatus:true};
     // The pinned JS client negotiates 2025-11-25. Also exercise modern
     // per-request metadata/header semantics directly against the same server.
     const modern = async (method, params, extraHeaders = {}) => {
@@ -183,16 +195,16 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     assert.ok(ui.text.includes('Live acceptance writer')); assert.ok(!ui.text.includes(write.token)); assert.ok(!ui.text.includes(read.token));
     evidence.settingsUi = { credentialsVisible: true, secretsHidden: true };
     const screenshot = await page.send('Page.captureScreenshot', { format: 'png' }); await writeFile(resolve(artifacts, 'mcp-settings.png'), Buffer.from(screenshot.data, 'base64'));
-    await page.invoke('mcp_credential_revoke', { id: read.credential.id }); credentials.splice(credentials.indexOf(read.credential.id), 1);
+    await page.invokeMcp('mcp_credential_revoke', { id: read.credential.id }); credentials.splice(credentials.indexOf(read.credential.id), 1);
     await assert.rejects(() => reader.listTools());
-    await page.invoke('mcp_settings_update', { settings: { enabled: false, port: settings.port } });
+    await page.invokeMcp('mcp_settings_update', { settings: { enabled: false, port: settings.port } });
     await assert.rejects(() => writer.listTools());
-    await page.invoke('mcp_settings_update', { settings: { enabled: true, port: settings.port } });
+    await page.invokeMcp('mcp_settings_update', { settings: { enabled: true, port: settings.port } });
     writer = await connect(endpoint, write.token); clients.push(writer);
     assert.equal((await ok(writer, 'profile_get', { id: prepared.profileId })).document.name, `${name} saved only`);
     if (process.env.OSG_MCP_RESTART_EXECUTABLE) {
       page.close();
-      await promisify(execFile)('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve('tests/ui/restart-mcp-cockpit.ps1'), '-Executable', process.env.OSG_MCP_RESTART_EXECUTABLE, '-Workspace', process.cwd(), '-ConfigPath', process.env.OSG_MCP_CONFIG_PATH, '-UiPort', String(new URL(process.env.OSG_NATIVE_DEV_ORIGIN).port), '-DebugPort', String(new URL(process.env.OSG_NATIVE_CDP_URL).port)], { timeout: 45000 });
+      await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolve('tests/ui/restart-mcp-cockpit.ps1'), '-Executable', process.env.OSG_MCP_RESTART_EXECUTABLE, '-Workspace', process.cwd(), '-ConfigPath', process.env.OSG_MCP_CONFIG_PATH, '-UiPort', String(new URL(process.env.OSG_NATIVE_DEV_ORIGIN).port), '-DebugPort', String(new URL(process.env.OSG_NATIVE_CDP_URL).port)], { timeout: 45000 });
       page = await until(async () => { const candidate = await nativePage(); try { const state = await candidate.invoke('mcp_settings_get'); if (state.running) return candidate; } catch {} candidate.close(); return null; }, 'Restarted native Cockpit did not restore MCP', 45000);
       writer = await connect(endpoint, write.token); clients.push(writer);
       assert.equal((await ok(writer, 'profile_get', { id: prepared.profileId })).document.name, `${name} saved only`);
@@ -205,8 +217,8 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
   } finally {
     for (const client of clients) await client.close().catch(() => {});
     for (const id of profiles) { try { await page.native({ command: 'profile_stop' }); const state = (await page.native({ command: 'profile_get', id })).profiles; await page.native({ command: 'profile_delete', id, expectedRevision: state.document.revision }); } catch {} }
-    for (const id of credentials) await page.invoke('mcp_credential_revoke', { id }).catch(() => {});
-    if (settings) await page.invoke('mcp_settings_update', { settings: { enabled: settings.enabled, port: settings.port } }).catch(() => {});
+    for (const id of credentials) await page.invokeMcp('mcp_credential_revoke', { id }).catch(() => {});
+    if (settings) await page.invokeMcp('mcp_settings_update', { settings: { enabled: settings.enabled, port: settings.port } }).catch(() => {});
     page.close();
   }
 });

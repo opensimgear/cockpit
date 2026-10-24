@@ -1,7 +1,6 @@
 package org.opensimgear.companion.platform
 
 import android.app.Activity
-import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -23,7 +22,7 @@ import javax.crypto.spec.GCMParameterSpec
 @InvokeArg
 class StoreArgs { lateinit var data: String }
 
-/** Fixed app-owned entry sealed with a non-exportable Android Keystore key.
+/** Cryptography with a non-exportable Android Keystore key; SQLite owns ciphertext.
  * Native Rust is the only caller; this plugin grants no webview commands.
  */
 @TauriPlugin
@@ -33,13 +32,12 @@ class CompanionPlatformPlugin(private val activity: Activity) : Plugin(activity)
     private val maxBytes = 65536
     private val worker = ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
         ArrayBlockingQueue<Runnable>(8), ThreadPoolExecutor.AbortPolicy())
-    private val preferences get() = activity.getSharedPreferences("companion-protected", Context.MODE_PRIVATE)
 
     private fun key(create: Boolean): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val existing = store.getKey(alias, null)
         if (existing != null) return existing as SecretKey
-        check(create && !preferences.contains("sealed")) { "Credential key unavailable; forget this host and pair again" }
+        check(create) { "Credential key unavailable; forget this host and pair again" }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
             init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -78,36 +76,23 @@ class CompanionPlatformPlugin(private val activity: Activity) : Plugin(activity)
         plain.fill(0); opened.fill(0); sealed.fill(0)
         JSObject()
     }
-    @Command
-    fun read(invoke: Invoke) = execute(invoke) {
-        val encoded = preferences.getString("sealed", null)
-        if (encoded == null) JSObject().put("data", org.json.JSONObject.NULL)
-        else {
-            require(encoded.length <= ((maxBytes + 31) / 3) * 4)
-            val plain = decrypt(Base64.decode(encoded, Base64.NO_WRAP))
-            try { JSObject().put("data", Base64.encodeToString(plain, Base64.NO_WRAP)) }
-            finally { plain.fill(0) }
-        }
-    }
-    @Command
-    fun write(invoke: Invoke) {
+    private fun transform(invoke: Invoke, sealing: Boolean) {
         val args = try { invoke.parseArgs(StoreArgs::class.java) }
-            catch (_: Exception) { invoke.reject("Invalid native credential request"); return }
+            catch (_: Exception) { invoke.reject("Invalid native protection request"); return }
         execute(invoke) {
-            require(args.data.length <= ((maxBytes + 2) / 3) * 4)
-            val plain = Base64.decode(args.data, Base64.NO_WRAP)
-            require(plain.size in 1..maxBytes)
+            val limit = if (sealing) maxBytes else maxBytes + 29
+            require(args.data.length <= ((limit + 2) / 3) * 4)
+            val input = Base64.decode(args.data, Base64.NO_WRAP)
             try {
-                val sealed = encrypt(plain)
-                check(preferences.edit().putString("sealed", Base64.encodeToString(sealed, Base64.NO_WRAP)).commit())
-                JSObject()
-            } finally { plain.fill(0) }
+                require(input.size in 1..limit)
+                val output = if (sealing) encrypt(input) else decrypt(input)
+                try { JSObject().put("data", Base64.encodeToString(output, Base64.NO_WRAP)) }
+                finally { output.fill(0) }
+            } finally { input.fill(0) }
         }
     }
     @Command
-    fun delete(invoke: Invoke) = execute(invoke) {
-        check(preferences.edit().remove("sealed").commit())
-        KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
-        JSObject()
-    }
+    fun seal(invoke: Invoke) = transform(invoke, true)
+    @Command
+    fun unseal(invoke: Invoke) = transform(invoke, false)
 }

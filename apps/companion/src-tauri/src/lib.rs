@@ -98,7 +98,10 @@ pub fn run() {
             // the UI thread that dispatches the mobile plugin.
             tauri::async_runtime::spawn_blocking(move || {
                 #[cfg(target_os = "android")]
-                let client = ClientRuntime::with_storage(path, Arc::new(store));
+                let client = {
+                    let storage=osg_companion_service::persistence::SealedSqliteStore::with_sealer(path.join("companion-client.dpapi"),Arc::new(store));
+                    ClientRuntime::with_storage(path,Arc::new(storage))
+                };
                 #[cfg(not(target_os = "android"))]
                 let client = ClientRuntime::open(path);
                 let _ = bridge.0.set(client.map(Arc::new));

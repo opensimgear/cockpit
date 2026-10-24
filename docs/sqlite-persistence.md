@@ -195,3 +195,34 @@ revision and retain metadata only for currently paired installations. Rendering
 compatibility reads use the same SQLite firmware records. Retired files are
 ignored. The host implementation is organized under `companion/host/`; every
 new module stays below 500 lines.
+
+## Encrypted native trust and MCP authority
+
+`SealedSqliteStore` stores host trust, the TLS identity and native client
+credentials under `secrets/companion-host`, `secrets/companion-identity` and
+`secrets/companion-client`. Native OS adapters seal bytes before any SQLite
+statement receives them. Windows DPAPI, macOS Keychain, Linux Secret Service and
+Android Keystore retain their protection boundaries; external keys are not
+exported. Android's native bridge seals/unseals bounded bytes and no longer owns
+a SharedPreferences record. Browser companion credentials remain confined to
+their browser origin. Retired `.dpapi` files are ignored.
+
+Passive trust discovery does not create a namespace, identity or key. Existing
+ciphertext must decrypt before a key-creating operation can run. Missing/locked
+keys and corrupt records preserve the saved ciphertext. Exact SQLite revisions
+reject stale writes and Forget operations; acknowledged revocation cannot be
+overwritten by an earlier owner. Native client public caches and atomic host
+publication/head/assignment snapshots remain separate S5/S6 work.
+
+MCP settings live at `security/mcp`. Only bearer-token hashes enter SQLite;
+creation and atomic rotation return a token once to the requesting caller.
+Native IPC and the authenticated MCP settings/credential tools share required
+`expectedSettingsRevision` guards. Rotation replaces the old hash and metadata
+in one transaction. Authorization refreshes SQLite state before admission,
+including external scope changes, revocation and corrupt-authority failures.
+No token is restored from the retired `mcp-v1.json` file. MCP operation results
+and newly issued tokens remain bounded process memory, not durable logs.
+
+The native MCP implementation is split under `mcp/server/` and `mcp/storage/`.
+Frontend uncertainty requires reconciliation; it cannot fall back to a second
+create/revoke sequence after an uncertain rotation result.

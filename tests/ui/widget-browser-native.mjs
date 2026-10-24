@@ -3,9 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { createHash, X509Certificate, randomUUID } from 'node:crypto';
-import { createServer, isIP } from 'node:net';
-import { connect as tlsConnect } from 'node:tls';
+import { randomUUID } from 'node:crypto';
+import {verifiedServerKey} from './native/browser-trust.mjs';
+import { createServer } from 'node:net';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { importBundle, publishDocument } from '../../packages/companion-designer/src/index.ts';
@@ -45,22 +45,6 @@ async function freePort() {
   const server = createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
 }
-async function verifiedServerKey(url, certificate) {
-  const address = new URL(url);
-  return new Promise((resolve, reject) => {
-    const socket = tlsConnect({ host: address.hostname, port: Number(address.port || 443), ...(isIP(address.hostname) ? {} : { servername: address.hostname }), ca: certificate, rejectUnauthorized: true });
-    socket.setTimeout(5000, () => socket.destroy(Error('Cockpit certificate verification timed out')));
-    socket.once('error', reject);
-    socket.once('secureConnect', () => {
-      try {
-        const certificate = new X509Certificate(socket.getPeerCertificate().raw);
-        resolve(createHash('sha256').update(certificate.publicKey.export({ format: 'der', type: 'spki' })).digest('base64'));
-      } catch (error) { reject(error); }
-      finally { socket.end(); }
-    });
-  });
-}
-
 test('the live browser companion shares an edited widget publication and isolates source loss', {
   skip: process.env.OSG_WIDGETS_BROWSER_NATIVE !== '1', timeout: 120000,
 }, async () => {

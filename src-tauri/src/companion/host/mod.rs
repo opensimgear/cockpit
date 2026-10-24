@@ -88,7 +88,7 @@ impl Runtime {
                 || runtime
                     .path
                     .as_ref()
-                    .is_some_and(|p| p.join("companion-host-state.dpapi").is_file())
+                    .is_some_and(|p| osg_companion_service::persistence::SealedSqliteStore::new(p.join("companion-host-state.dpapi")).exists().unwrap_or(true))
             {
                 if let Ok(services) = runtime.services() {
                     if crate::companion_panels::ready(&services.hub).unwrap_or(false) {
@@ -312,7 +312,7 @@ impl Runtime {
         if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
         if let Some(metadata) = self.metadata.get() { return Ok(metadata.hub.resource_instance_ids()); }
         let Some(path) = &self.path else { return Ok(Default::default()); };
-        if !path.join("companion-host-state.dpapi").try_exists().map_err(|error| error.to_string())? {
+        if !osg_companion_service::persistence::SealedSqliteStore::new(path.join("companion-host-state.dpapi")).exists()? {
             return Ok(Default::default());
         }
         Ok(self.metadata(false)?.hub.resource_instance_ids())
@@ -321,7 +321,7 @@ impl Runtime {
         if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
         if let Some(metadata)=self.metadata.get(){return Ok(metadata.hub.resource_companions());}
         let Some(path)=&self.path else{return Ok(vec![])};
-        if !path.join("companion-host-state.dpapi").try_exists().map_err(|error|error.to_string())?{return Ok(vec![])}
+        if !osg_companion_service::persistence::SealedSqliteStore::new(path.join("companion-host-state.dpapi")).exists()?{return Ok(vec![])}
         Ok(self.metadata(false)?.hub.resource_companions())
     }
     pub(crate) fn resource_publication(&self, instance_id: &str) -> Result<osg_companion_service::Publication, String> {

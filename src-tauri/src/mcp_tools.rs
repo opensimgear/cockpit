@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -15,6 +15,8 @@ mod authoring;
 mod workspace;
 #[path="mcp_tools/host_settings.rs"]
 mod host_settings;
+#[path="mcp_tools/integration_settings.rs"]
+mod integration_settings;
 #[path = "mcp_tools/catalogue.rs"]
 mod definitions;
 #[path = "mcp_tools/schema.rs"]
@@ -116,6 +118,7 @@ pub struct Tools {
     ledger: Mutex<Ledger>,
     drafts: Mutex<Vec<Draft>>,
     workspace_uploads: Mutex<Vec<workspace::Upload>>,
+    integration:OnceLock<std::sync::Weak<crate::mcp::Server>>,
 }
 impl Tools {
     pub fn new(manager: Arc<GatewayManager>) -> Self {
@@ -124,8 +127,10 @@ impl Tools {
             ledger: Mutex::new(Ledger::default()),
             drafts: Mutex::new(vec![]),
             workspace_uploads: Mutex::new(vec![]),
+            integration:OnceLock::new(),
         }
     }
+    pub(crate) fn bind_integration(&self,server:std::sync::Weak<crate::mcp::Server>){let _=self.integration.set(server);}
     /// The caller authenticates the connection and provides a stable, native
     /// client identity. Session IDs are deliberately not a mutation authority.
     pub fn call(&self, name: &str, args: Value, client: &str) -> Value {
@@ -243,6 +248,7 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "mcp_settings_get" | "mcp_settings_update" | "mcp_credential_create" | "mcp_credential_revoke" | "mcp_credential_rotate" => self.integration_tool(name,args),
             "companion_listener_get" | "companion_listener_save" => self.listener_tool(name,args,client),
             "designer_workspace_read" | "designer_workspace_begin" | "designer_workspace_chunk" | "designer_workspace_commit" | "designer_workspace_abort" => self.workspace_tool(name,args,client),
             "widgets_list" => forward("widgets_list", &["offset","limit"], Some("widgetLibrary")),

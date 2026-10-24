@@ -50,13 +50,17 @@ impl<T: Serialize + DeserializeOwned> Repository<T> {
         ))
     }
     pub fn load(&self) -> Result<Option<T>, String> {
+        self.load_snapshot().map(|(_,value)|value)
+    }
+    /// The returned document and expected revision come from the same read.
+    pub fn load_snapshot(&self) -> Result<(u64,Option<T>), String> {
         let mut expected = self
             .revision
             .lock()
             .map_err(|_| "Repository access failed.")?;
         let (revision, value) = self.hydrate()?;
         *expected = Some(revision);
-        Ok(value)
+        Ok((revision,value))
     }
     /// Cache advances only after successful commit. A failed save leaves the
     /// last read revision unchanged and cannot hide a concurrent writer.

@@ -11,6 +11,7 @@ license-file = "../../LICENSE"
 legacy-test-fixtures = []
 
 [dependencies]
+osg-persistence = { path = "../persistence" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -46,5 +47,6 @@ keyring = { version = "=3.6.3", default-features = false, features = ["sync-secr
 fs2 = "0.4"
 
 [dev-dependencies]
+osg-persistence = { path = "../persistence", features = ["test-support"] }
 tempfile = "3"
 osg-companion-service = { path = ".", features = ["legacy-test-fixtures"] }

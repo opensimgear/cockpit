@@ -605,6 +605,7 @@ fn disconnected_gateway_after_restart_retains_saved_identity_and_ports_without_a
 fn unavailable_durable_inventory_never_becomes_an_authoritative_empty_batch() {
     let (mut sources,temporary)=sources();
     std::fs::write(temporary.path().join("companion-host-state.dpapi"),b"unreadable protected host state").unwrap();
+    crate::persistence::test_support::record(&temporary.path().join("companion-host-state.dpapi"),"secrets","companion-host",b"unreadable protected SQLite state");
     sources.host=Arc::new(crate::companion_host::Runtime::new(Some(temporary.path().into()),sources.companions.clone()));
     assert!(sources.companion_observations().is_err());
     let controllers=temporary.path().join("controllers.json");std::fs::write(&controllers,b"corrupt controller settings").unwrap();

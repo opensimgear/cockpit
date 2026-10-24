@@ -81,6 +81,11 @@ pub fn catalogue() -> Vec<Value> {
         tool("game_telemetry_inspect","Read bounded passive telemetry values and canonical channel metadata from one game. This does not start a provider or apply a profile.",fields(vec![("gameId",string(64)),("search",json!({"type":"string","maxLength":200})),("group",json!({"type":"string","maxLength":256}))],page()),&[]),
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
+        tool("mcp_settings_get","Read this running Cockpit MCP server's public configuration, credential metadata and exact settingsRevision. Bearer tokens and hashes are excluded.",vec![],&[]),
+        tool("mcp_settings_update","Save local MCP enablement/port at exact expectedSettingsRevision. Disabling or changing port requires reconnecting to the returned endpoint.",vec![("enabled",json!({"type":"boolean"})),("port",integer(1024,65535)),("expectedSettingsRevision",integer(0,9007199254740991))],&["enabled","port","expectedSettingsRevision"]),
+        tool("mcp_credential_create","Create one named read/write credential at the exact settings revision. The reply contains its one-time token; Cockpit persists only its hash. Configure the intended client with that token.",vec![("name",string(80)),("scope",choice(&["read","write"])),("expectedSettingsRevision",integer(0,9007199254740991))],&["name","scope","expectedSettingsRevision"]),
+        tool("mcp_credential_rotate","Atomically replace a credential at exact expectedSettingsRevision, retaining its name/scope and returning the one-time replacement token. The old token is revoked in the same SQLite commit.",vec![("id",string(36)),("expectedSettingsRevision",integer(0,9007199254740991))],&["id","expectedSettingsRevision"]),
+        tool("mcp_credential_revoke","Revoke one credential at exact expectedSettingsRevision. Its token immediately loses access; other credentials are preserved.",vec![("id",string(36)),("expectedSettingsRevision",integer(0,9007199254740991))],&["id","expectedSettingsRevision"]),
         tool("companion_listener_get","Read native listener configuration, configured/live state, errors and exact settingsRevision. This uses the same native companion setup as the portal.",vec![],&[]),
         tool("companion_listener_save","Enable or disable the native companion listener at exact expectedSettingsRevision. Enabling requires address IP, port, advertisedHost and discovery. Configuration commits in SQLite before listener startup; bind failures retain configured intent and report the live error. Disable commits before stopping; rejected writes preserve the prior setting.",vec![("enabled",json!({"type":"boolean"})),("expectedSettingsRevision",integer(0,9007199254740991)),("address",string(64)),("port",integer(1024,65535)),("advertisedHost",string(253)),("discovery",json!({"type":"boolean"}))],&["enabled","expectedSettingsRevision"]),
         tool("companion_panels_list","List retained verified companion panel publications and compatibility; publication hashes are immutable authoring metadata.",page(),&[]),
@@ -126,6 +131,10 @@ pub fn is_mutation(name: &str) -> bool {
         name,
         "profile_create"
             | "widget_save"
+            | "mcp_settings_update"
+            | "mcp_credential_create"
+            | "mcp_credential_rotate"
+            | "mcp_credential_revoke"
             | "companion_listener_save"
             | "designer_workspace_begin"
             | "designer_workspace_chunk"

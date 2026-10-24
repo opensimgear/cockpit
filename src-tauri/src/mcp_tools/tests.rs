@@ -109,6 +109,7 @@ fn setup() -> (Tools, Arc<Fake>) {
             ledger: Mutex::new(Default::default()),
             drafts: Mutex::new(vec![]),
             workspace_uploads: Mutex::new(vec![]),
+            integration:OnceLock::new(),
         },
         backend,
     )

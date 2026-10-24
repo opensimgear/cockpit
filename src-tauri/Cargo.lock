@@ -3486,6 +3486,7 @@ dependencies = [
  "image",
  "keyring",
  "mdns-sd",
+ "osg-persistence",
  "qrcode",
  "rcgen",
  "ring",

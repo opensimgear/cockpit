@@ -1,4 +1,4 @@
-//! Native applications register all supported legacy roots against one database
+//! Native applications register all supported application roots against one database
 //! before starting workers. Unregistered fixture/standalone namespaces stay local.
 use crate::Database;
 use std::{
@@ -35,8 +35,7 @@ pub fn register_namespace(roots: &[PathBuf], database: &Path) -> Result<(), Stri
     Ok(())
 }
 
-impl Database {
-    pub fn for_namespace(source: &Path) -> Result<Self, String> {
+fn namespace_path(source: &Path) -> Result<PathBuf, String> {
         if source.is_dir() {
             return Err("A persistence namespace anchor cannot be a directory.".into());
         }
@@ -58,7 +57,7 @@ impl Database {
             if let Some((_, database)) =
                 namespaces.iter().find(|(root, _)| source.starts_with(root))
             {
-                return Self::open(database);
+                return Ok(database.clone());
             }
         }
         let parent = source
@@ -73,13 +72,33 @@ impl Database {
         } else {
             parent
         };
-        Self::open(root.join("cockpit.sqlite3"))
+        Ok(root.join("cockpit.sqlite3"))
+}
+
+impl Database {
+    pub fn for_namespace(source: &Path) -> Result<Self, String> {
+        Self::open(namespace_path(source)?)
+    }
+    /// Passive discovery never creates a namespace, database or protection key.
+    pub fn existing_for_namespace(source: &Path) -> Result<Option<Self>, String> {
+        let path=namespace_path(source)?;
+        crate::check_path(&path,false)?;
+        if !path.try_exists().map_err(|_|"Cannot inspect the persistence namespace.")? {return Ok(None);}
+        Self::open(path).map(Some)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn passive_discovery_never_creates_missing_namespaces() {
+        let dir=crate::test_directory();let anchor=dir.path().join("missing/companions/host-state");
+        assert!(Database::existing_for_namespace(&anchor).unwrap().is_none());
+        assert!(!dir.path().join("missing").exists());
+        let created=Database::for_namespace(&anchor).unwrap();
+        assert_eq!(Database::existing_for_namespace(&anchor).unwrap().unwrap().path(),created.path());
+    }
     #[test]
     fn explicit_roots_share_authority_and_other_namespaces_remain_isolated() {
         let dir = crate::test_directory();
