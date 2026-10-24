@@ -3,7 +3,7 @@
 export type PersistenceInvoke = (command: string, arguments_: Record<string, unknown>) => Promise<unknown>;
 export interface DesignerStorage<T> {
   read(): Promise<unknown>;
-  write(value: T): Promise<void>;
+  write(value: T): Promise<T | void>;
 }
 
 function revision(value: unknown): number {
@@ -32,6 +32,7 @@ export function sqliteDesignerStorage<T>(invoke: PersistenceInvoke): DesignerSto
       }));
       if (record.revision !== expected + 1) throw new Error('Designer save acknowledgement changed. Reload before editing again.');
       expected = record.revision;
+      return record.value as T | undefined;
     },
   };
 }

@@ -11,6 +11,8 @@ use std::{
 
 #[path = "mcp_tools/authoring.rs"]
 mod authoring;
+#[path = "mcp_tools/workspace.rs"]
+mod workspace;
 #[path = "mcp_tools/catalogue.rs"]
 mod definitions;
 #[path = "mcp_tools/schema.rs"]
@@ -111,6 +113,7 @@ pub struct Tools {
     backend: Arc<dyn Backend>,
     ledger: Mutex<Ledger>,
     drafts: Mutex<Vec<Draft>>,
+    workspace_uploads: Mutex<Vec<workspace::Upload>>,
 }
 impl Tools {
     pub fn new(manager: Arc<GatewayManager>) -> Self {
@@ -118,6 +121,7 @@ impl Tools {
             backend: manager,
             ledger: Mutex::new(Ledger::default()),
             drafts: Mutex::new(vec![]),
+            workspace_uploads: Mutex::new(vec![]),
         }
     }
     /// The caller authenticates the connection and provides a stable, native
@@ -237,6 +241,7 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "designer_workspace_read" | "designer_workspace_begin" | "designer_workspace_chunk" | "designer_workspace_commit" | "designer_workspace_abort" => self.workspace_tool(name,args,client),
             "widgets_list" => forward("widgets_list", &["offset","limit"], Some("widgetLibrary")),
             "widget_get" => forward("widget_get", &["id","version"], Some("widgetLibrary")),
             "widget_save" => forward("widget_save", &["bundle","expectedVersion"], Some("widgetSaved")),
@@ -827,3 +832,7 @@ fn compact_operation_result(result: &Value, id: &str) -> Value {
 #[cfg(test)]
 #[path = "mcp_tools/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path="mcp_tools/workspace_tests.rs"]
+mod workspace_tests;

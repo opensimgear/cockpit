@@ -16,7 +16,7 @@
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { compiledPanelResources, canonicalWidget, type CompiledPanelPublication, type PanelBounds, type CompiledWidgetBundle, type Scalar } from '../../packages/widget-runtime/src/index.ts';
   import { validateWidgetSource, type WidgetSource } from '../../packages/widget-compiler/src/index.ts';
-  import { CompiledWorkspaceStore, emptyCompiledWorkspace, newCompiledDraft, blankWidgetSource, latestWidgetSources, mergeWidgetSources, validateCompiledDraft, compilePanelDraft, designerId, type CompiledDraft, type WidgetSourceBundle } from './compiled-companion-library';
+  import { CompiledWorkspaceStore, emptyCompiledWorkspace, newCompiledDraft, blankWidgetSource, latestWidgetSources, mergeWidgetSources, validateCompiledDraft, compilePanelDraft, designerId, type CompiledDraft } from './compiled-companion-library';
   let { openSettings, initialCompanionId = '', onNavigate, active = true }: { openSettings: () => void; initialCompanionId?: string; onNavigate?: (navigation: CompanionNavigation) => void; active?: boolean } = $props();
   let workspace = $state.raw(emptyCompiledWorkspace()), ready = $state(false), error = $state(''), message = $state('');
   let draft = $state.raw<CompiledDraft>(), past = $state.raw<CompiledDraft[]>([]), future = $state.raw<CompiledDraft[]>([]), selected = $state(''), pageId = $state('');
@@ -107,8 +107,6 @@
   function editWidget(item?: WidgetSource, instance = '') { editingInstance = instance; widgetEditor = item ? { ...structuredClone(item), revision: Math.max(...workspace.sources.filter(s => s.id === item.id).map(s => s.revision)) + 1 } : blankWidgetSource(); }
   async function saveWidget(next: WidgetSource, _bundle: CompiledWidgetBundle) {
     const sources = mergeWidgetSources(workspace.sources, [next]);
-    const native = await gatewayRequest({ command: 'widget_library_merge', bundle: { bundleVersion: 2, library: { formatVersion: 2, definitions: [next] } } });
-    if (native.widgetLibrary?.bundleVersion !== 2) throw new Error('Restart Cockpit to use the generic widget source library.');
     workspace = await store.save({ ...workspace, sources });
     if (editingInstance && draft) change(draft => { const widget = draft.widgets.find(widget => widget.id === editingInstance); if (widget) { widget.sourceId = next.id; widget.revision = next.revision; widget.parameters = {}; } });
     widgetEditor = undefined; editingInstance = ''; message = `${next.title} saved.`;
@@ -135,7 +133,7 @@
     busy = true; try { await restoreCompanionPanels(); await removePanelAssignments((workspace.publications[id] ?? []).map(p => p.publicationHash), send); const publications = { ...workspace.publications }; delete publications[id]; workspace = await store.save({ ...workspace, drafts: workspace.drafts.filter(d => d.id !== id), publications }); if (draft?.id === id) { dirty = false; busy = false; showMain(); } } catch (e) { error = String(e); } finally { busy = false; }
   }
   function download(value: unknown, name: string) { const url = URL.createObjectURL(new Blob([JSON.stringify(value)], { type: 'application/json' })), anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-  async function importWidgets(file?: File) { if (!file) return; try { if (file.size > 8 * 1024 * 1024) throw new Error('Widget source import exceeds 8 MiB.'); const input = JSON.parse(await file.text()); const definitions = input.bundleVersion === 2 ? input.library.definitions : [input]; const sources = mergeWidgetSources(workspace.sources, definitions); const bundle: WidgetSourceBundle = { bundleVersion: 2, library: { formatVersion: 2, definitions } }; await gatewayRequest({ command: 'widget_library_merge', bundle }); workspace = await store.save({ ...workspace, sources }); } catch (e) { error = String(e); } }
+  async function importWidgets(file?: File) { if (!file) return; try { if (file.size > 8 * 1024 * 1024) throw new Error('Widget source import exceeds 8 MiB.'); const input = JSON.parse(await file.text()); const definitions = input.bundleVersion === 2 ? input.library.definitions : [input]; const sources = mergeWidgetSources(workspace.sources, definitions); workspace = await store.save({ ...workspace, sources }); } catch (e) { error = String(e); } }
   async function importPanel(file?: File) {
     if (!file || !leave()) return;
     try {
@@ -145,8 +143,6 @@
       const sources = mergeWidgetSources(workspace.sources, input.sources);
       const panel = validateCompiledDraft(input.draft, sources);
       if (workspace.drafts.some(d => d.id === panel.id)) panel.id = designerId('panel');
-      const native = await gatewayRequest({ command: 'widget_library_merge', bundle: { bundleVersion: 2, library: { formatVersion: 2, definitions: input.sources } } });
-      if (native.widgetLibrary?.bundleVersion !== 2) throw new Error('Restart Cockpit to use the generic widget source library.');
       workspace = await store.save({ ...workspace, sources, drafts: [...workspace.drafts.filter(d => d.id !== panel.id), panel] });
       openPanel(panel.id); compiled = undefined; dirty = true;
       message = 'Imported source. Compile this panel for its current browser target.';

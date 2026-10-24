@@ -3441,6 +3441,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "serialport",
  "sha2",
  "socket2",

@@ -68,3 +68,26 @@ test('panel compilation bakes exact placement size and supports static silent ta
 test('storage reports unavailable IndexedDB instead of claiming a save succeeded', async () => {
   const storage = compiledIndexedDbStorage(null); await assert.rejects(storage.read(), /unavailable/); await assert.rejects(storage.write(emptyCompiledWorkspace()), /unavailable/);
 });
+
+test('desktop defaults use native SQLite exclusively and return merged native sources',async()=>{
+  const previous=globalThis.__TAURI_INTERNALS__;
+  let value=null,revision=0,blocked=false,reads=0;
+  try {
+    globalThis.__TAURI_INTERNALS__={invoke:async(command,{request})=>{
+      assert.equal(command,'persistence_workspace');
+      if(blocked)throw Error('SQLite busy');
+      if(request.operation==='read'){reads++;return {revision,value:structuredClone(value)};}
+      assert.equal(request.expectedRevision,revision);
+      value=structuredClone(request.value);
+      const source=blankWidgetSource();source.id='external-mcp-source';
+      value.sources=mergeWidgetSources(value.sources,[source]);
+      return {revision:++revision,value:structuredClone(value)};
+    }};
+    const store=new CompiledWorkspaceStore();const loaded=await store.load();
+    assert.equal(loaded.sources.some(s=>s.id==='external-mcp-source'),true);
+    const saved=await store.save(loaded);assert.deepEqual(saved,value);
+    assert.equal(reads,1);blocked=true;
+    await assert.rejects(store.load(),/SQLite busy/);
+    await assert.rejects(store.save(saved),/SQLite busy/);
+  } finally {if(previous)globalThis.__TAURI_INTERNALS__=previous;else delete globalThis.__TAURI_INTERNALS__;}
+});

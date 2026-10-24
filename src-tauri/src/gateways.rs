@@ -718,11 +718,11 @@ impl GatewayManager {
             Err(error) => return self.error(&error, None),
         };
         // Widget sources are shared metadata; saving never enters output ownership.
-        if matches!(command,"widget_library_get"|"widget_library_merge"|"widgets_list"|"widget_get"|"widget_save") {
+        if matches!(command,"designer_workspace_read"|"designer_workspace_write"|"widget_library_get"|"widget_library_merge"|"widgets_list"|"widget_get"|"widget_save") {
             if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid widget client or closed cockpit.",None);}
             let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());
             if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()){return self.error(&error,None);}
-            return match self.widget_library.request(&request){Ok(widgets)=>if command=="widget_save"{json!({"ok":true,"state":{"widgetSaved":widgets}})}else{json!({"ok":true,"state":{"widgetLibrary":widgets}})},Err(error)=>self.error(&error,None)};
+            return match self.widget_library.request(&request){Ok(widgets)=>if command.starts_with("designer_workspace_"){json!({"ok":true,"state":{"designerWorkspace":widgets}})}else if command=="widget_save"{json!({"ok":true,"state":{"widgetSaved":widgets}})}else{json!({"ok":true,"state":{"widgetLibrary":widgets}})},Err(error)=>self.error(&error,None)};
         }
         // Activation progress and cancellation remain responsive while takeover
         // owns the admission/coordinator locks. These APIs never claim outputs.

@@ -49,7 +49,7 @@ def main():
     if not options.service_only:
         # Profile publication, authoring and lifecycle tests call this host from
         # other modules. Measure those real integrations as well as its unit tests.
-        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/companion/storage/widgets.rs"]))
+        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/companion/storage/widgets.rs", root / "src-tauri/src/companion/storage/workspace.rs", root / "src-tauri/src/companion/storage/workspace_validation.rs", root / "src-tauri/src/mcp_tools/workspace.rs"]))
     if options.desktop_only:
         targets = [target for target in targets if target[0] == "desktop"]
     summary = {}

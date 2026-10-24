@@ -108,6 +108,7 @@ fn setup() -> (Tools, Arc<Fake>) {
             backend: backend.clone(),
             ledger: Mutex::new(Default::default()),
             drafts: Mutex::new(vec![]),
+            workspace_uploads: Mutex::new(vec![]),
         },
         backend,
     )

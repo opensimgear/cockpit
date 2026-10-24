@@ -9,7 +9,9 @@ use std::{
 pub(crate) struct Runtime {
     path: Option<PathBuf>,
     bundle: Mutex<Option<Value>>,
-    repository: OnceLock<osg_persistence::Repository<Value>>,
+    database: OnceLock<osg_persistence::Database>,
+    revision: Mutex<u64>,
+    workspace: Mutex<(u64, Option<Value>)>,
 }
 const MAX_MCP_BYTES: usize = 2 * 1024 * 1024;
 fn builtins() -> Value {
@@ -59,43 +61,40 @@ impl Runtime {
         Self {
             path,
             bundle: Mutex::new(None),
-            repository: OnceLock::new(),
+            database: OnceLock::new(),
+            revision: Mutex::new(0),
+            workspace: Mutex::new((0, None)),
         }
     }
-    fn repository(&self) -> Result<Option<&osg_persistence::Repository<Value>>, String> {
-        let Some(path) = &self.path else {
-            return Ok(None);
-        };
-        if self.repository.get().is_none() {
-            let repository = osg_persistence::Repository::new(
-                osg_persistence::Database::for_namespace(path)?,
-                "widgets",
-                "library",
-                BUNDLE_BYTES,
-                validate_widget_bundle,
-            )?;
-            let _ = self.repository.set(repository);
+    fn database(&self) -> Result<Option<&osg_persistence::Database>, String> {
+        let Some(path) = &self.path else { return Ok(None); };
+        if self.database.get().is_none() {
+            let _ = self.database.set(osg_persistence::Database::for_namespace(path)?);
         }
-        Ok(self.repository.get())
+        Ok(self.database.get())
     }
     fn persist(&self, bundle: &Value) -> Result<(), String> {
-        if let Some(repository) = self.repository()? {
-            repository.save(bundle)?;
+        if let Some(database) = self.database()? {
+            let bytes = serde_json::to_vec(bundle).map_err(|_| "Cannot encode widget sources.")?;
+            let mut revision = self.revision.lock().unwrap_or_else(|p| p.into_inner());
+            *revision = database.commit(&[osg_persistence::Change { domain:"widgets", key:"library", expected_revision:*revision, payload:Some(&bytes) }])?[0];
         }
         Ok(())
     }
     fn load(&self) -> Result<Value, String> {
-        let saved = self
-            .repository()?
-            .map(|repository| repository.load())
-            .transpose()?
-            .flatten();
-        match saved {
-            Some(saved) => merge(&builtins(), &saved),
-            None => Ok(builtins()),
-        }
+        let Some(database) = self.database()? else { return Ok(builtins()); };
+        let (revision, record) = database.read_with_revision("widgets", "library")?;
+        let bundle = match record {
+            Some(record) => merge(&builtins(), &serde_json::from_slice(&record.payload).map_err(|_| "Invalid stored widget sources.")?)?,
+            None => builtins(),
+        };
+        *self.revision.lock().unwrap_or_else(|p| p.into_inner()) = revision;
+        Ok(bundle)
     }
     pub(crate) fn request(&self, request: &Value) -> Result<Value, String> {
+        if matches!(request["command"].as_str(), Some("designer_workspace_read" | "designer_workspace_write")) {
+            return self.workspace_request(request);
+        }
         let command = request["command"]
             .as_str()
             .ok_or("Missing widget operation.")?;
@@ -218,3 +217,6 @@ impl Runtime {
 #[cfg(test)]
 #[path = "widget_tests.rs"]
 mod tests;
+
+#[path = "workspace.rs"]
+mod workspace;

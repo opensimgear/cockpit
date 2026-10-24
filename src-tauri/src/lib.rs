@@ -345,6 +345,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             persistence::persistence_status,
+            persistence::persistence_workspace,
             gateway_request,
             mcp::mcp_settings_get,
             mcp::mcp_settings_update,

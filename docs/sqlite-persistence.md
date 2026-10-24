@@ -161,3 +161,26 @@ Run native/frontend/build/package checks and all affected coverage gates before
 pushing. Record Windows live evidence separately from unexecuted platform or
 physical-device qualification. New modules stay below 500 lines and related
 code lives in domain folders.
+
+## Native designer workspace ownership
+
+Desktop `CompiledWorkspaceStore` uses the typed `persistence_workspace` native
+command. Browser previews explicitly use their separate IndexedDB adapter. A
+native read/write failure stays visible; no desktop fallback reads IndexedDB.
+Workspace drafts, source revisions and publication archives are validated before
+commit. Source and parameter hashes must match the latest saved draft publication;
+all publication assets pass the shared native validator. Sources and workspace
+commit together at their exact SQLite revisions. Immutable sources added by MCP
+or another process are merged into the acknowledged workspace and never erased
+by an older designer snapshot. No file staging or asset garbage collection is
+needed for these bounded inline BLOBs. Limits remain 64 MiB workspace, 20 drafts,
+256 source revisions/8 MiB source library and 100 archived publication revisions.
+
+Authenticated MCP exposes `designer_workspace_read` as hash-fenced 48 KiB byte
+chunks. Begin/chunk/commit/abort tools upload a bounded UTF-8 JSON snapshot. Commit
+rechecks native authorization and expectedRevision and uses the same owner as the
+UI. Chunks are transient, client-bound and expire after ten minutes. The mutation
+ledger makes exact operation retries idempotent; failed native commits preserve
+the upload for explicit retry. Saving authoring data alone does not activate
+outputs or assign a companion. Host publication/head/assignment authority remains
+a separate remaining S5/S6 task until its transaction boundary is converted.

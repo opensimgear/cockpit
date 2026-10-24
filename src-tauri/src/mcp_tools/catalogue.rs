@@ -82,6 +82,11 @@ pub fn catalogue() -> Vec<Value> {
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
         tool("companion_panels_list","List retained verified companion panel publications and compatibility; publication hashes are immutable authoring metadata.",page(),&[]),
+        tool("designer_workspace_read","Read the native designer workspace as UTF-8 JSON in 48 KiB base64 chunks. Preserve revision and workspaceHash; pass expectedHash for later offsets to reject concurrent edits. Null JSON means no saved workspace. Drafts, source revisions and verified publications share one native SQLite authority.",vec![("offset",integer(0,67108864)),("expectedHash",string(71))],&[]),
+        tool("designer_workspace_begin","Begin a bounded designer snapshot upload. Read current workspace first; edit its portable schemaVersion2 sources/drafts/publications. Provide byte length and sha256 hash of the complete UTF-8 JSON. Nothing is persisted until commit; uploads expire after ten minutes.",vec![("expectedRevision",integer(0,9007199254740991)),("totalBytes",integer(1,67108864)),("workspaceHash",string(71))],&["expectedRevision","totalBytes","workspaceHash"]),
+        tool("designer_workspace_chunk","Append at most 48 KiB of UTF-8 JSON bytes, base64 encoded, to your exact uploadId at the acknowledged byte offset.",vec![("uploadId",string(36)),("offset",integer(0,67108864)),("base64",string(65536))],&["uploadId","offset","base64"]),
+        tool("designer_workspace_commit","Validate and atomically save the complete designer workspace plus immutable shared widget sources at expectedRevision. Rejected or busy writes preserve current data and keep the upload for retry. Saving authoring data does not assign or activate outputs.",vec![("uploadId",string(36))],&["uploadId"]),
+        tool("designer_workspace_abort","Discard your incomplete designer upload without changing saved state.",vec![("uploadId",string(36))],&["uploadId"]),
         tool("widgets_list","List generic widget sources in the shared Cockpit Widgets library. Returns the latest source revision; Toggle is the sole built-in seed.",page(),&[]),
         tool("widget_get","Read a format2 generic source bundle: pixel-space scene, typed parameters/signals/ports, configurable named state machines, finite visual domains and optional motion/sound. Assets are inline per source. Omit version for latest; version identifies source.revision. Cockpit compiles finished pixels before deployment.",vec![("id",string(64)),("version",integer(1,65535))],&["id"]),
         tool("widget_save","Create or revise one generic source in the shared Widgets library. Read cockpit://guide/widgets first. Send bundleVersion2/library.formatVersion2 with exactly one source. New IDs require expectedVersion:null and source.revision:1; revisions require exact current expectedVersion and source.revision:expectedVersion+1. Native validation checks bounded generic scene/behavior/domains/ports/media. Old widget imports are rejected. Saving source does not compile, publish, assign or activate a panel.",vec![("bundle",object()),("expectedVersion",json!({"type":["integer","null"],"minimum":1,"maximum":65535}))],&["bundle","expectedVersion"]),
@@ -119,6 +124,10 @@ pub fn is_mutation(name: &str) -> bool {
         name,
         "profile_create"
             | "widget_save"
+            | "designer_workspace_begin"
+            | "designer_workspace_chunk"
+            | "designer_workspace_commit"
+            | "designer_workspace_abort"
             | "profile_duplicate"
             | "profile_rename"
             | "profile_delete"
