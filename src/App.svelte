@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { uiPreference, uiPreferences } from './lib/persistence/ui-preferences';
+  const theme = uiPreference('theme');
   import Notifications from './lib/Notifications.svelte';
   import ActivationProgress from './lib/ActivationProgress.svelte';
   import { notify as showNotification } from './lib/notifications';
@@ -49,17 +51,10 @@
     node.showModal();
     return () => node.close();
   }
-  function stored<T>(key: string, fallback: T): T {
-    try {
-      const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
-      if (typeof value !== typeof fallback || value === null) return fallback;
-      return value as T;
-    } catch { return fallback; }
-  }
   const deviceKey = (gatewayId: string, moduleId: string) => `${gatewayId}/${moduleId}`;
   const nameForGateway = (backend?: string) => backend === 'stm32' ? 'OpenSimGear CAN gateway' : 'Pico W USB gateway';
   const inputSummary = (module: GatewayModule) => module.outputOnly ? 'Output device' : [module.buttonCount ? `${module.buttonCount} buttons` : '', module.hatCount ? `${module.hatCount} hats` : '', module.axisCount ? `${module.axisCount} axes` : ''].filter(Boolean).join(' · ');
-  let light = $state(stored<boolean>('osg-light', false));
+  const light = $derived($theme.value);
   let view = $state<View>('overview');
   let games = $state<GamesState>();
   let gamesStale = $state(true);
@@ -424,9 +419,7 @@
   function notify(message: string) { if (!disposed) showNotification(message); }
   function log(message: string, detail: string) { events = [{ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), message, detail }, ...events]; }
   function toggleTheme() {
-    light = !light;
-    try { localStorage.setItem('osg-light', JSON.stringify(light)); }
-    catch { notify('Theme changed for this session. Local storage is unavailable.'); }
+    void theme.save(!light).catch(reason => notify(String(reason)));
   }
   async function selectDevice(key: string) {
     const device = devices.find(item => item.key === key);
@@ -504,6 +497,7 @@
 
 <div class:light class="cockpit">
   <Notifications />
+  {#if $theme.error}<div role="alert"><Notification message={$theme.error} kind="error" /><button class="secondary-button" onclick={() => { void uiPreferences.hydrate(); }}><Icon name="refresh" size={14} />Retry</button></div>{/if}
   <ActivationProgress />
   <div class="app-shell">
     <aside class="sidebar">
@@ -536,7 +530,7 @@
           <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
         {:else if view === 'preferences'}
-          <SettingsPanel {light} onToggleTheme={toggleTheme} />
+          <SettingsPanel {light} onToggleTheme={toggleTheme} themeBusy={$theme.busy || !$theme.ready} />
         {:else if view === 'profiles'}
           <!-- The Profiles list/editor above remains mounted for its game-settings round-trip. -->
         {:else if view === 'companions'}

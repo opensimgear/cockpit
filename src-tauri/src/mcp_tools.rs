@@ -251,6 +251,8 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "ui_preferences_get"=>forward("ui_preferences_get",&["key"],Some("uiPreferences")),
+            "ui_preferences_save"=>forward("ui_preferences_save",&["key","expectedRevision","value"],Some("uiPreferences")),
             name if companion_controls::handles(name)=>self.companion_tool(name,args,client),
             "mcp_settings_get" | "mcp_settings_update" | "mcp_credential_create" | "mcp_credential_revoke" | "mcp_credential_rotate" => self.integration_tool(name,args),
             "companion_listener_get" | "companion_listener_save" => self.listener_tool(name,args,client),
@@ -849,3 +851,6 @@ mod tests;
 #[cfg(test)]
 #[path="mcp_tools/workspace_tests.rs"]
 mod workspace_tests;
+#[cfg(test)]
+#[path="mcp_tools/ui_preferences_tests.rs"]
+mod ui_preferences_tests;

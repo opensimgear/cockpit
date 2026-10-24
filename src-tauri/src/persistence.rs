@@ -1,5 +1,6 @@
 //! Native persistence operations execute on blocking command workers.
 use serde_json::{json, Value};
+pub(crate) mod ui;
 
 #[tauri::command]
 pub(crate) async fn persistence_status(database: tauri::State<'_, osg_persistence::Database>) -> Result<Value, String> {

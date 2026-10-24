@@ -219,6 +219,7 @@ pub struct GatewayManager {
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
     system_inventory: crate::system_inventory::Runtime,
+    pub(crate) ui_preferences:crate::persistence::ui::Preferences,
     configuration_gate: Arc<Mutex<()>>,
     profile_panels: Arc<ProfilePanelIo>,
     closed: Arc<AtomicBool>,
@@ -309,6 +310,7 @@ impl GatewayManager {
         let game_panel = retired_game_io::panel(panel, retired_recovery.clone(), controllers.clone(), companion_host.clone());
         let isolated = game_anchor.is_some();
         let anchor = game_anchor.unwrap_or_else(crate::config_paths::config_path);
+        let ui_preferences=crate::persistence::ui::Preferences::new(&anchor);
         let mut game_paths = crate::games::Paths::in_directory(anchor.parent().unwrap_or_else(|| std::path::Path::new(".")));
         // Only locate separately retained setup/recovery evidence at an explicit
         // old anchor. The obsolete game-profile configuration is never opened.
@@ -402,6 +404,7 @@ impl GatewayManager {
             sessions,
             inventory: Mutex::new(Vec::new()),
             system_inventory: crate::system_inventory::Runtime::new(native),
+            ui_preferences,
             configuration_gate,
             profile_panels,
             closed,
@@ -717,6 +720,12 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
+        if matches!(command,"ui_preferences_get"|"ui_preferences_save") {
+            if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid UI settings client or closed cockpit.",None);}
+            let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());
+            if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()){return self.error(&error,None);}
+            return match self.ui_preferences.request(&request){Ok(settings)=>json!({"ok":true,"state":{"uiPreferences":settings}}),Err(error)=>self.error(&error,None)};
+        }
         // Widget sources are shared metadata; saving never enters output ownership.
         if matches!(command,"designer_workspace_read"|"designer_workspace_write"|"widget_library_get"|"widget_library_merge"|"widgets_list"|"widget_get"|"widget_save") {
             if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid widget client or closed cockpit.",None);}

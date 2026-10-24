@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { inventoryStorage } from './persistence/inventory-storage';
+  import { uiPreference } from './persistence/ui-preferences';
+  const devicesMode = uiPreference('devices-mode');
   import { onMount, tick, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
   import { systemDeviceIcon } from './system-device-icons';
@@ -10,7 +13,7 @@
   import type { GatewayEntry } from './gateway-workspace';
   import type { GameId } from './games';
   import { SystemInventoryController, integrationGameId } from './system-inventory-providers';
-  import { filterSystem, isVisibleSystemComponent, presenceLabels, systemDeviceSubtext, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot, type InventoryStorage } from './system-inventory';
+  import { filterSystem, isVisibleSystemComponent, presenceLabels, systemDeviceSubtext, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot } from './system-inventory';
   let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory, onNavigate }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
     gatewayError?: string;
@@ -19,7 +22,8 @@
     onNavigate?: (componentId: string | null) => void;
   } = $props();
   let snapshot = $state.raw<SystemSnapshot>({ components: [], diagnostics: [], observedAt: 0 });
-  let mode = $state('list'), search = $state(''), filter = $state('all'), transport = $state('all'), selectedId = $state('');
+  const mode = $derived($devicesMode.value);
+  let search = $state(''), filter = $state('all'), transport = $state('all'), selectedId = $state('');
   let detailsOpen = $state(false);
   let inventoryElement: HTMLDivElement | undefined;
   let busy = $state(false), error = $state(''), confirmation = $state<SystemComponent[]>([]);
@@ -63,7 +67,7 @@
       if (!quiet) busy = false;
     }
   }
-  function setMode(value: string) { mode = value; try { localStorage.setItem('osg-devices-mode', value); } catch { /* mode remains usable */ } }
+  function setMode(value: string) { if(value === 'list' || value === 'topology') void devicesMode.save(value).catch(reason => { error = String(reason); }); }
   function canCleanup(component: SystemComponent) {
     const current = snapshot.components.find(item => item.id === component.id);
     return component.forget.allowed && !!current?.forget.allowed && current.presence !== 'connected' && !current.owner && !current.hidden;
@@ -115,10 +119,7 @@
   }
   function dialog(node: HTMLDialogElement) { node.showModal(); node.querySelector<HTMLButtonElement>('[data-cleanup-cancel]')?.focus(); return { destroy: () => node.close() }; }
   onMount(() => {
-    let storage: InventoryStorage;
-    try { storage = localStorage; mode = storage.getItem('osg-devices-mode') === 'topology' ? 'topology' : 'list'; }
-    catch { storage = { getItem: () => { throw Error('Local inventory storage unavailable.'); }, setItem: () => { throw Error('Local inventory storage unavailable.'); } }; }
-    controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage, onChange: next => { snapshot = next; oninventory(next); } });
+    controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage: inventoryStorage, onChange: next => { snapshot = next; oninventory(next); } });
     snapshot = controller.snapshot;
     void refresh();
     const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
@@ -134,7 +135,7 @@
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
   <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="bluetooth">Bluetooth</option><option value="software">Virtual</option><option value="unknown">Unknown connection</option></select>
-  <div class="mode-switch" role="group" aria-label="Devices presentation"><button aria-label="List" title="List" class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}><Icon name="grid" size={18} /></button><button aria-label="Topology" title="Topology" class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}><Icon name="network" size={18} /></button></div>
+  <div class="mode-switch" role="group" aria-label="Devices presentation"><button disabled={$devicesMode.busy || !$devicesMode.ready} aria-label="List" title="List" class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}><Icon name="grid" size={18} /></button><button disabled={$devicesMode.busy || !$devicesMode.ready} aria-label="Topology" title="Topology" class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}><Icon name="network" size={18} /></button></div>
 </div>
 <div class="type-counts" aria-label="Component counts"><span aria-live="polite">{visible.length} / {components.length} components</span>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
 {#if snapshot.diagnostics.length}<details class="provider-diagnostics"><summary>Inventory diagnostics ({snapshot.diagnostics.length})</summary>{#each snapshot.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}

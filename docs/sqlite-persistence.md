@@ -63,12 +63,12 @@ The portable library retains its document bytes and semantic hashes.
 | Native Companion IndexedDB `opensimgear-companion-publications` | client DB `companion-client/publications` | existing verified publication/cache bounds; S6 | 4-entry/24 MiB cache, selected panel/page, offline reopen |
 | `osg-light`; `App.svelte` | `ui/theme` | boolean; S7 | Hydration before first render, cross-window/restart |
 | `osg-devices-mode`; `SystemDevices.svelte` | `ui/devices-mode` | list/topology enum; S7 | Mode survives restart |
-| `osg-canvas-navigation`; canvas navigation store | `ui/canvas-navigation` | wheel-action enum/version; S7 | Hydration, wheel controls, failed save |
+| `osg-canvas-navigation`; canvas navigation store | `ui/canvas-navigation` | wheel-action enum; S7 | Hydration, wheel controls, failed save |
 | `osg-canvas-styling`; canvas styling store | `ui/canvas-styling` | arrow style, bounded radius, collapse boolean; S7 | Canvas appearance/restart, stale cross-window edits |
-| `osg-system-inventory-v1`; `SystemInventoryRegistry::persist` | `inventory/remembered` | version/components/tombstone validators; S7 | First/last seen, Forget tombstones, refreshed provider authority |
+| `osg-system-inventory-v1`; `SystemInventoryRegistry::persist` | `inventory/remembered` | bounded components/tombstone validators; S7 | First/last seen, Forget tombstones, refreshed provider authority |
 | App-config `desktop-preferences.json`; desktop `write_preferences` | `ui/tray` | `TrayPreferences`; S7 | Tray close/minimize, unavailable tray diagnostic |
-| App-config `profile-progress-preferences.json`; progress settings | `ui/progress` | schema and supported position enum; S7 | Progress position and restart |
-| App-config `window-state.json`; window-state plugin | `ui/windows` | bounded geometry/window labels/display validation; S7 | Coalesced move/resize, exit/restart/off-screen display removal |
+| App-config `profile-progress-preferences.json`; progress settings | `ui/progress` | delivery and supported position enums; S7 | Progress position and restart |
+| App-config `window-state.json`; window-state plugin | `ui/windows` | fixed main-window geometry/display validation; S7 | Coalesced move/resize, exit/restart/off-screen display removal |
 | `profile-session-v1.json`; profile session journal | `recovery/profile-session` | existing manifest/phase/owner validation; S8 | Intent/effect/receipt faults, Stop/restart/owner lock |
 | `profile-output-{session}-{generation}.json`; virtual output journal | `recovery/virtual/{owner}` | exact owner/generation/driver fingerprint validation; S8 | No output replay, neutral/cleanup receipts, second process |
 | `profile-desktop-{session}-{generation}.json`; desktop coordinator journal | `recovery/desktop/{owner}` | desktop session/process receipt validation; S8 | Crash/foreground/Stop recovery, no injector replay |
@@ -285,3 +285,36 @@ initializing a protected identity can be part of its native operation. Firmware
 uses only the approved native release resolver and current device checks. No
 arbitrary command, SQL, path or firmware bytes are accepted. Physical/mobile
 qualification and the final S9 authority/restore audit remain separate gates.
+
+## UI and desktop preferences
+
+Native bootstrap reads seven typed UI owners before mounting either the main
+portal or its progress window. The latter has a read-only bootstrap permission
+and cannot call the portal gateway. Theme, device mode, canvas controls, tray,
+progress and remembered inventory use exact SQLite revisions. A successful
+write updates the native projection and emits its changed key/revision after
+commit. Stale writes and uncertain acknowledgements require a fresh read.
+Defaults never overwrite stored rows during bootstrap. Native failures remain
+visible and never select browser storage. Browser previews use session memory.
+
+Remembered inventory is bounded to 1 MiB, 1,024 components and 4,096 tombstones;
+nested connection/reference budgets are validated. Persistence stores/returns
+stale, unowned observations while retaining identity, first/last-seen history
+and references. Providers establish current state again. Observation saves and
+Forget serialize, reread shared metadata and await persistence. A second view
+cannot resurrect a committed tombstone. Profile-bound records remain protected
+by the existing cleanup review. No native device authority comes from these rows.
+
+Tray and progress JSON writers and the window-state plugin are removed. Actual
+autostart registration and tray/monitor availability remain observed OS state.
+Tray intent updates the shared native cache used by window events. Main-window
+move/resize signals have one pending slot; a bounded worker retains only the
+latest geometry, commits off the window thread and flushes on close/shutdown.
+It rejects foreign edits instead of rebasing old observations over them. Startup
+clamps geometry to a current monitor work area and adjusts for DPI; minimized
+or hidden state is never restored. Storage/placement failures remain diagnostics.
+
+MCP ui_preferences_get/save uses the same fixed owners, validators and revisions.
+Windows edits describe next-start geometry; observed native gestures establish
+new current geometry. Remembered metadata is distinct from guarded device
+Forget/revoke operations. No SQL, filesystem path or protected key is accepted.

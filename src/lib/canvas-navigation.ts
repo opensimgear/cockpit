@@ -1,7 +1,10 @@
+import { uiPreferences } from './persistence/ui-preferences';
 export type CanvasWheelAction = 'pan' | 'zoom';
 export type CanvasNavigation = Readonly<{
   wheelAction: CanvasWheelAction;
   storageError: string | null;
+  saving?: boolean;
+  ready?: boolean;
 }>;
 export type CanvasNavigationStorage = Pick<Storage, 'getItem' | 'setItem'>;
 export const CANVAS_NAVIGATION_STORAGE_KEY = 'osg-canvas-navigation';
@@ -12,11 +15,6 @@ const saveError = 'Changes apply to this session. Canvas navigation could not be
 /** Local canvas controls are app preferences, independent of profile history. */
 export function createCanvasNavigationStore(storage?: CanvasNavigationStorage | null) {
   let storageError: string | null = null;
-  let storageUnavailable = false;
-  if (storage === undefined) {
-    try { storage = typeof localStorage === 'undefined' ? null : localStorage; }
-    catch { storage = null; storageError = loadError; storageUnavailable = true; }
-  }
   let wheelAction: CanvasWheelAction = 'pan';
   if (storage) {
     try {
@@ -34,7 +32,7 @@ export function createCanvasNavigationStore(storage?: CanvasNavigationStorage | 
     },
     setWheelAction(action: CanvasWheelAction) {
       if (action !== 'pan' && action !== 'zoom' || action === current.wheelAction && !current.storageError) return;
-      let error: string | null = storageUnavailable ? saveError : null;
+      let error: string | null = null;
       try { storage?.setItem(CANVAS_NAVIGATION_STORAGE_KEY, JSON.stringify({ wheelAction: action })); }
       catch { error = saveError; }
       current = Object.freeze({ wheelAction: action, storageError: error });
@@ -43,7 +41,17 @@ export function createCanvasNavigationStore(storage?: CanvasNavigationStorage | 
   };
 }
 
-export const canvasNavigation = createCanvasNavigationStore();
+export const canvasNavigation = {
+  subscribe(listener: (value: CanvasNavigation) => void) {
+    return uiPreferences.subscribe('canvas-navigation', entry => listener(Object.freeze({ ...entry.value, storageError: entry.error || null, saving: entry.busy, ready: entry.ready })));
+  },
+  setWheelAction(action: CanvasWheelAction) {
+    if (action !== 'pan' && action !== 'zoom') return;
+    const current = uiPreferences.get('canvas-navigation');
+    if (current.value.wheelAction === action && !current.error) return;
+    void uiPreferences.save('canvas-navigation', { wheelAction: action }).catch(() => {});
+  },
+};
 export const setWheelAction = canvasNavigation.setWheelAction;
 
 /** Shared wheel intent for interactive canvases; modifiers reverse the preference. */

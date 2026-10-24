@@ -61,6 +61,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "persistence_status",
             "persistence_workspace",
+            "persistence_ui_read",
             "gateway_request",
             "mcp_settings_get",
             "mcp_settings_update",

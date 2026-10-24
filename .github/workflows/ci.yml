@@ -28,6 +28,8 @@ jobs:
         run: pnpm system-inventory:test
       - name: Inventory, provider and topology coverage at least 71 percent per module
         run: pnpm system-inventory:coverage
+      - name: Native UI preference client coverage at least 71 percent per module
+        run: pnpm ui-preferences:coverage
       - run: pnpm browser:test
       - run: pnpm browser-feedback:coverage
       - run: pnpm controllers:coverage

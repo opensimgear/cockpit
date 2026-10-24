@@ -4,6 +4,9 @@
   "description": "The owned profile activation window can display progress and request cancellation of its current operation.",
   "windows": ["profile-activation"],
   "permissions": [
+    "allow-persistence-ui-read",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-profile-activation-window-state",
     "allow-profile-activation-window-cancel"
   ]

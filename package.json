@@ -103,7 +103,9 @@
     "games:categories:native": "node --test tests/ui/game-categories-native.mjs",
     "games:custom:native": "node --test tests/ui/custom-games-native.mjs",
     "games:steam:native": "node --test tests/ui/custom-games-steam-native.mjs",
-    "games:persistence:native": "node --test tests/ui/custom-games-persistence-native.mjs"
+    "games:persistence:native": "node --test tests/ui/custom-games-persistence-native.mjs",
+    "ui-preferences:test": "node --test src/lib/persistence/ui-preferences.test.mjs src/lib/persistence/native-ui-preferences.test.mjs src/lib/persistence/inventory-storage.test.mjs",
+    "ui-preferences:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/persistence/ui-preferences.ts --test-coverage-include=src/lib/persistence/native-ui-preferences.ts --test-coverage-include=src/lib/persistence/inventory-storage.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/persistence/ui-preferences.test.mjs src/lib/persistence/native-ui-preferences.test.mjs src/lib/persistence/inventory-storage.test.mjs"
   },
   "dependencies": {
     "@opensimgear/widget-runtime": "workspace:*",

@@ -33,6 +33,8 @@ mod dcs_profile;
 mod dcs_physics;
 mod dcs_setup;
 mod desktop;
+#[path="desktop/geometry.rs"]
+mod desktop_geometry;
 mod window_persistence;
 mod game_discovery;
 mod game_activation;
@@ -61,6 +63,7 @@ mod module_usb;
 mod module_usb_fleet;
 mod module_configuration_routes;
 mod profile_resources;
+#[path="desktop/progress/mod.rs"]
 mod profile_activation_window;
 mod profile_system_notification;
 mod profile_compilation;
@@ -320,17 +323,6 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         desktop::show_main(app);
     }));
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    let builder = builder.plugin(
-        tauri_plugin_window_state::Builder::default()
-            .with_filename("window-state.json")
-            // Progress windows retain their own placement and visibility.
-            .with_filter(|label| label == "main")
-            .with_state_flags(
-                desktop::window_state_flags(),
-            )
-            .build(),
-    );
     let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -342,6 +334,14 @@ pub fn run() {
         .setup(|app| {
             app.manage(initialize_persistence(&[app.path().app_config_dir()?])?);
             let gateway = Arc::new(gateways::GatewayManager::new());
+            {
+                use tauri::Emitter;
+                let handle=app.handle().clone();
+                gateway.ui_preferences.observe(Arc::new(move|key,revision|{
+                    let _=handle.emit("ui-preferences-changed",serde_json::json!({"key":key,"revision":revision}));
+                    if key=="progress"{profile_activation_window::preferences_changed(&handle);}
+                }));
+            }
             gateway.start_automatic();
             app.manage(mcp::Server::native(gateway.clone()));
             app.manage(NativeGateway(gateway));
@@ -352,6 +352,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             persistence::persistence_status,
             persistence::persistence_workspace,
+            persistence::ui::commands::persistence_ui_read,
             gateway_request,
             mcp::mcp_settings_get,
             mcp::mcp_settings_update,

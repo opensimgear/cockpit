@@ -45,6 +45,9 @@
           "url": "https://github.com/opensimgear/device-gateway/tree/main/simulation/pico"
         }
       ]
-    }
+    },
+    "allow-persistence-ui-read",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
   ]
 }
