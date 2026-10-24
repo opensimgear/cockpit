@@ -27,6 +27,7 @@
   let assignments=$state<{instanceId:string;publicationHash:string;name:string}[]>([]), selected=$state('');
   let panelError=$state(false);
   let active=$state(false), name=$state('Browser companion'), secret=$state(''), fullscreen=$state(false);
+  let hasFocus=$state(true), inputReady=$state(false);
   let feedback=$state<FeedbackSamples>({}), feedbackNotice=$state('');
   let suppressFeedbackCues=$state(true);
   const feedbackView=createBrowserFeedback();
@@ -35,13 +36,14 @@
   let connecting=$state(false);
   let disposed=false, pageHidden=false, nextAttempt=0, lastTick=performance.now();
   let handlingRuntimeError=false;
+  let focusWork:Promise<void>|undefined;
   const visible=()=>!pageHidden&&document.visibilityState==='visible';
-  const focused=()=>visible()&&document.hasFocus();
-  const current=(socket:BrowserTransport,version:number)=>version===epoch&&!disposed&&owner&&visible()&&connection===socket;
-  function emitOutput(change:{controlId:string;value:boolean|number}){if(active&&focused())queue.enqueue(epoch,[change]);}
+  const focused=()=>visible()&&hasFocus;
+  const current=(socket:BrowserTransport,version:number)=>version===epoch&&!disposed&&owner&&!pageHidden&&connection===socket;
+  function emitOutput(change:{controlId:string;value:boolean|number}){if(active&&inputReady&&focused())queue.enqueue(epoch,[change]);}
   async function availableAssets(){try{return await cache.haveAssets();}catch(e){warning='Compiled asset cache unavailable; receiving fresh content.';let stored:string|undefined;cache=createCompiledAssetCache({read:async()=>stored,write:async value=>{stored=value;}});return [];}}
   const queue=createOrderedInputQueue(async(version,changes)=>{
-    if(version!==epoch || !active || !connection || !session || !focused())throw new Error('Input session stopped');
+    if(version!==epoch || !active || !inputReady || !connection || !session || !focused())throw new Error('Input session stopped');
     await connection.request(frame('input',{sequence:String(++sequence),changes}));
   },reason=>stop(reason));
   function frame(type:string,rest:Record<string,unknown>={}) {
@@ -49,7 +51,7 @@
     return {version:1,type,clientId:session.clientId,sessionId:session.sessionId,generation:session.generation,publicationHash:session.publicationHash,...rest};
   }
   function stop(reason:string) {
-    epoch++;preparing?.abort();preparing=undefined;active=false;panelError=false;queue.stop();panelView?.suspend();session=null;
+    epoch++;preparing?.abort();preparing=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
     feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
   }
@@ -61,7 +63,7 @@
     finally{handlingRuntimeError=false;}
   }
   function consume(reply:Record<string,any>,version:number){
-    if(version!==epoch||disposed||!visible()||!session||!panel||!reply.feedback)return;
+    if(version!==epoch||disposed||!session||!panel||!reply.feedback)return;
     if(feedbackView.accept(session as FeedbackIdentity,reply.feedback,panel.document.ui,performance.now(),reply.type==='feedback-resync')){suppressFeedbackCues=reply.feedback.mode==='snapshot'||reply.type==='feedback-resync';feedback=feedbackView.snapshot();}
   }
   function resetFeedback(){feedbackView.reset();feedback={};suppressFeedbackCues=true;feedbackNotice='Visual state cleared locally. Controls are unchanged.';}
@@ -103,11 +105,11 @@
     const values=Object.fromEntries(panel.document.ui.controls.map(control=>[control.id,control.kind==='button'?false:control.fallback]));
     await socket.request(frame('baseline',{sequence:'0',values}));
     if(!current(socket,version))return;
-    if(focused())queue.start();else queue.stop();
+    inputReady=focused();if(inputReady)queue.start();else queue.stop();
     active=true;status=focused()?'Connected · panel active':'Connected · feedback active · controls paused';error='';
   }
   async function connect(){
-    if(!owner || connecting || connection || !credential || disposed || !visible() || performance.now()<nextAttempt)return;
+    if(!owner || connecting || connection || !credential || disposed || pageHidden || performance.now()<nextAttempt)return;
     connecting=true;const savedCredential=credential;const version=epoch,socket=new BrowserTransport();connection=socket;
     socket.onreply=reply=>consume(reply,version);
     socket.onclose=()=>{if(connection===socket)stop('Offline · reconnecting to Cockpit');};
@@ -150,18 +152,18 @@
   let polling=false;
   async function poll(){
     const now=performance.now();
-    if(now-lastTick>1000 && active)stop('Panel paused after timing gap');lastTick=now;
-    if(polling || connecting || disposed)return;
-    if(!visible()){if(connection||active)stop('Panel paused while hidden');return;}
+    if(now-lastTick>1000 && active&&inputReady)void refreshControls(true);lastTick=now;
+    if(polling || connecting || disposed || pageHidden || focusWork)return;
     if(!connection){void connect();return;}
     const socket=connection,version=epoch;polling=true;
     try{
       const presence=await socket.request({type:'presence',display:panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio)});
       if(version!==epoch)return;
+      if(focusWork)return;
       if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
-      if(session && (active||panelError) && visible())await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
-      else if(!session && visible() && assignments.length){stop('Resuming panel');nextAttempt=0;}
-    }catch(e){if(version===epoch){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
+      if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
+      else if(!session && visible() && assignments.length)await loadAssigned(socket,version,assignments);
+    }catch(e){if(version===epoch){if(String(e).includes('Session is obsolete'))void refreshControls(true);else{error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}}
     finally{polling=false;}
   }
   async function toggleFullscreen(){
@@ -174,21 +176,38 @@
   }
   function changedPage(value:string){stop('Panel page changed');pageId=value;nextAttempt=0;}
   function resumeVisible(){if(!visible()||disposed)return;nextAttempt=0;return connect();}
-  function blurred(){
-    // End every old input job/socket before establishing a neutral background
-    // session. Pairing/authentication without an input session can finish.
-    if(session||active)stop('Controls released · reconnecting visuals');
-    return resumeVisible();
+  function refreshControls(reopen=false):Promise<void>|undefined {
+    queue.stop();inputReady=false;panelView?.reset();
+    if(focusWork)return focusWork;
+    if(!connection||!session||!panel||panelError)return resumeVisible();
+    const socket=connection,version=epoch;
+    focusWork=Promise.resolve().then(async()=>{
+      try{
+        if(!reopen){
+          const changes=panel!.document.ui.controls.map(control=>({controlId:control.id,value:control.kind==='button'?false:control.fallback}));
+          for(let offset=0;offset<changes.length;offset+=64)await socket.request(frame('input',{sequence:String(++sequence),changes:changes.slice(offset,offset+64)}));
+          if(!current(socket,version))return;
+          status='Connected · feedback active · controls paused';
+        }
+        if(focused()||reopen){
+          const close=frame('close');session=null;active=false;
+          try{await socket.request(close);}catch(e){if(!String(e).includes('Session is obsolete'))throw e;}
+          if(current(socket,version))await loadAssigned(socket,version,assignments);
+        }
+      }catch(e){if(current(socket,version)){error=String(e);stop('Controls released · reconnecting to Cockpit');}}
+    }).finally(()=>{focusWork=undefined;});
+    return focusWork;
   }
-  function gainedFocus(){
-    if(!focused()||disposed)return;
-    if(session||active)stop('Refreshing focused control baseline');
-    return resumeVisible();
+  function blurred(){hasFocus=false;return refreshControls();}
+  function gainedFocus(){hasFocus=document.hasFocus();if(focused()&&!disposed)return refreshControls(true);}
+  function visibilityChanged(){
+    if(!visible()){if(secret){secret='';stop('Pairing paused while hidden');}else return blurred();}
+    else{hasFocus=document.hasFocus();return refreshControls(true);}
   }
-  function visibilityChanged(){if(!visible()){secret='';stop('Panel paused while hidden');}else return resumeVisible();}
   function pageHiding(){pageHidden=true;secret='';stop('Panel page unloaded');}
   function pageShowing(){pageHidden=false;return resumeVisible();}
   onMount(()=>{
+    hasFocus=document.hasFocus();
     try{credential=readCredential(localStorage);}catch(e){error=String(e);}
     secret=new URLSearchParams(location.hash.slice(1)).get('pair')??'';
     history.replaceState(null,'','/');
@@ -235,7 +254,7 @@
       {#if assignments.length>1}<label>Panel<select value={selected} onchange={e=>{stop('Switching panel');selected=e.currentTarget.value;nextAttempt=0;}}>{#each assignments as a}<option value={a.instanceId}>{a.name}</option>{/each}</select></label>{/if}
       {#if panel && panel.document.ui.pages.length>1}<label>Page<select value={pageId} onchange={e=>changedPage(e.currentTarget.value)}>{#each panel.document.ui.pages as page}<option value={page.id}>{page.title}</option>{/each}</select></label>{/if}
     </div>
-    {#if panel}<main class:inactive={!active} bind:clientWidth={displayWidth} bind:clientHeight={displayHeight}>{#key viewRevision}<CompiledPanel bind:this={panelView} publication={panel} prepared={panelSurfaces} {pageId} {feedback} {suppressFeedbackCues} {muted} interactive={active&&focused()} onoutput={emitOutput} onerror={runtimeError} onaudio={value=>audioAvailability=value}/>{/key}</main>
+    {#if panel}<main class:inactive={!active} bind:clientWidth={displayWidth} bind:clientHeight={displayHeight}>{#key viewRevision}<CompiledPanel bind:this={panelView} publication={panel} prepared={panelSurfaces} {pageId} {feedback} {suppressFeedbackCues} {muted} interactive={active&&inputReady&&focused()} onoutput={emitOutput} onerror={runtimeError} onaudio={value=>audioAvailability=value}/>{/key}</main>
       <div class="toolbar"><span>Visuals: requested, host accepted, host submitted and game confirmed are separate states.</span><button onclick={resetFeedback}>↻ Clear visual state</button>{#if panel.document.presentation.artifacts.some(entry=>entry.artifact.sounds.length>0)}<label><input type="checkbox" bind:checked={muted}/>Mute</label><button onclick={()=>void panelView?.enableAudio()} disabled={audioAvailability==="unsupported"||audioAvailability==="muted"}>♪ Enable sound</button><span role="status">Audio: {audioAvailability}</span>{/if}<button onclick={resyncFeedback} disabled={!active}>↻ Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
     {:else}<section class="empty"><h1>{status}</h1><p>{panelError?'Edit and save this panel in Cockpit to retry.':'Choose a panel for this companion in Cockpit. It will appear here automatically.'}</p></section>{/if}
   {/if}
