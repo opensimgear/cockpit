@@ -34,6 +34,15 @@ fn uploads(inner:&Inner)->Vec<PublicationUpload>{
     inner.publications.values().map(|p|PublicationUpload{canonical_document:p.canonical_document.clone(),publication_hash:p.publication_hash.clone(),capability_fingerprint:Some(p.capability_fingerprint.clone()),assets:p.assets.clone()}).collect()
 }
 impl Hub {
+    /// Validate retained public content and issue an empty identity for an
+    /// explicitly confirmed restore. The caller seals these bytes before SQL.
+    /// No credential or assignment from the historical host is accepted.
+    pub fn fresh_restore_record(content:&[u8])->Result<Zeroizing<Vec<u8>>,String>{
+        decode(Some(content))?;
+        let record=Record{host_id:uuid::Uuid::new_v4().to_string(),credentials:vec![],instances:vec![]};
+        serde_json::to_vec(&record).map(Zeroizing::new).map_err(|_|"Cannot encode the fresh restored host identity.".into())
+    }
+
     pub(super) fn content_bytes(inner:&Inner)->Result<Vec<u8>,String>{
         let bytes=serde_json::to_vec(&Content{publications:uploads(inner),saved_heads:inner.saved_heads.clone()}).map_err(|_|"Cannot encode companion content.")?;
         ensure(bytes.len()<=CONTENT_BYTES,"Saved panels exceed 80 MiB.")?;Ok(bytes)

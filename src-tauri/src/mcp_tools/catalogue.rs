@@ -64,6 +64,11 @@ fn tool(name: &str, description: &str, properties: Vec<(&str, Value)>, required:
 /// gateway command passthrough, even for an authenticated write-enabled client.
 pub fn catalogue() -> Vec<Value> {
     let mut tools=vec![
+        tool("storage_status","List native SQLite backups and the exact catalogue revision. Backup paths and arbitrary SQL are never accepted.",vec![],&[]),
+        tool("storage_create","Create an online SQLite backup with hash-checked immutable assets. One backup slot is reserved for restore rollback.",vec![("expectedRevision",integer(0,9007199254740990))],&["expectedRevision"]),
+        tool("storage_remove","Retire one exact saved backup then clean up its private immutable bundle.",vec![("id",string(36)),("expectedRevision",integer(0,9007199254740990))],&["id","expectedRevision"]),
+        tool("storage_restore","Verify a saved backup, require stopped profiles and completed recovery, stop native workers and queue restore for the next restart. This replaces settings/content and invalidates all historical credentials and cleanup authority. Explicit confirmed:true is required.",vec![("id",string(36)),("expectedRevision",integer(0,9007199254740990)),("confirmed",json!({"type":"boolean","const":true}))],&["id","expectedRevision","confirmed"]),
+        tool("storage_restart","Restart the native Cockpit after a restore was explicitly queued. Reconnect and reissue credentials after startup.",vec![],&[]),
         tool("ui_preferences_get","Read native SQLite UI preferences and revisions. Omit key for the seven frontend owners, or choose theme, devices-mode, canvas-navigation, canvas-styling, remembered, tray, progress or windows. Remembered observations remain stale/unowned until providers refresh.",vec![("key",choice(&["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress","windows"]))],&[]),
         tool("ui_preferences_save","Save one exact native UI settings revision. Values: theme boolean; devices-mode list/topology; canvas-navigation {wheelAction:pan/zoom}; canvas-styling {arrowStyle:smooth/orthogonal,cornerRadius:0..100,collapseParallelWires:boolean}; tray {closeToTray:boolean,minimizeToTray:boolean}; progress {delivery:system/window,position:bottom-right/bottom-left/top-right/top-left}; windows {x,y,width,height,scaleFactor,maximized} for next startup; remembered {components,forgotten} is bounded metadata, never native device authority. Native validators reject extra fields. Actual device Forget/revoke and OS autostart use their own guarded controls.",vec![("key",choice(&["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress","windows"])),("expectedRevision",integer(0,9007199254740990)),("value",json!({"type":["boolean","string","object","null"]}))],&["key","expectedRevision","value"]),
         tool("operation_status","Reconcile a retained mutation for this authenticated client. The ledger survives reconnects during this MCP server lifetime; reconcile native state after a server restart.",vec![("operationId",string(36))],&["operationId"]),
@@ -134,7 +139,7 @@ pub fn catalogue() -> Vec<Value> {
 pub fn is_mutation(name: &str) -> bool {
     super::companion_controls::mutation(name)||matches!(
         name,
-        "profile_create"
+        "storage_create" | "storage_remove" | "storage_restore" | "storage_restart" | "profile_create"
             | "ui_preferences_save"
             | "widget_save"
             | "mcp_settings_update"

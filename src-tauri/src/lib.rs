@@ -52,6 +52,7 @@ pub mod gateways;
 /// Initialize shared native persistence before constructing source workers.
 /// The browser development service uses the same namespace as desktop/MCP.
 pub fn initialize_persistence(additional_roots:&[std::path::PathBuf])->Result<osg_persistence::Database,String> {
+    persistence::backup::initialize()?;
     let database=config_paths::initialize(additional_roots)?;
     #[cfg(debug_assertions)]
     persistence::development::seed(&database)?;
@@ -336,6 +337,8 @@ pub fn run() {
         )
         .setup(|app| {
             app.manage(initialize_persistence(&[app.path().app_config_dir()?])?);
+            let restart_handle=app.handle().clone();
+            persistence::backup::bind_restart(Box::new(move||restart_handle.restart()));
             let gateway = Arc::new(gateways::GatewayManager::new());
             {
                 use tauri::Emitter;
@@ -404,6 +407,7 @@ pub fn run() {
             handle.state::<profile_activation_window::ActivationWindowState>().shutdown();
             handle.state::<Arc<mcp::Server>>().shutdown();
             handle.state::<NativeGateway>().0.shutdown();
+            if matches!(event,tauri::RunEvent::Exit){persistence::backup::release_namespace();}
         }
     });
 }

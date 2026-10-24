@@ -707,3 +707,13 @@ fn game_vehicle_catalogues_have_search_pages_setup_stamps_and_compact_game_summa
         .iter()
         .all(|call| call["command"] == "game_get_state"));
 }
+
+#[test]
+fn storage_tools_require_mutation_identity_and_never_accept_paths_or_sql(){
+ let tools=Tools::new(Arc::new(GatewayManager::mcp_test_manager()));
+ assert!(!is_mutation("storage_status"));
+ for name in ["storage_create","storage_remove","storage_restore","storage_restart"]{assert!(is_mutation(name));let result=tools.call(name,json!({}),CLIENT);assert_eq!(result["error"]["code"],"invalid_arguments","{name}: {result}");}
+ for name in ["storage_status","storage_create","storage_remove","storage_restore","storage_restart"]{let tool=catalogue().into_iter().find(|tool|tool["name"]==name).unwrap();assert_eq!(tool["inputSchema"]["additionalProperties"],false);assert_eq!(tool["annotations"]["readOnlyHint"],name=="storage_status");}
+ assert_eq!(tools.call("storage_restore",json!({"operationId":operation(),"id":uuid::Uuid::new_v4().to_string(),"expectedRevision":0,"confirmed":true,"path":"external.sqlite3"}),CLIENT)["error"]["code"],"invalid_arguments");
+ assert_eq!(tools.call("storage_status",json!({}),CLIENT)["ok"],false);
+}

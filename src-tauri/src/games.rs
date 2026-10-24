@@ -221,6 +221,7 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner());
         json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"categories":settings.saved.categories,"manualInstallations":settings.saved.manual_installations,"libraryCandidates":settings.library_candidates,"libraryDiagnostics":settings.library_diagnostics,"addedGameId":settings.added_game_id,"error":settings.error})
     }
+    pub(crate) fn recovery_pending(&self)->bool{self.inner.setup.pending()}
     pub(crate) fn active(&self)->bool{self.inner.setup.busy()}
     pub(crate) fn guard_profile_takeover(&self)->Result<(),String>{
         if self.inner.closed.load(Ordering::Acquire){Err("The game metadata runtime has closed.".into())}else{Ok(())}

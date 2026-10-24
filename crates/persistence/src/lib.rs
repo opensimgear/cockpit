@@ -7,6 +7,10 @@ use std::{
     time::Duration,
 };
 
+mod connection;
+mod epoch;
+mod restore;
+pub use restore::{snapshot_hash, NamespaceLease};
 mod repository;
 pub use repository::Repository;
 mod path;
@@ -28,6 +32,7 @@ pub const SQLITE_RUNTIME_VERSION: &str = "3.53.2";
 #[derive(Clone, Debug)]
 pub struct Database {
     path: PathBuf,
+    epoch: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,9 +55,9 @@ pub struct Change<'a> {
 /// A read dependency is rechecked in the writer transaction without changing
 /// its revision. Use it when retaining references owned by another domain.
 pub struct RevisionCheck<'a> {
-    pub domain:&'a str,
-    pub key:&'a str,
-    pub expected_revision:u64,
+    pub domain: &'a str,
+    pub key: &'a str,
+    pub expected_revision: u64,
 }
 /// Recovery admissions fence both the revision and the exact evidence bytes.
 pub struct PayloadCheck<'a> {
@@ -101,95 +106,39 @@ fn identity(connection: &Connection) -> Result<(i64, bool), String> {
 
 impl Database {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, String> {
-        let database = Self { path: path.into() };
-        database.connection()?;
+        Self::open_in(path.into(), true)
+    }
+    /// Passive current-layout open. Never creates a missing database.
+    pub fn open_existing(path: impl Into<PathBuf>) -> Result<Self, String> {
+        Self::open_in(path.into(), false)
+    }
+    fn open_in(path: PathBuf, create: bool) -> Result<Self, String> {
+        let mut database = Self {
+            path,
+            epoch: String::new(),
+        };
+        let connection = database.connect(create)?;
+        database.epoch = epoch::read(&connection)?;
         Ok(database)
+    }
+    fn connection(&self) -> Result<Connection, String> {
+        let connection = self.connect(false)?;
+        self.verify_epoch(&connection)?;
+        Ok(connection)
+    }
+    fn verify_epoch(&self, connection: &Connection) -> Result<(), String> {
+        if epoch::read(connection)? != self.epoch {
+            return Err(
+                "The database was restored or replaced. Restart Cockpit before continuing.".into(),
+            );
+        }
+        Ok(())
+    }
+    pub fn epoch(&self) -> &str {
+        &self.epoch
     }
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    fn connection(&self) -> Result<Connection, String> {
-        if rusqlite::version() != SQLITE_RUNTIME_VERSION {
-            return Err("Unsupported SQLite runtime. Use the pinned bundled Cockpit build.".into());
-        }
-        check_path(&self.path, true)?;
-        for suffix in ["-journal", "-wal", "-shm"] {
-            let mut sidecar = self.path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            check_path(Path::new(&sidecar), false)?;
-        }
-        let mut connection = Connection::open_with_flags(
-            &self.path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-        )
-        .map_err(failure)?;
-        connection.busy_timeout(BUSY_TIMEOUT).map_err(failure)?;
-        connection
-            .set_limit(
-                rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
-                MAX_PAYLOAD as i32 + 16384,
-            )
-            .map_err(failure)?;
-        connection
-            .pragma_update(None, "foreign_keys", true)
-            .map_err(failure)?;
-        connection
-            .pragma_update(None, "trusted_schema", false)
-            .map_err(failure)?;
-        connection
-            .pragma_update(None, "synchronous", "FULL")
-            .map_err(failure)?;
-        let (_, existing) = identity(&connection)?;
-        // DELETE/FULL is deliberate: redirected configuration directories are
-        // not guaranteed to support WAL shared memory. No checkpoint dependency.
-        let mode: String = connection
-            .pragma_query_value(None, "journal_mode", |row| row.get(0))
-            .map_err(failure)?;
-        if mode != "delete" {
-            connection
-                .pragma_update(None, "journal_mode", "DELETE")
-                .map_err(failure)?;
-        }
-        if !existing {
-            let tx = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(failure)?;
-            // Another connection can finish initialization while this one is
-            // waiting for the writer. Recheck under the same transaction.
-            if !identity(&tx)?.1 {
-                tx.execute_batch(include_str!("schema.sql"))
-                    .map_err(failure)?;
-                tx.execute_batch(include_str!("profile_indexes.sql"))
-                    .map_err(failure)?;
-                tx.pragma_update(None, "application_id", APPLICATION_ID)
-                    .map_err(failure)?;
-            }
-            tx.commit().map_err(failure)?;
-        }
-        let columns = connection
-            .prepare("SELECT name FROM pragma_table_info('records') ORDER BY cid")
-            .map_err(failure)?
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(failure)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(failure)?;
-        if columns != ["domain", "key", "revision", "payload"] {
-            return Err(
-                "SQLite layout differs from this development build. Start with a fresh database."
-                    .into(),
-            );
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|_| "Cannot protect SQLite database.")?;
-        }
-        Ok(connection)
     }
 
     pub fn read(&self, domain: &str, key: &str) -> Result<Option<Record>, String> {
@@ -238,14 +187,21 @@ impl Database {
     }
     /// Capture related ciphertext/content records under one read snapshot.
     /// The transaction ends before the caller validates or decrypts payloads.
-    pub fn read_many(&self,keys:&[(&str,&str)])->Result<Vec<(u64,Option<Record>)>,String>{
-        if keys.is_empty()||keys.len()>1024{return Err("Invalid persistence snapshot size.".into());}
-        let mut connection=self.connection()?;
-        let transaction=connection.transaction().map_err(failure)?;
-        let mut records=Vec::with_capacity(keys.len());
-        for (domain,key) in keys {
-            identifier(domain)?;identifier(key)?;
-            records.push((revision(&transaction,domain,key)?,read_record(&transaction,domain,key)?));
+    pub fn read_many(&self, keys: &[(&str, &str)]) -> Result<Vec<(u64, Option<Record>)>, String> {
+        if keys.is_empty() || keys.len() > 1024 {
+            return Err("Invalid persistence snapshot size.".into());
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(failure)?;
+        self.verify_epoch(&transaction)?;
+        let mut records = Vec::with_capacity(keys.len());
+        for (domain, key) in keys {
+            identifier(domain)?;
+            identifier(key)?;
+            records.push((
+                revision(&transaction, domain, key)?,
+                read_record(&transaction, domain, key)?,
+            ));
         }
         transaction.commit().map_err(failure)?;
         Ok(records)
@@ -253,29 +209,45 @@ impl Database {
     /// All expected revisions are tested under one immediate transaction. Any
     /// mismatch or failed statement rolls back the entire related edit.
     pub fn commit(&self, changes: &[Change<'_>]) -> Result<Vec<u64>, String> {
-        self.commit_checked(changes,&[])
+        self.commit_checked(changes, &[])
     }
-    pub fn commit_checked(&self, changes:&[Change<'_>],checks:&[RevisionCheck<'_>])->Result<Vec<u64>,String>{
-        self.commit_exact(changes,checks,&[])
+    pub fn commit_checked(
+        &self,
+        changes: &[Change<'_>],
+        checks: &[RevisionCheck<'_>],
+    ) -> Result<Vec<u64>, String> {
+        self.commit_exact(changes, checks, &[])
     }
-    pub fn commit_exact(&self, changes:&[Change<'_>],checks:&[RevisionCheck<'_>],payloads:&[PayloadCheck<'_>])->Result<Vec<u64>,String>{
-        if changes.is_empty() || changes.len()+checks.len()+payloads.len() > 1024 {
+    pub fn commit_exact(
+        &self,
+        changes: &[Change<'_>],
+        checks: &[RevisionCheck<'_>],
+        payloads: &[PayloadCheck<'_>],
+    ) -> Result<Vec<u64>, String> {
+        if changes.is_empty() || changes.len() + checks.len() + payloads.len() > 1024 {
             return Err("Invalid persistence transaction size.".into());
         }
         let mut connection = self.connection()?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failure)?;
+        self.verify_epoch(&tx)?;
         for check in payloads {
-            identifier(check.domain)?;identifier(check.key)?;
-            if revision(&tx,check.domain,check.key)?!=check.expected_revision
-                || read_record(&tx,check.domain,check.key)?.as_ref().map(|r|r.payload.as_slice())!=check.expected_payload {
+            identifier(check.domain)?;
+            identifier(check.key)?;
+            if revision(&tx, check.domain, check.key)? != check.expected_revision
+                || read_record(&tx, check.domain, check.key)?
+                    .as_ref()
+                    .map(|r| r.payload.as_slice())
+                    != check.expected_payload
+            {
                 return Err("Recovery evidence changed externally; preserving it.".into());
             }
         }
         for check in checks {
-            identifier(check.domain)?;identifier(check.key)?;
-            if revision(&tx,check.domain,check.key)?!=check.expected_revision {
+            identifier(check.domain)?;
+            identifier(check.key)?;
+            if revision(&tx, check.domain, check.key)? != check.expected_revision {
                 return Err("Persistence reference revision conflict. Reload current settings before saving.".into());
             }
         }

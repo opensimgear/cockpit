@@ -1,5 +1,6 @@
 <script lang="ts">
   import DesktopPreferences from './DesktopPreferences.svelte';
+  import BackupSettings from './persistence/BackupSettings.svelte';
   import ProgressNotificationSettings from './ProgressNotificationSettings.svelte';
   import OutputSettings from './OutputSettings.svelte';
   import CompanionListenerSettings from './CompanionListenerSettings.svelte';
@@ -52,6 +53,7 @@
     {#if $canvasNavigation.storageError}<div class="preference-row"><p class="storage-error" role="alert">{$canvasNavigation.storageError}</p></div>{/if}
   </section>
   <ProgressNotificationSettings />
+  <BackupSettings />
 </div>
 
 <div class="settings-content" id="settings-panel-styling" role="tabpanel" aria-labelledby="settings-tab-styling" tabindex="0" hidden={selected !== 'styling'}>

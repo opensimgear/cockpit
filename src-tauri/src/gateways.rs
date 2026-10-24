@@ -194,7 +194,10 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
+#[path="persistence/backup/gateway.rs"]
+mod storage_controls;
 pub struct GatewayManager {
+    storage:crate::persistence::backup::Runtime,
     widget_library: crate::widget_library::Runtime,
     profiles: Mutex<osg_profiles::service::Service>,
     profile_resources: Arc<crate::profile_resources::Runtime>,
@@ -395,6 +398,7 @@ impl GatewayManager {
             profile_worker: Mutex::new(profile_worker),
             profile_automatic: automatic::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("profiles-activation-v1.json"))),
             profile_automatic_worker: Mutex::new(None),
+            storage:crate::persistence::backup::Runtime::new(native),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
                 crate::config_paths::config_path().with_file_name("profiles-v2")
             }))),
@@ -718,6 +722,7 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
+        if matches!(command,"storage_status"|"storage_create"|"storage_remove"|"storage_restore"|"storage_restart"){return self.storage_request(&request,native_authorization.as_ref());}
         if matches!(command,"ui_preferences_get"|"ui_preferences_save") {
             if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid UI settings client or closed cockpit.",None);}
             let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());

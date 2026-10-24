@@ -8,3 +8,7 @@ CREATE TABLE records (
     payload BLOB,
     PRIMARY KEY(domain,key)
 ) STRICT;
+
+-- Incarnation identity, not a schema version. Restore rotates it atomically.
+CREATE TABLE incarnation (singleton INTEGER PRIMARY KEY CHECK(singleton=1), epoch TEXT NOT NULL CHECK(length(epoch)=32)) STRICT;
+INSERT INTO incarnation VALUES(1,lower(hex(randomblob(16))));

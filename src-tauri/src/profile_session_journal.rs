@@ -212,7 +212,12 @@ impl Store {
             self.fail_save_phase = None;
             return Err("Injected profile journal failure before phase admission.".into());
         }
-        if let Some(evidence)=&mut self.evidence { evidence.write(&data)?; }
+        // Repeated shutdown must not mint a new evidence revision after a
+        // stopped runtime has queued a restore. Verification above still rejects
+        // external edits, including equal bytes at a different revision.
+        if let Some(evidence)=&mut self.evidence {
+            if evidence.payload()!=Some(data.as_slice()){evidence.write(&data)?;}
+        }
         Ok(())
     }
     pub(super) fn verify(&self) -> Result<(), String> {
@@ -256,3 +261,7 @@ fn safe(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path="profile_session_journal_tests.rs"]
+mod tests;

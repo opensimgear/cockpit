@@ -1,6 +1,7 @@
 //! Native persistence operations execute on blocking command workers.
 use serde_json::{json, Value};
 pub(crate) mod ui;
+pub(crate) mod backup;
 #[cfg(any(debug_assertions,test))]
 pub(crate) mod development;
 

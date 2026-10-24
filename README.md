@@ -234,3 +234,10 @@ records describe their dated checks. Current user flows are in the
 ## Licensing
 
 Copyright © Ivan Gregurić Ortolan. All rights reserved for original OpenSimGear material while licensing is under review. The [temporary licensing policy](LICENSE) defines the current scope. Creative external contributions are suspended during review; [CONTRIBUTING.md](CONTRIBUTING.md) explains the policy for factual bug reports and questions. Upstream components retain their own licenses and notices.
+
+Cockpit saves settings and durable content in one SQLite database per configuration
+namespace. Development starts from a fresh database and seeds inert examples once;
+release builds do not seed examples. There is no old-data migration. Settings →
+General → Backups provides online snapshots and a stopped restore/restart workflow.
+See [SQLite operations](docs/sqlite-persistence.md) for paths, overrides, reset,
+backup assets and credential invalidation after restore.

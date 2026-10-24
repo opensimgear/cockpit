@@ -55,3 +55,8 @@ fn invalid_sql_archive_never_partially_restores_or_overwrites_the_rejected_evide
     db.commit(&[osg_persistence::Change{domain:"companion",key:"publications",expected_revision:revision,payload:Some(&bytes)}]).unwrap();assert!(open(dir.path()).is_err());assert!(hub.mark_saved(upload()["publicationHash"].as_str().unwrap()).is_err());assert_eq!(db.read("companion","publications").unwrap().unwrap().payload,bytes);
     assert!(decode(Some(b"invalid")).is_err());let missing=json!({"publications":[],"savedHeads":{"panel":"missing"}});assert!(decode(Some(&serde_json::to_vec(&missing).unwrap())).is_err());
 }
+
+#[test]
+fn fresh_restore_record_validates_content_and_generates_unpaired_identity(){
+ let archive=b"{\"publications\":[],\"savedHeads\":{}}";let first=Hub::fresh_restore_record(archive).unwrap();let second=Hub::fresh_restore_record(archive).unwrap();let first:Value=serde_json::from_slice(&first).unwrap();let second:Value=serde_json::from_slice(&second).unwrap();assert_ne!(first["hostId"],second["hostId"]);assert_eq!(first["credentials"],json!([]));assert_eq!(first["instances"],json!([]));assert!(Hub::fresh_restore_record(b"bad").is_err());
+}

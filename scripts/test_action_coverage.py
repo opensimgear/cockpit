@@ -67,11 +67,11 @@ class IntegrationCoverageTests(unittest.TestCase):
         self.assertEqual(integration_coverage.production_end(lines[:1]), 2)
 
     def test_assetto_adapter_keeps_real_production_code_in_the_report(self):
-        source = Path(__file__).resolve().parents[1] / 'src-tauri/src/acr_windows.rs'
+        source = Path(__file__).resolve().parents[1] / 'src-tauri/src/games/telemetry/windows_source/mod.rs'
         lines = source.read_text(encoding='utf-8').splitlines()
         end = integration_coverage.production_end(lines)
         self.assertIn('fn consistent_copy(', '\n'.join(lines[:end - 1]))
-        self.assertEqual(lines[end], 'mod tests {')
+        self.assertIn('mod tests;', lines[end:])
         self.assertGreater(end, 100)
 
 

@@ -251,6 +251,7 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "storage_status" | "storage_create" | "storage_remove" | "storage_restore" | "storage_restart"=>forward(name,&["id","expectedRevision","confirmed"],Some("storage")),
             "ui_preferences_get"=>forward("ui_preferences_get",&["key"],Some("uiPreferences")),
             "ui_preferences_save"=>forward("ui_preferences_save",&["key","expectedRevision","value"],Some("uiPreferences")),
             name if companion_controls::handles(name)=>self.companion_tool(name,args,client),

@@ -375,3 +375,77 @@ profile and setup services remains a separate current-data contract.
 ## Current DCS setup receipts
 
 New DCS operations commit pending intent and completed/restored receipts into a bounded SQLite ledger. The operation holds its own OS lifetime lock and checks the exact SQL revision and bytes before external file changes. Backup script bytes remain immutable files, identified by the receipt UUID and verified digests. SQL append order determines reverse removal order; filesystem timestamps carry no authority. Old journal/completed/restored JSON files are ignored. There is no importer.
+
+## Backup and stopped restore
+
+Use Settings → General → Backups. Create uses SQLite's online backup API, then
+captures the snapshot's referenced managed artwork and immutable DCS before-script
+bytes. The completed bundle lives at the configuration root's
+`backups/<UUID>/`: `snapshot.sqlite3`, content-addressed `assets/` and an
+unversioned, hash-checked `manifest.json`. These are immutable exports. The
+mutable catalogue, manifest hashes and queued restore intent live in the main
+database under `storage`. Seven ordinary slots leave one reserved for a rollback
+snapshot. Remove retires the SQL reference before deleting private bundle files.
+A failed backup never publishes an entry. Unreferenced failed staging bundles
+remain inert and may be inspected or removed after Cockpit exits.
+
+Restore requires an explicitly stopped profile, no pending activation, visibility,
+output/provision recovery, independent device claims or game setup. The same
+native gate applies to portal and MCP callers. After confirmation, Cockpit closes
+native workers and queues the exact backup identity. Restart finishes restoration
+before constructing any source worker. The current recovery fingerprint must
+still match the quiesced state. A verified rollback snapshot is committed first;
+immutable artwork is installed without replacing conflicting bytes; settings and
+derived profile indexes then change in one transaction. The namespace process
+lock is held for the boot and released after worker shutdown before relaunch.
+Repeated stopped receipt saves are idempotent, while external revision changes
+continue to fail.
+
+Every database handle pins a random incarnation identity. A restore rotates it
+in the same transaction, so older Database, Repository and Evidence handles fail
+even when saved record revisions happen to match. Registered native roots share
+the pinned handle. Pinned operations never recreate a removed database. This is
+an instance identity, not a schema version or an upgrade mechanism.
+
+Historical secret, MCP security, native-client, cleanup/recovery and automatic
+selection authority is excluded from restoration. The companion listener starts
+disabled, profile mode starts Manual and no profile is active. Pair companions
+again and issue new MCP credentials. Restoring settings does not restore game
+files, driver state, hardware flash or protection keys, and never replays old DCS
+cleanup. Historical setup backup bytes remain available only inside the immutable
+bundle for inspection. Current backup catalogue entries remain available,
+including the pre-restore rollback snapshot.
+
+Authenticated MCP exposes `storage_status`, `storage_create`, `storage_remove`,
+`storage_restore` and `storage_restart`. Mutations require write scope and a
+fresh operationId; catalogue changes carry expectedRevision and restore requires
+confirmed:true. No tool accepts SQL, arbitrary domains or filesystem paths.
+
+## Reset and troubleshooting
+
+There is no import or migration step. For a clean development start, exit every
+process using the namespace, select an empty configuration directory through
+`OSG_DCS_BIOS_CONFIG`, then launch a debug build. It seeds Default, Dev · Signals,
+Dev · Workspace and the Toggle source exactly once. Release builds skip these
+examples. Normal restarts preserve new SQL edits and deletions. Retired JSON,
+localStorage and IndexedDB records never overwrite the database. A layout from a
+different development build requires another fresh namespace.
+
+Busy errors are bounded and retryable after another writer finishes. Revision
+conflicts require reloading the current owner, not retrying an old save. A second
+native process using the same namespace must exit before another can own it.
+Permissions/read-only/disk-full failures leave the previous acknowledged records
+in place. Corrupt settings, manifests, missing assets, invalid fingerprints or
+changed recovery evidence are errors; they do not become defaults or start an
+import. Preserve that namespace for inspection and use a verified backup or a
+fresh development directory. A queued restore that fails startup remains queued
+and leaves current SQL data intact; do not erase evidence to force cleanup.
+Keys protected by DPAPI/Keychain/Secret Service/Keystore are bound to their native
+protection context and are not exported by copying a bundle.
+
+When retained public companion panels are present, restore validates the entire
+archive and prepares a newly sealed empty host record before the transaction. The
+new protected identity commits with the restored archive. It has no credentials
+or assignments; the old host and TLS identities are discarded. This keeps saved
+panels usable without treating an orphan archive as permission to recreate old
+trust. Locked protection services abort restoration and preserve current SQL.
