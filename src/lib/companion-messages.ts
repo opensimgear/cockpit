@@ -24,6 +24,11 @@ function operationMessage(value:unknown):CompanionMessage|undefined {
 export function companionMessages(state:CompanionHostState,client:Record<string,unknown>):CompanionMessage[] {
   const messages:CompanionMessage[]=[];
   const id=text(client,'companionId'),panelError=text(client,'panelError'),connection=text(client,'connectionStatus');
+  if(client.connected===true&&Array.isArray(client.displayReports))for(const report of client.displayReports){
+    if(report&&typeof report==='object'&&typeof report.warning==='string'&&report.warning
+      &&(state.host?.instances??[]).some(instance=>instance.companionId===id&&instance.publicationHash===report.publicationHash)
+      &&!messages.some(message=>message.message===report.warning))messages.push({source:'connection',kind:'warning',message:report.warning});
+  }
   const matches=id?[...(state.usb?.devices??[]),...(state.usb?.device?.companionId===id?[state.usb]:[])].filter(device=>device.device?.companionId===id):[];
   const usb=matches.find(device=>device.connected&&device.ready)??matches[0];
   const recovery=usb?.recovery&&['waiting','connecting','waiting-for-device'].includes(usb.recovery.phase)?usb.recovery.message:undefined;

@@ -52,6 +52,14 @@ Background color, then compile the panel. Page colors persist through export,
 import, compiled Try and browser delivery. Widget surfaces and previews are
 transparent; only authored artwork contributes pixels. Blank widgets start with
 an unfilled shape. The panel color shows through empty widget space.
+
+Select a connected destination under **Assignments** to check its current physical
+display size, including browser display scaling. If the page is too small, Cockpit
+shows a warning beside Width and Height before compilation. The same warning appears
+in the companion's Cockpit details and on the destination. It is advisory: it does
+not resize artwork or change compilation. Disconnected or unmeasured destinations
+cannot supply a current size check. Display reports and active-panel warnings are
+also available through MCP `companion_inventory` in `host.clients[].displayReports`.
 The source preview is labeled. **Try** uses complete compiled widget surfaces;
 its input stays in the local simulator. Select browser companions and **Save**
 to publish and update their assignments. Export includes editable panel/source

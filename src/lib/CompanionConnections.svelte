@@ -240,7 +240,7 @@
       {#if settingsError || selectedMessages.length}
         <div class="companion-status-messages">
           {#if settingsError}<div id="companion-autosave-status" class="companion-notice error" role="alert"><strong>Error</strong><span>{settingsError}</span></div>{/if}
-          {#each selectedMessages as message (message.source)}
+          {#each selectedMessages as message (`${message.source}:${message.message}`)}
             <div class="companion-notice" class:error={message.kind==='error'} class:warning={message.kind==='warning'} role={message.kind==='error'?'alert':'status'}>
               {#if message.kind!=='info'}<strong>{message.kind==='error'?'Error':'Warning'}</strong>{/if}<span>{message.message}</span>
             </div>
@@ -309,7 +309,7 @@
         <h3>{text(client,'name') || 'Companion'}</h3><p class="kind">{deviceKind(client)==='esp32'?'ESP32 screen':deviceKind(client)==='mobile'?'Mobile companion':['browser','desktop'].includes(deviceKind(client))?'Browser companion':'Companion'}</p>
         <p>{(hostState.host?.instances ?? []).filter(i=>i.companionId===client.companionId).map(i=>text(i,'name') || 'Panel').join(', ') || 'No panel assigned'}</p>
         </button>
-        {#if messages.length}<div class="tile-messages">{#each messages as message (message.source)}<CompanionMessage message={message.message} kind={message.kind}/>{/each}</div>{/if}
+        {#if messages.length}<div class="tile-messages">{#each messages as message (`${message.source}:${message.message}`)}<CompanionMessage message={message.message} kind={message.kind}/>{/each}</div>{/if}
       </article>
     {/each}</div>
   {:else}<div class="empty"><Icon name="monitor" size={30} /><h3>No companions paired</h3><p>Pair a browser or mobile device to get started.</p></div>{/if}

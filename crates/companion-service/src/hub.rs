@@ -17,6 +17,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 #[path="host_content/mod.rs"]
 mod content;
+#[path="hub_display.rs"]
+mod display;
 pub use content::SavedPanel;
 
 pub const LEASE_MS: u64 = 1500;
@@ -145,6 +147,7 @@ struct Inner {
     code_offer: Option<CodeOffer>,
     pending: BTreeMap<String, Pending>,
     connections: BTreeMap<String, String>,
+    display_reports: BTreeMap<String, display::DisplayReport>,
     render_profiles: BTreeMap<String, Value>,
     sessions: BTreeMap<String, Session>,
     used_sessions: BTreeSet<String>,
@@ -352,6 +355,7 @@ impl Hub {
                 code_offer: None,
                 pending: BTreeMap::new(),
                 connections: BTreeMap::new(),
+                display_reports: BTreeMap::new(),
                 render_profiles: BTreeMap::new(),
                 sessions: BTreeMap::new(),
                 used_sessions: BTreeSet::new(),
@@ -537,6 +541,7 @@ impl Hub {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let _ = self.expire(&mut inner, now_ms);
         inner.connections.remove(connection_id);
+        inner.display_reports.remove(connection_id);
         inner.render_profiles.remove(connection_id);
         let ids: Vec<_> = inner
             .sessions
@@ -609,6 +614,8 @@ impl Hub {
         inner
             .connections
             .retain(|_, c| c != &credential.companion_id);
+        let connected=inner.connections.keys().cloned().collect::<BTreeSet<_>>();
+        inner.display_reports.retain(|connection,_|connected.contains(connection));
         inner.record = record;
         inner.pending.get_mut(request_id).unwrap().token = Some(token);
         Ok(json!({"approved":true,"companionId":credential.companion_id}))
@@ -637,6 +644,7 @@ impl Hub {
                 }
                 inner.connections.retain(|_, c| c != companion);
                 let connected=inner.connections.keys().cloned().collect::<BTreeSet<_>>();
+                inner.display_reports.retain(|connection,_|connected.contains(connection));
                 inner.render_profiles.retain(|connection,_|connected.contains(connection));
                 inner.pending.retain(|_, p| p.companion_id != companion);
                 inner.record = record;
@@ -750,12 +758,13 @@ impl Hub {
             "companion_unassign" => {
                 let instance=field(request,"instanceId")?;
                 let mut record=inner.record.clone();
-                ensure(record.instances.iter().any(|a|a.instance_id==instance),"Unknown controller instance.")?;
+                let companion=record.instances.iter().find(|a|a.instance_id==instance).map(|a|a.companion_id.clone()).ok_or("Unknown controller instance.")?;
                 record.instances.retain(|a|a.instance_id!=instance);
                 let sessions=inner.sessions.iter().filter(|(_,s)|s.token.source_id==instance).map(|(id,_)|id.clone()).collect::<Vec<_>>();
                 for id in sessions { self.disarm(&mut inner,&id,"assignment-removed",true); }
                 self.persist(&record)?;
                 inner.record=record;
+                display::clear_companion(&mut inner,&companion);
                 inner.feedback.remove(instance);
                 Ok(json!({"unassigned":true}))
             }
@@ -792,6 +801,7 @@ impl Hub {
                     definition: p.definition(instance),
                     ownership: None,
                 };
+                let previous_companion=inner.record.instances.iter().find(|a|a.instance_id==instance).map(|a|a.companion_id.clone());
                 let mut record = inner.record.clone();
                 record.instances.retain(|a| a.instance_id != instance);
                 ensure(
@@ -812,6 +822,8 @@ impl Hub {
                 self.sink.register(assignment.definition.clone())?;
                 self.persist(&record)?;
                 inner.record = record;
+                if let Some(previous)=previous_companion{display::clear_companion(&mut inner,&previous);}
+                display::clear_companion(&mut inner,companion);
                 inner.feedback.remove(instance);
                 Ok(json!({"assigned":true,"instanceId":instance}))
             }
@@ -826,6 +838,8 @@ impl Hub {
                 let owner = request["companionId"]
                     .as_str()
                     .unwrap_or(&prior.companion_id);
+                let prior_companion=prior.companion_id.clone();
+                let owner_id=owner.to_owned();
                 ensure(
                     inner
                         .record
@@ -853,6 +867,8 @@ impl Hub {
                     self.disarm(&mut inner, &id, "operator-takeover", true);
                 }
                 inner.record = record;
+                display::clear_companion(&mut inner,&prior_companion);
+                display::clear_companion(&mut inner,&owner_id);
                 Ok(json!({"takenOver":true,"instanceId":instance}))
             }
             "companion_disconnect" => {
@@ -894,6 +910,7 @@ impl Hub {
                 json!({"companionId":client.companion_id,"name":client.name,"kind":client.kind,
                     "renderProfile":render_profile,"renderProfileError":render_error,
                     "connected":inner.connections.values().any(|value|value==&client.companion_id),"transports":transports,
+                    "displayReports":display::client_reports(inner,&client.companion_id),
                     "operation":inner.sessions.values().filter(|s|s.companion_id==client.companion_id).find_map(|s|s.operation.as_ref()),
                     "panelError":inner.sessions.values().filter(|s|s.companion_id==client.companion_id&&s.panel_error).map(|s|s.operation.as_ref().and_then(|o|o["message"].as_str()).unwrap_or("The screen cannot display the assigned panel. Remove unsupported content in the panel editor.")).next()})
             }).collect::<Vec<_>>(),
@@ -1059,13 +1076,17 @@ impl Hub {
                 }
             }
             "presence" => {
-                exact(frame, &["type"], &["version"])?;
+                exact(frame, &["type"], &["version", "display"])?;
                 let companion = inner
                     .connections
                     .get(connection_id)
-                    .ok_or("Authenticate this companion first.")?;
+                    .ok_or("Authenticate this companion first.")?
+                    .clone();
+                let report=display::validate_report(frame.get("display"),&inner,&companion)?;
+                if let Some(report)=report{inner.display_reports.insert(connection_id.to_owned(),report);}
+                else{inner.display_reports.remove(connection_id);}
                 Ok(
-                    json!({"ok":true,"type":"presence","assignments":inner.record.instances.iter().filter(|a| &a.companion_id==companion).map(|a|json!({"instanceId":a.instance_id,"publicationHash":a.publication_hash,"name":a.definition.name})).collect::<Vec<_>>()}),
+                    json!({"ok":true,"type":"presence","assignments":inner.record.instances.iter().filter(|a| a.companion_id==companion).map(|a|json!({"instanceId":a.instance_id,"publicationHash":a.publication_hash,"name":a.definition.name})).collect::<Vec<_>>()}),
                 )
             }
             "auth" => {
@@ -1109,6 +1130,7 @@ impl Hub {
                 inner
                     .connections
                     .insert(connection_id.into(), companion.clone());
+                inner.display_reports.remove(connection_id);
                 if let Some(profile)=render_profile{inner.render_profiles.insert(connection_id.into(),profile);}
                 Ok(
                     json!({"ok":true,"type":"authenticated","hostId":inner.record.host_id,"companionId":companion,"assignments":inner.record.instances.iter().filter(|a|a.companion_id==companion).map(|a|json!({"instanceId":a.instance_id,"publicationHash":a.publication_hash,"name":a.definition.name})).collect::<Vec<_>>()}),

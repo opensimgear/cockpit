@@ -9,10 +9,11 @@
   import { createOrderedInputQueue } from '../../companion/src/lib/input-queue';
   import { BrowserTransport, readCredential, saveCredential, clearCredential, type Credential } from './transport';
   import { createBrowserFeedback, type FeedbackIdentity, type FeedbackSamples } from './feedback';
-  import { panelResolutionWarning } from './panel-resolution';
+  import { panelResolutionWarning, panelDisplayReport } from './panel-resolution';
   let credential=$state<Credential|null>(null), error=$state(''), warning=$state(''), status=$state('Connecting…');
   let panel=$state<CompiledPanelPublication|null>(null), pageId=$state('');
   let displayWidth=$state(0), displayHeight=$state(0), pixelRatio=$state(1);
+  let windowWidth=$state(0), windowHeight=$state(0);
   const displayedPage=$derived(pageId||panel?.document.ui.pages[0].id);
   const resolutionWarning=$derived(panelResolutionWarning(panel?.document.presentation.viewports.find(viewport=>viewport.pageId===displayedPage),displayWidth,displayHeight,pixelRatio));
   const resolutionKey=$derived(`${panel?.publicationHash}:${pageId}:${resolutionWarning}`);
@@ -155,7 +156,7 @@
     if(!connection){void connect();return;}
     const socket=connection,version=epoch;polling=true;
     try{
-      const presence=await socket.request({type:'presence'});
+      const presence=await socket.request({type:'presence',display:panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio)});
       if(version!==epoch)return;
       if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
       if(session && (active||panelError) && visible())await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
@@ -219,7 +220,7 @@
   });
 </script>
 
-<svelte:window bind:devicePixelRatio={pixelRatio}/>
+<svelte:window bind:devicePixelRatio={pixelRatio} bind:innerWidth={windowWidth} bind:innerHeight={windowHeight}/>
 <div class="shell" class:fullscreen>
   <header><strong>OpenSimGear <span>Companion</span></strong><div><button onclick={install}>↓ Install app</button><button onclick={toggleFullscreen}>⛶ {fullscreen?'Exit fullscreen':'Fullscreen'}</button></div></header>
   {#if installHelp}<p class="help">Use your browser menu → Install app or Add to home screen. If installation is unavailable, bookmark this page for quick access. Keep using this browser profile to retain pairing.</p>{/if}

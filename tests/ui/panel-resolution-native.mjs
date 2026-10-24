@@ -37,6 +37,22 @@ test('running cockpit: resolution warning follows selected page, display scale, 
     await companion.getByText('Connected · panel active',{exact:true}).waitFor({timeout:30000});
     const warning=companion.locator('.resolution-warning');await warning.waitFor();
     assert.match(await warning.innerText(),/800 × 480 px, displayed at 1600 × 960 px/);
+    await page.waitForFunction(async id=>{
+      const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'native-resolution-warning'}});
+      return reply.state?.companions?.host?.clients?.find(client=>client.companionId===id)?.displayReports?.some(report=>report.warning.includes('1600 × 960 px'));
+    },companionId,{polling:250});
+    await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Companions',exact:true}).click();
+    await page.getByRole('region',{name:'Panels',exact:true}).getByRole('button',{name:'New',exact:true}).click();
+    await page.locator(`input[type="checkbox"][value="${companionId}"]`).check();
+    const editorWarning=page.locator('.panel-resolution-warning');await editorWarning.waitFor();
+    assert.match(await editorWarning.innerText(),/1280 × 800 px.*1600 × 960 px/);
+    await editorWarning.scrollIntoViewIfNeeded();
+    await mkdir('.research/panel-resolution',{recursive:true});await page.screenshot({path:'.research/panel-resolution/cockpit-authoring.png'});
+    await page.getByLabel('Width',{exact:true}).fill('2000');await page.getByLabel('Width',{exact:true}).dispatchEvent('change');
+    await page.getByLabel('Height',{exact:true}).fill('1200');await page.getByLabel('Height',{exact:true}).dispatchEvent('change');
+    await editorWarning.waitFor({state:'hidden'});
+    page.once('dialog',dialog=>dialog.accept());
+    await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Profiles',exact:true}).click();
     assert.equal(await companion.locator('.compiled-widget canvas').evaluate(c=>c.width),240);
     const widget=companion.locator('.compiled-widget'),initial=await widget.getAttribute('data-frame-id');
     await widget.locator('.compiled-hit').click();await companion.waitForTimeout(100);

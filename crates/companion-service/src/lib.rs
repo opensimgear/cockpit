@@ -12,6 +12,9 @@ pub use hub::profile;
 pub use publication::*;
 pub use sources::*;
 #[cfg(test)]
+#[path = "hub_display_tests.rs"]
+mod hub_display_tests;
+#[cfg(test)]
 mod hub_tests;
 
 pub fn qrcode_matrix(payload: &str) -> Result<Vec<Vec<bool>>, String> {

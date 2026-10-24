@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { companionMessages } from './companion-messages.ts';
 
+test('destination resolution warnings follow only connected current panel assignments',()=>{
+  const state={host:{instances:[{companionId:'win',publicationHash:'panel'}]}},report={publicationHash:'panel',warning:'The selected panel is too small for this display.'};
+  const client={companionId:'win',connected:true,displayReports:[report,report,{publicationHash:'old',warning:'Old warning'},{publicationHash:'panel',warning:''},null]};
+  assert.deepEqual(companionMessages(state,client),[{source:'connection',kind:'warning',message:report.warning}]);
+  assert.deepEqual(companionMessages(state,{...client,connected:false}),[]);
+  assert.deepEqual(companionMessages({},client),[]);
+  assert.deepEqual(companionMessages(state,{...client,companionId:'other'}),[]);
+});
+
 test('list firmware warnings follow each board when available versions differ',()=>{
   const state={firmwareVersion:null,firmware:{sunton:{version:'2026.10.22.7',profile:'sunton'},waveshare:{version:'2026.10.19.8',profile:'waveshare'}},firmwareProfiles:[{id:'sunton',available:true,version:'2026.10.22.7'},{id:'waveshare',available:true,version:'2026.10.21.1'}]};
   const client=companionId=>({companionId,kind:'esp32'});

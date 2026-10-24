@@ -15,6 +15,7 @@
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import { restoreCompanionPanels } from './companion-startup';
   import { notify } from './notifications';
+  import { panelDestinationWarnings } from './companion-panel-resolution';
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { compiledPanelResources, canonicalWidget, type CompiledPanelPublication, type PanelBounds, type CompiledWidgetBundle, type Scalar } from '../../packages/widget-runtime/src/index.ts';
   import { validateWidgetSource, type WidgetSource } from '../../packages/widget-compiler/src/index.ts';
@@ -40,6 +41,7 @@
   const widget = $derived(draft?.widgets.find(widget => widget.id === selected));
   const source = $derived(widget ? workspace.sources.find(source => source.id === widget.sourceId) : undefined);
   const resources = $derived(compiled ? compiledPanelResources(compiled.document) : undefined);
+  const resolutionWarnings = $derived(panelDestinationWarnings(page,selectedCompanions,host));
   function sourceFor(item: CompiledDraft['widgets'][number]) { return workspace.sources.find(source => source.id === item.sourceId)!; }
   function invalidate() { epoch++; build?.abort(); build = undefined; busy = false; compiled = undefined; trying = false; output = {}; progress = ''; player?.reset(); }
   function change(apply: (next: CompiledDraft) => void) {
@@ -178,6 +180,7 @@
     <div class="workspace" inert={saving}>
       <aside aria-label="Panel configuration"><h3>Panel</h3><label>Name<input aria-label="Panel name" value={draft.title} onchange={e => change(d => d.title = e.currentTarget.value)}/></label><label>Page<select value={page.id} onchange={e => { pageId = e.currentTarget.value; trying = false; player?.reset(); }}>{#each draft.pages as p}<option value={p.id}>{p.title}</option>{/each}</select></label><div class="actions"><button onclick={() => change(d => d.pages.push({ id: designerId('page'), title: `Page ${d.pages.length + 1}`, width: page!.width, height: page!.height }))} disabled={draft.pages.length >= 16}><Icon name="plus" size={16}/>Add</button><button disabled={draft.pages.length < 2} onclick={() => { const id = page!.id; change(d => { d.pages = d.pages.filter(p => p.id !== id); d.widgets = d.widgets.filter(w => w.pageId !== id); }); pageId = draft!.pages[0].id; }}><Icon name="trash" size={16}/>Remove</button></div>
         <label>Width<input type="number" min="320" max="8192" step="1" value={page.width} onchange={e => change(d => d.pages.find(p => p.id === page!.id)!.width = e.currentTarget.valueAsNumber)}/></label><label>Height<input type="number" min="320" max="8192" step="1" value={page.height} onchange={e => change(d => d.pages.find(p => p.id === page!.id)!.height = e.currentTarget.valueAsNumber)}/></label>
+        {#each resolutionWarnings as warning (warning.companionId)}<div class="panel-resolution-warning" role="status"><Icon name="alert" size={17}/><span>{warning.message}</span></div>{/each}
         <label>Background<input aria-label="Panel background" type="color" value={page.background??'#0d1820'} onchange={e=>change(d=>d.pages.find(p=>p.id===page!.id)!.background=e.currentTarget.value)}/></label>
         <h3>Widgets</h3>{#each sources as item}<button class="palette" onclick={() => add(item)} disabled={trying || busy}><Icon name="plus" size={16}/>{item.title}</button>{/each}<button onclick={() => editWidget()}><Icon name="pencil" size={16}/>New</button>
         <h3>Target</h3><label class="check"><input type="checkbox" checked={motion} onchange={e => { motion = e.currentTarget.checked; invalidate(); }}/>Animations</label><label class="check"><input type="checkbox" checked={audio} onchange={e => { audio = e.currentTarget.checked; invalidate(); }}/>Audio</label><small>Static visuals and live feedback remain available with media disabled.</small>
@@ -197,6 +200,7 @@
   <input hidden type="file" bind:this={panelImport} aria-label="Import compiled panel" accept="application/json,.json,.osg-panel" onchange={e => { void importPanel(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }}/>
 </section>
 <style>
+  .panel-resolution-warning{display:flex;gap:8px;align-items:start;padding:12px;border:1px solid #ad875440;border-radius:6px;background:#ad875408;color:#c9ab7b;font-size:11px;line-height:1.6}.panel-resolution-warning :global(svg){flex-shrink:0}
   .widget-cards article{height:240px;box-sizing:border-box;min-width:0}
   .card.widget-card{display:grid;grid-template-rows:minmax(0,1fr) auto auto;align-items:stretch;text-align:left;width:100%}
   .widget-card .thumbnail{height:100%;min-height:0;min-width:0}

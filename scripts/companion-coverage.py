@@ -43,7 +43,7 @@ def main():
     for tool in ["llvm-profdata", "llvm-cov"]:
         if not (llvm / f"{tool}{suffix}").exists():
             raise SystemExit("Install llvm-tools-preview for the pinned Rust toolchain.")
-    targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "profile", "profile_owned", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
+    targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "hub_display", "profile", "profile_owned", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
     targets[0][3].append(root / "crates/companion-service/src/persistence/sqlite.rs")
     targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["client_cache/mod", "client/cache_validation", "host_content/mod", "host_content/selection", "persistence/sqlite_host"])
     targets[0][3].extend(root / f"crates/companion-service/src/publication/{name}.rs"
