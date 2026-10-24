@@ -340,7 +340,7 @@ mod tests {
     }
     #[test]
     fn cache_is_revalidated_and_old_versions_are_never_returned() {
-        let directory=tempfile::tempdir().unwrap();let board="waveshare-lcd7-s3";
+        let directory=crate::test_directory();let board="waveshare-lcd7-s3";
         assert!(cached_archive(directory.path(),board,"1.2.3").unwrap().is_none());
         let path=directory.path().join(format!("{board}.zip"));
         std::fs::write(&path,archive(board,|_,_|{})).unwrap();
@@ -377,7 +377,7 @@ mod tests {
     }
     #[test]
     fn refuses_installed_semver_downgrades_before_cache_or_serial_writes_and_allows_legacy_migration() {
-        let directory=tempfile::tempdir().unwrap();let board="waveshare-lcd7-s3";
+        let directory=crate::test_directory();let board="waveshare-lcd7-s3";
         let resolver=Resolver::default();
         resolver.state.lock().unwrap().release=Some(select_release(&[release("1.2.3")]).unwrap());
         let error=resolver.load_published(directory.path(),board,&["1.3.0".into()],Instant::now()+REQUEST_BUDGET).unwrap_err();

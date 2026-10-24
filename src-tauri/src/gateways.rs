@@ -2544,7 +2544,7 @@ mod tests {
     fn retained_ownership_blocks_apply_learning_and_ambiguous_cleanup_without_loading_old_configuration() {
         let (manager, provider) = setup();
         let mut manager=Arc::try_unwrap(manager).ok().unwrap();
-        let root=tempfile::tempdir().unwrap();
+        let root=crate::test_directory();
         osg_persistence::test_support::write_evidence(&root.path().join("output-recovery.json"),"recovery-output",Some(b"malformed retained owner")).unwrap();
         std::fs::write(root.path().join("local-settings.json"),b"obsolete config").unwrap();
         manager.retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().into()),false));
@@ -2561,7 +2561,7 @@ mod tests {
     #[test]
     fn retained_ownership_appearing_during_slow_preparation_blocks_transition_without_driver_calls() {
         let (mut manager,provider)=setup();
-        let root=tempfile::tempdir().unwrap();
+        let root=crate::test_directory();
         Arc::get_mut(&mut manager).unwrap().retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().canonicalize().unwrap()),false));
         let prepare=manager.profile_prepare.clone();
         let gate=Arc::new(std::sync::Barrier::new(2));let blocked=gate.clone();

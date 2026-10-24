@@ -61,7 +61,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         let path =
-            std::env::temp_dir().join(format!("osg-provider-settings-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().canonicalize().unwrap().join(format!("osg-provider-settings-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }

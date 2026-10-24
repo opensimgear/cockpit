@@ -52,7 +52,7 @@ mod tests {
     use super::*;
     #[test]
     fn aliases_resolve_one_installed_module_and_reject_unknown_ambiguous_or_paths() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_directory();
         fs::write(dir.path().join("AircraftAliases.json"), json!({"A-10C":["A-10C","CommonData"],"A-10C_2":["A-10C","CommonData"],"F-16C_50":["F-16C_50","CommonData"],"F-14B":["F-14","CommonData","NS430"],"F-86F":["F-86F Sabre","CommonData","NS430"],"Ambiguous":["A-10C","F-16C_50"],"../outside":["../outside"]}).to_string()).unwrap();
         for module in ["A-10C", "F-16C_50", "F-14", "F-86F Sabre", "NS430"] { fs::write(dir.path().join(format!("{module}.json")), "{}").unwrap(); }
         assert_eq!(resolve_aircraft_module(dir.path(), "A-10C_2").unwrap(), "A-10C");

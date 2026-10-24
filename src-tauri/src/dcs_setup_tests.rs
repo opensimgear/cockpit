@@ -375,7 +375,7 @@ fn aircraft_rollback_removes_new_hook_but_preserves_concurrent_edits() {
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        let p = std::env::temp_dir().join(format!("osg-dcs-setup-{}", uuid::Uuid::new_v4()));
+        let p = std::env::temp_dir().canonicalize().unwrap().join(format!("osg-dcs-setup-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&p).unwrap();
         Self(p)
     }

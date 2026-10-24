@@ -541,7 +541,7 @@ mod persistence_tests {
 
     #[test]
     fn blocked_persistence_never_blocks_native_delivery_or_cached_capture_and_retries_raced_changes() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         // macOS's temporary parent can be a symlink; use its physical path so
         // this persistence/concurrency fixture passes the real storage guard.
         let directory_path = directory.path().canonicalize().unwrap();
@@ -580,7 +580,7 @@ mod persistence_tests {
 
     #[test]
     fn queued_metadata_writers_snapshot_after_the_writer_gate_and_never_restore_older_catalogues() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_directory();
         let directory_path = directory.path().canonicalize().unwrap();
         let runtime = Arc::new(Runtime::new(Some(directory_path.clone()), Arc::new(|_| vec![]), false));
         adopt_metadata(&runtime, 1, "Before repair");

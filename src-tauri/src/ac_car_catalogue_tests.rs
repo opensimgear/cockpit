@@ -4,7 +4,7 @@ use std::path::PathBuf;
 struct Installation(tempfile::TempDir);
 impl Installation {
     fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_directory();
         fs::create_dir_all(root.path().join("content/cars")).unwrap();
         Self(root)
     }

@@ -18,6 +18,7 @@ struct State {
     blocked_recovery: bool,
     failed_stop: bool,
     delay_stop_once: Option<Duration>,
+    fixed_clock: Option<u64>,
     stop_failures: Vec<String>,
     spawns: usize,
 }
@@ -102,11 +103,12 @@ impl Channel for Child {
                 std::thread::sleep(delay);
             }
         }
+        let now=self.shared.lock().unwrap().fixed_clock.unwrap_or_else(||self.clock.elapsed().as_micros() as u64+1);
         let result = if stopping && self.shared.lock().unwrap().failed_stop {
             Err("Stop acknowledgement lost".into())
         } else {
             self.feeder
-                .receive(request.clone(), self.clock.elapsed().as_micros() as u64 + 1)
+                .receive(request.clone(), now)
         };
         if stopping {
             if let Err(error) = &result {
@@ -259,6 +261,8 @@ fn qualified_fixture_requires_opt_in_and_delivers_edges_without_ui_polling() {
 #[test]
 fn child_death_stops_mapping_and_preserves_explicit_recovery_failure() {
     let (service, _root, profile, _assignments, state) = setup();
+    // This test injects child death, independently of filesystem/CI scheduling.
+    state.lock().unwrap().fixed_clock=Some(1);
     service
         .request(&json!({"command":"mapping_virtual_enable","enabled":true}))
         .unwrap();
