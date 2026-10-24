@@ -39,7 +39,7 @@ fn plan() -> Plan {
 }
 #[test]
 fn durable_session_restores_owned_properties_and_prevents_competing_owners() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("visibility.json");
     assert!(inspect(&path).unwrap().is_none());
     assert!(!path.exists());
@@ -64,7 +64,7 @@ fn durable_session_restores_owned_properties_and_prevents_competing_owners() {
 fn every_failed_or_unacknowledged_step_and_capture_loss_restores() {
     for after_write in [false, true] {
         for fail in 1..=3 {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = crate::test_directory();
             let mut store = Store::open(temp.path().join("v.json")).unwrap();
             let mut driver = driver();
             driver.fail = Some(fail);
@@ -75,7 +75,7 @@ fn every_failed_or_unacknowledged_step_and_capture_loss_restores() {
         }
     }
     for checkpoint in 1..=5 {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_directory();
         let mut store = Store::open(temp.path().join("v.json")).unwrap();
         let mut driver = driver();
         let mut checks = 0;
@@ -94,7 +94,7 @@ fn every_failed_or_unacknowledged_step_and_capture_loss_restores() {
 #[test]
 fn interrupted_pending_write_has_explicit_restart_recovery() {
     for happened in [false, true] {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_directory();
         let path = temp.path().join("v.json");
         let mut store = Store::open(path.clone()).unwrap();
         let mut record = store.begin(plan()).unwrap();
@@ -117,7 +117,7 @@ fn interrupted_pending_write_has_explicit_restart_recovery() {
 }
 #[test]
 fn external_policy_or_journal_edits_are_never_overwritten() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("v.json");
     let mut store = Store::open(path.clone()).unwrap();
     let mut driver = driver();
@@ -128,20 +128,17 @@ fn external_policy_or_journal_edits_are_never_overwritten() {
     assert!(restore(&mut driver, &mut store, &record.id).is_err());
     assert_eq!(driver.state, changed);
     assert_eq!(driver.calls, calls);
-    std::fs::write(&path, b"external edit").unwrap();
+    sql_write(&path, b"external edit").unwrap();
     assert!(store.read().is_err());
     assert!(store.write(&record).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), b"external edit");
+    assert_eq!(sql_read(&path).unwrap(), b"external edit");
 }
 #[test]
 fn malformed_records_pending_conflicts_and_invalid_files_refuse_recovery() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("v.json");
     let mut store = Store::open(path.clone()).unwrap();
     let record = store.begin(plan()).unwrap();
-    let mut bad = record.clone();
-    bad.schema = 2;
-    assert!(bad.validate().is_err());
     let mut bad = record.clone();
     bad.id = "invalid".into();
     assert!(bad.validate().is_err());
@@ -163,16 +160,16 @@ fn malformed_records_pending_conflicts_and_invalid_files_refuse_recovery() {
     assert!(restore(&mut driver, &mut store, &pending.id).is_err());
     assert_eq!(driver.calls, 0);
     drop(store);
-    std::fs::write(&path, b"{}").unwrap();
+    sql_write(&path, b"{}").unwrap();
     assert!(Store::open(path.clone()).is_err());
-    std::fs::write(&path, vec![0; MAX_RECORD as usize + 1]).unwrap();
+    sql_write(&path, vec![0; MAX_RECORD as usize + 1]).unwrap();
     assert!(inspect(&path).is_err());
     assert!(inspect(temp.path()).is_err());
 }
 #[cfg(unix)]
 #[test]
 fn symlink_journal_and_lock_are_rejected() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let real = temp.path().join("real");
     std::fs::write(&real, b"{}").unwrap();
     let path = temp.path().join("v.json");
@@ -193,7 +190,7 @@ fn process_exit_keeps_pending_intent_and_releases_file_ownership() {
         store.write(&record).unwrap();
         std::process::exit(0); // Bypass Store/driver/session destructors deliberately.
     }
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("v.json");
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "visibility::journal::tests::process_exit_keeps_pending_intent_and_releases_file_ownership"])
@@ -219,3 +216,6 @@ fn process_exit_keeps_pending_intent_and_releases_file_ownership() {
     assert!(restore(&mut driver, &mut store, &record.id).unwrap().clean);
     assert_eq!(driver.state, state());
 }
+
+fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-visibility")}
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-visibility",Some(data.as_ref()))}

@@ -107,7 +107,7 @@ fn handoff_input(task: &Task, job: &str, record: Record) -> HandoffInput {
 #[test]
 fn retained_read_tickets_reject_wrong_job_session_cancellation_and_expired_queued_replies() {
     let (task, factory, observe, state, _) = fixture();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("tickets.json");
     let mut worker = Worker::default();
     assert!(worker.handoff_status().is_err());
@@ -213,7 +213,7 @@ fn retained_inspection_fences_source_policy_executable_journal_and_expiry_withou
         r"\Device\Volume1\Cockpit.exe".into(),
     )
     .unwrap();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("inspect.json");
     let calls = Arc::new(AtomicUsize::new(0));
     let writes = Arc::new(AtomicUsize::new(0));
@@ -232,7 +232,7 @@ fn retained_inspection_fences_source_policy_executable_journal_and_expiry_withou
     )
     .unwrap();
     let active = state.lock().unwrap().clone();
-    let initial = std::fs::read(&path).unwrap();
+    let initial = osg_persistence::test_support::read_evidence(&path,"recovery-visibility").unwrap();
     let initial_writes = writes.load(Ordering::Acquire);
     let make = || {
         let (reply, _) = mpsc::sync_channel(1);
@@ -298,7 +298,7 @@ fn retained_inspection_fences_source_policy_executable_journal_and_expiry_withou
         .contains("no longer owns"));
     assert_eq!(calls.load(Ordering::Acquire), before_calls);
     assert_eq!(*state.lock().unwrap(), active);
-    assert_eq!(std::fs::read(&path).unwrap(), initial);
+    assert_eq!(osg_persistence::test_support::read_evidence(&path,"recovery-visibility").unwrap(), initial);
     assert_eq!(writes.load(Ordering::Acquire), initial_writes);
     state
         .lock()
@@ -310,7 +310,7 @@ fn retained_inspection_fences_source_policy_executable_journal_and_expiry_withou
         .unwrap_err()
         .contains("driver policy changed"));
     assert_eq!(*state.lock().unwrap(), foreign);
-    assert_eq!(std::fs::read(&path).unwrap(), initial);
+    assert_eq!(osg_persistence::test_support::read_evidence(&path,"recovery-visibility").unwrap(), initial);
     assert_eq!(writes.load(Ordering::Acquire), initial_writes);
     // Only reset this injected backend to permit ordinary fixture teardown.
     *state.lock().unwrap() = active;
@@ -337,7 +337,7 @@ fn game_preflight_plan_is_rechecked_in_the_mutating_worker() {
     if let Task::Apply { expected_plan, .. } = &mut task {
         *expected_plan = Some(plan);
     }
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let mut worker = Worker::default();
     worker
         .start(task, temp.path().join("session.json"), factory, observe)
@@ -350,7 +350,7 @@ fn game_preflight_plan_is_rechecked_in_the_mutating_worker() {
 #[test]
 fn independent_worker_requires_fresh_reports_and_stops_without_ui_polling() {
     let (task, factory, observe, state, _) = fixture();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("v.json");
     let mut worker = Worker::default();
     let status = worker
@@ -368,7 +368,7 @@ fn independent_worker_requires_fresh_reports_and_stops_without_ui_polling() {
 #[test]
 fn relocated_executable_shutdown_and_missing_dependencies_are_explicit() {
     let (task, factory, observe, state, broken) = fixture();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("v.json");
     let mut worker = Worker::default();
     worker
@@ -403,7 +403,7 @@ fn relocated_executable_shutdown_and_missing_dependencies_are_explicit() {
 #[test]
 fn cancellation_before_preflight_disabled_intent_and_worker_panic_do_not_hide() {
     let (task, factory, observe, state, _) = fixture();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("v.json");
     assert!(run(
         task.clone(),

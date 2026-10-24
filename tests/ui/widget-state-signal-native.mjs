@@ -1,3 +1,4 @@
+import {verifiedServerKey} from './native/browser-trust.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createRequire} from 'node:module';
@@ -9,17 +10,17 @@ import {sendPublication} from '../../src/lib/companions.ts';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 
 test('running Cockpit: plain source persistence, appearances, graph wiring, layout, compiled Preview, save and browser delivery',{timeout:240000},async()=>{
-  const endpoint=process.env.OSG_GENERIC_CDP??(await(await fetch('http://127.0.0.1:9222/json/version')).json()).webSocketDebuggerUrl;
+  const endpoint=process.env.OSG_GENERIC_CDP??(await(await fetch((process.env.OSG_GENERIC_CDP??'http://127.0.0.1:9222')+'/json/version')).json()).webSocketDebuggerUrl;
   const native=await chromium.connectOverCDP(endpoint,{noDefaults:true,timeout:15000});
-  const page=native.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:1420'));
+  const page=native.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith(process.env.OSG_GENERIC_ORIGIN??'http://127.0.0.1:1420'));
   assert.ok(page,'Start the dev Cockpit before running this qualification.');page.setDefaultTimeout(10000);
   const directory=resolve('.research/state-signal/qualification',String(Date.now()));await mkdir(directory,{recursive:true});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',dialog=>dialog.accept());
   const request=async(command,companion={})=>{const reply=await page.evaluate(request=>window.__TAURI_INTERNALS__.invoke('gateway_request',{request}),command.startsWith('widget_')?{command,clientId:'state-signal-qualification'}:{command,companion,clientId:'state-signal-qualification'});assert.equal(reply.ok,true,reply.error??command);return reply.state;};
   let browser,companionId,instanceId;
-  const restored=()=>page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});
+  const restored=()=>page.evaluate(async()=>{const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'native-widget-qualification'}});if(!reply.ok)throw Error(reply.error);});
   try{
-    await restored();await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();await restored();
+    await restored();const listener=(await request('companion_inventory')).companions.listener;if(!listener.enabled)await request('companion_enable',{address:'127.0.0.1',port:54449,advertisedHost:'127.0.0.1',discovery:false,expectedSettingsRevision:listener.settingsRevision});await page.evaluate(()=>history.replaceState(null,'','/'));await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();await restored();
     await page.getByRole('button',{name:'Edit design Toggle',exact:true}).waitFor();
     const library=(await request('widget_library_get')).widgetLibrary.definitions;
     const latest=library.find(s=>s.id==='toggle');assert.ok(latest);assert.equal('formatVersion'in latest,false);assert.equal('revision'in latest,false);assert.ok(latest.design.owners.some(o=>o.signal==='requested'));
@@ -43,7 +44,7 @@ test('running Cockpit: plain source persistence, appearances, graph wiring, layo
     await tab('Signals');await dialog.locator('.graph-editor .add summary').click();await dialog.getByRole('button',{name:'Clamp',exact:true}).click();
     const clamp=await dialog.locator('[data-graph-node]').filter({has:page.locator('strong',{hasText:'Clamp'})}).getAttribute('data-graph-node');
     await dialog.getByRole('button',{name:'Connect from requested',exact:true}).click();await dialog.getByRole('button',{name:'Connect to Clamp value',exact:true}).click();assert.match(await dialog.locator('.notice').innerText(),/numeric|type|clamp/i);
-    await dialog.locator(`[data-graph-node="${clamp}"] header`).click();await dialog.locator('.graph-editor aside').getByRole('button',{name:'Delete',exact:true}).click();
+    await dialog.getByRole('button',{name:'Auto-layout',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="Auto-layout"]')?.getAttribute('aria-busy')==='false');await dialog.locator(`[data-graph-node="${clamp}"] header`).click();await dialog.locator('.graph-editor aside').getByRole('button',{name:'Delete',exact:true}).click();
     await tab('States');await dialog.locator('.buildbar').getByRole('button',{name:'Compile',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.generic-designer .save-action button').disabled,undefined,{timeout:60000});
     const card=dialog.locator('[data-graph-node="off"] header');await card.focus();await page.keyboard.press('ArrowDown');assert.equal(await dialog.getByRole('button',{name:'Save',exact:true}).isEnabled(),true,'Layout must not invalidate compilation');
     await page.screenshot({path:resolve(directory,'states.png')});await tab('Preview');
@@ -55,13 +56,13 @@ test('running Cockpit: plain source persistence, appearances, graph wiring, layo
     let bundle;for(let i=0;i<100;i++){const files=(await readdir(downloads)).filter(f=>f.endsWith('.json'));if(files.length){bundle=JSON.parse(await readFile(resolve(downloads,files[0]),'utf8'));break;}await page.waitForTimeout(100);}assert.ok(bundle,'Compiled export did not finish');await verifyCompiledBundle(bundle);await session.detach();
     assert.equal('scene'in bundle.artifact,false);assert.equal('design'in bundle.artifact,false);
     await dialog.getByRole('button',{name:'Save',exact:true}).click();await dialog.waitFor({state:'hidden'});
-    await restored();await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();await page.getByRole('button',{name:'Edit design Toggle',exact:true}).click();await tab('States');assert.ok(await dialog.locator('[data-graph-node="on"]').count());await dialog.getByRole('button',{name:'Back',exact:true}).click();
+    await restored();await page.evaluate(()=>history.replaceState(null,'','/'));await page.reload();await page.getByRole('button',{name:'Companions',exact:true}).click();await page.getByRole('button',{name:'Edit design Toggle',exact:true}).click();await tab('States');assert.ok(await dialog.locator('[data-graph-node="on"]').count());await dialog.getByRole('button',{name:'Back',exact:true}).click();
     // Publish exactly the UI-exported artifact through the real native gateway.
     const publication=await createCompiledPanel({id:'state-signal-review',title:'State editor capsule',viewports:[{pageId:'main',title:'Main',width:640,height:480,background:'#193c52'}]},[{id:'capsule',label:'Toggle',pageId:'main',bounds:{x:0,y:0,width:bundle.artifact.width/640,height:bundle.artifact.height/480},bundle}]);
     const companionRequest=async(command,payload)=>{const state=await request(command,payload);return state.companions??state;};
     await restored();
     await sendPublication(publication,companionRequest,{saveAsLatest:false});const beforeClients=new Set((await companionRequest('companion_status')).host.clients.map(c=>c.companionId));
-    browser=await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL??'msedge'});const context=await browser.newContext({viewport:{width:1000,height:800}}),companion=await context.newPage();const offer=await companionRequest('companion_pair_offer',{kind:'browser'});await companion.goto(offer.pairing.browserUrl,{waitUntil:'domcontentloaded'});
+    const host=(await companionRequest('companion_status')),certificate=(await companionRequest('companion_browser_certificate')).certificatePem,spki=await verifiedServerKey(host.browserUrl,certificate);browser=await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL??'msedge',args:['--ignore-certificate-errors-spki-list='+spki]});const context=await browser.newContext({viewport:{width:1000,height:800}}),companion=await context.newPage();const offer=await companionRequest('companion_pair_offer',{kind:'browser'});await companion.goto(offer.pairing.browserUrl,{waitUntil:'domcontentloaded'});
     for(let i=0;i<100;i++){companionId=(await companionRequest('companion_status')).host.clients.find(c=>!beforeClients.has(c.companionId))?.companionId;if(companionId)break;await page.waitForTimeout(100);}assert.ok(companionId);
     instanceId='state-signal-'+Date.now();await companionRequest('companion_assign',{companionId,instanceId,publicationHash:publication.publicationHash});await companion.getByText('Connected · panel active',{exact:true}).waitFor({timeout:30000});assert.equal(await companion.locator('.compiled-widget svg').count(),0);assert.equal(await companion.locator('.compiled-panel').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(25, 60, 82)');
     const rendered=()=>companion.waitForFunction(()=>document.querySelector('.compiled-widget')?.dataset.frameId);

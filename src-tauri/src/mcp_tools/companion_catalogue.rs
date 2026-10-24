@@ -1,0 +1,33 @@
+use super::*;
+fn strings(max:usize)->Value{json!({"type":"array","maxItems":max,"items":string(71)})}
+fn guarded(mut properties:Vec<(&'static str,Value)>)->Vec<(&'static str,Value)>{properties.push(("expectedHostToken",string(80)));properties}
+pub(super) fn catalogue()->Vec<Value>{
+    let selection=json!({"type":"object","additionalProperties":false,"properties":{"expectedHostToken":string(80),"companionIds":strings(32)},"required":["expectedHostToken"]});
+    let mut tools=vec![
+        tool("companion_inventory","Read retained companion identities, assignments, pending requests, saved publications, snapshotToken and listener state. Does not create host or TLS keys.",vec![],&[]),
+        tool("companion_certificate_get","Export the native listener's public browser certificate. Requires Configure access because first use can initialize the native protected identity. No private key is exposed.",vec![],&[]),
+        tool("companion_pair_offer","Create a short-lived pairing offer using the native listener. Return its one-time link or manual payload only to the operator who requested pairing; never persist it in authoring data. ESP32 pairing retains its native availability gate.",vec![("kind",choice(&["browser","desktop","mobile","esp32"]))],&["kind"]),
+        tool("companion_pair_cancel","Cancel the current short-lived pairing offer.",vec![],&[]),
+        tool("companion_approve","Approve one exact current pairing request.",vec![("requestId",string(64)),("companionId",string(64))],&["requestId","companionId"]),
+        tool("companion_update","Rename one paired installation at its observed native snapshotToken.",guarded(vec![("companionId",string(64)),("name",string(80))]),&["companionId","name","expectedHostToken"]),
+        tool("companion_revoke","Revoke a paired installation and its assignments at its observed native snapshotToken.",guarded(vec![("companionId",string(64))]),&["companionId","expectedHostToken"]),
+        tool("companion_assign","Assign a verified immutable publication to an exact companion/controller instance. This is explicit operator assignment; inspect current profile ownership first.",guarded(vec![("companionId",string(64)),("instanceId",string(64)),("publicationHash",string(71))]),&["companionId","instanceId","publicationHash","expectedHostToken"]),
+        tool("companion_unassign","Remove one exact assignment at its observed snapshotToken.",guarded(vec![("instanceId",string(64))]),&["instanceId","expectedHostToken"]),
+        tool("companion_takeover","Explicitly transfer an existing instance to a paired installation, releasing its current session.",guarded(vec![("instanceId",string(64)),("companionId",string(64))]),&["instanceId","companionId","expectedHostToken"]),
+        tool("companion_disconnect","Disarm/disconnect sessions matching one instanceId or companionId without deleting saved content.",vec![("instanceId",string(64)),("companionId",string(64))],&[]),
+        tool("companion_prune","Prune unreferenced immutable revisions of specified panels. Current native/profile references are retained atomically.",guarded(vec![("hashes",strings(100)),("panelIds",strings(128))]),&["hashes","panelIds","expectedHostToken"]),
+        tool("companion_publish_begin","Start a client-owned native publication upload, at most 13 MiB. The complete JSON contains canonicalDocument, publicationHash and assets. Nothing is persisted until commit; expires after 60 seconds.",vec![("size",integer(1,13*1024*1024))],&["size"]),
+        tool("companion_publish_chunk","Append 1–8192 decoded publication bytes in base64 at the exact acknowledged offset.",vec![("uploadId",string(36)),("offset",integer(0,13*1024*1024)),("base64",string(10924))],&["uploadId","offset","base64"]),
+        tool("companion_publish_commit","Validate the complete publication and commit its archive, head and all direct selections together. Supply selection.expectedHostToken from companion_inventory; omitted companionIds preserve current membership. Profile-owned changes continue through native journaled activation. saveAsLatest=false archives content only and forbids selections.",vec![("uploadId",string(36)),("saveAsLatest",json!({"type":"boolean"})),("selection",selection)],&["uploadId","saveAsLatest"]),
+        tool("companion_publish_abort","Discard your incomplete native publication upload.",vec![("uploadId",string(36))],&["uploadId"]),
+        tool("companion_usb_ports","Refresh observed native USB ports; an optional paired companionId restricts update candidates.",vec![("companionId",string(64))],&[]),
+        tool("companion_usb_status","Read the current native USB session and progress.",vec![],&[]),
+        tool("companion_usb_connect","Connect the exact currently observed USB port.",vec![("port",string(256))],&["port"]),
+        tool("companion_usb_update_prepare","Identify a paired ESP32's exact USB update candidate. Native checks and existing qualification gates remain required.",vec![("companionId",string(64))],&["companionId"]),
+        tool("companion_usb_flash","Install the approved firmware for a supported board and exact current native USB candidate. Uses the fixed native release resolver; no firmware path or arbitrary bytes are accepted.",vec![("port",string(256)),("profile",choice(&["waveshare-lcd7-s3","sunton-3248s035r"])),("companionId",string(64))],&["port","profile"]),
+        tool("companion_usb_provision","Save native connection settings to the exact paired USB companion. Password travels only to its native device operation. New ESP32 pairing remains gated.",vec![("companionId",string(64)),("name",string(80)),("mode",choice(&["wifi","serial"])),("ssid",string(32)),("password",json!({"type":"string","maxLength":64})),("keepWifiPassword",json!({"type":"boolean"})),("publicationHash",string(71))],&["companionId","name","mode"]),
+    ];
+    for (name,description) in [("companion_firmware_check","Refresh approved native firmware release metadata."),("companion_usb_disconnect","Release the current USB transport."),("companion_usb_scan","Scan Wi-Fi networks using the connected native USB companion."),("companion_usb_arm","Explicitly arm the current native USB companion after native readiness checks."),("companion_usb_flash_cancel","Cancel the active native firmware operation.")] {tools.push(tool(name,description,vec![],&[]));}
+    for (name,description) in [("companion_usb_reconnect","Reconnect one paired USB companion."),("companion_usb_disarm","Disarm one paired USB companion."),("companion_usb_forget","Forget one paired USB companion's device connection settings.")] {tools.push(tool(name,description,vec![("companionId",string(64))],&["companionId"]));}
+    tools
+}

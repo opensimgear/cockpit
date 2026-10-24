@@ -1,4 +1,6 @@
+import { desktopDesignerStorage } from './persistence/designer-storage.ts';
 import { compileWidget, createToggleSource, validateWidgetSource, resolvedParameters, emptyDesign, type WidgetSource } from '../../packages/widget-compiler/src/index.ts';
+
 import { createCompiledPanel, verifyCompiledPanelPublication, canonicalWidget, widgetDigest, type CompiledPanelPublication, type PanelBounds, type WidgetCapabilities, type Scalar } from '../../packages/widget-runtime/src/index.ts';
 
 export interface WidgetSourceBundle { definitions: WidgetSource[] }
@@ -11,7 +13,7 @@ export interface CompiledWorkspace {
   sources: WidgetSource[]; drafts: CompiledDraft[];
   publications: Record<string, CompiledPanelPublication[]>;
 }
-export interface CompiledWorkspaceStorage { read(): Promise<unknown>; write(value: CompiledWorkspace): Promise<void> }
+export interface CompiledWorkspaceStorage { read(): Promise<unknown>; write(value: CompiledWorkspace): Promise<CompiledWorkspace | void> }
 const MAX_BYTES = 64 * 1024 * 1024;
 const encoder = new TextEncoder();
 function ensure(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
@@ -100,18 +102,21 @@ async function validateWorkspace(input: unknown): Promise<CompiledWorkspace> {
   for (const draft of drafts) { const current = publications[draft.id]?.at(-1); if (current) ensure(await publicationMatchesDraft(draft, sources, current), 'Saved compiled presentation belongs to an earlier panel or widget source. Recompile before saving.'); }
   return { sources, drafts, publications };
 }
-/** Source and compiled publication are committed together. */
+/** Source and compiled publication are committed together. Invalid saved data
+ * remains an error; no compatibility reset can overwrite it. */
+
 export class CompiledWorkspaceStore {
   private pending: Promise<unknown> = Promise.resolve();
   private storage: CompiledWorkspaceStorage;
-  constructor(storage: CompiledWorkspaceStorage = compiledIndexedDbStorage()) { this.storage = storage; }
+  constructor(storage: CompiledWorkspaceStorage = desktopDesignerStorage<CompiledWorkspace>() ?? compiledIndexedDbStorage()) { this.storage = storage; }
   private ordered<T>(work: () => Promise<T>): Promise<T> { const result = this.pending.then(work); this.pending = result.catch(() => undefined); return result; }
   load(): Promise<CompiledWorkspace> { return this.ordered(async () => {
     const input = await this.storage.read();
-    if (input === undefined) { const empty = emptyCompiledWorkspace(); await this.storage.write(empty); return empty; }
+    if (input === undefined) { const empty = emptyCompiledWorkspace(); const saved = await this.storage.write(empty); return saved ? validateWorkspace(saved) : empty; }
+
     return validateWorkspace(input);
   }); }
-  save(input: CompiledWorkspace): Promise<CompiledWorkspace> { const capture = structuredClone(input); return this.ordered(async () => { const checked = await validateWorkspace(capture); await this.storage.write(checked); return structuredClone(checked); }); }
+  save(input: CompiledWorkspace): Promise<CompiledWorkspace> { const capture = structuredClone(input); return this.ordered(async () => { const checked = await validateWorkspace(capture); const saved = await this.storage.write(checked); return saved ? validateWorkspace(saved) : structuredClone(checked); }); }
 }
 export function compiledIndexedDbStorage(factory = globalThis.indexedDB): CompiledWorkspaceStorage {
   let opening: Promise<IDBDatabase> | undefined;

@@ -1,71 +1,36 @@
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 use zeroize::Zeroize;
 
+mod sqlite;
+pub use sqlite::{NativeSealer,SealedSqliteStore};
+
 pub const STATE_BYTES: usize = 8 * 1024 * 1024;
+pub struct HostSnapshot {
+    pub state:Option<zeroize::Zeroizing<Vec<u8>>>,
+    pub content:Option<Vec<u8>>,
+}
+/// Optional atomic host boundary. Ephemeral test adapters need not retain
+/// public archives; native hosts always supply the SQLite implementation.
+pub trait HostSnapshotStore:Send+Sync {
+    fn read_host_snapshot(&self)->Result<HostSnapshot,String>;
+    fn write_host_snapshot(&self,state:&[u8],content:&[u8])->Result<(),String>;
+    fn write_host_record(&self,state:&[u8])->Result<(),String>;
+    fn retained_publications(&self)->Result<std::collections::BTreeSet<String>,String>;
+}
 pub trait StateStorage: Send + Sync {
     fn read(&self) -> Result<Option<Vec<u8>>, String>;
     fn write(&self, bytes: &[u8]) -> Result<(), String>;
+    fn host_snapshot_store(&self)->Option<&dyn HostSnapshotStore>{None}
     /// Explicitly supplied adapters are trusted native boundaries, never web storage.
     fn available(&self) -> Result<(), String> {
         Ok(())
     }
     fn delete(&self) -> Result<(), String> {
         Err("This protected store does not support deletion.".into())
-    }
-}
-
-#[derive(Clone)]
-pub struct SealedFileStore {
-    path: PathBuf,
-}
-impl SealedFileStore {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
-    }
-}
-impl StateStorage for SealedFileStore {
-    fn read(&self) -> Result<Option<Vec<u8>>, String> {
-        let metadata = match fs::symlink_metadata(&self.path) {
-            Ok(value) => value,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(format!("Cannot inspect protected companion state: {error}")),
-        };
-        if !metadata.is_file()
-            || metadata.file_type().is_symlink()
-            || metadata.len() > STATE_BYTES as u64
-        {
-            return Err("Invalid protected companion state file.".into());
-        }
-        let mut bytes = Vec::new();
-        fs::File::open(&self.path)
-            .map_err(|e| e.to_string())?
-            .take((STATE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() > STATE_BYTES {
-            return Err("Protected companion state exceeds budget.".into());
-        }
-        unseal(&bytes).map(Some)
-    }
-    fn write(&self, bytes: &[u8]) -> Result<(), String> {
-        atomic_write(&self.path, &seal(bytes)?)
-    }
-    fn available(&self) -> Result<(), String> {
-        available()
-    }
-    fn delete(&self) -> Result<(), String> {
-        match fs::symlink_metadata(&self.path) {
-            Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => {
-                fs::remove_file(&self.path).map_err(|error| error.to_string())
-            }
-            Ok(_) => Err("Refusing to delete an indirect protected-state path.".into()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.to_string()),
-        }
     }
 }
 
@@ -378,18 +343,18 @@ mod tests {
         assert_eq!(decrypt_with_key(&sealed, &key).unwrap(), maximum);
         assert!(encrypt_with_key(&vec![2; STATE_BYTES - OVERHEAD + 1], &key, [3; 12]).is_err());
         assert!(decrypt_with_key(&vec![0; STATE_BYTES + 1], &key).is_err());
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = root.path().join("sealed");
-        let store = SealedFileStore::new(&path);
+        let store = SealedSqliteStore::new(&path);
         store.delete().unwrap();
         fs::write(&path, b"encrypted").unwrap();
         store.delete().unwrap();
-        assert!(!path.exists());
-        assert!(SealedFileStore::new(root.path()).delete().is_err());
+        assert_eq!(fs::read(&path).unwrap(),b"encrypted","Retired files are never deleted or imported.");
+        assert!(SealedSqliteStore::new(root.path()).delete().is_err());
     }
     #[test]
     fn atomic_commit_replaces_only_valid_leafs_and_bounds_data() {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = root.path().join("private/state");
         atomic_write(&path, b"first").unwrap();
         atomic_write(&path, b"second").unwrap();
@@ -397,35 +362,37 @@ mod tests {
         assert!(atomic_write(&path, &vec![0; STATE_BYTES + 1]).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"second");
         assert!(atomic_write(root.path(), b"no").is_err());
-        let store = SealedFileStore::new(root.path().join("missing"));
+        let store = SealedSqliteStore::new(root.path().join("missing"));
         assert!(store.read().unwrap().is_none());
-        assert!(SealedFileStore::new(root.path()).read().is_err());
+        assert!(SealedSqliteStore::new(root.path()).read().is_err());
     }
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
     #[test]
     #[ignore = "Requires an explicitly supplied unlocked native Keychain/Secret Service session"]
     fn real_native_store_retains_the_key_across_reopen_and_rejects_tampered_ciphertext() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = directory.path().join("native-state.sealed");
-        let store = SealedFileStore::new(&path);
+        let store = SealedSqliteStore::new(&path);
         store
             .available()
             .expect("native OS store must be unlocked; this check cannot pass by skipping");
         let private = b"native companion authority and host trust";
         store.write(private).unwrap();
-        let sealed = fs::read(&path).unwrap();
+        let database=osg_persistence::Database::for_namespace(&path).unwrap();
+        let key=path.file_name().unwrap().to_str().unwrap();
+        let sealed = database.read("secrets",key).unwrap().unwrap().payload;
         assert!(!sealed.windows(private.len()).any(|value| value == private));
         assert_eq!(
-            SealedFileStore::new(&path).read().unwrap().unwrap(),
+            SealedSqliteStore::new(&path).read().unwrap().unwrap(),
             private
         );
         let mut corrupt = sealed.clone();
         let last = corrupt.len() - 1;
         corrupt[last] ^= 1;
-        fs::write(&path, &corrupt).unwrap();
+        database.commit(&[osg_persistence::Change{domain:"secrets",key,expected_revision:database.revision("secrets",key).unwrap(),payload:Some(&corrupt)}]).unwrap();
         assert!(store.read().is_err());
-        assert_eq!(fs::read(&path).unwrap(), corrupt);
-        fs::write(&path, &sealed).unwrap();
+        assert_eq!(database.read("secrets",key).unwrap().unwrap().payload, corrupt);
+        database.commit(&[osg_persistence::Change{domain:"secrets",key,expected_revision:database.revision("secrets",key).unwrap(),payload:Some(&sealed)}]).unwrap();
         assert_eq!(store.read().unwrap().unwrap(), private);
         store.delete().unwrap();
         assert!(store.read().unwrap().is_none());
@@ -439,12 +406,13 @@ mod tests {
         assert_eq!(unseal(&sealed).unwrap(), data);
         assert!(seal(&[]).is_err());
         assert!(unseal(b"invalid").is_err());
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = root.path().join("secret.dpapi");
-        let store = SealedFileStore::new(&path);
+        let store = SealedSqliteStore::new(&path);
         store.write(data).unwrap();
         assert_eq!(store.read().unwrap().unwrap(), data);
-        assert_ne!(fs::read(path).unwrap(), data);
+        assert_ne!(osg_persistence::Database::for_namespace(&path).unwrap().read("secrets","secret.dpapi").unwrap().unwrap().payload,data);
+        assert!(!path.exists());
     }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos", target_os = "ios")))]
     #[test]
@@ -453,3 +421,6 @@ mod tests {
         assert!(unseal(b"secret").is_err());
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_support;

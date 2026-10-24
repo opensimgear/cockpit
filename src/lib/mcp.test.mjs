@@ -5,32 +5,32 @@ import { loadModules } from './test-module-loader.mjs';
 const { createMcpSettings, parseMcpStatus, mcpClientConfig, mcpPortError, mcpStatusLabel } = (await loadModules(['./mcp'])).get('./mcp');
 const plain = value => JSON.parse(JSON.stringify(value));
 const credential = (id = 'client-a', scope = 'read', name = 'My assistant') => ({ id, name, scope, createdAt: 1_792_622_400_000 });
-const status = (changes = {}) => ({ enabled: false, port: 54438, endpoint: 'http://127.0.0.1:54438/mcp', running: false, error: null, credentials: [], protocolVersions: ['2026-07-28', '2025-11-25'], readOnly: false, ...changes });
+const status = (changes = {}) => ({ settingsRevision: 0, enabled: false, port: 54438, endpoint: 'http://127.0.0.1:54438/mcp', running: false, error: null, credentials: [], protocolVersions: ['2026-07-28', '2025-11-25'], readOnly: false, ...changes });
 const token = 'osg_mcp_' + 'a'.repeat(64);
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
 function host(initial = status()) {
-  let current = plain(initial), sequence = 0;
-  const calls = [];
-  const send = async (command, args) => {
-    calls.push(plain({ command, ...(args ? { args } : {}) }));
-    if (command === 'mcp_settings_get') return plain(current);
-    if (command === 'mcp_settings_update') {
-      current = { ...current, ...args.settings, endpoint: `http://127.0.0.1:${args.settings.port}/mcp`, running: args.settings.enabled };
-      return plain(current);
+  let current=plain(initial),sequence=0;const calls=[];
+  const send=async(command,args)=>{
+    calls.push(plain({command,...(args?{args}:{})}));
+    if(command==='mcp_settings_get')return plain(current);
+    const expected=command==='mcp_settings_update'?args.settings.expectedSettingsRevision:args.expectedSettingsRevision;
+    assert.equal(expected,current.settingsRevision);
+    if(command==='mcp_settings_update'){
+      current={...current,enabled:args.settings.enabled,port:args.settings.port,endpoint:'http://127.0.0.1:'+args.settings.port+'/mcp',running:args.settings.enabled,settingsRevision:current.settingsRevision+1};return plain(current);
     }
-    if (command === 'mcp_credential_create') {
-      const created = credential(`created-${++sequence}`, args.scope, args.name);
-      current.credentials.push(created);
-      return { credential: plain(created), token, status: plain(current) };
+    if(command==='mcp_credential_create'){
+      const created=credential('created-'+(++sequence),args.scope,args.name);current.credentials.push(created);current.settingsRevision++;return {credential:plain(created),token,status:plain(current)};
     }
-    if (command === 'mcp_credential_revoke') {
-      current.credentials = current.credentials.filter(item => item.id !== args.id);
-      return plain(current);
+    if(command==='mcp_credential_rotate'){
+      const original=current.credentials.find(item=>item.id===args.id);assert.ok(original);
+      const created=credential('created-'+(++sequence),original.scope,original.name);current.credentials=current.credentials.map(item=>item.id===args.id?created:item);current.settingsRevision++;
+      return {credential:plain(created),token,status:plain(current)};
     }
-    throw Error(`Unexpected command ${command}`);
+    if(command==='mcp_credential_revoke'){current.credentials=current.credentials.filter(item=>item.id!==args.id);current.settingsRevision++;return plain(current);}
+    throw Error('Unexpected command '+command);
   };
-  return { calls, send, get current() { return current; } };
+  return {calls,send,get current(){return current;}};
 }
 
 test('public status validates local endpoint and selects only nonsecret fields', () => {
@@ -86,7 +86,7 @@ test('enable and disable use exact settings arguments; invalid ports do not writ
   await settings.update(true, 0); assert.equal(h.calls.length, 1); assert.match(settings.state.error, /port/);
   await settings.update(true, 55555); assert.equal(settings.state.status.endpoint, 'http://127.0.0.1:55555/mcp'); assert.equal(mcpStatusLabel(settings.state), 'Listening');
   await settings.update(false, 55555); assert.equal(mcpStatusLabel(settings.state), 'Disabled');
-  assert.deepEqual(h.calls.slice(1), [{ command: 'mcp_settings_update', args: { settings: { enabled: true, port: 55555 } } }, { command: 'mcp_settings_update', args: { settings: { enabled: false, port: 55555 } } }]);
+  assert.deepEqual(h.calls.slice(1), [{ command: 'mcp_settings_update', args: { settings: { enabled: true, port: 55555, expectedSettingsRevision: 0 } } }, { command: 'mcp_settings_update', args: { settings: { enabled: false, port: 55555, expectedSettingsRevision: 1 } } }]);
 });
 
 test('an older poll cannot overwrite a confirmed settings mutation', async () => {
@@ -102,7 +102,7 @@ test('credential creation captures trimmed name/access and token copy hides the 
   await settings.create('   ', 'read'); assert.equal(h.calls.length, 1);
   await settings.create('界'.repeat(27), 'read'); assert.equal(h.calls.length, 1);
   await settings.create('  My assistant  ', 'write');
-  assert.deepEqual(h.calls.at(-1), { command: 'mcp_credential_create', args: { name: 'My assistant', scope: 'write' } });
+  assert.deepEqual(h.calls.at(-1), { command: 'mcp_credential_create', args: { name: 'My assistant', scope: 'write', expectedSettingsRevision: 0 } });
   assert.equal(settings.state.secret.token, token); assert.equal(settings.state.status.credentials[0].scope, 'write');
   assert.doesNotMatch(JSON.stringify(settings.state.status), new RegExp(token));
   await settings.create('Must save previous token first', 'read'); assert.equal(h.calls.length, 2);
@@ -125,26 +125,22 @@ test('clipboard failure keeps the token available for manual copy and explicit H
   settings.hideSecret(); assert.equal(settings.state.secret, null);
 });
 
-test('rotation creates a replacement before revoking the original', async () => {
-  const h = host(status({ credentials: [credential()] })), settings = createMcpSettings(h.send, true); await settings.load(); await settings.rotate('client-a');
-  assert.deepEqual(h.calls.slice(1), [{ command: 'mcp_credential_create', args: { name: 'My assistant', scope: 'read' } }, { command: 'mcp_credential_revoke', args: { id: 'client-a' } }]);
-  assert.equal(settings.state.status.credentials.length, 1); assert.equal(settings.state.secret.credential.id, 'created-1'); assert.equal(settings.state.error, '');
+test('rotation replaces the credential in one exact-revision native transaction',async()=>{
+ const h=host(status({credentials:[credential()]})),settings=createMcpSettings(h.send,true);await settings.load();await settings.rotate('client-a');
+ assert.deepEqual(h.calls.slice(1),[{command:'mcp_credential_rotate',args:{id:'client-a',expectedSettingsRevision:0}}]);
+ assert.equal(settings.state.status.credentials.length,1);assert.equal(settings.state.secret.credential.id,'created-1');assert.equal(settings.state.error,'');
 });
 
-test('rotation creation failure preserves the original credential and never revokes it', async () => {
-  const h = host(status({ credentials: [credential()] }));
-  const settings = createMcpSettings((command, args) => command === 'mcp_credential_create' ? Promise.reject(Error('Disk full')) : h.send(command, args), true);
-  await settings.load(); await settings.rotate('client-a');
-  assert.equal(settings.state.secret, null); assert.equal(settings.state.status.credentials[0].id, 'client-a'); assert.match(settings.state.error, /original credential was not revoked/);
-  assert.ok(h.calls.every(call => call.command !== 'mcp_credential_revoke'));
+test('failed atomic rotation preserves the acknowledged original and never sends separate writes',async()=>{
+ const h=host(status({credentials:[credential()]}));const settings=createMcpSettings((command,args)=>command==='mcp_credential_rotate'?Promise.reject(Error('Disk full')):h.send(command,args),true);
+ await settings.load();await settings.rotate('client-a');assert.equal(settings.state.secret,null);assert.equal(settings.state.status.credentials[0].id,'client-a');assert.match(settings.state.error,/Disk full.*reconcile/);
+ assert.ok(h.calls.every(call=>!['mcp_credential_create','mcp_credential_revoke'].includes(call.command)));
 });
 
-test('rotation revoke failure retains the new token and accurately reports both credentials', async () => {
-  const h = host(status({ credentials: [credential()] }));
-  const settings = createMcpSettings((command, args) => command === 'mcp_credential_revoke' ? Promise.reject(Error('Write failed')) : h.send(command, args), true);
-  await settings.load(); await settings.rotate('client-a');
-  assert.equal(settings.state.status.credentials.length, 2); assert.equal(settings.state.secret.token, token); assert.match(settings.state.error, /Replacement created.*could not be confirmed/);
-  await settings.load(true); assert.match(settings.state.error, /Replacement created.*could not be confirmed/);
+test('uncertain rotation is reconciled by reading without retrying or claiming either token',async()=>{
+ const h=host(status({credentials:[credential()]}));const settings=createMcpSettings(async(command,args)=>{const reply=await h.send(command,args);if(command==='mcp_credential_rotate')throw Error('Disconnected after commit');return reply;},true);
+ await settings.load();await settings.rotate('client-a');assert.equal(settings.state.secret,null);assert.match(settings.state.error,/reconcile/);assert.equal(h.current.credentials.length,1);assert.equal(h.current.credentials[0].id,'created-1');
+ await settings.load(true);assert.equal(settings.state.status.credentials[0].id,'created-1');assert.equal(settings.state.secret,null);assert.equal(h.calls.filter(call=>call.command==='mcp_credential_rotate').length,1);
 });
 
 test('revoke removes access and clears the displayed token if it belongs to that credential', async () => {
@@ -167,18 +163,16 @@ test('malformed creation and uncertain writes are not retried; refreshing reconc
 
 test('external revocation clears the secret and disposal prevents late replies or notifications', async () => {
   const h = host(), settings = createMcpSettings(h.send, true); await settings.load(); await settings.create('My assistant', 'read');
-  await h.send('mcp_credential_revoke', { id: settings.state.secret.credential.id }); await settings.load(true); assert.equal(settings.state.secret, null);
+  await h.send('mcp_credential_revoke', { id: settings.state.secret.credential.id, expectedSettingsRevision: h.current.settingsRevision }); await settings.load(true); assert.equal(settings.state.secret, null);
   const gate = deferred(), changes = [], pending = createMcpSettings(() => gate.promise, true, next => changes.push(next));
   const reading = pending.load(); const before = changes.length; pending.dispose(); gate.resolve(status()); await reading;
   assert.equal(changes.length, before); assert.equal(pending.state.status, null); assert.equal(pending.state.secret, null);
 });
 
-test('leaving during replacement creation does not revoke the original before its replacement token can be shown', async () => {
-  const h = host(status({ credentials: [credential()] })), gate = deferred();
-  const settings = createMcpSettings((command, args) => command === 'mcp_credential_create' ? gate.promise : h.send(command, args), true);
-  await settings.load(); const replacing = settings.rotate('client-a'); settings.dispose();
-  gate.resolve({ credential: credential('new-client'), token, status: status({ credentials: [credential(), credential('new-client')] }) });
-  await replacing; assert.ok(h.calls.every(call => call.command !== 'mcp_credential_revoke')); assert.equal(settings.state.secret, null);
+test('leaving during atomic replacement never publishes the secret or sends a second mutation',async()=>{
+ const h=host(status({credentials:[credential()]})),gate=deferred();const settings=createMcpSettings((command,args)=>command==='mcp_credential_rotate'?gate.promise:h.send(command,args),true);
+ await settings.load();const replacing=settings.rotate('client-a');settings.dispose();gate.resolve({credential:credential('new-client'),token,status:status({settingsRevision:1,credentials:[credential('new-client')]})});
+ await replacing;assert.ok(h.calls.every(call=>!['mcp_credential_create','mcp_credential_revoke'].includes(call.command)));assert.equal(settings.state.secret,null);
 });
 
 test('a corrupt native settings file permits reads but cannot trigger preference or credential writes', async () => {

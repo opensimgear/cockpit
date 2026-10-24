@@ -292,6 +292,9 @@ fn on_timer(ctx) { transaction(ctx.state,[],[]) }
 "#;
     let (mut service, _root, profile, _, state) = scripted(source);
     service.script_live_qualified = true;
+    // Keep the real script response deadline; backend lease expiry is covered
+    // separately and must not add recovery acquisitions during slow SQL fsync.
+    state.lock().unwrap().fixed_clock=Some(1);
     let factory = service.output_factory.clone();
     let checked = state.clone();
     let attempts = Arc::new(AtomicUsize::new(0));

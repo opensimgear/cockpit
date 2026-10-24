@@ -14,7 +14,6 @@ mod windows;
 use registry::{Registry, SavedSource};
 use serde_json::Value;
 use std::{
-    io::{Read, Write},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -23,11 +22,12 @@ use std::{
     thread::JoinHandle,
 };
 const MAX_SETTINGS: u64 = 1_048_576;
+fn validate_saved(saved:&Vec<SavedSource>)->Result<(),String> {Registry::default().restore(saved.clone())}
 pub struct ControllerService {
     registry: Arc<Mutex<Registry>>,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    path: Option<PathBuf>,
+    store: Option<osg_persistence::Repository<Vec<SavedSource>>>,
     persistence: Mutex<()>,
     storage_valid: bool,
     visibility: visibility::service::Service,
@@ -53,27 +53,16 @@ impl ControllerService {
     }
     fn start(path: Option<PathBuf>, native: bool, probe: bool) -> Self {
         let mut registry = Registry::default();
-        let loaded = path
-            .as_ref()
-            .map_or(Ok(vec![]), |path| match std::fs::File::open(path) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-                Err(e) => Err(e.to_string()),
-                Ok(file) => {
-                    let mut bytes = Vec::new();
-                    file.take(MAX_SETTINGS + 1)
-                        .read_to_end(&mut bytes)
-                        .map_err(|e| e.to_string())
-                        .and_then(|_| {
-                            if bytes.len() as u64 > MAX_SETTINGS {
-                                Err("Controller settings exceed 1 MiB.".into())
-                            } else {
-                                serde_json::from_slice::<Vec<SavedSource>>(&bytes)
-                                    .map_err(|e| e.to_string())
-                            }
-                        })
-                }
-            })
-            .and_then(|saved| registry.restore(saved));
+        let storage=path.as_ref().map(|path| {
+            let db=osg_persistence::Database::for_namespace(path)?;
+            osg_persistence::Repository::new(db,
+"controllers",
+"identities",
+MAX_SETTINGS as usize,
+validate_saved)
+        }).transpose();
+        let loaded=storage.as_ref().map_err(Clone::clone).and_then(|store|store.as_ref().map_or(Ok(vec![]),|store|store.load().map(|saved|saved.unwrap_or_default())))
+            .and_then(|saved|registry.restore(saved));
         let storage_valid = loaded.is_ok();
         if let Err(error) = loaded {
             registry.diagnostic=format!("Remembered controllers could not be loaded; settings will not be overwritten: {error}");
@@ -135,48 +124,37 @@ impl ControllerService {
             stop,
             visibility,
             worker: Mutex::new(worker),
-            path,
+            store: storage.ok().flatten(),
             persistence: Mutex::new(()),
             storage_valid,
         }
     }
     fn save(&self) -> Result<(), String> {
         let _guard = self.persistence.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        if !self.storage_valid {
-            return Err("Repair the existing controller settings before saving changes.".into());
+        let Some(store)=&self.store else {return if self.storage_valid {Ok(())} else {Err("Repair controller persistence before saving.".into())};};
+        if !self.storage_valid {return Err("Repair the existing controller settings before saving changes.".into());}
+        let saved={let r=self.registry.lock().unwrap_or_else(|p|p.into_inner());if !r.dirty {return Ok(());}r.saved()};
+        store.save(&saved)?;
+        let mut r=self.registry.lock().unwrap_or_else(|p|p.into_inner());
+        r.dirty=r.saved()!=saved;
+        Ok(())
+    }
+    fn edit(&self,request:&Value)->Result<Value,String> {
+        let _writer=self.persistence.lock().unwrap_or_else(|p|p.into_inner());
+        if !self.storage_valid {return Err("Repair controller persistence before editing remembered metadata.".into());}
+        let before=self.registry.lock().unwrap_or_else(|p|p.into_inner()).clone();let mut staged=before.clone();
+        let id=request["sourceId"].as_str().unwrap_or("");
+        match request["command"].as_str().unwrap_or("") {
+            "controller_update"=>staged.update(id,request["name"].as_str().unwrap_or(""),request["role"].as_str().unwrap_or(""))?,
+            "controller_forget"=>staged.forget(id)?,
+            "controller_reassign"=>staged.reassign(id,request["observedId"].as_str().unwrap_or(""))?,
+            _=>return Err("Unknown controller edit.".into()),
         }
-        let bytes = {
-            let mut r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-            if !r.dirty {
-                return Ok(());
-            }
-            let bytes = serde_json::to_vec(&r.saved()).map_err(|e| e.to_string())?;
-            if bytes.len() as u64 > MAX_SETTINGS {
-                return Err("Controller settings exceed 1 MiB.".into());
-            }
-            r.dirty = false;
-            bytes
-        };
-        let result = (|| {
-            let parent = path.parent().ok_or("Invalid controller settings path.")?;
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            let mut temporary =
-                tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-            temporary.write_all(&bytes).map_err(|e| e.to_string())?;
-            temporary.as_file().sync_all().map_err(|e| e.to_string())?;
-            temporary.persist(path).map_err(|e| e.to_string())?;
-            Ok(())
-        })();
-        if result.is_err() {
-            self.registry
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .dirty = true;
-        }
-        result
+        if let Some(store)=&self.store {store.save(&staged.saved())?;}
+        let mut r=self.registry.lock().unwrap_or_else(|p|p.into_inner());r.commit_metadata(&before,&staged);
+        let mut result=if request["command"]=="controller_forget" {r.list(0)} else {r.inspect(id,0)?};
+        drop(r);
+        result["selfAccess"]=serde_json::json!(self.visibility.self_access_status());Ok(result)
     }
     pub fn request(&self, request: &Value) -> Result<Value, String> {
         if self.stop.load(Ordering::Acquire) {
@@ -204,27 +182,12 @@ impl ControllerService {
                 .filter(|v| *v <= 256)
                 .ok_or("Invalid controller page.")? as usize,
         };
+        if matches!(command,"controller_update"|"controller_forget"|"controller_reassign") {return self.edit(request);}
         let mut result = {
-            let mut r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            let r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
             match command {
                 "controller_list" => r.list(offset),
                 "controller_inspect" => r.inspect(id, offset)?,
-                "controller_update" => {
-                    r.update(
-                        id,
-                        request["name"].as_str().unwrap_or(""),
-                        request["role"].as_str().unwrap_or(""),
-                    )?;
-                    r.inspect(id, 0)?
-                }
-                "controller_forget" => {
-                    r.forget(id)?;
-                    r.list(0)
-                }
-                "controller_reassign" => {
-                    r.reassign(id, request["observedId"].as_str().unwrap_or(""))?;
-                    r.inspect(id, 0)?
-                }
                 _ => return Err("Unknown controller command.".into()),
             }
         };
@@ -315,3 +278,11 @@ fn native_run(
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn test_directory()->tempfile::TempDir {
+    let parent=std::env::temp_dir();
+    #[cfg(unix)]
+    let parent=parent.canonicalize().expect("canonical OS temporary directory");
+    tempfile::tempdir_in(parent).expect("isolated controller fixture")
+}

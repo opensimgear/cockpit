@@ -1,3 +1,4 @@
+import { uiPreferences } from './persistence/ui-preferences';
 export type CanvasArrowStyle = 'smooth' | 'orthogonal';
 
 export type CanvasStyling = Readonly<{
@@ -5,6 +6,8 @@ export type CanvasStyling = Readonly<{
   cornerRadius: number;
   collapseParallelWires: boolean;
   storageError: string | null;
+  saving?: boolean;
+  ready?: boolean;
 }>;
 
 export type CanvasStylingStorage = Pick<Storage, 'getItem' | 'setItem'>;
@@ -23,11 +26,6 @@ function cornerRadius(value: unknown): number {
 /** A plain readable store so canvas preferences also work without a Svelte runtime. */
 export function createCanvasStylingStore(storage?: CanvasStylingStorage | null) {
   let storageError: string | null = null;
-  let storageUnavailable = false;
-  if (storage === undefined) {
-    try { storage = typeof localStorage === 'undefined' ? null : localStorage; }
-    catch { storage = null; storageError = loadError; storageUnavailable = true; }
-  }
   let preferences = { ...defaults };
   if (storage) {
     try {
@@ -46,7 +44,7 @@ export function createCanvasStylingStore(storage?: CanvasStylingStorage | null) 
   const subscribers = new Set<(value: CanvasStyling) => void>();
 
   function update(next: typeof preferences) {
-    let error: string | null = storageUnavailable ? saveError : null;
+    let error: string | null = null;
     try { storage?.setItem(CANVAS_STYLING_STORAGE_KEY, JSON.stringify(next)); }
     catch { error = saveError; }
     current = Object.freeze({ ...next, storageError: error });
@@ -78,7 +76,29 @@ export function createCanvasStylingStore(storage?: CanvasStylingStorage | null) 
   };
 }
 
-export const canvasStyling = createCanvasStylingStore();
+export const canvasStyling = {
+  subscribe(listener: (value: CanvasStyling) => void) {
+    return uiPreferences.subscribe('canvas-styling', entry => listener(Object.freeze({ ...entry.value, storageError: entry.error || null, saving: entry.busy, ready: entry.ready })));
+  },
+  setArrowStyle(style: CanvasArrowStyle) {
+    if (style !== 'smooth' && style !== 'orthogonal') return;
+    const current = uiPreferences.get('canvas-styling');
+    if (current.value.arrowStyle === style && !current.error) return;
+    void uiPreferences.save('canvas-styling', { ...current.value, arrowStyle: style }).catch(() => {});
+  },
+  setCornerRadius(value: number) {
+    if (!Number.isFinite(value)) return;
+    const current = uiPreferences.get('canvas-styling'), radius = cornerRadius(value);
+    if (current.value.cornerRadius === radius && !current.error) return;
+    void uiPreferences.save('canvas-styling', { ...current.value, cornerRadius: radius }).catch(() => {});
+  },
+  setCollapseParallelWires(value: boolean) {
+    if (typeof value !== 'boolean') return;
+    const current = uiPreferences.get('canvas-styling');
+    if (current.value.collapseParallelWires === value && !current.error) return;
+    void uiPreferences.save('canvas-styling', { ...current.value, collapseParallelWires: value }).catch(() => {});
+  },
+};
 export const setArrowStyle = canvasStyling.setArrowStyle;
 export const setCornerRadius = canvasStyling.setCornerRadius;
 export const setCollapseParallelWires = canvasStyling.setCollapseParallelWires;

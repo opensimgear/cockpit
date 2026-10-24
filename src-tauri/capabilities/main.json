@@ -6,11 +6,14 @@
     "main"
   ],
   "permissions": [
+    "allow-persistence-status",
+    "allow-persistence-workspace",
     "allow-gateway-request",
     "allow-mcp-settings-get",
     "allow-mcp-settings-update",
     "allow-mcp-credential-create",
     "allow-mcp-credential-revoke",
+    "allow-mcp-credential-rotate",
     "allow-profile-activation-window-open",
     "allow-profile-activation-window-update",
     "allow-profile-activation-window-state",
@@ -42,6 +45,9 @@
           "url": "https://github.com/opensimgear/device-gateway/tree/main/simulation/pico"
         }
       ]
-    }
+    },
+    "allow-persistence-ui-read",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
   ]
 }

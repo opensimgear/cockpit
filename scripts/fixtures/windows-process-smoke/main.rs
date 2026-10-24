@@ -6,9 +6,9 @@ mod game_discovery;
 // Compile the real registry/artwork types used by discovery. The process smoke
 // neither imports artwork nor writes application configuration; these modules
 // keep this standalone fixture aligned with the production discovery contract.
-#[path = "../../../src-tauri/src/game_installations.rs"]
+#[path = "../../../src-tauri/src/games/storage/installations.rs"]
 mod game_installations;
-#[path = "../../../src-tauri/src/game_artwork.rs"]
+#[path = "../../../src-tauri/src/games/artwork/model.rs"]
 mod game_artwork;
 #[path = "../../../src-tauri/src/xplane_installation.rs"]
 mod xplane_installation;

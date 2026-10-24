@@ -94,10 +94,8 @@ pub(super) fn restore(
     backup: &Path,
     journal: &Value,
     conflicts: &mut Vec<String>,
+    guard: &impl Fn() -> Result<(), String>,
 ) -> Result<(), String> {
-    if journal.get("physicsBefore").is_none() {
-        return Ok(());
-    }
     let target = checked_target(target)?;
     let path = target.join("Scripts").join(RELATIVE);
     regular_chain(&path)?;
@@ -115,15 +113,19 @@ pub(super) fn restore(
         return Ok(());
     }
     if let Some(expected) = before {
+        osg_persistence::check_path(&backup.join("DCSPhysics.lua.before"), false)?;
         let bytes = read(&backup.join("DCSPhysics.lua.before"), MAX_FILE)?;
         if hash(&bytes) != expected {
             return Err("DCS ownship export backup failed its integrity check.".into());
         }
+        guard()?;
         replace(&path, &bytes)?;
     } else {
+        guard()?;
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
     if journal["createdPhysicsDir"] == true {
+        guard()?;
         let _ = fs::remove_dir(path.parent().unwrap());
     }
     Ok(())

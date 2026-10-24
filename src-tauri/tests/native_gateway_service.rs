@@ -86,10 +86,9 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     supported.sort_unstable();
     assert_eq!(ids, supported);
     let game_state = games["state"]["games"].as_object().unwrap();
-    for retired_field in ["profiles", "defaultProfiles", "session"] {
+    for retired_field in ["profiles", "defaultProfiles", "session", "cleanup"] {
         assert!(!game_state.contains_key(retired_field), "{retired_field}");
     }
-    assert!(game_state.contains_key("cleanup"));
 
     // CRUD uses the unified schema-v2 profile service. The transport retains
     // correlation for both supported commands and explicit retired rejections.

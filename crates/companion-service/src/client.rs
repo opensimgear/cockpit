@@ -141,7 +141,7 @@ pub struct ClientRuntime {
 }
 impl ClientRuntime {
     pub fn open(data_dir: PathBuf) -> Result<Self, String> {
-        let storage = Arc::new(persistence::SealedFileStore::new(
+        let storage = Arc::new(persistence::SealedSqliteStore::new(
             data_dir.join("companion-client.dpapi"),
         ));
         Self::with_storage(data_dir, storage)
@@ -1067,6 +1067,8 @@ fn pair_worker(
         )?;
     }
 }
+#[path="client/cache_validation.rs"]
+pub(crate) mod cache_validation;
 #[derive(Clone)]
 struct Primitive {
     kind: String,
@@ -1426,7 +1428,7 @@ mod tests {
             .unwrap()
             .contains("#55/#56"));
         assert!(authentication_reason(Some("Locked".into()), true).is_some());
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let storage = adapter();
         storage.available.store(false, Ordering::SeqCst);
         let client =
@@ -1451,7 +1453,7 @@ mod tests {
     }
     #[test]
     fn injected_adapter_restores_only_authority_and_failed_forget_preserves_saved_credential() {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let storage = adapter();
         let saved = SavedCredential {
             companion_id: "saved-instance".into(),
@@ -1508,7 +1510,7 @@ mod tests {
     }
     #[test]
     fn temporarily_locked_store_retries_without_losing_the_saved_pairing_or_resuming_input() {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let storage = adapter();
         let saved = SavedCredential {
             companion_id: "persistent-install".into(),
@@ -1650,7 +1652,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn local_ipc_is_epoch_bound_bounded_and_never_exposes_or_accepts_unauthorized_input() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
         assert_eq!(
             client.command(json!({"type":"status"})).unwrap()["phase"],
@@ -1697,18 +1699,22 @@ mod tests {
         client.command(json!({"type":"disconnect"})).unwrap();
         client.command(json!({"type":"forget"})).unwrap();
         assert_eq!(client.status().phase, "unpaired");
-        std::fs::write(directory.path().join("companion-client.dpapi"), b"invalid").unwrap();
+        let anchor=directory.path().join("companion-client.dpapi");
+        std::fs::write(&anchor,b"retired invalid file").unwrap();
+        let database=osg_persistence::Database::for_namespace(&anchor).unwrap();
+        database.commit(&[osg_persistence::Change{domain:"secrets",key:"companion-client",expected_revision:database.revision("secrets","companion-client").unwrap(),payload:Some(b"invalid")}]).unwrap();
         let reopened = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
         assert!(!reopened.status().authentication_available);
         if reopened.status().protected_store_available {
             assert_eq!(reopened.status().phase, "storage-error");
         }
         assert_eq!(
-            std::fs::read(directory.path().join("companion-client.dpapi")).unwrap(),
+            database.read("secrets","companion-client").unwrap().unwrap().payload,
             b"invalid"
         );
         reopened.command(json!({"type":"forget"})).unwrap();
-        assert!(!directory.path().join("companion-client.dpapi").exists());
+        assert!(database.read("secrets","companion-client").unwrap().is_none());
+        assert_eq!(std::fs::read(anchor).unwrap(),b"retired invalid file");
     }
     #[test]
     fn wrong_pin_is_rejected_before_even_an_invalid_endpoint_is_resolved() {
@@ -1784,7 +1790,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn native_ipc_caps_cumulative_transitions_and_channel_drop_clears_reservations() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
         let (sender, receiver) = mpsc::sync_channel(128);
         let counter = {
@@ -1827,7 +1833,7 @@ mod tests {
     #[test]
     fn feedback_is_validated_deduplicated_and_resynced_without_input_or_arm_changes() {
         use crate::feedback::*;
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let client = ClientRuntime::with_storage(directory.path().into(), adapter()).unwrap();
         assert!(client
             .command(json!({"type":"feedback-resync","epoch":0}))

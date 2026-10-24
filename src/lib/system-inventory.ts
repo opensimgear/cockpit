@@ -17,8 +17,8 @@ export type SystemComponent = {
 export type SystemSnapshot = { components: SystemComponent[]; diagnostics: string[]; observedAt: number };
 export type SystemObservation = Omit<SystemComponent, 'firstSeen' | 'lastSeen'>;
 type InventoryTombstone = { signature: string; sawAbsent: boolean; type?: SystemType; provider?: string };
-export type InventoryMemory = { version: 1; components: SystemComponent[]; forgotten: Record<string, InventoryTombstone> };
-export type InventoryStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
+export type InventoryMemory = { components: SystemComponent[]; forgotten: Record<string, InventoryTombstone> };
+export type InventoryStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void | Promise<void>; refresh?(): Promise<void> };
 export const INVENTORY_STORAGE_KEY = 'osg-system-inventory-v1';
 export const systemTypeLabels: Record<SystemType, string> = { host: 'Computer', controller: 'Physical · Third-party', osg: 'Physical · OSG', gateway: 'Gateway · OSG', virtual: 'Virtual', integration: 'Integration', companion: 'Companion' };
 export const presenceLabels: Record<SystemPresence, string> = { connected: 'Connected', offline: 'Offline', unknown: 'Unknown', unavailable: 'Unavailable' };
@@ -90,22 +90,35 @@ function pruneGatewayRoutes<T extends SystemObservation>(components: readonly T[
 }
 /** Durable remembered records and tombstones; providers still perform their own guarded mutations. */
 export class SystemInventoryRegistry {
-  private memory: InventoryMemory = { version: 1, components: [], forgotten: {} };
+  private memory: InventoryMemory = { components: [], forgotten: {} };
   private storage?: InventoryStorage;
   private storageError = '';
+  private writes: Promise<unknown> = Promise.resolve();
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.writes.then(operation); this.writes = pending.catch(() => {}); return pending;
+  }
+  private reloadMemory(): void {
+    if (!this.storage) return;
+    const saved = JSON.parse(this.storage.getItem(INVENTORY_STORAGE_KEY) ?? 'null');
+    if (saved === null) { this.memory = { components: [], forgotten: {} }; return; }
+    if (typeof saved !== 'object' || Array.isArray(saved) || Object.keys(saved).length !== 2 || !Array.isArray(saved.components) || !saved.components.every(isComponent) || !validTombstones(saved.forgotten)) throw Error('Saved inventory is invalid. Preserve its SQLite record.');
+    this.memory = saved;
+  }
   snapshot: SystemSnapshot = { components: [], diagnostics: [], observedAt: 0 };
   constructor(storage?: InventoryStorage) {
     this.storage = storage;
-    try {
-      const saved = JSON.parse(storage?.getItem(INVENTORY_STORAGE_KEY) ?? 'null');
-      if (saved?.version === 1 && Array.isArray(saved.components) && saved.components.every(isComponent) && validTombstones(saved.forgotten)) this.memory = saved;
-    } catch { this.storageError = 'Remembered inventory could not be loaded.'; }
+    try { this.reloadMemory(); } catch { this.storageError = 'Remembered inventory could not be loaded.'; }
     this.snapshot = { components: this.memory.components.map(c => this.remembered(c)), diagnostics: this.storageError ? [this.storageError] : [], observedAt: 0 };
   }
   private remembered(c: SystemComponent): SystemComponent {
     return { ...c, presence: 'unknown', stale: true, owner: null, inputOwner: null, configurationOwner: null, configurationRoute: null, capture: 'unknown', connections: c.connections.map(x => ({ ...x, current: false })), forget: { ...c.forget, allowed: false, reason: 'Refresh this provider before forgetting a remembered component.' } };
   }
-  update(observations: SystemObservation[], completeProviders: string[], diagnostics: string[] = [], now = Date.now(), aliases: Record<string, string> = {}): SystemSnapshot {
+  update(observations: SystemObservation[], completeProviders: string[], diagnostics: string[] = [], now = Date.now(), aliases: Record<string, string> = {}): Promise<SystemSnapshot> {
+    return this.serialize(() => this.updateNow(observations, completeProviders, diagnostics, now, aliases));
+  }
+  private async updateNow(observations: SystemObservation[], completeProviders: string[], diagnostics: string[], now: number, aliases: Record<string, string>): Promise<SystemSnapshot> {
+    let readError = '';
+    try { await this.storage?.refresh?.(); this.reloadMemory(); } catch { readError = 'Remembered inventory could not be loaded. Durable cleanup is unavailable.'; }
     if (new Set(observations.map(c => c.id)).size !== observations.length) throw new Error('System inventory contains duplicate logical identities.');
     const candidate = cloneMemory(this.memory);
     // Positive provider identity evidence supersedes remembered sightings. This
@@ -163,14 +176,17 @@ export class SystemInventoryRegistry {
     }
     for (const [id, tombstone] of Object.entries(candidate.forgotten)) if (!seen.has(id) && (!tombstone.provider || completeProviders.includes(tombstone.provider))) tombstone.sawAbsent = true;
     candidate.components = pruneGatewayRoutes(next, forgottenGateways(candidate)).components;
-    this.storageError = this.persist(candidate);
+    this.storageError = readError || await this.persist(candidate);
     // Live inspection remains usable if remembering it fails. Destructive
     // cleanup below requires persistence to succeed before publishing anything.
     this.memory = candidate;
     this.snapshot = { components: candidate.components, diagnostics: [...diagnostics, ...(this.storageError ? [this.storageError] : [])], observedAt: now };
     return this.snapshot;
   }
-  forget(id: string): void {
+  forget(id: string): Promise<void> { return this.serialize(() => this.forgetNow(id)); }
+  private async forgetNow(id: string): Promise<void> {
+    await this.storage?.refresh?.();
+    this.reloadMemory();
     const c = this.snapshot.components.find(x => x.id === id);
     if (!c?.forget.allowed || c.presence === 'connected' || c.owner || c.hidden === true) throw new Error(c?.forget.reason || 'This component is currently present or owned. Refresh before forgetting it.');
     const candidate = cloneMemory(this.memory);
@@ -182,14 +198,14 @@ export class SystemInventoryRegistry {
       rememberTombstone(candidate, child.id, original.get(child.id)!);
     }
     candidate.components = pruned.components;
-    const error = this.persist(candidate);
+    const error = await this.persist(candidate);
     if (error) throw new Error(error);
     this.memory = candidate;
     this.snapshot = { ...this.snapshot, components: candidate.components, diagnostics: this.snapshot.diagnostics.filter(diagnostic => !this.storageError || diagnostic !== this.storageError) };
     this.storageError = '';
   }
-  private persist(memory: InventoryMemory): string {
-    try { this.storage?.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(memory)); return ''; }
+  private async persist(memory: InventoryMemory): Promise<string> {
+    try { await this.storage?.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(memory)); return ''; }
     catch { return 'Inventory changes could not be saved. Durable cleanup is unavailable.'; }
   }
 }

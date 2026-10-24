@@ -2,7 +2,7 @@
   import PageHeader from './PageHeader.svelte';
   import Notification from './Notification.svelte';
   import Icon from './Icon.svelte';
-  import { gameCleanupLabel, type GamesState } from './games';
+  import { type GamesState } from './games';
   import { gameContextLabel } from './game-provider-settings';
   import { DEFAULT_PROFILE_ID, type DeepReadonly, type ProfileSummary } from './profiles';
   import type { RuntimeControlState } from './profile-runtime-controller';
@@ -22,9 +22,9 @@
 </script>
 
 <PageHeader title="Overview" eyebrow="YOUR COCKPIT AT A GLANCE" subtitle="Your detected games, active profile and connected hardware.">{#snippet actions()}<span class="quiet-tag">Native status</span>{/snippet}</PageHeader>
-{#if games?.error || games?.cleanup?.error || inventoryError}<Notification message={String(games?.cleanup?.error || games?.error || inventoryError)} kind="error" />{/if}
+{#if games?.error || inventoryError}<Notification message={String(games?.error || inventoryError)} kind="error" />{/if}
+
 {#if profileState.statusError}<Notification message={profileState.statusError} kind="error" />{/if}
-{#if games?.cleanup && games.cleanup.phase !== 'idle'}<div class="cleanup-note"><strong>Previous owned setup · {gameCleanupLabel(games.cleanup)}</strong><p>This recovery record is separate from the applied profile.</p><button class="text-button" onclick={openGames}>Review cleanup <Icon name="chevron" size={13} /></button></div>{/if}
 <div class="overview-grid">
   <section class="panel overview-card">
     <div class="overview-label"><Icon name="play" size={18} /><h2>Detected game</h2></div>
@@ -59,6 +59,6 @@
 </div>
 
 <style>
-  .overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.overview-card{padding:25px;display:flex;flex-direction:column;align-items:flex-start;gap:15px;min-width:0}.overview-label{display:flex;align-items:center;gap:10px;color:var(--muted)}.overview-label h2{font-size:12px;font-weight:600}.overview-value,.detected-game>strong{font-size:21px;line-height:1.35;font-weight:650;overflow-wrap:anywhere}.overview-card p,.cleanup-note p,.degradation{color:var(--muted);font-size:12px;line-height:1.7}.overview-card>button,.cleanup-note button{margin-top:auto;padding-top:12px;display:flex;align-items:center;gap:6px}.detected-game{display:flex;flex-direction:column;gap:10px}.detected-game>span{color:var(--accent);font-size:11px;display:flex;align-items:center;gap:7px}.hardware-counts{display:flex;flex-wrap:wrap;gap:30px}.hardware-counts>div{display:flex;flex-direction:column;gap:6px}.hardware-counts strong{font-size:29px;font-weight:650}.hardware-counts small{font-size:16px;color:var(--muted);font-weight:400}.hardware-counts span{color:var(--muted);font-size:11px}.cleanup-note{border:1px solid var(--line);padding:18px;margin:0 0 20px;border-radius:8px}.cleanup-note strong{font-size:12px}.degradation{padding-left:18px;margin:0}
+  .overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.overview-card{padding:25px;display:flex;flex-direction:column;align-items:flex-start;gap:15px;min-width:0}.overview-label{display:flex;align-items:center;gap:10px;color:var(--muted)}.overview-label h2{font-size:12px;font-weight:600}.overview-value,.detected-game>strong{font-size:21px;line-height:1.35;font-weight:650;overflow-wrap:anywhere}.overview-card p,.degradation{color:var(--muted);font-size:12px;line-height:1.7}.overview-card>button{margin-top:auto;padding-top:12px;display:flex;align-items:center;gap:6px}.detected-game{display:flex;flex-direction:column;gap:10px}.detected-game>span{color:var(--accent);font-size:11px;display:flex;align-items:center;gap:7px}.hardware-counts{display:flex;flex-wrap:wrap;gap:30px}.hardware-counts>div{display:flex;flex-direction:column;gap:6px}.hardware-counts strong{font-size:29px;font-weight:650}.hardware-counts small{font-size:16px;color:var(--muted);font-weight:400}.hardware-counts span{color:var(--muted);font-size:11px}.degradation{padding-left:18px;margin:0}
   @media(max-width:900px){.overview-grid{grid-template-columns:1fr}}
 </style>

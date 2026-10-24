@@ -28,6 +28,8 @@ jobs:
         run: pnpm system-inventory:test
       - name: Inventory, provider and topology coverage at least 71 percent per module
         run: pnpm system-inventory:coverage
+      - name: Native UI preference client coverage at least 71 percent per module
+        run: pnpm ui-preferences:coverage
       - run: pnpm browser:test
       - run: pnpm browser-feedback:coverage
       - run: pnpm controllers:coverage
@@ -86,6 +88,24 @@ jobs:
         with:
           name: companion-release-readiness
           path: .research/companion-c6/release-readiness.json
+
+  persistence-contracts:
+    name: SQLite persistence (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: rustup component add llvm-tools-preview
+      - run: cargo test --locked --manifest-path crates/persistence/Cargo.toml
+      - name: Each persistence module has at least 71 percent production line coverage
+        run: python scripts/persistence-coverage.py
 
   profiles-contracts:
     name: Unified profile contracts (${{ matrix.os }})
@@ -300,6 +320,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        if: runner.os == 'Windows'
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build browser assets for native companion operators
+        if: runner.os == 'Windows'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm browser:build
       - name: Install pinned native coverage tools
         run: rustup component add llvm-tools-preview
       - name: Linux controller development dependency

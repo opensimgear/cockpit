@@ -28,7 +28,7 @@ TEST_FILTERS.extend(["profile_session_virtual::tests", "profile_session_host::ou
 TEST_FILTERS.append("profile_session_overrides::publication")
 MODULE_TEST_SOURCES = {
     "window_persistence": [],
-    "companion_panels": [],
+    "companion/storage/panels": [],
     "system_inventory": [],
     "system_inventory_associations": [],
     "profile_recovery_transport": ["profile_recovery_transport_tests", "profile_recovery_transport_stm32_tests"],
@@ -40,7 +40,7 @@ MODULE_TEST_SOURCES = {
 }
 MODULES.extend(["system_inventory", "system_inventory_associations"])
 TEST_FILTERS.append("system_inventory")
-MODULES.append("companion_panels")
+MODULES.append("companion/storage/panels")
 TEST_FILTERS.append("companion_panels::tests")
 MODULES.append("window_persistence")
 TEST_FILTERS.append("window_persistence::tests")
@@ -117,32 +117,15 @@ def run_test_filters(binary, filters, root, env, profiles, output, timeout_secon
     return evidence, invocations
 
 
-def main():
-    root = Path(__file__).resolve().parents[1]
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=root / ".research/module-usb-coverage")
-    parser.add_argument("--module", action="append", choices=MODULES,
-                        help="Focused local measurement only; CI's default still gates every module.")
-    parser.add_argument("--test-filter", action="append",
-                        help="Focused local test filter; requires --module. CI runs the complete filter list.")
-    args = parser.parse_args()
-    if args.test_filter and (not args.module or any(not value.strip() for value in args.test_filter)):
-        parser.error("--test-filter requires --module and nonempty filter values")
-    measured = args.module or MODULES
-    filters = args.test_filter or TEST_FILTERS
-    output = args.output_dir.resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    # Never leave a previous successful summary behind after a failed rerun.
-    for name in ["summary.json", "evidence.json", "tests.log"]:
-        (output / name).unlink(missing_ok=True)
+def tracked_source_paths(root, measured, focused):
     tracked = [root / f"src-tauri/src/{name}.rs"
                for module in MODULES
                for name in [module, *MODULE_TEST_SOURCES.get(module, [f"{module}_tests"])]]
     tracked.extend(root / f"src-tauri/src/{name}.rs" for name in
                    ["profile_session_overrides", "profile_session_overrides_tests"])
-    tracked.extend([root / "src-tauri/src/lib.rs", root / "src-tauri/src/profile_session_host.rs", root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/stm32.rs", root / "src-tauri/src/pico.rs", root / "src-tauri/src/games.rs", root / "src-tauri/src/game_discovery.rs", root / "src-tauri/src/game_context.rs", root / "src-tauri/src/game_context_runtime.rs", root / "src-tauri/src/profile_session.rs", root / "src-tauri/src/profile_session_stage.rs", root / "src-tauri/src/profile_session_journal.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
+    tracked.extend([root / "src-tauri/src/lib.rs", root / "src-tauri/src/profile_session_host.rs", root / "src-tauri/src/companion/host/mod.rs", root / "src-tauri/src/companion/host/commands.rs", root / "src-tauri/src/companion/host/presentation.rs", root / "src-tauri/src/companion/storage/host_settings.rs", root / "src-tauri/src/stm32.rs", root / "src-tauri/src/pico.rs", root / "src-tauri/src/games.rs", root / "src-tauri/src/game_discovery.rs", root / "src-tauri/src/game_context.rs", root / "src-tauri/src/game_context_runtime.rs", root / "src-tauri/src/profile_session.rs", root / "src-tauri/src/profile_session_stage.rs", root / "src-tauri/src/profile_session_journal.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
     tracked.extend([Path(__file__).resolve(), root / "scripts/test_module_usb_coverage.py"])
-    if not args.module or "profile_automatic" in measured or "profile_game_orchestration_runtime" in measured or "profile_companion_retention" in measured or "profile_recovery_transport" in measured:
+    if not focused or "profile_automatic" in measured or "profile_game_orchestration_runtime" in measured or "profile_companion_retention" in measured or "profile_recovery_transport" in measured:
         # The full gate also pins Manager construction/admission. A focused
         # production-module report is explicitly not whole-Manager evidence.
         tracked.append(root / "src-tauri/src/gateways.rs")
@@ -167,6 +150,28 @@ def main():
     tracked.extend(root / f"crates/controller-input/src/visibility/{name}.rs" for name in
                    ["mod", "game", "game_tests", "game_handoff_tests", "handoff", "handoff_tests",
                     "journal", "policy", "runtime", "service", "service_tests"])
+    return tracked
+
+
+def main():
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, default=root / ".research/module-usb-coverage")
+    parser.add_argument("--module", action="append", choices=MODULES,
+                        help="Focused local measurement only; CI's default still gates every module.")
+    parser.add_argument("--test-filter", action="append",
+                        help="Focused local test filter; requires --module. CI runs the complete filter list.")
+    args = parser.parse_args()
+    if args.test_filter and (not args.module or any(not value.strip() for value in args.test_filter)):
+        parser.error("--test-filter requires --module and nonempty filter values")
+    measured = args.module or MODULES
+    filters = args.test_filter or TEST_FILTERS
+    output = args.output_dir.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    # Never leave a previous successful summary behind after a failed rerun.
+    for name in ["summary.json", "evidence.json", "tests.log"]:
+        (output / name).unlink(missing_ok=True)
+    tracked = tracked_source_paths(root, measured, bool(args.module))
     initial_stamp = source_stamp(tracked, root)
     profiles = Path(tempfile.mkdtemp(prefix="profiles-", dir=output))
     env = dict(os.environ,
@@ -205,7 +210,7 @@ def main():
         source = root / f"src-tauri/src/{module}.rs"
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binary,
                          f"-instr-profile={profile}", "-show-line-counts-or-regions", source], root)
-        (output / f"{module}-lines.txt").write_text(annotated, encoding="utf-8")
+        (output / f"{module.replace(chr(47), chr(45))}-lines.txt").write_text(annotated, encoding="utf-8")
         lines = source.read_text(encoding="utf-8").splitlines()
         end = next((i + 1 for i, line in enumerate(lines) if line == "#[cfg(test)]"), len(lines) + 1)
         counts = {}

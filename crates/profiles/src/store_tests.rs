@@ -2,26 +2,32 @@ use super::*;
 use crate::new_document;
 
 #[test]
-fn fresh_library_round_trips_and_replace_failures_preserve_old_bytes() {
+fn sqlite_library_round_trips_and_stale_saves_preserve_the_committed_document() {
     let temp = crate::test_directory();
-    let store = Store::new(temp.path().join("profiles-v2"));
+    let root = temp.path().join("profiles-v2");
+    let store = Store::new(root.clone());
     assert!(store.load().unwrap().is_none());
     let original = Library::default();
     store.save(&original).unwrap();
-    let before = std::fs::read(store.root.join("library.json")).unwrap();
+    let stale = Store::new(root.clone());
+    stale.load().unwrap();
     let mut edited = original.clone();
     edited.profiles.push(new_document("New profile").unwrap());
-    assert!(store
-        .save_with(&edited, |_, _| Err("simulated replacement failure".into()))
-        .is_err());
-    assert_eq!(
-        std::fs::read(store.root.join("library.json")).unwrap(),
-        before
-    );
-    assert_eq!(store.load().unwrap().unwrap().profiles.len(), 1);
     store.save(&edited).unwrap();
-    assert_eq!(store.load().unwrap().unwrap().profiles.len(), 2);
-    assert_eq!(std::fs::read_dir(&store.root).unwrap().count(), 1);
+    assert!(stale.save(&original).unwrap_err().contains("conflict"));
+    assert_eq!(
+        Store::new(root.clone())
+            .load()
+            .unwrap()
+            .unwrap()
+            .profiles
+            .len(),
+        2
+    );
+    assert!(!root.join("library.json").exists());
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("library.json"), b"stale corrupt source").unwrap();
+    assert_eq!(Store::new(root).load().unwrap().unwrap().profiles.len(), 2);
 }
 
 #[test]
@@ -29,25 +35,29 @@ fn malformed_unknown_and_oversize_envelopes_are_rejected() {
     let temp = crate::test_directory();
     let store = Store::new(temp.path().to_owned());
     let path = temp.path().join("library.json");
-    std::fs::write(&path, "not json").unwrap();
+    crate::fixture_record(&path, "profiles", "library", b"not json");
     assert!(store.load().is_err());
     let mut value = serde_json::to_value(Library::default()).unwrap();
     value["unexpected"] = serde_json::json!(true);
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    crate::fixture_record(
+        &path,
+        "profiles",
+        "library",
+        &serde_json::to_vec(&value).unwrap(),
+    );
     assert!(store.load().is_err());
-    std::fs::File::create(&path)
-        .unwrap()
-        .set_len(MAX_LIBRARY_BYTES as u64 + 1)
-        .unwrap();
-    assert!(store.load().unwrap_err().contains("17 MiB"));
+    crate::fixture_record(
+        &path,
+        "profiles",
+        "library",
+        &vec![b' '; MAX_LIBRARY_BYTES + 1],
+    );
+    assert!(store.load().unwrap_err().contains("Oversized"));
 }
 
 #[test]
 fn library_enforces_default_uniqueness_and_count_bounds() {
     let mut library = Library::default();
-    library.schema_version = 1;
-    assert!(library.validate().is_err());
-    library.schema_version = 2;
     library.profiles.clear();
     assert!(library.validate().is_err());
     library.profiles.push(new_document("No default").unwrap());
@@ -129,7 +139,7 @@ fn relative_parent_and_nonregular_paths_are_rejected() {
             .load()
             .is_err()
     );
-    std::fs::create_dir(temp.path().join("library.json")).unwrap();
+    std::fs::create_dir(temp.path().join("cockpit.sqlite3")).unwrap();
     assert!(Store::new(temp.path().to_owned()).load().is_err());
     let file_parent = temp.path().join("not-a-directory");
     std::fs::write(&file_parent, "").unwrap();
@@ -150,8 +160,12 @@ fn symlinked_library_or_parent_is_never_followed() {
     std::fs::write(&target, Library::default().encode().unwrap()).unwrap();
     symlink(&target, real.join("library.json")).unwrap();
     let store = Store::new(real);
-    assert!(store.load().is_err());
-    assert!(store.save(&Library::default()).is_err());
+    assert!(store.load().unwrap().is_none());
+    store.save(&Library::default()).unwrap();
+    assert_eq!(
+        std::fs::read(target).unwrap(),
+        Library::default().encode().unwrap()
+    );
 }
 
 #[cfg(unix)]

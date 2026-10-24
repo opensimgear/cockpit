@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        let p = std::env::temp_dir().join(format!("osg-acr-setup-{}", uuid::Uuid::new_v4()));
+        let p = std::env::temp_dir().canonicalize().unwrap().join(format!("osg-acr-setup-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&p).unwrap();
         Self(p)
     }

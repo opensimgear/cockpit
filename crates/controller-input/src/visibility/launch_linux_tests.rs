@@ -116,7 +116,7 @@ fn preflight_refuses_swapped_nodes_bad_applications_and_missing_approval() {
         .unwrap()
         .contains("disabled"));
     assert!(trusted_program(Path::new("/missing/bwrap")).is_err());
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("helper");
     std::fs::write(&path, b"test").unwrap();
     assert!(trusted_program(&path).is_err());
@@ -252,7 +252,7 @@ fn parent_death_cleans_namespace_children_without_drop() {
         std::fs::write(path, serde_json::to_vec(&pids).unwrap()).unwrap();
         unsafe { libc::_exit(0) };
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_directory();
     let file = dir.path().join("children.json");
     let status = Command::new(std::env::current_exe().unwrap())
         .args([

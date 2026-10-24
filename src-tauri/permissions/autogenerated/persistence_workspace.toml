@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-persistence-workspace"
+description = "Enables the persistence_workspace command without any pre-configured scope."
+commands.allow = ["persistence_workspace"]
+
+[[permission]]
+identifier = "deny-persistence-workspace"
+description = "Denies the persistence_workspace command without any pre-configured scope."
+commands.deny = ["persistence_workspace"]

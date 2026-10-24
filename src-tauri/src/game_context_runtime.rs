@@ -768,6 +768,7 @@ mod tests {
         let settings_path = paths.provider_setup.clone();
         let saved = json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":crate::game_integration_setup::dcs_connection(&catalogue_path),"aircraftModule":"A-10C"}}});
         std::fs::write(&settings_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        crate::persistence::test_support::record(&settings_path,"games","setup",&serde_json::to_vec(&saved).unwrap());
         let before = std::fs::read(&settings_path).unwrap();
         let runtime = GamesRuntime::new(Arc::new(|request| panic!("DCS catalogue/vehicle introspection must not submit output: {request}")), paths, Arc::new(DcsPlatform));
         runtime.inner.closed.store(true, Ordering::Release);

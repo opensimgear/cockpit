@@ -215,35 +215,18 @@ impl Manager {
         if let Some(root) = &manager.root {
             let scan = (|| -> Result<(), String> {
                 let directory = root.join("companion-recovery");
-                let entries = match std::fs::read_dir(directory) {
-                    Ok(e) => e,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                    Err(e) => return Err(e.to_string()),
-                };
+                let entries=osg_persistence::Evidence::siblings(&directory.join("inventory.json"),"recovery-output",32)?;
                 let known = manager
                     .configurations
                     .keys()
                     .map(|id| format!("{}.json", id_for("instance", id)))
                     .collect::<BTreeSet<_>>();
-                let mut count = 0;
-                for entry in entries {
-                    let entry = entry.map_err(|e| e.to_string())?;
-                    if entry.path().extension().and_then(|v| v.to_str()) != Some("json") {
-                        continue;
-                    }
-                    count += 1;
-                    if count > 32 {
-                        return Err(
-                            "Too many companion recovery journals; preserve and inspect ownership."
-                                .into(),
-                        );
-                    }
-                    let name = entry.file_name().to_string_lossy().into_owned();
+                for name in entries {
                     if known.contains(&name) {
                         continue;
                     }
                     if let Some(record) =
-                        osg_virtual_controller::output_journal::inspect(&entry.path())?
+                        osg_virtual_controller::output_journal::inspect(&directory.join(&name))?
                             .filter(|r| r.pending())
                     {
                         manager.orphaned.insert(
@@ -1008,7 +991,7 @@ impl Service {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .filter(|c| c["passed"] != true)
+                    .filter(|c| c["passed"] != true && (live || matches!(c["id"].as_str(), Some("authorization" | "configurationStore" | "configuration" | "resources"))))
                     .filter_map(|c| c["reason"].as_str())
                     .collect::<Vec<_>>()
                     .join("; ")

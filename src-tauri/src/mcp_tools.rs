@@ -1,16 +1,25 @@
 //! Task-oriented MCP adapter for the running native manager. This boundary has
-//! no general command, filesystem, shell, firmware or arbitrary action tool.
+//! no general command, filesystem, shell or arbitrary action tool. Companion
+//! firmware tools use only the approved native resolver and device guards.
 use crate::gateways::GatewayManager;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
 #[path = "mcp_tools/authoring.rs"]
 mod authoring;
+#[path = "mcp_tools/workspace.rs"]
+mod workspace;
+#[path="mcp_tools/host_settings.rs"]
+mod host_settings;
+#[path="mcp_tools/companion_controls.rs"]
+mod companion_controls;
+#[path="mcp_tools/integration_settings.rs"]
+mod integration_settings;
 #[path = "mcp_tools/catalogue.rs"]
 mod definitions;
 #[path = "mcp_tools/schema.rs"]
@@ -111,6 +120,8 @@ pub struct Tools {
     backend: Arc<dyn Backend>,
     ledger: Mutex<Ledger>,
     drafts: Mutex<Vec<Draft>>,
+    workspace_uploads: Mutex<Vec<workspace::Upload>>,
+    integration:OnceLock<std::sync::Weak<crate::mcp::Server>>,
 }
 impl Tools {
     pub fn new(manager: Arc<GatewayManager>) -> Self {
@@ -118,8 +129,11 @@ impl Tools {
             backend: manager,
             ledger: Mutex::new(Ledger::default()),
             drafts: Mutex::new(vec![]),
+            workspace_uploads: Mutex::new(vec![]),
+            integration:OnceLock::new(),
         }
     }
+    pub(crate) fn bind_integration(&self,server:std::sync::Weak<crate::mcp::Server>){let _=self.integration.set(server);}
     /// The caller authenticates the connection and provides a stable, native
     /// client identity. Session IDs are deliberately not a mutation authority.
     pub fn call(&self, name: &str, args: Value, client: &str) -> Value {
@@ -237,9 +251,16 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "storage_status" | "storage_create" | "storage_remove" | "storage_restore" | "storage_restart"=>forward(name,&["id","expectedRevision","confirmed"],Some("storage")),
+            "ui_preferences_get"=>forward("ui_preferences_get",&["key"],Some("uiPreferences")),
+            "ui_preferences_save"=>forward("ui_preferences_save",&["key","expectedRevision","value"],Some("uiPreferences")),
+            name if companion_controls::handles(name)=>self.companion_tool(name,args,client),
+            "mcp_settings_get" | "mcp_settings_update" | "mcp_credential_create" | "mcp_credential_revoke" | "mcp_credential_rotate" => self.integration_tool(name,args),
+            "companion_listener_get" | "companion_listener_save" => self.listener_tool(name,args,client),
+            "designer_workspace_read" | "designer_workspace_begin" | "designer_workspace_chunk" | "designer_workspace_commit" | "designer_workspace_abort" => self.workspace_tool(name,args,client),
             "widgets_list" => forward("widgets_list", &["offset","limit"], Some("widgetLibrary")),
             "widget_get" => forward("widget_get", &["id"], Some("widgetLibrary")),
-            "widget_save" => forward("widget_save", &["bundle"], Some("widgetSaved")),
+            "widget_save" => forward("widget_save", &["bundle","expectedRevision"], Some("widgetSaved")),
             "operation_status" => Ok(self
                 .ledger
                 .lock()
@@ -827,3 +848,10 @@ fn compact_operation_result(result: &Value, id: &str) -> Value {
 #[cfg(test)]
 #[path = "mcp_tools/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path="mcp_tools/workspace_tests.rs"]
+mod workspace_tests;
+#[cfg(test)]
+#[path="mcp_tools/ui_preferences_tests.rs"]
+mod ui_preferences_tests;

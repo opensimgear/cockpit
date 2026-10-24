@@ -26,7 +26,7 @@ function harness(options = {}) {
     if (input.command === 'controller_list') return { controllers: { session: 'controllers-1', offset: input.offset, total: state.controllers.length, sources: state.controllers.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'module_usb_list') return { moduleUsb: { offset: input.offset, total: state.usb.length, modules: state.usb.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'profile_resources_list') return { profileResources: { session: 'inventory-1', revision: '1', offset: input.offset, total: state.resources.length, resources: state.resources.slice(input.offset, input.offset + input.limit) } };
-    if (input.command === 'companion_status') return { companions: state.companions };
+    if (input.command === 'companion_inventory') return { companions: state.companions };
     if (input.command === 'profile_status') return { profiles: { profileSession: state.runtime ?? { state: 'stopped', owner: null, appliedSnapshot: null } } };
     if (input.command === 'game_get_state') return { games: state.games };
     if (input.command === 'system_inventory') return { systemInventory: state.native };
@@ -481,7 +481,7 @@ test('malformed, changed-session and truncated pages fail one provider without d
 
 test('missing capabilities are surfaced as diagnostics instead of silently treating providers as empty', async () => {
   const h = harness();
-  for (const command of ['controller_list', 'module_usb_list', 'companion_status', 'game_get_state', 'system_inventory', 'profile_resources_list']) h.custom.set(command, () => ({}));
+  for (const command of ['controller_list', 'module_usb_list', 'companion_inventory', 'game_get_state', 'system_inventory', 'profile_resources_list']) h.custom.set(command, () => ({}));
   await h.controller.refresh();
   assert.equal(h.controller.snapshot.components.length, 1);
   assert.equal(h.controller.snapshot.diagnostics.length, 6);

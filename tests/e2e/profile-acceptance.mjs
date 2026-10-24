@@ -7,6 +7,7 @@ import {setterProfile} from './profile-graph-fixtures.mjs';
 import {waitForCurrentAction} from './profile-action-readiness.mjs';
 import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
+import {recoveryEvidence} from './persistence-evidence.mjs';
 import {processClient} from './process-client.mjs';
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function wait(operation,predicate,label,limit=10000){const end=Date.now()+limit;let current;do{current=await operation();if(predicate(current))return current;await sleep(40);}while(Date.now()<end);assert.fail(`${label}: ${JSON.stringify(current)}`);}
@@ -117,7 +118,8 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
     assert.deepEqual(lease.fallback,['112233']);assert.equal(lease.fallbackStatus,'none');assert.ok(lease.remainingMs>0);
     assert.deepEqual(routeOf(await ok('status',{gatewayId})),crashRoute);
     publicationOf(await ok('status',{gatewayId}));
-    const journalPath=resolve(directory,'profile-session-v1.json'),journalBytes=await readFile(journalPath),journal=JSON.parse(journalBytes);
+    const journalBytes=await recoveryEvidence(launch.python,directory),journal=JSON.parse(journalBytes);
+    await assert.rejects(readFile(resolve(directory,'profile-session-v1.json')), {code:'ENOENT'});
     assert.equal(journal.pending,null);assert.deepEqual(journal.active.owner,active.owner);
     assert.deepEqual(journal.active.attempted,['overrides','acquire','baseline','visibility','start']);
     const receipts=journal.active.receipts.filter(receipt=>receipt.kind==='physical-action-lease');
@@ -143,7 +145,7 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
     };
     assertRestored(expired);
     assert.ok(Number.isInteger(expired.clockMs)&&expired.clockMs>=0&&expired.clockMs<=0xffffffff,'Production simulator clock must be a present u32');
-    assert.deepEqual(await readFile(journalPath),journalBytes,'A killed host cannot clean or replace the active journal');
+    assert.deepEqual(await recoveryEvidence(launch.python,directory),journalBytes,'A killed host cannot clean or replace the active journal');
     await checkpoint('watchdog-restored-while-host-dead',{clockMs:expired.clockMs,actual:actualRgb(expired),ownership:ownershipOf(expired)});
 
     // Same directory, environment and inherited CI DBus/SecretService session.
@@ -152,12 +154,12 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
     const interrupted=(await ok('profile_status')).profiles.profileSession;
     assert.equal(interrupted.state,'recovery-needed');assert.equal(interrupted.owner,null);assert.equal(interrupted.appliedSnapshot,null);
     assert.match(interrupted.fault,/previous profile run needs explicit recovery/i);
-    assert.deepEqual(await readFile(journalPath),journalBytes,'Cold startup must preserve exact durable cleanup evidence');
+    assert.deepEqual(await recoveryEvidence(launch.python,directory),journalBytes,'Cold startup must preserve exact durable cleanup evidence');
     assert.equal((await request('profile_runtime_inspect',{owner:active.owner})).ok,false);
     const denied=await request('profile_apply',{id:saved.id,expectedRevision:1});assert.equal(denied.ok,false);
     assert.match(denied.error,/Recover the interrupted profile session/i);
     assert.equal((await ok('profile_status')).profiles.profileSession.state,'recovery-needed');
-    assert.deepEqual(await readFile(journalPath),journalBytes,'Rejected Apply must preserve the recovery journal');
+    assert.deepEqual(await recoveryEvidence(launch.python,directory),journalBytes,'Rejected Apply must preserve the recovery journal');
     const returned=await reconnect();assert.deepEqual(routeOf(returned),crashRoute,'This case requires the original exact CAN route');
     assert.deepEqual(publicationOf(returned),publication);
     await ok('action_describe',{gatewayId,moduleId});
@@ -166,7 +168,7 @@ test('unified physical Setter uses exact native pins, captured baseline and owne
       actual:actualRgb(beforeRecover),ownership:ownershipOf(beforeRecover),journalSha256});
     const recovered=(await ok('profile_recover')).profiles.profileSession;
     assert.equal(recovered.state,'stopped');assert.equal(recovered.owner,null);assert.equal(recovered.appliedSnapshot,null);assert.equal(recovered.fault,null);
-    const empty=JSON.parse(await readFile(journalPath));assert.equal(empty.active,null);assert.equal(empty.pending,null);
+    const empty=JSON.parse(await recoveryEvidence(launch.python,directory));assert.equal(empty.active,null);assert.equal(empty.pending,null);
     assert.deepEqual((await ok('profile_export',{id:saved.id})).profiles.document,saved);
     assert.equal((await request('profile_runtime_inspect',{owner:active.owner})).ok,false);
     await ok('profile_recover');

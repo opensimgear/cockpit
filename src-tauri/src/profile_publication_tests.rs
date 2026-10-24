@@ -973,7 +973,7 @@ mod native_host {
                         // Read the real durable Coordinator journal at the actual
                         // serial admission boundary, before this fixture mutates.
                         let manifest: Value =
-                            serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+                            serde_json::from_slice(&osg_persistence::test_support::read_evidence(&journal,"recovery-profile").unwrap()).unwrap();
                         let incoming = &manifest["pending"]["incoming"];
                         assert_eq!(incoming["attempted"], json!(["overrides"]));
                         let run_owner: RunOwner =

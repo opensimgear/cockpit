@@ -8,7 +8,7 @@ fn setup() -> (
     String,
 ) {
     let (registry, id) = inventory();
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let shared = Arc::new(Mutex::new(state()));
     let cloned = shared.clone();
     let mut service = Service::new(Some(temp.path().into()), registry.clone());
@@ -269,7 +269,7 @@ fn ephemeral_suppression_is_scoped_and_never_restored_by_reapplying_it() {
         ),
     ] {
         let (registry, id) = inventory_for(backend);
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_directory();
         let mut s = Service::new(Some(temp.path().into()), registry);
         s.platform = platform;
         s.qualified = true;

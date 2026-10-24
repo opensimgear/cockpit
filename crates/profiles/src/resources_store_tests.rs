@@ -1,33 +1,33 @@
 use super::*;
 use crate::resources::{Registry, SavedRegistry};
 use serde_json::json;
+use std::path::Component;
 
 #[test]
-fn empty_inventory_is_fresh_atomic_and_independent_of_profile_library() {
+fn sqlite_inventory_is_atomic_and_independent_of_profile_library() {
     let temp = crate::test_directory();
-    let store = Store::new(temp.path().join("profiles-v1"));
+    let root = temp.path().join("profile-resources-v1");
+    let store = Store::new(root.clone());
     assert!(store.load().unwrap().is_none());
     store.save(&SavedRegistry::default()).unwrap();
-    let before = std::fs::read(store.root.join("inventory.json")).unwrap();
-    assert!(store
-        .save_with(&SavedRegistry::default(), |_, _| Err(
-            "simulated replacement failure".into()
-        ))
-        .is_err());
+    let other = Store::new(root.clone());
+    other.load().unwrap();
+    store.save(&SavedRegistry::default()).unwrap();
+    assert!(other
+        .save(&SavedRegistry::default())
+        .unwrap_err()
+        .contains("conflict"));
     assert_eq!(
-        std::fs::read(store.root.join("inventory.json")).unwrap(),
-        before
-    );
-    assert_eq!(
-        Registry::restore(store.load().unwrap().unwrap())
+        Registry::restore(Store::new(root.clone()).load().unwrap().unwrap())
             .unwrap()
             .list(0, 32)
             .unwrap()
             .total,
         0
     );
-    assert!(!store.root.join("library.json").exists());
-    assert_eq!(std::fs::read_dir(&store.root).unwrap().count(), 1);
+    assert!(!root.join("inventory.json").exists());
+    let db = osg_persistence::Database::for_namespace(&root.join("inventory.json")).unwrap();
+    assert!(db.read("profiles", "library").unwrap().is_none());
 }
 
 #[test]
@@ -35,17 +35,27 @@ fn corrupt_unknown_runtime_and_oversize_envelopes_are_not_loaded() {
     let temp = crate::test_directory();
     let store = Store::new(temp.path().to_owned());
     let path = temp.path().join("inventory.json");
-    std::fs::write(&path, "invalid").unwrap();
+    crate::fixture_record(&path, "resources", "inventory", b"invalid");
     assert!(store.load().is_err());
     let mut value = serde_json::to_value(SavedRegistry::default()).unwrap();
     value["activeRoutes"] = json!([]);
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    crate::fixture_record(
+        &path,
+        "resources",
+        "inventory",
+        &serde_json::to_vec(&value).unwrap(),
+    );
     assert!(store.load().is_err());
-    std::fs::File::create(&path)
-        .unwrap()
-        .set_len(MAX_INVENTORY_BYTES as u64 + 1)
-        .unwrap();
-    assert!(store.load().unwrap_err().contains("128 MiB"));
+    let db = osg_persistence::Database::for_namespace(&path).unwrap();
+    assert!(db
+        .commit(&[osg_persistence::Change {
+            domain: "resources",
+            key: "inventory",
+            expected_revision: db.revision("resources", "inventory").unwrap(),
+            payload: Some(&vec![0; MAX_INVENTORY_BYTES + 1])
+        }])
+        .is_err());
+    assert!(store.load().is_err());
     assert!(store
         .save(&SavedRegistry {
             schema_version: 2,
@@ -59,7 +69,7 @@ fn inventory_storage_rejects_traversal_and_non_regular_targets() {
     assert!(Store::new("relative".into()).load().is_err());
     let temp = crate::test_directory();
     assert!(Store::new(temp.path().join("x").join("..")).load().is_err());
-    std::fs::create_dir(temp.path().join("inventory.json")).unwrap();
+    std::fs::create_dir(temp.path().join("cockpit.sqlite3")).unwrap();
     assert!(Store::new(temp.path().to_owned())
         .save(&SavedRegistry::default())
         .is_err());
@@ -120,9 +130,19 @@ fn a_saved_resource_round_trips_offline_and_tampered_port_metadata_is_preserved_
     value["resources"][0]["sightings"][0]["catalogue"]["ports"][0]["contract"]["freshnessMs"] =
         json!(2000);
     let corrupt = serde_json::to_vec(&value).unwrap();
-    std::fs::write(&path, &corrupt).unwrap();
+    let db = osg_persistence::Database::for_namespace(&path).unwrap();
+    db.commit(&[osg_persistence::Change {
+        domain: "resources",
+        key: "inventory",
+        expected_revision: db.revision("resources", "inventory").unwrap(),
+        payload: Some(&corrupt),
+    }])
+    .unwrap();
     assert!(store.load().unwrap_err().contains("fingerprint"));
-    assert_eq!(std::fs::read(&path).unwrap(), corrupt);
+    assert_eq!(
+        db.read("resources", "inventory").unwrap().unwrap().payload,
+        corrupt
+    );
 }
 
 #[cfg(windows)]
@@ -223,5 +243,5 @@ fn inventory_storage_refuses_symlinked_parent_and_target() {
     let target = temp.path().join("target");
     std::fs::write(&target, "{}").unwrap();
     symlink(&target, real.join("inventory.json")).unwrap();
-    assert!(Store::new(real).load().is_err());
+    assert!(Store::new(real).load().unwrap().is_none());
 }

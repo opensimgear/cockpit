@@ -1,4 +1,6 @@
 use super::*;
+#[path="companion_catalogue.rs"]
+mod companion;
 
 fn string(max: usize) -> Value {
     json!({"type":"string","minLength":1,"maxLength":max,"pattern":"^[^\\u0000-\\u001f\\u007f]*$"})
@@ -61,7 +63,14 @@ fn tool(name: &str, description: &str, properties: Vec<(&str, Value)>, required:
 /// Explicit discoverable tasks; there is intentionally no generic invoke or
 /// gateway command passthrough, even for an authenticated write-enabled client.
 pub fn catalogue() -> Vec<Value> {
-    vec![
+    let mut tools=vec![
+        tool("storage_status","List native SQLite backups and the exact catalogue revision. Backup paths and arbitrary SQL are never accepted.",vec![],&[]),
+        tool("storage_create","Create an online SQLite backup with hash-checked immutable assets. One backup slot is reserved for restore rollback.",vec![("expectedRevision",integer(0,9007199254740990))],&["expectedRevision"]),
+        tool("storage_remove","Retire one exact saved backup then clean up its private immutable bundle.",vec![("id",string(36)),("expectedRevision",integer(0,9007199254740990))],&["id","expectedRevision"]),
+        tool("storage_restore","Verify a saved backup, require stopped profiles and completed recovery, stop native workers and queue restore for the next restart. This replaces settings/content and invalidates all historical credentials and cleanup authority. Explicit confirmed:true is required.",vec![("id",string(36)),("expectedRevision",integer(0,9007199254740990)),("confirmed",json!({"type":"boolean","const":true}))],&["id","expectedRevision","confirmed"]),
+        tool("storage_restart","Restart the native Cockpit after a restore was explicitly queued. Reconnect and reissue credentials after startup.",vec![],&[]),
+        tool("ui_preferences_get","Read native SQLite UI preferences and revisions. Omit key for the seven frontend owners, or choose theme, devices-mode, canvas-navigation, canvas-styling, remembered, tray, progress or windows. Remembered observations remain stale/unowned until providers refresh.",vec![("key",choice(&["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress","windows"]))],&[]),
+        tool("ui_preferences_save","Save one exact native UI settings revision. Values: theme boolean; devices-mode list/topology; canvas-navigation {wheelAction:pan/zoom}; canvas-styling {arrowStyle:smooth/orthogonal,cornerRadius:0..100,collapseParallelWires:boolean}; tray {closeToTray:boolean,minimizeToTray:boolean}; progress {delivery:system/window,position:bottom-right/bottom-left/top-right/top-left}; windows {x,y,width,height,scaleFactor,maximized} for next startup; remembered {components,forgotten} is bounded metadata, never native device authority. Native validators reject extra fields. Actual device Forget/revoke and OS autostart use their own guarded controls.",vec![("key",choice(&["theme","devices-mode","canvas-navigation","canvas-styling","remembered","tray","progress","windows"])),("expectedRevision",integer(0,9007199254740990)),("value",json!({"type":["boolean","string","object","null"]}))],&["key","expectedRevision","value"]),
         tool("operation_status","Reconcile a retained mutation for this authenticated client. The ledger survives reconnects during this MCP server lifetime; reconcile native state after a server restart.",vec![("operationId",string(36))],&["operationId"]),
         tool("profiles_list","List saved profile summaries, revisions, eligibility and selection. Saving and selection do not activate outputs.",page(),&[]),
         tool("profile_get","Read a saved portable profile and its exact machine-local resource assignments. Use returned revision for edits.",vec![("id",string(36))],&["id"]),
@@ -81,10 +90,22 @@ pub fn catalogue() -> Vec<Value> {
         tool("game_telemetry_inspect","Read bounded passive telemetry values and canonical channel metadata from one game. This does not start a provider or apply a profile.",fields(vec![("gameId",string(64)),("search",json!({"type":"string","maxLength":200})),("group",json!({"type":"string","maxLength":256}))],page()),&[]),
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
+        tool("mcp_settings_get","Read this running Cockpit MCP server's public configuration, credential metadata and exact settingsRevision. Bearer tokens and hashes are excluded.",vec![],&[]),
+        tool("mcp_settings_update","Save local MCP enablement/port at exact expectedSettingsRevision. Disabling or changing port requires reconnecting to the returned endpoint.",vec![("enabled",json!({"type":"boolean"})),("port",integer(1024,65535)),("expectedSettingsRevision",integer(0,9007199254740991))],&["enabled","port","expectedSettingsRevision"]),
+        tool("mcp_credential_create","Create one named read/write credential at the exact settings revision. The reply contains its one-time token; Cockpit persists only its hash. Configure the intended client with that token.",vec![("name",string(80)),("scope",choice(&["read","write"])),("expectedSettingsRevision",integer(0,9007199254740991))],&["name","scope","expectedSettingsRevision"]),
+        tool("mcp_credential_rotate","Atomically replace a credential at exact expectedSettingsRevision, retaining its name/scope and returning the one-time replacement token. The old token is revoked in the same SQLite commit.",vec![("id",string(36)),("expectedSettingsRevision",integer(0,9007199254740991))],&["id","expectedSettingsRevision"]),
+        tool("mcp_credential_revoke","Revoke one credential at exact expectedSettingsRevision. Its token immediately loses access; other credentials are preserved.",vec![("id",string(36)),("expectedSettingsRevision",integer(0,9007199254740991))],&["id","expectedSettingsRevision"]),
+        tool("companion_listener_get","Read native listener configuration, configured/live state, errors and exact settingsRevision. This uses the same native companion setup as the portal.",vec![],&[]),
+        tool("companion_listener_save","Enable or disable the native companion listener at exact expectedSettingsRevision. Enabling requires address IP, port, advertisedHost and discovery. Configuration commits in SQLite before listener startup; bind failures retain configured intent and report the live error. Disable commits before stopping; rejected writes preserve the prior setting.",vec![("enabled",json!({"type":"boolean"})),("expectedSettingsRevision",integer(0,9007199254740991)),("address",string(64)),("port",integer(1024,65535)),("advertisedHost",string(253)),("discovery",json!({"type":"boolean"}))],&["enabled","expectedSettingsRevision"]),
         tool("companion_panels_list","List retained verified companion panel publications and compatibility; publication hashes are immutable authoring metadata.",page(),&[]),
+        tool("designer_workspace_read","Read the native designer workspace as UTF-8 JSON in 48 KiB base64 chunks. Preserve revision and workspaceHash; pass expectedHash for later offsets to reject concurrent edits. Null JSON means no saved workspace. Drafts, source revisions and verified publications share one native SQLite authority.",vec![("offset",integer(0,67108864)),("expectedHash",string(71))],&[]),
+        tool("designer_workspace_begin","Begin a bounded designer snapshot upload. Read current workspace first; edit its plain sources/drafts/publications. Provide byte length and sha256 hash of the complete UTF-8 JSON. Nothing is persisted until commit; uploads expire after ten minutes.",vec![("expectedRevision",integer(0,9007199254740991)),("expectedLibraryRevision",integer(0,9007199254740991)),("totalBytes",integer(1,67108864)),("workspaceHash",string(71))],&["expectedRevision","expectedLibraryRevision","totalBytes","workspaceHash"]),
+        tool("designer_workspace_chunk","Append at most 48 KiB of UTF-8 JSON bytes, base64 encoded, to your exact uploadId at the acknowledged byte offset.",vec![("uploadId",string(36)),("offset",integer(0,67108864)),("base64",string(65536))],&["uploadId","offset","base64"]),
+        tool("designer_workspace_commit","Validate and atomically save the complete designer workspace plus immutable shared widget sources at expectedRevision. Rejected or busy writes preserve current data and keep the upload for retry. Saving authoring data does not assign or activate outputs.",vec![("uploadId",string(36))],&["uploadId"]),
+        tool("designer_workspace_abort","Discard your incomplete designer upload without changing saved state.",vec![("uploadId",string(36))],&["uploadId"]),
         tool("widgets_list","List generic widget sources in the shared Cockpit Widgets library. Returns the latest source revision; Toggle is the sole built-in seed.",page(),&[]),
         tool("widget_get","Read the current plain widget source by ID. Artwork, states, signal expressions and effects compile into finished pixels.",vec![("id",string(64))],&["id"]),
-        tool("widget_save","Save one current widget source in place. Read cockpit://guide/widgets. Send {definitions:[source]}; there are no format or revision fields. Native admission checks the complete source. This does not compile, publish, assign or activate a panel.",vec![("bundle",object())],&["bundle"]),
+        tool("widget_save","Save one current widget source in place. Read cockpit://guide/widgets. Send {definitions:[source]} and the exact expectedRevision from widgets_list/widget_get. Sources have no format or revision fields. Native admission checks the complete source. This does not compile, publish, assign or activate a panel.",vec![("bundle",object()),("expectedRevision",integer(0,9007199254740990))],&["bundle","expectedRevision"]),
         tool("companion_inspect","Inspect a retained companion panel's typed ports using an exact native resource identity and immutable publication hash.",fields(vec![("resourceId",string(36)),("publicationHash",string(71))],page()),&["resourceId","publicationHash"]),
         tool("profile_prepare_changes","Prepare and compile an ephemeral draft without saving, selecting or activating. Supply either profileId plus expectedRevision and typed edits; a full document plus explicit null/numeric expectedRevision; or name plus expectedRevision:null for a new graph. Local assignments remain separate. Returns draftId, deterministic diff, validation and native compiler diagnostics. Read cockpit://schemas/profile and cockpit://guide/configuration first.",vec![("profileId",string(36)),("expectedRevision",nullable_revision()),("name",string(80)),("document",schema::reference("ProfileDocument")),("edits",json!({"type":"array","maxItems":256,"items":schema::reference("Edit")})),("assignments",json!({"type":"array","maxItems":64,"items":schema::reference("LocalAssignment")}))],&["expectedRevision"]),
         tool("profile_save_prepared","Atomically persist the exact prepared document and local assignments with its captured expectedRevision. A save never applies or reapplies outputs. Drafts expire after 30 minutes and belong to this client.",vec![("draftId",string(36))],&["draftId"]),
@@ -111,14 +132,25 @@ pub fn catalogue() -> Vec<Value> {
         tool("device_config_prepare","Read one exact gateway/USB module configuration, validate a complete candidate with the native config encoder, and return a deterministic reviewable diff. Performs no claim, apply or save. Gateway selectors are gatewayId+moduleId; USB selectors are key+current route. The resulting baseline is review context; explicit setup rechecks native ownership, boot and route, and firmware semantic acceptance remains an Apply result.",vec![("transport",choice(&["gateway","usb"])),("gatewayId",string(100)),("moduleId",string(80)),("key",string(256)),("route",object()),("config",schema::runtime_config())],&["transport","config"]),
         tool("local_settings_get","Read revisioned machine-local game-provider, desktop or automatic-selection preferences. Path-bearing provider preferences never enter a portable profile.",vec![("scope",scope()),("gameId",string(64))],&["scope"]),
         tool("local_settings_save","Save typed machine-local preferences with the exact settings revision and observed active owner. Scope-specific native validation rejects unknown fields; provider paths are preferences, never arbitrary file access. Read the workflow resource for scope settings.",vec![("scope",scope()),("gameId",string(64)),("expectedSettingsRevision",string(128)),("expectedActiveOwner",owner()),("settings",object())],&["scope","expectedSettingsRevision","expectedActiveOwner","settings"]),
-    ]
+    ];
+    tools.extend(companion::catalogue());tools
 }
 
 pub fn is_mutation(name: &str) -> bool {
-    matches!(
+    super::companion_controls::mutation(name)||matches!(
         name,
-        "profile_create"
+        "storage_create" | "storage_remove" | "storage_restore" | "storage_restart" | "profile_create"
+            | "ui_preferences_save"
             | "widget_save"
+            | "mcp_settings_update"
+            | "mcp_credential_create"
+            | "mcp_credential_rotate"
+            | "mcp_credential_revoke"
+            | "companion_listener_save"
+            | "designer_workspace_begin"
+            | "designer_workspace_chunk"
+            | "designer_workspace_commit"
+            | "designer_workspace_abort"
             | "profile_duplicate"
             | "profile_rename"
             | "profile_delete"

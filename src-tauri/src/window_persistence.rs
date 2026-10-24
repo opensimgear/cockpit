@@ -1,11 +1,11 @@
 //! Coalesce native move/resize bursts without relying on a clean app exit.
-use std::{sync::{mpsc::{self, RecvTimeoutError, Sender}, Mutex}, time::Duration};
+use std::{sync::{mpsc::{self, RecvTimeoutError, SyncSender}, Mutex}, time::Duration};
 
-pub(crate) struct SaveWorker(Mutex<Option<Sender<()>>>);
+pub(crate) struct SaveWorker(Mutex<Option<SyncSender<()>>>);
 
 impl SaveWorker {
     pub(crate) fn new(delay: Duration, mut save: impl FnMut() + Send + 'static) -> Self {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
             while receiver.recv().is_ok() {
                 loop {
@@ -22,7 +22,7 @@ impl SaveWorker {
 
     pub(crate) fn changed(&self) {
         if let Some(sender) = self.0.lock().unwrap_or_else(|p|p.into_inner()).as_ref() {
-            let _ = sender.send(());
+            let _ = sender.try_send(());
         }
     }
 

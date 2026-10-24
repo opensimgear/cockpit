@@ -46,7 +46,7 @@ fn status(record: &Record) -> Status {
 }
 #[test]
 fn real_journal_handoff_reverses_original_before_new_hide_and_stop_restores_original() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_directory();
     let mut driver = Driver(original());
     let mut old = Store::open(root.path().join("old.json")).unwrap();
     let record = journal::apply(&mut driver, &mut old, plan(original()), || Ok(())).unwrap();
@@ -76,7 +76,7 @@ fn real_journal_handoff_reverses_original_before_new_hide_and_stop_restores_orig
 }
 #[test]
 fn partial_dirty_changed_owner_and_external_driver_state_never_prove_active() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_directory();
     let mut driver = Driver(original());
     let mut store = Store::open(root.path().join("owner.json")).unwrap();
     let record = journal::apply(&mut driver, &mut store, plan(original()), || Ok(())).unwrap();
@@ -120,7 +120,7 @@ fn partial_dirty_changed_owner_and_external_driver_state_never_prove_active() {
 }
 #[test]
 fn restored_proof_rejects_other_journal_or_worker_and_original_state_edits() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_directory();
     let mut driver = Driver(original());
     let mut store = Store::open(root.path().join("owner.json")).unwrap();
     let record = journal::apply(&mut driver, &mut store, plan(original()), || Ok(())).unwrap();
@@ -152,7 +152,7 @@ fn restored_proof_rejects_other_journal_or_worker_and_original_state_edits() {
 }
 #[test]
 fn proof_wire_is_strict_bounded_and_cannot_relabel_an_original_plan() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_directory();
     let mut driver = Driver(original());
     let mut store = Store::open(root.path().join("owner.json")).unwrap();
     let record = journal::apply(&mut driver, &mut store, plan(original()), || Ok(())).unwrap();

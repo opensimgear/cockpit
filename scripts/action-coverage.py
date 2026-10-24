@@ -59,17 +59,17 @@ def main():
                root / 'src-tauri/src/pico.rs', root / 'src-tauri/src/local_gateway.rs']
     annotated = command([str(llvm / 'llvm-cov'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
-    (output / 'lines.txt').write_text(annotated)
+    (output / 'lines.txt').write_text(annotated, encoding='utf-8')
     counts, current = {}, ''
     for line in annotated.splitlines():
         if line.endswith(':') and line[:-1] in map(str, sources):
             current = Path(line[:-1]).name
         if match := re.match(r'^\s*(\d+)\|\s*(\d+)\|', line):
             counts.setdefault(current, {})[int(match[1])] = int(match[2])
-    actions = sources[0].read_text().splitlines()
-    adapter = sources[1].read_text().splitlines()
-    pico = sources[2].read_text().splitlines()
-    local = sources[3].read_text().splitlines()
+    actions = sources[0].read_text(encoding='utf-8').splitlines()
+    adapter = sources[1].read_text(encoding='utf-8').splitlines()
+    pico = sources[2].read_text(encoding='utf-8').splitlines()
+    local = sources[3].read_text(encoding='utf-8').splitlines()
     find = lambda lines, marker: next(i + 1 for i, line in enumerate(lines) if marker in line)
     ranges = {'actions.rs': [(1, find(actions, '#[cfg(test)]') - 1)],
               'stm32.rs': [(find(adapter, 'fn action_route('), find(adapter, 'struct Gateway {') - 1),
@@ -86,7 +86,7 @@ def main():
         percent = 100 * covered / len(measured)
         report[name] = {'covered': covered, 'lines': len(measured), 'percent': round(percent, 2)}
         print(f'{name}: {covered}/{len(measured)} production lines ({percent:.2f}%)', flush=True)
-    (output / 'action-summary.json').write_text(json.dumps(report, indent=2) + '\n')
+    (output / 'action-summary.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] <= 70 for item in report.values()):
         raise SystemExit('Production device-action line coverage must exceed 70%.')
 

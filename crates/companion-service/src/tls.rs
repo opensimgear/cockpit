@@ -8,13 +8,14 @@ use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{io::Read, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
+use crate::persistence::{SealedSqliteStore,StateStorage};
 use subtle::ConstantTimeEq;
 use time::{Duration, OffsetDateTime};
 use zeroize::Zeroize;
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeIdentity {
     pub host_id: String,
     pub ca_cert_der: Vec<u8>,
@@ -27,24 +28,6 @@ impl Drop for NativeIdentity {
         self.ca_key_der.zeroize();
         self.server_key_der.zeroize();
     }
-}
-pub(crate) fn read_sealed(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > limit as u64 {
-        return Err(
-            "Protected native state exceeds its file budget or is not a regular leaf".into(),
-        );
-    }
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .map_err(|error| error.to_string())?
-        .take((limit + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    if bytes.len() > limit {
-        return Err("Protected native state grew beyond its budget".into());
-    }
-    Ok(bytes)
 }
 pub fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
@@ -117,29 +100,17 @@ impl NativeIdentity {
         Ok(identity)
     }
     pub fn load_or_create(path: &Path, host_id: &str, names: Vec<String>) -> Result<Self, String> {
-        let mut identity = if path.exists() {
-            let bytes = read_sealed(path, 131072)?;
-            if bytes.len() > 131072 {
-                return Err("Stored TLS identity exceeds its budget".into());
-            }
-            let mut plain = crate::persistence::unseal(&bytes)?;
-            let decoded = serde_json::from_slice::<Self>(&plain)
-                .map_err(|_| "Stored TLS identity is invalid".to_string());
-            plain.zeroize();
-            let value = decoded?;
-            if value.host_id != host_id {
-                return Err("Stored TLS identity belongs to another host; explicit reset and re-pairing are required".into());
-            }
-            ca_spki_pin(&value.ca_cert_der)?;
-            value
-        } else {
-            Self::generate(host_id, names.clone())?
-        };
+        let storage=SealedSqliteStore::new(path);
+        let mut identity = if let Some(plain)=storage.read()? {
+            let plain=zeroize::Zeroizing::new(plain);
+            if plain.len()>131072{return Err("Stored TLS identity exceeds its budget".into());}
+            let value=serde_json::from_slice::<Self>(&plain).map_err(|_|"Stored TLS identity is invalid".to_string())?;
+            if value.host_id!=host_id{return Err("Stored TLS identity belongs to another host; explicit reset and re-pairing are required".into());}
+            ca_spki_pin(&value.ca_cert_der)?;value
+        } else {Self::generate(host_id,names.clone())?};
         identity.renew_leaf(names)?;
-        let mut plain = serde_json::to_vec(&identity).map_err(|error| error.to_string())?;
-        let sealed = crate::persistence::seal(&plain)?;
-        plain.zeroize();
-        crate::persistence::atomic_write(path, &sealed)?;
+        let plain=zeroize::Zeroizing::new(serde_json::to_vec(&identity).map_err(|error|error.to_string())?);
+        storage.write(&plain)?;
         Ok(identity)
     }
     pub fn renew_leaf(&mut self, names: Vec<String>) -> Result<(), String> {
@@ -253,7 +224,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn identity_reload_preserves_pin_and_refuses_foreign_or_corrupted_native_state() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = directory.path().join("identity.dpapi");
         let first =
             NativeIdentity::load_or_create(&path, "host", vec!["localhost".into()]).unwrap();
@@ -261,9 +232,10 @@ mod tests {
             NativeIdentity::load_or_create(&path, "host", vec!["127.0.0.1".into()]).unwrap();
         assert_eq!(first.pin().unwrap(), second.pin().unwrap());
         assert!(NativeIdentity::load_or_create(&path, "other", vec!["localhost".into()]).is_err());
-        std::fs::write(&path, b"corrupt").unwrap();
+        let storage=SealedSqliteStore::new(&path);storage.read().unwrap();
+        storage.write(b"corrupt").unwrap();
         assert!(NativeIdentity::load_or_create(&path, "host", vec!["localhost".into()]).is_err());
-        std::fs::write(&path, vec![0; 131073]).unwrap();
+        storage.write(&vec![0;131073]).unwrap();
         assert!(NativeIdentity::load_or_create(&path, "host", vec!["localhost".into()]).is_err());
     }
 }

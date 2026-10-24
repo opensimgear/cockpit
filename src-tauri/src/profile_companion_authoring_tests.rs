@@ -16,6 +16,7 @@ fn publish(hub:&Hub,changed:bool)->Publication {
 }
 fn fixture()->(Runtime,Hub,Publication,Publication,tempfile::TempDir) {
     let directory=crate::test_directory();
+    crate::companion_settings::firmware(directory.path()).unwrap();
     let provider=Arc::new(CompanionProvider::new(Arc::new(||1)));
     let hub=Hub::new("passive-authoring".into(),provider.clone());
     let offer=hub.command(&json!({"command":"companion_pair_offer"})).unwrap();
@@ -35,7 +36,7 @@ fn passive_catalogue_has_bounded_real_metadata_no_assets_and_stable_content_fing
     assert_eq!(first.panels[0].panel_id,"flight-panel");
     assert!(first.panels.iter().all(|panel|(1..=128).contains(&panel.control_count)));
     assert_eq!(first.revision,runtime.profile_authoring_catalogue().unwrap().revision);
-    assert!(runtime.services.get().is_none());assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(),0);
+    assert!(runtime.services.get().is_none());assert_eq!(std::fs::read_dir(directory.path()).unwrap().map(|entry|entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>(),["cockpit.sqlite3"]);
     let serialized=serde_json::to_value(&first).unwrap();
     assert!(serialized["panels"][0].get("assets").is_none());
     assert!(serialized["panels"][0].get("canonicalDocument").is_none());
@@ -84,7 +85,7 @@ fn catalogue_compatibility_matches_paired_screen_size_and_device_support_without
         let pending=hub.handle_wire(json!({"type":"pair","secret":offer["secret"],"companionId":companion,"name":companion}),companion,hub.now_ms());
         hub.command(&json!({"command":"companion_approve","requestId":pending["requestId"],"companionId":companion})).unwrap();
     }
-    std::fs::write(directory.path().join("companion-firmware.json"),serde_json::to_vec(&json!({"sunton":{"profile":"sunton-3248s035r"},"waveshare":{"profile":"waveshare-lcd7-s3"}})).unwrap()).unwrap();
+    crate::companion_settings::firmware(directory.path()).unwrap().0.save(&json!({"sunton":{"profile":"sunton-3248s035r"},"waveshare":{"profile":"waveshare-lcd7-s3"}})).unwrap();
     let blank=publish_zero_control_panel(&hub,true);
     let mut document=hub.publication_document(&blank.publication_hash).unwrap();
     document["ui"]["id"]=json!("sunton-panel");document["ui"]["title"]=json!("Sunton display only");
@@ -171,7 +172,8 @@ fn malformed_unknown_unpaired_and_oversized_requests_fail_without_initializing_t
 fn authoring_read_of_missing_setup_never_creates_state_or_listener() {
     let directory=crate::test_directory();let missing=directory.path().join("missing");
     let runtime=Runtime::new(Some(missing.clone()),Arc::new(CompanionProvider::new(Arc::new(||1))));
-    assert!(runtime.profile_authoring_catalogue().is_err());
+    assert!(runtime.profile_authoring_catalogue().unwrap().panels.is_empty());
+    assert!(runtime.saved_panel_updates().unwrap().is_empty());assert!(runtime.saved_panel_heads().unwrap().is_empty());assert!(runtime.saved_panel_references().unwrap().is_empty());
     assert!(runtime.profile_authoring_inspect("r","instance",&format!("sha256:{}","0".repeat(64)),0,1).is_err());
     assert!(!missing.exists());assert!(runtime.services.get().is_none());assert!(runtime.metadata.get().is_none());runtime.shutdown();
 }

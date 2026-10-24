@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fs::{File, OpenOptions},
-    io::{Read, Write},
     path::{Path, PathBuf},
 };
 const LIMIT: usize = 65_536;
@@ -21,15 +20,13 @@ pub enum Phase {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Record {
-    pub schema: u32,
     pub token: RunToken,
     pub bindings: Vec<Binding>,
     pub phase: Phase,
 }
 impl Record {
     fn validate(&self) -> Result<(), String> {
-        if self.schema != 1
-            || self.token.generation.0 == 0
+        if self.token.generation.0 == 0
             || uuid::Uuid::parse_str(&self.token.session)
                 .ok()
                 .map(|u| u.to_string())
@@ -54,31 +51,8 @@ impl Record {
         self.phase != Phase::Clean
     }
 }
-fn regular(path: &Path) -> Result<(), String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
-            Err("Recovery paths must be regular files.".into())
-        }
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.to_string()),
-    }
-}
 fn bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    regular(path)?;
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.to_string()),
-    };
-    let mut data = Vec::new();
-    file.take(LIMIT as u64 + 1)
-        .read_to_end(&mut data)
-        .map_err(|e| e.to_string())?;
-    if data.len() > LIMIT {
-        return Err("Output recovery record exceeds 64 KiB.".into());
-    }
-    Ok(Some(data))
+    osg_persistence::Evidence::inspect(path,"recovery-output",LIMIT)
 }
 fn decode(data: &[u8]) -> Result<Record, String> {
     let record: Record =
@@ -91,9 +65,8 @@ pub fn inspect(path: &Path) -> Result<Option<Record>, String> {
     bytes(path)?.as_deref().map(decode).transpose()
 }
 pub struct Store {
-    path: PathBuf,
+    evidence: osg_persistence::Evidence,
     _lock: File,
-    expected: Option<Vec<u8>>,
     record: Option<Record>,
 }
 impl Drop for Store {
@@ -106,12 +79,9 @@ impl Drop for Store {
 }
 impl Store {
     pub fn open(path: PathBuf) -> Result<Self, String> {
-        let parent = path
-            .parent()
-            .ok_or("Output recovery requires a storage directory.")?;
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let lock_path = path.with_extension("lock");
-        regular(&lock_path)?;
+        osg_persistence::check_path(&path,false)?;
+        let lock_path=path.with_extension("lock");
+        osg_persistence::check_path(&lock_path,true)?;
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -121,12 +91,11 @@ impl Store {
             .map_err(|e| e.to_string())?;
         lock.try_lock()
             .map_err(|e| format!("Another Cockpit session owns output recovery storage: {e}"))?;
-        let expected = bytes(&path)?;
-        let record = expected.as_deref().map(decode).transpose()?;
+        let evidence = osg_persistence::Evidence::open(&path,"recovery-output",LIMIT)?;
+        let record = evidence.payload().map(decode).transpose()?;
         Ok(Self {
-            path,
+            evidence,
             _lock: lock,
-            expected,
             record,
         })
     }
@@ -135,31 +104,17 @@ impl Store {
     }
     /// Read-only comparison while this Store still holds the ownership lock.
     pub fn verify_current(&self) -> Result<(), String> {
-        if bytes(&self.path)? != self.expected {
-            return Err("Output recovery record changed externally; preserving it.".into());
-        }
-        Ok(())
+        self.evidence.verify()
     }
     fn save(&mut self, record: Record) -> Result<(), String> {
         record.validate()?;
-        if bytes(&self.path)? != self.expected {
-            return Err("Output recovery record changed externally; preserving it.".into());
-        }
+        self.evidence.verify()?;
         let data = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
         if data.len() > LIMIT {
             return Err("Output recovery record exceeds 64 KiB.".into());
         }
-        let parent = self.path.parent().unwrap();
-        let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        temp.write_all(&data).map_err(|e| e.to_string())?;
-        temp.as_file().sync_all().map_err(|e| e.to_string())?;
-        temp.persist(&self.path).map_err(|e| e.to_string())?;
-        self.expected = Some(data);
+        self.evidence.write(&data)?;
         self.record = Some(record);
-        #[cfg(unix)]
-        File::open(parent)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
         Ok(())
     }
     pub fn begin(&mut self, token: RunToken, bindings: Vec<Binding>) -> Result<(), String> {
@@ -167,7 +122,6 @@ impl Store {
             return Err("Resolve the interrupted output run before starting another.".into());
         }
         self.save(Record {
-            schema: 1,
             token,
             bindings,
             phase: Phase::Intent,

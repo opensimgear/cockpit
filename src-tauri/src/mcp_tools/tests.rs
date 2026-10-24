@@ -8,11 +8,11 @@ fn widget_tasks_use_native_validation_persistence_and_mutation_ledger(){
     let guide=tools.read_resource("cockpit://guide/widgets",CLIENT);
     let mut bundle=guide["data"]["example"].clone();bundle["definitions"][0]["id"]=json!("mcp-native-widget");
     assert!(bundle.get("bundleVersion").is_none());assert!(bundle["definitions"][0].get("revision").is_none());
-    let args=json!({"operationId":operation(),"bundle":bundle});let saved=tools.call("widget_save",args.clone(),CLIENT);assert_eq!(saved["ok"],true,"{saved}");assert_eq!(tools.call("widget_save",args,CLIENT),saved);
-    assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"],bundle);assert_eq!(tools.call("widgets_list",json!({}),CLIENT)["data"]["total"],2);
+    let args=json!({"operationId":operation(),"expectedRevision":0,"bundle":bundle});let saved=tools.call("widget_save",args.clone(),CLIENT);assert_eq!(saved["ok"],true,"{saved}");assert_eq!(tools.call("widget_save",args,CLIENT),saved);
+    assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"]["definitions"],bundle["definitions"]);assert_eq!(tools.call("widgets_list",json!({}),CLIENT)["data"]["total"],2);
     let mut next=bundle.clone();next["definitions"][0]["title"]=json!("Updated capsule");
-    let updated=tools.call("widget_save",json!({"operationId":operation(),"bundle":next}),CLIENT);assert_eq!(updated["ok"],true,"{updated}");assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"],next);
-    let mut invalid=next.clone();invalid["definitions"][0]["scene"][0]=json!({"id":"bad","kind":"script","code":"alert(1)"});assert_eq!(tools.call("widget_save",json!({"operationId":operation(),"bundle":invalid}),CLIENT)["ok"],false);assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"],next);
+    let updated=tools.call("widget_save",json!({"operationId":operation(),"expectedRevision":1,"bundle":next}),CLIENT);assert_eq!(updated["ok"],true,"{updated}");assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"]["definitions"],next["definitions"]);
+    let mut invalid=next.clone();invalid["definitions"][0]["scene"][0]=json!({"id":"bad","kind":"script","code":"alert(1)"});assert_eq!(tools.call("widget_save",json!({"operationId":operation(),"expectedRevision":2,"bundle":invalid}),CLIENT)["ok"],false);assert_eq!(tools.call("widget_get",json!({"id":"mcp-native-widget"}),CLIENT)["data"]["definitions"],next["definitions"]);
     assert_eq!(tools.call("widget_save",json!({"bundle":bundle}),CLIENT)["error"]["code"],"invalid_arguments");
 
 }
@@ -89,6 +89,8 @@ fn setup() -> (Tools, Arc<Fake>) {
             backend: backend.clone(),
             ledger: Mutex::new(Default::default()),
             drafts: Mutex::new(vec![]),
+            workspace_uploads: Mutex::new(vec![]),
+            integration:OnceLock::new(),
         },
         backend,
     )
@@ -685,4 +687,14 @@ fn game_vehicle_catalogues_have_search_pages_setup_stamps_and_compact_game_summa
         .unwrap()
         .iter()
         .all(|call| call["command"] == "game_get_state"));
+}
+
+#[test]
+fn storage_tools_require_mutation_identity_and_never_accept_paths_or_sql(){
+ let tools=Tools::new(Arc::new(GatewayManager::mcp_test_manager()));
+ assert!(!is_mutation("storage_status"));
+ for name in ["storage_create","storage_remove","storage_restore","storage_restart"]{assert!(is_mutation(name));let result=tools.call(name,json!({}),CLIENT);assert_eq!(result["error"]["code"],"invalid_arguments","{name}: {result}");}
+ for name in ["storage_status","storage_create","storage_remove","storage_restore","storage_restart"]{let tool=catalogue().into_iter().find(|tool|tool["name"]==name).unwrap();assert_eq!(tool["inputSchema"]["additionalProperties"],false);assert_eq!(tool["annotations"]["readOnlyHint"],name=="storage_status");}
+ assert_eq!(tools.call("storage_restore",json!({"operationId":operation(),"id":uuid::Uuid::new_v4().to_string(),"expectedRevision":0,"confirmed":true,"path":"external.sqlite3"}),CLIENT)["error"]["code"],"invalid_arguments");
+ assert_eq!(tools.call("storage_status",json!({}),CLIENT)["ok"],false);
 }

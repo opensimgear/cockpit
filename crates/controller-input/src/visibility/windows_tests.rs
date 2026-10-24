@@ -21,7 +21,7 @@ fn paths_use_existing_os_handles_and_invalid_paths_are_inert() {
 }
 #[test]
 fn absent_unsupported_and_installed_dependency_inspection_never_mutates() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("HidHide.sys");
     assert!(artifact(&path).is_err());
     std::fs::write(&path, b"unqualified").unwrap();
@@ -58,7 +58,7 @@ fn native_transport_rejects_writes_and_malformed_requests_before_io() {
 }
 #[test]
 fn self_access_transport_cannot_write_other_properties_or_bypass_dependency_verification() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("missing.sys");
     assert_eq!(verify_artifact(&path).unwrap_err().status().status, "absent");
     std::fs::write(&path, b"unsupported driver").unwrap();

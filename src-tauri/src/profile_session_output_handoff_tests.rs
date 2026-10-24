@@ -1482,6 +1482,7 @@ fn populated_native_preparation_keeps_exact_pins_without_recapturing_unused_cata
     // Native storage guards cannot be replaced by the existence of old pins.
     let corrupt = crate::test_directory();
     std::fs::write(corrupt.path().join("inventory.json"), b"corrupt").unwrap();
+    crate::persistence::test_support::record(&corrupt.path().join("inventory.json"),"resources","inventory",&std::fs::read(&corrupt.path().join("inventory.json")).unwrap());
     let unreadable = Arc::new(crate::profile_resources::Runtime::new(
         Some(corrupt.path().to_path_buf()),
         Arc::new(|_| panic!("No discovery")),

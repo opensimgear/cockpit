@@ -1,3 +1,4 @@
+import {progressSettingsInvoke} from './native-progress-settings.mjs';
 // Real dev Cockpit, a native child window and a physical USB screen. No mocked IPC.
 // Cleanup observation subscribes to the actual loaded gateway module; it never
 // replaces transport or inserts artificial delays into native output cleanup.
@@ -34,6 +35,7 @@ test('real native progress covers physical activation, exact cancellation, recov
   const evidence={actualNativeCockpit:true,physicalCompanion:true,checks:[],activation:[]};
   const checkpoint=async stage=>{evidence.stage=stage;await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(stage);};
   let original,fixture,profileId,probeId,child,originalMode,activationId,originalProgressSettings;
+  const invokeProgress=progressSettingsInvoke((command,args={})=>native.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`));
   const request=async(command,payload={})=>{const value={command,clientId:'profile-activation-progress-native',...(command.startsWith('companion_')?{companion:payload}:payload)};const reply=await native.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify(value)}})`);assert.equal(reply.ok,true,reply.error??command);return reply.state;};
   const profileStatus=async()=>(await request('profile_status')).profiles.profileSession;
   const companions=async()=>(await request('companion_status')).companions;
@@ -94,8 +96,8 @@ test('real native progress covers physical activation, exact cancellation, recov
     }
   };
   try{
-    originalProgressSettings=await native.evaluate(`window.__TAURI_INTERNALS__.invoke('profile_progress_settings_get')`);
-    await native.evaluate(`window.__TAURI_INTERNALS__.invoke('profile_progress_settings_save',{settings:${JSON.stringify({...originalProgressSettings,delivery:'window'})}})`);
+    originalProgressSettings=await invokeProgress('profile_progress_settings_get');
+    await invokeProgress('profile_progress_settings_save',{settings:{...originalProgressSettings,delivery:'window'}});
     const initial=await profileStatus();assert.equal(initial.owner,null,'Run acceptance with no active profile.');assert.equal(initial.fault,null);
     const before=await companions();original=instance(before);assert.ok(original,'The physical companion must have its ordinary panel assigned first.');
     assert.ok(peer(before)?.operation,'This acceptance requires cache-aware companion firmware.');await ready(original.publicationHash);
@@ -190,7 +192,7 @@ test('real native progress covers physical activation, exact cancellation, recov
       if(probeId)await deleteProfile(probeId);if(profileId)await deleteProfile(profileId);
       if(fixture)await request('companion_prune',{hashes:[],panelIds:[fixture.panelId]});
       if(originalMode&&originalMode!=='manual')await request('profile_selection_mode',{mode:originalMode});
-      if(originalProgressSettings)await native.evaluate(`window.__TAURI_INTERNALS__.invoke('profile_progress_settings_save',{settings:${JSON.stringify(originalProgressSettings)}})`);
+      if(originalProgressSettings)await invokeProgress('profile_progress_settings_save',{settings:originalProgressSettings});
       evidence.finalStatus=await profileStatus();assert.equal(evidence.finalStatus.owner,null);assert.equal(evidence.finalStatus.fault,null);
     }catch(error){evidence.cleanupError=error.message;throw error;}
     finally{await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');child?.close();native.close();}

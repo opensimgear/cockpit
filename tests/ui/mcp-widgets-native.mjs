@@ -32,7 +32,7 @@ async function nativePage() {
   const send = (method, params = {}) => new Promise((resolve, reject) => { const id = ++sequence, timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out`)); }, 45000); pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params })); });
   return {
     send,
-    async evaluate(fn, ...args) { const reply = await send('Runtime.evaluate', { expression: `(${fn.toString()})(...${JSON.stringify(args)})`, awaitPromise: true, returnByValue: true }); if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text); return reply.result.value; },
+    async evaluate(fn, ...args) { const reply = await send('Runtime.evaluate', { expression: `(${fn.toString()})(...${JSON.stringify(args)})`, awaitPromise: true, returnByValue: true }); if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.exception?.value ?? reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text); return reply.result.value; },
     async invoke(command, args = {}) { return this.evaluate((command, args) => window.__TAURI_INTERNALS__.invoke(command, args), command, args); },
     async native(request) { const response = await this.invoke('gateway_request', { request: { ...request, clientId: 'mcp-native-acceptance-ui' } }); assert.equal(response.ok, true, response.error); return response.state; },
     close() { for (const task of pending.values()) clearTimeout(task.timer); socket.close(); },
@@ -57,9 +57,9 @@ test('MCP widget saves replace plain sources in the running Widgets editor', {ti
   try {
     await until(()=>page.evaluate(()=>typeof window.__TAURI_INTERNALS__?.invoke==='function'&&!!document.querySelector('nav[aria-label="Main navigation"]')),'Native cockpit did not finish startup');
     settings=await page.invoke('mcp_settings_get');
-    const write=await page.invoke('mcp_credential_create',{name:'Widget acceptance writer',scope:'write'});credentials.push(write.credential.id);
-    const read=await page.invoke('mcp_credential_create',{name:'Widget acceptance reader',scope:'read'});credentials.push(read.credential.id);
-    const status=await page.invoke('mcp_settings_update',{settings:{enabled:true,port:settings.port}});
+    const write=await page.invoke('mcp_credential_create',{name:'Widget acceptance writer',scope:'write',expectedSettingsRevision:(await page.invoke('mcp_settings_get')).settingsRevision});credentials.push(write.credential.id);
+    const read=await page.invoke('mcp_credential_create',{name:'Widget acceptance reader',scope:'read',expectedSettingsRevision:(await page.invoke('mcp_settings_get')).settingsRevision});credentials.push(read.credential.id);
+    const status=await page.invoke('mcp_settings_update',{settings:{enabled:true,port:settings.port,expectedSettingsRevision:(await page.invoke('mcp_settings_get')).settingsRevision}});
     const writer=await connect(status.endpoint,write.token);clients.push(writer);
     const reader=await connect(status.endpoint,read.token);clients.push(reader);
     assert.ok((await writer.listTools()).tools.some(t=>t.name==='widget_save'));
@@ -69,13 +69,17 @@ test('MCP widget saves replace plain sources in the running Widgets editor', {ti
     const bundle=data.example;assert.ok(bundle);
     const id='mcp-widget-acceptance';
     const definition=bundle.definitions[0];definition.id=id;definition.title='MCP toggle acceptance';
-    const args=mutation({bundle});
+    const current=await ok(reader,'widgets_list');const args=mutation({bundle,expectedRevision:current.revision});
     await assert.rejects(()=>reader.callTool({name:'widget_save',arguments:args}));
+    const staleWorkspace=await page.invoke('persistence_workspace',{request:{operation:'read'}});
     const result=await call(writer,'widget_save',args);assert.equal(result.ok,true,JSON.stringify(result));
     assert.deepEqual(await call(writer,'widget_save',args),result,'Exact reconnect retry recovers original save');
-    assert.equal((await call(writer,'widget_save',mutation({bundle}))).ok,true,'Saving the same ID replaces the current definition');
+    assert.equal((await call(writer,'widget_save',mutation({bundle,expectedRevision:(await ok(reader,'widgets_list')).revision}))).ok,true,'Saving the same ID replaces the current definition');
+    assert.equal((await call(writer,'widget_save',mutation({bundle,expectedRevision:current.revision}))).ok,false,'A fresh operation cannot reuse a stale SQL library revision');
+    await assert.rejects(()=>page.invoke('persistence_workspace',{request:{operation:'write',expectedRevision:staleWorkspace.revision,expectedLibraryRevision:staleWorkspace.libraryRevision,value:staleWorkspace.value}}),/revision conflict/);
+    const acknowledged=await page.invoke('persistence_workspace',{request:{operation:'read'}});assert.ok(acknowledged.value.sources.some(source=>source.id===id));
     const malformed=structuredClone(bundle);malformed.definitions[0].scene[0].kind='script';
-    assert.equal((await call(writer,'widget_save',mutation({bundle:malformed}))).ok,false);
+    assert.equal((await call(writer,'widget_save',mutation({bundle:malformed,expectedRevision:(await ok(reader,'widgets_list')).revision}))).ok,false);
     const listed=await ok(reader,'widgets_list');assert.equal(listed.widgets.filter(w=>w.id===id).length,1);assert.equal('version'in listed.widgets.find(w=>w.id===id),false);
     assert.equal((await ok(reader,'widget_get',{id})).definitions[0].title,definition.title);
     await page.send('Page.reload');
@@ -93,8 +97,8 @@ test('MCP widget saves replace plain sources in the running Widgets editor', {ti
   } finally {
     try{await page.evaluate(()=>Array.from(document.querySelectorAll('.generic-designer button')).find(b=>b.textContent.trim()==='Back')?.click());}catch{}
     for(const client of clients)await client.close().catch(()=>{});
-    for(const id of credentials)await page.invoke('mcp_credential_revoke',{id});
-    if(settings)await page.invoke('mcp_settings_update',{settings:{enabled:settings.enabled,port:settings.port}});
+    for(const id of credentials)await page.invoke('mcp_credential_revoke',{id,expectedSettingsRevision:(await page.invoke('mcp_settings_get')).settingsRevision});
+    if(settings)await page.invoke('mcp_settings_update',{settings:{enabled:settings.enabled,port:settings.port,expectedSettingsRevision:(await page.invoke('mcp_settings_get')).settingsRevision}});
     page.close();
   }
 });

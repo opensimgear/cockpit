@@ -1,6 +1,15 @@
 #[path="src/local_firmware.rs"]
 mod local_firmware;
 fn main() {
+    // Tauri embeds this dependency in application binaries. Library IPC tests
+    // also link its native dialogs and need the v6 Common Controls exports.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+        // Application binaries already receive Tauri's embedded resource.lib.
+        // Keep that manifest and avoid generating a second resource with ID 1.
+        println!("cargo:rustc-link-arg-bins=/MANIFEST:NO");
+    }
     let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let files = ["bootloader.bin", "partition-table.bin", "application.bin"];
     let mut generated=String::new();
@@ -50,11 +59,15 @@ fn main() {
 
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "persistence_status",
+            "persistence_workspace",
+            "persistence_ui_read",
             "gateway_request",
             "mcp_settings_get",
             "mcp_settings_update",
             "mcp_credential_create",
             "mcp_credential_revoke",
+            "mcp_credential_rotate",
             "profile_activation_window_open",
             "profile_activation_window_update",
             "profile_activation_window_state",

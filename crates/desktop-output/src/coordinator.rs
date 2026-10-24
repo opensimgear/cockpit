@@ -8,10 +8,11 @@ use osg_mapping::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    io::Read,
     path::{Path, PathBuf},
 };
 pub const MAX_JOURNAL_BYTES: usize = 131_072;
+#[path="coordinator/journal.rs"]
+mod journal;
 
 pub trait Channel: Send {
     fn request(&mut self, request: &Request) -> Result<Ack, String>;
@@ -61,6 +62,7 @@ pub struct Coordinator {
     snapshot: Snapshot,
     clock: fn() -> u64,
     journal: Option<PathBuf>,
+    journal_store: std::cell::RefCell<Option<journal::Store>>,
     terminal_stopped: bool,
     #[cfg(test)]
     persist_attempts: std::cell::Cell<usize>,
@@ -102,179 +104,6 @@ impl Coordinator {
             Err("Native keyboard and mouse output is available only on Windows; recording remains available.".into())
         }
     }
-    pub fn spawn_with_journal(
-        enabled: bool,
-        qualified: bool,
-        path: PathBuf,
-    ) -> Result<Self, String> {
-        if path.exists() {
-            let previous = Self::inspect_journal(&path)?;
-            if previous.uncertain
-                || !previous.held.is_empty()
-                || previous.in_flight.is_some()
-                || !previous.cleanup_complete
-            {
-                return Err(
-                    "Interrupted desktop output requires explicit recovery before activation."
-                        .into(),
-                );
-            }
-        }
-        let mut coordinator = Self::spawn(enabled, qualified)?;
-        coordinator.journal = Some(path);
-        coordinator.persist()?;
-        Ok(coordinator)
-    }
-    /// ProfileSession composition pins receipt identity before Start can arm or
-    /// deliver. The identity survives clean Stop and explicit recovery.
-    pub fn spawn_with_owned_journal(enabled:bool,qualified:bool,path:PathBuf,owner:RunToken,scope:Option<Scope>)->Result<Self,String>{
-        if path.exists(){Self::inspect_owned_journal(&path,&owner,scope.as_ref())?;}
-        let mut coordinator=Self::spawn_with_journal(enabled,qualified,path)?;
-        coordinator.snapshot.journal_owner=Some(owner);coordinator.snapshot.journal_scope=scope;coordinator.persist()?;Ok(coordinator)
-    }
-    pub fn inspect_journal(path: &Path) -> Result<Snapshot, String> {
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|e| format!("Desktop recovery journal is missing or inaccessible: {e}"))?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() {
-            return Err("Desktop recovery journal must be a regular local file.".into());
-        }
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)
-            .map_err(|e| e.to_string())?
-            .take((MAX_JOURNAL_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() > MAX_JOURNAL_BYTES {
-            return Err("Desktop recovery journal exceeds its bound.".into());
-        }
-        let snapshot: Snapshot = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("Invalid desktop recovery journal: {e}"))?;
-        crate::reducer::recovery_releases(&snapshot.possible_held)?;
-        crate::reducer::recovery_releases(&snapshot.held)?;
-        Ok(snapshot)
-    }
-    /// Bind a journal to the owning ProfileSession receipt before explicit
-    /// recovery. A well-formed record for another run must never release keys.
-    pub fn inspect_owned_journal(
-        path: &Path,
-        expected: &RunToken,
-        scope: Option<&Scope>,
-    ) -> Result<Snapshot, String> {
-        let record = Self::inspect_journal(path)?;
-        if record.journal_owner.as_ref()!=Some(expected){return Err("Desktop recovery journal is not bound to this exact ProfileSession run and generation.".into())}
-        if scope.is_some()&&record.journal_scope.as_ref()!=scope{return Err("Desktop recovery journal application scope does not match its receipt.".into())}
-        let validate_run = |run: &RunToken| {
-            if run == expected {
-                Ok(())
-            } else {
-                Err(
-                    "Desktop recovery journal belongs to a different run or generation."
-                        .to_string(),
-                )
-            }
-        };
-        let validate_scope = |actual: &Scope| {
-            if scope.is_none_or(|expected| expected == actual) {
-                Ok(())
-            } else {
-                Err(
-                    "Desktop recovery journal application scope does not match its receipt."
-                        .to_string(),
-                )
-            }
-        };
-        for run in &record.runs {
-            validate_run(&run.run)?;
-            validate_scope(&run.scope)?;
-        }
-        for owner in &record.owners {
-            validate_run(&owner.producer.run)?;
-            crate::reducer::recovery_releases(&owner.controls)?;
-        }
-        if let Some(request) = &record.in_flight {
-            match &request.command {
-                Command::Activate { run, scope } => {
-                    validate_run(run)?;
-                    validate_scope(scope)?;
-                }
-                Command::Arm { producer, .. } => validate_run(&producer.run)?,
-                Command::Deliver { delivery } => validate_run(&delivery.producer.run)?,
-                Command::Renew { run } | Command::Pause { run } => validate_run(run)?,
-                Command::Stop | Command::Recover { .. } => {}
-            }
-        }
-        Ok(record)
-    }
-    pub fn recover_journal(enabled: bool, qualified: bool, path: PathBuf) -> Result<(), String> {
-        let original = Self::inspect_journal(&path)?;
-        let mut controls = original.held.clone();
-        controls.extend(original.possible_held.clone());
-        let mut coordinator = Self::spawn(enabled, qualified)?;
-        coordinator.snapshot = original;
-        coordinator.journal = Some(path);
-        coordinator.recover(controls)?;
-        coordinator.stop_all()
-    }
-    fn persist(&self) -> Result<(), String> {
-        let result = self.persist_inner();
-        if result.is_err() && self.channel.audit_id().is_some() {
-            crate::audit::fault(crate::audit::Fault::Io);
-        }
-        result
-    }
-    fn persist_inner(&self) -> Result<(), String> {
-        if let Some(path) = &self.journal {
-            #[cfg(test)]
-            {
-                let attempt = self.persist_attempts.get() + 1;
-                self.persist_attempts.set(attempt);
-                if self.fail_persist_at.get() == Some(attempt) {
-                    return Err("Injected desktop journal write failure.".into());
-                }
-            }
-            let mut audit_times = self.channel.audit_id().map(|channel| (channel, Vec::with_capacity(7)));
-            let mark = |times: &mut Option<(u64, Vec<u64>)>| {
-                if let Some((_, values)) = times {
-                    values.push(crate::audit::stamp().map_or(0, |at| at.qpc));
-                }
-            };
-            mark(&mut audit_times);
-            let bytes = serde_json::to_vec(&self.snapshot).map_err(|e| e.to_string())?;
-            mark(&mut audit_times);
-            if bytes.len() > MAX_JOURNAL_BYTES {
-                return Err(
-                    "Desktop recovery journal exceeds its 128 KiB bound; output was refused."
-                        .into(),
-                );
-            }
-            let parent = path
-                .parent()
-                .ok_or("Desktop journal requires a parent directory.")?;
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            mark(&mut audit_times);
-            let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-            mark(&mut audit_times);
-            use std::io::Write;
-            file.as_file_mut()
-                .write_all(&bytes)
-                .map_err(|e| e.to_string())?;
-            mark(&mut audit_times);
-            file.as_file_mut().sync_all().map_err(|e| e.to_string())?;
-            mark(&mut audit_times);
-            file.persist(path).map_err(|e| e.to_string())?;
-            mark(&mut audit_times);
-            if let Some((channel, times)) = audit_times {
-                if times.iter().any(|time| *time == 0) || times.windows(2).any(|pair| pair[0] > pair[1]) {
-                    crate::audit::fault(crate::audit::Fault::Clock);
-                } else {
-                    let mut fields = vec![channel, self.sequence];
-                    fields.extend_from_slice(&times);
-                    crate::audit::record_at(crate::audit::Stamp { qpc: times[6] }, crate::audit::Kind::JournalPersist, &fields);
-                }
-            }
-        }
-        Ok(())
-    }
     /// Explicit recording/test composition. This constructor has no native adapter.
     pub fn with_channel(channel: Box<dyn Channel>, clock: fn() -> u64) -> Self {
         Self {
@@ -283,6 +112,7 @@ impl Coordinator {
             sequence: 0,
             clock,
             journal: None,
+            journal_store: Default::default(),
             terminal_stopped: false,
             #[cfg(test)]
             persist_attempts: std::cell::Cell::new(0),

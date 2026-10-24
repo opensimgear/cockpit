@@ -5,25 +5,24 @@ import {mkdir} from 'node:fs/promises';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 
 test('running Cockpit: content widget editor and shared States/Signals canvas controls',{timeout:180000},async()=>{
-  const endpoint=(await(await fetch('http://127.0.0.1:9222/json/version')).json()).webSocketDebuggerUrl;
+  const endpoint=(await(await fetch((process.env.OSG_GENERIC_CDP??'http://127.0.0.1:9222')+'/json/version')).json()).webSocketDebuggerUrl;
   const browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});
-  const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:1420'));
+  const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith(process.env.OSG_GENERIC_ORIGIN??'http://127.0.0.1:1420'));
   assert.ok(page,'Start the dev Cockpit first.');page.setDefaultTimeout(15000);
   const directory='.research/state-signal/canvas';await mkdir(directory,{recursive:true});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  const preferences=await page.evaluate(()=>[localStorage.getItem('osg-canvas-navigation'),localStorage.getItem('osg-canvas-styling')]);
+  const preferences=await page.evaluate(async()=>{const url=performance.getEntriesByType('resource').find(e=>new URL(e.name).pathname==='/src/lib/persistence/ui-preferences.ts').name;const {uiPreferences:p}=await import(url);return [p.get('canvas-navigation').value,p.get('canvas-styling').value];});
   const editor=page.getByRole('region',{name:'Generic widget designer',exact:true});
   const select=mode=>editor.locator('nav').getByRole('button',{name:mode,exact:true}).click();
   const open=async()=>{await page.getByRole('button',{name:'Companions',exact:true}).click();await page.getByRole('button',{name:'Edit design Toggle',exact:true}).click();await editor.waitFor();};
   const settings=async(wheelAction,arrowStyle,cornerRadius=24)=>page.evaluate(async({wheelAction,arrowStyle,cornerRadius})=>{
-    (await import('/src/lib/canvas-navigation.ts')).setWheelAction(wheelAction);
-    const styling=await import('/src/lib/canvas-styling.ts');styling.setArrowStyle(arrowStyle);styling.setCornerRadius(cornerRadius);
+    const url=performance.getEntriesByType('resource').find(e=>new URL(e.name).pathname==='/src/lib/persistence/ui-preferences.ts').name;const {uiPreferences:p}=await import(url);await p.save('canvas-navigation',{wheelAction});await p.save('canvas-styling',{...p.get('canvas-styling').value,arrowStyle,cornerRadius});
   },{wheelAction,arrowStyle,cornerRadius});
   const state=()=>editor.locator('.plane').evaluate(element=>{const m=new DOMMatrix(getComputedStyle(element).transform);return{x:m.e,y:m.f,zoom:m.a};});
   const fitted=()=>editor.locator('.viewport').evaluate(element=>{const v=element.getBoundingClientRect();return [...element.querySelectorAll('article')].every(card=>{const c=card.getBoundingClientRect();return c.left>=v.left+20&&c.top>=v.top+20&&c.right<=v.right-20&&c.bottom<=v.bottom-20;});});
   const wheel=async(ctrlKey=false)=>{await editor.locator('.viewport').dispatchEvent('wheel',{deltaY:80,deltaX:20,deltaMode:0,ctrlKey,bubbles:true,cancelable:true});};
   try{
-    await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});await page.reload();await open();assert.equal(await page.locator('dialog[open]').count(),0);
+    await page.evaluate(async()=>{const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'native-widget-qualification'}});if(!reply.ok)throw Error(reply.error);});await page.reload();await open();assert.equal(await page.locator('dialog[open]').count(),0);
     assert.equal(await page.getByRole('region',{name:'Widgets',exact:true}).count(),0,'Library is replaced by the editor');
     assert.equal(await editor.evaluate(el=>getComputedStyle(el).position),'static');
     for(const mode of ['States','Signals']){
@@ -57,7 +56,7 @@ test('running Cockpit: content widget editor and shared States/Signals canvas co
     await page.evaluate(()=>{window.confirm=()=>true;});await editor.getByRole('button',{name:'Back',exact:true}).click();assert.equal(await editor.count(),0);
     assert.deepEqual(errors,[]);
   }catch(error){console.error(error);throw error;}finally{
-    try{await page.evaluate(async values=>{for(const [i,key]of ['osg-canvas-navigation','osg-canvas-styling'].entries())values[i]===null?localStorage.removeItem(key):localStorage.setItem(key,values[i]);},preferences);
-    await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});await page.reload();await open();await select('States');await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(entry=>new URL(entry.name).pathname==='/src/lib/companion-startup.ts');if(!entry)throw Error('Startup module was not loaded');await(await import(entry.name)).restoreCompanionPanels();});}finally{await browser.close();}
+    try{await page.evaluate(async values=>{const url=performance.getEntriesByType('resource').find(e=>new URL(e.name).pathname==='/src/lib/persistence/ui-preferences.ts').name;const {uiPreferences:p}=await import(url);await p.hydrate();for(const [i,key]of ['canvas-navigation','canvas-styling'].entries())await p.save(key,values[i]);},preferences);
+    await page.evaluate(async()=>{const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'native-widget-qualification'}});if(!reply.ok)throw Error(reply.error);});await page.reload();await open();await select('States');await page.evaluate(async()=>{const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'native-widget-qualification'}});if(!reply.ok)throw Error(reply.error);});}finally{await browser.close();}
   }
 });

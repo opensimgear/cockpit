@@ -1,37 +1,63 @@
+#[path="games/storage/installations.rs"]
 mod game_installations;
+#[path="games/artwork/mod.rs"]
 mod game_artwork;
 mod game_library;
 mod retained_game_companions;
+#[path="persistence/paths.rs"]
 mod config_paths;
+mod persistence;
+#[path="mcp/server/mod.rs"]
 mod mcp;
+#[path="mcp/storage/credentials.rs"]
 mod mcp_credentials;
 mod mcp_tools;
+#[path="companion/storage/widgets.rs"]
 mod widget_library;
+#[path="companion/storage/host_settings.rs"]
+mod companion_settings;
 mod acr_setup;
 mod ac_car_catalogue;
+#[path="games/storage/car_catalogue.rs"]
 mod ac_car_catalogue_cache;
+#[path="games/telemetry/windows_source/mod.rs"]
 mod acr_windows;
+#[path="companion/host/mod.rs"]
 mod companion_host;
 mod firmware_releases;
+#[path="companion/storage/panels.rs"]
 mod companion_panels;
-mod widget_cutover;
 mod actions;
 pub mod dcs_bios;
 mod dcs_profile;
 mod dcs_physics;
 mod dcs_setup;
 mod desktop;
+#[path="desktop/geometry.rs"]
+mod desktop_geometry;
 mod window_persistence;
 mod game_discovery;
 mod game_activation;
 mod game_context;
+#[path="games/integration/mod.rs"]
 mod game_integration_setup;
 mod game_telemetry;
 mod game_channels;
 mod game_telemetry_inspection;
+#[path="games/vehicles/mod.rs"]
 mod game_vehicles;
 mod games;
 pub mod gateways;
+
+/// Initialize shared native persistence before constructing source workers.
+/// The browser development service uses the same namespace as desktop/MCP.
+pub fn initialize_persistence(additional_roots:&[std::path::PathBuf])->Result<osg_persistence::Database,String> {
+    persistence::backup::initialize()?;
+    let database=config_paths::initialize(additional_roots)?;
+    #[cfg(debug_assertions)]
+    persistence::development::seed(&database)?;
+    Ok(database)
+}
 mod hid_names;
 mod system_inventory;
 mod local_gateway;
@@ -41,6 +67,7 @@ mod module_usb;
 mod module_usb_fleet;
 mod module_configuration_routes;
 mod profile_resources;
+#[path="desktop/progress/mod.rs"]
 mod profile_activation_window;
 mod profile_system_notification;
 mod profile_compilation;
@@ -300,17 +327,6 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         desktop::show_main(app);
     }));
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    let builder = builder.plugin(
-        tauri_plugin_window_state::Builder::default()
-            .with_filename("window-state.json")
-            // Progress windows retain their own placement and visibility.
-            .with_filter(|label| label == "main")
-            .with_state_flags(
-                desktop::window_state_flags(),
-            )
-            .build(),
-    );
     let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -320,7 +336,18 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            app.manage(initialize_persistence(&[app.path().app_config_dir()?])?);
+            let restart_handle=app.handle().clone();
+            persistence::backup::bind_restart(Box::new(move||restart_handle.restart()));
             let gateway = Arc::new(gateways::GatewayManager::new());
+            {
+                use tauri::Emitter;
+                let handle=app.handle().clone();
+                gateway.ui_preferences.observe(Arc::new(move|key,revision|{
+                    let _=handle.emit("ui-preferences-changed",serde_json::json!({"key":key,"revision":revision}));
+                    if key=="progress"{profile_activation_window::preferences_changed(&handle);}
+                }));
+            }
             gateway.start_automatic();
             app.manage(mcp::Server::native(gateway.clone()));
             app.manage(NativeGateway(gateway));
@@ -329,11 +356,15 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            persistence::persistence_status,
+            persistence::persistence_workspace,
+            persistence::ui::commands::persistence_ui_read,
             gateway_request,
             mcp::mcp_settings_get,
             mcp::mcp_settings_update,
             mcp::mcp_credential_create,
             mcp::mcp_credential_revoke,
+            mcp::mcp_credential_rotate,
             profile_activation_window::profile_activation_window_open,
             profile_activation_window::profile_activation_window_update,
             profile_activation_window::profile_activation_window_state,
@@ -376,6 +407,7 @@ pub fn run() {
             handle.state::<profile_activation_window::ActivationWindowState>().shutdown();
             handle.state::<Arc<mcp::Server>>().shutdown();
             handle.state::<NativeGateway>().0.shutdown();
+            if matches!(event,tauri::RunEvent::Exit){persistence::backup::release_namespace();}
         }
     });
 }

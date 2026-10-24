@@ -12,6 +12,7 @@ test('empty storage seeds one plain Toggle and reopens the same workspace', asyn
   assert.deepEqual(await store.load(), loaded);
   assert.equal((await new CompiledWorkspaceStore(memory()).load()).sources.length, 1);
   assert.match(designerId('instance'), /^instance-[a-f0-9-]+$/);
+
 });
 test('source bank replaces by stable ID without keeping revisions', () => {
   const toggle = createToggleSource(), next = { ...structuredClone(toggle), title: 'Power' }, blank = blankWidgetSource();
@@ -75,6 +76,28 @@ test('storage reports unavailable IndexedDB instead of claiming a save succeeded
   const storage = compiledIndexedDbStorage(null); await assert.rejects(storage.read(), /unavailable/); await assert.rejects(storage.write(emptyCompiledWorkspace()), /unavailable/);
 });
 
+test('desktop defaults use native SQLite exclusively and return merged native sources',async()=>{
+  const previous=globalThis.__TAURI_INTERNALS__;
+  let value=null,revision=0,blocked=false,reads=0;
+  try {
+    globalThis.__TAURI_INTERNALS__={invoke:async(command,{request})=>{
+      assert.equal(command,'persistence_workspace');
+      if(blocked)throw Error('SQLite busy');
+      if(request.operation==='read'){reads++;return {revision,libraryRevision:revision,value:structuredClone(value)};}
+      assert.equal(request.expectedRevision,revision);
+      value=structuredClone(request.value);
+      const source=blankWidgetSource();source.id='external-mcp-source';
+      value.sources=mergeWidgetSources(value.sources,[source]);
+      return {revision:++revision,libraryRevision:revision,value:structuredClone(value)};
+    }};
+    const store=new CompiledWorkspaceStore();const loaded=await store.load();
+    assert.equal(loaded.sources.some(s=>s.id==='external-mcp-source'),true);
+    const saved=await store.save(loaded);assert.deepEqual(saved,value);
+    assert.equal(reads,1);blocked=true;
+    await assert.rejects(store.load(),/SQLite busy/);
+    await assert.rejects(store.save(saved),/SQLite busy/);
+  } finally {if(previous)globalThis.__TAURI_INTERNALS__=previous;else delete globalThis.__TAURI_INTERNALS__;}
+});
 
 test('new widgets and the capsule compile on a transparent surface, including state transitions',async()=>{
  const {compileWidget,decodeCompiledFrame}=await import('../../packages/widget-compiler/src/index.ts');
@@ -82,4 +105,5 @@ test('new widgets and the capsule compile on a transparent surface, including st
  assert.ok(decodeCompiledFrame(blank.artifact,blank.assets,blank.artifact.frames[0].id).every(value=>value===0));
  const toggle=await compileWidget(createToggleSource(),{width:120,height:72});
  for(const frame of toggle.artifact.frames){const rgba=decodeCompiledFrame(toggle.artifact,toggle.assets,frame.id);assert.equal(rgba[3],0);assert.equal(rgba.at(-1),0);assert.ok(rgba.some((v,i)=>i%4===3&&v>0),'Artwork remains visible');}
+
 });

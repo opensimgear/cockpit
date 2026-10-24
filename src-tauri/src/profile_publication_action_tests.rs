@@ -467,7 +467,7 @@ fn actual_host_stop_and_default_retain_foreign_or_independently_preserved_public
                 false
             );
             let journal: Value = serde_json::from_slice(
-                &std::fs::read(f._directory.path().join("profile-session.json")).unwrap(),
+                &osg_persistence::test_support::read_evidence(&f._directory.path().join("profile-session.json"),"recovery-profile").unwrap(),
             )
             .unwrap();
             assert!(
@@ -519,7 +519,7 @@ fn failed_pre_acquire_recapture_save_discards_only_inert_actions_and_restores_ow
         );
     }
     let journal: Value = serde_json::from_slice(
-        &std::fs::read(f._directory.path().join("profile-session.json")).unwrap(),
+        &osg_persistence::test_support::read_evidence(&f._directory.path().join("profile-session.json"),"recovery-profile").unwrap(),
     )
     .unwrap();
     assert!(journal["active"].is_null() && journal["pending"].is_null());
@@ -580,7 +580,7 @@ fn failed_pre_overrides_recapture_save_preserves_completed_outgoing_cleanup_with
         true
     );
     let journal: Value = serde_json::from_slice(
-        &std::fs::read(f._directory.path().join("profile-session.json")).unwrap(),
+        &osg_persistence::test_support::read_evidence(&f._directory.path().join("profile-session.json"),"recovery-profile").unwrap(),
     )
     .unwrap();
     assert!(journal["active"].is_null() && journal["pending"].is_null());
@@ -632,7 +632,7 @@ fn unresolved_action_cleanup_revokes_publication_renewal_without_advancing_the_c
         .filter(|(kind, _)| *kind == "renew")
         .all(|(_, admitted)| !admitted));
     let journal: Value = serde_json::from_slice(
-        &std::fs::read(f._directory.path().join("profile-session.json")).unwrap(),
+        &osg_persistence::test_support::read_evidence(&f._directory.path().join("profile-session.json"),"recovery-profile").unwrap(),
     )
     .unwrap();
     assert!(!journal["active"].is_null() || !journal["pending"].is_null());
@@ -677,7 +677,7 @@ fn unresolved_action_cleanup_revokes_publication_renewal_without_advancing_the_c
         lease.as_u64().unwrap() + 1
     );
     let journal: Value = serde_json::from_slice(
-        &std::fs::read(f._directory.path().join("profile-session.json")).unwrap(),
+        &osg_persistence::test_support::read_evidence(&f._directory.path().join("profile-session.json"),"recovery-profile").unwrap(),
     )
     .unwrap();
     assert!(journal["active"].is_null() && journal["pending"].is_null());

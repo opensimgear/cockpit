@@ -5,9 +5,9 @@ import {mkdir} from 'node:fs/promises';
 const {chromium}=createRequire(import.meta.url)(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 
 test('running Cockpit: Preview automatically compiles, displays centered progress, cancels and reuses a valid build',{timeout:120000},async()=>{
-  const endpoint=(await(await fetch('http://127.0.0.1:9222/json/version')).json()).webSocketDebuggerUrl;
+  const endpoint=(await(await fetch((process.env.OSG_GENERIC_CDP??'http://127.0.0.1:9222')+'/json/version')).json()).webSocketDebuggerUrl;
   const browser=await chromium.connectOverCDP(endpoint,{noDefaults:true});
-  const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:1420'));
+  const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith(process.env.OSG_GENERIC_ORIGIN??'http://127.0.0.1:1420'));
   assert.ok(page,'Start the actual dev Cockpit before running this qualification.');
   page.setDefaultTimeout(15000);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));

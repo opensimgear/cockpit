@@ -17,7 +17,7 @@ export async function loadModules(names) {
     // New pure helpers may add dependencies without every consumer fixture
     // needing to repeat their transitive import order.
     for(const match of code.matchAll(/require\(["'](\.\/[^"']+)["']\)/g))await load(match[1]);
-    vm.runInNewContext(code, { exports, TextEncoder, crypto:webcrypto, require(name) {
+    vm.runInNewContext(code, { exports, TextEncoder, structuredClone, crypto:webcrypto, require(name) {
       const key=name.replace(/\.ts$/,'');
       if (!exportsByName.has(key)) throw new Error(`Load dependency ${name} before its consumer.`);
       return exportsByName.get(key);

@@ -2,95 +2,43 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { newDocument,publishDocument } from '../../packages/companion-designer/src/index.ts';
 import { synchronizePanel,removePanelAssignments } from './panel-actions.ts';
-async function fixture(){
- const first=await publishDocument(newDocument('Panel'),[]);
- const doc=structuredClone(first.document);doc.ui.title='Updated panel';
- const next=await publishDocument(doc,[]);
- return {first,next};
+async function fixture(){const first=await publishDocument(newDocument('Panel'),[]);const doc=structuredClone(first.document);doc.ui.title='Updated panel';return {first,next:await publishDocument(doc,[])};}
+function host(instances=[],publications=[]){
+ const calls=[],state={host:{snapshotToken:'native-snapshot:4',instances:structuredClone(instances),publications,clients:['a','b','c'].map(companionId=>({companionId}))}};
+ return {calls,state,send:async(command,payload={})=>{calls.push({command,payload});if(command==='companion_publish_begin')return {uploadId:'upload'};if(command==='companion_publish_commit')return {...structuredClone(state),selectionCommitted:true};return structuredClone(state);}};
 }
-function host(instances,publications=[]){
- const calls=[];const state={host:{instances:structuredClone(instances),publications,clients:['a','b','c'].map(companionId=>({companionId}))}};
- return {calls,state,send:async(command,payload={})=>{
-  calls.push({command,payload});
-  if(command==='companion_publish_begin')return {uploadId:'upload'};
-  if(command==='companion_unassign')state.host.instances=state.host.instances.filter(i=>i.instanceId!==payload.instanceId);
-  if(command==='companion_assign'){state.host.instances=state.host.instances.filter(i=>i.instanceId!==payload.instanceId);state.host.instances.push({...payload});}
-  return structuredClone(state);
- }};
-}
-test('saving updates all assigned companions while leaving unrelated panels alone',async()=>{
- const {first,next}=await fixture();
- const h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash},{instanceId:'two',companionId:'b',publicationHash:first.publicationHash},{instanceId:'other',companionId:'c',publicationHash:'other'}]);
- await synchronizePanel(next,[first.publicationHash],h.send);
- assert.equal(h.calls.filter(c=>c.command==='companion_assign').length,2);
- assert.equal(h.state.host.instances.find(i=>i.instanceId==='other').publicationHash,'other');
- assert.equal(h.state.host.instances.find(i=>i.instanceId==='one').publicationHash,next.publicationHash);
+test('Save carries exact observed authority and all deduplicated selections in a single native commit',async()=>{
+ const {first,next}=await fixture(),h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash}]);
+ await synchronizePanel(next,[first.publicationHash],h.send,['b','c','c']);
+ assert.deepEqual(h.calls.find(c=>c.command==='companion_publish_commit').payload,{uploadId:'upload',selection:{expectedHostToken:'native-snapshot:4',companionIds:['b','c']}});
+ assert.equal(h.calls.filter(c=>c.command==='companion_status').length,1);assert.equal(h.calls.filter(c=>c.command==='companion_assign'||c.command==='companion_unassign').length,0);
 });
-
-test('profile-owned companion updates belong to the native profile transition and are never directly assigned',async()=>{
- const {first,next}=await fixture();
- const h=host([{instanceId:'profile-screen',companionId:'a',publicationHash:first.publicationHash,profileOwned:true},{instanceId:'direct-screen',companionId:'b',publicationHash:first.publicationHash}]);
+test('omitted selection tells native to preserve current panel membership and profile ownership',async()=>{
+ const {first,next}=await fixture(),h=host([{instanceId:'profile',companionId:'a',publicationHash:first.publicationHash,profileOwned:true},{instanceId:'direct',companionId:'b',publicationHash:first.publicationHash}]);
  await synchronizePanel(next,[first.publicationHash],h.send);
- assert.deepEqual(h.calls.filter(call=>call.command==='companion_assign').map(call=>call.payload.instanceId),['direct-screen']);
- assert.equal(h.calls.filter(call=>call.command==='companion_unassign').length,0);
- const failed=host([{instanceId:'profile-screen',companionId:'a',publicationHash:first.publicationHash,profileOwned:true}]);
- const send=async(command,payload)=>{const result=await failed.send(command,payload);return command==='companion_publish_commit'?{...result,panelSaveApplication:{state:'failed',error:'Release touch before activating the updated panel'}}:result;};
- await assert.rejects(synchronizePanel(next,[first.publicationHash],send),/Release touch/);
- assert.equal(failed.calls.filter(call=>call.command==='companion_assign'||call.command==='companion_unassign').length,0);
+ assert.deepEqual(h.calls.find(c=>c.command==='companion_publish_commit').payload.selection,{expectedHostToken:'native-snapshot:4'});
+ assert.ok(!h.calls.some(c=>c.command==='companion_assign'||c.command==='companion_unassign'));
+ const empty=host();await synchronizePanel(next,[],empty.send,[]);assert.deepEqual(empty.calls.find(c=>c.command==='companion_publish_commit').payload.selection.companionIds,[]);
 });
-
-test('after native commit, refreshed assignments prevent duplicate writes and preserve concurrent ownership changes',async()=>{
- const {first,next}=await fixture();
- for(const changed of [{publicationHash:next.publicationHash},{publicationHash:'another-panel'},{publicationHash:first.publicationHash,profileOwned:true}]){
-  const h=host([{instanceId:'screen',companionId:'a',publicationHash:first.publicationHash}]);
-  const send=async(command,payload)=>{const result=await h.send(command,payload);if(command==='companion_publish_commit')Object.assign(h.state.host.instances[0],changed);return result;};
-  await synchronizePanel(next,[first.publicationHash],send);
-  assert.equal(h.calls.filter(call=>call.command==='companion_assign'||call.command==='companion_unassign').length,0);
-  assert.equal(h.state.host.instances[0].publicationHash,changed.publicationHash);
+test('a missing native acknowledgement or failed profile transition is surfaced without follow-up assignment writes',async()=>{
+ const {next}=await fixture();
+ for(const response of [{selectionCommitted:false},{selectionCommitted:true,panelSaveApplication:{state:'failed',error:'Release touch first'}}]){
+  const h=host(),send=async(command,payload)=>command==='companion_publish_commit'?{...await h.send(command,payload),...response}:h.send(command,payload);
+  await assert.rejects(synchronizePanel(next,[],send),/not acknowledged|Release touch/);assert.ok(!h.calls.some(c=>c.command==='companion_assign'||c.command==='companion_unassign'));
  }
 });
-test('selection removes assignments, reuses a companion controller and assigns a new companion',async()=>{
+test('unpaired, ambiguous, incompatible or missing authority fail before upload',async()=>{
  const {first,next}=await fixture();
- const h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash},{instanceId:'two',companionId:'b',publicationHash:'other'}]);
- await synchronizePanel(next,[first.publicationHash],h.send,['b','c','c']);
- assert.ok(!h.state.host.instances.some(i=>i.companionId==='a'));
- assert.equal(h.state.host.instances.find(i=>i.instanceId==='two').publicationHash,next.publicationHash);
- assert.equal(h.state.host.instances.filter(i=>i.companionId==='c').length,1);
+ const cases=[{h:host(),selected:['missing'],pattern:/no longer paired/},{h:host([{instanceId:'one',companionId:'b',publicationHash:'old-1'},{instanceId:'two',companionId:'b',publicationHash:'old-2'}]),selected:['b'],pattern:/multiple/}];
+ const missing=host();delete missing.state.host.snapshotToken;cases.push({h:missing,pattern:/Refresh/});
+ const incompatible=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash}]);incompatible.state.host.clients[0].kind='esp32';incompatible.state.host.clients[0].screen={width:1280,height:800};const bad=structuredClone(next);bad.document.presentation.viewports[0].backgroundAssetId='image';cases.push({h:incompatible,panel:bad,pattern:/backgrounds/});
+ for(const {h,selected,panel,pattern} of cases){await assert.rejects(synchronizePanel(panel??next,[first.publicationHash],h.send,selected),pattern);assert.deepEqual(h.calls.map(c=>c.command),['companion_status']);}
+ await assert.rejects(synchronizePanel(next,[],async()=>{throw Error('offline');}),/offline/);
 });
-test('current content is not reassigned, and host panel identity locates older assignments',async()=>{
- const {first,next}=await fixture();
- const h=host([{instanceId:'one',companionId:'a',publicationHash:next.publicationHash},{instanceId:'two',companionId:'b',publicationHash:first.publicationHash}],[{uiId:next.document.ui.id,publicationHash:first.publicationHash}]);
- await synchronizePanel(next,[],h.send);
- assert.equal(h.calls.filter(c=>c.command==='companion_assign').length,1);
+test('a stale or failed commit aborts its upload without sequential mutations',async()=>{
+ const {next}=await fixture(),h=host();const send=async(command,payload)=>{const result=await h.send(command,payload);if(command==='companion_publish_commit')throw Error('Companion assignments changed. Refresh before saving.');return result;};
+ await assert.rejects(synchronizePanel(next,[],send,['a']),/Refresh/);assert.equal(h.calls.at(-1).command,'companion_publish_abort');assert.ok(!h.calls.some(c=>c.command==='companion_assign'||c.command==='companion_unassign'));
 });
-test('empty selection unassigns the panel and removal only touches matching panels',async()=>{
- const {first,next}=await fixture();
- const h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash},{instanceId:'other',companionId:'b',publicationHash:'other'}]);
- await synchronizePanel(next,[first.publicationHash],h.send,[]);
- assert.deepEqual(h.state.host.instances.map(i=>i.instanceId),['other']);
- await removePanelAssignments(['other'],h.send);assert.equal(h.state.host.instances.length,0);
-});
-test('upload and assignment ambiguity failures are surfaced without unrelated mutations',async()=>{
- const {next}=await fixture();
- await assert.rejects(synchronizePanel(next,[],async()=>{throw new Error('offline')}),/offline/);
- const h=host([{instanceId:'one',companionId:'b',publicationHash:'old-1'},{instanceId:'two',companionId:'b',publicationHash:'old-2'}]);
- await assert.rejects(synchronizePanel(next,[],h.send,['b']),/multiple/);
- assert.equal(h.calls.filter(c=>c.command==='companion_assign'||c.command==='companion_unassign').length,0);
-});
-
-test('an unpaired selection fails preflight before removing existing assignments',async()=>{
- const {first,next}=await fixture();
- const h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash}]);
- await assert.rejects(synchronizePanel(next,[first.publicationHash],h.send,['missing']),/no longer paired/);
- assert.equal(h.calls.filter(c=>c.command==='companion_unassign').length,0);
-});
-
-test('incompatible ESP updates fail before uploads or assignment changes',async()=>{
- const {first,next}=await fixture();
- const h=host([{instanceId:'one',companionId:'a',publicationHash:first.publicationHash}]);
- h.state.host.clients[0].kind='esp32';h.state.host.clients[0].screen={width:1280,height:800};
- const bad=structuredClone(next);bad.document.presentation.viewports[0].backgroundAssetId='image';
- await assert.rejects(synchronizePanel(bad,[first.publicationHash],h.send),/backgrounds/);
- assert.deepEqual(h.calls.map(c=>c.command),['companion_status']);
- assert.equal(h.state.host.instances[0].publicationHash,first.publicationHash);
+test('explicit removal touches only matching immutable panel assignments',async()=>{
+ const h=host([{instanceId:'one',companionId:'a',publicationHash:'remove'},{instanceId:'two',companionId:'b',publicationHash:'keep'}]);await removePanelAssignments(['remove'],h.send);assert.deepEqual(h.calls.filter(c=>c.command==='companion_unassign').map(c=>c.payload),[{instanceId:'one'}]);
 });

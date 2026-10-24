@@ -1,3 +1,4 @@
+import {progressSettingsInvoke} from './native-progress-settings.mjs';
 // Actual running Cockpit + verified native process, with authored RREF UDP.
 // This exercises production IPC/transports; it does not qualify a real simulator.
 import test from 'node:test';
@@ -54,7 +55,7 @@ test('native vehicle observation switches scoped settings with positioned progre
  const datarefs=resolve(dirname(executable),'Resources/plugins/DataRefs.txt'),datarefsBefore=await readFile(datarefs);
  let child,profileId,installationBefore,modeBefore,connectionBefore,selectedBefore,progressSettingsBefore,viewBefore,lastProgressOperation='';
  const cleanup=async(label,action)=>{try{await action();}catch(error){cleanupErrors.push(`${label}: ${error}`);}};
- const invoke=(command,args={})=>cdp.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
+ const invoke=progressSettingsInvoke((command,args={})=>cdp.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`));
  async function notificationPosition(position){
   await until(()=>cdp.evaluate(`(()=>{const button=[...document.querySelectorAll('.sidebar button')].find(button=>button.textContent.trim()==='Settings');if(!button)return false;button.click();return true;})()`),'Settings navigation is unavailable');
   await until(()=>cdp.evaluate(`(()=>{const selects=[...document.querySelectorAll('[aria-label="Progress notifications"] select')];return selects.length===2&&selects.every(select=>!select.disabled);})()`),'Notification settings did not load');

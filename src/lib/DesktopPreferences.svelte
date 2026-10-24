@@ -1,4 +1,7 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
+  import { uiPreference, uiPreferences } from './persistence/ui-preferences';
+  const tray = uiPreference('tray');
   import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -9,6 +12,7 @@
     trayAvailable: boolean;
     trayError: string | null;
     settingsError: string | null;
+    windowStateError?: string | null;
     autostartSupported: boolean;
     autostartEnabled: boolean;
     autostartError: string | null;
@@ -45,8 +49,8 @@
         if (preferences.autostartEnabled !== enabled) throw new Error('The operating system did not apply the auto-start change.');
         preferences.autostartError = null;
       } else {
-        const next = { closeToTray: preferences.closeToTray, minimizeToTray: preferences.minimizeToTray, [key]: !preferences[key] };
-        await invoke('set_tray_preferences', { preferences: next });
+        const next = { ...$tray.value, [key]: !$tray.value[key] };
+        await tray.save(next);
         preferences = { ...preferences, ...next, settingsError: null };
       }
       message = 'Preference saved.';
@@ -64,21 +68,23 @@
   {:else if preferences}
     <div class="preference-row">
       <div><strong>Close to tray</strong><p>Keep Cockpit and your connections running when you close the window. Use the tray menu to open Cockpit or quit.</p></div>
-      <button class="toggle" class:on={preferences.closeToTray} role="switch" aria-label="Close to tray" aria-checked={preferences.closeToTray} disabled={busy || !preferences.trayAvailable} onclick={() => toggle('closeToTray')}><span></span></button>
+      <button class="toggle" class:on={$tray.value.closeToTray} role="switch" aria-label="Close to tray" aria-checked={$tray.value.closeToTray} disabled={busy || $tray.busy || !$tray.ready || !preferences.trayAvailable} onclick={() => toggle('closeToTray')}><span></span></button>
     </div>
     <div class="preference-row">
       <div><strong>Minimize to tray</strong><p>Hide the window in the system tray when minimized. Open it again from the tray menu.</p></div>
-      <button class="toggle" class:on={preferences.minimizeToTray} role="switch" aria-label="Minimize to tray" aria-checked={preferences.minimizeToTray} disabled={busy || !preferences.trayAvailable} onclick={() => toggle('minimizeToTray')}><span></span></button>
+      <button class="toggle" class:on={$tray.value.minimizeToTray} role="switch" aria-label="Minimize to tray" aria-checked={$tray.value.minimizeToTray} disabled={busy || $tray.busy || !$tray.ready || !preferences.trayAvailable} onclick={() => toggle('minimizeToTray')}><span></span></button>
     </div>
     <div class="preference-row">
       <div><strong>Start Cockpit when I sign in</strong><p>{preferences.autostartSupported ? 'Automatically launch Cockpit when you sign in to this computer.' : 'Auto-start is not supported on this platform.'}</p></div>
       <button class="toggle" class:on={preferences.autostartEnabled} role="switch" aria-label="Start Cockpit when I sign in" aria-checked={preferences.autostartEnabled} disabled={busy || !preferences.autostartSupported} onclick={() => toggle('autostartEnabled')}><span></span></button>
     </div>
+    {#if preferences.windowStateError}<Notification message={'Window geometry could not be saved or restored: ' + preferences.windowStateError} kind="error" />{/if}
     {#if preferences.trayError}<Notification message={'The system tray is unavailable: ' + String(preferences.trayError)} kind="error" />{/if}
     {#if preferences.settingsError}<Notification message={'Saved desktop preferences could not be read: ' + String(preferences.settingsError) + '. Normal window behavior is active.'} kind="error" />{/if}
-    {#if preferences.autostartError}<div class="preference-row"><Notification message={'Auto-start status could not be read: ' + String(preferences.autostartError)} kind="error" /><button class="secondary-button" disabled={busy} onclick={load}>Retry</button></div>{/if}
+    {#if preferences.autostartError}<div class="preference-row"><Notification message={'Auto-start status could not be read: ' + String(preferences.autostartError)} kind="error" /><button class="secondary-button" disabled={busy} onclick={load}><Icon name="refresh" size={14} />Retry</button></div>{/if}
   {/if}
-  {#if error}<div class="preference-row"><Notification message={String(error)} kind="error" />{#if !preferences}<button class="secondary-button" onclick={load}>Retry</button>{/if}</div>{/if}
+  {#if $tray.error}<div class="preference-row"><Notification message={$tray.error} kind="error" /><button class="secondary-button" onclick={() => { void uiPreferences.hydrate(); }}><Icon name="refresh" size={14} />Retry</button></div>{/if}
+  {#if error}<div class="preference-row"><Notification message={String(error)} kind="error" />{#if !preferences}<button class="secondary-button" onclick={load}><Icon name="refresh" size={14} />Retry</button>{/if}</div>{/if}
   {#if message}<Notification message={String(message)} />{/if}
 </section>
 

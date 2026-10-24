@@ -57,13 +57,8 @@ fn digest(value: &str) -> bool {
 }
 impl Runtime {
     fn profile_panel_compatibility(&self,hub:&osg_companion_service::Hub,publication:&str)->Result<Vec<PanelCompatibility>,String>{
-        use std::io::Read;
         let metadata=self.metadata(false)?;
-        let mut bytes=vec![];
-        if let Ok(file)=std::fs::File::open(metadata.directory.join("companion-firmware.json")){
-            let _=file.take(65537).read_to_end(&mut bytes);
-        }
-        let mut firmware=if bytes.len()<=65536 {serde_json::from_slice::<serde_json::Value>(&bytes).ok().filter(serde_json::Value::is_object)}else{None}.unwrap_or(serde_json::json!({}));
+        let mut firmware=crate::companion_settings::firmware(&metadata.directory)?.1;
         let devices=self.services.get().and_then(|services|services.as_ref().ok()).map(|services|services.usb.statuses()).unwrap_or_default();
         let _=hub.publication_document(publication)?;
         let companions=hub.resource_companions();
@@ -86,7 +81,8 @@ impl Runtime {
         }).collect())
     }
     pub(crate) fn profile_authoring_catalogue(&self) -> Result<Catalogue, String> {
-        let hub = self.profile_metadata()?;
+        let Some(metadata)=self.existing_metadata()? else{return Ok(Catalogue{schema_version:1,revision:format!("sha256:{:x}",Sha256::digest(b"[]")),panels:vec![],diagnostics:vec![]})};
+        let hub=metadata.hub.clone();
         let updates=self.saved_panel_updates()?;
         let raw = hub.publication_summaries().into_iter().filter_map(|mut value|{
             let saved=updates.iter().find(|saved|value["publicationHash"]==saved.publication_hash)?;

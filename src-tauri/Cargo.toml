@@ -18,6 +18,7 @@ sha2 = "0.10"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+osg-persistence = { path = "../crates/persistence" }
 osg-profiles = { path = "../crates/profiles" }
 osg-companion-serial = { path = "../crates/companion-serial" }
 osg-companion-service = { path = "../crates/companion-service" }
@@ -30,6 +31,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde_json = "1"
+serde_json_canonicalizer = "=0.3.2"
 serde = { version = "1", features = ["derive"] }
 serialport = "4.8"
 uuid = { version = "1", features = ["v4"] }
@@ -49,12 +51,13 @@ tokio-util = "0.7"
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+osg-persistence = { path = "../crates/persistence", features = ["test-support"] }
 osg-companion-service = { path = "../crates/companion-service", features = ["legacy-test-fixtures"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
-tauri-plugin-window-state = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_System_WinRT", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

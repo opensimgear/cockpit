@@ -27,7 +27,7 @@
     polling = true;
     const version=requestVersion;
     try {
-      const result=(await gatewayRequest({ command: 'companion_status' })).companions ?? {};
+      const result=(await gatewayRequest({ command: 'companion_inventory' })).companions ?? {};
       if(disposed || version!==requestVersion || busy)return;
       if (!result.listener) throw new Error('Companion listener settings are unavailable.');
       hostState=result;
@@ -44,8 +44,10 @@
     if (!loaded || busy || enabled && (!address || portError)) return;
     requestVersion++;busy = true; error = '';
     try {
+      const expectedSettingsRevision=hostState.listener?.settingsRevision;
+      if(!Number.isSafeInteger(expectedSettingsRevision))throw new Error('Reload listener settings before saving.');
       const result = (await gatewayRequest({ command: enabled ? 'companion_enable' : 'companion_disable',
-        companion: enabled ? { address, advertisedHost: address, port, discovery } : {} })).companions;
+        companion: { expectedSettingsRevision, ...(enabled ? { address, advertisedHost: address, port, discovery } : {}) } })).companions;
       if (disposed) return;
       if (!result?.listener) throw new Error('Companion listener settings could not be saved.');
       hostState = result;

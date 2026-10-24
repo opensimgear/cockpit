@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
 
-const { createCanvasNavigationStore, canvasNavigation, canvasWheelNavigation, CANVAS_NAVIGATION_STORAGE_KEY } = (await loadModules(['./canvas-navigation'])).get('./canvas-navigation');
+let modules;
+const { createCanvasNavigationStore, canvasNavigation, canvasWheelNavigation, CANVAS_NAVIGATION_STORAGE_KEY } = (modules = await loadModules(['./canvas-navigation'])).get('./canvas-navigation');
 const plain = value => JSON.parse(JSON.stringify(value));
 function current(store) { let value; store.subscribe(next => { value = next; })(); return plain(value); }
 function memory(saved = null) {
@@ -11,7 +12,7 @@ function memory(saved = null) {
 }
 
 test('canvas navigation defaults to pan and works without browser storage', () => {
-  assert.deepEqual(current(canvasNavigation), { wheelAction: 'pan', storageError: null });
+  assert.deepEqual(current(canvasNavigation), { wheelAction: 'pan', storageError: null, saving: false, ready: true });
   const store = createCanvasNavigationStore(null); store.setWheelAction('zoom');
   assert.deepEqual(current(store), { wheelAction: 'zoom', storageError: null });
 });
@@ -73,4 +74,12 @@ test('shared canvas wheel actions reverse with either modifier and normalize pix
   }
   assert.equal(canvasWheelNavigation('zoom',{deltaX:0,deltaY:1},500).multiplier,1/1.1);
   assert.equal(canvasWheelNavigation('zoom',{deltaX:5,deltaY:0},500).multiplier,1);
+});
+
+test('the runtime navigation store waits for native commit and exposes persistence failures',async()=>{
+ const {uiPreferences,UI_KEYS}=modules.get('./persistence/ui-preferences');const entries=Object.fromEntries(UI_KEYS.map(key=>[key,{revision:0,value:null}]));let release,fail=false;
+ uiPreferences.connect({read:async()=>({entries}),write:async(key,revision,value)=>{await new Promise(resolve=>release=resolve);if(fail)throw Error('busy');entries[key]={revision:revision+1,value};return entries[key];}});await uiPreferences.hydrate();
+ const seen=[];const stop=canvasNavigation.subscribe(value=>seen.push(value));canvasNavigation.setWheelAction('invalid');canvasNavigation.setWheelAction('pan');assert.equal(release,undefined);
+ canvasNavigation.setWheelAction('zoom');assert.equal(current(canvasNavigation).wheelAction,'pan');assert.equal(current(canvasNavigation).saving,true);release();await new Promise(setImmediate);assert.equal(current(canvasNavigation).wheelAction,'zoom');
+ fail=true;canvasNavigation.setWheelAction('pan');release();await new Promise(setImmediate);assert.equal(current(canvasNavigation).wheelAction,'zoom');assert.match(current(canvasNavigation).storageError,/busy/);stop();
 });

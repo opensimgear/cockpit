@@ -70,6 +70,10 @@ fn main() {
         eprintln!("The browser gateway service requires a debug build.");
         std::process::exit(2);
     }
+    let _database=match osg_cockpit::initialize_persistence(&[]) {
+        Ok(database)=>database,
+        Err(error)=>{eprintln!("Cannot initialize Cockpit persistence: {error}");std::process::exit(2);}
+    };
     let service = Arc::new(GatewayManager::new());
     service.start_automatic();
     let output = Arc::new(Mutex::new(io::stdout()));

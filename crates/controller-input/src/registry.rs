@@ -156,7 +156,7 @@ pub fn fingerprint(controls: &[Control]) -> String {
         Sha256::digest(serde_json::to_vec(controls).expect("serializable controls"))
     )
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SavedSource {
     pub id: String,
@@ -226,6 +226,7 @@ impl Source {
             "identityConfidence":if self.saved.identity.serial.is_some() {"serial"} else {"local-path"}})
     }
 }
+#[derive(Clone)]
 pub struct Registry {
     sources: BTreeMap<String, Source>,
     journal: Journal,
@@ -247,6 +248,42 @@ impl Default for Registry {
     }
 }
 impl Registry {
+    /// Publish committed authoring metadata while retaining input samples and
+    /// discoveries received during database I/O. Input capture never waits on
+    /// the database or receives a restored historical baseline.
+    pub(crate) fn commit_metadata(&mut self, before:&Registry, staged:&Registry) {
+        for (id,desired) in &staged.sources {
+            if before.sources.get(id).is_some_and(|old|old.saved==desired.saved) {continue;}
+            let reassigned=before.sources.get(id).is_some_and(|old|old.saved.identity!=desired.saved.identity);
+            if reassigned {
+                let observed=before.sources.iter().find(|(observed,source)|*observed!=id&&source.saved.identity==desired.saved.identity).map(|(id,_)|id.clone());
+                if let Some(observed)=observed {
+                    let replacement=self.sources.get(&observed).cloned();
+                    self.disconnect(&observed);
+                    self.sources.remove(&observed);
+                    if let Some(mut current)=replacement {
+                        current.saved.id=id.clone();current.saved.name=desired.saved.name.clone();current.saved.role=desired.saved.role.clone();
+                        current.generation=current.generation.max(desired.generation);current.sequence=0;current.values.clear();
+                        self.sources.insert(id.clone(),current);
+                        continue;
+                    }
+                }
+            }
+            if let Some(current)=self.sources.get_mut(id) {
+                current.saved.name=desired.saved.name.clone();current.saved.role=desired.saved.role.clone();
+            } else {
+                let mut offline=desired.clone();offline.online=false;offline.values.clear();offline.sequence=0;
+                self.sources.insert(id.clone(),offline);
+            }
+        }
+        for (id,old) in &before.sources {
+            if staged.sources.contains_key(id) {continue;}
+            // A positive reconnect after an offline Forget is a new observation.
+            if self.sources.get(id).is_some_and(|current|current.online&&!old.online) {continue;}
+            self.disconnect(id);self.sources.remove(id);
+        }
+        self.dirty=self.saved()!=staged.saved();
+    }
     pub fn resource_inventory(&self) -> ResourceInventory {
         ResourceInventory {
             session: self.session.clone(),

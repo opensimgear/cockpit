@@ -1,7 +1,17 @@
+fn tamper(path: &std::path::Path, payload: &[u8]) {
+    let db = osg_persistence::Database::for_namespace(path).unwrap();
+    db.commit(&[osg_persistence::Change {
+        domain: "controllers",
+        key: "visibility",
+        expected_revision: db.revision("controllers", "visibility").unwrap(),
+        payload: Some(payload),
+    }])
+    .unwrap();
+}
 use super::*;
 #[test]
 fn explicit_intent_roundtrip_stays_disabled_and_external_edits_are_preserved() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("settings.json");
     let mut store = Settings::new(Some(path.clone()));
     assert!(!path.exists());
@@ -19,9 +29,17 @@ fn explicit_intent_roundtrip_stays_disabled_and_external_edits_are_preserved() {
     assert_eq!(Settings::new(Some(path.clone())).value, value);
     value.enabled = true;
     store.save(value).unwrap();
-    std::fs::write(&path, b"external").unwrap();
+    tamper(&path, b"external");
     assert!(store.save(Preferences::default()).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+    assert_eq!(
+        osg_persistence::Database::for_namespace(&path)
+            .unwrap()
+            .read("controllers", "visibility")
+            .unwrap()
+            .unwrap()
+            .payload,
+        b"external"
+    );
     let mut broken = Settings::new(Some(path));
     assert!(broken.error.is_some());
     assert!(broken.save(Preferences::default()).is_err());
@@ -54,21 +72,13 @@ fn limits_identity_schema_paths_and_competing_editors_are_checked() {
             .insert(uuid::Uuid::new_v4().to_string(), Intent::Visible);
     }
     assert!(value.validate().is_err());
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_directory();
     let path = temp.path().join("s.json");
     let mut first = Settings::new(Some(path.clone()));
     let mut second = Settings::new(Some(path.clone()));
     first.save(Preferences::default()).unwrap();
     assert!(second.save(Preferences::default()).is_err());
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path.with_extension("lock"))
-        .unwrap();
-    lock.try_lock().unwrap();
-    assert!(first.save(Preferences::default()).is_err());
-    drop(lock);
-    std::fs::write(&path, vec![0; 1_048_577]).unwrap();
+    tamper(&path, &vec![0; 1_048_577]);
     assert!(Settings::new(Some(path)).error.is_some());
     assert!(Settings::new(Some(temp.path().into())).error.is_some());
     let mut memory = Settings::new(None);

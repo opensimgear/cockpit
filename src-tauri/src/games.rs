@@ -1,10 +1,10 @@
-//! Installation/provider metadata and explicit restoration of retained ownership.
+//! Current installation/provider metadata. Retired game data is never opened.
 //! Unified ProfileSession is the only graph/runtime authoring and launch path.
 use crate::game_discovery::Platform;
+#[cfg(test)]
+use std::fs;
 use serde_json::{json, Value};
 use std::{
-    fs,
-    io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -14,7 +14,6 @@ use std::{
     time::{Duration, Instant},
 };
 type CleanupIo = Arc<dyn Fn(Value) -> Value + Send + Sync>;
-const CLIENT: &str = "cockpit-game-session-coordinator";
 const GAMES: [&str; 7] = [
     "dcs",
     "assetto-corsa-rally",
@@ -37,10 +36,11 @@ fn game_id(value: &Value) -> Result<&str, String> {
 }
 
 /// Explicit paths prevent installation metadata from loading an old profile
-/// library while retaining separately journaled cleanup and provider settings.
+/// library; current provider settings have their own SQLite owner.
 pub(crate) struct Paths {
     pub installations: PathBuf,
     pub provider_setup: PathBuf,
+    #[cfg(test)]
     pub recovery: PathBuf,
 }
 impl Paths {
@@ -48,6 +48,7 @@ impl Paths {
         Self {
             installations: root.join("game-installations-v1.json"),
             provider_setup: root.join("games.integration-setup.json"),
+            #[cfg(test)]
             recovery: root.join("games.recovery.json"),
         }
     }
@@ -56,17 +57,14 @@ struct Settings {
     saved: crate::game_installations::Settings,
     metadata_error: Option<String>,
     catalogue: Vec<Value>,
-    journal: Option<Value>,
     error: Option<String>,
     library_candidates: Vec<crate::game_library::Candidate>,
     library_diagnostics: Vec<String>,
     added_game_id: Option<String>,
 }
 struct Inner {
-    panel: CleanupIo,
     platform: Arc<dyn Platform>,
     installations: crate::game_installations::Store,
-    journal_path: PathBuf,
     setup: crate::game_integration_setup::GameIntegrationSetup,
     contexts: Mutex<crate::game_context::Broker>,
     vehicles: Mutex<crate::game_vehicles::Tracker>,
@@ -74,22 +72,16 @@ struct Inner {
     context_setup_check: Mutex<Option<Instant>>,
     activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
-    state: Mutex<Value>,
-    busy: AtomicBool,
     closed: AtomicBool,
-    cancel: AtomicBool,
 }
 pub(crate) struct GamesRuntime {
     inner: Arc<Inner>,
     admission: Mutex<()>,
-    worker: Mutex<Option<JoinHandle<()>>>,
     observer: Mutex<Option<JoinHandle<()>>>,
     activation_observer: Mutex<Option<JoinHandle<()>>>,
 }
 #[path = "game_activation_runtime.rs"]
 mod activation_runtime;
-#[path = "game_cleanup.rs"]
-mod cleanup;
 #[path = "game_context_runtime.rs"]
 mod context_runtime;
 #[path = "game_dcs_catalogues.rs"]
@@ -107,7 +99,7 @@ impl GamesRuntime {
     pub(crate) fn local_provider_settings(&self, id: &str) -> (Value, String) {
         self.inner.setup.provider_preferences_snapshot(id)
     }
-    pub(crate) fn new(panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>) -> Self {
+    pub(crate) fn new(_panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>) -> Self {
         let vehicles = crate::game_vehicles::Tracker::new(
             paths.installations.with_file_name("game-vehicles-v1.json"),
         );
@@ -116,33 +108,16 @@ impl GamesRuntime {
             Ok(saved) => (saved.unwrap_or_default(), None),
             Err(error) => (Default::default(), Some(error)),
         };
-        let mut error = metadata_error.clone();
-        let journal = match cleanup::load(&paths.recovery) {
-            Ok(journal) => journal,
-            Err(issue) => {
-                error=Some(format!("Retained game cleanup is invalid: {issue}. Preserve its journal until inspected."));
-                Some(
-                    json!({"invalid":true,"rawFingerprint":cleanup::fingerprint(&paths.recovery).ok()}),
-                )
-            }
-        };
-        let state = match &journal {
-            Some(journal) => {
-                json!({"phase":"recovery-needed","gameId":journal["gameId"],"retiredProfileId":journal["profileId"],"error":"A retained game owner needs explicit cleanup; no old profile was loaded or started."})
-            }
-            None => json!({"phase":"idle","error":null}),
-        };
+        let error=metadata_error.clone();
         let catalogue = crate::game_discovery::merged_catalogue(platform.as_ref(), &saved);
         let runtime = Self {
             inner: Arc::new(Inner {
-                panel,
                 setup: crate::game_integration_setup::GameIntegrationSetup::new(
                     paths.provider_setup,
                     platform.integration_setup_supported(),
                 ),
                 platform,
                 installations,
-                journal_path: paths.recovery,
                 contexts: Mutex::new(Default::default()),
                 vehicles: Mutex::new(vehicles),
                 dcs_vehicle_catalogues: Mutex::new(Default::default()),
@@ -152,19 +127,14 @@ impl GamesRuntime {
                     saved,
                     metadata_error,
                     catalogue,
-                    journal,
                     error,
                     library_candidates: vec![],
                     library_diagnostics: vec![],
                     added_game_id: None,
                 }),
-                state: Mutex::new(state),
-                busy: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
-                cancel: AtomicBool::new(false),
             }),
             admission: Mutex::new(()),
-            worker: Mutex::new(None),
             observer: Mutex::new(None),
             activation_observer: Mutex::new(None),
         };
@@ -249,72 +219,14 @@ impl GamesRuntime {
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"categories":settings.saved.categories,"manualInstallations":settings.saved.manual_installations,"libraryCandidates":settings.library_candidates,"libraryDiagnostics":settings.library_diagnostics,"addedGameId":settings.added_game_id,"cleanup":self.inner.state.lock().unwrap_or_else(|p|p.into_inner()).clone(),"error":settings.error})
+        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"categories":settings.saved.categories,"manualInstallations":settings.saved.manual_installations,"libraryCandidates":settings.library_candidates,"libraryDiagnostics":settings.library_diagnostics,"addedGameId":settings.added_game_id,"error":settings.error})
     }
-    pub(crate) fn active(&self) -> bool {
-        self.inner.busy.load(Ordering::Acquire)
-            || self.inner.setup.busy()
-            || self
-                .inner
-                .settings
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .journal
-                .is_some()
+    pub(crate) fn recovery_pending(&self)->bool{self.inner.setup.pending()}
+    pub(crate) fn active(&self)->bool{self.inner.setup.busy()}
+    pub(crate) fn guard_profile_takeover(&self)->Result<(),String>{
+        if self.inner.closed.load(Ordering::Acquire){Err("The game metadata runtime has closed.".into())}else{Ok(())}
     }
-    pub(crate) fn guard_profile_takeover(&self) -> Result<(), String> {
-        if self.inner.busy.load(Ordering::Acquire)
-            || self
-                .inner
-                .settings
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .journal
-                .is_some()
-        {
-            Err("Explicitly clean up or acknowledge retained game ownership before applying or launching a unified profile.".into())
-        } else {
-            Ok(())
-        }
-    }
-    pub(crate) fn guard_request(&self, request: &Value) -> Result<(), String> {
-        if self.guard_profile_takeover().is_ok() {
-            return Ok(());
-        }
-        let command = request["command"].as_str().unwrap_or("");
-        if command.starts_with("game_")
-            || matches!(
-                command,
-                "ports"
-                    | "connect"
-                    | "disconnect"
-                    | "module_usb_ports"
-                    | "module_usb_list"
-                    | "module_usb_status"
-                    | "module_usb_connect"
-                    | "module_usb_disconnect"
-                    | "status"
-                    | "config_read"
-                    | "action_describe"
-                    | "action_state"
-                    | "action_ownership"
-                    | "events_state"
-                    | "events_read"
-                    | "controller_list"
-                    | "controller_inspect"
-                    | "controller_visibility_status"
-                    | "controller_visibility_inspect"
-                    | "controller_visibility_processes"
-                    | "companion_status"
-                    | "companion_firmware_check"
-                    | "companion_usb_ports"
-                    | "companion_usb_status"
-            )
-        {
-            return Ok(());
-        }
-        Err("Retained game cleanup owns its existing hardware evidence. Finish cleanup before independent writes.".into())
-    }
+    pub(crate) fn guard_request(&self,_request:&Value)->Result<(),String>{self.guard_profile_takeover()}
     pub(crate) fn request(&self, request: &Value) -> Result<(), String> {
         if matches!(
             request["command"].as_str(),
@@ -377,16 +289,6 @@ impl GamesRuntime {
                 .find(|game| game["id"] == id)
                 .cloned()
                 .ok_or("Choose a current game installation.")?;
-            if (settings.journal.is_some() || self.inner.busy.load(Ordering::Acquire))
-                && !matches!(
-                    command,
-                    "game_integration_check" | "game_integration_cancel"
-                )
-            {
-                return Err(
-                    "Resolve retained game cleanup before changing its provider setup.".into(),
-                );
-            }
             drop(settings);
             let result = self
                 .inner
@@ -398,9 +300,8 @@ impl GamesRuntime {
             return result;
         }
         let fields: &[&str] = match command {
-            "game_get_state" | "game_scan" | "game_recover" => &[],
+            "game_get_state" | "game_scan" => &[],
             "game_installation" => &["gameId", "executable"],
-            "game_abandon" => &["preserveCurrentSetup"],
             _ => return Err("Unknown game metadata operation.".into()),
         };
         if !known(request, &[&["command", "clientId"][..], fields].concat()) {
@@ -408,12 +309,6 @@ impl GamesRuntime {
         }
         if command == "game_get_state" {
             return Ok(());
-        }
-        if command == "game_recover" {
-            return self.recover();
-        }
-        if command == "game_abandon" {
-            return self.abandon(request);
         }
         self.guard_profile_takeover()?;
         let mut settings = self
@@ -478,105 +373,10 @@ impl GamesRuntime {
         self.inner.refresh_game_contexts(true);
         Ok(())
     }
-    fn spawn(&self, work: impl FnOnce() + Send + 'static) {
-        let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(previous) = worker.take() {
-            let _ = previous.join();
-        }
-        *worker = Some(thread::spawn(work));
-    }
-    fn recover(&self) -> Result<(), String> {
-        if self.inner.busy.load(Ordering::Acquire) {
-            return Err("Wait for retained game cleanup to finish.".into());
-        }
-        let journal = self
-            .inner
-            .settings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .journal
-            .clone();
-        let Some(journal) = journal else {
-            self.inner.phase("idle", None);
-            return Ok(());
-        };
-        let journal = cleanup::validate_journal(journal)?;
-        let lease = cleanup::lease(&self.inner.journal_path)?;
-        self.inner.verify_journal()?;
-        self.inner.busy.store(true, Ordering::Release);
-        self.inner.cancel.store(false, Ordering::Release);
-        self.inner.phase("restoring", None);
-        let inner = self.inner.clone();
-        self.spawn(move || {
-            let _lease = lease;
-            let result = inner.restore(journal);
-            inner.finish(result, None);
-        });
-        Ok(())
-    }
-    fn abandon(&self, request: &Value) -> Result<(), String> {
-        if request["preserveCurrentSetup"] != true {
-            return Err(
-                "Explicitly confirm preserving current setup without restoring the retained owner."
-                    .into(),
-            );
-        }
-        if self.inner.busy.load(Ordering::Acquire) {
-            return Err(
-                "Wait for retained cleanup to finish before acknowledging its journal.".into(),
-            );
-        }
-        let lease = cleanup::lease(&self.inner.journal_path)?;
-        let journal = self
-            .inner
-            .settings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .journal
-            .clone()
-            .ok_or("No retained game journal needs acknowledgement.")?;
-        // An invalid journal has no trusted owner. Archive only this exact file;
-        // separate output/protected ownership records remain explicit recovery.
-        if journal["invalid"] != true {
-            self.inner.verify_journal()?;
-            if journal["companions"]["taken"] == true {
-                self.inner.call(
-                    "_game_companion_abandon",
-                    json!({"companions":journal["companions"]}),
-                )?;
-            }
-            self.inner.verify_journal()?;
-        } else {
-            let expected=journal["rawFingerprint"].as_str().ok_or("The rejected cleanup file has no bounded native snapshot; preserve it for inspection.")?;
-            if cleanup::fingerprint(&self.inner.journal_path)? != expected {
-                return Err(
-                    "The rejected cleanup file changed after inspection; it was preserved.".into(),
-                );
-            }
-        }
-        let archive = self
-            .inner
-            .journal_path
-            .with_file_name(format!("games.abandoned-{}.json", uuid::Uuid::new_v4()));
-        fs::rename(&self.inner.journal_path, &archive).map_err(|e| e.to_string())?;
-        let mut settings = self
-            .inner
-            .settings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        settings.journal = None;
-        settings.error = settings.metadata_error.clone();
-        drop(settings);
-        drop(lease);
-        *self.inner.state.lock().unwrap_or_else(|p| p.into_inner()) =
-            json!({"phase":"idle","error":null,"recoveryArchive":archive.to_string_lossy()});
-        Ok(())
-    }
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
-        self.inner.cancel.store(true, Ordering::Release);
-        for worker in [&self.activation_observer, &self.observer, &self.worker] {
+        for worker in [&self.activation_observer, &self.observer] {
             if let Some(worker) = worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
                 let _ = worker.join();
             }

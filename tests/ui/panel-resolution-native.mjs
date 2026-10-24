@@ -1,3 +1,4 @@
+import {verifiedServerKey} from './native/browser-trust.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createRequire} from 'node:module';
@@ -8,16 +9,17 @@ import {sendPublication} from '../../src/lib/companions.ts';
 const {chromium}=createRequire(import.meta.url)(process.env.OSG_PLAYWRIGHT_MODULE??'C:/Users/ivang/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 
 test('running cockpit: resolution warning follows selected page, display scale, resize and fullscreen', {timeout:120000},async()=>{
-  const endpoint=(await(await fetch('http://127.0.0.1:9222/json/version')).json()).webSocketDebuggerUrl;
+  const endpoint=(await(await fetch((process.env.OSG_GENERIC_CDP??'http://127.0.0.1:9222')+'/json/version')).json()).webSocketDebuggerUrl;
   const native=await chromium.connectOverCDP(endpoint,{noDefaults:true});
-  const page=native.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:1420'));
+  const page=native.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith(process.env.OSG_GENERIC_ORIGIN??'http://127.0.0.1:1420'));
   assert.ok(page,'Start the dev Cockpit before running this qualification.');
   const send=(command,companion={})=>page.evaluate(async request=>{
     const {gatewayRequest}=await import('/src/lib/gateway.ts');return (await gatewayRequest(request)).companions;
   },{command,companion});
   let browser,companionId,instanceId;
   try{
-    await page.evaluate(async()=>{const entry=performance.getEntriesByType('resource').find(e=>new URL(e.name).pathname==='/src/lib/companion-startup.ts');await(await import(entry.name)).restoreCompanionPanels();});
+    await page.evaluate(async()=>{const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'native-widget-qualification'}});if(!reply.ok)throw Error(reply.error);});
+    const listener=(await send('companion_inventory')).listener;if(!listener.enabled)await send('companion_enable',{address:'127.0.0.1',port:54449,advertisedHost:'127.0.0.1',discovery:false,expectedSettingsRevision:listener.settingsRevision});
     const source=createToggleSource(),draft=newCompiledDraft('Resolution warning review',800,480);
     draft.pages.push({id:'large',title:'Large',width:1600,height:960});
     for(const [index,p] of draft.pages.entries())draft.widgets.push({id:'toggle-'+index,label:'Toggle',pageId:p.id,sourceId:source.id,parameters:{},bounds:{x:.1,y:.1,width:240/p.width,height:144/p.height}});
@@ -25,7 +27,7 @@ test('running cockpit: resolution warning follows selected page, display scale, 
     assert.equal(publication.document.presentation.artifacts[0].artifact.width,240,'Compilation must keep the authored resolution');
     await sendPublication(publication,send,{saveAsLatest:false});
     const previous=new Set((await send('companion_status')).host.clients.map(c=>c.companionId));
-    browser=await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL??'msedge'});
+    const host=(await send('companion_status')),certificate=(await send('companion_browser_certificate')).certificatePem,spki=await verifiedServerKey(host.browserUrl,certificate);browser=await chromium.launch({headless:true,channel:process.env.OSG_BROWSER_CHANNEL??'msedge',args:['--ignore-certificate-errors-spki-list='+spki]});
     const context=await browser.newContext({viewport:{width:840,height:800},deviceScaleFactor:2});
     const companion=await context.newPage(),errors=[];companion.on('pageerror',e=>errors.push(e.message));
     const offer=await send('companion_pair_offer',{kind:'browser'});await companion.goto(offer.pairing.browserUrl,{waitUntil:'domcontentloaded'});

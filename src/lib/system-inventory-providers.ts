@@ -197,7 +197,7 @@ export class SystemInventoryController {
       if (c && visibility) aliases[`visibility:pnp:${visibility.id.toLowerCase()}`] = c.id;
       if (c) aliases[visibilityIds.get(h)!] = c.id;
     }
-    const snapshot = this.registry.update(observations, complete, diagnostics, now, aliases); this.onChange(snapshot); return snapshot;
+    const snapshot = await this.registry.update(observations, complete, diagnostics, now, aliases); this.onChange(snapshot); return snapshot;
   }
   private async controllers(now: number): Promise<Capture> {
     const sources: HostController[] = []; let offset = 0, session: string | undefined, total: number | undefined, backend = 'ready', diagnostic = '';
@@ -240,7 +240,7 @@ export class SystemInventoryController {
     }) };
   }
   private async companions(now: number): Promise<Capture> {
-    const state = (await this.send({ command: 'companion_status' })).companions;
+    const state = (await this.send({ command: 'companion_inventory' })).companions;
     if (!state?.host) throw Error('Companion inventory unavailable.');
     const observations: SystemObservation[] = [];
     for (const c of rows(state.host.clients)) {
@@ -391,7 +391,7 @@ export class SystemInventoryController {
     }
     else if (t?.kind === 'module' && this.gateways().some(e => e.id === t.gatewayId && e.state?.connected)) await this.send({ command: 'forget', gatewayId: t.gatewayId, moduleId: t.id });
     else if (t?.kind === 'companion') await this.send({ command: 'companion_revoke', companion: { companionId: t.id } });
-    this.registry.forget(id); this.onChange(this.snapshot);
+    await this.registry.forget(id); this.onChange(this.snapshot);
   }
   dispose() { this.disposed = true; this.epoch++; }
 }

@@ -138,7 +138,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
     if command=="profile_retired_recovery_status" { return None; }
     if command.starts_with("profile_retired_recovery_") { return Some("claim"); }
     if matches!(command,
-        "companion_status" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
+        "companion_status" | "companion_inventory" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_telemetry_inspect" | "game_integration_settings_save"
@@ -158,7 +158,7 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_library_scan"|"game_background_save"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_library_scan"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
             |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
@@ -194,7 +194,10 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 
 /// One process can keep any number of independently addressed gateways connected.
 /// The session map is held only while selecting an adapter, never during CDC I/O.
+#[path="persistence/backup/gateway.rs"]
+mod storage_controls;
 pub struct GatewayManager {
+    storage:crate::persistence::backup::Runtime,
     widget_library: crate::widget_library::Runtime,
     profiles: Mutex<osg_profiles::service::Service>,
     profile_resources: Arc<crate::profile_resources::Runtime>,
@@ -219,6 +222,7 @@ pub struct GatewayManager {
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
     system_inventory: crate::system_inventory::Runtime,
+    pub(crate) ui_preferences:crate::persistence::ui::Preferences,
     configuration_gate: Arc<Mutex<()>>,
     profile_panels: Arc<ProfilePanelIo>,
     closed: Arc<AtomicBool>,
@@ -227,6 +231,8 @@ pub struct GatewayManager {
     controllers: Arc<osg_controller_input::ControllerService>,
     retired_recovery: Arc<crate::profile_retired_recovery::Recovery>,
     companion_host: Arc<crate::companion_host::Runtime>,
+    #[cfg(test)]
+    test_namespace: Option<tempfile::TempDir>,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -252,6 +258,13 @@ impl GatewayManager {
         Self::with_options(provider, false)
     }
     fn with_options(provider: Arc<dyn Provider>, native: bool) -> Self {
+        #[cfg(test)]
+        if !native {
+            let directory=crate::test_directory();
+            let mut manager=Self::with_options_at(provider,false,Some(directory.path().join("dcs.json")));
+            manager.test_namespace=Some(directory);
+            return manager;
+        }
         Self::with_options_at(provider, native, None)
     }
     #[cfg(test)]
@@ -300,13 +313,12 @@ impl GatewayManager {
         let game_panel = retired_game_io::panel(panel, retired_recovery.clone(), controllers.clone(), companion_host.clone());
         let isolated = game_anchor.is_some();
         let anchor = game_anchor.unwrap_or_else(crate::config_paths::config_path);
+        let ui_preferences=crate::persistence::ui::Preferences::new(&anchor);
         let mut game_paths = crate::games::Paths::in_directory(anchor.parent().unwrap_or_else(|| std::path::Path::new(".")));
-        // Only locate separately retained setup/recovery evidence at an explicit
-        // old anchor. The obsolete game-profile configuration is never opened.
-        if let Some(retained_anchor) = std::env::var_os("OSG_GAMES_CONFIG").filter(|_|!isolated) {
-            let retained_anchor = std::path::PathBuf::from(retained_anchor);
-            game_paths.provider_setup = retained_anchor.with_extension("integration-setup.json");
-            game_paths.recovery = retained_anchor.with_extension("recovery.json");
+        // An explicit game namespace shares the current SQL provider settings.
+        if let Some(setup_anchor) = std::env::var_os("OSG_GAMES_CONFIG").filter(|_|!isolated) {
+            let setup_anchor = std::path::PathBuf::from(setup_anchor);
+            game_paths.provider_setup = setup_anchor.with_extension("integration-setup.json");
         }
         let games = Arc::new(crate::games::GamesRuntime::new(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform)));
         let resource_sessions = sessions.clone();
@@ -365,6 +377,8 @@ impl GatewayManager {
             worker
         });
         let manager = Self {
+            #[cfg(test)]
+            test_namespace:None,
             module_usb,
             profile_resources,
             profile_compilation: crate::profile_compilation::Runtime::default(),
@@ -384,6 +398,7 @@ impl GatewayManager {
             profile_worker: Mutex::new(profile_worker),
             profile_automatic: automatic::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("profiles-activation-v1.json"))),
             profile_automatic_worker: Mutex::new(None),
+            storage:crate::persistence::backup::Runtime::new(native),
             profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
                 crate::config_paths::config_path().with_file_name("profiles-v2")
             }))),
@@ -391,6 +406,7 @@ impl GatewayManager {
             sessions,
             inventory: Mutex::new(Vec::new()),
             system_inventory: crate::system_inventory::Runtime::new(native),
+            ui_preferences,
             configuration_gate,
             profile_panels,
             closed,
@@ -706,12 +722,19 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
+        if matches!(command,"storage_status"|"storage_create"|"storage_remove"|"storage_restore"|"storage_restart"){return self.storage_request(&request,native_authorization.as_ref());}
+        if matches!(command,"ui_preferences_get"|"ui_preferences_save") {
+            if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid UI settings client or closed cockpit.",None);}
+            let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());
+            if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()){return self.error(&error,None);}
+            return match self.ui_preferences.request(&request){Ok(settings)=>json!({"ok":true,"state":{"uiPreferences":settings}}),Err(error)=>self.error(&error,None)};
+        }
         // Widget sources are shared metadata; saving never enters output ownership.
-        if matches!(command,"widget_library_get"|"widget_library_merge"|"widgets_list"|"widget_get"|"widget_save") {
+        if matches!(command,"designer_workspace_read"|"designer_workspace_write"|"widget_library_get"|"widget_library_merge"|"widgets_list"|"widget_get"|"widget_save") {
             if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid widget client or closed cockpit.",None);}
             let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());
             if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()){return self.error(&error,None);}
-            return match self.widget_library.request(&request){Ok(widgets)=>if command=="widget_save"{json!({"ok":true,"state":{"widgetSaved":widgets}})}else{json!({"ok":true,"state":{"widgetLibrary":widgets}})},Err(error)=>self.error(&error,None)};
+            return match self.widget_library.request(&request){Ok(widgets)=>if command.starts_with("designer_workspace_"){json!({"ok":true,"state":{"designerWorkspace":widgets}})}else if command=="widget_save"{json!({"ok":true,"state":{"widgetSaved":widgets}})}else{json!({"ok":true,"state":{"widgetLibrary":widgets}})},Err(error)=>self.error(&error,None)};
         }
         // Activation progress and cancellation remain responsive while takeover
         // owns the admission/coordinator locks. These APIs never claim outputs.
@@ -2521,8 +2544,8 @@ mod tests {
     fn retained_ownership_blocks_apply_learning_and_ambiguous_cleanup_without_loading_old_configuration() {
         let (manager, provider) = setup();
         let mut manager=Arc::try_unwrap(manager).ok().unwrap();
-        let root=tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("output-recovery.json"),b"malformed retained owner").unwrap();
+        let root=crate::test_directory();
+        osg_persistence::test_support::write_evidence(&root.path().join("output-recovery.json"),"recovery-output",Some(b"malformed retained owner")).unwrap();
         std::fs::write(root.path().join("local-settings.json"),b"obsolete config").unwrap();
         manager.retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().into()),false));
         let status=request(&manager,"profile_retired_recovery_status",None,json!({}));
@@ -2531,14 +2554,14 @@ mod tests {
         assert_eq!(reply["ok"],false);assert!(reply["error"].as_str().unwrap().contains("retained"));
         assert!(manager.guard_learning().unwrap_err().contains("retained"));
         assert_eq!(request(&manager,"profile_retired_recovery_acknowledge",None,json!({"reference":null}))["ok"],false);
-        assert_eq!(std::fs::read(root.path().join("output-recovery.json")).unwrap(),b"malformed retained owner");
+        assert_eq!(osg_persistence::test_support::read_evidence(&root.path().join("output-recovery.json"),"recovery-output").unwrap(),b"malformed retained owner");
         assert!(provider.adapters.lock().unwrap().is_empty());
         assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
     }
     #[test]
     fn retained_ownership_appearing_during_slow_preparation_blocks_transition_without_driver_calls() {
         let (mut manager,provider)=setup();
-        let root=tempfile::tempdir().unwrap();
+        let root=crate::test_directory();
         Arc::get_mut(&mut manager).unwrap().retired_recovery=Arc::new(crate::profile_retired_recovery::Recovery::new(Some(root.path().canonicalize().unwrap()),false));
         let prepare=manager.profile_prepare.clone();
         let gate=Arc::new(std::sync::Barrier::new(2));let blocked=gate.clone();
@@ -2552,13 +2575,13 @@ mod tests {
         let admission=manager.profile_admission.write().unwrap();
         gate.wait();
         let path=root.path().join("output-recovery.json");
-        std::fs::write(&path,b"interrupted legacy owner").unwrap();
+        osg_persistence::test_support::write_evidence(&path,"recovery-output",Some(b"interrupted legacy owner")).unwrap();
         drop(admission);
         let reply=pending.join().unwrap();assert_eq!(reply["ok"],false,"{reply}");
         assert!(reply["error"].as_str().unwrap().contains("retained"));
         assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
         assert!(provider.adapters.lock().unwrap().is_empty());
-        assert_eq!(std::fs::read(path).unwrap(),b"interrupted legacy owner");
+        assert_eq!(osg_persistence::test_support::read_evidence(&path,"recovery-output").unwrap(),b"interrupted legacy owner");
     }
     #[test]
     fn retired_provider_commands_cannot_cancel_or_reconfigure_a_unified_run() {

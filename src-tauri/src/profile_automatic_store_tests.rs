@@ -21,16 +21,13 @@ fn missing_state_is_passive_and_rules_round_trip_without_process_authority() {
     let path = directory.path().join("new").join("automatic.json");
     let store = Store::new(Some(path.clone()));
     assert!(store.load().unwrap().is_none());
-    assert!(!path.parent().unwrap().exists());
+    assert!(!path.exists());
     store.save(&settings()).unwrap();
     assert_eq!(store.load().unwrap(), Some(settings()));
-    let before = std::fs::read(&path).unwrap();
-    assert!(store
-        .save_with(&Settings::default(), |_, _| Err(
-            "injected replacement error".into()
-        ))
-        .is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let stale=Store::new(Some(path.clone()));stale.load().unwrap();
+    store.save(&Settings::default()).unwrap();
+    assert!(stale.save(&settings()).unwrap_err().contains("conflict"));
+    assert_eq!(Store::new(Some(path.clone())).load().unwrap(),Some(Settings::default()));
     Store::new(None).save(&settings()).unwrap();
     assert!(Store::new(None).load().unwrap().is_none());
 }
@@ -43,11 +40,14 @@ fn corrupt_unknown_oversized_and_nonregular_settings_are_preserved() {
     forged["rules"][0]["pid"] = serde_json::json!(42);
     let bytes = serde_json::to_vec(&forged).unwrap();
     std::fs::write(&path, &bytes).unwrap();
+    crate::persistence::test_support::record(&path,"profiles","selection",&std::fs::read(&path).unwrap());
     assert!(store.load().is_err());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     std::fs::write(&path, vec![b' '; MAX_BYTES + 1]).unwrap();
+    crate::persistence::test_support::record(&path,"profiles","selection",&std::fs::read(&path).unwrap());
     assert!(store.load().is_err());
     std::fs::write(&path, b"{").unwrap();
+    crate::persistence::test_support::record(&path,"profiles","selection",&std::fs::read(&path).unwrap());
     assert!(store.load().is_err());
     for mutate in [
         |s: &mut Settings| s.schema_version = 2,
@@ -89,8 +89,9 @@ fn remembered_context_choices_round_trip_and_older_settings_load_without_them() 
     assert_eq!(store.load().unwrap(),Some(saved));
     let mut legacy = serde_json::to_value(settings()).unwrap();
     legacy.as_object_mut().unwrap().remove("preferredProfiles");
-    std::fs::write(&path,serde_json::to_vec(&legacy).unwrap()).unwrap();
-    assert!(store.load().unwrap().unwrap().preferred_profiles.is_empty());
+    let legacy_root=crate::test_directory();let legacy_path=legacy_root.path().join("automatic.json");
+    std::fs::write(&legacy_path,serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(Store::new(Some(legacy_path)).load().unwrap().is_none());
     for (game, profile) in [("unknown",DEFAULT_PROFILE_ID),("dcs","forged")] {
         let mut invalid = settings();
         invalid.preferred_profiles.insert(game.into(),profile.into());

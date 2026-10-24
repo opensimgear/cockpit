@@ -11,7 +11,7 @@ pub(super) fn setup() -> (
     Vec<Assignment>,
     Arc<AtomicUsize>,
 ) {
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let profile =
         Profile::parse(include_bytes!("../../mapping/fixtures/direct-profile.json")).unwrap();
     Store::new(root.path().into()).save(&profile).unwrap();

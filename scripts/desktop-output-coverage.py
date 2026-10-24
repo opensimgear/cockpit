@@ -157,11 +157,11 @@ def main():
     summary = {}
     # Native process entry, Win32 injection and receiver probes have a separate
     # interactive acceptance boundary. Coverage here cannot qualify that path.
-    for module in ("keys", "protocol", "reducer", "worker", "coordinator"):
+    for module in ("keys", "protocol", "reducer", "worker", "coordinator", "coordinator/journal"):
         source = root / f"crates/desktop-output/src/{module}.rs"
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={profile}",
                          "-show-line-counts-or-regions", source], root)
-        (output / f"{module}-lines.txt").write_text(annotated, encoding="utf-8")
+        (output / (module.replace('/', '-') + '-lines.txt')).write_text(annotated, encoding="utf-8")
         counts = production_counts(source.read_text(encoding="utf-8"), annotated)
         if not counts:
             raise RuntimeError(f"No instrumented production lines for {module}.")

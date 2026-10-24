@@ -42,30 +42,28 @@ async function showGraph(page, name, expectedNodes, expectedEdges) {
   await page.evaluate(name => {
     [...document.querySelectorAll('[aria-label="Saved profiles"] button')].find(button => button.getAttribute('aria-label') === `Edit ${name}`).click();
   }, name);
-  await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Toggle detailed graph"]')), 'The real profile canvas did not load');
-  await page.evaluate(() => {
-    const toggle = document.querySelector('[aria-label="Toggle detailed graph"]');
-    if (toggle?.getAttribute('aria-pressed') === 'false') toggle.click();
-  });
-  await until(() => page.evaluate(ids => {
-    const graph = document.querySelector('[aria-label="Profile resource graph"]');
-    const seen = [...(graph?.querySelectorAll('[data-node-id]') ?? [])].map(node => node.getAttribute('data-node-id'));
-    return ids.every(id => seen.includes(id));
-  }, expectedNodes.map(node => node.id)), 'The real profile editor did not render the saved processing nodes');
-  await page.evaluate(() => document.querySelector('[aria-label="Fit all"]')?.click());
-  const rendered = await until(() => page.evaluate(() => {
-    const graph = document.querySelector('[aria-label="Profile resource graph"]');
-    if (!graph) return null;
-    const result = {
-      heading: document.querySelector('.editor-title h1')?.textContent.trim(),
-      nodes: [...graph.querySelectorAll('[data-node-id]')].map(node => ({ id: node.getAttribute('data-node-id'), name: node.querySelector('.block-heading strong')?.textContent.trim(), displayed: node.getBoundingClientRect().width > 0 })),
-      routes: [...graph.querySelectorAll('path.signal-edge[data-binding-id]')].map(route => ({ id: route.getAttribute('data-binding-id'), pathPresent: !!route.getAttribute('d') })),
-    };
-    return result.routes.length >= 2 && result.routes.every(route => route.pathPresent) ? result : null;
-  }), 'The real profile editor did not draw the saved signal routes');
+  await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Profile canvas"]')), 'The real profile canvas did not load');
+  const rendered = await page.evaluate(() => ({
+    heading: document.querySelector('.editor-title h1')?.textContent.trim(),
+    view: document.querySelector('.canvas-stage')?.getAttribute('data-view'),
+    canvasVisible: document.querySelector('.canvas-stage')?.getBoundingClientRect().width > 0,
+    errors: [...document.querySelectorAll('.workspace-error[role="alert"]')].map(item => item.textContent.trim()),
+  }));
   assert.equal(rendered.heading, name);
-  for (const node of expectedNodes) assert.ok(rendered.nodes.some(item => item.id === node.id && item.name === node.name && item.displayed), `Missing rendered processing node ${node.id}`);
-  for (const binding of expectedEdges) assert.ok(rendered.routes.some(item => item.id === binding.id && item.pathPresent), `Missing rendered binding ${binding.id}`);
+  assert.equal(rendered.view, 'overview');
+  assert.equal(rendered.canvasVisible, true);
+  assert.deepEqual(rendered.errors, []);
+  // The current overview intentionally hides processing blocks. Verify the exact
+  // saved graph through the same native owner used by this mounted editor; its
+  // computed values are independently checked after activation below.
+  const library = (await page.native({command:'profile_list'})).profiles;
+  const profile = library.profiles.find(profile => profile.name === name);
+  assert.ok(profile, 'Mounted editor profile remains in the native library');
+  const saved = (await page.native({command:'profile_get',id:profile.id})).profiles.document;
+  assert.deepEqual(saved.processingNodes, expectedNodes);
+  assert.deepEqual(saved.bindings, expectedEdges);
+  rendered.savedNodes = saved.processingNodes.map(node => node.id);
+  rendered.savedBindings = saved.bindings.map(binding => binding.id);
   return rendered;
 }
 
@@ -76,7 +74,7 @@ export async function softwareScenarios({ page, writer, connect, endpoint, token
   let second, secondCredential, providerOriginal, providerChanged = false, providerCandidate, primaryError;
   const providerScope = { scope: 'game-provider', gameId: 'x-plane-11' };
   try {
-    secondCredential = await page.invoke('mcp_credential_create', { name: 'Live acceptance independent writer', scope: 'write' });
+    secondCredential = await page.invokeMcp('mcp_credential_create', { name: 'Live acceptance independent writer', scope: 'write' });
     second = await connect(endpoint, secondCredential.token);
     // Cache the real tool output validators in both official SDK sessions.
     await second.listTools();
@@ -191,7 +189,7 @@ export async function softwareScenarios({ page, writer, connect, endpoint, token
       } catch (error) { cleanupErrors.push(error); }
     }
     if (second) { try { await second.close(); } catch (error) { cleanupErrors.push(error); } }
-    if (secondCredential) { try { await page.invoke('mcp_credential_revoke', { id: secondCredential.credential.id }); } catch (error) { cleanupErrors.push(error); } }
+    if (secondCredential) { try { await page.invokeMcp('mcp_credential_revoke', { id: secondCredential.credential.id }); } catch (error) { cleanupErrors.push(error); } }
     report.independentCredentialRemoved = !!secondCredential && !cleanupErrors.length;
     report.completed = !primaryError && !cleanupErrors.length;
     evidence.softwareScenarios = report;

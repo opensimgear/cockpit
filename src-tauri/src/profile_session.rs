@@ -261,16 +261,6 @@ impl<H: Host> Coordinator<H> {
             launch: None,
         }
     }
-    /// Upgrade old operator Pause intent to a durable Stop before Automatic can run.
-    pub(crate) fn legacy_stop_requested(&self) -> bool {
-        self.manifest.legacy_paused
-    }
-    pub(crate) fn complete_legacy_stop_migration(&mut self) -> Result<(), String> {
-        if !self.manifest.legacy_paused { return Ok(()); }
-        let mut next = self.manifest.clone();
-        next.legacy_paused = false;
-        self.persist(next)
-    }
     pub(crate) fn status(&self) -> &Status {
         &self.status
     }

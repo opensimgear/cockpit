@@ -1,14 +1,21 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { invoke, isTauri } from '@tauri-apps/api/core';
-  import { createProgressNotificationSettings, PROGRESS_NOTIFICATION_POSITIONS, type ProgressNotificationSettingsState } from './progress-notification-settings';
-
+  import { isTauri } from '@tauri-apps/api/core';
+  import Icon from './Icon.svelte';
+  import { uiPreference, uiPreferences } from './persistence/ui-preferences';
+  import { PROGRESS_NOTIFICATION_POSITIONS } from './progress-notification-settings';
+  const progress = uiPreference('progress');
   const nativeApp = isTauri();
-  let preferences = $state.raw<ProgressNotificationSettingsState>({
-    delivery: 'system', position: 'bottom-right', native: nativeApp, loaded: false, busy: '', error: '', retry: '', message: '',
-  });
-  const settings = createProgressNotificationSettings(invoke, nativeApp, next => { preferences = next; });
-  onMount(() => { void settings.load(); return () => settings.dispose(); });
+  let message = $state('');
+  const preferences = $derived({ ...$progress.value, native: nativeApp, loaded: $progress.ready, busy: $progress.busy ? 'save' : '', error: $progress.error, message });
+  async function save(value: typeof preferences.position, delivery = $progress.value.delivery) {
+    message = '';
+    try { await progress.save({ delivery, position: value }); message = 'Notification settings saved.'; } catch { /* The shared store retains the visible error. */ }
+  }
+  const settings = {
+    save(value: string) { return save(value as typeof preferences.position); },
+    setDelivery(value: string) { return save($progress.value.position, value as typeof preferences.delivery); },
+    retry() { return uiPreferences.hydrate(); },
+  };
 </script>
 
 <section class="panel preferences-panel progress-notification-settings" aria-label="Progress notifications">
@@ -23,7 +30,7 @@
   </div>
   {#if !preferences.native}<div class="preference-row"><p>Progress notification settings are available in the Cockpit desktop app.</p></div>
   {:else if preferences.busy}<div class="preference-row"><p role="status">{preferences.busy === 'load' ? 'Loading notification settings…' : 'Saving notification settings…'}</p></div>
-  {:else if preferences.error}<div class="preference-row"><p class="settings-error" role="alert">{preferences.error}</p><button class="secondary-button" onclick={() => { void settings.retry(); }}>Retry</button></div>
+  {:else if preferences.error}<div class="preference-row"><p class="settings-error" role="alert">{preferences.error}</p><button class="secondary-button" onclick={() => { void settings.retry(); }}><Icon name="refresh" size={14} />Retry</button></div>
   {:else if preferences.message}<div class="preference-row"><p role="status">{preferences.message}</p></div>{/if}
 </section>
 

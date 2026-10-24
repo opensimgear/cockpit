@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
 
-const { createCanvasStylingStore, canvasStyling, CANVAS_STYLING_STORAGE_KEY } = (await loadModules(['./canvas-styling'])).get('./canvas-styling');
+let modules;
+const { createCanvasStylingStore, canvasStyling, CANVAS_STYLING_STORAGE_KEY } = (modules = await loadModules(['./canvas-styling'])).get('./canvas-styling');
 const plain = value => JSON.parse(JSON.stringify(value));
 function current(store) {
   let value;
@@ -15,7 +16,7 @@ function memory(saved = null) {
 }
 
 test('canvas styling works without browser globals and starts with smooth connections', () => {
-  assert.deepEqual(current(canvasStyling), { arrowStyle: 'smooth', cornerRadius: 24, collapseParallelWires: true, storageError: null });
+  assert.deepEqual(current(canvasStyling), { arrowStyle: 'smooth', cornerRadius: 24, collapseParallelWires: true, storageError: null, saving: false, ready: true });
   const store = createCanvasStylingStore(null);
   store.setArrowStyle('orthogonal');
   store.setCornerRadius(35);
@@ -110,4 +111,12 @@ test('collapsed connection preference restores only boolean values and defaults 
   for (const value of [true, false]) {
     assert.equal(current(createCanvasStylingStore(memory(JSON.stringify({ collapseParallelWires: value })))).collapseParallelWires, value);
   }
+});
+
+test('runtime styling uses one native owner, acknowledges each field and preserves failed edits',async()=>{
+ const {uiPreferences,UI_KEYS}=modules.get('./persistence/ui-preferences');const entries=Object.fromEntries(UI_KEYS.map(key=>[key,{revision:0,value:null}]));let fail=false,calls=0;
+ uiPreferences.connect({read:async()=>({entries}),write:async(key,revision,value)=>{calls++;if(fail)throw Error('locked');entries[key]={revision:revision+1,value};return entries[key];}});await uiPreferences.hydrate();const stop=canvasStyling.subscribe(()=>{});
+ canvasStyling.setArrowStyle('invalid');canvasStyling.setArrowStyle('smooth');canvasStyling.setCornerRadius(NaN);canvasStyling.setCornerRadius(24);canvasStyling.setCollapseParallelWires('bad');canvasStyling.setCollapseParallelWires(true);assert.equal(calls,0);
+ canvasStyling.setArrowStyle('orthogonal');await new Promise(setImmediate);canvasStyling.setCornerRadius(40);await new Promise(setImmediate);canvasStyling.setCollapseParallelWires(false);await new Promise(setImmediate);assert.equal(current(canvasStyling).cornerRadius,40);assert.equal(current(canvasStyling).collapseParallelWires,false);assert.equal(calls,3);
+ fail=true;canvasStyling.setArrowStyle('smooth');await new Promise(setImmediate);assert.equal(current(canvasStyling).arrowStyle,'orthogonal');assert.match(current(canvasStyling).storageError,/locked/);stop();
 });

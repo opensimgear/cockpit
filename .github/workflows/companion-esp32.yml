@@ -4,6 +4,8 @@ permissions:
   contents: read
 jobs:
   portable:
+    # Temporarily disabled at user request while ESP32 qualification is deferred.
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -82,6 +84,8 @@ jobs:
             .research/esp32-waveshare-native/coverage.json
             .research/esp32-waveshare-native/board-test.log
   cross-build:
+    # Temporarily disabled at user request while ESP32 qualification is deferred.
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -104,6 +108,8 @@ jobs:
             apps/companion-esp32/build-${{ matrix.target }}/flasher_args.json
           if-no-files-found: error
   waveshare:
+    # Temporarily disabled at user request while ESP32 qualification is deferred.
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -126,6 +132,8 @@ jobs:
             apps/companion-esp32/build-waveshare-lcd7/sdkconfig
           if-no-files-found: error
   sunton:
+    # Temporarily disabled at user request while ESP32 qualification is deferred.
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -143,6 +151,8 @@ jobs:
             apps/companion-esp32/build-sunton-3248s035r/*.map
           if-no-files-found: error
   host-wire:
+    # Temporarily disabled at user request while ESP32 qualification is deferred.
+    if: ${{ false }}
     runs-on: windows-2022
     env:
       CARGO_INCREMENTAL: "0"

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { uiPreference } from './persistence/ui-preferences';
+  const theme = uiPreference('theme');
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import {profileProgressCanCancel, type ActivationWindowSnapshot} from './profile-activation-window';
@@ -11,7 +13,7 @@
   const canCancel = $derived(!!snapshot && profileProgressCanCancel(snapshot.progress) && !cancelling);
   const showCancel = $derived(!!snapshot && (profileProgressCanCancel(snapshot.progress) || cancelling));
   const status = $derived(error || snapshot?.progress.message || 'Preparing profile…');
-  const light = (() => { try { return localStorage.getItem('osg-light') === 'true'; } catch { return false; } })();
+  const light = $derived($theme.value);
 
   async function refresh() {
     if (loading) return;

@@ -2,6 +2,7 @@
 //! A write-ahead journal owns only matching bytes; recovery preserves external edits.
 mod aircraft;
 mod physics;
+mod recovery;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -1188,95 +1189,15 @@ pub(crate) fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
     result.map_err(|e| format!("Cannot replace {}: {e}", path.display()))
 }
+#[cfg(test)]
 fn save_journal(work: &Path, value: &Value) -> Result<(), String> {
-    replace(&work.join(JOURNAL), value.to_string().as_bytes())
+    recovery::Ledger::open(work)?.begin(value.clone())
 }
 pub(crate) fn recovery_pending(work: &Path) -> bool {
-    work.join(JOURNAL).exists()
+    recovery::pending(work)
 }
-fn journal(work: &Path) -> Result<Value, String> {
-    read_receipt(&work.join(JOURNAL))
-}
-fn read_receipt(path: &Path) -> Result<Value, String> {
-    reject_link(path)?;
-    let value: Value = serde_json::from_slice(&read(path, 2 * 1024 * 1024)?)
-        .map_err(|_| "The DCS setup recovery journal is invalid.")?;
-    if value["schemaVersion"] != 1
-        || value["id"]
-            .as_str()
-            .and_then(|s| uuid::Uuid::parse_str(s).ok())
-            .is_none()
-        || !value["files"].is_object()
-        || !value["target"]
-            .as_str()
-            .is_some_and(|s| Path::new(s).is_absolute())
-    {
-        return Err("The DCS setup recovery journal is invalid.".into());
-    }
-    for key in [
-        "aircraftBefore",
-        "aircraftAfter",
-        "physicsBefore",
-        "physicsAfter",
-    ] {
-        if let Some(digest) = value.get(key) {
-            if !digest.is_null()
-                && !digest
-                    .as_str()
-                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-            {
-                return Err("Invalid aircraft export recovery digest.".into());
-            }
-        }
-    }
-    for (name, expected) in value["files"].as_object().unwrap() {
-        safe_relative(name)?;
-        if !expected
-            .as_str()
-            .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        {
-            return Err("Invalid DCS setup recovery digest.".into());
-        }
-    }
-    Ok(value)
-}
-fn completed_receipts(
-    target: &Path,
-    work: &Path,
-) -> Result<Vec<(std::time::SystemTime, PathBuf, Value)>, String> {
-    let target = checked_target(target)?;
-    if !work.exists() {
-        return Ok(Vec::new());
-    }
-    reject_link(work)?;
-    let mut receipts = Vec::new();
-    for entry in fs::read_dir(work).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name();
-        let Some(id) = name.to_str().filter(|s| uuid::Uuid::parse_str(s).is_ok()) else {
-            continue;
-        };
-        reject_link(&entry.path())?;
-        let path = entry.path().join("completed.json");
-        if !path.exists() {
-            continue;
-        }
-        let value = read_receipt(&path)?;
-        if value["id"] != id {
-            return Err("A DCS setup receipt does not match its backup folder. Existing files were preserved.".into());
-        }
-        let recorded_target = Path::new(value["target"].as_str().unwrap());
-        // Receipts for a removed or unrelated user folder do not block this installation.
-        if fs::canonicalize(recorded_target).ok().as_ref() == Some(&target) {
-            checked_target(recorded_target)?;
-            let modified = fs::metadata(&path)
-                .and_then(|metadata| metadata.modified())
-                .map_err(|e| e.to_string())?;
-            receipts.push((modified, path, value));
-        }
-    }
-    receipts.sort_by(|a, b| b.0.cmp(&a.0));
-    Ok(receipts)
+fn completed_receipts(target: &Path, work: &Path) -> Result<Vec<(usize, PathBuf, Value)>, String> {
+    recovery::completed(target, work)
 }
 /// Only completed Cockpit transactions can be uninstalled. External installations remain owned by their installer.
 pub(crate) fn removal_available(target: &Path, work: &Path) -> Result<bool, String> {
@@ -1333,6 +1254,7 @@ fn removal_preflight(work: &Path, value: &Value) -> Result<(), String> {
             return Err(format!("{} changed after setup. Integration removal preserved its contents; restore the matching setup version before removing integration.", path.display()));
         }
         if let Some(expected) = value[before].as_str() {
+            osg_persistence::check_path(&backup.join(backup_name), false)?;
             if hash(&read(&backup.join(backup_name), max)?) != expected {
                 return Err("A DCS integration backup failed its integrity check. Existing files were preserved.".into());
             }
@@ -1357,7 +1279,12 @@ fn removal_preflight(work: &Path, value: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn clean_owned_tree(root: &Path, files: &Value, conflicts: &mut Vec<String>) -> Result<(), String> {
+fn clean_owned_tree(
+    root: &Path,
+    files: &Value,
+    conflicts: &mut Vec<String>,
+    guard: &impl Fn() -> Result<(), String>,
+) -> Result<(), String> {
     if !root.exists() {
         return Ok(());
     }
@@ -1383,6 +1310,7 @@ fn clean_owned_tree(root: &Path, files: &Value, conflicts: &mut Vec<String>) -> 
         }
         if path.exists() {
             if hash(&read(&path, MAX_FILE)?) == expected.as_str().unwrap() {
+                guard()?;
                 fs::remove_file(&path)
                     .map_err(|e| format!("Cannot restore {}: {e}", path.display()))?;
             } else {
@@ -1396,6 +1324,7 @@ fn clean_owned_tree(root: &Path, files: &Value, conflicts: &mut Vec<String>) -> 
     let mut directories = directories.into_iter().collect::<Vec<_>>();
     directories.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     for directory in directories {
+        guard()?;
         let _ = fs::remove_dir(directory);
     }
     let remaining = fs::read_dir(root)
@@ -1412,6 +1341,7 @@ fn clean_owned_tree(root: &Path, files: &Value, conflicts: &mut Vec<String>) -> 
             if hash(&read(&marker, MAX_FILE)?)
                 == files[".osg-cockpit-install.json"].as_str().unwrap_or("")
             {
+                guard()?;
                 fs::remove_file(&marker).map_err(|e| e.to_string())?;
             } else {
                 conflicts.push(format!(
@@ -1421,6 +1351,7 @@ fn clean_owned_tree(root: &Path, files: &Value, conflicts: &mut Vec<String>) -> 
             }
         }
         if conflicts.is_empty() {
+            guard()?;
             fs::remove_dir(root).map_err(|e| e.to_string())?;
         }
     } else {
@@ -1431,7 +1362,8 @@ fn clean_owned_tree(root: &Path, files: &Value, conflicts: &mut Vec<String>) -> 
     }
     Ok(())
 }
-fn restore(work: &Path, value: &Value) -> Result<Value, String> {
+fn restore(work: &Path, value: &Value, ledger: &mut recovery::Ledger) -> Result<Value, String> {
+    ledger.verify_pending(value)?;
     let target = checked_target(Path::new(
         value["target"].as_str().ok_or("Missing setup target.")?,
     ))?;
@@ -1450,12 +1382,15 @@ fn restore(work: &Path, value: &Value) -> Result<Value, String> {
         let before = value["exportBefore"].as_str();
         if current_hash.as_deref() == Some(after) {
             if let Some(before) = before {
+                osg_persistence::check_path(&backup, false)?;
                 let bytes = read(&backup, MAX_EXPORT)?;
                 if hash(&bytes) != before {
                     return Err("The DCS export backup failed its integrity check. Existing files were preserved.".into());
                 }
+                ledger.verify_pending(value)?;
                 replace(&export, &bytes)?;
             } else {
+                ledger.verify_pending(value)?;
                 fs::remove_file(&export).map_err(|e| e.to_string())?;
             }
         } else if current_hash.as_deref() != before {
@@ -1464,8 +1399,12 @@ fn restore(work: &Path, value: &Value) -> Result<Value, String> {
             );
         }
     }
-    aircraft::restore(&target, &work.join(id), value, &mut conflicts)?;
-    physics::restore(&target, &work.join(id), value, &mut conflicts)?;
+    aircraft::restore(&target, &work.join(id), value, &mut conflicts, &|| {
+        ledger.verify_pending(value)
+    })?;
+    physics::restore(&target, &work.join(id), value, &mut conflicts, &|| {
+        ledger.verify_pending(value)
+    })?;
     if value["installModule"] == true && scripts.join("DCS-BIOS").exists() {
         let ownership = scripts.join("DCS-BIOS/.osg-cockpit-install.json");
         if ownership.exists()
@@ -1474,7 +1413,12 @@ fn restore(work: &Path, value: &Value) -> Result<Value, String> {
                     .as_str()
                     .unwrap_or("")
         {
-            clean_owned_tree(&scripts.join("DCS-BIOS"), &value["files"], &mut conflicts)?;
+            clean_owned_tree(
+                &scripts.join("DCS-BIOS"),
+                &value["files"],
+                &mut conflicts,
+                &|| ledger.verify_pending(value),
+            )?;
         } else {
             conflicts.push(
                 "The DCS-BIOS folder is not owned by this setup operation; it was preserved."
@@ -1486,13 +1430,14 @@ fn restore(work: &Path, value: &Value) -> Result<Value, String> {
         &scripts.join(format!(".osg-dcs-stage-{id}")),
         &value["files"],
         &mut conflicts,
+        &|| ledger.verify_pending(value),
     )?;
     if value["createdScripts"] == true {
+        ledger.verify_pending(value)?;
         let _ = fs::remove_dir(&scripts);
     }
     if conflicts.is_empty() {
-        fs::rename(work.join(JOURNAL), work.join(id).join("restored.json"))
-            .map_err(|e| e.to_string())?;
+        ledger.finish(recovery::State::Restored)?;
     }
     Ok(json!({"restored":conflicts.is_empty(),"conflicts":conflicts,"backupFolder":work.join(id)}))
 }
@@ -1501,7 +1446,11 @@ pub(crate) fn recover(work: &Path) -> Result<Value, String> {
     if !recovery_pending(work) {
         return Ok(json!({"restored":true,"conflicts":[]}));
     }
-    restore(work, &journal(work)?)
+    let mut ledger = recovery::Ledger::open(work)?;
+    let value = ledger
+        .pending()
+        .ok_or("No current DCS setup operation needs recovery.")?;
+    restore(work, &value, &mut ledger)
 }
 /// Undo completed transactions in reverse order, using the same durable, byte-checked recovery as interrupted setup.
 pub(crate) fn remove(
@@ -1511,26 +1460,27 @@ pub(crate) fn remove(
     progress: impl Fn(&str, u8),
     write_boundary: impl Fn() -> Result<(), String>,
 ) -> Result<(), String> {
-    if recovery_pending(work) {
+    let mut ledger = recovery::Ledger::open(work)?;
+    if ledger.pending().is_some() {
         return Err("Recover the interrupted DCS integration operation before removing it.".into());
     }
-    let receipts = completed_receipts(target, work)?;
+    let receipts = ledger.completed(target, work)?;
     if receipts.is_empty() {
         return Err("This DCS-BIOS installation was not installed by Cockpit. Its files were preserved; remove it with its original installer.".into());
     }
     let total = receipts.len();
-    for (index, (_, path, value)) in receipts.into_iter().enumerate() {
+    for (index, (_, _path, value)) in receipts.into_iter().enumerate() {
         cancelled(&check)?;
         removal_preflight(work, &value)?;
+        ledger.verify()?;
         write_boundary()?;
         progress(
             "Restoring DCS export scripts and removing owned integration files",
             (index * 100 / total) as u8,
         );
-        // Moving the receipt first makes interruption during removal recoverable.
-        fs::rename(&path, work.join(JOURNAL))
-            .map_err(|e| format!("Cannot prepare DCS integration removal: {e}"))?;
-        let restored = restore(work, &value)?;
+        // Commit pending intent before touching the installation.
+        ledger.begin_removal(&value)?;
+        let restored = restore(work, &value, &mut ledger)?;
         if restored["restored"] != true {
             return Err(format!(
                 "Integration removal preserved external changes. Recovery is required: {}",
@@ -1550,6 +1500,7 @@ fn install_guarded_for_installation(
     progress: &impl Fn(&str, u8),
     write_boundary: &impl Fn() -> Result<(), String>,
 ) -> Result<Value, String> {
+    let mut ledger = recovery::Ledger::open(work)?;
     let target = checked_target(target)?;
     let state = inspect_for_installation(&target, installation)?;
     if state["repairable"] != true {
@@ -1607,7 +1558,7 @@ fn install_guarded_for_installation(
         .iter()
         .map(|(name, bytes)| (name.clone(), json!(hash(bytes))))
         .collect();
-    let value = json!({"schemaVersion":1,"id":id,"target":target,"createdScripts":!scripts.exists(),"installModule":install_module,"files":manifest,"exportBefore":before.as_ref().map(|b|hash(b)),"exportAfter":hash(&after),"version":VERSION,"archiveSha256":ARCHIVE_SHA256});
+    let value = json!({"id":id,"target":target,"createdScripts":!scripts.exists(),"installModule":install_module,"files":manifest,"exportBefore":before.as_ref().map(|b|hash(b)),"exportAfter":hash(&after),"version":VERSION,"archiveSha256":ARCHIVE_SHA256});
     let mut value = value;
     value["aircraftBefore"] = json!(aircraft.before.as_ref().map(|b| hash(b)));
     value["aircraftAfter"] = json!(aircraft.after.as_ref().map(|b| hash(b)));
@@ -1615,9 +1566,10 @@ fn install_guarded_for_installation(
     value["physicsBefore"] = json!(physics.before.as_ref().map(|b| hash(b)));
     value["physicsAfter"] = json!(hash(&physics.after));
     value["createdPhysicsDir"] = json!(!scripts.join("OpenSimGear").exists());
-    save_journal(work, &value)?;
+    ledger.begin(value.clone())?;
     let result: Result<Value, String> = (|| {
         cancelled(check)?;
+        ledger.verify_pending(&value)?;
         write_boundary()?;
         fs::create_dir_all(&scripts)
             .map_err(|e| format!("Cannot create DCS Scripts folder: {e}. Check permissions."))?;
@@ -1634,6 +1586,7 @@ fn install_guarded_for_installation(
                     continue;
                 }
                 cancelled(check)?;
+                ledger.verify_pending(&value)?;
                 let path = stage.join(safe_relative(relative)?);
                 fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
                 write_new(&path, bytes)?;
@@ -1648,17 +1601,20 @@ fn install_guarded_for_installation(
             if scripts.join("DCS-BIOS").exists() {
                 return Err("A DCS-BIOS folder appeared during setup. It was preserved; recheck the user folder.".into());
             }
+            ledger.verify_pending(&value)?;
             write_boundary()?;
             fs::rename(&stage, scripts.join("DCS-BIOS"))
                 .map_err(|e| format!("Cannot install DCS-BIOS module: {e}"))?;
         }
         cancelled(check)?;
         if aircraft.before != aircraft.after {
+            ledger.verify_pending(&value)?;
             write_boundary()?;
             aircraft::apply(&target, &aircraft)?;
         }
         if physics.before.as_ref() != Some(&physics.after) {
             cancelled(check)?;
+            ledger.verify_pending(&value)?;
             write_boundary()?;
             physics::apply(&target, &physics)?;
         }
@@ -1673,6 +1629,7 @@ fn install_guarded_for_installation(
             );
         }
         if current.as_ref() != Some(&after) {
+            ledger.verify_pending(&value)?;
             write_boundary()?;
             replace(&export, &after)?;
         }
@@ -1682,13 +1639,13 @@ fn install_guarded_for_installation(
         if ready["ready"] != true {
             return Err("DCS-BIOS verification failed. Previous files will be restored.".into());
         }
-        fs::rename(work.join(JOURNAL), backup.join("completed.json")).map_err(|e| e.to_string())?;
+        ledger.finish(recovery::State::Completed)?;
         progress("DCS-BIOS installed and configured", 100);
         Ok(ready)
     })();
     match result {
         Ok(v) => Ok(v),
-        Err(error) => match restore(work, &value) {
+        Err(error) => match restore(work, &value, &mut ledger) {
             Ok(restored) if restored["restored"] == true => {
                 Err(format!("{error} Previous files were restored."))
             }

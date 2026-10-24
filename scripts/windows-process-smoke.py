@@ -16,7 +16,8 @@ def source_stamp(root, fixture):
     paths = set((root / 'crates/profiles/src').rglob('*.rs'))
     paths.update(root / 'src-tauri/src' / name for name in
                  ['game_discovery.rs', 'game_activation.rs', 'xplane_installation.rs',
-                  'game_installations.rs', 'game_artwork.rs'])
+                  'games/storage/installations.rs', 'games/artwork/mod.rs',
+                  'games/artwork/model.rs', 'games/artwork/sources.rs'])
     paths.update(fixture / name for name in ['Cargo.toml', 'Cargo.lock', 'main.rs', 'stub.rs'])
     paths.update(root / name for name in ['crates/profiles/Cargo.toml', 'scripts/windows-process-smoke.py'])
     return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()

@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./games']);
 const games=modules.get('./games');
-const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason,gameCleanupLabel}=games;
+const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason}=games;
 const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
@@ -75,22 +75,17 @@ test('game-owned setup targets use only explicit bounded installation metadata',
  assert.deepEqual(plain(gameIntegrationSetupRequest(dcs(),'game_integration_check','')),{command:'game_integration_check',gameId:'dcs'});
 });
 
-test('missing cleanup metadata is unavailable rather than a manufactured idle session; native profile ownership blocks setup separately',()=>{
- const game=dcs();assert.match(gameIntegrationSetupBlockedReason(game,undefined,''),/cleanup metadata is unavailable/);
- for(const phase of ['idle','failed'])assert.equal(gameIntegrationSetupBlockedReason(game,{phase},''),'');
- for(const phase of ['restoring','recovery-needed'])assert.match(gameIntegrationSetupBlockedReason(game,{phase},''),/previous owned setup/);
- assert.equal(gameIntegrationSetupBlockedReason(game,{phase:'idle'},'Exact native profile recovery is pending.'),'Exact native profile recovery is pending.');
- assert.match(gameIntegrationSetupBlockedReason({...game,installed:false},undefined,''),/Install/);
- assert.equal(gameIntegrationSetupBlockedReason({...game,integrationSetup:{state:'unsupported-platform',message:'Native setup requires Windows.'}},{phase:'idle'},''),'Native setup requires Windows.');
- assert.match(gameIntegrationSetupBlockedReason({...game,integrationSetup:{state:'setting-up'}},{phase:'idle'},''),/in progress/);
- assert.match(gameIntegrationSetupBlockedReason({...game,integrationSetup:{recoveryNeeded:true}},{phase:'idle'},''),/Recover/);
- assert.equal(gameIntegrationSetupBlockedReason({...game,integrationSetup:{repairable:false,message:'Unrecognized DCS module.'}},{phase:'idle'},''),'Unrecognized DCS module.');
+test('current provider setup and native profile ownership guard integration without legacy cleanup state',()=>{
+ const game=dcs();assert.equal(gameIntegrationSetupBlockedReason(game,''),'');
+ assert.equal(gameIntegrationSetupBlockedReason(game,'Exact native profile recovery is pending.'),'Exact native profile recovery is pending.');
+ assert.match(gameIntegrationSetupBlockedReason({...game,installed:false},''),/Install/);
+ assert.equal(gameIntegrationSetupBlockedReason({...game,integrationSetup:{state:'unsupported-platform',message:'Native setup requires Windows.'}},''),'Native setup requires Windows.');
+ assert.match(gameIntegrationSetupBlockedReason({...game,integrationSetup:{state:'setting-up'}},''),/in progress/);
+ assert.match(gameIntegrationSetupBlockedReason({...game,integrationSetup:{recoveryNeeded:true}},''),/Recover/);
+ assert.equal(gameIntegrationSetupBlockedReason({...game,integrationSetup:{repairable:false,message:'Unrecognized DCS module.'}},''),'Unrecognized DCS module.');
 });
 
-test('cleanup labels cannot represent running profiles, process launches or applying a graph',()=>{
- for(const [phase,label]of [['idle','Nothing to restore'],['restoring','Restoring previous owned setup'],['recovery-needed','Recovery needed'],['failed','Cleanup failed']])assert.equal(gameCleanupLabel({phase}),label);
- assert.equal(gameCleanupLabel({phase:'running'}),undefined);assert.equal(gameCleanupLabel({phase:'launching'}),undefined);
-});
+
 
 test('category filtering includes built-in and custom games and distinguishes uncategorized',()=>{
   const id='custom-11111111-1111-4111-8111-111111111111',catalogue=[{id,name:'Custom',categoryId:'racing'},games.supportedGames[0],{...games.supportedGames[1],categoryId:'racing'}];

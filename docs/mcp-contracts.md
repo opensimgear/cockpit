@@ -23,7 +23,7 @@ The canonical definitions are:
 | Processing operation parameter schemas | `processing_operations_list.operations[].parametersSchema`; per-operation `schemaHash` |
 | Success/error envelope | `cockpit://schemas/task-results`, each tool's `outputSchema` |
 | Workflow, current limits, local-setting field sets | `cockpit://guide/configuration` |
-| Transport versions, settings and credentials | [mcp.rs](../src-tauri/src/mcp.rs), [mcp_credentials.rs](../src-tauri/src/mcp_credentials.rs) |
+| Transport versions, settings and credentials | [server](../src-tauri/src/mcp/server/mod.rs), [credentials](../src-tauri/src/mcp/storage/credentials.rs) |
 
 Successful tool replies contain `{ok:true,data:…}`. Mutating results also identify
 their `operationId`. Failed tool replies contain
@@ -59,7 +59,7 @@ All write rows also require `operationId` unless noted as passive preparation.
 | `game_telemetry_inspect` · read | Optional game/search/group and `page` | `game_telemetry_inspect`. Passive bounded current/cached channel inspection; no provider start. |
 | `game_aircraft_resource` · write | Exact installed `vehicleId` | `profile_dcs_vehicle_resource`. Explicit aircraft catalogue registration changes inventory discovery; accepts no file path and does not activate a provider/profile/game. |
 | `companions_list`, `companion_panels_list`, `companion_inspect` · read | `page`; inspect requires native resource ID and immutable publication hash | Native resource inventory plus `profile_companion_catalogue` / `profile_companion_inspect`. Device identities and retained verified panel publications remain distinct. |
-| `widgets_list`, `widget_get` · read; `widget_save` · write | List supports `offset`/`limit`; get requires `id`; save requires plain `{definitions:[source]}` with exactly one definition and `operationId` | Shared native widget library. Full native source and asset validation, replacement by stable ID and atomic persistence. Authoring has no format/revision fields or compatibility reader. Read `cockpit://guide/widgets` for the source example. Saving never publishes or activates a panel. |
+| `widgets_list`, `widget_get` · read; `widget_save` · write | List supports `offset`/`limit`; get requires `id`; save requires plain `{definitions:[source]}` with exactly one definition, the library `expectedRevision` returned by list/get, and `operationId` | Shared native widget library. Full native source and asset validation, replacement by stable ID and atomic persistence. Authoring has no format/revision fields or compatibility reader. Read `cockpit://guide/widgets` for the source example. Saving never publishes or activates a panel. |
 | `profile_prepare_changes` · read | Explicit null/numeric `expectedRevision`; existing `profileId` plus typed edits, full typed document, or new name; optional assignments | Reads the saved base/assignments, applies typed edits, reparses, validates assignments, calls `profile_compile`, and retains a client-owned draft. Returns diff, document/assignments, validation, compilation, and `effects` with no save/select/apply. |
 | `compilation_inspect` · read | Exact `compilationId`, section enum, `page` | `profile_compilation_inspect`. Bounded sections from a recent cached native preview; it is not Apply authority. |
 | `profile_save_prepared` · write | Exact client-owned `draftId` | `profile_draft_save`. One atomic native document+assignment transaction checks the captured expected revision. It leaves the applied owner/revision unchanged. Existing UI `profile_editor_save` retains its reapplication behavior. |
@@ -115,7 +115,7 @@ The presence of a test file does not itself establish that a run passed.
 | Milestone / invariant | Implementation and verification paths |
 | --- | --- |
 | M0 schemas, typed arguments, catalogue completeness, bounded errors | `src-tauri/src/mcp_tools/catalogue.rs`, `schema.rs`, `tests.rs`; `tests/ui/mcp-software-scenarios.mjs` exercises actual operation schemas and paged game/vehicle discovery. |
-| M1 one running service, authentication/scopes, host/origin rejection, lifecycle | `src-tauri/src/mcp.rs`, `mcp_credentials.rs` native tests; `tests/ui/mcp-native.mjs` uses the official SDK and actual native WebView IPC. |
+| M1 one running service, authentication/scopes, host/origin rejection, lifecycle | `src-tauri/src/mcp/server/tests.rs`, `mcp/storage/credential_tests.rs` native tests; `tests/ui/mcp-native.mjs` uses the official SDK and actual native WebView IPC. |
 | M1 connection UI and one-time credentials | `src/lib/mcp.test.mjs`, `mcp-ui.test.mjs`; native UI acceptance verifies visible listener/credential state without displaying stored tokens. |
 | M2–M3 discovery, explicit transformation/wiring, read-only preparation and diff | `mcp_tools/tests.rs`, `mcp_tools/authoring.rs` tests; live software scenarios save a constant → NOT → NOT graph and compare native compiler traces and rendered nodes/routes. |
 | M4 atomic draft-only persistence and concurrent writers | `crates/profiles/src/service_editor_tests.rs`, `src-tauri/src/profile_editor_save_tests.rs`, `mcp_tools/tests.rs`; live helper races independently authenticated writers at one revision and verifies exactly one commit. |

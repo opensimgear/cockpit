@@ -43,6 +43,7 @@ pub struct Page {
     pub gap: bool,
     pub events: Vec<Event>,
 }
+#[derive(Clone)]
 pub(crate) struct Journal {
     origin: Instant,
     cursor: u64,

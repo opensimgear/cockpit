@@ -11,33 +11,33 @@ fn binding() -> Binding {
 }
 #[test]
 fn read_only_verification_checks_locked_current_bytes_without_rewriting_them() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let mut store = Store::open(path.clone()).unwrap();
     store.verify_current().unwrap();
     store.begin(token(), vec![binding()]).unwrap();
     store.transition(Phase::Confirmed).unwrap();
-    let original = std::fs::read(&path).unwrap();
+    let original = sql_read(&path).unwrap();
     store.verify_current().unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(sql_read(&path).unwrap(), original);
     assert!(Store::open(path.clone()).is_err());
-    std::fs::write(&path, b"external").unwrap();
+    sql_write(&path, b"external").unwrap();
     assert!(store.verify_current().unwrap_err().contains("externally"));
-    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+    assert_eq!(sql_read(&path).unwrap(), b"external");
     assert_eq!(store.record().unwrap().phase, Phase::Confirmed);
-    std::fs::remove_file(&path).unwrap();
+    sql_delete(&path).unwrap();
     assert!(store.verify_current().is_err());
     std::fs::create_dir(&path).unwrap();
     assert!(store.verify_current().is_err());
     std::fs::remove_dir(&path).unwrap();
-    std::fs::write(&path, &original).unwrap();
-    store.verify_current().unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    sql_write(&path, &original).unwrap();
+    assert!(store.verify_current().is_err()); // Revision cannot be rewound by restoring equal bytes.
+    assert_eq!(sql_read(&path).unwrap(), original);
 }
 
 #[test]
 fn journal_orders_ownership_and_refuses_competing_sessions_or_stale_acknowledgements() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     assert!(inspect(&path).unwrap().is_none());
     let mut store = Store::open(path.clone()).unwrap();
@@ -64,7 +64,7 @@ fn journal_orders_ownership_and_refuses_competing_sessions_or_stale_acknowledgem
 }
 #[test]
 fn malformed_bounded_and_externally_changed_records_are_preserved() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let mut store = Store::open(path.clone()).unwrap();
     assert!(store.begin(token(), vec![]).is_err());
@@ -76,23 +76,23 @@ fn malformed_bounded_and_externally_changed_records_are_preserved() {
     run.generation = Counter(0);
     assert!(store.begin(run, vec![binding()]).is_err());
     store.begin(token(), vec![binding()]).unwrap();
-    let original = std::fs::read(&path).unwrap();
-    std::fs::write(&path, b"external").unwrap();
+    let original = sql_read(&path).unwrap();
+    sql_write(&path, b"external").unwrap();
     assert!(store
         .transition(Phase::Confirmed)
         .unwrap_err()
         .contains("externally"));
-    assert_eq!(std::fs::read(&path).unwrap(), b"external");
+    assert_eq!(sql_read(&path).unwrap(), b"external");
     drop(store);
     assert!(inspect(&path).is_err());
     assert!(Store::open(path.clone()).is_err());
-    std::fs::write(&path, vec![b'x'; LIMIT + 1]).unwrap();
-    assert!(inspect(&path).unwrap_err().contains("64 KiB"));
+    sql_write(&path, vec![b'x'; LIMIT + 1]).unwrap();
+    assert!(inspect(&path).unwrap_err().contains("bound"));
     let mut value: serde_json::Value = serde_json::from_slice(&original).unwrap();
     value["schema"] = 2.into();
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    sql_write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     assert!(inspect(&path).is_err());
-    std::fs::remove_file(&path).unwrap();
+    sql_delete(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
     assert!(inspect(&path).is_err());
     let lock = dir.path().join("output.lock");
@@ -109,7 +109,7 @@ fn process_exit_preserves_confirmed_intent_and_releases_os_lock() {
         store.transition(Phase::Confirmed).unwrap();
         std::process::exit(0); // Deliberately bypass Drop, like a terminated app.
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
@@ -136,7 +136,7 @@ fn process_exit_preserves_confirmed_intent_and_releases_os_lock() {
 #[cfg(unix)]
 #[test]
 fn recovery_never_follows_symlink_records_or_lock_files() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let target = dir.path().join("external");
     std::fs::write(&target, b"external").unwrap();
@@ -150,7 +150,7 @@ fn recovery_never_follows_symlink_records_or_lock_files() {
 
 #[test]
 fn releasing_owner_unlocks_even_while_a_duplicated_descriptor_is_alive() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let store = Store::open(path.clone()).unwrap();
     let inherited = store._lock.try_clone().unwrap();
@@ -162,3 +162,7 @@ fn releasing_owner_unlocks_even_while_a_duplicated_descriptor_is_alive() {
     drop(next);
     Store::open(path).unwrap();
 }
+
+fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-output")}
+fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-output",Some(data.as_ref()))}
+fn sql_delete(path:&std::path::Path)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-output",None)}

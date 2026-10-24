@@ -1,3 +1,4 @@
+import {progressSettingsInvoke} from './native-progress-settings.mjs';
 // Presentation acceptance against the running native Cockpit. These explicitly
 // named display probes author no simulator telemetry or profile ownership.
 import test from 'node:test';
@@ -35,10 +36,11 @@ test('native progress uses system delivery or fallback, preserves controls and r
  skip:process.env.OSG_PROGRESS_NOTIFICATIONS_NATIVE!=='1',timeout:90_000,
 },async()=>{
  assert.equal(process.platform,'win32');await mkdir(artifacts,{recursive:true});
- const target=(await targets()).find(target=>target.type==='page'&&/127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(target.url)&&!target.url.includes('profile-activation-window'));
+ const origin=process.env.OSG_NATIVE_DEV_ORIGIN??'http://127.0.0.1:1420';
+ const target=(await targets()).find(target=>target.type==='page'&&(target.url.startsWith(`${origin}/`)||target.url.startsWith('http://tauri.localhost/'))&&!target.url.includes('profile-activation-window'));
  assert.ok(target,'Start the native dev Cockpit with CDP enabled.');
  const main=await connect(target),cleanupErrors=[];
- const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
+ const invoke=progressSettingsInvoke((command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`));
  const evidence={actualNativeCockpit:true,presentationProbes:true,actualSimulatorQualified:false,simulatorTransitionQualified:false,checks:[],cleanupErrors};
  let original,operation,child;
  const cleanup=async(label,action)=>{try{await action();}catch(error){cleanupErrors.push(`${label}: ${error}`);}};

@@ -1,5 +1,3 @@
-# Generated companion imports are byte-for-byte deterministic on every platform.
-examples/companion/*.json text eol=lf
-tests/fixtures/legacy-companion/*.json text eol=lf
-# These distributed notices must retain the installed upstream bytes.
-public/licenses/** text eol=lf
+# Protocol fixtures and upstream notices retain exact bytes.
+*.json text eol=lf
+public/licenses/** -text

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fs::{self, File, OpenOptions},
-    io::Read,
     path::{Component, Path, PathBuf},
 };
 const MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -22,10 +21,6 @@ pub(super) struct Transition {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Manifest {
-    pub schema_version: u32,
-    /// Read old journals without retaining the removed operator Pause latch.
-    #[serde(default, rename = "paused", skip_serializing)]
-    pub(super) legacy_paused: bool,
     #[serde(deserialize_with = "super::required_option")]
     pub active: Option<OwnedRun>,
     #[serde(deserialize_with = "super::required_option")]
@@ -34,8 +29,6 @@ pub(super) struct Manifest {
 impl Default for Manifest {
     fn default() -> Self {
         Self {
-            schema_version: 1,
-            legacy_paused: false,
             active: None,
             pending: None,
         }
@@ -97,9 +90,6 @@ impl OwnedRun {
 }
 impl Manifest {
     fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1 {
-            return Err("Unsupported profile session journal version.".into());
-        }
         if let Some(active) = &self.active {
             active.validate()?;
             if active.attempted != super::APPLY_PHASES {
@@ -129,7 +119,7 @@ impl Manifest {
 pub(super) struct Store {
     path: Option<PathBuf>,
     lock: Option<File>,
-    expected: Option<Vec<u8>>,
+    evidence: Option<osg_persistence::Evidence>,
     error: Option<String>,
     #[cfg(test)]
     pub(super) fail_save: bool,
@@ -148,7 +138,7 @@ impl Store {
         let mut store = Self {
             path,
             lock: None,
-            expected: None,
+            evidence: None,
             error: None,
             #[cfg(test)]
             fail_save: false,
@@ -177,10 +167,9 @@ impl Store {
             lock.try_lock()
                 .map_err(|_| "Another Cockpit process owns the profile session journal.")?;
             store.lock = Some(lock);
-            store.expected = read(path)?;
-            let manifest: Manifest = store
-                .expected
-                .as_ref()
+            let evidence=osg_persistence::Evidence::open(path,"recovery-profile",MAX_BYTES)?;
+            let manifest: Manifest = evidence
+                .payload()
                 .map(|data| {
                     serde_json::from_slice(data)
                         .map_err(|e| format!("Invalid profile recovery journal: {e}"))
@@ -188,6 +177,7 @@ impl Store {
                 .transpose()?
                 .unwrap_or_default();
             manifest.validate()?;
+            store.evidence=Some(evidence);
             Ok::<_, String>(manifest)
         })();
         match loaded {
@@ -222,15 +212,11 @@ impl Store {
             self.fail_save_phase = None;
             return Err("Injected profile journal failure before phase admission.".into());
         }
-        if let Some(path) = &self.path {
-            crate::dcs_setup::replace(path, &data)?;
-            // Replacement is the commit boundary. A post-commit directory sync
-            // cannot be reported as if the old manifest still owned the disk.
-            self.expected = Some(data);
-            #[cfg(unix)]
-            if let Some(parent) = path.parent() {
-                let _ = File::open(parent).and_then(|f| f.sync_all());
-            }
+        // Repeated shutdown must not mint a new evidence revision after a
+        // stopped runtime has queued a restore. Verification above still rejects
+        // external edits, including equal bytes at a different revision.
+        if let Some(evidence)=&mut self.evidence {
+            if evidence.payload()!=Some(data.as_slice()){evidence.write(&data)?;}
         }
         Ok(())
     }
@@ -238,11 +224,7 @@ impl Store {
         if let Some(error) = &self.error {
             return Err(format!("Profile recovery storage is read-only: {error}"));
         }
-        if let Some(path) = &self.path {
-            if read(path)? != self.expected {
-                return Err("Profile recovery journal changed externally; preserving it.".into());
-            }
-        }
+        if let Some(evidence)=&self.evidence {evidence.verify()?;}
         Ok(())
     }
 }
@@ -279,19 +261,7 @@ fn safe(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    safe(path)?;
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut data = vec![];
-    file.take(MAX_BYTES as u64 + 1)
-        .read_to_end(&mut data)
-        .map_err(|e| e.to_string())?;
-    if data.len() > MAX_BYTES {
-        return Err("Profile recovery journal exceeds 2 MiB.".into());
-    }
-    Ok(Some(data))
-}
+
+#[cfg(test)]
+#[path="profile_session_journal_tests.rs"]
+mod tests;
