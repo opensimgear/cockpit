@@ -13,6 +13,8 @@ use std::{
 mod authoring;
 #[path = "mcp_tools/workspace.rs"]
 mod workspace;
+#[path="mcp_tools/host_settings.rs"]
+mod host_settings;
 #[path = "mcp_tools/catalogue.rs"]
 mod definitions;
 #[path = "mcp_tools/schema.rs"]
@@ -241,6 +243,7 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "companion_listener_get" | "companion_listener_save" => self.listener_tool(name,args,client),
             "designer_workspace_read" | "designer_workspace_begin" | "designer_workspace_chunk" | "designer_workspace_commit" | "designer_workspace_abort" => self.workspace_tool(name,args,client),
             "widgets_list" => forward("widgets_list", &["offset","limit"], Some("widgetLibrary")),
             "widget_get" => forward("widget_get", &["id","version"], Some("widgetLibrary")),

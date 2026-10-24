@@ -49,7 +49,7 @@ def main():
     if not options.service_only:
         # Profile publication, authoring and lifecycle tests call this host from
         # other modules. Measure those real integrations as well as its unit tests.
-        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/companion/storage/widgets.rs", root / "src-tauri/src/companion/storage/workspace.rs", root / "src-tauri/src/companion/storage/workspace_validation.rs", root / "src-tauri/src/mcp_tools/workspace.rs"]))
+        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion/host/mod.rs", root / "src-tauri/src/companion/host/commands.rs", root / "src-tauri/src/companion/host/presentation.rs", root / "src-tauri/src/companion/storage/host_settings.rs", root / "src-tauri/src/mcp_tools/host_settings.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/companion/storage/widgets.rs", root / "src-tauri/src/companion/storage/workspace.rs", root / "src-tauri/src/companion/storage/workspace_validation.rs", root / "src-tauri/src/mcp_tools/workspace.rs"]))
     if options.desktop_only:
         targets = [target for target in targets if target[0] == "desktop"]
     summary = {}
@@ -63,12 +63,13 @@ def main():
         test_environment = dict(environment, LLVM_PROFILE_FILE=str(profiles / f"{name}-%m-%p.profraw"))
         arguments = [binaries[0], *([selection] if selection else []),
                      *([f"--test-threads={options.test_threads}"] if options.test_threads else [])]
-        tests = subprocess.Popen(arguments, cwd=root, env=test_environment, text=True, encoding="utf-8",
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        log, _ = tests.communicate()
-        (output / f"{name}-tests.log").write_text(log, encoding="utf-8")
+        log_path = output / f"{name}-tests.log"
+        with log_path.open("w", encoding="utf-8") as log:
+            tests = subprocess.Popen(arguments, cwd=root, env=test_environment, text=True, encoding="utf-8",
+                                     stdout=log, stderr=subprocess.STDOUT)
+            tests.wait()
         if tests.returncode:
-            print(log, flush=True)
+            print(log_path.read_text(encoding="utf-8"), flush=True)
             raise subprocess.CalledProcessError(tests.returncode, arguments)
         raw_profiles = list(profiles.glob(f"{name}-*-{tests.pid}.profraw"))
         if not raw_profiles:
@@ -77,7 +78,9 @@ def main():
         run([llvm / f"llvm-profdata{suffix}", "merge", "-sparse", *raw_profiles, "-o", merged], root)
         for source in sources:
             annotation = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={merged}", "-show-line-counts-or-regions", source], root)
-            (output / f"{name}-{source.stem}-lines.txt").write_text(annotation, encoding="utf-8")
+            relative = source.relative_to(root).as_posix()
+            annotation_name = relative.replace("/", "-")
+            (output / f"{name}-{annotation_name}-lines.txt").write_text(annotation, encoding="utf-8")
             lines = source.read_text(encoding="utf-8").splitlines()
             # lib.rs declares test modules but has production exports/functions afterward.
             end = len(lines) + 1 if source.name == "lib.rs" else next((index + 1 for index, line in enumerate(lines) if line == "#[cfg(test)]"), len(lines) + 1)
@@ -89,7 +92,7 @@ def main():
                 raise RuntimeError(f"No instrumented production lines for {source}.")
             covered = sum(counts.values())
             percent = 100 * covered / len(counts)
-            key = f"{name}/{source.name}"
+            key = f"{name}/{relative}"
             summary[key] = {"covered": covered, "lines": len(counts), "percent": round(percent, 2)}
             print(f"{key}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

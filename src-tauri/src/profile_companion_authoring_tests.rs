@@ -16,6 +16,7 @@ fn publish(hub:&Hub,changed:bool)->Publication {
 }
 fn fixture()->(Runtime,Hub,Publication,Publication,tempfile::TempDir) {
     let directory=crate::test_directory();
+    crate::companion_settings::firmware(directory.path()).unwrap();
     let provider=Arc::new(CompanionProvider::new(Arc::new(||1)));
     let hub=Hub::new("passive-authoring".into(),provider.clone());
     let offer=hub.command(&json!({"command":"companion_pair_offer"})).unwrap();
@@ -35,7 +36,7 @@ fn passive_catalogue_has_bounded_real_metadata_no_assets_and_stable_content_fing
     assert_eq!(first.panels[0].panel_id,"flight-panel");
     assert!(first.panels.iter().all(|panel|(1..=128).contains(&panel.control_count)));
     assert_eq!(first.revision,runtime.profile_authoring_catalogue().unwrap().revision);
-    assert!(runtime.services.get().is_none());assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(),0);
+    assert!(runtime.services.get().is_none());assert_eq!(std::fs::read_dir(directory.path()).unwrap().map(|entry|entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>(),["cockpit.sqlite3"]);
     let serialized=serde_json::to_value(&first).unwrap();
     assert!(serialized["panels"][0].get("assets").is_none());
     assert!(serialized["panels"][0].get("canonicalDocument").is_none());
@@ -84,7 +85,7 @@ fn catalogue_compatibility_matches_paired_screen_size_and_device_support_without
         let pending=hub.handle_wire(json!({"type":"pair","secret":offer["secret"],"companionId":companion,"name":companion}),companion,hub.now_ms());
         hub.command(&json!({"command":"companion_approve","requestId":pending["requestId"],"companionId":companion})).unwrap();
     }
-    std::fs::write(directory.path().join("companion-firmware.json"),serde_json::to_vec(&json!({"sunton":{"profile":"sunton-3248s035r"},"waveshare":{"profile":"waveshare-lcd7-s3"}})).unwrap()).unwrap();
+    crate::companion_settings::firmware(directory.path()).unwrap().0.save(&json!({"sunton":{"profile":"sunton-3248s035r"},"waveshare":{"profile":"waveshare-lcd7-s3"}})).unwrap();
     let blank=publish_zero_control_panel(&hub,true);
     let mut document=hub.publication_document(&blank.publication_hash).unwrap();
     document["ui"]["id"]=json!("sunton-panel");document["ui"]["title"]=json!("Sunton display only");

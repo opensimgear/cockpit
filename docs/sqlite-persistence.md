@@ -50,12 +50,12 @@ The portable library retains its document bytes and semantic hashes.
 | `game-vehicles-v1.json`; game vehicles store | `games/vehicles` | saved catalogue/vehicle validation; S4 | Retained selection/seen vehicles, offline catalogue |
 | `assetto-corsa-cars-v1.json`; AC car catalogue cache | `games/ac-cars` | current cache identity/version/bounds; S4 | Rescan, stable car IDs, stale observations |
 | `desktop-input-v1.json`; desktop settings | `outputs/desktop-preferences` | `Preferences`/native process-identity validator; S4 | Enablement/scope/application references and stale saves |
-| IndexedDB `opensimgear-cockpit-companion-designer`, `workspace/snapshot` | `designer/workspace` | `validateWorkspace`, compiled publications/source/asset hashes; S5 | Draft/source/publication order/assets, 64 MiB/20 drafts/100 revisions |
+| IndexedDB `opensimgear-cockpit-companion-designer`, `workspace/snapshot` | `companion/designer-workspace` | `validateWorkspace`, compiled publications/source/asset hashes; S5 | Draft/source/publication order/assets, 64 MiB/20 drafts/100 revisions |
 | `widgets-v1.json`; `widget_library::persist` | `widgets/library` | compiled widget bundle/source validation; S5 | User library/update/import/hash preservation |
 | `companions/companion-panels.json`; `companion_panels` | `companions/publications` | compiled publication validators, byte limits; S5 | Publish/archive/retention and interrupted publication |
 | `companions/companion-panel-heads.json`; `save_heads` | `companions/heads` | panel/revision/hash head checks; S5 | Heads and publication/assignment references commit together |
-| `companions/companion-listener.json`; host listener operations | `companions/listener` | listener interface/port validation; S5 | Enable/disable/listener restart without premature success |
-| `companions/companion-firmware.json`; host firmware metadata | `companions/firmware` | board/profile/version validators; S5 | Firmware preference/assigned profiles and restart |
+| `companions/companion-listener.json`; host listener operations | `companion/listener` | listener interface/port validation; S5 | Enable/disable/listener restart without premature success |
+| `companions/companion-firmware.json`; host firmware metadata | `companion/firmware` | board/profile/version validators; S5 | Firmware preference/assigned profiles and restart |
 | `companion-host-state.dpapi`; `SealedFileStore` | `secrets/companion-host` ciphertext | native unseal then host record validation; S6 | Pairing/assignments/revoke/forget/reconnect; raw DB secret scan |
 | `companion-identity.dpapi`; TLS native identity store | `secrets/companion-identity` ciphertext | unseal/identity certificate validation; S6 | Same host ID/CA fingerprint; locked/corrupt key diagnostics |
 | `mcp-v1.json`; credential settings store | `security/mcp` | current settings/hash/scope validators; S6 | Real MCP client, port/enablement/revocation/concurrent revisions |
@@ -184,3 +184,14 @@ ledger makes exact operation retries idempotent; failed native commits preserve
 the upload for explicit retry. Saving authoring data alone does not activate
 outputs or assign a companion. Host publication/head/assignment authority remains
 a separate remaining S5/S6 task until its transaction boundary is converted.
+
+Listener settings and firmware observations now use SQLite. Missing metadata
+uses validated defaults; corrupt or unreadable metadata remains an error. UI
+and MCP listener changes carry settingsRevision, commit before applying the
+listener effect and report configured intent separately from live bind state.
+Listener effects serialize with acknowledged changes so an in-flight restart
+cannot overtake a successful disable. Firmware captures keep their own exact
+revision and retain metadata only for currently paired installations. Rendering
+compatibility reads use the same SQLite firmware records. Retired files are
+ignored. The host implementation is organized under `companion/host/`; every
+new module stays below 500 lines.

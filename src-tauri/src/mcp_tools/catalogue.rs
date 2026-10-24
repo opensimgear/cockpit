@@ -81,6 +81,8 @@ pub fn catalogue() -> Vec<Value> {
         tool("game_telemetry_inspect","Read bounded passive telemetry values and canonical channel metadata from one game. This does not start a provider or apply a profile.",fields(vec![("gameId",string(64)),("search",json!({"type":"string","maxLength":200})),("group",json!({"type":"string","maxLength":256}))],page()),&[]),
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
+        tool("companion_listener_get","Read native listener configuration, configured/live state, errors and exact settingsRevision. This uses the same native companion setup as the portal.",vec![],&[]),
+        tool("companion_listener_save","Enable or disable the native companion listener at exact expectedSettingsRevision. Enabling requires address IP, port, advertisedHost and discovery. Configuration commits in SQLite before listener startup; bind failures retain configured intent and report the live error. Disable commits before stopping; rejected writes preserve the prior setting.",vec![("enabled",json!({"type":"boolean"})),("expectedSettingsRevision",integer(0,9007199254740991)),("address",string(64)),("port",integer(1024,65535)),("advertisedHost",string(253)),("discovery",json!({"type":"boolean"}))],&["enabled","expectedSettingsRevision"]),
         tool("companion_panels_list","List retained verified companion panel publications and compatibility; publication hashes are immutable authoring metadata.",page(),&[]),
         tool("designer_workspace_read","Read the native designer workspace as UTF-8 JSON in 48 KiB base64 chunks. Preserve revision and workspaceHash; pass expectedHash for later offsets to reject concurrent edits. Null JSON means no saved workspace. Drafts, source revisions and verified publications share one native SQLite authority.",vec![("offset",integer(0,67108864)),("expectedHash",string(71))],&[]),
         tool("designer_workspace_begin","Begin a bounded designer snapshot upload. Read current workspace first; edit its portable schemaVersion2 sources/drafts/publications. Provide byte length and sha256 hash of the complete UTF-8 JSON. Nothing is persisted until commit; uploads expire after ten minutes.",vec![("expectedRevision",integer(0,9007199254740991)),("totalBytes",integer(1,67108864)),("workspaceHash",string(71))],&["expectedRevision","totalBytes","workspaceHash"]),
@@ -124,6 +126,7 @@ pub fn is_mutation(name: &str) -> bool {
         name,
         "profile_create"
             | "widget_save"
+            | "companion_listener_save"
             | "designer_workspace_begin"
             | "designer_workspace_chunk"
             | "designer_workspace_commit"

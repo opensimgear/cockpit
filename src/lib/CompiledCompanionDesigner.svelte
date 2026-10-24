@@ -63,7 +63,10 @@
     void (async () => { try {
       workspace = await store.load();
       const library = (await gatewayRequest({ command: 'widget_library_get' })).widgetLibrary;
-      if (library?.bundleVersion === 2) workspace = await store.save({ ...workspace, sources: mergeWidgetSources(workspace.sources, library.library.definitions) });
+      if (library?.bundleVersion === 2) {
+        const sources=mergeWidgetSources(workspace.sources, library.library.definitions);
+        if(canonicalWidget(sources)!==canonicalWidget(workspace.sources))workspace = await store.save({ ...workspace, sources });
+      }
       ready = true;
     } catch (e) { error = `Cannot load designer: ${String(e)}`; } finally { resolveLoaded(); } })();
     void refresh(); const timer = setInterval(refresh, 2000);

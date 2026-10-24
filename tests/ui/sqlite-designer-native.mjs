@@ -60,6 +60,7 @@ test('designer source, draft and compiled assets use native SQLite across proces
       await page.getByRole('button',{name:'Edit '+previous.panelName,exact:true}).click();
       await expect(page.getByLabel('Panel name',{exact:true})).toHaveValue(previous.panelName);
       await expect(page.locator('.compiled-designer').getByRole('button',{name:'Try',exact:true})).toBeEnabled();
+      assert.equal((await snapshot()).revision,saved.revision,'Opening unchanged authoring data must not create a new save.');
       assert.deepEqual(await retired(),{retiredEvidence:'SQLite acceptance'});
       console.log(JSON.stringify({phase:'verify',previousProcessId:previous.processId,processId:status.processId,revision:saved.revision,exactWorkspaceRetained:true,retiredIndexedDbIgnored:true}));
     }

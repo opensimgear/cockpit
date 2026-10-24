@@ -12,12 +12,15 @@ mod mcp_credentials;
 mod mcp_tools;
 #[path="companion/storage/widgets.rs"]
 mod widget_library;
+#[path="companion/storage/host_settings.rs"]
+mod companion_settings;
 mod acr_setup;
 mod ac_car_catalogue;
 #[path="games/storage/car_catalogue.rs"]
 mod ac_car_catalogue_cache;
 #[path="games/telemetry/windows_source/mod.rs"]
 mod acr_windows;
+#[path="companion/host/mod.rs"]
 mod companion_host;
 mod firmware_releases;
 mod companion_panels;
