@@ -297,9 +297,11 @@ test('profile mode switch shares the Add action bar and appears only once on the
  await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(!editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
 });
 
-test('profile editor keeps one global history group with Save and game context above the runtime and canvas',async()=>{
+test('profile editor keeps history with Save and game context first in the components column',async()=>{
  const h=harness();await h.store.refresh();await h.store.open(DEFAULT_PROFILE_ID);const body=html(h.store,h.client).replace(/<!--[\s\S]*?-->/g,'');
  const context=body.match(/<select[^>]*aria-label="Game context"[^>]*>([^]*?)<\/select>/)?.[1];assert.ok(context);assert.match(context,/<option value=""[^>]*>None<\/option>/);
+ const column=body.indexOf('class="profile-components-column'),contextPosition=body.indexOf('aria-label="Game context"'),palettePosition=body.indexOf('aria-label="Component palette"');
+ assert.ok(column>=0&&column<contextPosition&&contextPosition<palettePosition);
  for(const game of modules.get('./games').supportedGames)assert.ok(context.includes(`value="${game.id}"`),game.name);
  const runtime=body.match(/<section[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];assert.ok(runtime!==undefined);assert.ok(!runtime.includes('Game context'));assert.ok(!runtime.includes('Activate profile'));assert.ok(!body.includes('class="group-editor"'));
  const historyGroups=[...body.matchAll(/<div\b([^>]*aria-label="Edit history"[^>]*)>([^]*?)<\/div>/g)];assert.equal(historyGroups.length,1);assert.match(historyGroups[0][1],/role="group"/);
