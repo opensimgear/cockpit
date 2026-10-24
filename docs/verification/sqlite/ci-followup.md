@@ -11,3 +11,5 @@ The initial cross-platform runs exposed platform assumptions outside the Windows
 Local validation: complete mapping-host suite (113 tests) passes; mapping-host module coverage passes every 71% gate, with companion_runs 90.84%. Virtual-controller module coverage also passes every gate. Native MCP credential IPC, UI preference IPC, and game symlink regressions pass on Windows. Cross-platform CI validates the Unix-specific paths/origins.
 
 At the user's explicit request, all jobs in companion-esp32.yml are temporarily skipped. The ESP32 investigation was stopped; no production ESP32 code was changed and no ESP32 acceptance claim is made. Re-enabling those job conditions restores their existing test/build definitions.
+
+A later macOS job exposed one additional desktop-output fixture under the aliased temporary directory. That fixture and the remaining companion SQLite/TLS/cache fixtures now select canonical temporary roots too. The complete desktop-output suite passes (45 tests); companion-service/serial coverage again passes all production module gates. These changes affect test setup only.

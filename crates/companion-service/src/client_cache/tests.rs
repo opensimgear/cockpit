@@ -8,20 +8,20 @@ fn content()->Value{
 fn empty()->String{json!({"entries":[],"selectedKey":""}).to_string()}
 #[test]
 fn native_cache_reopens_exact_public_content_and_preserves_selected_panel_and_page(){
-    let dir=tempfile::tempdir().unwrap();let cache=ClientCache::open(dir.path()).unwrap();let initial=cache.execute(CacheRequest::Read{}).unwrap();assert_eq!(initial.revision,0);assert!(initial.payload.is_none());
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let cache=ClientCache::open(dir.path()).unwrap();let initial=cache.execute(CacheRequest::Read{}).unwrap();assert_eq!(initial.revision,0);assert!(initial.payload.is_none());
     let payload=content().to_string();let written=cache.execute(CacheRequest::Write{expected_revision:0,payload:payload.clone()}).unwrap();assert_eq!(written.revision,1);
     let reopened=ClientCache::open(dir.path()).unwrap().read().unwrap();assert_eq!(reopened.payload.as_deref(),Some(payload.as_str()));assert!(reopened.error.is_none());
     assert!(!dir.path().join("companion-publications").exists());assert!(dir.path().join("cockpit.sqlite3").exists());
 }
 #[test]
 fn stale_writers_and_failed_commits_cannot_resurrect_a_cleared_library(){
-    let dir=tempfile::tempdir().unwrap();let cache=ClientCache::open(dir.path()).unwrap();cache.write(0,&content().to_string()).unwrap();let stale=ClientCache::open(dir.path()).unwrap();assert_eq!(stale.read().unwrap().revision,1);
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let cache=ClientCache::open(dir.path()).unwrap();cache.write(0,&content().to_string()).unwrap();let stale=ClientCache::open(dir.path()).unwrap();assert_eq!(stale.read().unwrap().revision,1);
     let lock=osg_persistence::test_support::hold_writer(&cache.database).unwrap();assert!(cache.write(1,&empty()).is_err());drop(lock);assert_eq!(cache.read().unwrap().revision,1);
     cache.write(1,&empty()).unwrap();assert!(stale.write(1,&content().to_string()).is_err());assert_eq!(cache.read().unwrap().payload.unwrap(),empty());
 }
 #[test]
 fn invalid_records_stay_visible_and_an_explicit_clear_uses_the_observed_revision(){
-    let dir=tempfile::tempdir().unwrap();let cache=ClientCache::open(dir.path()).unwrap();
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let cache=ClientCache::open(dir.path()).unwrap();
     cache.database.commit(&[Change{domain:"companion-client",key:"publications",expected_revision:0,payload:Some(b"corrupt cache")}]).unwrap();
     let snapshot=cache.read().unwrap();assert_eq!(snapshot.revision,1);assert!(snapshot.payload.is_none());assert!(snapshot.error.is_some());
     assert_eq!(cache.database.read("companion-client","publications").unwrap().unwrap().payload,b"corrupt cache");cache.write(1,&empty()).unwrap();assert!(cache.read().unwrap().error.is_none());
@@ -57,7 +57,7 @@ fn native_validation_rejects_corruption_unknown_metadata_and_unbounded_content()
 #[test]
 fn clearing_public_cache_never_forgets_or_exposes_the_same_namespaces_sealed_credential(){
     use crate::persistence::{SealedSqliteStore,StateStorage};
-    let dir=tempfile::tempdir().unwrap();let secret=SealedSqliteStore::new(dir.path().join("companion-client.dpapi"));
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let secret=SealedSqliteStore::new(dir.path().join("companion-client.dpapi"));
     let private=b"native installation token remains sealed";secret.write(private).unwrap();
     let cache=ClientCache::open(dir.path()).unwrap();cache.write(0,&content().to_string()).unwrap();cache.write(1,&empty()).unwrap();
     assert_eq!(secret.read().unwrap().unwrap(),private);let bytes=std::fs::read(cache.database.path()).unwrap();assert!(!bytes.windows(private.len()).any(|chunk|chunk==private));

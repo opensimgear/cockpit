@@ -356,7 +356,7 @@ fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg
 
 #[test]
 fn stale_evidence_and_exclusive_lifetime_owner_prevent_helper_dispatch(){
-    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("journal.json");
+    let directory=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let path=directory.path().join("journal.json");
     let mut c=fixture(Fault::None);c.journal=Some(path.clone());
     c.snapshot.journal_owner=Some(run());c.snapshot.journal_scope=Some(Scope::DesktopWide);
     c.activate(run(),Scope::DesktopWide).unwrap();

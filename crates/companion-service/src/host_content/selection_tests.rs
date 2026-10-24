@@ -14,7 +14,7 @@ fn assign(hub:&Hub,instance:&str,companion:&str,publication:&Value){
 }
 #[test]
 fn bulk_selection_updates_adds_removes_and_reuses_instances_in_one_guarded_snapshot(){
-    let dir=tempfile::tempdir().unwrap();let hub=open(dir.path()).unwrap();for id in ["a","b","c"]{pair(&hub,id,"browser");}
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let hub=open(dir.path()).unwrap();for id in ["a","b","c"]{pair(&hub,id,"browser");}
     let first=upload();let next=other(first.clone());publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);assign(&hub,"two","b",&first);
     let db=database(dir.path());let before=db.read_many(&[("secrets","companion-host"),("companion","publications")]).unwrap();
     let result=save(&hub,next.clone(),json!({"expectedHostToken":token(&hub),"companionIds":["b","c","c"]})).unwrap();assert_eq!(result["selectionCommitted"],true);
@@ -28,7 +28,7 @@ fn bulk_selection_updates_adds_removes_and_reuses_instances_in_one_guarded_snaps
 }
 #[test]
 fn malformed_stale_unpaired_ambiguous_and_incompatible_selections_preserve_every_record(){
-    let dir=tempfile::tempdir().unwrap();let hub=open(dir.path()).unwrap();pair(&hub,"a","browser");pair(&hub,"esp","esp32");let first=upload();publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let hub=open(dir.path()).unwrap();pair(&hub,"a","browser");pair(&hub,"esp","esp32");let first=upload();publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);
     let stale=token(&hub);hub.command(&json!({"command":"companion_update","companionId":"a","name":"renamed"})).unwrap();
     let db=database(dir.path());let before=db.read_many(&[("secrets","companion-host"),("companion","publications")]).unwrap();let next=other(first.clone());
     for selection in [json!({}),json!({"expectedHostToken":token(&hub),"unexpected":true}),json!({"expectedHostToken":stale}),
@@ -41,7 +41,7 @@ fn malformed_stale_unpaired_ambiguous_and_incompatible_selections_preserve_every
 }
 #[test]
 fn writer_busy_or_cross_process_edit_never_acknowledges_partial_publication_or_selection(){
-    let dir=tempfile::tempdir().unwrap();let hub=open(dir.path()).unwrap();pair(&hub,"a","browser");let first=upload();publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let hub=open(dir.path()).unwrap();pair(&hub,"a","browser");let first=upload();publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);
     let db=database(dir.path());let before=db.read_many(&[("secrets","companion-host"),("companion","publications")]).unwrap();let next=other(first.clone());let old_token=token(&hub);
     let lock=osg_persistence::test_support::hold_writer(&db).unwrap();assert!(save(&hub,next.clone(),json!({"expectedHostToken":old_token,"companionIds":[]})).is_err());drop(lock);
     assert_ne!(token(&hub),old_token);assert_eq!(hub.assigned_publication("one").unwrap().publication_hash,first["publicationHash"]);assert_eq!(hub.publication_uploads().len(),1);
@@ -52,7 +52,7 @@ fn writer_busy_or_cross_process_edit_never_acknowledges_partial_publication_or_s
 }
 #[test]
 fn selection_keeps_profile_ownership_and_reuses_unrelated_direct_slot(){
-    let dir=tempfile::tempdir().unwrap();let hub=open(dir.path()).unwrap();pair(&hub,"a","browser");pair(&hub,"b","browser");let first=upload();let next=other(first.clone());publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let hub=open(dir.path()).unwrap();pair(&hub,"a","browser");pair(&hub,"b","browser");let first=upload();let next=other(first.clone());publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);
     let proof=hub.prepare_profile_assignment("one",first["publicationHash"].as_str().unwrap()).unwrap();
     let receipt=hub.capture_profile_assignment(&proof,&uuid::Uuid::new_v4().to_string(),None).unwrap();hub.acquire_profile_assignment(&receipt).unwrap();
     let mut unrelated=first.clone();unrelated["canonicalDocument"]=json!(first["canonicalDocument"].as_str().unwrap().replace("toggle-native-fixture","different-panel"));unrelated["publicationHash"]=json!(format!("sha256:{}",hash(unrelated["canonicalDocument"].as_str().unwrap().as_bytes())));unrelated["capabilityFingerprint"]=Value::Null;
@@ -78,7 +78,7 @@ impl SourceSink for FaultSink {
 }
 #[test]
 fn descriptor_failure_and_failed_compensation_preserve_the_old_snapshot_and_surface_diagnostics(){
-    let dir=tempfile::tempdir().unwrap();let sink=Arc::new(FaultSink::default());
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let sink=Arc::new(FaultSink::default());
     let hub=Hub::with_storage(Arc::new(crate::persistence::test_support::store(dir.path().join("companion-host-state.dpapi"))),sink.clone()).unwrap();
     pair(&hub,"a","browser");let first=upload();let next=other(first.clone());publish(&hub,first.clone(),true);assign(&hub,"one","a",&first);
     let db=database(dir.path());let before=db.read_many(&[("secrets","companion-host"),("companion","publications")]).unwrap();

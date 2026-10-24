@@ -14,7 +14,7 @@ fn pair(hub:&Hub){
 }
 #[test]
 fn sqlite_reopen_restores_complete_content_heads_and_assignments_before_any_transport(){
-    let dir=tempfile::tempdir().unwrap();for name in ["companion-panels.json","companion-panel-heads.json"]{std::fs::write(dir.path().join(name),b"retired invalid file").unwrap();}
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();for name in ["companion-panels.json","companion-panel-heads.json"]{std::fs::write(dir.path().join(name),b"retired invalid file").unwrap();}
     let hub=open(dir.path()).unwrap();assert!(hub.saved_panel_references().is_empty());pair(&hub);let value=upload();let saved=publish(&hub,value.clone(),true);assert_eq!(saved["panelSaved"]["publicationHash"],value["publicationHash"]);assert_eq!(hub.saved_panel_references().len(),1);
     hub.command(&json!({"command":"companion_assign","instanceId":"assigned","companionId":"screen","publicationHash":value["publicationHash"]})).unwrap();
     let restored=open(dir.path()).unwrap();assert_eq!(restored.host_id(),hub.host_id());assert_eq!(restored.assigned_publication("assigned").unwrap().publication_hash,value["publicationHash"]);
@@ -25,7 +25,7 @@ fn sqlite_reopen_restores_complete_content_heads_and_assignments_before_any_tran
 }
 #[test]
 fn failed_save_head_assignment_and_prune_leave_the_prior_acknowledged_snapshot_in_memory_and_sqlite(){
-    let dir=tempfile::tempdir().unwrap();let hub=open(dir.path()).unwrap();pair(&hub);let first=upload();publish(&hub,first.clone(),true);let second=other(first.clone());assert_ne!(first["publicationHash"],second["publicationHash"]);
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let hub=open(dir.path()).unwrap();pair(&hub);let first=upload();publish(&hub,first.clone(),true);let second=other(first.clone());assert_ne!(first["publicationHash"],second["publicationHash"]);
     let db=database(dir.path());let before=db.read_many(&[("secrets","companion-host"),("companion","publications")]).unwrap();let lock=osg_persistence::test_support::hold_writer(&db).unwrap();
     let mut request=second.clone();request["command"]=json!("companion_publish");request["saveAsLatest"]=json!(true);assert!(hub.command(&request).is_err());
     assert!(hub.command(&json!({"command":"companion_assign","instanceId":"uncommitted","companionId":"screen","publicationHash":first["publicationHash"]})).is_err());
@@ -39,7 +39,7 @@ fn failed_save_head_assignment_and_prune_leave_the_prior_acknowledged_snapshot_i
 }
 #[test]
 fn profile_and_assignment_references_retain_immutable_archives_until_their_references_are_removed(){
-    let dir=tempfile::tempdir().unwrap();let hub=open(dir.path()).unwrap();let first=upload();let second=other(first.clone());publish(&hub,first.clone(),true);publish(&hub,second.clone(),true);
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let hub=open(dir.path()).unwrap();let first=upload();let second=other(first.clone());publish(&hub,first.clone(),true);publish(&hub,second.clone(),true);
     let db=database(dir.path());let profile=serde_json::to_vec(&json!({"profiles":[{"id":"00000000-0000-4000-8000-000000000001","name":"Retain panel","revision":1,"companionAssignments":[{"resourceId":"panel","panelId":"toggle-native-fixture","publicationHash":first["publicationHash"]}]}],"localAssignments":{}})).unwrap();
     db.commit(&[osg_persistence::Change{domain:"profiles",key:"library",expected_revision:0,payload:Some(&profile)}]).unwrap();
     let request=json!({"command":"companion_prune","panelIds":["toggle-native-fixture"],"hashes":[second["publicationHash"]]});assert_eq!(hub.command(&request).unwrap()["removed"],0);
@@ -50,7 +50,7 @@ fn profile_and_assignment_references_retain_immutable_archives_until_their_refer
 }
 #[test]
 fn invalid_sql_archive_never_partially_restores_or_overwrites_the_rejected_evidence(){
-    let dir=tempfile::tempdir().unwrap();let hub=open(dir.path()).unwrap();publish(&hub,upload(),true);let db=database(dir.path());let revision=db.revision("companion","publications").unwrap();
+    let dir=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let hub=open(dir.path()).unwrap();publish(&hub,upload(),true);let db=database(dir.path());let revision=db.revision("companion","publications").unwrap();
     let mut bad=upload();bad["publicationHash"]=json!(format!("sha256:{}","0".repeat(64)));let bytes=serde_json::to_vec(&json!({"publications":[upload(),bad],"savedHeads":{}})).unwrap();
     db.commit(&[osg_persistence::Change{domain:"companion",key:"publications",expected_revision:revision,payload:Some(&bytes)}]).unwrap();assert!(open(dir.path()).is_err());assert!(hub.mark_saved(upload()["publicationHash"].as_str().unwrap()).is_err());assert_eq!(db.read("companion","publications").unwrap().unwrap().payload,bytes);
     assert!(decode(Some(b"invalid")).is_err());let missing=json!({"publications":[],"savedHeads":{"panel":"missing"}});assert!(decode(Some(&serde_json::to_vec(&missing).unwrap())).is_err());

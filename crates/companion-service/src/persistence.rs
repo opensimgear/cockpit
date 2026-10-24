@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(decrypt_with_key(&sealed, &key).unwrap(), maximum);
         assert!(encrypt_with_key(&vec![2; STATE_BYTES - OVERHEAD + 1], &key, [3; 12]).is_err());
         assert!(decrypt_with_key(&vec![0; STATE_BYTES + 1], &key).is_err());
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = root.path().join("sealed");
         let store = SealedSqliteStore::new(&path);
         store.delete().unwrap();
@@ -354,7 +354,7 @@ mod tests {
     }
     #[test]
     fn atomic_commit_replaces_only_valid_leafs_and_bounds_data() {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = root.path().join("private/state");
         atomic_write(&path, b"first").unwrap();
         atomic_write(&path, b"second").unwrap();
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     #[ignore = "Requires an explicitly supplied unlocked native Keychain/Secret Service session"]
     fn real_native_store_retains_the_key_across_reopen_and_rejects_tampered_ciphertext() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = directory.path().join("native-state.sealed");
         let store = SealedSqliteStore::new(&path);
         store
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(unseal(&sealed).unwrap(), data);
         assert!(seal(&[]).is_err());
         assert!(unseal(b"invalid").is_err());
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = root.path().join("secret.dpapi");
         let store = SealedSqliteStore::new(&path);
         store.write(data).unwrap();

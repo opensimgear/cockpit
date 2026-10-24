@@ -71,7 +71,7 @@ fn host_ca_pin_is_checked_and_leaf_is_not_accepted_as_a_ca() {
 #[cfg(windows)]
 #[test]
 fn real_wss_pair_approval_publication_input_ui_stall_and_sealed_restart() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let sink = Arc::new(Recorder::default());
     let hub = Hub::new("host-test".into(), sink.clone());
     let server = ServerRuntime::new(hub.clone(), directory.path().join("host")).unwrap();
@@ -184,7 +184,7 @@ fn real_wss_pair_approval_publication_input_ui_stall_and_sealed_restart() {
 #[cfg(windows)]
 #[test]
 fn tls_rejects_wrong_authority_and_wss_frame_oversize_without_affecting_another_client() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let hub = Hub::new("host-test".into(), Arc::new(Recorder::default()));
     let server = ServerRuntime::new(hub.clone(), directory.path().to_path_buf()).unwrap();
     let status = server
@@ -266,7 +266,7 @@ fn publication_transfer_chunks_round_trip_without_losing_canonical_bytes() {
 #[cfg(windows)]
 #[test]
 fn one_real_listener_routes_two_different_ui_and_two_instances_of_one_ui_independently() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let sink = Arc::new(Recorder::default());
     let hub = Hub::new("multi-host".into(), sink.clone());
     let server = ServerRuntime::new(hub.clone(), directory.path().join("host")).unwrap();
@@ -378,7 +378,7 @@ fn one_real_listener_routes_two_different_ui_and_two_instances_of_one_ui_indepen
 #[cfg(windows)]
 #[test]
 fn occupied_port_is_reported_and_stalled_handshake_has_an_absolute_shutdown_bound() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let hub = Hub::new("host".into(), Arc::new(Recorder::default()));
     let server = ServerRuntime::new(hub, directory.path().to_path_buf()).unwrap();
     let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -414,7 +414,7 @@ mod feedback_cases;
 #[cfg(windows)]
 #[test]
 fn short_code_pairing_persists_both_ends_tracks_presence_and_revocation() {
-    let directory=tempfile::tempdir().unwrap();
+    let directory=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let sink=Arc::new(Recorder::default());
     let hub=Hub::open(directory.path().join("host-record"),sink.clone()).unwrap();
     let server=ServerRuntime::new(hub.clone(),directory.path().join("tls")).unwrap();
@@ -447,7 +447,7 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     static ASSETS:&[BrowserAsset]=&[BrowserAsset{path:"/",mime:"text/html",bytes:b"browser companion"}];
     let sink=Arc::new(Recorder::default());
     let hub=Hub::new("browser-host".into(),sink.clone());
-    let directory=tempfile::tempdir().unwrap();
+    let directory=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let server=ServerRuntime::with_browser(hub.clone(),directory.path().to_path_buf(),ASSETS).unwrap();
     let status=server.start(ServerConfig{bind:"127.0.0.1:0".parse().unwrap(),advertised_host:"127.0.0.1".into(),discovery:false}).unwrap();
     let origin=server.browser_url().unwrap().trim_end_matches('/').to_owned();

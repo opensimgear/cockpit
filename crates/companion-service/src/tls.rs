@@ -224,7 +224,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn identity_reload_preserves_pin_and_refuses_foreign_or_corrupted_native_state() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let path = directory.path().join("identity.dpapi");
         let first =
             NativeIdentity::load_or_create(&path, "host", vec!["localhost".into()]).unwrap();

@@ -1428,7 +1428,7 @@ mod tests {
             .unwrap()
             .contains("#55/#56"));
         assert!(authentication_reason(Some("Locked".into()), true).is_some());
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let storage = adapter();
         storage.available.store(false, Ordering::SeqCst);
         let client =
@@ -1453,7 +1453,7 @@ mod tests {
     }
     #[test]
     fn injected_adapter_restores_only_authority_and_failed_forget_preserves_saved_credential() {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let storage = adapter();
         let saved = SavedCredential {
             companion_id: "saved-instance".into(),
@@ -1510,7 +1510,7 @@ mod tests {
     }
     #[test]
     fn temporarily_locked_store_retries_without_losing_the_saved_pairing_or_resuming_input() {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let storage = adapter();
         let saved = SavedCredential {
             companion_id: "persistent-install".into(),
@@ -1652,7 +1652,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn local_ipc_is_epoch_bound_bounded_and_never_exposes_or_accepts_unauthorized_input() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
         assert_eq!(
             client.command(json!({"type":"status"})).unwrap()["phase"],
@@ -1790,7 +1790,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn native_ipc_caps_cumulative_transitions_and_channel_drop_clears_reservations() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
         let (sender, receiver) = mpsc::sync_channel(128);
         let counter = {
@@ -1833,7 +1833,7 @@ mod tests {
     #[test]
     fn feedback_is_validated_deduplicated_and_resynced_without_input_or_arm_changes() {
         use crate::feedback::*;
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let client = ClientRuntime::with_storage(directory.path().into(), adapter()).unwrap();
         assert!(client
             .command(json!({"type":"feedback-resync","epoch":0}))

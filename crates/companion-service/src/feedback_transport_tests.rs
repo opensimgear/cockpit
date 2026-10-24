@@ -7,7 +7,7 @@ use crate::{
 #[cfg(windows)]
 #[test]
 fn large_feedback_only_snapshots_native_resync_freshness_and_disconnected_peers_are_isolated() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let sink = Arc::new(Recorder::default());
     let hub = Hub::new("feedback-host".into(), sink.clone());
     let server = ServerRuntime::new(hub.clone(), directory.path().join("host")).unwrap();
