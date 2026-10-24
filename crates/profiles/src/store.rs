@@ -83,9 +83,11 @@ impl Library {
     }
 }
 
-
 /// Validate exact local pins without requiring a semantically valid saved graph.
-pub fn validate_assignments(document: &ProfileDocument, assignments: &[LocalAssignment]) -> Result<(), String> {
+pub fn validate_assignments(
+    document: &ProfileDocument,
+    assignments: &[LocalAssignment],
+) -> Result<(), String> {
     if assignments.len() > document.resources.len() {
         return Err("Too many local resource assignments.".into());
     }
@@ -97,9 +99,7 @@ pub fn validate_assignments(document: &ProfileDocument, assignments: &[LocalAssi
                 .iter()
                 .any(|r| r.id == assignment.resource_id)
         {
-            return Err(
-                "Local assignments must reference distinct profile resources.".into(),
-            );
+            return Err("Local assignments must reference distinct profile resources.".into());
         }
         let resource = document
             .resources
@@ -126,7 +126,10 @@ pub fn validate_assignments(document: &ProfileDocument, assignments: &[LocalAssi
                                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                     })
             {
-                return Err("Local port assignments require unique exact observed IDs and contract hashes.".into());
+                return Err(
+                    "Local port assignments require unique exact observed IDs and contract hashes."
+                        .into(),
+                );
             }
         }
         if assignment.source_id.is_empty()
@@ -145,20 +148,38 @@ pub struct Store {
     repository: std::sync::OnceLock<osg_persistence::Repository<Library>>,
 }
 impl Store {
-    pub fn new(root: PathBuf) -> Self { Self {root,repository:std::sync::OnceLock::new()} }
-    fn repository(&self)->Result<&osg_persistence::Repository<Library>,String> {
+    pub fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            repository: std::sync::OnceLock::new(),
+        }
+    }
+    fn repository(&self) -> Result<&osg_persistence::Repository<Library>, String> {
         if self.repository.get().is_none() {
-            let source=self.root.join("library.json");
-            let database=osg_persistence::Database::for_source(&source)?;
-            let repository=osg_persistence::Repository::new(database,"profiles","library",LIBRARY_SCHEMA_VERSION,
-                Some(source),MAX_LIBRARY_BYTES,Library::validate)?;
-            let _=self.repository.set(repository);
+            let source = self.root.join("library.json");
+            let database = osg_persistence::Database::for_namespace(&source)?;
+            let repository = osg_persistence::Repository::new(
+                database,
+                "profiles",
+                "library",
+                MAX_LIBRARY_BYTES,
+                Library::validate,
+            )?;
+            let _ = self.repository.set(repository);
         }
         Ok(self.repository.get().expect("repository initialized"))
     }
-    pub fn load(&self)->Result<Option<Library>,String> { self.repository()?.load() }
-    pub fn save(&self,library:&Library)->Result<(),String> { library.encode()?;self.repository()?.save(library) }
-    pub fn reset(&self,library:&Library)->Result<(),String> {library.encode()?;self.repository()?.reset(library)}
+    pub fn load(&self) -> Result<Option<Library>, String> {
+        self.repository()?.load()
+    }
+    pub fn save(&self, library: &Library) -> Result<(), String> {
+        library.encode()?;
+        self.repository()?.save(library)
+    }
+    pub fn reset(&self, library: &Library) -> Result<(), String> {
+        library.encode()?;
+        self.repository()?.reset(library)
+    }
 }
 
 #[cfg(test)]

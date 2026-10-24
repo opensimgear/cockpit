@@ -237,8 +237,8 @@ fn disk_failure_and_read_only_library_never_publish_half_an_editor_save() {
     let fresh = draft();
     assert!(save(&mut service, &fresh, Value::Null, assignments(&fresh)).is_err());
     assert!(service.compile_source(&fresh.id).is_err());
-    let db=osg_persistence::Database::for_source(&temp.path().join("library.json")).unwrap();
-    db.commit(&[osg_persistence::Change{domain:"profiles",key:"library",format_version:2,expected_revision:db.revision("profiles","library").unwrap(),payload:Some(b"{corrupt")}]).unwrap();
+    let db=osg_persistence::Database::for_namespace(&temp.path().join("library.json")).unwrap();
+    db.commit(&[osg_persistence::Change{domain:"profiles",key:"library",expected_revision:db.revision("profiles","library").unwrap(),payload:Some(b"{corrupt")}]).unwrap();
     let mut blocked = Service::new(Some(temp.path().to_owned()));
     assert!(save(&mut blocked, &fresh, Value::Null, json!([]))
         .unwrap_err()

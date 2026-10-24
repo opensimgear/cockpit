@@ -225,7 +225,8 @@ fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
 fn corrupt_recovery_and_preferences_are_reported_without_startup_replay() {
     let (registry, _) = inventory();
     let temp = crate::test_directory();
-    std::fs::write(temp.path().join("controller-visibility.json"), b"invalid").unwrap();
+    let db=osg_persistence::Database::for_namespace(&temp.path().join("controller-visibility.json")).unwrap();
+    db.commit(&[osg_persistence::Change{domain:"controllers",key:"visibility",expected_revision:0,payload:Some(b"invalid")}]).unwrap();
     std::fs::write(
         temp.path().join("controller-visibility-session.json"),
         b"invalid",

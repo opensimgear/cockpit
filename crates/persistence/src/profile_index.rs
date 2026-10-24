@@ -74,7 +74,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Change, APPLICATION_ID};
+    use crate::Change;
     const ID: &str = "00000000-0000-4000-8000-000000000001";
     fn library() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({"schemaVersion":2,"profiles":[{"id":ID,"name":"Default","revision":7,
@@ -89,7 +89,6 @@ mod tests {
         db.commit(&[Change {
             domain: "profiles",
             key: "library",
-            format_version: 2,
             expected_revision: 0,
             payload: Some(&payload),
         }])
@@ -122,7 +121,6 @@ mod tests {
         db.commit(&[Change {
             domain: "profiles",
             key: "library",
-            format_version: 2,
             expected_revision: 0,
             payload: Some(&payload),
         }])
@@ -137,14 +135,12 @@ mod tests {
                 Change {
                     domain: "profiles",
                     key: "library",
-                    format_version: 2,
                     expected_revision: 1,
                     payload: Some(&edited)
                 },
                 Change {
                     domain: "settings",
                     key: "conflict",
-                    format_version: 1,
                     expected_revision: 4,
                     payload: Some(b"{}")
                 }
@@ -155,7 +151,6 @@ mod tests {
         db.commit(&[Change {
             domain: "profiles",
             key: "library",
-            format_version: 2,
             expected_revision: 1,
             payload: Some(&edited),
         }])
@@ -169,7 +164,6 @@ mod tests {
         db.commit(&[Change {
             domain: "profiles",
             key: "library",
-            format_version: 2,
             expected_revision: 2,
             payload: None,
         }])
@@ -178,40 +172,6 @@ mod tests {
         assert!(db.profile_references(ID).unwrap().is_empty());
     }
     #[test]
-    fn schema_two_upgrade_backfills_indexes_without_changing_saved_bytes_or_revisions() {
-        let dir = crate::test_directory();
-        let path = dir.path().join("cockpit.sqlite3");
-        let payload = library();
-        let connection = rusqlite::Connection::open(&path).unwrap();
-        connection
-            .execute_batch(include_str!("schema.sql"))
-            .unwrap();
-        connection
-            .execute_batch(include_str!("migration.sql"))
-            .unwrap();
-        connection
-            .pragma_update(None, "application_id", APPLICATION_ID)
-            .unwrap();
-        connection.pragma_update(None, "user_version", 2).unwrap();
-        connection
-            .execute("INSERT INTO domains VALUES('profiles')", [])
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO records VALUES('profiles','library',2,12,?1)",
-                [&payload],
-            )
-            .unwrap();
-        let db = Database::open(path).unwrap();
-        assert_eq!(db.profile_index().unwrap()[0].revision, 7);
-        assert_eq!(db.revision("profiles", "library").unwrap(), 12);
-        assert_eq!(
-            db.read("profiles", "library").unwrap().unwrap().payload,
-            payload
-        );
-    }
-
-    #[test]
     fn orphan_assignments_rollback_and_untrusted_index_sizes_are_bounded() {
         let dir = crate::test_directory();
         let db = Database::open(dir.path().join("cockpit.sqlite3")).unwrap();
@@ -219,7 +179,6 @@ mod tests {
         db.commit(&[Change {
             domain: "profiles",
             key: "library",
-            format_version: 2,
             expected_revision: 0,
             payload: Some(&payload),
         }])
@@ -232,7 +191,6 @@ mod tests {
             .commit(&[Change {
                 domain: "profiles",
                 key: "library",
-                format_version: 2,
                 expected_revision: 1,
                 payload: Some(&orphan)
             }])
@@ -249,7 +207,6 @@ mod tests {
         db.commit(&[Change {
             domain: "profiles",
             key: "library",
-            format_version: 2,
             expected_revision: 1,
             payload: Some(&bytes),
         }])
@@ -263,7 +220,6 @@ mod tests {
         db.commit(&[Change {
             domain: "profiles",
             key: "library",
-            format_version: 2,
             expected_revision: 2,
             payload: Some(&bytes),
         }])

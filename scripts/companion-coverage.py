@@ -25,7 +25,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=root / ".research/companion-coverage")
     parser.add_argument("--service-only", action="store_true", help="Measure the portable crate without desktop IPC")
+    parser.add_argument("--desktop-only", action="store_true", help="Measure only native desktop operators")
+    parser.add_argument("--test-threads", type=int, choices=range(1,33), help="Bound native regression concurrency")
     options = parser.parse_args()
+    if options.desktop_only and options.service_only:
+        parser.error("Choose either desktop-only or service-only")
     output = options.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     profiles = Path(tempfile.mkdtemp(prefix="profiles-", dir=output))
@@ -45,7 +49,9 @@ def main():
     if not options.service_only:
         # Profile publication, authoring and lifecycle tests call this host from
         # other modules. Measure those real integrations as well as its unit tests.
-        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/widget_library.rs", root / "src-tauri/src/widget_cutover.rs"]))
+        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion_host.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/companion/storage/widgets.rs"]))
+    if options.desktop_only:
+        targets = [target for target in targets if target[0] == "desktop"]
     summary = {}
     for name, manifest, selection, sources in targets:
         artifacts = run(["cargo", "test", "--locked", "--lib", "--no-run", "--message-format=json", "--manifest-path", manifest], root, environment)
@@ -55,7 +61,8 @@ def main():
         if len(binaries) != 1:
             raise RuntimeError(f"Expected one {name} library test executable.")
         test_environment = dict(environment, LLVM_PROFILE_FILE=str(profiles / f"{name}-%m-%p.profraw"))
-        arguments = [binaries[0], *([selection] if selection else [])]
+        arguments = [binaries[0], *([selection] if selection else []),
+                     *([f"--test-threads={options.test_threads}"] if options.test_threads else [])]
         tests = subprocess.Popen(arguments, cwd=root, env=test_environment, text=True, encoding="utf-8",
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         log, _ = tests.communicate()

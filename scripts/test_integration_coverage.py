@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
 
 
 spec = importlib.util.spec_from_file_location(
@@ -10,6 +11,16 @@ spec.loader.exec_module(coverage)
 
 
 class IntegrationCoverageTests(unittest.TestCase):
+    def test_sqlite_schema_changes_invalidate_the_source_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'crates/persistence/src'
+            source.mkdir(parents=True)
+            schema = source / 'schema.sql'
+            schema.write_text('CREATE TABLE records(value BLOB);', encoding='utf-8')
+            before = coverage.source_stamp(root)
+            schema.write_text('CREATE TABLE records(value TEXT);', encoding='utf-8')
+            self.assertNotEqual(before, coverage.source_stamp(root))
     def test_test_only_import_does_not_hide_production_functions(self):
         lines = ['#[cfg(test)]', 'use crate::fixture;', 'fn production() {}',
                  '#[cfg(test)]', 'mod tests {', 'fn regression() {}', '}']
@@ -25,13 +36,13 @@ class IntegrationCoverageTests(unittest.TestCase):
         self.assertEqual(coverage.production_end(lines), 4)
 
     def test_assetto_adapter_includes_production_before_its_actual_tests(self):
-        source = Path(__file__).resolve().parents[1] / 'src-tauri/src/acr_windows.rs'
+        source = Path(__file__).resolve().parents[1] / 'src-tauri/src/games/telemetry/windows_source/mod.rs'
         lines = source.read_text(encoding='utf-8').splitlines()
         end = coverage.production_end(lines)
         acquisition = next(i + 1 for i, line in enumerate(lines)
                            if line.startswith('fn consistent_copy_for_game('))
         self.assertLess(acquisition, end)
-        self.assertEqual(lines[end], 'mod tests {')
+        self.assertEqual(lines[end], 'mod tests;')
 
 class ProductionBoundaryTests(unittest.TestCase):
     def test_test_only_imports_do_not_hide_production_functions(self):

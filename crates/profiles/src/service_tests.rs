@@ -1,5 +1,5 @@
 pub(super) fn saved_library(root:&std::path::Path)->Vec<u8> {
-    osg_persistence::Database::for_source(&root.join("library.json")).unwrap().read("profiles","library").unwrap().unwrap().payload
+    osg_persistence::Database::for_namespace(&root.join("library.json")).unwrap().read("profiles","library").unwrap().unwrap().payload
 }
 use super::*;
 use crate::store::LocalAssignment;
@@ -125,6 +125,7 @@ fn companion_reference_reads_refuse_corrupt_storage_and_browser_authority() {
     std::fs::create_dir_all(&root).unwrap();
     let original = b"{corrupt saved references";
     std::fs::write(root.join("library.json"), original).unwrap();
+    crate::fixture_record(&root.join("library.json"),"profiles","library",original);
     let mut service = Service::new(Some(root.clone()));
     assert!(service.request(&json!({"command":"profile_companion_references"})).unwrap_err().contains("preserve companion publications"));
     assert!(service.request(&json!({"command":"profile_companion_references","hashes":[]})).unwrap_err().contains("Unknown field"));
@@ -230,6 +231,7 @@ fn corrupted_library_requires_explicit_reset_and_never_overwrites_evidence() {
     let temp = crate::test_directory();
     let path = temp.path().join("library.json");
     std::fs::write(&path, "{corrupt").unwrap();
+    crate::fixture_record(&path,"profiles","library",b"{corrupt");
     let mut service = Service::new(Some(temp.path().to_owned()));
     let status = service
         .request(&json!({"command":"profile_status"}))
@@ -491,6 +493,6 @@ fn schema_one_library_is_never_migrated_or_read_from_new_namespace() {
     );
     assert_eq!(std::fs::read(old.join("library.json")).unwrap(), bytes);
     let blocked = Service::new(Some(old.clone()));
-    assert!(blocked.compile_source(DEFAULT_PROFILE_ID).unwrap().2);
+    assert!(!blocked.compile_source(DEFAULT_PROFILE_ID).unwrap().2);
     assert_eq!(std::fs::read(old.join("library.json")).unwrap(), bytes);
 }

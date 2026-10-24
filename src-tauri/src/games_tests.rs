@@ -219,14 +219,15 @@ fn manual_installations_save_restart_remove_and_corruption_is_preserved() {
     runtime.shutdown();
     drop(runtime);
     fs::write(&file, b"malformed retained metadata").unwrap();
-    let runtime = GamesRuntime::new(
-        no_io(),
-        Paths::in_directory(directory.path()),
-        Arc::new(FakePlatform::default()),
-    );
+    let runtime = GamesRuntime::new(no_io(),Paths::in_directory(directory.path()),Arc::new(FakePlatform::default()));
+    assert!(runtime.status()["error"].is_null(), "retired files cannot replace the database");
+    assert_eq!(runtime.status()["manualInstallations"],json!({}));runtime.shutdown();drop(runtime);
+    let db=osg_persistence::Database::for_namespace(&file).unwrap();
+    db.commit(&[osg_persistence::Change{domain:"games",key:"installations",expected_revision:db.revision("games","installations").unwrap(),payload:Some(b"malformed active metadata")}]).unwrap();
+    let runtime=GamesRuntime::new(no_io(),Paths::in_directory(directory.path()),Arc::new(FakePlatform::default()));
     assert!(runtime.status()["error"].is_string());
     assert!(runtime.request(&json!({"command":"game_installation","gameId":"dcs","executable":"C:\\Chosen\\DCS.exe"})).is_err());
-    assert_eq!(fs::read(file).unwrap(), b"malformed retained metadata");
+    assert_eq!(fs::read(file).unwrap(),b"malformed retained metadata");
     runtime.request(&json!({"command":"game_scan"})).unwrap();
 }
 #[test]
@@ -256,7 +257,7 @@ fn game_get_state_does_not_wait_for_metadata_admission_and_keeps_request_validat
     assert!(oversized.unwrap_err().contains("Invalid game metadata request"));
     runtime.shutdown();
     assert!(runtime.request(&json!({"command":"game_get_state"})).unwrap_err().contains("closed"));
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    assert!(fs::read_dir(directory.path()).unwrap().all(|entry|matches!(entry.unwrap().file_name().to_str(),Some("cockpit.sqlite3"|"game-artwork.lock"))));
 }
 
 #[test]
@@ -290,7 +291,7 @@ fn retired_commands_and_unknown_metadata_fields_have_no_effects_or_files() {
     assert!(runtime.request(&json!({"command":"unknown"})).is_err());
     assert!(runtime.guard_profile_takeover().is_ok());
     assert_eq!(platform.calls.load(Ordering::Acquire), 0);
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    assert!(fs::read_dir(directory.path()).unwrap().all(|entry|matches!(entry.unwrap().file_name().to_str(),Some("cockpit.sqlite3"|"game-artwork.lock"))));
 }
 #[test]
 fn retained_volatile_binding_intents_cleanup_without_reading_or_restarting_old_graphs() {

@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 fn settings() -> Settings {
     Settings {
@@ -28,35 +29,31 @@ fn fresh_store_does_not_read_seed_or_modify_an_old_profile_library() {
         Some(fresh)
     );
     assert_eq!(fs::read(old).unwrap(), legacy);
-    let value: serde_json::Value = serde_json::from_slice(&fs::read(&store.path).unwrap()).unwrap();
+    let value: serde_json::Value =
+        serde_json::from_slice(&serde_json::to_vec(&store.load().unwrap().unwrap()).unwrap())
+            .unwrap();
     assert_eq!(
         value,
         serde_json::json!({"schemaVersion":1,"manualInstallations":{}})
     );
 }
 #[test]
-fn atomic_replacement_failure_preserves_old_bytes_and_restart_state() {
+fn stale_game_settings_cannot_overwrite_a_committed_edit() {
     let directory = crate::test_directory();
     let path = directory.path().join("new/settings.json");
-    let store = Store::new(path.clone());
+    let first = Store::new(path.clone());
     let original = settings();
-    store.save(&original).unwrap();
-    let bytes = fs::read(&path).unwrap();
+    first.save(&original).unwrap();
+    let stale = Store::new(path.clone());
+    stale.load().unwrap();
     let mut edited = original.clone();
     edited
         .manual_installations
         .insert("x-plane-12".into(), "C:\\X-Plane\\X-Plane.exe".into());
-    assert!(store
-        .save_with(&edited, |_, _| Err("Injected pre-commit failure".into()))
-        .is_err());
-    assert_eq!(fs::read(&path).unwrap(), bytes);
-    assert_eq!(Store::new(path.clone()).load().unwrap(), Some(original));
-    store.save(&edited).unwrap();
-    assert_eq!(Store::new(path).load().unwrap(), Some(edited));
-    assert_eq!(
-        fs::read_dir(directory.path().join("new")).unwrap().count(),
-        1
-    );
+    first.save(&edited).unwrap();
+    assert!(stale.save(&original).unwrap_err().contains("conflict"));
+    assert_eq!(Store::new(path.clone()).load().unwrap(), Some(edited));
+    assert!(!path.exists());
 }
 #[test]
 fn strict_envelope_rejects_profiles_tokens_duplicate_keys_and_oversized_files() {
@@ -75,11 +72,17 @@ fn strict_envelope_rejects_profiles_tokens_duplicate_keys_and_oversized_files() 
         "malformed",
     ] {
         fs::write(&path, bytes).unwrap();
+        crate::persistence::test_support::record(&path, "games", "installations", bytes.as_bytes());
         assert!(store.load().is_err(), "{bytes}");
         assert_eq!(fs::read(&path).unwrap(), bytes.as_bytes());
     }
-    fs::write(&path, vec![b' '; MAX_BYTES + 1]).unwrap();
-    assert!(store.load().unwrap_err().contains("size bound"));
+    crate::persistence::test_support::record(
+        &path,
+        "games",
+        "installations",
+        &vec![b' '; MAX_BYTES + 1],
+    );
+    assert!(store.load().unwrap_err().contains("Oversized"));
 }
 #[test]
 fn paths_are_bounded_absolute_and_cannot_smuggle_runtime_or_extra_games() {
@@ -113,9 +116,15 @@ fn paths_are_bounded_absolute_and_cannot_smuggle_runtime_or_extra_games() {
         .is_err());
     let directory = crate::test_directory();
     assert!(Store::new(directory.path().to_owned()).load().is_err());
-    assert!(Store::new(directory.path().join("sub/../settings.json"))
-        .load()
-        .is_err());
+    assert!(Store::new(PathBuf::from(format!(
+        "{}{}sub{}..{}settings.json",
+        directory.path().display(),
+        std::path::MAIN_SEPARATOR,
+        std::path::MAIN_SEPARATOR,
+        std::path::MAIN_SEPARATOR
+    )))
+    .load()
+    .is_err());
     let parent = directory.path().join("file");
     fs::write(&parent, b"file").unwrap();
     assert!(Store::new(parent.join("settings.json"))
@@ -128,7 +137,14 @@ fn symbolic_target_and_parent_are_never_followed() {
     let real = directory.path().join("real");
     fs::create_dir(&real).unwrap();
     let target = real.join("settings.json");
-    Store::new(target.clone()).save(&settings()).unwrap();
+    fs::write(&target, serde_json::to_vec(&settings()).unwrap()).unwrap();
+    crate::persistence::test_support::record(
+        &target,
+        "games",
+        "installations",
+        &fs::read(&target).unwrap(),
+    );
+    Store::new(target.clone()).load().unwrap();
     let retained = fs::read(&target).unwrap();
     #[cfg(unix)]
     let link = |source: &Path, destination: &Path, _directory: bool| {
@@ -138,7 +154,7 @@ fn symbolic_target_and_parent_are_never_followed() {
     {
         let linked = directory.path().join("linked.json");
         link(&target, &linked, false).unwrap();
-        assert!(Store::new(linked).load().unwrap_err().contains("symlink"));
+        assert!(Store::new(linked).load().unwrap().is_none());
     }
     let parent = directory.path().join("alias");
     #[cfg(unix)]
@@ -209,7 +225,8 @@ fn dynamic_game_registry_round_trips_and_preserves_legacy_overrides() {
         crate::game_artwork::Background {
             image: format!("artwork:{}.jpg", "a".repeat(64)),
             position_x: 20.0,
-            position_y: 75.0, crop: None,
+            position_y: 75.0,
+            crop: None,
         },
     );
     store.save(&value).unwrap();
@@ -227,14 +244,16 @@ fn registry_rejects_duplicate_records_missing_background_owners_and_excess_games
     let id = "custom-11111111-1111-4111-8111-111111111111";
     let record = r#"{"name":"Game","executable":null}"#;
     fs::write(&path,format!(r#"{{"schemaVersion":1,"manualInstallations":{{}},"customGames":{{"{id}":{record},"{id}":{record}}}}}"#)).unwrap();
-    assert!(store.load().unwrap_err().contains("Duplicate"));
+    crate::persistence::test_support::record(&path,"games","installations",&std::fs::read(&path).unwrap());
+    assert!(store.load().is_err());
     let mut value = Settings::default();
     value.backgrounds.insert(
         id.into(),
         crate::game_artwork::Background {
             image: format!("artwork:{}.jpg", "a".repeat(64)),
             position_x: 50.0,
-            position_y: 50.0, crop: None,
+            position_y: 50.0,
+            crop: None,
         },
     );
     assert!(value.validate().is_err());

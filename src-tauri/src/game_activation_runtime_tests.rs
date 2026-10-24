@@ -90,6 +90,7 @@ fn corrupt_installation_store_never_verifies_or_launches_the_discovered_fallback
     let file = paths.installations.clone();
     let corrupt=br#"{"schemaVersion":1,"manualInstallations":{"dcs":"Z:\\Pinned\\DCS.exe"},"interrupted":true}"#;
     fs::write(&file, corrupt).unwrap();
+    crate::persistence::test_support::record(&file,"games","installations",corrupt);
     let platform = Arc::new(Fallback::default());
     let runtime = GamesRuntime::new(
         Arc::new(|_| panic!("No provider/hardware calls")),
@@ -157,7 +158,7 @@ fn corrupt_installation_store_never_verifies_or_launches_the_discovered_fallback
     assert_eq!(platform.0.load(Ordering::Acquire), 0);
     assert_eq!(fs::read(file).unwrap(), corrupt);
     assert_eq!(
-        fs::read_dir(directory.path()).unwrap().count(),
+        fs::read_dir(directory.path()).unwrap().filter(|entry|entry.as_ref().unwrap().file_name()!="cockpit.sqlite3").count(),
         1,
         "No setup, probe or cleanup evidence was written"
     );

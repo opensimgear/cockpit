@@ -109,6 +109,7 @@ impl Fixture {
         let directory = crate::test_directory();
         if corrupt {
             std::fs::write(directory.path().join("games.installations-v1.json"),b"interrupted pinned executable metadata").unwrap();
+    crate::persistence::test_support::record(&directory.path().join("games.installations-v1.json"),"games","installations",&std::fs::read(&directory.path().join("games.installations-v1.json")).unwrap());
         }
         let games = Arc::new(Games::default());
         games.appear.store(true, Ordering::Release);

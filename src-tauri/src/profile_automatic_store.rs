@@ -70,8 +70,12 @@ impl Store {
     fn repository(&self)->Result<Option<&osg_persistence::Repository<Settings>>,String> {
         let Some(path)=&self.path else {return Ok(None);};
         if self.repository.get().is_none() {
-            let db=osg_persistence::Database::for_source(path)?;
-            let repository=osg_persistence::Repository::new(db,"profiles","selection",1,Some(path.clone()),MAX_BYTES,Settings::validate)?;
+            let db=osg_persistence::Database::for_namespace(path)?;
+            let repository=osg_persistence::Repository::new(db,
+"profiles",
+"selection",
+MAX_BYTES,
+Settings::validate)?;
             let _=self.repository.set(repository);
         }
         Ok(self.repository.get())

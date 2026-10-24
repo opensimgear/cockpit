@@ -1,7 +1,12 @@
-fn tamper(path:&std::path::Path,payload:&[u8]) {
-    let db=osg_persistence::Database::for_source(path).unwrap();
-    db.commit(&[osg_persistence::Change{domain:"controllers",key:"visibility",format_version:1,
-        expected_revision:db.revision("controllers","visibility").unwrap(),payload:Some(payload)}]).unwrap();
+fn tamper(path: &std::path::Path, payload: &[u8]) {
+    let db = osg_persistence::Database::for_namespace(path).unwrap();
+    db.commit(&[osg_persistence::Change {
+        domain: "controllers",
+        key: "visibility",
+        expected_revision: db.revision("controllers", "visibility").unwrap(),
+        payload: Some(payload),
+    }])
+    .unwrap();
 }
 use super::*;
 #[test]
@@ -24,9 +29,17 @@ fn explicit_intent_roundtrip_stays_disabled_and_external_edits_are_preserved() {
     assert_eq!(Settings::new(Some(path.clone())).value, value);
     value.enabled = true;
     store.save(value).unwrap();
-    tamper(&path,b"external");
+    tamper(&path, b"external");
     assert!(store.save(Preferences::default()).is_err());
-    assert_eq!(osg_persistence::Database::for_source(&path).unwrap().read("controllers","visibility").unwrap().unwrap().payload,b"external");
+    assert_eq!(
+        osg_persistence::Database::for_namespace(&path)
+            .unwrap()
+            .read("controllers", "visibility")
+            .unwrap()
+            .unwrap()
+            .payload,
+        b"external"
+    );
     let mut broken = Settings::new(Some(path));
     assert!(broken.error.is_some());
     assert!(broken.save(Preferences::default()).is_err());
@@ -65,7 +78,7 @@ fn limits_identity_schema_paths_and_competing_editors_are_checked() {
     let mut second = Settings::new(Some(path.clone()));
     first.save(Preferences::default()).unwrap();
     assert!(second.save(Preferences::default()).is_err());
-    tamper(&path,&vec![0;1_048_577]);
+    tamper(&path, &vec![0; 1_048_577]);
     assert!(Settings::new(Some(path)).error.is_some());
     assert!(Settings::new(Some(temp.path().into())).error.is_some());
     let mut memory = Settings::new(None);

@@ -98,8 +98,8 @@ async function validateWorkspace(input: unknown): Promise<CompiledWorkspace> {
   for (const draft of drafts) { const current = publications[draft.id]?.at(-1); if (current) ensure(await publicationMatchesDraft(draft, sources, current), 'Saved compiled presentation belongs to an earlier panel or widget source. Recompile before saving.'); }
   return { schemaVersion: 2, sources, drafts, publications };
 }
-/** Source and compiled publication are committed together. The old authoring record is
- * deliberately replaced on first use; pairing and native trust use separate stores. */
+/** Source and compiled publication are committed together. Invalid saved data
+ * remains an error; no compatibility reset can overwrite it. */
 export class CompiledWorkspaceStore {
   private pending: Promise<unknown> = Promise.resolve();
   private storage: CompiledWorkspaceStorage;
@@ -107,7 +107,7 @@ export class CompiledWorkspaceStore {
   private ordered<T>(work: () => Promise<T>): Promise<T> { const result = this.pending.then(work); this.pending = result.catch(() => undefined); return result; }
   load(): Promise<CompiledWorkspace> { return this.ordered(async () => {
     const input = await this.storage.read();
-    if (input === undefined || input && typeof input === 'object' && (input as any).schemaVersion === 1) { const empty = emptyCompiledWorkspace(); await this.storage.write(empty); return empty; }
+    if (input === undefined) { const empty = emptyCompiledWorkspace(); await this.storage.write(empty); return empty; }
     return validateWorkspace(input);
   }); }
   save(input: CompiledWorkspace): Promise<CompiledWorkspace> { const capture = structuredClone(input); return this.ordered(async () => { const checked = await validateWorkspace(capture); await this.storage.write(checked); return structuredClone(checked); }); }

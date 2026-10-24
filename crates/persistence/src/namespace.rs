@@ -36,7 +36,10 @@ pub fn register_namespace(roots: &[PathBuf], database: &Path) -> Result<(), Stri
 }
 
 impl Database {
-    pub fn for_source(source: &Path) -> Result<Self, String> {
+    pub fn for_namespace(source: &Path) -> Result<Self, String> {
+        if source.is_dir() {
+            return Err("A persistence namespace anchor cannot be a directory.".into());
+        }
         if !source.is_absolute()
             || source
                 .components()
@@ -44,6 +47,10 @@ impl Database {
         {
             return Err("Persistence source requires an absolute path without traversal.".into());
         }
+        let parent = source
+            .parent()
+            .ok_or("Persistence path has no namespace directory.")?;
+        crate::check_path(&parent.join(".namespace-check"), false)?;
         if let Some(namespaces) = NAMESPACES.get() {
             let namespaces = namespaces
                 .read()
@@ -81,25 +88,27 @@ mod tests {
         let database = dir.path().join("state/cockpit.sqlite3");
         register_namespace(&[a.clone(), b.clone()], &database).unwrap();
         assert_eq!(
-            Database::for_source(&a.join("profiles-v2/library.json"))
+            Database::for_namespace(&a.join("profiles-v2/library.json"))
                 .unwrap()
                 .path(),
             database
         );
         assert_eq!(
-            Database::for_source(&b.join("tray.json")).unwrap().path(),
+            Database::for_namespace(&b.join("tray.json"))
+                .unwrap()
+                .path(),
             database
         );
         assert!(register_namespace(&[a], &dir.path().join("other.sqlite3")).is_err());
-        assert!(Database::for_source(Path::new("relative.json")).is_err());
+        assert!(Database::for_namespace(Path::new("relative.json")).is_err());
         let other = dir.path().join("other/profiles-v2/library.json");
         assert_eq!(
-            Database::for_source(&other).unwrap().path(),
+            Database::for_namespace(&other).unwrap().path(),
             dir.path().join("other/cockpit.sqlite3")
         );
         let local = dir.path().join("standalone/client.dpapi");
         assert_eq!(
-            Database::for_source(&local).unwrap().path(),
+            Database::for_namespace(&local).unwrap().path(),
             dir.path().join("standalone/cockpit.sqlite3")
         );
     }

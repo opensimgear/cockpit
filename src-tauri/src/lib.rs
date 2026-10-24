@@ -1,21 +1,26 @@
+#[path="games/storage/installations.rs"]
 mod game_installations;
+#[path="games/artwork/mod.rs"]
 mod game_artwork;
 mod game_library;
 mod retained_game_companions;
+#[path="persistence/paths.rs"]
 mod config_paths;
 mod persistence;
 mod mcp;
 mod mcp_credentials;
 mod mcp_tools;
+#[path="companion/storage/widgets.rs"]
 mod widget_library;
 mod acr_setup;
 mod ac_car_catalogue;
+#[path="games/storage/car_catalogue.rs"]
 mod ac_car_catalogue_cache;
+#[path="games/telemetry/windows_source/mod.rs"]
 mod acr_windows;
 mod companion_host;
 mod firmware_releases;
 mod companion_panels;
-mod widget_cutover;
 mod actions;
 pub mod dcs_bios;
 mod dcs_profile;
@@ -26,10 +31,12 @@ mod window_persistence;
 mod game_discovery;
 mod game_activation;
 mod game_context;
+#[path="games/integration/mod.rs"]
 mod game_integration_setup;
 mod game_telemetry;
 mod game_channels;
 mod game_telemetry_inspection;
+#[path="games/vehicles/mod.rs"]
 mod game_vehicles;
 mod games;
 pub mod gateways;

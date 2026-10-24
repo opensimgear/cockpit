@@ -1,12 +1,15 @@
 //! Setup-owned installed car choices. This cache never establishes a live car.
 use serde_json::{json, Value};
-use std::{fs, io::Read, path::PathBuf};
+#[cfg(test)]
+use std::fs;
+use std::path::PathBuf;
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_CARS: usize = 1024;
 
 pub(crate) struct Cache {
-    path: PathBuf,
+    store: Result<osg_persistence::Repository<Value>, String>,
+    error: Option<String>,
     saved: Option<Value>,
 }
 
@@ -66,29 +69,37 @@ fn valid_cars(cars: &Value) -> bool {
     })
 }
 
+fn validate(saved: &Value) -> Result<(), String> {
+    if saved["schemaVersion"] != 1 || !valid_cars(&saved["cars"]) {
+        return Err("Invalid saved Assetto Corsa car catalogue; preserve it for recovery.".into());
+    }
+    let game = json!({"id":"assetto-corsa","installed":true,"installPath":saved["installation"]["installPath"],"executable":saved["installation"]["executable"]});
+    if scope(&game).as_ref() != Some(&saved["installation"]) {
+        return Err("Invalid saved car installation scope.".into());
+    }
+    Ok(())
+}
 impl Cache {
     pub(crate) fn new(path: PathBuf) -> Self {
-        let saved = (|| {
-            let mut bytes = vec![];
-            fs::File::open(&path)
-                .ok()?
-                .take(MAX_BYTES + 1)
-                .read_to_end(&mut bytes)
-                .ok()?;
-            if bytes.len() as u64 > MAX_BYTES {
-                return None;
-            }
-            let saved: Value = serde_json::from_slice(&bytes).ok()?;
-            if saved["schemaVersion"] != 1 || !valid_cars(&saved["cars"]) {
-                return None;
-            }
-            let game = json!({"id":"assetto-corsa","installed":true,"installPath":saved["installation"]["installPath"],"executable":saved["installation"]["executable"]});
-            if scope(&game)? != saved["installation"] {
-                return None;
-            }
-            Some(saved)
-        })();
-        Self { path, saved }
+        let store = osg_persistence::Database::for_namespace(&path).and_then(|db| {
+            osg_persistence::Repository::new(db, "games", "ac-cars", MAX_BYTES as usize, validate)
+        });
+        let loaded = store
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|store| store.load());
+        match loaded {
+            Ok(saved) => Self {
+                store,
+                saved,
+                error: None,
+            },
+            Err(error) => Self {
+                store,
+                saved: None,
+                error: Some(error),
+            },
+        }
     }
 
     pub(crate) fn replace(&mut self, game: &Value, cars: Vec<Value>) -> Result<(), String> {
@@ -103,7 +114,13 @@ impl Cache {
         if bytes.len() as u64 > MAX_BYTES {
             return Err("The Assetto Corsa car catalogue exceeds its size limit.".into());
         }
-        crate::dcs_setup::replace(&self.path, &bytes)?;
+        let store = self.store.as_ref().map_err(Clone::clone)?;
+        if self.error.is_some() {
+            store.reset(&saved)?;
+        } else {
+            store.save(&saved)?;
+        }
+        self.error = None;
         self.saved = Some(saved);
         Ok(())
     }
@@ -112,6 +129,7 @@ impl Cache {
         if game["id"] != "assetto-corsa" {
             return;
         }
+        game["vehicleSupport"]["retentionError"] = json!(self.error);
         let selected = scope(game);
         let matching = self
             .saved
@@ -151,7 +169,7 @@ mod tests {
 
     #[test]
     fn persists_names_scopes_installations_and_replaces_removed_cars_without_live_identity() {
-        let scratch = tempfile::tempdir().unwrap();
+        let scratch = crate::test_directory();
         let path = scratch.path().join("cars.json");
         let mut cache = Cache::new(path.clone());
         let mut selected = game(&scratch.path().join("AC"));
@@ -205,7 +223,7 @@ mod tests {
 
     #[test]
     fn failed_replacement_keeps_the_previous_snapshot_and_invalid_cache_is_ignored() {
-        let scratch = tempfile::tempdir().unwrap();
+        let scratch = crate::test_directory();
         let path = scratch.path().join("cars.json");
         let mut cache = Cache::new(path.clone());
         let mut selected = game(scratch.path());
@@ -218,6 +236,20 @@ mod tests {
         cache.decorate(&mut selected);
         assert_eq!(selected["vehicleSupport"]["vehicles"][0]["id"], "car");
         fs::write(path.clone(), b"invalid cache").unwrap();
-        assert!(Cache::new(path).saved.is_none());
+        assert!(
+            Cache::new(path).saved.is_some(),
+            "retired files cannot replace SQLite"
+        );
+        let invalid = scratch.path().join("other/cars.json");
+        fs::create_dir_all(invalid.parent().unwrap()).unwrap();
+        fs::write(&invalid, b"invalid cache").unwrap();
+        crate::persistence::test_support::record(&invalid, "games", "ac-cars", b"invalid cache");
+        let mut broken = Cache::new(invalid.clone());
+        assert!(broken.error.is_some());
+        broken
+            .replace(&selected, vec![json!({"id":"car","name":"Repaired"})])
+            .unwrap();
+        assert!(broken.error.is_none());
+        assert_eq!(fs::read(invalid).unwrap(), b"invalid cache");
     }
 }

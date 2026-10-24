@@ -80,6 +80,7 @@ fn invalid_browser_pins_or_unreadable_saved_references_never_reach_prune() {
     let directory = crate::test_directory();
     let original = b"{unreadable saved profiles";
     std::fs::write(directory.path().join("library.json"), original).unwrap();
+    crate::persistence::test_support::record(&directory.path().join("library.json"),"profiles","library",&std::fs::read(&directory.path().join("library.json")).unwrap());
     let corrupt = Mutex::new(osg_profiles::service::Service::new(Some(directory.path().to_owned())));
     assert!(with_saved_references(&corrupt, &json!({"companion":{"hashes":[]}}), |_| panic!("unknown saved references reached native pruning")).unwrap_err().contains("preserve companion publications"));
     assert_eq!(std::fs::read(directory.path().join("library.json")).unwrap(), original);

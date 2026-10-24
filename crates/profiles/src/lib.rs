@@ -54,3 +54,9 @@ fn test_directory_in(parent: &std::path::Path) -> tempfile::TempDir {
 
 #[cfg(test)]
 mod desktop_tests;
+
+#[cfg(test)]
+fn fixture_record(path:&std::path::Path,domain:&str,key:&str,payload:&[u8]) {
+    let db=osg_persistence::Database::for_namespace(path).unwrap();
+    db.commit(&[osg_persistence::Change{domain,key,expected_revision:db.revision(domain,key).unwrap(),payload:Some(payload)}]).unwrap();
+}

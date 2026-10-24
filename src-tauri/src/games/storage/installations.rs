@@ -6,9 +6,7 @@ use serde::{
 };
 use std::{
     collections::BTreeMap,
-    fs,
-    io::{Read, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 pub(crate) const MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -53,7 +51,7 @@ pub(crate) struct LibrarySource {
     pub launcher: Option<String>,
 }
 impl LibrarySource {
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if !matches!(self.client.as_str(), "steam" | "epic")
             || self.app_id.is_empty()
             || self.app_id.len() > 128
@@ -72,9 +70,10 @@ impl LibrarySource {
             || self.launcher.as_ref().is_some_and(|path| {
                 !executable(path)
                     || self.client != "steam"
-                    || !path.rsplit(['\\', '/']).next().is_some_and(|name| {
-                        name.eq_ignore_ascii_case("steam.exe")
-                    })
+                    || !path
+                        .rsplit(['\\', '/'])
+                        .next()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("steam.exe"))
             })
         {
             return Err("Invalid local game library source.".into());
@@ -87,9 +86,17 @@ impl LibrarySource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Settings {
     pub schema_version: u32,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "distinct_map")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "distinct_map"
+    )]
     pub categories: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "distinct_map")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "distinct_map"
+    )]
     pub game_categories: BTreeMap<String, String>,
     #[serde(deserialize_with = "distinct_installations")]
     pub manual_installations: BTreeMap<String, String>,
@@ -181,17 +188,26 @@ pub(crate) fn executable(path: &str) -> bool {
 impl Settings {
     pub(crate) fn validate(&self) -> Result<(), String> {
         let mut names = std::collections::BTreeSet::new();
-        if self.categories.len() > 64 || self.categories.iter().any(|(id, name)| {
-            !uuid::Uuid::parse_str(id).is_ok_and(|parsed| parsed.to_string() == *id)
-                || name.is_empty() || name.trim() != name || name.chars().count() > 48
-                || name.chars().any(char::is_control) || !names.insert(name.to_lowercase())
-        }) {
-            return Err("Use at most 64 categories with distinct names between 1 and 48 characters.".into());
+        if self.categories.len() > 64
+            || self.categories.iter().any(|(id, name)| {
+                !uuid::Uuid::parse_str(id).is_ok_and(|parsed| parsed.to_string() == *id)
+                    || name.is_empty()
+                    || name.trim() != name
+                    || name.chars().count() > 48
+                    || name.chars().any(char::is_control)
+                    || !names.insert(name.to_lowercase())
+            })
+        {
+            return Err(
+                "Use at most 64 categories with distinct names between 1 and 48 characters.".into(),
+            );
         }
-        if self.game_categories.len() > MAX_GAMES || self.game_categories.iter().any(|(id, category)| {
-            (!GAMES.contains(&id.as_str()) && !self.custom_games.contains_key(id))
-                || !self.categories.contains_key(category)
-        }) {
+        if self.game_categories.len() > MAX_GAMES
+            || self.game_categories.iter().any(|(id, category)| {
+                (!GAMES.contains(&id.as_str()) && !self.custom_games.contains_key(id))
+                    || !self.categories.contains_key(category)
+            })
+        {
             return Err("Choose an existing game and category.".into());
         }
         if self.schema_version != 1
@@ -249,119 +265,43 @@ impl Settings {
 
 pub(crate) struct Store {
     path: PathBuf,
-}
-fn redirected(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        return metadata.file_attributes() & 0x400 != 0;
-    }
-    #[cfg(not(windows))]
-    false
-}
-fn check_path(path: &Path) -> Result<(), String> {
-    if !path.is_absolute()
-        || path.file_name().is_none()
-        || path
-            .components()
-            .any(|part| matches!(part, Component::ParentDir))
-    {
-        return Err(
-            "Choose an absolute native installation metadata file without parent traversal.".into(),
-        );
-    }
-    let mut current = PathBuf::new();
-    for part in path.components() {
-        current.push(part.as_os_str());
-        // A bare verbatim drive prefix is not an openable Windows path.
-        // Inspect it only once the following root component has been added.
-        if matches!(part, Component::Prefix(_)) {
-            continue;
-        }
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if redirected(&metadata) => {
-                return Err("Installation metadata cannot use a symlink or reparse point.".into())
-            }
-            Ok(metadata) if current != path && !metadata.is_dir() => {
-                return Err("An installation metadata parent is not a directory.".into())
-            }
-            Ok(metadata) if current == path && !metadata.is_file() => {
-                return Err("Installation metadata must be a regular file.".into())
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Ok(())
+    repository: std::sync::OnceLock<osg_persistence::Repository<Settings>>,
 }
 impl Store {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            repository: std::sync::OnceLock::new(),
+        }
     }
     pub(crate) fn root(&self) -> &Path {
-        self.path
-            .parent()
-            .expect("game installation store has a parent")
+        self.path.parent().expect("game namespace has a parent")
+    }
+    fn repository(&self) -> Result<&osg_persistence::Repository<Settings>, String> {
+        if self.repository.get().is_none() {
+            let db = osg_persistence::Database::for_namespace(&self.path)?;
+            let repository = osg_persistence::Repository::new(
+                db,
+                "games",
+                "installations",
+                MAX_BYTES,
+                Settings::validate,
+            )?;
+            let _ = self.repository.set(repository);
+        }
+        Ok(self.repository.get().expect("repository initialized"))
     }
     pub(crate) fn load(&self) -> Result<Option<Settings>, String> {
-        check_path(&self.path)?;
-        let file = match fs::File::open(&self.path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        let mut bytes = Vec::new();
-        file.take(MAX_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() > MAX_BYTES {
-            return Err("Installation metadata exceeds its native size bound.".into());
-        }
-        let settings: Settings = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("Invalid installation metadata: {e}"))?;
-        settings.validate()?;
-        Ok(Some(settings))
+        self.repository()?
+            .load()
+            .map_err(|error| format!("Cannot load game installation metadata: {error}"))
     }
     pub(crate) fn save(&self, settings: &Settings) -> Result<(), String> {
-        self.save_with(settings, |temporary, path| {
-            temporary
-                .persist(path)
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        })
-    }
-    fn save_with(
-        &self,
-        settings: &Settings,
-        replace: impl FnOnce(tempfile::NamedTempFile, &Path) -> Result<(), String>,
-    ) -> Result<(), String> {
         settings.validate()?;
-        check_path(&self.path)?;
-        let parent = self
-            .path
-            .parent()
-            .ok_or("Installation metadata has no parent directory.")?;
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        check_path(&self.path)?;
-        let bytes = serde_json::to_vec(settings).map_err(|e| e.to_string())?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        temporary.write_all(&bytes).map_err(|e| e.to_string())?;
-        temporary.as_file().sync_all().map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        let directory = fs::File::open(parent).map_err(|e| e.to_string())?;
-        replace(temporary, &self.path)?;
-        // Replacement is the commit boundary. A best-effort directory flush
-        // must not report rollback after the new file has already committed.
-        #[cfg(unix)]
-        let _ = directory.sync_all();
-        Ok(())
+        self.repository()?.save(settings)
     }
 }
 
 #[cfg(test)]
-#[path = "game_installations_tests.rs"]
+#[path = "installation_tests.rs"]
 mod tests;

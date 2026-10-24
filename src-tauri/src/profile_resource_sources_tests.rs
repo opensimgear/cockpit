@@ -608,6 +608,7 @@ fn unavailable_durable_inventory_never_becomes_an_authoritative_empty_batch() {
     sources.host=Arc::new(crate::companion_host::Runtime::new(Some(temporary.path().into()),sources.companions.clone()));
     assert!(sources.companion_observations().is_err());
     let controllers=temporary.path().join("controllers.json");std::fs::write(&controllers,b"corrupt controller settings").unwrap();
+    crate::persistence::test_support::record(&controllers,"controllers","identities",&std::fs::read(&controllers).unwrap());
     sources.controllers=Arc::new(osg_controller_input::ControllerService::new(Some(controllers),false));
     assert!(sources.controllers.authoritative_resource_inventory().is_err());
     assert!(sources.can_observations("gateway",&json!({"error":"not available"}),&BTreeMap::new()).is_err());
@@ -632,6 +633,7 @@ fn restored_host_metadata_remains_a_distinct_offline_controller_without_guessing
         },
     };
     std::fs::write(&path, serde_json::to_vec(&vec![saved]).unwrap()).unwrap();
+    crate::persistence::test_support::record(&path,"controllers","identities",&std::fs::read(&path).unwrap());
     sources.controllers = Arc::new(osg_controller_input::ControllerService::new(
         Some(path),
         false,

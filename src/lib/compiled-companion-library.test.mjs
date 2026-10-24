@@ -5,13 +5,14 @@ import { createToggleSource } from '../../packages/widget-compiler/src/seeds.ts'
 
 function memory(initial) { let value = initial, fail = false; return { read: async () => structuredClone(value), write: async next => { if (fail) throw new Error('Disk full'); value = structuredClone(next); }, get value() { return value; }, set fail(v) { fail = v; } }; }
 function draftFor(source = createToggleSource()) { const draft = newCompiledDraft('Test', 640, 400); draft.widgets.push({ id: 'switch', pageId: draft.pages[0].id, label: 'Toggle', sourceId: source.id, revision: source.revision, parameters: {}, bounds: { x: .1, y: .1, width: .2, height: .16 } }); return draft; }
-test('one-time authoring reset removes the old catalog and panels, seeding only Toggle', async () => {
-  const storage = memory({ schemaVersion: 1, library: { drafts: [{ id: 'legacy' }] }, widgets: { library: { definitions: ['old'] } }, publications: {} });
-  const store = new CompiledWorkspaceStore(storage), loaded = await store.load();
-  assert.equal(loaded.schemaVersion, 2); assert.deepEqual(loaded.sources.map(s => s.title), ['Toggle']); assert.deepEqual(loaded.drafts, []);
-  assert.deepEqual(await store.load(), loaded);
-  assert.equal((await new CompiledWorkspaceStore(memory()).load()).sources.length, 1);
-  assert.match(designerId('instance'), /^instance-[a-f0-9-]+$/);
+test('a fresh workspace seeds Toggle and incompatible data is preserved as an error', async () => {
+  const legacy={schemaVersion:1,library:{drafts:[{id:'legacy'}]},widgets:{library:{definitions:['old']}},publications:{}};
+  const storage=memory(legacy);
+  await assert.rejects(new CompiledWorkspaceStore(storage).load(),/Unexpected or missing workspace field|Unsupported designer workspace/);
+  assert.deepEqual(storage.value,legacy);
+  const fresh=new CompiledWorkspaceStore(memory()),loaded=await fresh.load();
+  assert.equal(loaded.schemaVersion,2);assert.deepEqual(loaded.sources.map(source=>source.title),['Toggle']);assert.deepEqual(loaded.drafts,[]);
+  assert.deepEqual(await fresh.load(),loaded);assert.match(designerId('instance'),/^instance-[a-f0-9-]+$/);
 });
 test('source bank accepts generic drafts and immutable revisions without old catalog preservation', () => {
   const toggle = createToggleSource(), next = { ...structuredClone(toggle), revision: 2, title: 'Power' }, blank = blankWidgetSource();

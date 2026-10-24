@@ -1,9 +1,6 @@
 //! Local intent is separate from applied driver policy. Saving never hides anything.
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, path::PathBuf};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Intent {
@@ -72,27 +69,54 @@ impl Preferences {
     }
 }
 pub struct Settings {
-    pub value:Preferences,
-    pub error:Option<String>,
-    store:Option<osg_persistence::Repository<Preferences>>,
+    pub value: Preferences,
+    pub error: Option<String>,
+    store: Option<osg_persistence::Repository<Preferences>>,
 }
 impl Settings {
-    pub fn new(path:Option<PathBuf>)->Self {
-        let storage=path.map(|path| {
-            let db=osg_persistence::Database::for_source(&path)?;
-            osg_persistence::Repository::new(db,"controllers","visibility",1,Some(path),1_048_576,Preferences::validate)
-        }).transpose();
-        let loaded=storage.as_ref().map_err(Clone::clone).and_then(|store|store.as_ref().map_or(Ok(Preferences::default()),|store|store.load().map(|value|value.unwrap_or_default())));
+    pub fn new(path: Option<PathBuf>) -> Self {
+        let storage = path
+            .map(|path| {
+                let db = osg_persistence::Database::for_namespace(&path)?;
+                osg_persistence::Repository::new(
+                    db,
+                    "controllers",
+                    "visibility",
+                    1_048_576,
+                    Preferences::validate,
+                )
+            })
+            .transpose();
+        let loaded = storage.as_ref().map_err(Clone::clone).and_then(|store| {
+            store.as_ref().map_or(Ok(Preferences::default()), |store| {
+                store.load().map(|value| value.unwrap_or_default())
+            })
+        });
         match loaded {
-            Ok(value)=>Self {value,error:None,store:storage.ok().flatten()},
-            Err(error)=>Self {value:Preferences::default(),error:Some(error),store:storage.ok().flatten()},
+            Ok(value) => Self {
+                value,
+                error: None,
+                store: storage.ok().flatten(),
+            },
+            Err(error) => Self {
+                value: Preferences::default(),
+                error: Some(error),
+                store: storage.ok().flatten(),
+            },
         }
     }
-    pub fn save(&mut self,value:Preferences)->Result<(),String> {
+    pub fn save(&mut self, value: Preferences) -> Result<(), String> {
         value.validate()?;
-        if self.error.is_some() {return Err("Repair existing visibility settings before saving; they were preserved.".into());}
-        if let Some(store)=&self.store {store.save(&value)?;}
-        self.value=value;Ok(())
+        if self.error.is_some() {
+            return Err(
+                "Repair existing visibility settings before saving; they were preserved.".into(),
+            );
+        }
+        if let Some(store) = &self.store {
+            store.save(&value)?;
+        }
+        self.value = value;
+        Ok(())
     }
 }
 #[cfg(test)]

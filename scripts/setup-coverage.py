@@ -20,18 +20,25 @@ def command(arguments, cwd, env=None):
 
 def production_end(lines):
     """Top-level test items are trailing; indented fixture branches remain production."""
-    return next((index + 1 for index, line in enumerate(lines)
-                 if line.startswith('#[cfg(test)]')), len(lines) + 1)
+    for index, line in enumerate(lines):
+        if line == '#[cfg(test)]':
+            following = next((entry.strip() for entry in lines[index + 1:] if entry.strip()), '')
+            if not following.startswith(('use ', 'pub use ')):
+                return index + 1
+    return len(lines) + 1
 
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    module_names = ['dcs_setup.rs', 'dcs_setup/aircraft.rs', 'game_integration_setup.rs', 'acr_setup.rs',
-                    'game_context.rs', 'game_context_runtime.rs', 'game_provider_settings.rs',
+    module_names = ['dcs_setup.rs', 'dcs_setup/aircraft.rs', 'games/integration/mod.rs', 'acr_setup.rs',
+                    'game_context.rs', 'game_context_runtime.rs', 'games/integration/provider_settings.rs', 'games/integration/settings.rs',
+                    'games/integration/requests.rs', 'games/integration/provision.rs',
+                    'games/integration/inspection.rs', 'games/integration/catalogues.rs',
                     'profile_session.rs', 'profile_session_journal.rs', 'profile_session_games.rs',
                     'profile_session_stage.rs', 'profile_session_inputs.rs',
                     'profile_session_scripts.rs', 'profile_session_virtual.rs',
-                    'profile_hid_publication.rs', 'profile_session_dcs_hid.rs']
+                    'profile_hid_publication.rs', 'profile_session_dcs_hid.rs',
+                    'games/storage/car_catalogue.rs', 'games/vehicles/mod.rs', 'games/vehicles/sources.rs', 'profile_desktop_settings.rs']
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=root / '.research/setup-coverage')
     parser.add_argument('--module', action='append', choices=module_names,
@@ -88,24 +95,25 @@ def main():
     annotated = command([str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', *map(str, sources)], root)
     (output / 'lines.txt').write_text(annotated, encoding='utf-8')
-    source_paths = {str(path): path for path in sources}
+    source_paths = {str(path).replace('\\', '/'): path for path in sources}
     # llvm-cov omits the file heading when exactly one source was requested.
-    counts, current = {}, sources[0].name if len(sources) == 1 else ''
+    counts, current = {}, str(sources[0].relative_to(root)) if len(sources) == 1 else ''
     for line in annotated.splitlines():
-        if line.endswith(':') and line[:-1] in source_paths:
-            current = source_paths[line[:-1]].name
+        heading = line[:-1].replace('\\', '/') if line.endswith(':') else ''
+        if heading in source_paths:
+            current = str(source_paths[heading].relative_to(root))
         if match := re.match(r'^\s*(\d+)\|\s*(\d+(?:\.\d+)?[kMGT]?)\|', line):
             # llvm-cov abbreviates large hit counts; line coverage needs only zero/nonzero.
             counts.setdefault(current, {})[int(match[1])] = int(match[2] != '0')
     report = {}
     for source in sources:
         end = production_end(source.read_text(encoding='utf-8').splitlines())
-        measured = {line: count for line, count in counts.get(source.name, {}).items() if line < end}
+        measured = {line: count for line, count in counts.get(str(source.relative_to(root)), {}).items() if line < end}
         if not measured:
             raise RuntimeError(f'No production coverage recorded for {source.name}.')
         covered = sum(count > 0 for count in measured.values())
         percent = 100 * covered / len(measured)
-        report[source.name] = {'covered': covered, 'lines': len(measured), 'percent': round(percent, 2)}
+        report[str(source.relative_to(root))] = {'covered': covered, 'lines': len(measured), 'percent': round(percent, 2)}
         print(f'{source.name}: {covered}/{len(measured)} production lines ({percent:.2f}%)', flush=True)
     (output / 'setup-summary.json').write_text(json.dumps(report, indent=2) + '\n')
     (output / 'source-hashes.json').write_text(json.dumps(source_hashes, indent=2) + '\n', encoding='utf-8')

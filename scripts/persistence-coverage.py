@@ -48,7 +48,7 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
-    sources = [root / f'crates/persistence/src/{module}.rs' for module in ['lib', 'repository', 'migration', 'namespace', 'profile_index']]
+    sources = [root / f'crates/persistence/src/{module}.rs' for module in ['lib', 'repository', 'path', 'namespace', 'profile_index', 'observation']]
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',

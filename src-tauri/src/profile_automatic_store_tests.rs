@@ -40,11 +40,14 @@ fn corrupt_unknown_oversized_and_nonregular_settings_are_preserved() {
     forged["rules"][0]["pid"] = serde_json::json!(42);
     let bytes = serde_json::to_vec(&forged).unwrap();
     std::fs::write(&path, &bytes).unwrap();
+    crate::persistence::test_support::record(&path,"profiles","selection",&std::fs::read(&path).unwrap());
     assert!(store.load().is_err());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     std::fs::write(&path, vec![b' '; MAX_BYTES + 1]).unwrap();
+    crate::persistence::test_support::record(&path,"profiles","selection",&std::fs::read(&path).unwrap());
     assert!(store.load().is_err());
     std::fs::write(&path, b"{").unwrap();
+    crate::persistence::test_support::record(&path,"profiles","selection",&std::fs::read(&path).unwrap());
     assert!(store.load().is_err());
     for mutate in [
         |s: &mut Settings| s.schema_version = 2,
@@ -88,7 +91,7 @@ fn remembered_context_choices_round_trip_and_older_settings_load_without_them() 
     legacy.as_object_mut().unwrap().remove("preferredProfiles");
     let legacy_root=crate::test_directory();let legacy_path=legacy_root.path().join("automatic.json");
     std::fs::write(&legacy_path,serde_json::to_vec(&legacy).unwrap()).unwrap();
-    assert!(Store::new(Some(legacy_path)).load().unwrap().unwrap().preferred_profiles.is_empty());
+    assert!(Store::new(Some(legacy_path)).load().unwrap().is_none());
     for (game, profile) in [("unknown",DEFAULT_PROFILE_ID),("dcs","forged")] {
         let mut invalid = settings();
         invalid.preferred_profiles.insert(game.into(),profile.into());

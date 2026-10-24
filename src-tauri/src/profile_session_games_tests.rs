@@ -700,6 +700,7 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
         fs::write(&paths.provider_setup,serde_json::to_vec(&json!({"schemaVersion":1,"games":{"assetto-corsa-rally":{
             "connection":{"source":"shared-memory","freshnessMs":1500},"configuredFingerprint":fingerprint,"verifiedFingerprint":fingerprint
         }}})).unwrap()).unwrap();
+    crate::persistence::test_support::record(&paths.provider_setup,"games","setup",&std::fs::read(&paths.provider_setup).unwrap());
         let full_path = executable
             .to_string_lossy()
             .replace(['\\', '/'], &separator.to_string());
@@ -975,6 +976,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     let mut connection = crate::game_integration_setup::dcs_connection(&catalogue);
     connection["freshnessMs"] = json!(100);
     fs::write(&paths.provider_setup, serde_json::to_vec(&json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":connection,"aircraftModule":"A-10C"}}})).unwrap()).unwrap();
+    crate::persistence::test_support::record(&paths.provider_setup,"games","setup",&std::fs::read(&paths.provider_setup).unwrap());
     let platform = Arc::new(GuardClock {
         thread: std::thread::current().id(),
         armed: AtomicBool::new(false),

@@ -503,6 +503,7 @@ fn corrupt_inventory_is_preserved_and_reported_without_silent_reset() {
     };
     let path = temporary.path().join("inventory.json");
     std::fs::write(&path, b"corrupt").unwrap();
+    crate::persistence::test_support::record(&path,"resources","inventory",&std::fs::read(&path).unwrap());
     let runtime = Runtime::new(Some(temporary.path().into()), Arc::new(|_| vec![]), false);
     let response = runtime
         .request(&json!({"command":"profile_resources_list"}))
@@ -645,7 +646,7 @@ fn failed_inventory_save_is_retried_on_unchanged_provider_data_then_restores_off
     let directory = temporary();
     let (runtime, _feed) = scripted(Ok(vec![observed(1)]), Some(directory.path().into()));
     let target = directory.path().join("inventory.json");
-    let database=osg_persistence::Database::for_source(&target).unwrap();
+    let database=osg_persistence::Database::for_namespace(&target).unwrap();
     let blocked=osg_persistence::test_support::hold_writer(&database).unwrap();
     let listed = runtime
         .request(&json!({"command":"profile_resources_list"}))
@@ -731,6 +732,7 @@ fn corrupt_retained_inventory_allows_inspection_but_blocks_write_tokens() {
     let directory = temporary();
     let path = directory.path().join("inventory.json");
     std::fs::write(&path, b"corrupt").unwrap();
+    crate::persistence::test_support::record(&path,"resources","inventory",&std::fs::read(&path).unwrap());
     let mut item = observed(1);
     item.route.as_mut().unwrap().writable = true;
     item.ports = Some(

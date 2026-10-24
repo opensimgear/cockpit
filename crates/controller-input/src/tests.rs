@@ -296,8 +296,8 @@ fn settings_persist_and_import_cannot_start_capture() {
         .request(&json!({"command":"controller_list"}))
         .is_err());
     service.shutdown();
-    let db=osg_persistence::Database::for_source(&path).unwrap();
-    db.commit(&[osg_persistence::Change{domain:"controllers",key:"identities",format_version:1,expected_revision:db.revision("controllers","identities").unwrap(),payload:Some(b"corrupt")}]).unwrap();
+    let db=osg_persistence::Database::for_namespace(&path).unwrap();
+    db.commit(&[osg_persistence::Change{domain:"controllers",key:"identities",expected_revision:db.revision("controllers","identities").unwrap(),payload:Some(b"corrupt")}]).unwrap();
     let invalid = ControllerService::new(Some(path.clone()), false);
     assert!(invalid.status()["diagnostic"]
         .as_str()
@@ -313,7 +313,7 @@ fn settings_persist_and_import_cannot_start_capture() {
         .request(&json!({"command":"controller_list"}))
         .is_ok());
     assert_eq!(db.read("controllers","identities").unwrap().unwrap().payload,b"corrupt");
-    db.commit(&[osg_persistence::Change{domain:"controllers",key:"identities",format_version:1,expected_revision:db.revision("controllers","identities").unwrap(),payload:Some(&vec![b' ';MAX_SETTINGS as usize+1])}]).unwrap();
+    db.commit(&[osg_persistence::Change{domain:"controllers",key:"identities",expected_revision:db.revision("controllers","identities").unwrap(),payload:Some(&vec![b' ';MAX_SETTINGS as usize+1])}]).unwrap();
     let oversized = ControllerService::new(Some(path), false);
     assert!(!oversized.storage_valid);
 }

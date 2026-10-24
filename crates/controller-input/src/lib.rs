@@ -54,8 +54,12 @@ impl ControllerService {
     fn start(path: Option<PathBuf>, native: bool, probe: bool) -> Self {
         let mut registry = Registry::default();
         let storage=path.as_ref().map(|path| {
-            let db=osg_persistence::Database::for_source(path)?;
-            osg_persistence::Repository::new(db,"controllers","identities",1,Some(path.clone()),MAX_SETTINGS as usize,validate_saved)
+            let db=osg_persistence::Database::for_namespace(path)?;
+            osg_persistence::Repository::new(db,
+"controllers",
+"identities",
+MAX_SETTINGS as usize,
+validate_saved)
         }).transpose();
         let loaded=storage.as_ref().map_err(Clone::clone).and_then(|store|store.as_ref().map_or(Ok(vec![]),|store|store.load().map(|saved|saved.unwrap_or_default())))
             .and_then(|saved|registry.restore(saved));

@@ -227,6 +227,8 @@ pub struct GatewayManager {
     controllers: Arc<osg_controller_input::ControllerService>,
     retired_recovery: Arc<crate::profile_retired_recovery::Recovery>,
     companion_host: Arc<crate::companion_host::Runtime>,
+    #[cfg(test)]
+    test_namespace: Option<tempfile::TempDir>,
 }
 impl Default for GatewayManager {
     fn default() -> Self {
@@ -252,6 +254,13 @@ impl GatewayManager {
         Self::with_options(provider, false)
     }
     fn with_options(provider: Arc<dyn Provider>, native: bool) -> Self {
+        #[cfg(test)]
+        if !native {
+            let directory=crate::test_directory();
+            let mut manager=Self::with_options_at(provider,false,Some(directory.path().join("dcs.json")));
+            manager.test_namespace=Some(directory);
+            return manager;
+        }
         Self::with_options_at(provider, native, None)
     }
     #[cfg(test)]
@@ -365,6 +374,8 @@ impl GatewayManager {
             worker
         });
         let manager = Self {
+            #[cfg(test)]
+            test_namespace:None,
             module_usb,
             profile_resources,
             profile_compilation: crate::profile_compilation::Runtime::default(),

@@ -57,5 +57,3 @@ BEGIN
  SELECT p.id,json_extract(a.value,'$.resourceId'),json_extract(a.value,'$.panelId'),json_extract(a.value,'$.publicationHash')
  FROM profile_documents p,json_each(CAST(p.document AS TEXT),'$.companionAssignments') a;
 END;
-
-UPDATE records SET payload=payload WHERE domain='profiles' AND key='library';

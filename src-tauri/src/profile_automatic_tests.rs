@@ -95,6 +95,7 @@ impl Fixture {
             aliases["F-16C_50"] = json!(["A-10C"]);
             std::fs::write(aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
             std::fs::write(&paths.provider_setup, serde_json::to_vec(&json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":crate::game_integration_setup::dcs_connection(&catalogue),"aircraftModule":"A-10C"}}})).unwrap()).unwrap();
+            crate::persistence::test_support::record(&paths.provider_setup,"games","setup",&std::fs::read(&paths.provider_setup).unwrap());
         }
         manager.games = Arc::new(crate::games::GamesRuntime::new(
             Arc::new(|request| {
@@ -739,6 +740,7 @@ fn malformed_optional_automation_storage_blocks_automatic_but_preserves_explicit
     let mut fixture = Fixture::new();
     let path = fixture.directory.path().join("automatic.json");
     std::fs::write(&path, b"{").unwrap();
+    crate::persistence::test_support::record(&path,"profiles","selection",b"{");
     fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
     let id = create(&fixture.manager, "Manual hardware");
     ok(
@@ -795,7 +797,7 @@ fn failed_manual_pin_storage_inhibits_automatic_events_after_explicit_selection(
     fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
     mode(&fixture.manager, "automatic");
     let id = create(&fixture.manager, "Manual choice");
-    let database=osg_persistence::Database::for_source(&path).unwrap();
+    let database=osg_persistence::Database::for_namespace(&path).unwrap();
     let _blocked=osg_persistence::test_support::hold_writer(&database).unwrap();
     assert_eq!(
         request(
@@ -842,7 +844,7 @@ fn legacy_stop_migration_preserves_the_old_intent_until_both_writes_succeed() {
         let path = fixture.directory.path().join("automatic.json");
         fixture.manager.profile_automatic = Runtime::new(Some(path.clone()));
         mode(&fixture.manager, "automatic");
-        let database=osg_persistence::Database::for_source(&path).unwrap();
+        let database=osg_persistence::Database::for_namespace(&path).unwrap();
         let blocked=if fail_pin {Some(osg_persistence::test_support::hold_writer(&database).unwrap())} else {None};
         if !fail_pin {
             fixture.manager.profile_session.lock().unwrap().fail_journal_saves(true);

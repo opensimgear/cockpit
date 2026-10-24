@@ -181,8 +181,6 @@ struct Metadata {
 }
 pub struct Runtime {
     path: Option<PathBuf>,
-    cutover_notice: Option<String>,
-    cutover_error: Option<String>,
     stopped: AtomicBool,
     provider: Arc<CompanionProvider>,
     metadata: OnceLock<Metadata>,
@@ -197,12 +195,8 @@ impl Runtime {
         // Protected-store/TLS setup can require an OS credential service. Keep it
         // outside ordinary gateway startup; explicit companion operations and
         // captured-game recovery initialize the same retained state on demand.
-        let (cutover_notice,cutover_error)=match path.as_ref().map(|directory|crate::widget_cutover::profiles(directory)){
-            Some(Ok(notice))=>(notice,None),Some(Err(error))=>(None,Some(error)),None=>(None,None),
-        };
         Self {
             path,
-            cutover_notice,cutover_error,
             stopped: AtomicBool::new(false),
             provider,
             metadata: OnceLock::new(),
@@ -241,7 +235,6 @@ impl Runtime {
         });
     }
     fn metadata(&self, create: bool) -> Result<&Metadata, String> {
-        if let Some(error)=&self.cutover_error{return Err(format!("Widget reset could not finish; companion output remains disabled: {error}"));}
         if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
         if let Some(metadata) = self.metadata.get() { return Ok(metadata); }
         let _initialization = self.metadata_init.lock().unwrap_or_else(|p|p.into_inner());
@@ -256,9 +249,8 @@ impl Runtime {
             (Hub::new(format!("host-{}", uuid::Uuid::new_v4()), self.provider.clone()),
                 std::env::temp_dir().join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
-        let cutover=crate::widget_cutover::panels(&hub,&directory)?;
         let restored=crate::companion_panels::restore_or_quarantine(&hub, &directory)?;
-        let warnings=[self.cutover_notice.clone(),cutover,restored].into_iter().flatten().collect::<Vec<_>>();
+        let warnings=[restored].into_iter().flatten().collect::<Vec<_>>();
         let cache_warning=(!warnings.is_empty()).then(||warnings.join(" "));
         let _ = self.metadata.set(Metadata {hub, directory, cache_warning});
         Ok(self.metadata.get().expect("metadata initialized under its gate"))
@@ -1171,7 +1163,7 @@ mod tests {
         assert_eq!(std::fs::read(directory.join("companion-host-state.dpapi")).unwrap(), before);
         let mut names = std::fs::read_dir(&directory).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
         names.sort();
-        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json", "widget-panel-cutover-v4.json"]);
+        assert_eq!(names, ["companion-host-state.dpapi", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json"]);
         runtime.shutdown();
         for name in names { std::fs::remove_file(directory.join(name)).unwrap(); }
         std::fs::remove_dir(directory).unwrap();
