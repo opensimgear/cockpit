@@ -4,10 +4,11 @@
   import {prepareCompiledSurface,type PreparedCompiledSurface} from './compiled-surface.ts';
   import { CompiledWidgetPlayer, CompiledSoundPlayer, createBrowserAudioDriver, type AudioAvailability, type PlayerUpdate } from '../../widget-runtime/src/player.ts';
   import type { BehaviorEvent, BehaviorFeedback, BehaviorState, Scalar } from '../../widget-runtime/src/behavior.ts';
-  let { bundle, prepared, name = 'Widget', motion = true, muted = false, interactive = true, showAudioControls = false, onoutput, onstate, onerror, onready, onaudio }: {
+  let { bundle, prepared, name = 'Widget', motion = true, muted = false, interactive = true, showAudioControls = false, onoutput, onstate, onerror, onready, onaudio, ontrace }: {
     bundle: CompiledWidgetBundle; name?: string; motion?: boolean; muted?: boolean; interactive?: boolean; showAudioControls?: boolean;
     prepared?:PreparedCompiledSurface;
     onoutput?: (output: { port: string; value: Scalar }) => void;
+    ontrace?: (trace:NonNullable<PlayerUpdate['trace']>)=>void;
     onstate?: (state: BehaviorState) => void; onerror?: (error: string) => void; onready?: () => void; onaudio?: (availability: AudioAvailability) => void;
   } = $props();
   let canvas: HTMLCanvasElement,canvasHost:HTMLDivElement;
@@ -21,6 +22,7 @@
   const now = () => Math.floor(performance.now());
   function report(message: string) { error = message;ready=false;audio?.close();onerror?.(message); }
   function paint(update: PlayerUpdate) {
+    if(update.trace?.length)ontrace?.(update.trace);
     if (update.error) { report(update.error);return; }
     for (const effect of update.effects) if (effect.type === 'emit') onoutput?.({ port: effect.port, value: effect.value });
     const signature = JSON.stringify({ values: update.state.values, regions: update.state.regions });
@@ -115,5 +117,5 @@
 {#if showAudioControls && bundle.artifact.sounds.length}<div class="audio-controls"><button onclick={()=>void enableAudio()} disabled={audioAvailability==='available' || muted} aria-label="Enable sound">♪ Enable sound</button><span role="status">Audio: {audioAvailability}</span></div>{/if}
 
 <style>
-  .compiled-widget{position:relative;width:100%;height:100%;min-width:0;min-height:0;isolation:isolate}.pixel-surface{width:100%;height:100%}.pixel-surface :global(canvas){display:block;width:100%;height:100%;object-fit:fill}.compiled-hit{position:absolute;display:block;padding:0;background:transparent;border:0;border-radius:0;touch-action:none;cursor:pointer}.compiled-hit:focus-visible{outline:2px solid #8be2c7;outline-offset:2px}.loading{position:absolute;inset:0;display:grid;place-items:center;font:12px sans-serif;color:#b1c7ce}.error{position:absolute;inset:0;margin:0;display:grid;place-items:center;background:#371e25;color:#ffd1c3;font:12px sans-serif;padding:8px}.audio-controls{display:flex;align-items:center;gap:10px;color:#b4cbd0;font-size:11px}.audio-controls button{font:inherit;padding:6px;border:1px solid #3b5e66;border-radius:4px;background:#213b43;color:inherit;cursor:pointer}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .compiled-widget{position:relative;width:100%;height:100%;min-width:0;min-height:0;isolation:isolate;background:transparent}.pixel-surface{width:100%;height:100%;background:transparent}.pixel-surface :global(canvas){display:block;width:100%;height:100%;object-fit:fill;background:transparent}.compiled-hit{position:absolute;display:block;padding:0;background:transparent;border:0;border-radius:0;touch-action:none;cursor:pointer}.compiled-hit:focus-visible{outline:2px solid #8be2c7;outline-offset:2px}.loading{position:absolute;inset:0;display:grid;place-items:center;font:12px sans-serif;color:#b1c7ce}.error{position:absolute;inset:0;margin:0;display:grid;place-items:center;background:#371e25;color:#ffd1c3;font:12px sans-serif;padding:8px}.audio-controls{display:flex;align-items:center;gap:10px;color:#b4cbd0;font-size:11px}.audio-controls button{font:inherit;padding:6px;border:1px solid #3b5e66;border-radius:4px;background:#213b43;color:inherit;cursor:pointer}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 </style>

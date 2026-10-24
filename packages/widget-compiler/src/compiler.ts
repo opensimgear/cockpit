@@ -96,7 +96,7 @@ export function encodePixelTile(rgba:Uint8Array,width:number,height:number,left:
 }
 export async function compileWidget(source:WidgetSource,options:CompileOptions={}):Promise<CompiledWidgetBundle>{
   abort(options.signal);const preflight=preflightWidget(source,options),s=preflight.source,capabilities=structuredClone(options.capabilities??BROWSER_WIDGET_CAPABILITIES);
-  const sourceHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(s))),parameterHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(preflight.parameters))),behaviorHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(s.behavior))),capabilityHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(capabilities)));
+  const sourceHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(source))),parameterHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(preflight.parameters))),behaviorHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(s.behavior))),capabilityHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(capabilities)));
   const key=canonicalWidget({sourceHash,parameterHash,capabilityHash,width:preflight.width,height:preflight.height,motion:options.motion??true,audio:options.audio??true,compiler:'osg-widget-compiler-1',fonts:FONTS.map(font=>font.hash),images:IMAGE_COMPILER_ID});
   abort(options.signal);const cached=cache.get(key);if(cached){options.onProgress?.({completed:cached.artifact.frames.length,total:cached.artifact.frames.length,phase:'cached'});return cached;}
   const rasterSource=await prepareRasterImages(s,options.signal);await initializeWidgetCompiler();abort(options.signal);

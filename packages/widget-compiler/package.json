@@ -6,7 +6,7 @@
   "exports": "./src/index.ts",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "coverage": "node --experimental-test-coverage --test-coverage-include=src/*.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test test/*.test.mjs",
+    "coverage": "node --experimental-test-coverage --test-coverage-include=src/**/*.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test test/*.test.mjs",
     "check": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions --lib ES2022,DOM src/index.ts"
   },
   "dependencies": {

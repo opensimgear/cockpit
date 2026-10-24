@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PageHeader from './PageHeader.svelte';
   import Notification from './Notification.svelte';
   import {onMount} from 'svelte';
   import {pickGameExecutable} from './gateway';
@@ -97,16 +98,15 @@
   {#if !receivedStatus}<p class="game-status-loading" role="status" aria-live="polite">Loading game status…</p>{/if}
   {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} kind="error" />{/if}
 
-  {#if returnToEditor}<button class="text-button back-link" onclick={returnToEditor}><Icon name="back" size={14} /> {returnLabel ?? 'Return to profile'}</button>{/if}
   {#if selected}
-    <button class="text-button back-link" onclick={allGames}><Icon name="back" size={14} /> All games</button>
-    <div class="game-details-heading">
-      <div class={['game-detail-mark', { racing: selectedArt!.category !== 'Flight' }]}><Icon name={selectedArt!.category === 'Flight' ? 'command' : selectedArt!.category === 'Custom' ? 'gamepad' : 'wheel'} size={32} /></div>
-      <div class="game-heading-copy"><p class="game-kicker">{selected.categoryId?categories[selected.categoryId]:selectedArt!.category==='Custom'?'Game':`${selectedArt!.category} simulation`}</p><h2 aria-label={selected.name}>{#if isCustomGameId(selected.id)}<input class="game-name-input" aria-label="Game name" title="Rename game" maxlength="80" value={initializedGameId===selected.id?nameDraft:selected.name} disabled={locked} oninput={event=>nameDraft=event.currentTarget.value} onblur={()=>void saveName(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){nameDraft=selected.name;nameBase=selected.name;notice='';event.currentTarget.value=selected.name;event.currentTarget.blur();}}}/>{:else}{selected.name}{/if}</h2><p class="detail-subtitle">{selected.installed ? 'Installation found' : 'Installation not found'} · {selectedArt!.telemetryLabel}</p></div>
-      <div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}>
+    <PageHeader title={selected.name} eyebrow={selected.categoryId?categories[selected.categoryId]:selectedArt!.category==='Custom'?'Game':`${selectedArt!.category} simulation`} subtitle={`${selected.installed ? 'Installation found' : 'Installation not found'} · ${selectedArt!.telemetryLabel}`} onback={allGames} backLabel="All games">
+      {#snippet leading()}<div class={['game-detail-mark', { racing: selectedArt!.category !== 'Flight' }]}><Icon name={selectedArt!.category === 'Flight' ? 'command' : selectedArt!.category === 'Custom' ? 'gamepad' : 'wheel'} size={32} /></div>{/snippet}
+      {#snippet titleContent()}{#if isCustomGameId(selected.id)}<input class="game-name-input" aria-label="Game name" title="Rename game" maxlength="80" value={initializedGameId===selected.id?nameDraft:selected.name} disabled={locked} oninput={event=>nameDraft=event.currentTarget.value} onblur={()=>void saveName(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){nameDraft=selected.name;nameBase=selected.name;notice='';event.currentTarget.value=selected.name;event.currentTarget.blur();}}}/>{:else}{selected.name}{/if}{/snippet}
+      {#snippet actions()}{#if returnToEditor}<button class="text-button" onclick={returnToEditor}><Icon name="back" size={14}/>{returnLabel ?? 'Return to profile'}</button>{/if}<div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}>
         {#snippet actions()}{#if isCustomGameId(selected.id)}<button class="secondary-button destructive-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/if}{/snippet}
       </GameProfileLaunch>{/key}</div>
-    </div>
+    {/snippet}
+    </PageHeader>
 
     <div class="game-content">
       <section class="panel installation-panel" aria-label="Installation"><div class="sidebar-title"><Icon name="search" size={18} /><h3>Installation</h3></div>
@@ -176,7 +176,7 @@
         {:else}<section class="panel custom-game-context"><div class="sidebar-title"><Icon name="gamepad" size={18}/><h3>Bindings and profile activation</h3></div><p>Set this game as a profile’s game context. Context scoped keyboard and mouse bindings work while its verified process is in front. Automatic mode activates a matching saved profile when the game runs.</p><p>{selected.executable?'This game uses process detection. No telemetry integration is needed.':'Choose its executable to enable process detection and scoped bindings.'}</p></section>{/if}
     </div>
   {:else}
-    <div class="page-heading games-toolbar"><div><div class="eyebrow">YOUR GAMES</div><h1>Games</h1><p>{gameState.catalogue.filter(game => game.installed).length} found · {gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated</p></div><div class="toolbar-controls"><button class="primary-button" disabled={locked} onclick={()=>customDialog='add'}><Icon name="plus" size={14}/>Add game</button><button class="secondary-button" disabled={locked} onclick={()=>libraryDialog=true}><Icon name="gamepad" size={14}/>Import from library</button><button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={13} /> Rescan</button><label class="supported-switch"><input type="checkbox" role="switch" bind:checked={showAll} /><span class="switch-track" aria-hidden="true"></span> Show all supported</label></div></div>
+    <PageHeader title="Games" eyebrow="YOUR GAMES" subtitle={`${gameState.catalogue.filter(game => game.installed).length} found · ${gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated`} onback={returnToEditor} backLabel={returnLabel ?? 'Return to profile'}>{#snippet actions()}<div class="toolbar-controls"><button class="primary-button" disabled={locked} onclick={()=>customDialog='add'}><Icon name="plus" size={14}/>Add game</button><button class="secondary-button" disabled={locked} onclick={()=>libraryDialog=true}><Icon name="gamepad" size={14}/>Import from library</button><button class="text-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={13} /> Rescan</button><label class="supported-switch"><input type="checkbox" role="switch" bind:checked={showAll} /><span class="switch-track" aria-hidden="true"></span> Show all supported</label></div>{/snippet}</PageHeader>
     <div class="category-filter"><label>Category<select aria-label="Filter games by category" bind:value={categoryFilter}><option value="">All categories</option><option value="uncategorized">Uncategorized</option>{#each Object.entries(categories) as [id,title] (id)}<option value={id}>{title}</option>{/each}</select></label><button class="secondary-button" disabled={locked} onclick={()=>categoriesDialog=true}>Manage categories</button></div>
     {#if receivedStatus&&!games.length}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31} /></div><h2>{categoryFilter?'No games in this category':'No games found'}</h2><p>{categoryFilter?'Choose another category or show all games.':'Add a custom game, import from a local game library, or show supported games to choose their locations.'}</p><div>{#if categoryFilter}<button class="secondary-button" onclick={()=>categoryFilter=''}>Clear category filter</button>{:else}<button class="primary-button" disabled={locked} onclick={() => send({ command: 'game_scan' })}><Icon name="refresh" size={14} /> Rescan games</button><button class="secondary-button" onclick={() => { showAll = true; }}>Show supported games</button>{/if}</div></div>{/if}
     <div class="game-grid">
@@ -213,7 +213,7 @@
 
 
 <style>
-  .installation-layout{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:24px;align-items:start;margin-top:20px}.installation-fields{display:grid;gap:16px;min-width:0}.game-heading-copy{flex:1}.game-name-input{width:100%;min-width:0;padding:3px 5px;margin:-4px -6px;box-sizing:border-box;border:1px solid transparent;border-radius:4px;background:transparent;color:inherit;font:inherit;font-weight:inherit;letter-spacing:inherit}.game-name-input:hover:enabled{border-color:var(--line)}.game-name-input:focus{outline:1px solid var(--accent);border-color:var(--accent);background:var(--surface)}.executable-input{flex:1;min-width:0;padding:11px 12px;box-sizing:border-box;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--text);font-family:ui-monospace,monospace;font-size:var(--game-detail-text-size)}.executable-row>button{flex-shrink:0}@media(max-width:800px){.installation-layout{grid-template-columns:1fr}.installation-layout>:first-child{max-width:400px}}
+  .installation-layout{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:24px;align-items:start;margin-top:20px}.installation-fields{display:grid;gap:16px;min-width:0}.game-name-input{width:100%;min-width:0;padding:3px 5px;margin:-4px -6px;box-sizing:border-box;border:1px solid transparent;border-radius:4px;background:transparent;color:inherit;font:inherit;font-weight:inherit;letter-spacing:inherit}.game-name-input:hover:enabled{border-color:var(--line)}.game-name-input:focus{outline:1px solid var(--accent);border-color:var(--accent);background:var(--surface)}.executable-input{flex:1;min-width:0;padding:11px 12px;box-sizing:border-box;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--text);font-family:ui-monospace,monospace;font-size:var(--game-detail-text-size)}.executable-row>button{flex-shrink:0}@media(max-width:800px){.installation-layout{grid-template-columns:1fr}.installation-layout>:first-child{max-width:400px}}
   .destructive-button{background:#b32b38;border-color:#cd4552;color:#fff}.destructive-button:hover:enabled{background:#98232e;border-color:#e35d69;color:#fff}
   .category-panel{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px}.category-panel .editor-label{flex:1;min-width:180px;margin:0}.category-filter{display:flex;align-items:flex-end;gap:12px;margin-bottom:24px;flex-wrap:wrap}.category-filter label{display:grid;gap:8px;min-width:220px;font-size:12px;color:var(--soft)}.category-filter select,.category-panel select{font-size:12px;min-height:38px}.category-panel button{flex-shrink:0}.art-category.custom-art-badge{left:auto;right:16px}
   .custom-game-context{padding:20px}.custom-game-context p{color:var(--muted);font-size:12px;line-height:1.7}
@@ -238,8 +238,7 @@
   .games-workspace {--game-detail-text-size:12px;--game-detail-heading-size:14px;--game-detail-line-height:1.6;padding-bottom:30px;}
   .game-status-loading {margin-bottom:20px;color:var(--muted);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
-  .games-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 27px; }
-  .game-kicker {color:var(--muted);font-size:var(--game-detail-text-size,12px);line-height:var(--game-detail-line-height,1.6);letter-spacing:1.3px;text-transform:uppercase;font-weight:600;}
+
   .toolbar-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; }
   .supported-switch { display: flex; gap: 8px; align-items: center; color: var(--soft); font-size: 10px; cursor: pointer; position: relative; }
   .supported-switch input { position: absolute; opacity: 0; width: 30px; height: 20px; margin: 0; }
@@ -285,13 +284,13 @@
   .games-empty h2 { font-size: 19px; letter-spacing: -.3px; }
   .games-empty p { color: var(--muted); font-size: 11px; margin: 12px auto 22px; max-width: 360px; line-height: 1.8; }
   .games-empty > div:last-child { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
-  .back-link {margin-bottom:23px;padding-left:0;font-size:var(--game-detail-text-size);}
-  .game-details-heading { display: flex; gap: 17px; align-items: center; margin-bottom: 27px; }
+
+
   .game-detail-mark {color:#a1c5d7;width:65px;height:65px;flex-shrink:0;border-radius:12px;border:1px solid var(--line);background:var(--surface-raised);display:grid;place-items:center;}
   .game-detail-mark.racing { color: #c8b292; }
-  .game-details-heading>div:not(.game-detail-mark):not(.detail-launch) {min-width:0;}
-  .game-details-heading h2 {font-size:24px;letter-spacing:-.5px;margin-top:7px;overflow-wrap:anywhere;}
-  .detail-subtitle {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);color:var(--muted);margin-top:8px;}
+
+
+
   .detail-launch { margin-left: auto; }
   h3 {font-size:var(--game-detail-heading-size);line-height:var(--game-detail-line-height);font-weight:600;}
   .editor-label {display:flex;flex-direction:column;gap:8px;color:var(--soft);font-size:var(--game-detail-text-size);}
@@ -334,11 +333,11 @@
   .setup-live strong {font-size:var(--game-detail-text-size);font-weight:500;color:var(--soft);}
   .setup-live p {font-size:var(--game-detail-text-size);color:var(--muted);line-height:var(--game-detail-line-height);margin-top:7px;}
   @media (hover: none) { .tile-launch {padding:0 20px 18px;} }
-  @media (max-width: 600px) { .games-toolbar { align-items: start; }
+  @media (max-width: 600px) {
   .toolbar-controls { width:100%;align-items:center;justify-content:flex-start;flex-direction:row;gap:12px; }
   .game-grid { grid-template-columns: 1fr; }
-  .game-details-heading { flex-wrap: wrap; }
-  .game-details-heading h2 {font-size:24px;}
+
+
   .game-detail-mark { width: 50px; height: 50px; }
   .detail-launch { margin-left: 0; width: 100%; }
   }

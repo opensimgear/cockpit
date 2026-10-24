@@ -385,7 +385,7 @@ impl GatewayManager {
             profile_session,
             profile_admission: RwLock::new(()),
             mcp_clients: Mutex::new(BTreeMap::new()),
-            widget_library: crate::widget_library::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("widgets-v1.json"))),
+            widget_library: crate::widget_library::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("widgets.json"))),
             profile_prepare,
             profile_native: native,
             profile_admission_epoch,

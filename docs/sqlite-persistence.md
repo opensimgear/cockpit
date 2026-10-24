@@ -4,8 +4,7 @@ Implementation baseline: `d4808b1` (main, 23 October 2026). This includes Custom
 games #128 and the compiled widget publication format. Work is isolated in
 `feature/sqlite-140`; the unrelated widget/ESP32 checkout is untouched.
 
-This is the inventory and implementation contract. Entries below describe the
-required destination, not a claim that every owner has already been converted.
+This is the inventory and implementation contract. Entries below describe the implemented destinations.
 Acceptance evidence lives in `docs/verification/2026-10-24-sqlite.md`.
 
 ## Namespace and authority
@@ -79,7 +78,7 @@ The portable library retains its document bytes and semantic hashes.
 
 Legacy `mappings/*.json`, `local-settings.json`, `companion-routes.json` and
 old captured DCS profile authoring stores are retired. The old mapping crate
-APIs remain for compatibility tests, never as native Cockpit configuration
+APIs remain for portable fixtures and retired harnesses, never as native Cockpit configuration
 authority. Their cleanup evidence is separately enumerated above. Restored
 observations always begin offline/stale with no process, device or output owner.
 
@@ -167,18 +166,19 @@ code lives in domain folders.
 Desktop `CompiledWorkspaceStore` uses the typed `persistence_workspace` native
 command. Browser previews explicitly use their separate IndexedDB adapter. A
 native read/write failure stays visible; no desktop fallback reads IndexedDB.
-Workspace drafts, source revisions and publication archives are validated before
+Workspace drafts, plain sources and publication archives are validated before
 commit. Source and parameter hashes must match the latest saved draft publication;
 all publication assets pass the shared native validator. Sources and workspace
-commit together at their exact SQLite revisions. Immutable sources added by MCP
-or another process are merged into the acknowledged workspace and never erased
-by an older designer snapshot. No file staging or asset garbage collection is
+commit together at their exact SQLite revisions. Sources use stable IDs, and edits replace the current source. MCP and designer
+saves fence both source-library and workspace SQL revisions in one transaction;
+a stale designer cannot overwrite a newer source or draft. Source edits discard
+compiled workspace publications for affected drafts, requiring recompilation. No file staging or asset garbage collection is
 needed for these bounded inline BLOBs. Limits remain 64 MiB workspace, 20 drafts,
-256 source revisions/8 MiB source library and 100 archived publication revisions.
+256 sources/8 MiB source library and 100 archived publication revisions.
 
 Authenticated MCP exposes `designer_workspace_read` as hash-fenced 48 KiB byte
 chunks. Begin/chunk/commit/abort tools upload a bounded UTF-8 JSON snapshot. Commit
-rechecks native authorization and expectedRevision and uses the same owner as the
+rechecks native authorization, expectedRevision and expectedLibraryRevision and uses the same owner as the
 UI. Chunks are transient, client-bound and expire after ten minutes. The mutation
 ledger makes exact operation retries idempotent; failed native commits preserve
 the upload for explicit retry. Saving authoring data alone does not activate

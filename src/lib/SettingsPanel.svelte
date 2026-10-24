@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PageHeader from './PageHeader.svelte';
   import DesktopPreferences from './DesktopPreferences.svelte';
   import BackupSettings from './persistence/BackupSettings.svelte';
   import ProgressNotificationSettings from './ProgressNotificationSettings.svelte';
@@ -34,7 +35,7 @@
   }
 </script>
 
-<div class="page-heading"><div><div class="eyebrow">MAKE IT YOURS</div><h1>Settings</h1><p>A familiar cockpit, arranged around the way you work.</p></div></div>
+<PageHeader title="Settings" eyebrow="MAKE IT YOURS" subtitle="A familiar cockpit, arranged around the way you work."/>
 
 <div class="settings-tabs" role="tablist" aria-label="Settings sections">
   {#each tabs as tab, index (tab.id)}
@@ -67,8 +68,9 @@
   <section class="panel preferences-panel arrows-settings" aria-label="Arrow styling">
     <div class="panel-heading"><h2>Arrows</h2></div>
     <div class="preference-row">
-      <div><strong>Arrow style</strong><p id="arrow-style-help">Choose how connections are drawn on every profile canvas. Changes are saved automatically.</p></div>
+      <div><strong>Arrow style</strong><p id="arrow-style-help">Choose how connections are drawn on every canvas. Changes are saved automatically.</p></div>
       <label class="style-field"><span class="field-label">Arrow style</span><select disabled={$canvasStyling.saving || $canvasStyling.ready === false} aria-label="Arrow style" aria-describedby="arrow-style-help" value={$canvasStyling.arrowStyle} onchange={event => setArrowStyle(event.currentTarget.value as CanvasArrowStyle)}><option value="smooth">Fully smooth (Bézier)</option><option value="orthogonal">Horizontal / vertical</option></select></label>
+
     </div>
     <div class="preference-row">
       <div><strong id="arrow-collapse-label">Collapse parallel connections</strong><p id="arrow-collapse-help">Share trunks at common input or output points, with a signal count and branches to each block.</p></div>

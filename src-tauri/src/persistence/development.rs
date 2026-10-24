@@ -49,7 +49,7 @@ fn widgets() -> Result<Value, String> {
         "../../../examples/companion/generic-toggle.source.json"
     ))
     .map_err(|_| "Invalid development widget source.")?;
-    let bundle = json!({"bundleVersion":2,"library":{"formatVersion":2,"definitions":[toggle]}});
+    let bundle = json!({"definitions":[toggle]});
     osg_companion_service::validate_widget_bundle(&bundle)?;
     Ok(bundle)
 }

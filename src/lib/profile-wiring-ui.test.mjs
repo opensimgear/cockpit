@@ -27,6 +27,7 @@ let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.
 canvasSource = canvasSource.replace('const overview=true', 'const overview=false');
 canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,addWireHandle,beginHandle,handleKeyboard,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,syncSelectionFocus,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},setInspector(value){inspectorPanel=value;},setSelection(value){selectedId=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,selectionView,focusedSelectionId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const lanesCode=transpile(compile(await readFile(new URL('./ProfileSignalLanes.svelte',import.meta.url),'utf8'),{filename:'ProfileSignalLanes.svelte',generate:'server'}).js.code);
+const controlsCode=transpile(compile(await readFile(new URL('./CanvasViewControls.svelte',import.meta.url),'utf8'),{filename:'CanvasViewControls.svelte',generate:'server'}).js.code);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
@@ -45,6 +46,7 @@ function harness(props = {}, arrowStyle='smooth',cornerRadius=24,wheelAction='pa
       if (name === 'svelte/internal/server') return server;
       if (name === 'svelte') return svelte;
       if (name === './ProfileSignalLanes.svelte') return {default:Lanes};
+      if (name === './CanvasViewControls.svelte') return {default:Controls};
       if (name === './Icon.svelte') return { default: Icon };
       const key = name.replace(/\.ts$/, '');
       if (modules.has(key)) return modules.get(key);
@@ -53,7 +55,8 @@ function harness(props = {}, arrowStyle='smooth',cornerRadius=24,wheelAction='pa
   };
   const iconExports = {};
   vm.runInNewContext(iconCode, { ...context, exports: iconExports }, { filename: 'Icon.svelte' });
-  const Icon = iconExports.default, canvasExports = {},lanesExports={};
+  const Icon = iconExports.default, canvasExports = {},lanesExports={},controlsExports={};
+  vm.runInNewContext(controlsCode,{...context,exports:controlsExports});const Controls=controlsExports.default;
   vm.runInNewContext(lanesCode,{...context,exports:lanesExports});const Lanes=lanesExports.default;
   vm.runInNewContext(canvasCode, { ...context, exports: canvasExports }, { filename: 'ProfileCanvas.svelte' });
   const document = props.document ?? profile(), before = plain(document);

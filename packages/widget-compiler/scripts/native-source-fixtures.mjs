@@ -1,9 +1,27 @@
+import {behaviorToggleSource as createToggleSource} from '../test/behavior-toggle.mjs';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
-import {createToggleSource,createLinearGaugeFixture,createRadialGaugeFixture,createThreeStateFixture,createPcmSoundFixture,validateWidgetSource} from '../src/index.ts';
+import {createToggleSource as createCapsuleSource,createLinearGaugeFixture,createRadialGaugeFixture,createThreeStateFixture,createPcmSoundFixture,validateWidgetSource} from '../src/index.ts';
 import {tinySource,rasterPng} from '../test/fixtures.mjs';
 
 const cases=[];
 function add(name,source){const checked=validateWidgetSource(source);cases.push({name,valid:checked.ok,source});}
+const authored=createCapsuleSource();authored.design.nodes=[{id:'requested-value',label:'Requested',domain:{type:'boolean'},expression:{op:'eq',left:{state:'requested-state'},right:{literal:'on'}}}];add('authoring-capsule',authored);
+for(const [name,edit]of [
+  ['cycle',s=>s.design.nodes[0].expression={ref:'requested-value'}],
+  ['unknown-reference',s=>s.design.nodes[0].expression={ref:'missing'}],
+  ['wrong-type',s=>s.design.nodes[0].domain={type:'number',min:0,max:1}],
+  ['duplicate-owner',s=>s.design.owners.push(s.design.owners[0])],
+  ['owner-domain',s=>s.design.owners[0].values.on=7],
+  ['second-writer',s=>s.behavior.regions[0].transitions[0].actions.push({type:'set',signal:'requested',value:{literal:true}})],
+  ['missing-layer',s=>s.design.appearances[0].layers.missing={x:1}],
+  ['unknown-state',s=>s.design.appearances[0].regions['requested-state']='missing'],
+  ['invalid-property',s=>s.design.appearances[0].layers.thumb={children:[]}],
+  ['missing-transition',s=>s.design.effects[0].transition='missing'],
+  ['invalid-playback',s=>s.design.effects[0].easing='bounce'],
+  ['duplicate-effect',s=>s.design.effects.push(s.design.effects[0])],
+  ['competing-motion',s=>s.motions=[{id:'custom',from:{},to:{},durationMs:160,fps:30,tracks:[{node:'thumb',property:'x',keyframes:[{at:0,value:31},{at:1,value:157}]}]}]],
+  ['extra-field',s=>s.design.script='alert(1)'],
+]){const source=structuredClone(authored);edit(source);add('authoring-'+name,source);if(cases.at(-1).valid)throw Error('Expected invalid authoring '+name);}
 for(const source of [createToggleSource(),createLinearGaugeFixture(),createRadialGaugeFixture(),createThreeStateFixture()])add(source.id,source);
 const complete=tinySource();complete.parameters=[{id:'label',label:'Label',type:'text',default:'SAMPLE'},{id:'visible',label:'Visible',type:'boolean',default:true},{id:'scale',label:'Scale',type:'number',default:1,min:0,max:2},{id:'color',label:'Color',type:'color',default:'#ffffff80'}];
 complete.assets=[{id:'pixel',mime:'image/png',base64:Buffer.from(rasterPng()).toString('base64')},createPcmSoundFixture()];
@@ -28,4 +46,4 @@ const invalids=[
 ];
 for(const [name,change] of invalids){const source=createToggleSource();change(source);add(name,source);if(cases.at(-1).valid)throw new Error('Expected malformed fixture: '+name);}
 const output=JSON.stringify({formatVersion:1,cases},null,2)+'\n',path=new URL('../test/fixtures/native-sources.json',import.meta.url);
-if(process.argv.includes('--check')){if(readFileSync(path,'utf8')!==output)throw new Error('Native source fixtures are stale');}else{mkdirSync(new URL('../test/fixtures/',import.meta.url),{recursive:true});writeFileSync(path,output);}
+if(process.argv.includes('--check')){if(readFileSync(path,'utf8').replaceAll('\r\n','\n')!==output)throw new Error('Native source fixtures are stale');}else{mkdirSync(new URL('../test/fixtures/',import.meta.url),{recursive:true});writeFileSync(path,output);}

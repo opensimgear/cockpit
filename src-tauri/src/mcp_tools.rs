@@ -259,8 +259,8 @@ impl Tools {
             "companion_listener_get" | "companion_listener_save" => self.listener_tool(name,args,client),
             "designer_workspace_read" | "designer_workspace_begin" | "designer_workspace_chunk" | "designer_workspace_commit" | "designer_workspace_abort" => self.workspace_tool(name,args,client),
             "widgets_list" => forward("widgets_list", &["offset","limit"], Some("widgetLibrary")),
-            "widget_get" => forward("widget_get", &["id","version"], Some("widgetLibrary")),
-            "widget_save" => forward("widget_save", &["bundle","expectedVersion"], Some("widgetSaved")),
+            "widget_get" => forward("widget_get", &["id"], Some("widgetLibrary")),
+            "widget_save" => forward("widget_save", &["bundle","expectedRevision"], Some("widgetSaved")),
             "operation_status" => Ok(self
                 .ledger
                 .lock()

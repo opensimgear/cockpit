@@ -7,10 +7,10 @@ function database(initial=null) {
   const invoke=async(command,{request})=>{
     assert.equal(command,'persistence_workspace');
     if(fail)throw new Error(fail);
-    if(request.operation==='read')return {revision,value:structuredClone(value)};
+    if(request.operation==='read')return {revision,libraryRevision:revision,value:structuredClone(value)};
     assert.equal(request.operation,'write');
-    if(request.expectedRevision!==revision)throw new Error('Persistence revision conflict');
-    value=structuredClone(request.value);return {revision:++revision};
+    if(request.expectedRevision!==revision||request.expectedLibraryRevision!==revision)throw new Error('Persistence revision conflict');
+    value=structuredClone(request.value);return {revision:++revision,libraryRevision:revision};
   };
   return {invoke,get value(){return value;},set fail(error){fail=error;}};
 }
@@ -52,6 +52,22 @@ test('invalid or uncertain acknowledgements require a reload',async()=>{
     await assert.rejects(sqliteDesignerStorage(async()=>result).read(),/Invalid designer/);
   }
   for(const result of [null,[]])await assert.rejects(sqliteDesignerStorage(async()=>result).write({}),/Invalid designer/);
-  const store=sqliteDesignerStorage(async()=>({revision:4}));
+  const store=sqliteDesignerStorage(async()=>({revision:4,libraryRevision:4}));
   await assert.rejects(store.write({drafts:[]}),/acknowledgement changed/);
+});
+
+test('library conflicts and malformed replies preserve both acknowledged revisions',async()=>{
+  let fail=false,writeCount=0;
+  const store=sqliteDesignerStorage(async(_,{request})=>{
+    if(request.operation==='read')return {revision:7,libraryRevision:12,value:{drafts:[]}};
+    assert.equal(request.expectedRevision,7);assert.equal(request.expectedLibraryRevision,12);
+    writeCount++;if(!fail)return {revision:8,libraryRevision:-1};
+    return {revision:8,libraryRevision:14,value:{drafts:['saved']}};
+  });
+  await store.read();await assert.rejects(store.write({}),/Invalid designer storage revision/);
+  fail=true;assert.deepEqual(await store.write({}),{drafts:['saved']});assert.equal(writeCount,2);
+  for(const invalid of [false,1,'value',{revision:1,libraryRevision:1},[],{value:null,revision:0,libraryRevision:-1}])
+    await assert.rejects(sqliteDesignerStorage(async()=>invalid).read(),/Invalid designer/);
+  for(const invalid of [false,1,'value',[],{revision:1,libraryRevision:NaN}])
+    await assert.rejects(sqliteDesignerStorage(async()=>invalid).write({}),/Invalid designer/);
 });

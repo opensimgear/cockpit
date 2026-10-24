@@ -45,15 +45,15 @@ fn draft(v: &Value, sources: &[Value]) -> Result<(), String> {
     let pages=list(&v["pages"],1,16)?; let widgets=list(&v["widgets"],0,192)?;
     let mut ids=BTreeSet::new();
     for page in pages {
-        exact(page,&["id","title","width","height"])?;
+        let mut fields=vec!["id","title","width","height"];if page.get("background").is_some(){fields.push("background");let color=page["background"].as_str().unwrap_or("");ensure(color.len()==7&&color.starts_with('#')&&color[1..].bytes().all(|b|b.is_ascii_hexdigit()),"Invalid page background.")?;}exact(page,&fields)?;
         ensure(ids.insert(id(&page["id"])?),"Duplicate designer ID.")?; title(&page["title"])?;
         for key in ["width","height"] { ensure(page[key].as_u64().is_some_and(|n|(320..=8192).contains(&n)),"Invalid page dimensions.")?; }
     }
     for widget in widgets {
-        exact(widget,&["id","pageId","label","sourceId","revision","parameters","bounds"])?;
+        exact(widget,&["id","pageId","label","sourceId","parameters","bounds"])?;
         ensure(ids.insert(id(&widget["id"])?),"Duplicate designer ID.")?; title(&widget["label"])?;
         ensure(pages.iter().any(|p|p["id"]==widget["pageId"]),"Unknown widget page.")?;
-        let source=sources.iter().find(|s|s["id"]==widget["sourceId"] && s["revision"]==widget["revision"]).ok_or("Unavailable widget revision.")?;
+        let source=sources.iter().find(|s|s["id"]==widget["sourceId"]).ok_or("Unavailable widget source.")?;
         parameters(source,&widget["parameters"])?;
         let b=&widget["bounds"]; exact(b,&["x","y","width","height"])?;
         for key in ["x","y","width","height"] { ensure(b[key].as_f64().is_some_and(|n|n.is_finite() && (0.0..=1.0).contains(&n)),"Invalid widget bounds.")?; }
@@ -65,12 +65,12 @@ fn matches_draft(draft: &Value, sources: &[Value], publication: &Value) -> Resul
     let doc=&publication["document"];
     let pages=draft["pages"].as_array().unwrap(); let widgets=draft["widgets"].as_array().unwrap();
     let expected_pages=pages.iter().map(|p|json!({"id":p["id"],"title":p["title"]})).collect::<Vec<_>>();
-    let viewports=pages.iter().map(|p|json!({"pageId":p["id"],"width":p["width"],"height":p["height"]})).collect::<Vec<_>>();
+    let viewports=pages.iter().map(|p|{let mut viewport=json!({"pageId":p["id"],"width":p["width"],"height":p["height"]});if let Some(background)=p.get("background"){viewport["background"]=background.clone();}viewport}).collect::<Vec<_>>();
     ensure(doc["ui"]["id"]==draft["id"] && doc["ui"]["title"]==draft["title"] && doc["ui"]["pages"]==json!(expected_pages) && doc["presentation"]["viewports"]==json!(viewports) && doc["presentation"]["widgets"].as_array().unwrap().len()==widgets.len(),"Saved publication belongs to an earlier panel. Recompile before saving.")?;
     for widget in widgets {
         let placed=doc["presentation"]["widgets"].as_array().unwrap().iter().find(|w|w["id"]==widget["id"]).ok_or("Missing compiled widget.")?;
         ensure(["pageId","label","bounds"].iter().all(|k|placed[*k]==widget[*k]),"Saved publication belongs to an earlier placement.")?;
-        let source=sources.iter().find(|s|s["id"]==widget["sourceId"] && s["revision"]==widget["revision"]).unwrap();
+        let source=sources.iter().find(|s|s["id"]==widget["sourceId"]).unwrap();
         let artifact=&doc["presentation"]["artifacts"].as_array().unwrap().iter().find(|a|a["hash"]==placed["artifactHash"]).ok_or("Missing compiled artifact.")?["artifact"];
         ensure(artifact["sourceHash"]==hash(source)? && artifact["parameterHash"]==hash(&parameters(source,&widget["parameters"])?)?,"Saved publication belongs to earlier widget source or parameters.")?;
     }
@@ -78,10 +78,9 @@ fn matches_draft(draft: &Value, sources: &[Value], publication: &Value) -> Resul
 }
 pub(super) fn validate(value: &Value) -> Result<(), String> {
     ensure(serde_json::to_vec(value).map_err(|_|"Cannot encode designer workspace.")?.len()<=LIMIT,"Designer storage exceeds 64 MiB.")?;
-    exact(value,&["schemaVersion","sources","drafts","publications"])?;
-    ensure(value["schemaVersion"]==2,"Unsupported designer workspace.")?;
+    exact(value,&["sources","drafts","publications"])?;
     let sources=list(&value["sources"],0,256)?;
-    let bundle=json!({"bundleVersion":2,"library":{"formatVersion":2,"definitions":sources}});
+    let bundle=json!({"definitions":sources});
     validate_widget_bundle(&bundle)?;
     ensure(canonical(&value["sources"])?.len()<=8*1024*1024,"Widget library exceeds 8 MiB.")?;
     let drafts=list(&value["drafts"],0,20)?; let mut ids=BTreeSet::new();

@@ -1,6 +1,9 @@
 # State and signal-flow editor — implementation plan
 
-Date: 23 October 2026. Status: proposed; this feature is not implemented.
+Date: 23 October 2026. Status: implemented on `feature/widget-state-signal-editor`;
+qualification evidence is recorded below. The later user decision supersedes all
+previous migration/versioning proposals: use one plain source, overwrite by ID,
+and keep no authoring format discriminator, revisions or compatibility reader.
 
 ## Outcome and scope
 
@@ -21,7 +24,7 @@ Included:
 - The current primitives, layer tree, groups, reparenting, selection, dragging,
   resizing, imported raster assets, parameters and advanced bindings.
 - Optional motion and sound, compiled Try, trace inspection and browser delivery.
-- Save/reopen/import/export and an explicit conversion of the current capsule pilot.
+- Save/reopen/import/export and direct conversion of the current dev capsule data.
 
 Not part of this feature:
 
@@ -44,7 +47,7 @@ Use [the current implementation guide](generic-widget-designer.md) as the baseli
 | `packages/widget-compiler/src/{types,source,compiler}.ts` | Validation, finite sampling, rasterization, tile deduplication and optional media | Authoring schema, lowering, overrides and source diagnostics |
 | `packages/companion-ui/src/CompiledWidget.svelte` | Compiled Try and player lifecycle | Trace/value inspection; future slider pointer mapping is separate |
 | `src/lib/ProfileCanvas.svelte` and canvas routing/navigation helpers | Dotted canvas, node/port treatment, selection, wires and inspector conventions | Extract narrowly reusable parts without importing profile-specific semantics |
-| `src/lib/compiled-companion-library.ts` and native source admission | Revisioned source, compilation identity and publication validation | New source admission and pilot conversion |
+| `src/lib/compiled-companion-library.ts` and native source admission | Plain mutable source, compilation identity and publication validation | New source admission and pilot conversion |
 
 The existing reducer evaluates guards and actions against one event snapshot;
 conflicting writes fail atomically. Generated behavior must retain this rule.
@@ -55,7 +58,7 @@ compile cancellation must continue working.
 
 ### One authoritative document
 
-Introduce a versioned **authoring source format 3**. Retain the existing
+Use one **plain authoring source schema**. Retain the existing
 `VisualNode` layer representation and parameter/asset definitions. Add:
 
 - Statechart definitions with stable region, state and transition IDs.
@@ -88,13 +91,13 @@ Authoring v3: existing layers + statechart + signal graph + appearance overrides
   -> existing compiled artifact and browser player
 ```
 
-Keep the existing executable source v2 representation as an internal compilation
-target and supported import format. Add a `lowerWidgetDesign` entry point with
-diagnostic source maps from generated expressions/actions to authored nodes/edges.
+Keep the existing behavior and scene representations as an internal compilation
+target. `lowerWidgetDesign` resolves authoring references and reports diagnostic
+IDs for invalid graph nodes, state mappings and appearance properties.
 Validate the lowered result with existing validators before rasterization.
 
-The artifact's source identity must bind the original semantic v3 document, not
-just its temporary lowered v2 result. Include the lowering/compiler version in
+The artifact's source identity must bind the original authored document, not
+just its temporary lowered result. Include the lowering/compiler version in
 cache identity. Update TypeScript and independent native source admission,
 canonical hashing, saved-draft checks and fixture generation together. Preserve
 the deployed raster artifact format unless qualification proves a necessary change.
@@ -231,15 +234,14 @@ expression with its currently evaluated number.
 
 Deliver:
 
-- Versioned v3 types/validators, typed graph registry, stable references and editor
+- Plain types/validators, typed expression graph, stable references and editor
   layout record; canonical source and compile identity rules.
 - Lowering to the existing behavior/scene model, with reference/type/cycle/write
   diagnostics and limits on expansion into expression trees.
-- A hand-authored capsule v3 fixture, generated runtime behavior and parity traces.
-- v2/v3 library admission, native validation updates and immutable revision support.
+- A hand-authored capsule fixture, generated runtime behavior and parity traces.
+- Plain library admission and independent native validation. Save replaces by ID.
 
-Gate: headless compilation produces valid capsule artifacts; old v2 sources still
-validate; generated toggle emissions, freshness, reset and neutral behavior match
+Gate: headless compilation produces valid capsule artifacts; obsolete authoring fields are rejected; generated toggle emissions, freshness, reset and neutral behavior match
 the baseline. Malformed graphs are rejected before compilation or persistence.
 
 ### M2 — State appearances in the existing layer designer
@@ -308,11 +310,14 @@ behavior and compiled player as publication, not a mock evaluator.
 
 Deliver:
 
-- Explicit **Convert to state editor** for the capsule, producing a new revision;
-  retain the prior revision for rollback and switch panel references deliberately.
-- Recognize supported capsule bindings by validated structure, not only layer names.
-  Preserve unrecognized expressions as advanced nodes; if lossless conversion is
-  impossible, retain the v2 editor and show a concrete conversion diagnostic.
+- Convert the existing dev library once, preserving current artwork, groups and IDs.
+  Remove authoring format/revision fields and reference each widget by source ID.
+- Ship only the plain source reader and current Toggle seed. Remove unused old
+  designer components, revision selectors, conversion buttons and compatibility
+  branches. Keep advanced expressions within the same plain source schema.
+- Save/import/MCP overwrite the current source by ID. Invalidate dependent panel
+  assets on changes and require compilation before publication. Store only the
+  current compiled result for each saved panel.
 - Normal save/reopen, export/import, panel placement/parameters and publication.
 - Current guide, authoring examples and recorded verification evidence.
 
@@ -324,7 +329,7 @@ the active publication intact. Do not require or enable an ESP32 target.
 
 Dependencies: M1 → M2 → M3 → M4 → M5 → M6. Keep each milestone reviewable and
 executable; use atomic commits within the larger feature branch. Do not merge a
-partial source-version rollout that the native host or source importer rejects.
+partial schema rollout that the native host or source importer rejects.
 
 ## Compilation, capabilities and cost control
 
@@ -350,7 +355,7 @@ partial source-version rollout that the native host or source importer rejects.
 | Appearance resolver | Base inheritance, state overrides, explicit combinations, conflicts, group transforms, bound offsets, topology edits and reference cleanup |
 | Compiler | Real raster goldens, state combinations, motion endpoints, deduplicated tiles, capability fallbacks, limits, cancellation and cache/source identity |
 | Behavior | Event snapshot semantics, rapid activation, disabled input, press/cancel, exactly-once emission, unknown/stale/disconnected feedback and provenance |
-| Persistence | v2/v3 admission, new revision conversion, old revision rollback, layout isolation, round trips and source/artifact mismatch rejection |
+| Persistence | Plain admission, replacement by ID, stale compiled-result invalidation, layout isolation, round trips and source/artifact mismatch rejection |
 | Editor | Release selection, overlapping layers, individual thumb/group dragging, resize handles, graph wiring, keyboard connection, diagnostics, undo/redo and save tooltips |
 | Browser | Published pixels/hit regions, output/feedback direction, reload/reconnect, candidate replacement, mute/unlock and reduced motion |
 | Profile editor | Regression tests for shared canvas helpers, connections, navigation and inspector behavior after extraction |
@@ -384,3 +389,40 @@ editing and behavior/media capabilities remain available.
 - Further graph presets and editing ergonomics after capsule usability review.
 - ESP32 capability negotiation, asset delivery, runtime and hardware qualification
   under its separate backlog feature; no pairing changes in this feature.
+
+
+## Implementation evidence
+
+- `packages/widget-compiler/src/design.ts`: typed lowering, state ownership,
+  appearance inheritance/conflicts, automatic numeric motion and shared topology edits.
+- `crates/companion-service/src/publication/widget_design.rs`: independent native
+  validation using the bounded behavior validator; generated positive/negative corpus.
+- `WidgetGraphEditor.svelte`: profile-style state/flow canvases with persistent layout,
+  keyboard header movement, port wiring, state ownership and presentation bindings.
+  Shared profile controls provide ELK layout, fit, anchored zoom, background pan,
+  global wheel behavior, and smooth/orthogonal arrows with global corner radius.
+  Connection dots match profile sizing, border, hover fill and transform color.
+  The existing Data/Behavior forms remain the full inspector for port declarations,
+  arbitrary actions and timers. Graph cards do not create a second runtime.
+- `GenericWidgetDesigner.svelte`: Base/state layer editing, override reset/promotion,
+  shared history, compiled Try and reducer transition traces.
+- Widget editing opens in the main content area without a modal or outer card.
+  Panel pages support a background color through native admission and browser
+  rendering; widget surfaces and new blank artwork remain transparent.
+- Plain source library, native/MCP save and panel source references are updated
+  together. The current development data was rewritten directly; no migration code
+  or old authoring schemas are shipped.
+- `tests/ui/widget-state-signal-native.mjs`: running native Cockpit checks for state
+  thumb drag, independent Off appearance, undo/redo, typed wire rejection, layout-only
+  changes, real compiled traces, export, native save/reopen and trusted browser
+  Off/On/Off playback plus reconnect. Canvas edge checks account for alpha rounding.
+- `tests/ui/widget-graph-canvas-native.mjs`: live checks cover both graph modes,
+  global settings, fit/layout/zoom/pan, scaled dragging, persisted layout, and
+  return to an unsaved panel draft. Profile suites: 153 canvas and 275 UI tests pass.
+- `pnpm companion:test` passes the 71% gates; runtime line coverage is 100%, compiler
+  exceeds 97%, and designer model/store exceeds 95%. Native service graph admission
+  covers 79.48% of production lines. Full native suite: 1,155 passed, 8 ignored.
+
+ESP32 implementation and physical-device qualification remain in the separate
+backlog feature. Graphical interaction is based on the existing discrete events;
+this work does not add slider pointer tracking or arbitrary path morphing.

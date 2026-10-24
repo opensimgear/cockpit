@@ -1,0 +1,406 @@
+# SQLite implementation evidence
+
+Feature #140 is in progress. This record distinguishes implemented infrastructure
+from the domain cutover and final acceptance still required by S2-S9.
+
+## S0 / S1, Windows, 24 October 2026
+
+Baseline: main `d4808b1`; isolated `feature/sqlite-140` worktree. Source inventory
+and contracts are recorded in [SQLite persistence](../../sqlite-persistence.md).
+
+- `cargo test --locked --manifest-path crates/persistence/Cargo.toml`: 13 tests
+  pass. Covers reopen, CAS, delete/recreate tombstones, multi-record rollback,
+  import idempotence/validation, concurrent writers, bounded busy, disk-full,
+  read-only, foreign keys, future/foreign/corrupt databases and online backup.
+- `python scripts/persistence-coverage.py`: `lib.rs` 316/329 production lines
+  (96.05%); `repository.rs` 94/97 (96.91%). Each module is gated at >=71%.
+- `pnpm check`: passes, zero Svelte errors/warnings, including browser companion.
+- `pnpm ui:build`: passes. Existing large-chunk build warnings remain.
+- Live worktree Cockpit runs at `http://127.0.0.1:1421/`, using an isolated
+  `.research/sqlite/config/` namespace. `tests/ui/sqlite-native.mjs` passes through
+  actual WebView/native IPC: schema 1, healthy integrity, DELETE/FULL, 250 ms busy
+  timeout, expected `cockpit.sqlite3` location and visible main navigation.
+
+Generated fixture JSON was locally normalized to LF for existing byte-for-byte
+checks in this fresh Windows checkout; no fixture content changed.
+
+Full native regression is being run with process/socket access. The initial
+sandboxed run could not exercise those fixtures and is not acceptance evidence.
+No macOS/Linux/Android/physical-device execution is claimed by this Windows run;
+the dedicated CI matrix builds/tests the pinned bundled SQLite dependency there.
+
+At this checkpoint, existing Cockpit domain settings still use their old stores.
+The SQLite infrastructure/live status check does not constitute final cutover.
+No implementation issue is marked complete without its domain evidence.
+
+## Staged migration framework and profile repository progress
+
+Schema 2 adds durable required-origin declarations, staged bounded source
+snapshots, checksums and a monotonically increasing migration generation.
+Authority commits only after every declared origin arrived, validation completed
+and an online pre-cutover backup succeeded. A snapshot changed during validation
+rejects cutover. Conflicting origin values require explicit resolution; no origin
+ordering silently discards content. Staging never exposes records to live readers.
+
+`scripts/persistence-coverage.py` passes: lib 96.12%, typed repository 97.73%,
+migration 99.02%, namespace resolution 97.92%. The 22 tests also exercise failed
+upgrade rollback, missing origins, repeat handshakes, failed backup/validation,
+staged-source corruption and explicit-reset evidence retention.
+
+Profile graph/assignment and retained resource repositories now use SQLite.
+The complete profiles crate run passes (139 library tests plus 20 integration
+tests). Existing per-module profile coverage gates pass: profile storage 99.10%,
+resource storage 100%, service 98.25%; all other measured modules remain >=90%.
+The assembled native/webview domain registration and final migration handshake
+are still being connected; S2/S3 acceptance remains in progress.
+
+## Profile, controller and selection store conversion
+
+- Full current native library run: **1,157 passed, 0 failed, 8 ignored**,
+  using 16 test workers. The six old file-failure fixtures were replaced with
+  real SQLite writer-lock faults or SQLite payload inspections; all affected
+  automatic-selection/resource/widget-cutover regressions pass.
+- Controller crate: **100 tests pass**. Per-module production coverage remains
+  >=71% (controller service 83.25%, registry >98%, visibility settings 100%).
+  Failed metadata commits retain the prior visible values; reports and new
+  discoveries received during saves remain live. Reassignment cannot restore
+  a controller that disconnected while the database write was in progress.
+- Live UI save/restart phases both pass. Native process 16256 saved a renamed
+  profile through the editor; process 43616 reopened the exact document and
+  revision, then deleted it. Neither phase applied output.
+- The real `osg-gateway-service` starts in an independent test namespace and
+  returns a healthy Default profile through its actual line protocol. Desktop
+  and service startup explicitly register native, desktop and retained-game
+  roots against the same configured database.
+
+The dev cockpit is run with `--no-watch` for verification: Tauri's additional
+crate watcher otherwise observes independent crate test build outputs and
+restarts during tests. Tests use canonical temporary parents on Unix to avoid
+weakening the production no-symlink storage contract for macOS temp aliases.
+
+Schema 3 adds transactional profile identity/revision/reference indexes. The
+shared persistence suite now has 26 passing tests, including index rollback,
+orphan-assignment rejection and schema-2 backfill without changing saved bytes
+or revisions. Index-module production coverage is 100%; all persistence modules
+remain above 96%. The complete profile library/integration suites pass against
+the indexed schema. A live editor save in process 46604 also passed the exact
+SQLite-index count versus native profile-list check.
+
+## Revised development contract and current game checkpoint
+
+The 24 October AGENTS instructions supersede legacy import/upgrade requirements.
+The shared store now uses one current SQLite layout, with no import receipts,
+legacy fallback or schema upgrade chain. Existing portable/network contracts
+retain their own validators. Obsolete widget cutover code was removed.
+
+- Shared persistence: 20 tests pass. Production line coverage: core 96.12%,
+  typed repositories 99.00%, path validation 93.55%, namespace resolution 98.04%,
+  profile indexes 100%, observation writer 96.77%.
+- Profiles: 139 unit and 20 integration tests pass. Controllers: 100 tests pass.
+- Full native library checkpoint: 1,157 pass, 0 fail, 8 ignored, four workers.
+  Test managers now keep a private namespace instead of reading the real user
+  configuration. The previous highly parallel run had USB timing failures; it
+  is retained as failed evidence and is not a passing claim.
+- Game settings cover registrations/categories/artwork, integration/provider
+  preferences, car scans, passive vehicles and desktop output preferences.
+  Vehicle retention is coalesced on a storage worker; live telemetry never waits
+  for SQLite. Artwork GC uses current SQLite references and a process asset lease.
+- Live fresh namespace: process 38916 saved through actual UI/IPC and process
+  56964 verified exact profile/game/artwork/provider/output settings after restart.
+  Invalid retired JSON files did not replace any saved state. Logs are
+  `.research/sqlite/live-fresh-prepare.log` and `live-fresh-verify.log`.
+- Native widget library conversion has 8 passing tests, including stale writers,
+  busy commit failure and ignored retired files. Companion workspace, host stores,
+  protected trust/client state, UI preferences, recovery and restore remain open.
+
+New game and persistence modules are grouped in domain folders and kept under
+500 lines. Broader current-source coverage is still being gathered; there has
+been no implementation push for this checkpoint yet.
+
+The aggregate instrumented suite subsequently passed **1,158 tests**, with eight
+qualification tests ignored. Its Windows coverage run exposed configuration-path
+and native mapping gaps. Focused current-source checks close them without
+reducing thresholds: Windows acquisition 82.65%, namespace/configuration paths
+71.15%, shared native widgets 99.42%. Configuration tests use injected environment
+values, not process-global mutations. Native acquisition tests create only
+uniquely named owned mappings and read the current test process; they do not
+start or qualify a simulator or create its public mapping names.
+
+A new eight-way first-open test reproduced a SQLite initialization race. Database
+identity is now read consistently and rechecked under the initializing transaction;
+all 21 persistence tests pass. Current persistence coverage is core 96.14%,
+repositories 99%, paths 93.55%, namespace lookup 96.36%, profile indexes 100%
+and observation writer 96.77%.
+
+Live widget save/restart phases also pass (processes 56964 and 59008), preserving
+the exact source through native UI/MCP IPC while an invalid retired widget file
+is present. Native background crop/URL/disk and category UI scenarios both pass.
+Frontend game coverage is 98.60% aggregate, and frontend/browser checks have no
+errors or warnings. The new designer transport adapter has 100% line/branch/
+function coverage; it remains to be wired to the native workspace owner.
+
+Final checkpoint native rerun: **1,162 passed, 0 failed, 8 ignored**. Widget
+runtime/compiler/designer coverage passes (compiled workspace 91.97% lines;
+compiler 99.80%; runtime 100%). Canonical JSON and bundled license bytes are
+now protected from checkout line-ending conversion. The rebuilt live Cockpit
+process 65456 reports healthy SQLite integrity in the fresh namespace.
+
+## S5 native designer checkpoint
+
+The desktop designer now uses native SQLite, including source edits, drafts,
+compiled publication history and inline assets. The UI no longer saves widget
+sources separately before saving its workspace. Native validation covers exact
+shapes, budgets, source revisions/parameters, placement, content hashes and
+compiled publication assets. Workspace/shared-source writes are one CAS commit.
+MCP has bounded hash-fenced reads and authenticated begin/chunk/commit/abort
+tools, including multi-chunk compiled-asset tests and replay/conflict checks.
+
+Focused current-source native coverage passes: shared widgets 100%, workspace
+transaction owner 100%, workspace validation 98.94%, MCP workspace transfer 100%.
+Evidence: `.research/sqlite-workspace-coverage/{evidence.json,integration-summary.json,native-tests.log}`.
+Frontend workspace/transport tests pass (11 tests): workspace 92.03% lines,
+transport 100% lines/branches/functions.
+
+Actual Cockpit acceptance used normal New/Edit/Compile/Save controls to save a
+widget and panel with compiled PNG assets, then closed process 28176 and reopened
+process 51428. The exact workspace, drafts, source order, publication identities
+and asset bytes matched before UI hydration; the reopened panel retained Try.
+A deliberately invalid retired IndexedDB snapshot remained unchanged and unused.
+Evidence: `.research/sqlite/live-designer-{prepare,verify}.log` and
+`.research/sqlite/designer-restart.json`; reproducible with
+`tests/ui/sqlite-designer-native.mjs` prepare/verify phases. Initial harness
+failures were locator/navigation assumptions, corrected before this passing run.
+This qualifies desktop authoring persistence; host configuration, atomic host
+publication/head/assignment integration and remaining S6–S9 owners are pending.
+
+Full native regression for this designer checkpoint: **1,171 passed, 0 failed,
+8 ignored** (four workers, 110.17 seconds). Final frontend/browser checks report
+zero errors/warnings. Widget runtime/compiler/designer/editor coverage passes;
+compiled workspace is 92.03% lines and the editor 100%. The standard widget test
+and coverage commands now include the SQLite transport adapter tests.
+
+## S5 host setup checkpoint
+
+Listener configuration and retained firmware/board/render-profile observations
+now use SQLite. Invalid/read-only/busy state never becomes an empty successful
+read. Real writer-lock and stale-owner tests preserve the last acknowledged
+listener state and prevent external listener effects after failed commits.
+Firmware observations carry their captured revision; a concurrent read cannot
+advance an older capture into overwriting newer data. Unpaired installations
+are removed from retained firmware metadata. Authoring compatibility reads the
+same records. Native UI and authenticated MCP listener writes check the exact
+settings revision; MCP tests also cover typed forwarding on every platform.
+
+Focused current-source coverage passes at 100% for both host settings and its
+MCP adapter. Full native regression passes **1,176 tests, 0 failed, 8 ignored**
+(four workers, 110.56 seconds). Frontend/browser checks report zero errors and
+warnings. Coverage parser/source-provenance tests: 13 passed. Source maps and
+coverage paths were updated for the host split into modules below 500 lines.
+
+Actual Settings UI saved a real loopback listener in process 69276 and reopened
+it after native restart in process 43848 with the exact bind and discovery
+settings. An old-revision disable failed while the listener remained enabled;
+the normal UI switch then committed disable at revision 2 and stopped it.
+Invalid retired listener/firmware files remained unchanged. Evidence:
+`.research/sqlite/live-listener-{prepare,verify}.log`, `listener-restart.json`,
+`host-settings-full-native.log`, `host-settings-frontend-check.log` and
+`.research/sqlite-host-settings-coverage/`. The first harness attempts needed
+control-role and WebView-ready waits; the recorded final phases pass. No physical
+ESP32 flashing or simulator qualification is claimed. Host publication/head
+atomicity and sealed trust/client/MCP state remain the next S5/S6 work.
+
+Full desktop companion coverage also passes after all 1,176 tests (419.20
+seconds instrumented): host core 78.88%, commands 71.47%, presentation helpers
+94.74%, listener/firmware and MCP settings 100%, widgets/workspace/MCP transfer
+100%, workspace validation 98.94%, local firmware metadata 100%. The completed
+profile was re-exported with unique source paths after verifying the full native
+source stamp; `.research/sqlite-host-coverage/source-evidence.json` and
+`summary.json` preserve every module separately. The coverage runner now uses
+unique report paths and streams future native progress to its log file.
+
+The live designer was rechecked in process 43848: exact workspace content still
+matched its earlier saved evidence, and opening unchanged content left revision
+11 unchanged. The frontend no longer performs a redundant save during hydration.
+SQLite read-only inspection confirms listener revision 2 contains JSON null, and
+integrity_check is ok. Final frontend/browser checks remain clean.
+
+## S6 encrypted trust and MCP checkpoint
+
+Native host/client trust and TLS identity now use sealed SQLite BLOBs. Tests
+cover actual Windows DPAPI reopen, ciphertext-only database and online backup,
+missing/locked keys, corrupt ciphertext, writer contention, stale saves and
+Forget. Availability probes do not advance the revision of a loaded owner.
+Retired secret files are ignored. Android's Rust bridge now supplies a native
+Keystore sealer; its old SharedPreferences authority was removed.
+
+The real designer/pairing browser acceptance passed against the isolated native
+Cockpit. Restarting process 31460 as 35948 preserved the host ID, CA pin, browser
+credential, exact publication hash and assignment. The browser reconnected
+without a pairing fragment. Invalid retired secret files remained untouched;
+the test then revoked its browser installation. Chromium trusted only the leaf
+SPKI independently verified against this host's CA, without changing the OS
+trust store. Evidence: `.research/sqlite/live-encrypted-pairing.log`,
+`live-trust-{prepare,verify}.log` and `trust-restart.json`.
+
+The real official MCP SDK acceptance passed, including native UI agreement,
+exact settings revisions, atomic credential rotation/revocation, read/write
+scope checks, protocol/resource/tool checks, concurrent profile writes and
+constant/NOT/NOT runtime evaluation. Restart retained the credential and saved
+profile but did not replay the applied owner. Evidence:
+`.research/sqlite/live-mcp-sqlite.log` and
+`.research/mcp-native/1792809475936/evidence.json`. The visual graph assertion
+uses the current overview; processing nodes are verified through its shared
+native owner and runtime, not a removed detailed-graph toggle.
+
+All 38 focused MCP native tests pass, including real HTTP resources and bounded
+admission plus Tauri mock IPC serialization/revision/rotation tests. Windows
+library IPC tests require the same v6 Common Controls manifest as the native
+application. MCP production coverage passes at the unchanged 71% gate: server
+91.61%, authorization 97.06%, credential operations 97.67%, HTTP transport
+92.16%, SQLite credential store 97.40%, typed integration tools 91.67%.
+`.research/sqlite-mcp-coverage/evidence.json` stamps the native source set.
+
+Companion service tests: 142 passed; serial: 38 passed. All measured companion
+modules pass coverage, including encrypted SQLite 100%, TLS 100%, client 91.56%
+and native protection adapters 94.53%. Shared persistence tests/coverage pass:
+core 96.14%, repositories 99.03%, paths 93.55%, passive namespace discovery
+98.44%, profile indexes 100%, observation writer 96.77%. Frontend MCP tests and
+checks pass (zero Svelte diagnostics); MCP coverage is 96.20% lines, 92.86%
+branches, 93.94% functions. Desktop/browser production builds pass, with the
+existing bundle-size advisory. Dependent mapping-host and serial checks pass.
+
+Android's Rust sealing codec test passes. This machine has no Android SDK/NDK
+or mobile Rust target, so Android Keystore execution and iOS qualification are
+unverified. The companion application's intentional mobile-only build guard
+remains intact; a Windows cargo check correctly refuses that application.
+Native public-content cache conversion and atomic host archive/head/assignment
+transactions remain required S5/S6 work. This checkpoint does not complete S6
+or the parent feature.
+
+The full native suite passes: 1,184 passed, zero failed, eight ignored (112.39s).
+Its first run exposed a corruption fixture still writing the retired `.dpapi`
+file; that fixture now corrupts `secrets/companion-host` and retains the invalid
+old file as evidence that it has no authority. The final Windows application
+also builds and starts successfully. Tauri's embedded application manifest is
+retained; the linker-generated Common Controls manifest is used by library
+tests without duplicating the application's resource. Evidence:
+`.research/sqlite/secrets-full-native.log` and `dev-secrets-final.log`.
+
+The final rebuilt executable also passes the real SDK/UI/restart acceptance
+(67.83s), recorded in `.research/mcp-native/1792810493675/evidence.json`.
+The restart helper now uses noninteractive Windows PowerShell and basic HTTP
+parsing; its previous interactive page-parser prompt could stall an automated
+restart. Closed CDP connections fail immediately during cleanup. The final MCP
+coverage rerun remains green and includes `build.rs` in its source stamp.
+
+## S6 native companion public cache
+
+The native application now routes its public cache, selected panel and remembered
+page through a fixed SQLite IPC adapter. Browser preview retains its explicit
+IndexedDB adapter. All 147 companion service tests and 38 serial tests pass;
+the cache owner and native-client cache validation modules both reach 100%
+production line coverage at the unchanged 71% gate. Tests cover exact reopen,
+stale/blocked commits, corrupt records and explicit Clear, byte/entry bounds,
+selection and page identity, and actual Windows DPAPI proving public Clear
+preserves the credential in the same namespace without plaintext in SQLite.
+Evidence: `.research/sqlite-native-cache-coverage/` and
+`.research/sqlite/client-cache-coverage.log`.
+
+All 30 companion frontend tests pass. Native adapter coverage is 100% for lines,
+branches and functions; cache logic reaches 90.43%, 96.21% and 87.27%
+respectively. Svelte check reports zero errors/warnings and the companion UI
+production build passes. Evidence: `.research/sqlite/client-cache-frontend-*`
+and `client-cache-ui-build.log`. Mobile IPC/Keystore execution remains
+unqualified on this Windows machine without the required SDK or device; the
+mobile-only build guard remains unchanged. This does not complete S5/S6's
+remaining atomic host publication/head/assignment transaction work.
+
+## S5/S6 atomic host snapshot checkpoint
+
+Native host records now commit encrypted trust/assignments together with public
+archives and explicit saved heads. Retired panel/head JSON readers and writers
+are removed. Startup loads and validates the complete snapshot before native
+transports. Tests cover failed Save/head/assignment/prune rollback, stale owners,
+corrupt or orphaned content, ciphertext preservation and SQL profile-reference
+retention. A profile change between reference capture and commit causes a
+transaction conflict; it cannot erase a referenced publication or advance the
+profile revision.
+
+All 155 companion service tests and 38 serial tests pass. Atomic host content,
+atomic encrypted storage and sealed store coverage each reach 100% production
+lines. All 24 shared persistence tests pass; core coverage is 96.43%, including
+concurrent related-record snapshot and revision-check tests. The complete
+native suite passes: 1,181 passed, zero failed, eight ignored (113.13s).
+Desktop companion coverage also passes after all 1,181 tests (450.11s): host
+core 79.38%, commands 71.15%, presentation 94.74%, native panel projections
+85.71%, settings/widgets/workspace/MCP transfer 100% except workspace validation
+98.94%. All thresholds remain 71%. Evidence:
+`.research/sqlite/host-atomic-*`, `.research/sqlite-atomic-host-coverage/`,
+`.research/sqlite-atomic-host-desktop-coverage/` and
+`.research/sqlite-persistence-atomic-host/`.
+
+The actual panel builder created and positioned a Toggle, compiled, tried,
+saved and assigned it to an authenticated browser; real input reached its native
+instance. Evidence: `.research/generic-panel-builder-native/1792816311326/`.
+Process 62788 then restarted as 14432 with the same host ID, CA, exact public
+archive bytes, saved heads and assignment. The exact public/trust revision pair remained unchanged across restart;
+assignment-only writes do not rewrite the public archive. The browser reconnected without a pairing fragment;
+invalid retired panel/head and trust files remained untouched. Evidence:
+`.research/sqlite/live-atomic-trust-{prepare,verify}.log` and
+`atomic-trust-restart.json`. The test revokes its browser credential afterward.
+
+A fresh namespace stays free of host archives and sealed companion records
+through passive inventory, the Settings UI, MCP software profile workflows and
+full restart. Startup does not replay workspace publications.
+
+Real MCP SDK/UI/restart acceptance passes (53.05s), recorded at
+`.research/mcp-native/1792816241478/evidence.json`. Companion/widget/designer
+frontend tests and existing coverage gates pass, and frontend/browser checks
+report zero diagnostics. The first frontend run lacked loopback permission;
+the successful run used the required native test permissions.
+
+Live checks use `.research/sqlite/atomic-host/cockpit.sqlite3`, a fresh
+development namespace for the unversioned private host envelope. Earlier test
+databases remain intact. This checkpoint does not mark S5/S6 complete: bulk
+portal selection and remaining companion MCP parity still need implementation,
+followed by S7 preferences, S8 journals and S9 backup/restore/final audit.
+
+## S5/S6 bulk selection and MCP companion controls
+
+A single guarded Save now commits a validated publication, explicit head and all
+direct selections. Tests cover add/remove/reuse, preserved profile ownership,
+malformed/unpaired/incompatible/ambiguous targets, stale tokens, cross-process
+CAS, busy writers, source registration/removal failure and failed compensation.
+Every rejected case preserves durable authority; changed inputs remain disarmed.
+The portal no longer emits a sequence of direct assignment calls after Save.
+
+All 160 companion service tests and 38 serial tests pass. The selection module
+has 100% production line coverage. Full native regression passes: 1,185 passed,
+zero failed, eight ignored (52.28s). Full desktop coverage passes after 1,185
+tests (426.06s): host 79.38%, commands 71.63%, presentation 94.74%, native panel
+projection 85.71%, remaining measured storage/MCP modules at least 98.94%.
+Final MCP permission/status refinements pass a separate current-source
+focused coverage run: controls 20/20 and catalogue 31/31 production lines (100%).
+Evidence: .research/sqlite-companion-tools-final-coverage/. Earlier controls
+annotations are superseded by that run.
+All existing frontend companion gates and Svelte/browser checks pass. Evidence:
+.research/sqlite/bulk-host-*, .research/sqlite-bulk-host-coverage/ and
+.research/sqlite-bulk-host-desktop-coverage/.
+
+The actual dev panel builder compiled, saved and assigned a Toggle through the
+new bulk Save; real browser input reached its native instance. Evidence:
+.research/generic-panel-builder-native/1792817041606/. The extended real SDK
+acceptance passes (57.53s), including read scope, pairing offer/cancel, owned
+base64 upload, exact offsets, guarded Save/replay, native UI agreement, stale
+prune rejection and restart: .research/mcp-native/1792817204560/evidence.json.
+An initial extra-client connection failed authentication; the isolated probe
+and repeat acceptance succeeded. Test-owned credentials were revoked.
+Final-source fresh-namespace SDK acceptance also passes (52.60s): inventory,
+listener and USB status reads leave zero companion trust/TLS/archive rows
+through software profile operations, Settings UI and full restart. Read tokens
+cannot discover certificate initialization. Evidence:
+.research/sqlite/live-bulk-passive-final.log.
+
+S7 UI/desktop preferences, S8 recovery journals and S9 backup/restore plus the
+final writer/authority audit remain outstanding. No all-SQLite completion or
+mobile/physical qualification is claimed at this checkpoint.

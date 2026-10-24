@@ -7,9 +7,10 @@ export type CanvasPoint = {x:number;y:number};
 export type CanvasViewport = CanvasPoint & {zoom:number};
 export type CanvasNode = {id:string;name:string;kind:'resource'|'processing'|'virtual'|'desktop';category:string;position:CanvasPoint;desktop?:DeepReadonly<ProfileDesktopOutput>;resource?:DeepReadonly<ProfileDocument['resources'][number]>;processing?:DeepReadonly<ProfileDocument['processingNodes'][number]>;virtual?:DeepReadonly<ProfileDocument['virtualOutputs'][number]>;assignment?:DeepReadonly<ProfileLocalAssignment>;observation?:DeepReadonly<ResourceSummary>};
 export const PROFILE_TRANSFORM_WIDTH=224,PROFILE_TRANSFORM_HEADER=78,PROFILE_TRANSFORM_PORT_ROW=28,PROFILE_TRANSFORM_BOTTOM=8;
-type CanvasNodeGeometry=Partial<Pick<CanvasNode,'kind'|'processing'>>;
+type CanvasNodeGeometry=Partial<Pick<CanvasNode,'kind'|'processing'>>&{width?:number;height?:number};
 /** Named transform ports determine the card height; resource cards retain their footer. */
 export function canvasNodeSize(node:CanvasNodeGeometry):{width:number;height:number}{
+  if(Number.isFinite(node.width)&&Number.isFinite(node.height)&&node.width!>0&&node.height!>0)return{width:node.width!,height:node.height!};
   return node.kind==='processing'?{width:PROFILE_TRANSFORM_WIDTH,height:PROFILE_TRANSFORM_HEADER+PROFILE_TRANSFORM_BOTTOM+Math.max(1,node.processing?.inputs.length??0,node.processing?.outputs.length??0)*PROFILE_TRANSFORM_PORT_ROW}:{width:PROFILE_BLOCK_WIDTH,height:PROFILE_BLOCK_HEIGHT};
 }
 /** Attachments sit exactly on the block border, centered on their named port row. */

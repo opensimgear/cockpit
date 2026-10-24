@@ -10,28 +10,28 @@ function revision(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error('Invalid designer storage revision. Reload the designer.');
   return value as number;
 }
-function response(value: unknown): { revision: number; value: unknown } {
+function response(value: unknown): { revision: number; libraryRevision:number; value: unknown } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid designer storage response.');
   const record = value as Record<string, unknown>;
-  return { revision: revision(record.revision), value: record.value };
+  return { revision: revision(record.revision), libraryRevision:revision(record.libraryRevision), value: record.value };
 }
 
 export function sqliteDesignerStorage<T>(invoke: PersistenceInvoke): DesignerStorage<T> {
-  let expected = 0;
+  let expected = 0, expectedLibrary=0;
   return {
     async read() {
       const result = await invoke('persistence_workspace', { request: { operation: 'read' } });
       if (!result || typeof result !== 'object' || !Object.hasOwn(result, 'value')) throw new Error('Invalid designer storage response.');
       const record = response(result);
-      expected = record.revision;
+      expected = record.revision; expectedLibrary=record.libraryRevision;
       return record.value === null ? undefined : record.value;
     },
     async write(value) {
       const record = response(await invoke('persistence_workspace', {
-        request: { operation: 'write', expectedRevision: expected, value },
+        request: { operation: 'write', expectedRevision: expected, expectedLibraryRevision:expectedLibrary, value },
       }));
       if (record.revision !== expected + 1) throw new Error('Designer save acknowledgement changed. Reload before editing again.');
-      expected = record.revision;
+      expected = record.revision; expectedLibrary=record.libraryRevision;
       return record.value as T | undefined;
     },
   };

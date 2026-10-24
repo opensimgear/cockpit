@@ -6,7 +6,7 @@ import { canonicalWidget } from '../../../packages/widget-runtime/src/artifact.t
 import { createCompiledAssetCache, browserCompiledCacheStore } from './compiled-cache.ts';
 
 export async function fixture(color='#48ae7e') {
-  const source={formatVersion:2,id:'fixture-cache',revision:1,title:'Lamp',size:{width:16,height:16},parameters:[],behavior:{version:1,signals:[{id:'value',source:'feedback',type:'boolean',initial:false}],events:[{id:'feedback',updates:['value']}],regions:[]},visualDomains:[{signal:'value',values:[false,true]}],inputs:[],outputs:[{id:'status',label:'Status',signal:'value',type:'boolean'}],hitRegions:[],scene:[{id:'square',kind:'rectangle',x:0,y:0,width:16,height:16,fill:{op:'if',condition:{ref:'value'},then:{literal:color},else:{literal:'#142330'}}}],motions:[],sounds:[]};
+  const source={id:'fixture-cache',title:'Lamp',size:{width:16,height:16},parameters:[],behavior:{version:1,signals:[{id:'value',source:'feedback',type:'boolean',initial:false}],events:[{id:'feedback',updates:['value']}],regions:[]},visualDomains:[{signal:'value',values:[false,true]}],inputs:[],outputs:[{id:'status',label:'Status',signal:'value',type:'boolean'}],hitRegions:[],scene:[{id:'square',kind:'rectangle',x:0,y:0,width:16,height:16,fill:{op:'if',condition:{ref:'value'},then:{literal:color},else:{literal:'#142330'}}}],motions:[],sounds:[]};
   const bundle=await compileWidget(source,{motion:false,audio:false});
   return createCompiledPanel({id:'fixture-panel',title:'Lamp panel',viewports:[{pageId:'page',title:'Page',width:320,height:320}]},[{id:'lamp',pageId:'page',label:'Lamp',bounds:{x:0,y:0,width:.05,height:.05},bundle}]);
 }

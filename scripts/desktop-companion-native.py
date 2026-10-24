@@ -279,8 +279,14 @@ def macro_focus_return(service, peer, owner, first, second, evidence):
     assert known_false(intermediate["output"]), "The original native macro did not reach its intermediate release while out of scope"
     assert int(intermediate["capturedUs"]) < start_us + MACRO_STEPS[2]["afterUs"] - 1_000_000, "Focus-return setup exceeded the macro's generous pending-step window"
     first.with_suffix(".focus").write_text("focus")
-    returned = mapping.wait_for(lambda: (status if status["runtime"]["state"] == "waiting" and "route-macro" in status["runtime"]["waitingNeutral"] else None)
-        if (status := desktop_status(service)) else None, "Macro focus return did not require fresh source neutral")
+    def waiting_macro():
+        status = desktop_status(service)
+        evidence['macroReturnAttempt'] = dict(desktop=status, receiver=receiver(first), source=inspection())
+        return status if status['runtime']['state'] == 'waiting' and 'route-macro' in status['runtime']['waitingNeutral'] else None
+    try:returned = mapping.wait_for(waiting_macro, 'Macro focus return did not require fresh source neutral')
+    except AssertionError:
+        first.with_name('macro-return-failure.json').write_text(json.dumps(evidence['macroReturnAttempt'],indent=2))
+        raise
     send(False)
     def fresh_neutral():
         status, sample = desktop_status(service), inspection()
@@ -376,7 +382,7 @@ def make_profile(service, instance, publication):
         "to": dict(nodeId="desktop", portId=action["portId"])}) for action in actions[:3]]
     document["processingNodes"] = [dict(id="encoder-edge", name="Visible encoder press edge", operation=dict(kind="event-edge", edge="rising"),
         inputs=[mapping.port("in", observed["encoder"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", event, "output")]),
-        dict(id="pointer-normalize", name="Visible raw axis normalization", operation=dict(kind="scale", factor=1 / 32768, offset=0),
+        dict(id="pointer-normalize", name="Visible raw axis normalization", operation=dict(kind="scale", factor=1 / 65535, offset=0),
         inputs=[mapping.port("in", observed["axis"]["descriptor"]["contract"], "input")], outputs=[mapping.port("out", normalized, "output")]),
         dict(id="focus-macro", name="Visible macro cancelled at desktop focus boundary",
             operation=dict(kind="builtin", inputs=["in"], rule=dict(kind="macro", steps=MACRO_STEPS)),
@@ -404,7 +410,7 @@ def main():
     args = parser.parse_args()
     assert not args.inject or os.environ.get("OSG_DESKTOP_NATIVE_INJECT") == "1", "Native injection needs explicit test opt-in"
     service = NativeCockpit(args.bridge)
-    publication = json.loads((ROOT / "crates/companion-service/tests/fixtures/c1-flight-publication.json").read_text())
+    publication = json.loads((ROOT / "scripts/fixtures/compiled-flight-publication.json").read_text())
     instance = "desktop-acceptance-" + uuid.uuid4().hex[:12]
     before = service.profiles("profile_status")["profileSession"]
     desktop_before = mapping.state(service, "profile_desktop_status", "desktop")
@@ -445,7 +451,9 @@ def main():
             args.receiver.with_suffix(".focus").write_text("focus")
             mapping.wait_for(lambda: desktop_status(service).get("recentApplication", {}).get("pid") == identity["pid"], "Native foreground observer did not see the first receiver")
             selected = mapping.state(service, "profile_desktop_capture_application", "desktop")
-            assert selected["application"]["pid"] == identity["pid"], selected
+            assert selected["recentApplication"] == identity and selected["capturedApplicationReference"], selected
+            document['desktopOutputs'][0]['scope'] = dict(kind='application', applicationReference=selected['capturedApplicationReference'])
+            saved = mapping.save(service, document, assignments, expected=saved['revision'])
             mapping.state(service, "profile_desktop_configure", "desktop", enabled=True, scope=dict(kind="application"))
             service.profiles("profile_stop")
             apply_attempted = True

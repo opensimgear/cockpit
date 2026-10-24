@@ -3,7 +3,7 @@ use super::*;
 use base64::{engine::general_purpose::STANDARD,Engine};
 const LIMIT:usize=64*1024*1024;
 const CHUNK:usize=48*1024;
-pub(super) struct Upload {id:String,client:String,revision:u64,expected:usize,hash:String,bytes:Vec<u8>,created:Instant}
+pub(super) struct Upload {id:String,client:String,revision:u64,library_revision:u64,expected:usize,hash:String,bytes:Vec<u8>,created:Instant}
 impl Tools {
     pub(super) fn workspace_tool(&self,name:&str,args:&Value,client:&str)->Result<Value,Value> {
         let fail=|message:&str|failure("invalid_workspace_transfer",message,false);
@@ -15,7 +15,7 @@ impl Tools {
             let offset=args["offset"].as_u64().unwrap_or(0) as usize;
             if offset>bytes.len(){return Err(fail("Workspace offset is past the end."));}
             let end=(offset+CHUNK).min(bytes.len());
-            return Ok(json!({"revision":state["revision"],"workspaceHash":hash,"totalBytes":bytes.len(),"offset":offset,"base64":STANDARD.encode(&bytes[offset..end]),"nextOffset":if end<bytes.len(){Some(end)}else{None}}));
+            return Ok(json!({"revision":state["revision"],"libraryRevision":state["libraryRevision"],"workspaceHash":hash,"totalBytes":bytes.len(),"offset":offset,"base64":STANDARD.encode(&bytes[offset..end]),"nextOffset":if end<bytes.len(){Some(end)}else{None}}));
         }
         let mut uploads=self.workspace_uploads.lock().unwrap_or_else(|p|p.into_inner());
         uploads.retain(|u|u.created.elapsed()<Duration::from_secs(600));
@@ -23,7 +23,7 @@ impl Tools {
             let expected=args["totalBytes"].as_u64().ok_or_else(||fail("Provide totalBytes."))? as usize;
             if uploads.iter().any(|u|u.client==client) || uploads.len()>=4 || uploads.iter().map(|u|u.expected).sum::<usize>()+expected>LIMIT {return Err(fail("Workspace transfer capacity is occupied. Abort an earlier upload or retry after it expires."));}
             let id=uuid::Uuid::new_v4().to_string();
-            uploads.push(Upload{id:id.clone(),client:client.into(),revision:args["expectedRevision"].as_u64().ok_or_else(||fail("Provide expectedRevision."))?,expected,hash:args["workspaceHash"].as_str().unwrap().into(),bytes:vec![],created:Instant::now()});
+            uploads.push(Upload{id:id.clone(),client:client.into(),revision:args["expectedRevision"].as_u64().ok_or_else(||fail("Provide expectedRevision."))?,library_revision:args["expectedLibraryRevision"].as_u64().ok_or_else(||fail("Provide expectedLibraryRevision."))?,expected,hash:args["workspaceHash"].as_str().unwrap().into(),bytes:vec![],created:Instant::now()});
             return Ok(json!({"uploadId":id,"chunkBytes":CHUNK,"expiresInSeconds":600}));
         }
         let index=uploads.iter().position(|u|u.client==client && Some(u.id.as_str())==args["uploadId"].as_str()).ok_or_else(||fail("Workspace upload expired or belongs to another client."))?;
@@ -37,10 +37,10 @@ impl Tools {
         }
         if upload.bytes.len()!=upload.expected || format!("sha256:{:x}",Sha256::digest(&upload.bytes))!=upload.hash {return Err(fail("Workspace upload is incomplete or its content hash differs."));}
         let value:Value=serde_json::from_slice(&upload.bytes).map_err(|_|fail("Invalid workspace JSON."))?;
-        let saved=self.native("designer_workspace_write",json!({"expectedRevision":upload.revision,"value":value}),client,Some("designerWorkspace"))?;
+        let saved=self.native("designer_workspace_write",json!({"expectedRevision":upload.revision,"expectedLibraryRevision":upload.library_revision,"value":value}),client,Some("designerWorkspace"))?;
         // Failed native commits keep the upload for an explicit retry. Successful
         // responses contain only the acknowledgement, never a 64 MiB MCP reply.
         uploads.remove(index);
-        Ok(json!({"saved":true,"revision":saved["revision"]}))
+        Ok(json!({"saved":true,"revision":saved["revision"],"libraryRevision":saved["libraryRevision"]}))
     }
 }

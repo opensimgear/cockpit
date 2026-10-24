@@ -133,7 +133,7 @@ impl Runtime {
             (hub, path.clone())
         } else if create {
             (Hub::new(format!("host-{}", uuid::Uuid::new_v4()), self.provider.clone()),
-                std::env::temp_dir().join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
+                std::env::temp_dir().canonicalize().map_err(|error|error.to_string())?.join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
         let _ = self.metadata.set(Metadata {hub, directory});
         Ok(self.metadata.get().expect("metadata initialized under its gate"))

@@ -153,3 +153,10 @@ test('malformed foreign entries and invalid routes never reach the restoration c
   ui.navigation.record({view:'unknown'});assert.equal(ui.entries.length,2);
   ui.navigation.dispose();ui.navigation.record({view:'preferences'});assert.equal(ui.entries.length,2);
 });
+
+
+test('widget content editors have restorable navigation entries',()=>{
+ const route={view:'companions',companion:{kind:'widget',id:'capsule'}};
+ assert.deepEqual(plain(cockpitRoute(route)),route);
+ assert.equal(cockpitRoute({view:'companions',companion:{kind:'widget',id:''}}),null);
+});

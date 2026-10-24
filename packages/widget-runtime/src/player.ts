@@ -1,4 +1,4 @@
-import { createBehaviorState, reduceBehavior, type BehaviorEvent, type BehaviorEffect, type BehaviorState, type Scalar } from './behavior.ts';
+import { createBehaviorState, reduceBehavior, type BehaviorEvent, type BehaviorEffect, type BehaviorState, type BehaviorTrace, type Scalar } from './behavior.ts';
 import { decodeWidgetBase64, validatePcmWave, type CompiledWidgetArtifact, type CompiledWidgetBundle, type CompiledMotion, type CompiledSound } from './artifact.ts';
 
 /** Static frames are selected by finite samples and region states, never by authoring layers. */
@@ -19,7 +19,7 @@ export function selectCompiledFrame(artifact: CompiledWidgetArtifact, state: Pic
 
 interface Playback { motion: CompiledMotion; startedAt: number; start: number; end: number; duration: number }
 interface ScalarPlayback { start: number; target: number; current: number; startedAt: number; duration: number }
-export interface PlayerUpdate { state: BehaviorState; effects: BehaviorEffect[]; frameId: string; error?: string }
+export interface PlayerUpdate { state: BehaviorState; effects: BehaviorEffect[]; frameId: string; error?: string; trace?:BehaviorTrace[] }
 
 /** The behavior reducer completes synchronously before any decorative playback begins. */
 export class CompiledWidgetPlayer {
@@ -88,7 +88,7 @@ export class CompiledWidgetPlayer {
     const frame = this.presentation(event.nowMs);
     if (event.type === 'reset') { this.playback = undefined; this.scalars.clear(); this.desired = this.shown = selectCompiledFrame(this.artifact, this.state); }
     else this.target(frame, event.nowMs);
-    return { state: this.state, effects: result.effects, frameId: this.present(event.nowMs), ...(result.error ? { error: result.error } : {}) };
+    return { state: this.state, effects: result.effects, frameId: this.present(event.nowMs), ...(result.trace.length?{trace:result.trace}:{}), ...(result.error ? { error: result.error } : {}) };
   }
   sample(nowMs: number): PlayerUpdate { return this.dispatch({ type: 'tick', nowMs }); }
   setMotionEnabled(enabled: boolean): void { this.motionEnabled = enabled; if (!enabled) this.snap(); }

@@ -74,7 +74,10 @@ while its source is alive.
 Uncertain submission or interrupted workers retain a recovery record. Recovery
 attempts releases for recorded possible holds and leaves output stopped; it does
 not retry clicks or shortcuts. Physical keyboard holds share the OS stream with
-injected holds. Windows pointer settings still affect relative motion, and a
+injected holds. Releasing a mapped key can send key-up while the same physical
+key is still held; releasing the physical key can likewise clear a mapped hold.
+The ownership ledger keeps Cockpit actions separate, but cannot isolate physical
+keyboard state. Windows pointer settings still affect relative motion, and a
 game's native controller bindings can react alongside mapped keys.
 
 Windows provides native keyboard/mouse submission. Linux/macOS support portable

@@ -25,7 +25,7 @@ test('fresh dev initialization seeds SQL once and restart preserves edits',{skip
     assert.ok(rows.some(r=>r.domain==='widgets'&&r.key==='library'));
     assert.ok(!rows.some(r=>['secrets','security','recovery-profile','recovery-output','recovery-desktop','recovery-visibility'].includes(r.domain)));
     assert.ok((await readdir(configRoot)).every(name=>!name.endsWith('.json')));
-    const widgets=(await native({command:'widgets_list',offset:0,limit:32})).widgetLibrary;assert.ok(widgets.widgets.some(w=>w.id==='toggle-v2'));
+    const widgets=(await native({command:'widgets_list',offset:0,limit:32})).widgetLibrary;assert.ok(widgets.widgets.some(w=>w.id==='toggle'));
     if(phase==='prepare'){
       assert.equal(demo.name,'Dev · Signals');assert.equal(demo.revision,1);
       const open=page.getByRole('button',{name:'Open profiles',exact:true});

@@ -56,7 +56,7 @@
   $effect(()=>{const states=widgets.filter(widget=>bundles.get(widget.id)!.artifact.sounds.length>0).map(widget=>audioStates[widget.id]??'locked');const order:AudioAvailability[]=['blocked','unsupported','muted','hidden','locked','available'];onaudio?.(order.find(status=>states.includes(status))??'unsupported');});
 </script>
 
-<div class="compiled-panel" aria-label={publication.document.ui.title} data-publication-hash={publication.publicationHash} style:aspect-ratio={viewport?`${viewport.width}/${viewport.height}`:undefined}>
+<div class="compiled-panel" style:background={viewport?.background??'#0d1820'} aria-label={publication.document.ui.title} data-publication-hash={publication.publicationHash} style:aspect-ratio={viewport?`${viewport.width}/${viewport.height}`:undefined}>
   {#each widgets as widget (`${publication.publicationHash}:${widget.id}`)}
     <section class="compiled-panel-widget" data-widget-id={widget.id} style:left={`${widget.bounds.x*100}%`} style:top={`${widget.bounds.y*100}%`} style:width={`${widget.bounds.width*100}%`} style:height={`${widget.bounds.height*100}%`} aria-label={widget.label}>
       <CompiledWidget bind:this={players[widget.id]} bundle={bundles.get(widget.id)!} prepared={prepared?.[widget.id]} name={widget.label} {interactive} {motion} {muted} onready={()=>{ready.add(widget.id);applyFeedback(widget.id);}} onoutput={value=>output(widget.id,value.port,value.value)} onaudio={status=>{if(audioStates[widget.id]!==status)audioStates={...audioStates,[widget.id]:status};}} {onerror}/>

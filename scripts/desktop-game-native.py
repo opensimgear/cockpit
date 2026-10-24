@@ -226,7 +226,7 @@ def main():
     settings_existed = args.desktop_settings_file.exists()
     settings_before = args.desktop_settings_file.read_bytes() if settings_existed else None
     evidence.update(installation=game, desktopBefore=before, automaticBefore=service.profiles("profile_automatic_status")["automatic"])
-    publication = json.loads((ROOT / "crates/companion-service/tests/fixtures/c1-flight-publication.json").read_text())
+    publication = json.loads((ROOT / "scripts/fixtures/compiled-flight-publication.json").read_text())
     instance, peer, identity, listener_enabled = "desktop-game-" + uuid.uuid4().hex[:12], None, None, None
     try:
         listener_enabled = companion.operator(service, "companion_status").get("listener", {}).get("enabled", False)

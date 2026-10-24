@@ -1,6 +1,8 @@
 <script lang="ts">
   import { uiPreference, uiPreferences } from './lib/persistence/ui-preferences';
   const theme = uiPreference('theme');
+  import PageHeader from './lib/PageHeader.svelte';
+
   import Notifications from './lib/Notifications.svelte';
   import ActivationProgress from './lib/ActivationProgress.svelte';
   import { notify as showNotification } from './lib/notifications';
@@ -527,7 +529,7 @@
         {:else if view === 'overview'}
           <OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
-          <div class="page-heading"><div><div class="eyebrow">THE RECORD OF YOUR RIG</div><h1>Activity</h1><p>Setup sessions, saved changes, and connection events.</p></div><span class="quiet-tag">{events.length} events</span></div>
+          <PageHeader title="Activity" eyebrow="THE RECORD OF YOUR RIG" subtitle="Setup sessions, saved changes, and connection events.">{#snippet actions()}<span class="quiet-tag">{events.length} events</span>{/snippet}</PageHeader>
           <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
         {:else if view === 'preferences'}
           <SettingsPanel {light} onToggleTheme={toggleTheme} themeBusy={$theme.busy || !$theme.ready} />
@@ -540,8 +542,7 @@
         {:else if view === 'devices'}
           <!-- Shared inventory stays mounted during configuration. -->
         {:else if view === 'device' && selected}
-          <button class="text-button device-back" onclick={() => { view = 'devices';recordRoute(); }}><Icon name="arrow" size={14} />Back to devices</button>
-          <div class="page-heading"><div><div class="eyebrow">DEVICE WORKSPACE</div><h1>{selected.settings.label}</h1><p>Configuration, live controller inputs and manual device actions.</p></div></div>
+          <PageHeader title={selected.settings.label} eyebrow="DEVICE WORKSPACE" subtitle="Configuration, live controller inputs and manual device actions." onback={() => { view = 'devices';recordRoute(); }} backLabel="Back to devices"/>
           {#if lifecycle && gateway?.layoutPending}<div class="reconnect-notice" role="status"><Icon name="usb" size={19} /><div><strong>Updating USB controllers…</strong><p>The gateway saves this change and reconnects automatically.</p></div></div>
           {:else if needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>{physicalGateway ? 'Controller layout changes pending' : `${gatewayName} needs a reconnect`}</strong><p>Apply the pending controller layout to reconnect USB. Check your game bindings afterward.</p></div><button class="secondary-button" disabled={gatewayBusy || !gatewayConnected || gateway?.reconnecting || !!gateway?.claimedModules?.length} onclick={() => reconnectGateway(selected.gatewayId)}><Icon name="usb" size={15} />{physicalGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}
 

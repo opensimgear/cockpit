@@ -147,11 +147,11 @@ test('the native UI and MCP widget source repository survives a process restart'
     const status=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('persistence_status'));
     const evidencePath=resolve('.research/sqlite/widget-restart.json');
     if(process.env.OSG_SQLITE_WIDGET_RESTART_PHASE==='prepare') {
-      const initial=await native({command:'widget_get',id:'toggle-v2'});
+      const initial=await native({command:'widget_get',id:'toggle'});
       const bundle=structuredClone(initial.widgets??initial.widgetLibrary??initial);
-      assert.equal(bundle.bundleVersion,2);
-      const source=bundle.library.definitions[0];source.id='sqlite-widget-'+Date.now();source.title='SQLite source acceptance';source.revision=1;
-      await native({command:'widget_save',bundle,expectedVersion:null});
+      assert.ok(Array.isArray(bundle.definitions));
+      const source=bundle.definitions[0];source.id='sqlite-widget-'+Date.now();source.title='SQLite source acceptance';
+      await native({command:'widget_save',bundle:{definitions:bundle.definitions},expectedRevision:bundle.revision});
       const saved=await native({command:'widget_get',id:source.id});
       await writeFile(evidencePath,JSON.stringify({processId:status.processId,id:source.id,saved},null,2));
       await writeFile(resolve(dirname(status.path),'widgets-v1.json'),'retired widget file');

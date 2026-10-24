@@ -9,8 +9,14 @@
   import { createOrderedInputQueue } from '../../companion/src/lib/input-queue';
   import { BrowserTransport, readCredential, saveCredential, clearCredential, type Credential } from './transport';
   import { createBrowserFeedback, type FeedbackIdentity, type FeedbackSamples } from './feedback';
+  import { panelResolutionWarning } from './panel-resolution';
   let credential=$state<Credential|null>(null), error=$state(''), warning=$state(''), status=$state('Connecting…');
   let panel=$state<CompiledPanelPublication|null>(null), pageId=$state('');
+  let displayWidth=$state(0), displayHeight=$state(0), pixelRatio=$state(1);
+  const displayedPage=$derived(pageId||panel?.document.ui.pages[0].id);
+  const resolutionWarning=$derived(panelResolutionWarning(panel?.document.presentation.viewports.find(viewport=>viewport.pageId===displayedPage),displayWidth,displayHeight,pixelRatio));
+  const resolutionKey=$derived(`${panel?.publicationHash}:${pageId}:${resolutionWarning}`);
+  let dismissedResolution=$state('');
   let panelView=$state<{reset:()=>void;suspend:()=>void;enableAudio:()=>Promise<void>}>();
   let panelSurfaces=$state.raw<PreparedCompiledSurfaces>(),viewRevision=$state(0);
   let preparing:AbortController|undefined;
@@ -213,6 +219,7 @@
   });
 </script>
 
+<svelte:window bind:devicePixelRatio={pixelRatio}/>
 <div class="shell" class:fullscreen>
   <header><strong>OpenSimGear <span>Companion</span></strong><div><button onclick={install}>↓ Install app</button><button onclick={toggleFullscreen}>⛶ {fullscreen?'Exit fullscreen':'Fullscreen'}</button></div></header>
   {#if installHelp}<p class="help">Use your browser menu → Install app or Add to home screen. If installation is unavailable, bookmark this page for quick access. Keep using this browser profile to retain pairing.</p>{/if}
@@ -227,14 +234,16 @@
       {#if assignments.length>1}<label>Panel<select value={selected} onchange={e=>{stop('Switching panel');selected=e.currentTarget.value;nextAttempt=0;}}>{#each assignments as a}<option value={a.instanceId}>{a.name}</option>{/each}</select></label>{/if}
       {#if panel && panel.document.ui.pages.length>1}<label>Page<select value={pageId} onchange={e=>changedPage(e.currentTarget.value)}>{#each panel.document.ui.pages as page}<option value={page.id}>{page.title}</option>{/each}</select></label>{/if}
     </div>
-    {#if panel}<main class:inactive={!active}>{#key viewRevision}<CompiledPanel bind:this={panelView} publication={panel} prepared={panelSurfaces} {pageId} {feedback} {suppressFeedbackCues} {muted} interactive={active&&focused()} onoutput={emitOutput} onerror={runtimeError} onaudio={value=>audioAvailability=value}/>{/key}</main>
+    {#if panel}<main class:inactive={!active} bind:clientWidth={displayWidth} bind:clientHeight={displayHeight}>{#key viewRevision}<CompiledPanel bind:this={panelView} publication={panel} prepared={panelSurfaces} {pageId} {feedback} {suppressFeedbackCues} {muted} interactive={active&&focused()} onoutput={emitOutput} onerror={runtimeError} onaudio={value=>audioAvailability=value}/>{/key}</main>
       <div class="toolbar"><span>Visuals: requested, host accepted, host submitted and game confirmed are separate states.</span><button onclick={resetFeedback}>↻ Clear visual state</button>{#if panel.document.presentation.artifacts.some(entry=>entry.artifact.sounds.length>0)}<label><input type="checkbox" bind:checked={muted}/>Mute</label><button onclick={()=>void panelView?.enableAudio()} disabled={audioAvailability==="unsupported"||audioAvailability==="muted"}>♪ Enable sound</button><span role="status">Audio: {audioAvailability}</span>{/if}<button onclick={resyncFeedback} disabled={!active}>↻ Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
     {:else}<section class="empty"><h1>{status}</h1><p>{panelError?'Edit and save this panel in Cockpit to retry.':'Choose a panel for this companion in Cockpit. It will appear here automatically.'}</p></section>{/if}
   {/if}
+  {#if panel && resolutionWarning && dismissedResolution!==resolutionKey}<aside class="resolution-warning" role="status">{resolutionWarning}<button aria-label="Dismiss resolution warning" onclick={()=>dismissedResolution=resolutionKey}>×</button></aside>{/if}
   {#if warning && !error}<aside role="alert">{warning}<button aria-label="Dismiss notification" onclick={()=>warning=''}>×</button></aside>{/if}
   {#if error}<aside role="alert">{error}<button aria-label="Dismiss notification" onclick={()=>error=''}>×</button></aside>{/if}
 </div>
 <style>
   :global(body){margin:0;background:#111a22;color:#e1eaf0;font-family:system-ui,sans-serif}:global(*){box-sizing:border-box}.shell{min-height:100dvh;padding:20px}header,.toolbar,header>div{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}header{padding-bottom:20px;border-bottom:1px solid #344452}header span{color:#64caba}button,input,select{font:inherit;border:1px solid #344452;border-radius:7px;padding:10px 14px;background:#1a2935;color:#e1eaf0}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}button:hover{border-color:#64caba}label{display:flex;align-items:center;gap:10px}.pair,.empty{max-width:620px;margin:60px auto;padding:25px;border:1px solid #344452;border-radius:10px}.pair label{margin:25px 0}.toolbar{padding:16px 0;font-size:14px;color:#9aafbf}.toolbar .active{color:#64caba}main{max-width:1600px;margin:auto}.inactive{opacity:.55;pointer-events:none}.help{color:#9aafbf;font-size:14px;line-height:1.6}aside{position:fixed;right:20px;bottom:20px;max-width:500px;padding:16px;border:1px solid #e9b75c;background:#1a2935;border-radius:8px;box-shadow:0 8px 30px #0008;display:flex;align-items:center;gap:12px;z-index:100}aside button{padding:3px 9px}
-  .shell.fullscreen{height:100dvh;min-height:0;padding:0;overflow:hidden}.shell.fullscreen>:not(main){display:none}.shell.fullscreen main{width:100%;height:100%;max-width:none;margin:0}.shell.fullscreen main :global(.compiled-panel){height:100%;min-height:0;border:0;border-radius:0;aspect-ratio:auto!important}
+  .resolution-warning{left:20px;right:auto;max-width:min(500px,calc(100vw - 40px));font-size:14px;line-height:1.5}.resolution-warning button{flex-shrink:0}
+  .shell.fullscreen{height:100dvh;min-height:0;padding:0;overflow:hidden}.shell.fullscreen>:not(main):not(.resolution-warning){display:none}.shell.fullscreen main{width:100%;height:100%;max-width:none;margin:0}.shell.fullscreen main :global(.compiled-panel){height:100%;min-height:0;border:0;border-radius:0;aspect-ratio:auto!important}
 </style>

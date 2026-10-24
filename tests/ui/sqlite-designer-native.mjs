@@ -30,7 +30,7 @@ test('designer source, draft and compiled assets use native SQLite across proces
       const sourceName='SQLite source '+Date.now(),panelName='SQLite panel '+Date.now();
       await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Companions',exact:true}).click();
       await page.locator('section[aria-label="Widgets"]').getByRole('button',{name:'New',exact:true}).click();
-      const dialog=page.locator('dialog.generic-designer');await expect(dialog).toBeVisible();
+      const dialog=page.locator('section.generic-designer');await expect(dialog).toBeVisible();
       await dialog.getByLabel('Widget name',{exact:true}).fill(sourceName);await dialog.getByLabel('Widget name',{exact:true}).press('Tab');
       await dialog.getByRole('button',{name:'Compile',exact:true}).click();
       await expect(dialog.locator('.buildbar [role="status"]')).toHaveText('Compilation complete',{timeout:90_000});

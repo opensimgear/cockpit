@@ -471,7 +471,7 @@ test('Debug defaults to telemetry and retains working profile inspection and run
 
 test('standalone Debug retains all diagnostic sections without a profile-owned Back button',async()=>{
   const h=await debugHarness(draft(),{},{editor:null,close:undefined,locate:undefined});
-  assert.match(h.body,/<h1\b[^>]*>Debug<\/h1>/);assert.ok(h.body.includes('aria-label="Debug sections"'));
+  assert.match(h.body.replace(/<!--[\s\S]*?-->/g,''),/<h1\b[^>]*>Debug<\/h1>/);assert.ok(h.body.includes('aria-label="Debug sections"'));
   for(const label of ['Incoming telemetry','Profile inspection','Runtime &amp; recovery'])assert.ok(h.body.includes(label),label);
   assert.ok(!h.body.includes('Back to Profiles'));assert.ok(!h.body.includes('Current editor draft'));
 });

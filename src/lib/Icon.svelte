@@ -17,6 +17,7 @@
     chevron: ['m9 5 7 7-7 7'],
     arrow: ['M4 12h16m-7-7 7 7-7 7'],
     plus: ['M12 5v14M5 12h14'],
+    minus: ['M5 12h14'],
     trash: ['M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7'],
     close: ['m6 6 12 12M6 18 18 6'],
     check: ['m5 12 4 4L19 6'],

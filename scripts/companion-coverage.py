@@ -47,7 +47,7 @@ def main():
     targets[0][3].append(root / "crates/companion-service/src/persistence/sqlite.rs")
     targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["client_cache/mod", "client/cache_validation", "host_content/mod", "host_content/selection", "persistence/sqlite_host"])
     targets[0][3].extend(root / f"crates/companion-service/src/publication/{name}.rs"
-                         for name in ["compiled", "compiled/artifact", "compiled/behavior", "widget_source"])
+                         for name in ["compiled", "compiled/artifact", "compiled/behavior", "widget_source", "widget_design", "widget_design/helpers"])
     targets.append(("serial", root / "crates/companion-serial/Cargo.toml", "", [root / "crates/companion-serial/src/boot_wait.rs"]))
     if not options.service_only:
         # Profile publication, authoring and lifecycle tests call this host from
