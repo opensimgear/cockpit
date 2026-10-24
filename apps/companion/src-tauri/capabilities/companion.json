@@ -8,6 +8,7 @@
   "permissions": [
     "allow-companion-lifecycle",
     "allow-companion-client-request",
+    "allow-companion-cache-request",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

@@ -226,3 +226,19 @@ and newly issued tokens remain bounded process memory, not durable logs.
 The native MCP implementation is split under `mcp/server/` and `mcp/storage/`.
 Frontend uncertainty requires reconciliation; it cannot fall back to a second
 create/revoke sequence after an uncertain rotation result.
+
+Native companion public content now uses `companion-client/publications` in
+that application's own SQLite namespace, alongside its separately sealed
+credential. The fixed `companion_cache_request` read/write API accepts exact
+revisions and cannot address other domains or paths. One bounded snapshot holds
+four panels at most, 24 MiB total and 13 MiB per entry, selected panel and last
+page. Native client transport checks validate document/asset hashes; the
+existing renderer revalidates the complete publication and capability identity
+before opening it. Offline content never supplies authenticated input authority.
+
+The native adapter never opens IndexedDB, including on a failed read or write.
+Browser previews explicitly select their browser adapter. The private cache
+document has no schema/version chain or importer. Corruption remains visible,
+and explicit Clear uses the observed SQLite revision. A stale window cannot
+resurrect a cleared cache. Panel/page selection is acknowledged only after a
+successful durable write; clearing content does not remove sealed pairing.

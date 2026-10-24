@@ -15,7 +15,7 @@
     "ui:dev": "vite --host 127.0.0.1",
     "ui:build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --experimental-test-coverage --test-coverage-include=src/lib/*.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/*.test.mjs"
+    "test": "node --experimental-test-coverage --test-coverage-include=src/lib/*.ts --test-coverage-include=src/lib/persistence/*.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/*.test.mjs"
   },
   "dependencies": {
     "@opensimgear/companion-contracts": "workspace:*",

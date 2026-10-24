@@ -7,6 +7,7 @@
   import { createFeedbackView } from './lib/feedback-state.ts';
   import { createOrderedInputQueue } from './lib/input-queue.ts';
   import { browserCacheStore, cacheKey, createPublicationCache, verifyPublishedPayload, type CacheSummary, type PublishedPayload } from './lib/companion-cache.ts';
+  import { publicationCacheStore } from './lib/persistence/cache-storage.ts';
   import { createSessionGuard, remoteIdentity, type PanelMode } from './lib/session-guard.ts';
   interface NativeStatus { phase:string; protectedStoreAvailable?:boolean; authenticationAvailable?:boolean; authenticationUnavailableReason?:string|null; storageError?:string|null; epoch:number; busy?:boolean; pairedHost?:{hostId:string;endpoint:string;caSpkiSha256:string;name:string};requestId?:string;assignments?:unknown[];session?:Record<string,unknown>;publicationHash?:string;lastError?:string;ack?:{ackStage?:string;submitted?:boolean;sequence?:string};feedback?:Record<string,unknown>[];feedbackRevision?:number }
   let panel = $state(flightTemplate), pageId = $state(flightTemplate.ui.pages[0].id), reference = $state('flight');
@@ -20,7 +21,7 @@
   let feedbackNotice=$state('');
   const feedbackView=createFeedbackView();
   let discovering=$state(false);
-  const gate=createSessionGuard(), cache=createPublicationCache(browserCacheStore());
+  const gate=createSessionGuard(), cache=createPublicationCache(publicationCacheStore({invoke,browser:browserCacheStore}));
   const remoteSelected=$derived(panelMode==='remote'), offline=$derived(panelMode==='offline');
   const request = <T,>(value:unknown) => invoke<T>('companion_client_request',{request:value});
   const inputQueue=createOrderedInputQueue((epoch,changes)=>request({type:'input',epoch,changes}),reason=>fail(new Error(reason)));
@@ -42,7 +43,7 @@
   }
   function fail(value:unknown){error=message(value);const mode=remoteSelected&&loadedHash?'offline':panelMode;remote={...remote,phase:'error'};invalidate('Connection unavailable; input stopped',mode);if(nativeAvailable)void request({type:'neutralize'}).catch(()=>{});}
   function disarm(reason:string){invalidate(reason);}
-  async function refreshCache(){try{cached=await cache.list();if(!cached.some(entry=>entry.key===offlineKey))offlineKey=cached[0]?.key??'';cacheNotice=cached.length?'Saved panels contain public layouts and assets only.':'No verified panel has been saved yet.';}catch(value){cacheNotice=message(value);}}
+  async function refreshCache(){try{cached=await cache.list();if(!cached.some(entry=>entry.key===offlineKey))offlineKey=await cache.selected()||cached[0]?.key||'';cacheNotice=cached.length?'Saved panels contain public layouts and assets only.':'No verified panel has been saved yet.';}catch(value){cacheNotice=message(value);}}
   function showPublication(publication:Publication,page?:string){
     const urls:Record<string,string>={};for(const payload of publication.assets){const manifest=publication.document.ui.assets.find(value=>value.id===payload.assetId)!;urls[payload.assetId]=`data:${manifest.mime};base64,${payload.base64}`;}
     recorder.disarm('Verified panel loaded');panel=publication.document;pageId=panel.ui.pages.some(value=>value.id===page)?page!:panel.ui.pages[0].id;assets=urls;loadedHash=publication.publicationHash;feedbackView.clear();feedback={};feedbackNotice='';
@@ -51,6 +52,7 @@
     const token=invalidate('Saved panel opened offline','offline');error='';
     try{const entry=await cache.open(offlineKey);if(disposed||!gate.current(token))return;currentCacheKey=entry.key;showPublication(entry.publication,entry.pageId);cacheNotice='Offline view is disarmed. Feedback is unknown; connect to the host for a fresh baseline.';}catch(value){if(gate.current(token))cacheNotice=message(value);}
   }
+  async function chooseOffline(key:string){try{await cache.select(key);offlineKey=key;}catch(value){cacheNotice=message(value);}}
   async function clearCache(){try{await cache.clear();await refreshCache();if(offline)local();}catch(value){cacheNotice=message(value);}}
   async function togglePreview(){
     if(snapshot.armed){disarm('Stopped by operator');return;}if(offline||switching)return;
@@ -134,7 +136,7 @@
     {#if error}<p class="validation-error" role="alert">{error}</p>{/if}
     {#if validation.ok}<PanelCanvas document={panel} {pageId} {assets} {feedback} controller={recorder}/>{:else}<p class="validation-error">Panel validation failed: {validation.error}</p>{/if}
     <div class="template-chooser" aria-label="Feedback controls"><span>Visuals: requested / host accepted / host submitted / game confirmed are separate states.</span><button onclick={resetFeedback}>Clear visual state</button><button onclick={resyncFeedback} disabled={!remoteSelected||!gate.matches(remote)||!['ready','armed'].includes(remote.phase)}>Resync visuals</button>{#if feedbackNotice}<span role="status">{feedbackNotice}</span>{/if}</div>
-    <section class="offline-library" aria-label="Saved offline panels"><div><strong>Saved panels</strong><span>{cacheNotice}</span></div><label>Panel <select bind:value={offlineKey} disabled={!cached.length}>{#each cached as entry}<option value={entry.key}>{entry.name} · {entry.title} · {entry.hostId.slice(0,8)}</option>{/each}</select></label><button onclick={openOffline} disabled={!offlineKey}>Open offline</button><button onclick={clearCache}>Clear saved panels</button></section>
+    <section class="offline-library" aria-label="Saved offline panels"><div><strong>Saved panels</strong><span>{cacheNotice}</span></div><label>Panel <select value={offlineKey} onchange={event=>void chooseOffline(event.currentTarget.value)} disabled={!cached.length}>{#each cached as entry}<option value={entry.key}>{entry.name} · {entry.title} · {entry.hostId.slice(0,8)}</option>{/each}</select></label><button onclick={openOffline} disabled={!offlineKey}>Open offline</button><button onclick={clearCache}>Clear saved panels</button></section>
     <div class="bottom-grid">
       <section class="connection-card"><div class="card-heading"><h3>Connection</h3><span class="pill">{nativeAvailable?remote.phase.toUpperCase():'BROWSER PREVIEW'}</span></div>
         {#if nativeAvailable}

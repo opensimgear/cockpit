@@ -1067,6 +1067,8 @@ fn pair_worker(
         )?;
     }
 }
+#[path="client/cache_validation.rs"]
+pub(crate) mod cache_validation;
 #[derive(Clone)]
 struct Primitive {
     kind: String,

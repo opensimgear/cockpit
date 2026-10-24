@@ -4,6 +4,18 @@ use osg_companion_service::client::ClientRuntime;
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 use tauri::{Emitter, Manager};
+#[derive(Clone)]
+struct CacheDirectory(std::path::PathBuf);
+
+#[tauri::command]
+async fn companion_cache_request(
+    state:tauri::State<'_,CacheDirectory>,
+    request:osg_companion_service::client_cache::CacheRequest,
+)->Result<osg_companion_service::client_cache::Snapshot,String>{
+    let directory=state.inner().0.clone();
+    tauri::async_runtime::spawn_blocking(move||osg_companion_service::client_cache::ClientCache::open(&directory)?.execute(request))
+        .await.map_err(|_|"Offline cache worker failed.".to_owned())?
+}
 
 type ClientInitialization = Result<Arc<ClientRuntime>, String>;
 #[derive(Clone, Default)]
@@ -87,6 +99,7 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|error| error.to_string())?
                 .join("companion-client");
+            app.manage(CacheDirectory(path.clone()));
             let bridge = ClientBridge::default();
             app.manage(bridge.clone());
             #[cfg(target_os = "android")]
@@ -110,6 +123,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             companion_lifecycle,
+            companion_cache_request,
             companion_client_request
         ])
         .on_window_event(|window, event| {

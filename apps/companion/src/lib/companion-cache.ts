@@ -9,7 +9,7 @@ export interface PublishedPayload { canonicalDocument: string; document: unknown
 const clone = <T,>(value: T): T => structuredClone(value);
 const size = (value: string) => new TextEncoder().encode(value).length;
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid cached panel'); return value as Record<string, unknown>; }
-function text(value: unknown, max: number): string { if (typeof value !== 'string' || !value || value.length > max || /[\u0000-\u001f]/.test(value)) throw new Error('Invalid cache identity'); return value; }
+function text(value: unknown, max: number): string { if (typeof value !== 'string' || !value || size(value) > max || /[\u0000-\u001f]/.test(value)) throw new Error('Invalid cache identity'); return value; }
 export function cacheKey(owner: Pick<CacheOwner, 'hostId' | 'instanceId'>): string { return JSON.stringify([text(owner.hostId, 64), text(owner.instanceId, 64)]); }
 export async function verifyPublishedPayload(payload: PublishedPayload): Promise<Publication> {
   if (typeof payload.canonicalDocument !== 'string' || size(payload.canonicalDocument) > 1024 * 1024 || typeof payload.publicationHash !== 'string') throw new Error('Invalid published payload');
@@ -25,15 +25,15 @@ function summary(entry: CachedPanel): CacheSummary { return { hostId: entry.host
 /** A bounded public-content cache. Every disk read is untrusted; it never contains authority. */
 export function createPublicationCache(store: CacheStore, options: { clock?: () => number; maxBytes?: number; maxEntries?: number } = {}) {
   const clock = options.clock ?? Date.now, maxBytes = options.maxBytes ?? CACHE_LIMITS.bytes, maxEntries = options.maxEntries ?? CACHE_LIMITS.entries;
-  let entries: CachedPanel[] | null = null, pending = 0, tail: Promise<unknown> = Promise.resolve();
-  function serialized(value: CachedPanel[]) { return JSON.stringify({ version: 1, entries: value }); }
+  let entries: CachedPanel[] | null = null, selectedKey = '', pending = 0, tail: Promise<unknown> = Promise.resolve();
+  function serialized(value: CachedPanel[], selected = selectedKey) { return JSON.stringify({ entries: value, selectedKey: selected }); }
   async function load() {
     if (entries) return;
     const raw = await store.read();
     if (raw === null || raw === undefined) { entries = []; return; }
     if (typeof raw !== 'string' || raw.length > maxBytes || size(raw) > maxBytes) throw new Error('Offline cache exceeds its storage budget');
     const root = object(JSON.parse(raw));
-    if (root.version !== 1 || Object.keys(root).some(key => !['version', 'entries'].includes(key)) || !Array.isArray(root.entries) || root.entries.length > maxEntries) throw new Error('Unsupported offline cache');
+    if (typeof root.selectedKey !== 'string' || Object.keys(root).some(key => !['selectedKey', 'entries'].includes(key)) || !Array.isArray(root.entries) || root.entries.length > maxEntries) throw new Error('Unsupported offline cache');
     const checked: CachedPanel[] = [], keys = new Set<string>();
     for (const value of root.entries) {
       const entry = object(value), owner = { hostId: text(entry.hostId, 64), instanceId: text(entry.instanceId, 64), name: text(entry.name, 80) }, key = cacheKey(owner);
@@ -45,23 +45,26 @@ export function createPublicationCache(store: CacheStore, options: { clock?: () 
       if (!publication.document.ui.pages.some(page => page.id === pageId)) throw new Error('Cached page is absent from publication');
       checked.push({ ...owner, key, publication, savedAtMs: Number(entry.savedAtMs), pageId }); keys.add(key);
     }
-    entries = checked;
+    if (root.selectedKey && !keys.has(root.selectedKey as string)) throw new Error('Selected offline panel is unavailable');
+    entries = checked; selectedKey = root.selectedKey as string;
   }
   function queued<T>(action: () => Promise<T>): Promise<T> { if (pending >= 16) return Promise.reject(new Error('Offline cache is busy; try again after pending saves finish')); pending++; const result = tail.then(action).finally(() => { pending--; }); tail = result.catch(() => {}); return result; }
-  async function commit(next: CachedPanel[]) { const raw = serialized(next); if (size(raw) > maxBytes) throw new Error('Offline cache is full'); await store.write(raw); entries = next; }
+  async function commit(next: CachedPanel[], selected = selectedKey) { selected = next.some(entry => entry.key === selected) ? selected : next[0]?.key ?? ''; const raw = serialized(next, selected); if (size(raw) > maxBytes) throw new Error('Offline cache is full'); await store.write(raw); entries = next; selectedKey = selected; }
   return {
+    select: (key: string) => queued(async () => { await load(); if (!entries!.some(entry => entry.key === key)) throw new Error('Cached panel is unavailable'); if (selectedKey !== key) await commit(entries!, key); }),
+    selected: () => queued(async () => { await load(); return selectedKey; }),
     list: () => queued(async () => { await load(); return entries!.map(summary); }),
-    open: (key: string) => queued(async () => { await load(); const entry = entries!.find(value => value.key === key); if (!entry) throw new Error('Cached panel is unavailable'); return clone(entry); }),
+    open: (key: string) => queued(async () => { await load(); const entry = entries!.find(value => value.key === key); if (!entry) throw new Error('Cached panel is unavailable'); if (selectedKey !== key) await commit(entries!, key); return clone(entry); }),
     save: (owner: CacheOwner, publication: Publication, pageId?: string) => queued(async () => {
       await load(); const key = cacheKey(owner), verified = await publishDocument(publication.document, publication.assets, { optimizeAssets: false });
       if (verified.publicationHash !== publication.publicationHash || verified.capabilityFingerprint !== publication.capabilityFingerprint) throw new Error('Only verified publications can be cached');
       const old = entries!.find(entry => entry.key === key), nextPage = pageId ?? (old?.publication.publicationHash === verified.publicationHash ? old.pageId : verified.document.ui.pages[0].id);
       if (!verified.document.ui.pages.some(page => page.id === nextPage)) throw new Error('Unknown panel page');
       const entry: CachedPanel = { hostId: text(owner.hostId, 64), instanceId: text(owner.instanceId, 64), name: text(owner.name, 80), key, publication: verified, savedAtMs: clock(), pageId: nextPage };
-      if (!Number.isSafeInteger(entry.savedAtMs) || entry.savedAtMs < 0 || size(JSON.stringify(entry)) > CACHE_LIMITS.entryBytes || size(serialized([entry])) > maxBytes) throw new Error('Panel exceeds offline cache budget');
+      if (!Number.isSafeInteger(entry.savedAtMs) || entry.savedAtMs < 0 || size(JSON.stringify(entry)) > CACHE_LIMITS.entryBytes || size(serialized([entry], key)) > maxBytes) throw new Error('Panel exceeds offline cache budget');
       let next = [entry, ...entries!.filter(value => value.key !== key)].slice(0, maxEntries);
-      while (size(serialized(next)) > maxBytes) next.pop();
-      await commit(next); return summary(entry);
+      while (size(serialized(next, key)) > maxBytes) next.pop();
+      await commit(next, key); return summary(entry);
     }),
     rememberPage: (key: string, pageId: string) => queued(async () => { await load(); const next = clone(entries!), entry = next.find(value => value.key === key); if (!entry) return; if (!entry.publication.document.ui.pages.some(page => page.id === pageId)) throw new Error('Unknown panel page'); entry.pageId = pageId; await commit(next); }),
     remove: (key: string) => queued(async () => { await load(); await commit(entries!.filter(entry => entry.key !== key)); }),
