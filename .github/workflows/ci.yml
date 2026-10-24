@@ -320,6 +320,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        if: runner.os == 'Windows'
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build browser assets for native companion operators
+        if: runner.os == 'Windows'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm browser:build
       - name: Install pinned native coverage tools
         run: rustup component add llvm-tools-preview
       - name: Linux controller development dependency

@@ -272,3 +272,16 @@ fn remembered_vehicle_import_is_bounded_validated_and_never_restores_live_author
     tracker.writer.as_ref().unwrap().flush().unwrap();
     tracker.seen.clear();
 }
+
+#[test]
+fn injected_vehicle_remains_until_fixture_changes_it() {
+    let directory = crate::test_directory();
+    let mut tracker = Tracker::new(directory.path().join("vehicles.json"));
+    tracker.set_test_vehicle("dcs", Some("FA-18C_hornet"));
+    tracker.entries.get_mut("dcs").unwrap().observed =
+        Instant::now() - Duration::from_secs(3);
+    tracker.poll_verified(&[], |_| String::new(), |_| false);
+    assert_eq!(tracker.current("dcs").unwrap()["id"], "FA-18C_hornet");
+    tracker.set_test_vehicle("dcs", None);
+    assert_eq!(tracker.current("dcs"), None);
+}

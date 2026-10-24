@@ -76,6 +76,8 @@ fn validate_saved(saved: &Value) -> Result<(), String> {
     Ok(())
 }
 struct Entry {
+    #[cfg(test)]
+    injected: bool,
     signature: String,
     installation: String,
     setup_revision: String,
@@ -108,6 +110,9 @@ impl Tracker {
     pub(crate) fn set_test_vehicle(&mut self, id: &str, selected: Option<&str>) {
         self.observe(&json!({"id":id}), &json!({}), None, "test", false, u64::MAX);
         if let Some(entry) = self.entries.get_mut(id) {
+            // Injected simulator state changes only when the fixture changes it.
+            // Real telemetry freshness remains covered by the tracker tests.
+            entry.injected = true;
             entry.current = selected.and_then(|selected| vehicle(id, selected));
             entry.observed = Instant::now();
         }
@@ -176,6 +181,8 @@ impl Tracker {
         ])
         .to_string();
         let entry = self.entries.entry(id.into()).or_insert_with(|| Entry {
+            #[cfg(test)]
+            injected: false,
             signature: String::new(),
             installation: String::new(),
             setup_revision: String::new(),
@@ -245,6 +252,8 @@ impl Tracker {
         mut alive: impl FnMut(&ProcessIdentity) -> bool,
     ) {
         for (id, entry) in &mut self.entries {
+            #[cfg(test)]
+            if entry.injected { continue; }
             let qualified = entry.enabled
                 && games.iter().any(|game| {
                     game["id"] == id.as_str()
@@ -267,6 +276,8 @@ impl Tracker {
         let now_ms = self.origin.elapsed().as_millis() as u64;
         let mut changed = false;
         for (id, entry) in &mut self.entries {
+            #[cfg(test)]
+            if entry.injected { continue; }
             // A stalled process scan cannot leave a previous vehicle selected.
             if entry.observed.elapsed() > Duration::from_secs(2) {
                 entry.reader = None;
@@ -320,7 +331,11 @@ impl Tracker {
     pub(crate) fn current(&self, id: &str) -> Option<Value> {
         self.entries
             .get(id)
-            .filter(|entry| entry.observed.elapsed() <= Duration::from_secs(2))
+            .filter(|entry| {
+                #[cfg(test)]
+                if entry.injected { return true; }
+                entry.observed.elapsed() <= Duration::from_secs(2)
+            })
             .and_then(|entry| entry.current.clone())
     }
     pub(crate) fn telemetry(&self, game: &Value) -> Option<Capture> {

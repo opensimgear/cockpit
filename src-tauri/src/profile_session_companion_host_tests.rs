@@ -508,7 +508,9 @@ impl NativeFixture {
                     let received = peer_hub.handle_wire(heartbeat, "peer", peer_hub.now_ms());
                     if received["ok"] != true {
                         opened = None;
-                    } else {
+                    } else if received["feedback"]["values"].as_array().is_some_and(|values| !values.is_empty()) {
+                        // Feedback is a delta stream. Later empty acknowledgements
+                        // must not erase evidence already consumed by this peer.
                         *captured_reply.lock().unwrap() = received;
                     }
                 }
@@ -1062,7 +1064,8 @@ fn actual_host_acquires_desired_panel_reads_native_baseline_and_default_restores
         }
         assert!(
             Instant::now() < deadline,
-            "Native feedback did not reach the actual wire peer"
+            "Native feedback did not reach the actual wire peer: status={:?}, reply={}",
+            coordinator.status(), fixture.reply.lock().unwrap()
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }

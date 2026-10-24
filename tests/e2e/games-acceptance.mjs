@@ -13,8 +13,8 @@ test('Games persists only fresh installation metadata and rejects retired profil
   const request=(command,extra={})=>service.request({command,clientId:'unified-game-metadata-acceptance',...extra});
   const ok=async(command,extra={})=>{const reply=await request(command,extra);assert.equal(reply.ok,true,reply.error);return reply.state;};
   try{
-    const initial=(await ok('game_get_state')).games;assert.equal(initial.cleanup.phase,'idle');
-    for(const retired of ['session','profiles','defaultProfiles'])assert.equal(Object.hasOwn(initial,retired),false,`Retired Games field ${retired} must stay absent`);
+    const initial=(await ok('game_get_state')).games;
+    for(const retired of ['session','profiles','defaultProfiles','cleanup'])assert.equal(Object.hasOwn(initial,retired),false,`Retired Games field ${retired} must stay absent`);
     assert.equal((await ok('profile_status')).profiles.profileSession.owner,null);
     for(const command of ['game_profile_save','game_profile_delete','game_profile_default','game_activate','game_launch','game_capture','dcs_start','integration_start'])assert.equal((await request(command,{gameId:'dcs',gameProfile:{resume:true}})).ok,false,command);
     await ok('game_installation',{gameId:'dcs',executable});
