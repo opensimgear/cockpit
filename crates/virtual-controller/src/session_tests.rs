@@ -101,7 +101,7 @@ fn recording(token: &RunToken, count: u64) -> RecordingSink {
 }
 #[test]
 fn handoff_proof_requires_the_same_live_confirmed_owner_without_sending_output() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let (factory, state) = factory();
     state.lock().unwrap().process_id = Some(73);
@@ -166,7 +166,7 @@ fn anonymous_unjournaled_or_unresolved_sessions_cannot_authorize_handoff() {
             self.0.terminate()
         }
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let state = Arc::new(Mutex::new(State::default()));
     let shared = state.clone();
     let anonymous: Factory = Arc::new(move || {
@@ -209,7 +209,7 @@ fn anonymous_unjournaled_or_unresolved_sessions_cannot_authorize_handoff() {
 
 #[test]
 fn handoff_rejects_changed_or_missing_confirmed_journal_without_mutation() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let (factory, state) = factory();
     state.lock().unwrap().process_id = Some(73);
@@ -442,7 +442,7 @@ fn unresolved_recovery_is_visible_and_drop_stops_owned_run() {
 
 #[test]
 fn durable_activation_precedes_driver_calls_and_clean_stop_allows_a_new_run() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let (factory, state) = factory();
     state.lock().unwrap().observe = Some(path.clone());
@@ -501,7 +501,7 @@ fn durable_activation_precedes_driver_calls_and_clean_stop_allows_a_new_run() {
 }
 #[test]
 fn lost_start_acknowledgement_and_external_storage_changes_never_guess_ownership() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let (factory, state) = factory();
     state.lock().unwrap().fail = "start";
@@ -556,7 +556,7 @@ fn lost_start_acknowledgement_and_external_storage_changes_never_guess_ownership
 }
 #[test]
 fn restart_recovery_sends_only_fallback_and_refuses_ambiguous_or_missing_records() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let (factory, state) = factory();
     assert!(Session::recover_stored(factory.clone(), path.clone()).is_err());
@@ -584,7 +584,7 @@ fn restart_recovery_sends_only_fallback_and_refuses_ambiguous_or_missing_records
 
 #[test]
 fn exact_restart_recovery_rejects_changed_owner_binding_and_phase_before_opening_driver() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let (factory, state) = factory();
     let mut store = Store::open(path.clone()).unwrap();
@@ -628,7 +628,7 @@ fn exact_restart_recovery_rejects_changed_owner_binding_and_phase_before_opening
 }
 #[test]
 fn exact_restart_recovery_never_opens_driver_while_another_session_owns_the_journal() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let (factory, state) = factory();
     let mut store = Store::open(path.clone()).unwrap();

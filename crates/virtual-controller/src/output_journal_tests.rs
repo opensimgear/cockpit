@@ -11,7 +11,7 @@ fn binding() -> Binding {
 }
 #[test]
 fn read_only_verification_checks_locked_current_bytes_without_rewriting_them() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let mut store = Store::open(path.clone()).unwrap();
     store.verify_current().unwrap();
@@ -37,7 +37,7 @@ fn read_only_verification_checks_locked_current_bytes_without_rewriting_them() {
 
 #[test]
 fn journal_orders_ownership_and_refuses_competing_sessions_or_stale_acknowledgements() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     assert!(inspect(&path).unwrap().is_none());
     let mut store = Store::open(path.clone()).unwrap();
@@ -64,7 +64,7 @@ fn journal_orders_ownership_and_refuses_competing_sessions_or_stale_acknowledgem
 }
 #[test]
 fn malformed_bounded_and_externally_changed_records_are_preserved() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let mut store = Store::open(path.clone()).unwrap();
     assert!(store.begin(token(), vec![]).is_err());
@@ -109,7 +109,7 @@ fn process_exit_preserves_confirmed_intent_and_releases_os_lock() {
         store.transition(Phase::Confirmed).unwrap();
         std::process::exit(0); // Deliberately bypass Drop, like a terminated app.
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
@@ -136,7 +136,7 @@ fn process_exit_preserves_confirmed_intent_and_releases_os_lock() {
 #[cfg(unix)]
 #[test]
 fn recovery_never_follows_symlink_records_or_lock_files() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let target = dir.path().join("external");
     std::fs::write(&target, b"external").unwrap();
@@ -150,7 +150,7 @@ fn recovery_never_follows_symlink_records_or_lock_files() {
 
 #[test]
 fn releasing_owner_unlocks_even_while_a_duplicated_descriptor_is_alive() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let path = dir.path().join("output.json");
     let store = Store::open(path.clone()).unwrap();
     let inherited = store._lock.try_clone().unwrap();

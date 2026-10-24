@@ -184,7 +184,7 @@ fn symbolic_target_and_parent_are_never_followed() {
     assert!(Store::new(parent.join("settings.json"))
         .load()
         .unwrap_err()
-        .contains("reparse"));
+        .contains(if cfg!(windows) { "reparse" } else { "indirect" }));
     assert!(Store::new(parent.join("new.json"))
         .save(&settings())
         .is_err());

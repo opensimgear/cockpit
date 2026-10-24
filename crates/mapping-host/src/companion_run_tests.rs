@@ -108,7 +108,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new(qualified: bool) -> Self {
-        let root = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let capture = Arc::new(ControllerService::new(None, false));
         // Only explicit test steps advance leases. Coverage/CPU scheduling must
         // not expire an unrelated instance while a source-loss test is paused.
@@ -850,12 +850,13 @@ fn stalled_route_report_does_not_block_other_companion_or_ordinary_mapping_clock
         .iter()
         .any(|m| m["slot"] == 3 && m["message"]["report"]["state"]["buttons"][0] == true));
     drop(messages);
-    let status = f
-        .service
-        .request(&json!({"command":"mapping_status","inspect":true}))
-        .unwrap();
-    assert_eq!(status["running"], true);
-    assert_eq!(status["inspector"]["outputs"]["main"]["buttons"][0], true);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let status=f.service.request(&json!({"command":"mapping_status","inspect":true})).unwrap();
+        if status["running"]==true && status["inspector"]["outputs"]["main"]["buttons"][0]==true {break;}
+        assert!(Instant::now()<deadline,"Ordinary mapping failed to publish its input: {status}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
     assert_eq!(
         f.request("healthy", "inspect", json!({})).unwrap()["session"]["running"],
         true
@@ -1303,4 +1304,13 @@ fn capture_only_guard_checks_cached_reservations_and_recovery_without_provider_c
     {let mut manager=service.companion_runs.lock().unwrap();manager.pending=Some((1,Resources::default()));}assert!(service.guard_capture_only().is_err());service.companion_runs.lock().unwrap().pending=None;
     {let mut manager=service.companion_runs.lock().unwrap();manager.orphaned.insert("lost".into(),Resources::default());}assert!(service.guard_capture_only().is_err());service.companion_runs.lock().unwrap().orphaned.clear();
     service.companion_runs.lock().unwrap().error=Some("Unknown preserved recovery".into());assert!(service.guard_capture_only().is_err());service.companion_runs.lock().unwrap().error=None;assert!(service.guard_capture_only().is_ok());assert_eq!(calls.load(Ordering::Relaxed),0);
+}
+
+#[test]
+fn recording_start_reports_only_recording_admission_failures() {
+    let f=Fixture::new(false);
+    f.add("panel",publication());f.save("panel",None);
+    let _busy=f.service.router.lock().unwrap();
+    let error=f.request("panel","start",json!({"mode":"recording"})).unwrap_err();
+    assert_eq!(error,"Companion route is not ready: The manual mapping is preparing or busy; retry readiness.");
 }

@@ -430,7 +430,7 @@ fn restart_status_recovery_and_ambiguous_acknowledgement_never_resume_mapping() 
 
 #[test]
 fn unqualified_startup_keeps_restart_recovery_and_acknowledgement_behind_qualification() {
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let service = Service::with_output(
         Arc::new(ControllerService::new(None, false)),
         Some(root.path().into()),

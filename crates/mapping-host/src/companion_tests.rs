@@ -784,7 +784,7 @@ fn service_clock_consumes_companion_events_without_frontend_polling_or_optional_
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let (profile, assignments, _) = fixture(false);
     let store = osg_mapping::store::Store::new(root.path().into());
     store.save(&profile).unwrap();
@@ -926,7 +926,7 @@ fn service_clock_consumes_companion_events_without_frontend_polling_or_optional_
 
 #[test]
 fn captured_game_start_uses_companion_feed_without_relabeling_or_live_output() {
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let (profile, assignments, _) = fixture(false);
     let capture = Arc::new(osg_controller_input::ControllerService::new(None, false));
     let clock = capture.clone();

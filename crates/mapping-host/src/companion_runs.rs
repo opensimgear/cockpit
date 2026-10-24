@@ -991,7 +991,7 @@ impl Service {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .filter(|c| c["passed"] != true)
+                    .filter(|c| c["passed"] != true && (live || matches!(c["id"].as_str(), Some("authorization" | "configurationStore" | "configuration" | "resources"))))
                     .filter_map(|c| c["reason"].as_str())
                     .collect::<Vec<_>>()
                     .join("; ")
