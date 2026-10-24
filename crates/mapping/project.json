@@ -1,0 +1,48 @@
+{
+  "name": "native-mapping",
+  "projectType": "library",
+  "root": "crates/mapping",
+  "sourceRoot": "crates/mapping",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Rust crate osg-mapping"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/scripts/mapping-coverage.py",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python scripts/mapping-coverage.py"
+      }
+    }
+  }
+}

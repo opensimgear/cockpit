@@ -1,0 +1,35 @@
+{
+  "name": "widget-runtime",
+  "projectType": "library",
+  "sourceRoot": "packages/widget-runtime/src",
+  "tags": [
+    "language:typescript",
+    "scope:shared"
+  ],
+  "implicitDependencies": [],
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "packages/widget-runtime"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run coverage",
+        "cwd": "packages/widget-runtime"
+      },
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/packages/widget-compiler/**/*"
+      ]
+    }
+  }
+}

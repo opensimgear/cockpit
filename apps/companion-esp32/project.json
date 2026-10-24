@@ -1,0 +1,53 @@
+{
+  "name": "native-esp32",
+  "projectType": "application",
+  "root": "apps/companion-esp32",
+  "sourceRoot": "apps/companion-esp32",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Portable ESP32 firmware source and deferred IDF workflow"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python apps/companion-esp32/test/run.py"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-companion-service",
+    "companions-fe",
+    "widget-runtime",
+    "widget-compiler"
+  ]
+}

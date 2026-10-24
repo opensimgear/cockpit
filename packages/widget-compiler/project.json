@@ -1,0 +1,36 @@
+{
+  "name": "widget-compiler",
+  "projectType": "library",
+  "sourceRoot": "packages/widget-compiler/src",
+  "tags": [
+    "language:typescript",
+    "scope:shared"
+  ],
+  "implicitDependencies": [
+    "widget-runtime"
+  ],
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "packages/widget-compiler"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run coverage",
+        "cwd": "packages/widget-compiler"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    }
+  }
+}

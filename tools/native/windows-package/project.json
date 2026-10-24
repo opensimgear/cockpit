@@ -1,0 +1,68 @@
+{
+  "name": "native-windows-package",
+  "projectType": "library",
+  "root": "tools/native/windows-package",
+  "sourceRoot": "tools/native/windows-package",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Windows native acceptance and release package sources"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/packaging/**/*",
+      "{workspaceRoot}/release/**/*",
+      "{workspaceRoot}/src-tauri/**/*",
+      "{workspaceRoot}/apps/companion/**/*",
+      "{workspaceRoot}/apps/companion-esp32/**/*",
+      "{workspaceRoot}/tests/ui/**/*native*.mjs",
+      "{workspaceRoot}/scripts/**/*native*",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*",
+      "{workspaceRoot}/src/**/*",
+      "{workspaceRoot}/apps/browser-companion/**/*",
+      "{workspaceRoot}/packages/**/*",
+      "{workspaceRoot}/scripts/package-windows-release.ps1"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "pnpm tauri build --bundles nsis -- --locked && pwsh -NoProfile -File scripts/package-windows-release.ps1"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-host",
+    "cockpit-ui",
+    "browser-companion",
+    "widget-runtime",
+    "widget-compiler",
+    "companion-contracts",
+    "companion-designer",
+    "companion-ui"
+  ]
+}

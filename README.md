@@ -79,6 +79,14 @@ The automatic controller workflow is recorded in the [USB HID architecture](http
 
 ## Run and build
 
+The repository is an Nx workspace. Run `pnpm test:affected` for affected checks,
+tests with coverage, and builds; `pnpm test:all` runs all portable targets.
+Use `pnpm nx graph` to inspect the projects and their dependencies.
+Native and full integration checks run in the daily workflow when commits have
+changed their inputs since its last successful run. See
+[test selection and CI](docs/nx-testing.md) for local commands, cache setup, and
+the daily baseline behavior.
+
 Install the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), Node.js 20.19+ or 22.12+, and the pnpm version declared in `package.json`. Rust 1.90.0 is pinned in `rust-toolchain.toml`.
 
 From this repository:

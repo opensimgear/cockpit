@@ -1,0 +1,52 @@
+{
+  "name": "native-desktop-output",
+  "projectType": "library",
+  "root": "crates/desktop-output",
+  "sourceRoot": "crates/desktop-output",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Rust crate osg-desktop-output"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/scripts/desktop-output-coverage.py",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python scripts/desktop-output-coverage.py"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-mapping",
+    "native-persistence"
+  ]
+}

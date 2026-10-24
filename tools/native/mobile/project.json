@@ -1,0 +1,58 @@
+{
+  "name": "native-mobile",
+  "projectType": "library",
+  "root": "tools/native/mobile",
+  "sourceRoot": "tools/native/mobile",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Native companion mobile and platform sources"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/apps/companion/**/*",
+      "{workspaceRoot}/scripts/companion-mobile*.py",
+      "{workspaceRoot}/crates/companion-platform/**/*",
+      "{workspaceRoot}/crates/companion-serial/**/*",
+      "{workspaceRoot}/crates/companion-service/**/*",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "cargo test --locked --manifest-path apps/companion/src-tauri/Cargo.toml"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-companion-platform",
+    "native-companion-serial",
+    "native-companion-service",
+    "mobile-companion"
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "name": "cockpit-ui",
+  "projectType": "application",
+  "sourceRoot": "src",
+  "tags": [
+    "language:svelte",
+    "scope:cockpit"
+  ],
+  "implicitDependencies": [
+    "widget-compiler",
+    "widget-runtime",
+    "companion-contracts",
+    "companion-designer",
+    "companion-ui",
+    "browser-companion"
+  ],
+  "namedInputs": {
+    "default": [
+      "{workspaceRoot}/src/**/*",
+      "{workspaceRoot}/public/**/*",
+      "{workspaceRoot}/index.html",
+      "{workspaceRoot}/tsconfig.json",
+      "{workspaceRoot}/vite.config.ts",
+      "{workspaceRoot}/svelte.config.js",
+      "{workspaceRoot}/scripts/browser-companion-dev.mjs",
+      "{workspaceRoot}/scripts/native-gateway-bridge.mjs",
+      "{workspaceRoot}/scripts/native-gateway-messages.mjs",
+      "sharedGlobals"
+    ],
+    "production": [
+      "default",
+      "!{workspaceRoot}/src/**/*.test.*",
+      "!{workspaceRoot}/src/lib/test-module-loader.mjs"
+    ]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm cockpit:check"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm cockpit:build"
+      },
+      "dependsOn": [
+        "browser-companion:build"
+      ],
+      "outputs": [
+        "{workspaceRoot}/dist"
+      ],
+      "inputs": [
+        "production",
+        "^production"
+      ]
+    }
+  }
+}

@@ -1,0 +1,263 @@
+{
+  "groups": [
+    {
+      "name": "profiles-fe",
+      "testPatterns": [
+        "src/lib/profile-*.test.mjs",
+        "src/lib/profiles.test.mjs",
+        "src/lib/game-profile-*.test.mjs"
+      ],
+      "sourcePatterns": [
+        "src/lib/profile-*.ts",
+        "src/lib/profile-*.mjs",
+        "src/lib/profile-*.svelte",
+        "src/lib/Profile*.svelte",
+        "src/lib/profiles.*",
+        "src/lib/game-profile-*.ts",
+        "src/lib/game-profile-*.mjs",
+        "src/lib/game-profile-*.svelte",
+        "tests/fixtures/profiles/**"
+      ],
+      "coverageScripts": [
+        "profiles:coverage",
+        "profile-inventory:coverage",
+        "profile-compilation:coverage",
+        "profile-editor:coverage",
+        "profile-canvas:coverage",
+        "profile-port-browser:coverage",
+        "profile-companion-authoring:coverage",
+        "profile-graph:coverage",
+        "profile-graph-history:coverage",
+        "profile-processing:coverage",
+        "profile-runtime:coverage",
+        "profile-runtime-controller:coverage",
+        "profile-inspection:coverage",
+        "profile-inspection-controller:coverage",
+        "profile-activity:coverage",
+        "profile-activity-controller:coverage",
+        "profile-learning:coverage",
+        "profile-learning-controller:coverage",
+        "profile-automatic:coverage",
+        "profile-automatic-controller:coverage",
+        "profile-retired-recovery:coverage",
+        "profile-library:coverage",
+        "desktop:coverage"
+      ]
+    },
+    {
+      "name": "devices-fe",
+      "testPatterns": [
+        "src/lib/device-*.test.mjs",
+        "src/lib/system-*.test.mjs",
+        "src/lib/host-controllers-ui.test.mjs",
+        "src/lib/controller-lifecycle.test.mjs",
+        "src/lib/controllers.test.mjs",
+        "src/lib/module-usb.test.mjs",
+        "src/lib/persistence/inventory-storage.test.mjs"
+      ],
+      "sourcePatterns": [
+        "src/lib/device-*.ts",
+        "src/lib/device-*.mjs",
+        "src/lib/device-*.svelte",
+        "src/lib/system-*.ts",
+        "src/lib/system-*.mjs",
+        "src/lib/system-*.svelte",
+        "src/lib/System*.svelte",
+        "src/lib/host-controller*.ts",
+        "src/lib/host-controller*.mjs",
+        "src/lib/host-controller*.svelte",
+        "src/lib/controller*.ts",
+        "src/lib/controller*.mjs",
+        "src/lib/controller*.svelte",
+        "src/lib/controllers.*",
+        "src/lib/module-usb.*",
+        "src/lib/persistence/inventory-storage.*",
+        "tests/fixtures/system/**"
+      ],
+      "coverageScripts": [
+        "system-inventory:coverage",
+        "controllers:coverage",
+        "actions:coverage",
+        "module-usb:coverage"
+      ]
+    },
+    {
+      "name": "games-fe",
+      "testPatterns": [
+        "src/lib/game-*.test.mjs",
+        "src/lib/games.test.mjs",
+        "src/lib/custom-games.test.mjs",
+        "src/lib/assetto-games.test.mjs",
+        "src/lib/runtime-config.test.mjs"
+      ],
+      "excludePatterns": [
+        "src/lib/game-profile-*.test.mjs"
+      ],
+      "sourcePatterns": [
+        "src/lib/game-*.ts",
+        "src/lib/game-*.mjs",
+        "src/lib/game-*.svelte",
+        "src/lib/Game*.svelte",
+        "src/lib/games.*",
+        "src/lib/custom-games.*",
+        "src/lib/assetto-games.*",
+        "src/lib/runtime-config.*",
+        "tests/fixtures/games/**"
+      ],
+      "coverageScripts": [
+        "games:coverage",
+        "game-provider:coverage"
+      ]
+    },
+    {
+      "name": "widgets-fe",
+      "testPatterns": [
+        "src/lib/generic-widget-*.test.mjs",
+        "src/lib/compiled-companion-library.test.mjs",
+        "src/lib/persistence/designer-storage.test.mjs"
+      ],
+      "sourcePatterns": [
+        "src/lib/generic-widget-*.ts",
+        "src/lib/generic-widget-*.mjs",
+        "src/lib/generic-widget-*.svelte",
+        "src/lib/GenericWidget*.svelte",
+        "src/lib/compiled-companion-library.*",
+        "src/lib/CompiledCompanion*.svelte",
+        "src/lib/persistence/designer-storage.*",
+        "tests/fixtures/widgets/**"
+      ],
+      "coverageTasks": [
+        {
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/compiled-companion-library.ts",
+            "--test-coverage-include=src/lib/generic-widget-editor.ts",
+            "--test-coverage-include=src/lib/persistence/designer-storage.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/compiled-companion-library.test.mjs",
+            "src/lib/generic-widget-editor.test.mjs",
+            "src/lib/generic-widget-preview-ui.test.mjs",
+            "src/lib/persistence/designer-storage.test.mjs"
+          ],
+          "tests": [
+            "src/lib/compiled-companion-library.test.mjs",
+            "src/lib/generic-widget-editor.test.mjs",
+            "src/lib/generic-widget-preview-ui.test.mjs",
+            "src/lib/persistence/designer-storage.test.mjs"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "companions-fe",
+      "testPatterns": [
+        "src/lib/companion-*.test.mjs",
+        "src/lib/companions.test.mjs",
+        "src/lib/firmware-*.test.mjs",
+        "tests/fixtures/legacy-companion/layouts.test.mjs"
+      ],
+      "sourcePatterns": [
+        "src/lib/companion-*.ts",
+        "src/lib/companion-*.mjs",
+        "src/lib/companion-*.svelte",
+        "src/lib/Companion*.svelte",
+        "src/lib/companions.*",
+        "src/lib/firmware-*.ts",
+        "src/lib/firmware-*.mjs",
+        "src/lib/firmware-*.svelte",
+        "src/lib/Firmware*.svelte",
+        "tests/fixtures/legacy-companion/**"
+      ],
+      "coverageTasks": [
+        {
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/companion-library.ts",
+            "--test-coverage-include=src/lib/companions.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/companion-library.test.mjs",
+            "src/lib/companions.test.mjs"
+          ],
+          "tests": [
+            "src/lib/companion-library.test.mjs",
+            "src/lib/companions.test.mjs"
+          ]
+        },
+        {
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=tests/fixtures/legacy-companion/layouts.mjs",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "tests/fixtures/legacy-companion/layouts.test.mjs"
+          ],
+          "tests": [
+            "tests/fixtures/legacy-companion/layouts.test.mjs"
+          ]
+        }
+      ],
+      "additionalTests": [
+        "tests/fixtures/legacy-companion/layouts.test.mjs"
+      ]
+    },
+    {
+      "name": "shell-fe",
+      "catchAll": true,
+      "additionalTests": [
+        "scripts/native-gateway-bridge.test.mjs"
+      ],
+      "sourcePatterns": [
+        "src/lib/activation-progress-presenter.*",
+        "src/lib/canvas-navigation.*",
+        "src/lib/canvas-styling.*",
+        "src/lib/cockpit-history.*",
+        "src/lib/debug-inputs.*",
+        "src/lib/gateway-*.ts",
+        "src/lib/gateway-*.mjs",
+        "src/lib/mcp.*",
+        "src/lib/notifications.*",
+        "src/lib/output-settings-ui.*",
+        "src/lib/page-header-ui.*",
+        "src/lib/panel-actions.*",
+        "src/lib/progress-notification-settings.*",
+        "src/lib/settings-panel-ui.*",
+        "src/lib/ui-settings-guard.*",
+        "src/lib/persistence/ui-preferences.*",
+        "src/lib/persistence/native-ui-preferences.*",
+        "App.svelte",
+        "src/App.svelte"
+      ],
+      "coverageScripts": [
+        "debug:coverage",
+        "ui-preferences:coverage"
+      ],
+      "coverageTasks": [
+        {
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/panel-actions.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/panel-actions.test.mjs"
+          ],
+          "tests": [
+            "src/lib/panel-actions.test.mjs"
+          ]
+        }
+      ]
+    }
+  ],
+  "globalInputs": [
+    "sharedGlobals"
+  ]
+}

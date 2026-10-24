@@ -1,0 +1,58 @@
+{
+  "name": "shared-fixtures",
+  "projectType": "library",
+  "tags": [
+    "scope:contracts"
+  ],
+  "implicitDependencies": [
+    "widget-compiler",
+    "widget-runtime",
+    "companion-designer",
+    "companion-ui"
+  ],
+  "namedInputs": {
+    "default": [
+      "{workspaceRoot}/scripts/*fixtures.mjs",
+      "{workspaceRoot}/scripts/prepare-widget-fonts.py",
+      "{workspaceRoot}/packages/widget-compiler/scripts/**/*",
+      "{workspaceRoot}/packages/companion-ui/assets/**/*",
+      "{workspaceRoot}/examples/companion/**/*",
+      "{workspaceRoot}/apps/companion-esp32/test/*.json",
+      "{workspaceRoot}/apps/companion-esp32/network/*profile*",
+      "{workspaceRoot}/apps/companion-esp32/render/*profile*",
+      "{workspaceRoot}/crates/companion-service/tests/fixtures/**/*",
+      "{workspaceRoot}/src/lib/compiled-companion-library.ts",
+      "{workspaceRoot}/src/lib/generic-widget-editor.ts",
+      "sharedGlobals",
+      "{workspaceRoot}/tests/fixtures/legacy-companion/**/*",
+      "{workspaceRoot}/scripts/fixtures/**/*",
+      "{workspaceRoot}/packages/widget-compiler/test/fixtures/**/*"
+    ]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "node packages/widget-compiler/scripts/native-source-fixtures.mjs --check",
+          "node packages/widget-compiler/scripts/image-codec-fixtures.mjs --check",
+          "node scripts/workspace-fixtures.mjs --check",
+          "node scripts/widget-publication-fixtures.mjs --check",
+          "node scripts/compiled-acceptance-fixtures.mjs --check",
+          "node scripts/widget-lvgl-fixtures.mjs --check",
+          "node scripts/widget-source-fixtures.mjs --check",
+          "node scripts/widget-state-fixtures.mjs --check",
+          "node scripts/widget-draw-fixtures.mjs --check",
+          "node scripts/widget-input-fixtures.mjs --check",
+          "node scripts/panel-source-fixtures.mjs --check",
+          "python scripts/prepare-widget-fonts.py --check"
+        ],
+        "parallel": false
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    }
+  }
+}

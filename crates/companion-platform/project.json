@@ -1,0 +1,50 @@
+{
+  "name": "native-companion-platform",
+  "projectType": "library",
+  "root": "crates/companion-platform",
+  "sourceRoot": "crates/companion-platform",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Rust crate tauri-plugin-companion-platform"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "cargo test --manifest-path crates/companion-platform/Cargo.toml"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-companion-service"
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "name": "native-mapping-host",
+  "projectType": "library",
+  "root": "crates/mapping-host",
+  "sourceRoot": "crates/mapping-host",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Rust crate osg-mapping-host"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/scripts/mapping-host-coverage.py",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python scripts/mapping-host-coverage.py"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-companion-service",
+    "native-controller-input",
+    "native-desktop-output",
+    "native-logic",
+    "native-mapping",
+    "native-persistence",
+    "native-virtual-controller"
+  ]
+}

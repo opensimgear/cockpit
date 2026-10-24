@@ -1,0 +1,35 @@
+{
+  "name": "release-tooling",
+  "projectType": "library",
+  "tags": [
+    "scope:tooling"
+  ],
+  "namedInputs": {
+    "default": [
+      "{workspaceRoot}/scripts/*release*",
+      "{workspaceRoot}/scripts/test_package*",
+      "{workspaceRoot}/release/**/*",
+      "{workspaceRoot}/src/lib/firmware-release*",
+      "{workspaceRoot}/docs/*release*",
+      "{workspaceRoot}/docs/companion-clients.md",
+      "{workspaceRoot}/apps/companion-esp32/**/*",
+      "{workspaceRoot}/crates/*/src/**/*",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "python -m unittest discover -s scripts -p \"test_*release*.py\" -v",
+          "python scripts/companion-release-check.py --output .research/companion-c6/release-readiness.json"
+        ],
+        "parallel": false
+      },
+      "outputs": [
+        "{workspaceRoot}/.research/companion-c6/release-readiness.json"
+      ]
+    }
+  }
+}

@@ -1,4 +1,5 @@
 .DS_Store
+.nx/
 .e2e/
 .research/
 build/

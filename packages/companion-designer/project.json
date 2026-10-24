@@ -1,0 +1,36 @@
+{
+  "name": "companion-designer",
+  "projectType": "library",
+  "sourceRoot": "packages/companion-designer/src",
+  "tags": [
+    "language:typescript",
+    "scope:shared"
+  ],
+  "implicitDependencies": [
+    "companion-contracts"
+  ],
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "packages/companion-designer"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run coverage",
+        "cwd": "packages/companion-designer"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    }
+  }
+}

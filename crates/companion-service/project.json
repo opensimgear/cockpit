@@ -1,0 +1,51 @@
+{
+  "name": "native-companion-service",
+  "projectType": "library",
+  "root": "crates/companion-service",
+  "sourceRoot": "crates/companion-service",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Rust crate osg-companion-service"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*",
+      "{workspaceRoot}/scripts/companion-coverage.py"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python scripts/companion-coverage.py --service-only"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-persistence"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "companion-ui",
+  "projectType": "library",
+  "sourceRoot": "packages/companion-ui/src",
+  "tags": [
+    "language:typescript",
+    "scope:shared"
+  ],
+  "implicitDependencies": [
+    "companion-contracts",
+    "companion-designer",
+    "widget-runtime"
+  ],
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "packages/companion-ui"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run coverage",
+        "cwd": "packages/companion-ui"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    }
+  }
+}

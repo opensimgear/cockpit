@@ -1,0 +1,401 @@
+name: Native host and integration checks
+on:
+  workflow_call:
+    inputs:
+      run_persistence: { type: boolean, required: false, default: false }
+      run_profiles: { type: boolean, required: false, default: false }
+      run_host: { type: boolean, required: false, default: false }
+      run_logic: { type: boolean, required: false, default: false }
+      run_controllers: { type: boolean, required: false, default: false }
+      run_mapping: { type: boolean, required: false, default: false }
+      base: { type: string, required: false, default: '' }
+      head: { type: string, required: false, default: '' }
+      full: { type: boolean, required: false, default: false }
+permissions:
+  contents: read
+jobs:
+  persistence-contracts:
+    if: ${{ inputs.run_persistence }}
+    name: SQLite persistence (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: rustup component add llvm-tools-preview
+      - run: cargo test --locked --manifest-path crates/persistence/Cargo.toml
+      - name: Each persistence module has at least 71 percent production line coverage
+        run: python scripts/persistence-coverage.py
+
+  profiles-contracts:
+    if: ${{ inputs.run_profiles }}
+    name: Unified profile contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install profile coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Profile contracts, storage and session coverage
+        run: python scripts/profiles-coverage.py
+      - name: Complete profile rig and persistent editor metadata
+        run: cargo test --locked --manifest-path crates/profiles/Cargo.toml --test complete_rig --test editor_metadata
+      - name: Upload profile contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-coverage-${{ matrix.os }}
+          path: |
+            .research/profiles-coverage/summary.json
+            .research/profiles-coverage/*-lines.txt
+            .research/profiles-coverage/tests.log
+
+  native:
+    if: ${{ inputs.run_host }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.e2e/build/cockpit
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Tauri and serial platform dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev bubblewrap apparmor-profiles dbus-x11 gnome-keyring lua5.1
+          # Disposable runner: permit only the distro helper profile's namespaces.
+          # Keep global user-namespace restrictions enabled.
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - run: pnpm install --frozen-lockfile
+      - name: Native tests and desktop compile
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            cargo test --locked --manifest-path src-tauri/Cargo.toml
+          '
+
+      - name: Unified profile acceptance without optional output drivers
+        run: |
+          cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
+          python3 -m unittest discover -s scripts -p test_profile_acceptance.py -v
+          python3 scripts/mapping-acceptance.py --service .e2e/build/cockpit/debug/osg-gateway-service --expect-unavailable --output .research/mapping-m3/native-acceptance.json
+      - name: Unified profile startup with uinput absent
+        run: |
+          mkdir -p .research/mapping-m3
+          bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp \
+            --bind "$GITHUB_WORKSPACE/.research/mapping-m3" "$GITHUB_WORKSPACE/.research/mapping-m3" \
+            --unshare-pid --die-with-parent -- \
+            python3 scripts/mapping-acceptance.py \
+              --service .e2e/build/cockpit/debug/osg-gateway-service \
+              --expect-uinput-absent --output .research/mapping-m3/native-uinput-absent.json
+      - name: Device action coverage above 70 percent
+        run: |
+          rustup component add llvm-tools-preview
+          python3 -m unittest discover -s scripts -p test_action_coverage.py -v
+          python3 -m unittest discover -s scripts -p test_integration_coverage.py -v
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 scripts/action-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/action-coverage"
+            python3 scripts/dcs-bios-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/dcs-bios-coverage"
+            python3 scripts/integration-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/integration-coverage"
+          '
+      - name: USB, inventory and compiler preview coverage at least 71 percent
+        run: |
+          python3 -m unittest discover -s scripts -p test_module_usb_coverage.py -v
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 scripts/module-usb-coverage.py
+          '
+      - name: Game integration setup coverage at least 71 percent
+        env:
+          OSG_DCS_SETUP_ARCHIVE: ${{ runner.temp }}/osg-dcs-bios-v0.11.7.zip
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 120 --retry 2 --retry-max-time 300 \
+            --max-filesize 8234988 \
+            --output "$OSG_DCS_SETUP_ARCHIVE" \
+            'https://github.com/DCS-Skunkworks/dcs-bios/releases/download/v0.11.7/DCS-BIOS_v0.11.7.zip'
+          python3 scripts/test-dcs-aircraft-exports.py --archive "$OSG_DCS_SETUP_ARCHIVE" --lua lua5.1
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 scripts/setup-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/setup-coverage"
+          '
+      - name: Bootstrap behavior tests
+        run: |
+          python3 -m unittest discover -s tests/e2e -p 'test_*.py'
+          node --test tests/e2e/profile-graph-fixtures.test.mjs
+      - name: Independent gateway and device acceptance
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
+            python3 tests/e2e/run.py --sanitize
+          '
+      - name: Upload integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cockpit-integration-evidence
+          path: |
+            .e2e/resolved-dependencies.json
+            .e2e/runs/
+            .research/mapping-m3/native-acceptance.json
+            .research/mapping-m3/native-uinput-absent.json
+            .research/module-usb-coverage/summary.json
+            .research/module-usb-coverage/evidence.json
+            .research/module-usb-coverage/*-lines.txt
+            .research/module-usb-coverage/tests.log
+            .research/action-coverage/action-summary.json
+            .research/action-coverage/native-tests.log
+            .research/action-coverage/lines.txt
+            .research/dcs-bios-coverage/evidence.json
+            .research/dcs-bios-coverage/dcs-bios-summary.json
+            .research/dcs-bios-coverage/native-tests.log
+            .research/dcs-bios-coverage/lines.txt
+            .research/integration-coverage/evidence.json
+            .research/integration-coverage/integration-summary.json
+            .research/integration-coverage/native-tests.log
+            .research/integration-coverage/lines.txt
+            .research/setup-coverage/setup-summary.json
+            .research/setup-coverage/source-hashes.json
+            .research/setup-coverage/native-tests.log
+            .research/setup-coverage/lines.txt
+          if-no-files-found: ignore
+
+  mapping-prototypes:
+    if: ${{ inputs.run_logic }}
+    name: Mapping M0 prototypes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Portable framing, readiness, source and visibility contracts
+        run: python -m unittest discover -s tests/controller-mapping-m0 -v
+      - name: Qualification evidence validation
+        run: python -m unittest discover -s tests/qualification -v
+      - name: Install logic coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Production script worker budgets, replay and per-module coverage
+        run: python scripts/logic-coverage.py
+      - name: Bounded Rhai evaluation
+        run: cargo test --locked --manifest-path tests/controller-mapping-m0/rhai/Cargo.toml
+      - name: Upload production script evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logic-coverage-${{ matrix.os }}
+          path: |
+            .research/logic-coverage/summary.json
+            .research/logic-coverage/*-lines.txt
+            .research/logic-coverage/tests.log
+      - name: Compile Windows background-capture experiment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:tests\controller-mapping-m0\RawInputProbe.exe tests\controller-mapping-m0\RawInputProbe.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile and check Windows recovery experiment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /platform:x64 /r:System.Web.Extensions.dll /out:tests\controller-mapping-m0\HidHideSessionProbe.exe tests\controller-mapping-m0\HidHideSessionProbe.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\tests\controller-mapping-m0\HidHideSessionProbe.exe selftest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem tests/controller-mapping-m0 -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+
+  controllers:
+    if: ${{ inputs.run_controllers }}
+    name: Native controllers (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: pnpm/action-setup@v4
+        if: runner.os == 'Windows'
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build browser assets for native companion operators
+        if: runner.os == 'Windows'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm browser:build
+      - name: Install pinned native coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Linux controller development dependency
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libudev-dev libdbus-1-dev bubblewrap apparmor-profiles
+          # Disposable runner only: allow the distro helper to create namespaces,
+          # with its children confined by the distro profile. Keep global userns
+          # restrictions enabled; never replace them with a sysctl exception.
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+      - name: Unified profile acceptance protocol oracle tests
+        run: python -m unittest discover -s scripts -p test_profile_acceptance.py -v
+      - name: Native controller tests with per-module coverage
+        run: python scripts/controller-coverage.py
+      - name: Native virtual-output tests with per-module coverage
+        run: python scripts/virtual-coverage.py
+      - name: Native mapping-host tests with per-module coverage
+        run: python scripts/mapping-host-coverage.py
+      - name: Desktop ownership, protocol and failure tests (no injection)
+        run: cargo test --locked --manifest-path crates/desktop-output/Cargo.toml --all-targets
+      - name: Desktop latency and coverage oracle regressions (no injection)
+        run: python -m unittest discover -s scripts -p 'test_desktop_*.py' -v
+      - name: Portable desktop backend coverage (no injection)
+        run: python scripts/desktop-output-coverage.py
+      - name: Build unavailable Apple helper and inspect without activation
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --locked --manifest-path crates/virtual-controller/Cargo.toml --bin osg-macos-hid-helper
+          crates/virtual-controller/target/debug/osg-macos-hid-helper --inspect
+      - name: Isolated macOS native-test Keychain
+        # A credential created by this binary otherwise prompts when the separate
+        # instrumented coverage binary accesses it on a headless macOS runner.
+        # Provision only a random item in a disposable, isolated test Keychain.
+        if: runner.os == 'macOS'
+        run: python scripts/macos-native-test-keychain.py setup
+      - name: Windows and macOS desktop compilation and regression tests
+        if: runner.os != 'Linux'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Windows and macOS USB, inventory and compiler preview coverage
+        if: runner.os != 'Linux'
+        run: |
+          python -m unittest discover -s scripts -p test_module_usb_coverage.py -v
+          python scripts/module-usb-coverage.py
+      - name: Windows companion trust, WSS, source isolation and operator coverage
+        if: runner.os == 'Windows'
+        env:
+          # Reuse the instrumented desktop build from the preceding coverage step.
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.research/module-usb-coverage/target
+        run: python scripts/companion-coverage.py
+      - name: Build Windows desktop and service binaries
+        if: runner.os == 'Windows'
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service --bin osg-cockpit
+      - name: Windows unified profile acceptance
+        if: runner.os == 'Windows'
+        run: python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --expect-unavailable --output .research/mapping-m3/native-acceptance.json
+      - name: Companion inputs through the unified applied profile
+        if: runner.os == 'Windows'
+        run: |
+          python -m unittest discover -s scripts -p test_companion_mapping_acceptance.py -v
+          python scripts/companion-mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --output .research/companion-c4/native-acceptance.json
+      - name: Companion feedback through the unified applied profile and real WSS
+        if: runner.os == 'Windows'
+        run: |
+          python -m unittest discover -s scripts -p test_companion_feedback_acceptance.py -v
+          python scripts/companion-feedback-acceptance.py --service src-tauri/target/debug/osg-gateway-service.exe --output .research/companion-c5/native-feedback-acceptance.json
+      - name: Stage Windows private-worker packaging evidence
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-windows-mapping.ps1 -Executable src-tauri/target/debug/osg-cockpit.exe -OutputDirectory .research/windows-mapping-package -BuildKind development
+      - name: macOS unified profile lifecycle without an authorized output helper
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service
+          python scripts/mapping-acceptance.py --service src-tauri/target/debug/osg-gateway-service --expect-unavailable --output .research/mapping-m3/native-acceptance.json
+      - name: Remove isolated macOS native-test Keychain
+        if: always() && runner.os == 'macOS'
+        run: python scripts/macos-native-test-keychain.py cleanup
+      - name: Upload controller coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-coverage-${{ matrix.os }}
+          path: |
+            .research/module-usb-coverage/summary.json
+            .research/module-usb-coverage/evidence.json
+            .research/module-usb-coverage/*-lines.txt
+            .research/module-usb-coverage/tests.log
+            .research/controller-coverage/summary.json
+            .research/controller-coverage/*-lines.txt
+            .research/controller-coverage/tests.log
+            .research/virtual-coverage/summary.json
+            .research/virtual-coverage/*-lines.txt
+            .research/virtual-coverage/tests.log
+            .research/mapping-host-coverage/summary.json
+            .research/mapping-host-coverage/*-lines.txt
+            .research/mapping-host-coverage/tests.log
+            .research/desktop-output-coverage/summary.json
+            .research/desktop-output-coverage/*-lines.txt
+            .research/desktop-output-coverage/tests.log
+            .research/mapping-m3/native-acceptance.json
+            .research/windows-mapping-package/qualification.json
+            .research/companion-coverage/summary.json
+            .research/companion-coverage/*-tests.log
+            .research/companion-coverage/*-lines.txt
+            .research/companion-c4/native-acceptance.json
+            .research/companion-c5/native-feedback-acceptance.json
+
+  mapping:
+    if: ${{ inputs.run_mapping }}
+    name: Portable mapping (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Portable mapping tests and per-module coverage
+        run: python scripts/mapping-coverage.py
+      - name: Execute authored preview trace
+        run: cargo run --locked --manifest-path crates/mapping/Cargo.toml --example replay -- crates/mapping/fixtures/direct-trace.json
+      - name: Upload mapping evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapping-coverage-${{ matrix.os }}
+          path: |
+            .research/mapping-coverage/summary.json
+            .research/mapping-coverage/*-lines.txt
+            .research/mapping-coverage/tests.log

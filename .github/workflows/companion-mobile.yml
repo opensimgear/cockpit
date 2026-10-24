@@ -1,47 +1,15 @@
 name: Mobile checks and build artifacts
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/companion/**'
-      - 'packages/companion-contracts/**'
-      - 'packages/companion-designer/**'
-      - 'packages/companion-ui/**'
-      - 'crates/companion-service/**'
-      - 'crates/companion-platform/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'rust-toolchain.toml'
-      - '.cargo/**'
-      - '.npmrc'
-      - '.github/workflows/companion-mobile.yml'
-      - 'scripts/companion-mobile*'
-      - 'scripts/test_companion_mobile*.py'
-      - 'docs/companion-mobile-release-notes.md'
-      - 'LICENSE'
-      - 'THIRD_PARTY_NOTICES.md'
-  pull_request:
-    paths:
-      - 'apps/companion/**'
-      - 'packages/companion-contracts/**'
-      - 'packages/companion-designer/**'
-      - 'packages/companion-ui/**'
-      - 'crates/companion-service/**'
-      - 'crates/companion-platform/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'rust-toolchain.toml'
-      - '.cargo/**'
-      - '.npmrc'
-      - '.github/workflows/companion-mobile.yml'
-      - 'scripts/companion-mobile*'
-      - 'scripts/test_companion_mobile*.py'
-      - 'docs/companion-mobile-release-notes.md'
-      - 'LICENSE'
-      - 'THIRD_PARTY_NOTICES.md'
+  workflow_call:
+    inputs:
+      include_signed_ios: { type: boolean, required: false, default: false }
   workflow_dispatch:
+    inputs:
+      include_signed_ios:
+        description: Build the signed iOS device package when signing secrets are configured.
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -135,7 +103,7 @@ jobs:
           path: .research/mobile-release/*.tar.gz
           if-no-files-found: error
   ios-device:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.IOS_SIGNING_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && inputs.include_signed_ios && vars.IOS_SIGNING_ENABLED == 'true'
     needs: checks
     runs-on: macos-15
     timeout-minutes: 60

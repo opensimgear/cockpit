@@ -1,40 +1,5 @@
 name: Cockpit Windows package checks
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'public/**'
-      - 'src-tauri/**'
-      - 'apps/browser-companion/**'
-      - 'packages/companion-contracts/**'
-      - 'packages/companion-designer/**'
-      - 'packages/companion-ui/**'
-      - 'packages/widget-runtime/**'
-      - 'packages/widget-compiler/**'
-      - 'crates/**'
-      - '!crates/companion-platform/**'
-      - 'apps/companion-esp32/network/firmware.h'
-      - 'examples/companion/**'
-      - 'tests/fixtures/**'
-      - 'scripts/native-gateway-bridge*'
-      - 'scripts/package-windows-*.ps1'
-      - 'docs/windows-release-notes.md'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'rust-toolchain.toml'
-      - 'index.html'
-      - 'svelte.config.js'
-      - 'tsconfig.json'
-      - 'vite.config.ts'
-      - '.cargo/**'
-      - '.npmrc'
-      - '.gitattributes'
-      - '.github/workflows/cockpit-windows-release.yml'
-      - 'LICENSE'
-      - 'THIRD_PARTY_NOTICES.md'
+on: [workflow_call, workflow_dispatch]
 permissions:
   contents: read
 concurrency:

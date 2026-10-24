@@ -1,0 +1,62 @@
+{
+  "name": "mobile-companion",
+  "projectType": "application",
+  "sourceRoot": "apps/companion/src",
+  "tags": [
+    "language:svelte",
+    "scope:mobile"
+  ],
+  "implicitDependencies": [
+    "companion-contracts",
+    "companion-designer",
+    "companion-ui",
+    "widget-runtime"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/src/**/*",
+      "{projectRoot}/*.json",
+      "{projectRoot}/vite.config.ts",
+      "{projectRoot}/index.html",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "apps/companion"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run test",
+        "cwd": "apps/companion"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run ui:build",
+        "cwd": "apps/companion"
+      },
+      "outputs": [
+        "{projectRoot}/dist"
+      ],
+      "inputs": [
+        "production",
+        "^production"
+      ]
+    }
+  }
+}

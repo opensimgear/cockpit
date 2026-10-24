@@ -8,5 +8,8 @@
     "test": "node --test test/*.test.mjs",
     "coverage": "node --experimental-test-coverage --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test test/*.test.mjs",
     "check": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions src/index.ts"
+  },
+  "nx": {
+    "includedScripts": []
   }
 }

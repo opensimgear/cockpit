@@ -1,0 +1,21 @@
+{
+  "name": "ci-tools",
+  "root": "tools/ci",
+  "projectType": "library",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --experimental-test-coverage \"--test-coverage-include=tools/ci/*-core.mjs\" --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test tools/ci/*.test.mjs"
+      },
+      "inputs": [
+        "{projectRoot}/**/*",
+        "{workspaceRoot}/.github/workflows/**/*",
+        "{workspaceRoot}/tools/nx/**/*",
+        "{workspaceRoot}/nx.json",
+        "{workspaceRoot}/package.json",
+        "{workspaceRoot}/pnpm-lock.yaml"
+      ]
+    }
+  }
+}

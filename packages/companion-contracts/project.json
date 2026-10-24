@@ -1,0 +1,34 @@
+{
+  "name": "companion-contracts",
+  "projectType": "library",
+  "sourceRoot": "packages/companion-contracts/src",
+  "tags": [
+    "language:typescript",
+    "scope:shared"
+  ],
+  "implicitDependencies": [],
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "packages/companion-contracts"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm run coverage",
+        "cwd": "packages/companion-contracts"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    }
+  }
+}

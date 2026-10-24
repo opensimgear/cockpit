@@ -1,0 +1,60 @@
+{
+  "name": "browser-companion",
+  "projectType": "application",
+  "sourceRoot": "apps/browser-companion/src",
+  "tags": [
+    "language:svelte",
+    "scope:browser"
+  ],
+  "implicitDependencies": [
+    "companion-contracts",
+    "companion-designer",
+    "companion-ui",
+    "widget-runtime"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/src/**/*",
+      "{projectRoot}/*.json",
+      "{projectRoot}/vite.config.ts",
+      "{projectRoot}/index.html",
+      "{workspaceRoot}/tsconfig.json",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm browser:check"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm browser:test && pnpm browser-feedback:coverage"
+      },
+      "inputs": [
+        "default",
+        "^production"
+      ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm browser:build"
+      },
+      "outputs": [
+        "{projectRoot}/dist"
+      ],
+      "inputs": [
+        "production",
+        "^production"
+      ]
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "main",
+  "plugins": [
+    "./tools/nx/plugin.cjs"
+  ],
+  "namedInputs": {
+    "sharedGlobals": [
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/tools/nx/**/*",
+      "{workspaceRoot}/pnpm-lock.yaml",
+      "{workspaceRoot}/pnpm-workspace.yaml",
+      "{workspaceRoot}/package.json",
+      "{workspaceRoot}/.npmrc",
+      {
+        "runtime": "node --version"
+      },
+      {
+        "runtime": "node -p \"process.platform + '-' + process.arch\""
+      }
+    ],
+    "default": [
+      "{projectRoot}/**/*",
+      "sharedGlobals"
+    ],
+    "production": [
+      "default",
+      "!{projectRoot}/**/*.test.*",
+      "!{projectRoot}/test/**/*"
+    ]
+  },
+  "targetDefaults": {
+    "check": {
+      "cache": true
+    },
+    "test": {
+      "cache": true
+    },
+    "build": {
+      "cache": true
+    },
+    "native": {
+      "cache": false,
+      "parallelism": false
+    },
+    "native-ui": {
+      "cache": false,
+      "parallelism": false
+    }
+  },
+  "parallel": 3,
+  "nxCloudId": "6adca7b2048d18edb6e5b448"
+}

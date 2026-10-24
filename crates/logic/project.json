@@ -1,0 +1,53 @@
+{
+  "name": "native-logic",
+  "projectType": "library",
+  "root": "crates/logic",
+  "sourceRoot": "crates/logic",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Rust crate osg-logic"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/scripts/logic-coverage.py",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*",
+      "{workspaceRoot}/tests/controller-mapping-m0/**/*",
+      "{workspaceRoot}/tests/qualification/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python scripts/logic-coverage.py"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-mapping"
+  ]
+}

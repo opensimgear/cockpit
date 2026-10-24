@@ -1,0 +1,128 @@
+name: Daily native and integration checks
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: cockpit-daily-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    outputs:
+      base: ${{ steps.baseline.outputs.base }}
+      head: ${{ steps.baseline.outputs.head }}
+      full: ${{ steps.baseline.outputs.full }}
+      has_changes: ${{ steps.baseline.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Resolve last successful daily baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/ci/baseline.mjs daily
+
+  select-native:
+    needs: baseline
+    if: needs.baseline.outputs.has_changes == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      NX_CLOUD_ACCESS_TOKEN: ${{ secrets.NX_CLOUD_ACCESS_TOKEN }}
+      NX_NO_CLOUD: ${{ secrets.NX_CLOUD_ACCESS_TOKEN == '' }}
+      NX_BASE: ${{ needs.baseline.outputs.base }}
+      NX_HEAD: ${{ needs.baseline.outputs.head }}
+      NX_FULL: ${{ needs.baseline.outputs.full }}
+    outputs:
+      native_host: ${{ steps.plan.outputs.native_host }}
+      native_controllers: ${{ steps.plan.outputs.native_controllers }}
+      native_profiles: ${{ steps.plan.outputs.native_profiles }}
+      native_persistence: ${{ steps.plan.outputs.native_persistence }}
+      native_mapping: ${{ steps.plan.outputs.native_mapping }}
+      native_logic: ${{ steps.plan.outputs.native_logic }}
+      native_mobile: ${{ steps.plan.outputs.native_mobile }}
+      native_esp32: ${{ steps.plan.outputs.native_esp32 }}
+      native_windows_package: ${{ steps.plan.outputs.native_windows_package }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Find affected native projects
+        if: env.NX_FULL != 'true'
+        run: |
+          mkdir -p .research/ci
+          pnpm exec nx show projects --affected --withTarget=native --json --base="$NX_BASE" --head="$NX_HEAD" > .research/ci/affected-native.json
+      - name: Plan platform jobs
+        id: plan
+        run: node tools/ci/plan-native.mjs .research/ci/affected-native.json
+
+  native-tests:
+    needs: [baseline, select-native]
+    if: >-
+      needs.baseline.outputs.has_changes == 'true' &&
+      (needs.select-native.outputs.native_host == 'true' ||
+      needs.select-native.outputs.native_controllers == 'true' ||
+      needs.select-native.outputs.native_profiles == 'true' ||
+      needs.select-native.outputs.native_persistence == 'true' ||
+      needs.select-native.outputs.native_mapping == 'true' ||
+      needs.select-native.outputs.native_logic == 'true')
+    uses: ./.github/workflows/ci-native.yml
+    with:
+      run_host: ${{ needs.select-native.outputs.native_host == 'true' }}
+      run_controllers: ${{ needs.select-native.outputs.native_controllers == 'true' }}
+      run_profiles: ${{ needs.select-native.outputs.native_profiles == 'true' }}
+      run_persistence: ${{ needs.select-native.outputs.native_persistence == 'true' }}
+      run_mapping: ${{ needs.select-native.outputs.native_mapping == 'true' }}
+      run_logic: ${{ needs.select-native.outputs.native_logic == 'true' }}
+      base: ${{ needs.baseline.outputs.base }}
+      head: ${{ needs.baseline.outputs.head }}
+      full: ${{ needs.baseline.outputs.full == 'true' }}
+
+  mobile:
+    needs: [baseline, select-native]
+    if: needs.baseline.outputs.has_changes == 'true' && needs.select-native.outputs.native_mobile == 'true'
+    uses: ./.github/workflows/companion-mobile.yml
+    with:
+      include_signed_ios: false
+    secrets: inherit
+
+  esp32:
+    needs: [baseline, select-native]
+    if: needs.baseline.outputs.has_changes == 'true' && needs.select-native.outputs.native_esp32 == 'true'
+    uses: ./.github/workflows/companion-esp32.yml
+
+  windows-package:
+    needs: [baseline, select-native]
+    if: needs.baseline.outputs.has_changes == 'true' && needs.select-native.outputs.native_windows_package == 'true'
+    uses: ./.github/workflows/cockpit-windows-release.yml
+
+  daily-gate:
+    if: always()
+    needs: [baseline, select-native, native-tests, mobile, esp32, windows-package]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require successful selected platform gates
+        env:
+          HAS_CHANGES: ${{ needs.baseline.outputs.has_changes }}
+          NATIVE_FLAGS: ${{ toJSON(needs.select-native.outputs) }}
+          JOB_RESULTS: '{"baseline":"${{ needs.baseline.result }}","selection":"${{ needs.select-native.result }}","native":"${{ needs.native-tests.result }}","mobile":"${{ needs.mobile.result }}","esp32":"${{ needs.esp32.result }}","windows_package":"${{ needs.windows-package.result }}"}'
+        run: node tools/ci/daily-gate.mjs

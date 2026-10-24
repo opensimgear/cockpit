@@ -1,0 +1,122 @@
+{
+  "name": "native-host",
+  "projectType": "application",
+  "root": "src-tauri",
+  "sourceRoot": "src-tauri",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Tauri native host and acceptance sources"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/crates/**/*",
+      "{workspaceRoot}/tests/e2e/**/*",
+      "{workspaceRoot}/scripts/**/*native*",
+      "{workspaceRoot}/tests/fixtures/**/*",
+      "{workspaceRoot}/apps/companion/**/*",
+      "{workspaceRoot}/apps/browser-companion/**/*",
+      "{workspaceRoot}/packages/widget-runtime/**/*",
+      "{workspaceRoot}/packages/widget-compiler/**/*",
+      "{workspaceRoot}/packages/companion-contracts/**/*",
+      "{workspaceRoot}/packages/companion-designer/**/*",
+      "{workspaceRoot}/packages/companion-ui/**/*",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*",
+      "{workspaceRoot}/src/**/*",
+      "{workspaceRoot}/src-tauri/**/*",
+      "{workspaceRoot}/tests/**/*",
+      "{workspaceRoot}/e2e/**/*",
+      "{workspaceRoot}/apps/**/*",
+      "{workspaceRoot}/packages/**/*",
+      "{workspaceRoot}/apps/companion-esp32/network/firmware.h",
+      "{workspaceRoot}/apps/companion-esp32/test/*.json",
+      "{workspaceRoot}/scripts/*coverage*",
+      "{workspaceRoot}/scripts/*acceptance*",
+      "{workspaceRoot}/scripts/test-dcs-aircraft-exports.py",
+      "{workspaceRoot}/integration-profiles/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "pnpm native:test"
+      }
+    },
+    "native-ui": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "pnpm widgets:native:ui"
+      }
+    },
+    "native-smoke": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tests/ui/widget-preview-native.mjs"
+      },
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ]
+    }
+  },
+  "implicitDependencies": [
+    "native-companion-platform",
+    "native-companion-serial",
+    "native-companion-service",
+    "native-controller-input",
+    "native-desktop-output",
+    "native-logic",
+    "native-mapping",
+    "native-mapping-host",
+    "native-persistence",
+    "native-profiles",
+    "native-virtual-controller",
+    "profiles-fe",
+    "devices-fe",
+    "games-fe",
+    "widgets-fe",
+    "companions-fe",
+    "shell-fe",
+    "mobile-companion",
+    "browser-companion",
+    "widget-runtime",
+    "widget-compiler",
+    "companion-contracts",
+    "companion-designer",
+    "companion-ui"
+  ]
+}

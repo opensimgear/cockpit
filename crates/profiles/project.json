@@ -1,0 +1,53 @@
+{
+  "name": "native-profiles",
+  "projectType": "library",
+  "root": "crates/profiles",
+  "sourceRoot": "crates/profiles",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Rust crate osg-profiles"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/scripts/profiles-coverage.py",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*",
+      "{workspaceRoot}/tests/fixtures/profiles/**/*"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python scripts/profiles-coverage.py"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-mapping",
+    "native-persistence"
+  ]
+}

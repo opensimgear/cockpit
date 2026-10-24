@@ -1,0 +1,70 @@
+{
+  "name": "native-controllers",
+  "projectType": "library",
+  "root": "tools/native/controllers",
+  "sourceRoot": "tools/native/controllers",
+  "tags": [
+    "native"
+  ],
+  "metadata": {
+    "description": "Native controller, serial, service and mapping acceptance checks"
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/crates/controller-input/**/*",
+      "{workspaceRoot}/crates/virtual-controller/**/*",
+      "{workspaceRoot}/crates/mapping-host/**/*",
+      "{workspaceRoot}/crates/desktop-output/**/*",
+      "{workspaceRoot}/crates/companion-serial/**/*",
+      "{workspaceRoot}/crates/companion-service/**/*",
+      "{workspaceRoot}/tests/ui/**/*native*.mjs",
+      "{workspaceRoot}/scripts/**/*native*",
+      "{workspaceRoot}/tests/e2e/**/*",
+      "sharedGlobals",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*",
+      "{workspaceRoot}/scripts/companion-coverage.py",
+      "{workspaceRoot}/scripts/*coverage*",
+      "{workspaceRoot}/scripts/*acceptance*",
+      "{workspaceRoot}/scripts/test_desktop_*.py",
+      "{workspaceRoot}/scripts/macos-native-test-keychain.py"
+    ],
+    "rustGlobals": [
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/src-tauri/Cargo.toml",
+      "{workspaceRoot}/src-tauri/Cargo.lock",
+      "{workspaceRoot}/Cargo.lock"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": [
+        "default",
+        "^default",
+        "rustGlobals"
+      ],
+      "options": {
+        "command": "python scripts/controller-coverage.py && python scripts/virtual-coverage.py && python scripts/mapping-host-coverage.py && python scripts/desktop-output-coverage.py && python scripts/companion-coverage.py --service-only"
+      }
+    }
+  },
+  "implicitDependencies": [
+    "native-host",
+    "native-companion-serial",
+    "native-companion-service",
+    "native-controller-input",
+    "native-desktop-output",
+    "native-mapping-host",
+    "native-virtual-controller"
+  ]
+}
