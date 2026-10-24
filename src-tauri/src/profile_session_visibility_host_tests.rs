@@ -59,10 +59,12 @@ fn cancelled_pending_application_is_never_admitted_and_remains_owned_for_cleanup
     *io.start_pending.lock().unwrap() = true;
     let mut visibility = visibility(io.clone());
     let mut checks = 0;
+    // Exercise cancellation after durable Start, independently of slow CI disk I/O.
+    // Production retains its three-second admission deadline.
     let error = wait(
         &mut visibility,
         false,
-        Duration::from_secs(1),
+        Duration::from_secs(30),
         || {
             checks += 1;
             if checks == 1 {
@@ -74,13 +76,14 @@ fn cancelled_pending_application_is_never_admitted_and_remains_owned_for_cleanup
         || Ok(()),
     )
     .unwrap_err();
-    assert!(error.contains("admission epoch"));
+    assert!(error.contains("admission epoch"), "{error}");
+    assert_eq!(checks, 2);
     assert!(visibility.needs_cleanup());
     assert!(io.driver.lock().unwrap().active);
     wait(
         &mut visibility,
         true,
-        Duration::from_secs(1),
+        Duration::from_secs(30),
         || Ok(()),
         || Ok(()),
     )

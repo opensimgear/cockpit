@@ -17,6 +17,17 @@ coverage = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(coverage)
 
 
+class RepositorySourceTests(unittest.TestCase):
+    def test_default_gate_tracks_only_existing_current_sources(self):
+        root = Path(__file__).resolve().parents[1]
+        paths = coverage.tracked_source_paths(root, coverage.MODULES, False)
+        self.assertTrue(paths)
+        self.assertIn(root / "src-tauri/src/companion/storage/panels.rs", paths)
+        for path in paths:
+            with self.subTest(path=str(path.relative_to(root))):
+                self.assertTrue(path.is_file(), "Coverage must pin the current production/test source")
+
+
 class InvocationEvidenceTests(unittest.TestCase):
     def run_filters(self, callback, filters=("first", "second")):
         directory = tempfile.TemporaryDirectory()
