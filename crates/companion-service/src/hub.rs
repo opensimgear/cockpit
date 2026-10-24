@@ -683,8 +683,11 @@ impl Hub {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let now = self.now_ms().max(inner.last_now);
         self.expire(&mut inner, now)?;
+        if let Some(expected)=request.get("expectedHostToken") {
+            ensure(expected.as_str()==Some(self.snapshot_token().as_str()),"Companion assignments changed. Refresh before saving.")?;
+        }
         match request["command"].as_str().unwrap_or("") {
-            "companion_status" => Ok(Self::status(&inner)),
+            "companion_status" => Ok(self.status(&inner)),
             "companion_pair_offer" => {
                 let secret = random_secret()?;
                 let expires = now.saturating_add(PAIRING_MS);
@@ -729,7 +732,7 @@ impl Hub {
                 let client=record.credentials.iter_mut().find(|c|c.companion_id==companion).ok_or("Unknown companion.")?;
                 client.name=name.into();
                 self.persist(&record)?;inner.record=record;
-                Ok(Self::status(&inner))
+                Ok(self.status(&inner))
             }
             "companion_revoke" => {
                 let companion=field(request,"companionId")?;
@@ -738,7 +741,10 @@ impl Hub {
             }
             "companion_publish" => {
                 let p = published.unwrap();
-                self.publish_content(&mut inner,p,request["saveAsLatest"]==true)
+                if let Some(selection)=request.get("selection") {
+                    ensure(request["saveAsLatest"]==true,"Selections require saving the panel head.")?;
+                    self.publish_selection(&mut inner,p,selection)
+                }else{self.publish_content(&mut inner,p,request["saveAsLatest"]==true)}
             }
             "companion_prune" => self.prune_content(&mut inner,request),
             "companion_unassign" => {
@@ -877,8 +883,8 @@ impl Hub {
             _ => Err("Unknown local companion command.".into()),
         }
     }
-    fn status(inner: &Inner) -> Value {
-        json!({"hostId":inner.record.host_id,"diagnostic":inner.diagnostic,
+    fn status(&self, inner: &Inner) -> Value {
+        json!({"hostId":inner.record.host_id,"snapshotToken":self.snapshot_token(),"diagnostic":inner.diagnostic,
             "clients":inner.record.credentials.iter().map(|client| {
                 // The native adapter supplies each Session's transport. Kind,
                 // display names and an authenticated connection cannot prove it.

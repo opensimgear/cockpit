@@ -1,9 +1,9 @@
 use super::*;
-fn open(path:&Path)->Result<Hub,String>{Hub::with_storage(Arc::new(crate::persistence::test_support::store(path.join("companion-host-state.dpapi"))),Arc::new(NullSourceSink))}
-fn database(path:&Path)->osg_persistence::Database{osg_persistence::Database::for_namespace(&path.join("companion-host-state.dpapi")).unwrap()}
-fn upload()->Value{serde_json::from_str(include_str!("../../tests/fixtures/compiled-toggle-publication.json")).unwrap()}
-fn publish(hub:&Hub,mut value:Value,save:bool)->Value{value["command"]=json!("companion_publish");value["saveAsLatest"]=json!(save);hub.command(&value).unwrap()}
-fn other(mut value:Value)->Value{
+pub(super) fn open(path:&Path)->Result<Hub,String>{Hub::with_storage(Arc::new(crate::persistence::test_support::store(path.join("companion-host-state.dpapi"))),Arc::new(NullSourceSink))}
+pub(super) fn database(path:&Path)->osg_persistence::Database{osg_persistence::Database::for_namespace(&path.join("companion-host-state.dpapi")).unwrap()}
+pub(super) fn upload()->Value{serde_json::from_str(include_str!("../../tests/fixtures/compiled-toggle-publication.json")).unwrap()}
+pub(super) fn publish(hub:&Hub,mut value:Value,save:bool)->Value{value["command"]=json!("companion_publish");value["saveAsLatest"]=json!(save);hub.command(&value).unwrap()}
+pub(super) fn other(mut value:Value)->Value{
     value["canonicalDocument"]=json!(value["canonicalDocument"].as_str().unwrap().replace("\"title\":\"Toggle\"","\"title\":\"Later Toggle\""));
     value["publicationHash"]=json!(format!("sha256:{}",hash(value["canonicalDocument"].as_str().unwrap().as_bytes())));value["capabilityFingerprint"]=Value::Null;value
 }

@@ -183,7 +183,7 @@ UI. Chunks are transient, client-bound and expire after ten minutes. The mutatio
 ledger makes exact operation retries idempotent; failed native commits preserve
 the upload for explicit retry. Saving authoring data alone does not activate
 outputs or assign a companion. Host publication/head/assignment authority remains
-owned by the atomic host snapshot described below. Bulk portal selection and full MCP parity remain required before S5/S6 completion.
+owned by the atomic host snapshot described below. Portal bulk Save and the fixed companion MCP controls use that same native boundary.
 
 Listener settings and firmware observations now use SQLite. Missing metadata
 uses validated defaults; corrupt or unreadable metadata remains an error. UI
@@ -268,6 +268,20 @@ If a profile changes during pruning, a read-dependency revision check rejects
 the entire transaction without rewriting that profile's revision. No database
 transaction spans sealing, source registration or transport waits.
 
-The portal still coordinates authoring workspace saves and multiple direct
-selections through separate acknowledged commands. Bulk selection and the
-remaining companion MCP controls must be completed before S5/S6 are marked done.
+Portal Save captures a native snapshotToken and submits one publication commit
+with the complete direct companion selection. Archive, saved head and direct
+assignments commit at once. All targets are validated before source effects;
+stale or failed writes restore the prior snapshot and leave touched inputs
+disarmed. Profile-owned assignments remain under journaled profile transitions.
+Draft workspace saves are separate authoring commits; publication failure leaves
+that editable draft available and does not acknowledge its deployment.
+
+MCP exposes fixed typed companion inventory, pairing, rename/revoke, assignment,
+retention, client-owned publication upload and native USB/firmware operations.
+Write operations share native validation and the operation ledger. Record edits
+require the observed snapshotToken; publication selection carries its own token.
+USB status stays passive. Certificate export requires Configure access because
+initializing a protected identity can be part of its native operation. Firmware
+uses only the approved native release resolver and current device checks. No
+arbitrary command, SQL, path or firmware bytes are accepted. Physical/mobile
+qualification and the final S9 authority/restore audit remain separate gates.

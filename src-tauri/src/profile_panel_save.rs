@@ -70,16 +70,8 @@ impl GatewayManager {
                 (owner,candidate,apply_epoch,pending,policy)
             };
             if let Some(candidate)=candidate.as_mut(){candidate.admission_epoch=apply_epoch;}
-            // Independent companion assignments follow the same saved panel.
-            // Profile-owned assignments are replaced only by journaled apply.
-            let hub=self.companion_host.profile_metadata()?;
-            let current=hub.command(&json!({"command":"companion_status"}))?;
-            for instance in current["instances"].as_array().into_iter().flatten() {
-                if instance["profileOwned"]!=true && instance["publicationHash"]!=saved.publication_hash
-                    && instance["publicationHash"].as_str().is_some_and(|hash|saved.previous_hashes.iter().any(|previous|previous==hash)) {
-                    hub.command(&json!({"command":"companion_assign","companionId":instance["companionId"],"instanceId":instance["instanceId"],"publicationHash":saved.publication_hash,"expectedUnownedPublicationHash":instance["publicationHash"]}))?;
-                }
-            }
+            // Direct selections already committed with the publication/head.
+            // Profile-owned effects continue through the journaled takeover.
             match (owner,candidate) {
                 (Some(owner),Some(candidate))=>{self.apply_saved_editor(candidate,&owner,apply_epoch)?;Ok(true)},
                 _=>Ok(false),

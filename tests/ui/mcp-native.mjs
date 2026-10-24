@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { softwareScenarios } from './mcp-software-scenarios.mjs';
+import { companionScenarios } from './mcp-companion-scenarios.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(operation, description, timeout = 20000) {
@@ -148,6 +149,8 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     if(process.env.OSG_MCP_EXPECT_NO_COMPANIONS){
       assert.deepEqual(companionPanels.panels,[]);
       const listener=await ok(reader,'companion_listener_get');assert.equal(listener.enabled,false);
+      assert.equal((await ok(reader,'companion_usb_status')).usb.connected,false);
+      assert.ok(!readTools.some(tool=>tool.name==='companion_certificate_get'));
       await assertNoCompanionState(page);evidence.passiveCompanions={emptyCatalogue:true,listenerRead:true,noTrustOrTlsCreation:true};
     }
     const name = `MCP acceptance ${Date.now()}`;
@@ -201,6 +204,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const currentLocal = await ok(writer, 'local_settings_get', { scope: 'selection-mode' });
     await ok(writer, 'local_settings_save', mutation({ scope: 'selection-mode', expectedSettingsRevision: currentLocal.revision, expectedActiveOwner: (await ok(writer, 'profile_status')).profileSession.owner, settings: { mode: local.settings.mode } }));
     await softwareScenarios({ page, writer, connect, endpoint, token: write.token, profiles, evidence, ok, call, mutation });
+    if(process.env.OSG_MCP_COMPANION_ACCEPTANCE)await companionScenarios({page,reader,connect,endpoint,ok,call,mutation,evidence});
     await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Settings').click());
     await until(() => page.evaluate(() => [...document.querySelectorAll('[role=tab]')].some(button => button.textContent.trim() === 'AI integration')), 'AI integration tab is missing');
     await page.evaluate(() => [...document.querySelectorAll('[role=tab]')].find(button => button.textContent.trim() === 'AI integration').click());

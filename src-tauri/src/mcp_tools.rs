@@ -1,5 +1,6 @@
 //! Task-oriented MCP adapter for the running native manager. This boundary has
-//! no general command, filesystem, shell, firmware or arbitrary action tool.
+//! no general command, filesystem, shell or arbitrary action tool. Companion
+//! firmware tools use only the approved native resolver and device guards.
 use crate::gateways::GatewayManager;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -15,6 +16,8 @@ mod authoring;
 mod workspace;
 #[path="mcp_tools/host_settings.rs"]
 mod host_settings;
+#[path="mcp_tools/companion_controls.rs"]
+mod companion_controls;
 #[path="mcp_tools/integration_settings.rs"]
 mod integration_settings;
 #[path = "mcp_tools/catalogue.rs"]
@@ -248,6 +251,7 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            name if companion_controls::handles(name)=>self.companion_tool(name,args,client),
             "mcp_settings_get" | "mcp_settings_update" | "mcp_credential_create" | "mcp_credential_revoke" | "mcp_credential_rotate" => self.integration_tool(name,args),
             "companion_listener_get" | "companion_listener_save" => self.listener_tool(name,args,client),
             "designer_workspace_read" | "designer_workspace_begin" | "designer_workspace_chunk" | "designer_workspace_commit" | "designer_workspace_abort" => self.workspace_tool(name,args,client),

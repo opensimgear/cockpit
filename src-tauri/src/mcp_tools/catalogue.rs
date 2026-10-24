@@ -1,4 +1,6 @@
 use super::*;
+#[path="companion_catalogue.rs"]
+mod companion;
 
 fn string(max: usize) -> Value {
     json!({"type":"string","minLength":1,"maxLength":max,"pattern":"^[^\\u0000-\\u001f\\u007f]*$"})
@@ -61,7 +63,7 @@ fn tool(name: &str, description: &str, properties: Vec<(&str, Value)>, required:
 /// Explicit discoverable tasks; there is intentionally no generic invoke or
 /// gateway command passthrough, even for an authenticated write-enabled client.
 pub fn catalogue() -> Vec<Value> {
-    vec![
+    let mut tools=vec![
         tool("operation_status","Reconcile a retained mutation for this authenticated client. The ledger survives reconnects during this MCP server lifetime; reconcile native state after a server restart.",vec![("operationId",string(36))],&["operationId"]),
         tool("profiles_list","List saved profile summaries, revisions, eligibility and selection. Saving and selection do not activate outputs.",page(),&[]),
         tool("profile_get","Read a saved portable profile and its exact machine-local resource assignments. Use returned revision for edits.",vec![("id",string(36))],&["id"]),
@@ -123,11 +125,12 @@ pub fn catalogue() -> Vec<Value> {
         tool("device_config_prepare","Read one exact gateway/USB module configuration, validate a complete candidate with the native config encoder, and return a deterministic reviewable diff. Performs no claim, apply or save. Gateway selectors are gatewayId+moduleId; USB selectors are key+current route. The resulting baseline is review context; explicit setup rechecks native ownership, boot and route, and firmware semantic acceptance remains an Apply result.",vec![("transport",choice(&["gateway","usb"])),("gatewayId",string(100)),("moduleId",string(80)),("key",string(256)),("route",object()),("config",schema::runtime_config())],&["transport","config"]),
         tool("local_settings_get","Read revisioned machine-local game-provider, desktop or automatic-selection preferences. Path-bearing provider preferences never enter a portable profile.",vec![("scope",scope()),("gameId",string(64))],&["scope"]),
         tool("local_settings_save","Save typed machine-local preferences with the exact settings revision and observed active owner. Scope-specific native validation rejects unknown fields; provider paths are preferences, never arbitrary file access. Read the workflow resource for scope settings.",vec![("scope",scope()),("gameId",string(64)),("expectedSettingsRevision",string(128)),("expectedActiveOwner",owner()),("settings",object())],&["scope","expectedSettingsRevision","expectedActiveOwner","settings"]),
-    ]
+    ];
+    tools.extend(companion::catalogue());tools
 }
 
 pub fn is_mutation(name: &str) -> bool {
-    matches!(
+    super::companion_controls::mutation(name)||matches!(
         name,
         "profile_create"
             | "widget_save"

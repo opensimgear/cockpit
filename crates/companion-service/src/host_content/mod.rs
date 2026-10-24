@@ -1,5 +1,6 @@
 //! Public archives and explicit saved heads share the protected host commit.
 use super::*;
+mod selection;
 pub(super) const CONTENT_BYTES:usize=80*1024*1024;
 #[derive(Default,Serialize,Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
@@ -89,3 +90,5 @@ impl Hub {
 }
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod selection_tests;

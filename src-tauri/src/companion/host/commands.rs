@@ -119,11 +119,17 @@ impl Runtime {
                 let services = self.services()?;
                 let _cache=services.panel_cache.lock().unwrap_or_else(|p|p.into_inner());
                 value["saveAsLatest"]=json!(payload["saveAsLatest"]!=false);
+                if let Some(selection)=payload.get("selection"){value["selection"]=selection.clone();}
+                else if value["saveAsLatest"]==true {
+                    let token=services.hub.command(&json!({"command":"companion_status"}))?["snapshotToken"].clone();
+                    value["selection"]=json!({"expectedHostToken":token});
+                }
                 let published=services.hub.command(&value)?;
                 let saved=published.get("panelSaved").cloned();
                 Self::start_saved_listener(services);
                 let mut response=self.status(services)?;
                 if let Some(saved)=saved {response["panelSaved"]=saved;}
+                if published["selectionCommitted"]==true {response["selectionCommitted"]=json!(true);}
                 return Ok(response);
             }
             _ => {}

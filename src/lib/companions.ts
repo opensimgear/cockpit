@@ -12,6 +12,7 @@ export interface CompanionOperation {
   diagnostic?:{widget:string;definition:string;layer:string;field:string;required:number;available:number};
 }
 export interface CompanionHostState {
+  selectionCommitted?: boolean;
   panelSaved?: {panelId:string;publicationHash:string};
   panelSaveApplication?: {state:'inactive'|'applied'|'failed';error:string|null};
   firmwareVersion?: string | null;
@@ -25,7 +26,7 @@ export interface CompanionHostState {
   usb?: {devices?: Omit<NonNullable<CompanionHostState['usb']>,'devices'>[];scanning?:boolean;scanError?:string;lastHostError?:string;flashing?:boolean;waitingForBoot?:boolean;flashCancelled?:boolean;cancelRequested?:boolean;flashFinished?:boolean;flashError?:string;flashWarning?:string;progress?:number;connected:boolean;ready?:boolean;port?:string;stage?:string;deviceStatus?:string;recovery?:{phase:'waiting'|'connecting'|'waiting-for-device'|'recovered';attempt:number;nextRetryMs:number;message:string};networks?:{ssid:string;rssi:number;secured:boolean}[];device?:{name?:string;ssid?:string;wifiPasswordSaved?:boolean;firmwareVersion?:string;boardProfile?:string;renderProfile?:RenderProfile;status?:string;statusMessage?:string;setupSaved?:boolean;connectionMode?:string;companionId?:string;readyForArm?:boolean;touchAvailable?:boolean;operation?:CompanionOperation}};
 
   listener?: { settingsRevision?:number;configuredEnabled?:boolean;config?:{bind:string;advertisedHost:string;discovery:boolean}|null;enabled: boolean; endpoint?: string | null; caSpkiSha256?: string; lastError?: string | null; discovery?: unknown; interfaces?: string[] };
-  host?: { hostId?: string; clients?: Record<string, unknown>[]; pending?: Record<string, unknown>[]; instances?: Record<string, unknown>[]; publications?: Record<string, unknown>[] };
+  host?: { hostId?: string; snapshotToken?: string; clients?: Record<string, unknown>[]; pending?: Record<string, unknown>[]; instances?: Record<string, unknown>[]; publications?: Record<string, unknown>[] };
   pairing?: { browserUrl?: string; manualPayload: string; qrMatrix: string[]; ttlMs: number; code?: string };
   interfaces?: string[];
   uploadId?: string;
@@ -33,14 +34,14 @@ export interface CompanionHostState {
 export type CompanionSend = (command: CompanionCommand, payload?: Record<string, unknown>) => Promise<CompanionHostState>;
 
 /** Committing a saved panel lets native code refresh profiles that use it. */
-export async function sendPublication(publication: CompanionPublication, send: CompanionSend, options:{saveAsLatest?:boolean}={}): Promise<CompanionHostState> {
+export async function sendPublication(publication: CompanionPublication, send: CompanionSend, options:{saveAsLatest?:boolean;selection?:{expectedHostToken:string;companionIds?:string[]}}={}): Promise<CompanionHostState> {
   const bytes = new TextEncoder().encode(JSON.stringify({ canonicalDocument: canonical(publication.document), publicationHash: publication.publicationHash, assets: publication.assets }));
   if (bytes.length > 13 * 1024 * 1024) throw new Error('Published panel exceeds the native upload budget.');
   const result = await send('companion_publish_begin', { size: bytes.length });
   if (!result.uploadId) throw new Error('The native panel upload did not start.');
   try {
     for (let offset = 0; offset < bytes.length; offset += 8192) await send('companion_publish_chunk', { uploadId: result.uploadId, offset, bytes: Array.from(bytes.subarray(offset, offset + 8192)) });
-    return await send('companion_publish_commit', { uploadId: result.uploadId, ...(options.saveAsLatest===false?{saveAsLatest:false}:{}) });
+    return await send('companion_publish_commit', { uploadId: result.uploadId, ...(options.saveAsLatest===false?{saveAsLatest:false}:{}), ...(options.selection?{selection:options.selection}:{}) });
   } catch (error) {
     await send('companion_publish_abort', { uploadId: result.uploadId }).catch(() => {});
     throw error;
