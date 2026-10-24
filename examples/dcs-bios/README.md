@@ -2,6 +2,9 @@
 
 ## Feature Lab profile
 
+The [WIN Companion panel](win-companion/README.md) provides minimal compiled
+controls and feedback widgets sized for the desktop destination.
+
 [feature-lab.profile.json](feature-lab.profile.json) restores the saved
 **DCS Feature Lab - AH-6J + F/A-18C** demo (archived revision 11, reset to revision 1
 for a fresh seed). It includes both aircraft tabs, controller processing, telemetry,
