@@ -306,6 +306,7 @@ impl GamesRuntime {
                     | "controller_visibility_inspect"
                     | "controller_visibility_processes"
                     | "companion_status"
+                    | "companion_inventory"
                     | "companion_firmware_check"
                     | "companion_usb_ports"
                     | "companion_usb_status"

@@ -52,15 +52,15 @@ The portable library retains its document bytes and semantic hashes.
 | `desktop-input-v1.json`; desktop settings | `outputs/desktop-preferences` | `Preferences`/native process-identity validator; S4 | Enablement/scope/application references and stale saves |
 | IndexedDB `opensimgear-cockpit-companion-designer`, `workspace/snapshot` | `companion/designer-workspace` | `validateWorkspace`, compiled publications/source/asset hashes; S5 | Draft/source/publication order/assets, 64 MiB/20 drafts/100 revisions |
 | `widgets-v1.json`; `widget_library::persist` | `widgets/library` | compiled widget bundle/source validation; S5 | User library/update/import/hash preservation |
-| `companions/companion-panels.json`; `companion_panels` | `companions/publications` | compiled publication validators, byte limits; S5 | Publish/archive/retention and interrupted publication |
-| `companions/companion-panel-heads.json`; `save_heads` | `companions/heads` | panel/revision/hash head checks; S5 | Heads and publication/assignment references commit together |
+| `companions/companion-panels.json`; `companion_panels` | `companion/publications` | compiled publication validators, byte limits; S5 | Publish/archive/retention and interrupted publication |
+| `companions/companion-panel-heads.json`; `save_heads` | same `companion/publications` transaction | panel/revision/hash head checks; S5 | Heads and publication/assignment references commit together |
 | `companions/companion-listener.json`; host listener operations | `companion/listener` | listener interface/port validation; S5 | Enable/disable/listener restart without premature success |
 | `companions/companion-firmware.json`; host firmware metadata | `companion/firmware` | board/profile/version validators; S5 | Firmware preference/assigned profiles and restart |
-| `companion-host-state.dpapi`; `SealedFileStore` | `secrets/companion-host` ciphertext | native unseal then host record validation; S6 | Pairing/assignments/revoke/forget/reconnect; raw DB secret scan |
+| `companion-host-state.dpapi`; `SealedSqliteStore` | `secrets/companion-host` ciphertext | native unseal then host record validation; S6 | Pairing/assignments/revoke/forget/reconnect; raw DB secret scan |
 | `companion-identity.dpapi`; TLS native identity store | `secrets/companion-identity` ciphertext | unseal/identity certificate validation; S6 | Same host ID/CA fingerprint; locked/corrupt key diagnostics |
 | `mcp-v1.json`; credential settings store | `security/mcp` | current settings/hash/scope validators; S6 | Real MCP client, port/enablement/revocation/concurrent revisions |
-| Native Companion `companion-client.dpapi` | client DB `secrets/client` ciphertext | existing native client validation; S6 | Native upgrade, reconnect and forget/re-pair |
-| Native Companion IndexedDB `opensimgear-companion-publications` | client DB `client/publications` | existing verified publication/cache bounds; S6 | 4-entry/24 MiB cache, selected panel/page, offline reopen |
+| Native Companion `companion-client.dpapi` | client DB `secrets/companion-client` ciphertext | existing native client validation; S6 | Native upgrade, reconnect and forget/re-pair |
+| Native Companion IndexedDB `opensimgear-companion-publications` | client DB `companion-client/publications` | existing verified publication/cache bounds; S6 | 4-entry/24 MiB cache, selected panel/page, offline reopen |
 | `osg-light`; `App.svelte` | `ui/theme` | boolean; S7 | Hydration before first render, cross-window/restart |
 | `osg-devices-mode`; `SystemDevices.svelte` | `ui/devices-mode` | list/topology enum; S7 | Mode survives restart |
 | `osg-canvas-navigation`; canvas navigation store | `ui/canvas-navigation` | wheel-action enum/version; S7 | Hydration, wheel controls, failed save |
@@ -183,7 +183,7 @@ UI. Chunks are transient, client-bound and expire after ten minutes. The mutatio
 ledger makes exact operation retries idempotent; failed native commits preserve
 the upload for explicit retry. Saving authoring data alone does not activate
 outputs or assign a companion. Host publication/head/assignment authority remains
-a separate remaining S5/S6 task until its transaction boundary is converted.
+owned by the atomic host snapshot described below. Bulk portal selection and full MCP parity remain required before S5/S6 completion.
 
 Listener settings and firmware observations now use SQLite. Missing metadata
 uses validated defaults; corrupt or unreadable metadata remains an error. UI
@@ -211,8 +211,7 @@ Passive trust discovery does not create a namespace, identity or key. Existing
 ciphertext must decrypt before a key-creating operation can run. Missing/locked
 keys and corrupt records preserve the saved ciphertext. Exact SQLite revisions
 reject stale writes and Forget operations; acknowledged revocation cannot be
-overwritten by an earlier owner. Native client public caches and atomic host
-publication/head/assignment snapshots remain separate S5/S6 work.
+overwritten by an earlier owner. Native public caches use the SQLite adapter described below. Host publication/head/assignment snapshots use the atomic owner described below.
 
 MCP settings live at `security/mcp`. Only bearer-token hashes enter SQLite;
 creation and atomic rotation return a token once to the requesting caller.
@@ -242,3 +241,33 @@ document has no schema/version chain or importer. Corruption remains visible,
 and explicit Clear uses the observed SQLite revision. A stale window cannot
 resurrect a cleared cache. Panel/page selection is acknowledged only after a
 successful durable write; clearing content does not remove sealed pairing.
+
+## Atomic host content
+
+`secrets/companion-host` and `companion/publications` commit together at their
+exact revisions. The latter contains immutable publication uploads, inline
+assets and explicit saved heads. Bounds remain 32 publications, 64 MiB admitted
+publication bytes and an 80 MiB encoded archive. Assignment-only changes guard the current archive revision in the same writer
+transaction without rewriting its bytes, so an acknowledged reference cannot
+point to an archive changed since validation. Save/head/prune failures restore the previous
+in-memory projection. Public content alone never supplies host identity or trust.
+
+Native startup captures related records in one SQLite read snapshot, ends that
+transaction, then unseals and validates all publications before registering
+retained descriptors. Passive inventory, listener settings and empty authoring catalogues do not
+initialize a host, TLS identity or listener. Frontend startup never republishes
+workspace history or advances native saved heads.
+Corrupt archives stay in SQLite and block their owner; there is no JSON fallback
+or quarantine rename. The private host envelope is unversioned. This change uses
+a fresh development namespace rather than upgrading an earlier checkpoint's
+private record; portable publication/network formats remain unchanged.
+
+Pruning retains assignments, profile baselines, live sessions and current saved
+profile references read from SQLite. It does not trust a cached profile library.
+If a profile changes during pruning, a read-dependency revision check rejects
+the entire transaction without rewriting that profile's revision. No database
+transaction spans sealing, source registration or transport waits.
+
+The portal still coordinates authoring workspace saves and multiple direct
+selections through separate acknowledged commands. Bulk selection and the
+remaining companion MCP controls must be completed before S5/S6 are marked done.

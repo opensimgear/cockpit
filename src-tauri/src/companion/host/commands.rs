@@ -27,6 +27,7 @@ impl Runtime {
             return Err("ESP32 pairing is temporarily unavailable.".into());
         }
         match command {
+            "companion_inventory" => return self.inventory(),
             "companion_publish_begin" => {
                 let expected = payload["size"]
                     .as_u64()
@@ -117,14 +118,12 @@ impl Runtime {
                 }
                 let services = self.services()?;
                 let _cache=services.panel_cache.lock().unwrap_or_else(|p|p.into_inner());
-                services.hub.command(&value)?;
-                crate::companion_panels::save(&services.hub,&services.directory)?;
-                let saved=if payload["saveAsLatest"]!=false {
-                    Some(crate::companion_panels::mark_saved(&services.hub,&services.directory,value["publicationHash"].as_str().ok_or("The saved panel has no content identity.")?)?)
-                } else {None};
+                value["saveAsLatest"]=json!(payload["saveAsLatest"]!=false);
+                let published=services.hub.command(&value)?;
+                let saved=published.get("panelSaved").cloned();
                 Self::start_saved_listener(services);
                 let mut response=self.status(services)?;
-                if let Some(saved)=saved {response["panelSaved"]=serde_json::to_value(saved).map_err(|error|error.to_string())?;}
+                if let Some(saved)=saved {response["panelSaved"]=saved;}
                 return Ok(response);
             }
             _ => {}
@@ -393,9 +392,6 @@ impl Runtime {
                 request["command"] = json!(command);
                 let _cache=services.panel_cache.lock().unwrap_or_else(|p|p.into_inner());
                 services.hub.command(&request)?;
-                if command=="companion_prune" || command=="companion_assign" {
-                    crate::companion_panels::save(&services.hub,&services.directory)?;
-                }
                 self.status(services)
             }
             _ => Err("Unsupported companion operator command.".into()),

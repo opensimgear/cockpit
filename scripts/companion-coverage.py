@@ -44,14 +44,14 @@ def main():
             raise SystemExit("Install llvm-tools-preview for the pinned Rust toolchain.")
     targets = [("service", root / "crates/companion-service/Cargo.toml", "", [root / f"crates/companion-service/src/{name}.rs" for name in ["lib", "sources", "persistence", "publication", "feedback", "hub", "profile", "profile_owned", "hub_feedback", "hub_assignments", "tls", "server", "client"]])]
     targets[0][3].append(root / "crates/companion-service/src/persistence/sqlite.rs")
-    targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["client_cache/mod", "client/cache_validation"])
+    targets[0][3].extend(root / f"crates/companion-service/src/{name}.rs" for name in ["client_cache/mod", "client/cache_validation", "host_content/mod", "persistence/sqlite_host"])
     targets[0][3].extend(root / f"crates/companion-service/src/publication/{name}.rs"
                          for name in ["compiled", "compiled/artifact", "compiled/behavior", "widget_source"])
     targets.append(("serial", root / "crates/companion-serial/Cargo.toml", "", [root / "crates/companion-serial/src/boot_wait.rs"]))
     if not options.service_only:
         # Profile publication, authoring and lifecycle tests call this host from
         # other modules. Measure those real integrations as well as its unit tests.
-        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion/host/mod.rs", root / "src-tauri/src/companion/host/commands.rs", root / "src-tauri/src/companion/host/presentation.rs", root / "src-tauri/src/companion/storage/host_settings.rs", root / "src-tauri/src/mcp_tools/host_settings.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/companion/storage/widgets.rs", root / "src-tauri/src/companion/storage/workspace.rs", root / "src-tauri/src/companion/storage/workspace_validation.rs", root / "src-tauri/src/mcp_tools/workspace.rs"]))
+        targets.append(("desktop", root / "src-tauri/Cargo.toml", "", [root / "src-tauri/src/companion/host/mod.rs", root / "src-tauri/src/companion/host/commands.rs", root / "src-tauri/src/companion/host/presentation.rs", root / "src-tauri/src/companion/storage/host_settings.rs", root / "src-tauri/src/mcp_tools/host_settings.rs", root / "src-tauri/src/companion/storage/panels.rs", root / "src-tauri/src/local_firmware.rs", root / "src-tauri/src/companion/storage/widgets.rs", root / "src-tauri/src/companion/storage/workspace.rs", root / "src-tauri/src/companion/storage/workspace_validation.rs", root / "src-tauri/src/mcp_tools/workspace.rs"]))
     if options.desktop_only:
         targets = [target for target in targets if target[0] == "desktop"]
     summary = {}

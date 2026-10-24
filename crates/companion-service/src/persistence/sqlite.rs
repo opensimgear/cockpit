@@ -22,6 +22,7 @@ struct Inner {
     anchor:PathBuf,
     database:OnceLock<Database>,
     revision:Mutex<Option<u64>>,
+    content_revision:Mutex<Option<u64>>,
     sealer:Arc<dyn NativeSealer>,
 }
 impl SealedSqliteStore {
@@ -29,7 +30,7 @@ impl SealedSqliteStore {
         Self::with_sealer(anchor,Arc::new(PlatformSealer))
     }
     pub fn with_sealer(anchor:impl Into<PathBuf>,sealer:Arc<dyn NativeSealer>)->Self {
-        Self(Arc::new(Inner{anchor:anchor.into(),database:OnceLock::new(),revision:Mutex::new(None),sealer}))
+        Self(Arc::new(Inner{anchor:anchor.into(),database:OnceLock::new(),revision:Mutex::new(None),content_revision:Mutex::new(None),sealer}))
     }
     fn key(&self)->Result<&str,String>{
         let name=self.0.anchor.file_name().and_then(|s|s.to_str()).ok_or("Invalid protected-state identity.")?;
@@ -57,6 +58,9 @@ impl SealedSqliteStore {
     }
 }
 impl StateStorage for SealedSqliteStore {
+    fn host_snapshot_store(&self)->Option<&dyn super::HostSnapshotStore>{
+        (self.key().ok()==Some("companion-host")).then_some(self)
+    }
     fn read(&self)->Result<Option<Vec<u8>>,String>{
         let mut expected=self.0.revision.lock().map_err(|_|"Protected-store access failed.")?;
         let Some(database)=self.database(false)? else{*expected=Some(0);return Ok(None)};
@@ -97,6 +101,8 @@ impl StateStorage for SealedSqliteStore {
         *expected=Some(next);Ok(())
     }
 }
+#[path="sqlite_host.rs"]
+mod host;
 #[cfg(test)]
 #[path="sqlite_tests.rs"]
 mod tests;

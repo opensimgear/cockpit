@@ -1,24 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { restoreAssignedPanels,restoreSavedPanelLibrary } from './companion-startup.ts';
-test('restored native panels need no frontend library access',async()=>{
- await restoreAssignedPanels({host:{instances:[{publicationHash:'a'}],publications:[{publicationHash:'a'}]}},()=>{throw Error('unexpected load');},()=>{throw Error('unexpected publish');});
-});
-test('legacy startup restores only missing assignments, once, before completion',async()=>{
- const sent=[];const a={publicationHash:'a'},b={publicationHash:'b'},unused={publicationHash:'unused'};
- await restoreAssignedPanels({host:{instances:[a,b,b],publications:[a]}},async()=>[a,b,unused],async panel=>{await Promise.resolve();sent.push(panel.publicationHash);});
- assert.deepEqual(sent,['b']);
-});
-test('missing saved content reports actionable error before publishing anything',async()=>{
- const sent=[];
- await assert.rejects(restoreAssignedPanels({host:{instances:[{publicationHash:'a'},{publicationHash:'missing'}]}},async()=>[{publicationHash:'a'}],async p=>sent.push(p)),/select a saved panel/);
- assert.deepEqual(sent,[]);
-});
+import {readFile} from 'node:fs/promises';
+import {readNativeCompanionState} from './companion-startup.ts';
 
-test('startup restores missing transport content without making it current, then establishes one latest saved state per panel',async()=>{
- const old={publicationHash:'old'},latest={publicationHash:'latest'},another={publicationHash:'another'},removed={publicationHash:'removed'};
- const saved={schemaVersion:1,library:{schemaVersion:1,drafts:[{id:'panel-one'},{id:'panel-two'}]},publications:{'panel-one':[old,latest],'panel-two':[another],'deleted-panel':[removed]}};
- const calls=[];
- await restoreSavedPanelLibrary({host:{instances:[old],publications:[]}},saved,async(panel,options)=>calls.push([panel.publicationHash,options.saveAsLatest]));
- assert.deepEqual(calls,[['old',false],['latest',true],['another',true]]);
+test('native retained state is observed without replaying any frontend archive or head',async()=>{
+  const state={host:{instances:[{publicationHash:'assigned'}],publications:[{publicationHash:'assigned'},{publicationHash:'saved'}]},panelSaved:{panelId:'panel',publicationHash:'saved'}};
+  const commands=[];assert.equal(await readNativeCompanionState(async command=>{commands.push(command);return state;}),state);assert.deepEqual(commands,['companion_status']);
+});
+test('missing content is left with its native owner instead of reconstructed implicitly',async()=>{
+  const state={host:{instances:[{publicationHash:'missing'}],publications:[]}},commands=[];
+  assert.equal(await readNativeCompanionState(async command=>{commands.push(command);return state;}),state);assert.deepEqual(commands,['companion_status']);assert.deepEqual(state.host.publications,[]);
+});
+test('native read failures propagate without falling back to a designer or browser cache',async()=>{
+  await assert.rejects(readNativeCompanionState(async()=>{throw Error('SQLite unavailable');}),/SQLite unavailable/);
+  await assert.rejects(readNativeCompanionState(async()=>({})),/native Cockpit/);
+});
+test('mounting the app does not initialize companion trust or replay publications',async()=>{
+  const source=await readFile(new URL('../App.svelte',import.meta.url),'utf8');assert.equal(source.includes('restoreCompanionPanels'),false);assert.equal(source.includes("'companion_status'"),false);
 });

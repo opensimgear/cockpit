@@ -81,7 +81,8 @@ impl Runtime {
         }).collect())
     }
     pub(crate) fn profile_authoring_catalogue(&self) -> Result<Catalogue, String> {
-        let hub = self.profile_metadata()?;
+        let Some(metadata)=self.existing_metadata()? else{return Ok(Catalogue{schema_version:1,revision:format!("sha256:{:x}",Sha256::digest(b"[]")),panels:vec![],diagnostics:vec![]})};
+        let hub=metadata.hub.clone();
         let updates=self.saved_panel_updates()?;
         let raw = hub.publication_summaries().into_iter().filter_map(|mut value|{
             let saved=updates.iter().find(|saved|value["publicationHash"]==saved.publication_hash)?;

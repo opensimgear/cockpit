@@ -232,7 +232,6 @@ use super::*;
         let mut upload:Value = serde_json::from_str(include_str!("../../../../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json")).unwrap();
         upload["command"] = json!("companion_publish");
         hub.command(&upload).unwrap();
-        crate::companion_panels::save(&hub, &directory).unwrap();
         // A saved listener is shared setup. Merely inspecting a profile must not
         // construct a server or attempt to bind this saved endpoint.
         std::fs::write(directory.join("companion-listener.json"), b"invalid listener configuration").unwrap();
@@ -252,15 +251,20 @@ use super::*;
         assert_eq!(saved.len(), 1);
         assert!(runtime.saved_panel_heads().unwrap().is_empty());
         assert!(runtime.saved_panel_references().unwrap().is_empty(), "An archive alone is not a saved head");
-        crate::companion_panels::mark_saved(&hub, &directory, upload["publicationHash"].as_str().unwrap()).unwrap();
+        let inventory=call(&runtime,"companion_inventory",json!({})).unwrap();
+        assert_eq!(inventory["host"]["publications"].as_array().unwrap().len(),1);
+        assert_eq!(inventory["listener"]["enabled"],false);
+        assert!(runtime.services.get().is_none());
+        assert_eq!(database.read("secrets","companion-host").unwrap().unwrap(), before);
+        metadata.mark_saved(upload["publicationHash"].as_str().unwrap()).unwrap();
         assert_eq!(runtime.saved_panel_heads().unwrap()[&saved[0].panel_id], saved[0].publication_hash);
         assert_eq!(runtime.saved_panel_references().unwrap()[0].publication_hash, saved[0].publication_hash);
         assert!(runtime.services.get().is_none());
-        assert_eq!(database.read("secrets","companion-host").unwrap().unwrap(), before);
+        assert_eq!(database.read("secrets","companion-host").unwrap().unwrap().revision,before.revision+1);
         assert!(database.read("secrets","companion-identity").unwrap().is_none());
         let mut names = std::fs::read_dir(&directory).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
         names.sort();
-        assert_eq!(names, ["cockpit.sqlite3", "companion-listener.json", "companion-panel-heads.json", "companion-panels.json"]);
+        assert_eq!(names, ["cockpit.sqlite3", "companion-listener.json"]);
         runtime.shutdown();
         for name in names { std::fs::remove_file(directory.join(name)).unwrap(); }
         std::fs::remove_dir(directory).unwrap();

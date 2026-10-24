@@ -45,6 +45,13 @@ pub struct Change<'a> {
     pub expected_revision: u64,
     pub payload: Option<&'a [u8]>,
 }
+/// A read dependency is rechecked in the writer transaction without changing
+/// its revision. Use it when retaining references owned by another domain.
+pub struct RevisionCheck<'a> {
+    pub domain:&'a str,
+    pub key:&'a str,
+    pub expected_revision:u64,
+}
 
 fn failure(error: rusqlite::Error) -> String {
     use rusqlite::ErrorCode::*;
@@ -220,16 +227,39 @@ impl Database {
             None => (0, None),
         })
     }
+    /// Capture related ciphertext/content records under one read snapshot.
+    /// The transaction ends before the caller validates or decrypts payloads.
+    pub fn read_many(&self,keys:&[(&str,&str)])->Result<Vec<(u64,Option<Record>)>,String>{
+        if keys.is_empty()||keys.len()>1024{return Err("Invalid persistence snapshot size.".into());}
+        let mut connection=self.connection()?;
+        let transaction=connection.transaction().map_err(failure)?;
+        let mut records=Vec::with_capacity(keys.len());
+        for (domain,key) in keys {
+            identifier(domain)?;identifier(key)?;
+            records.push((revision(&transaction,domain,key)?,read_record(&transaction,domain,key)?));
+        }
+        transaction.commit().map_err(failure)?;
+        Ok(records)
+    }
     /// All expected revisions are tested under one immediate transaction. Any
     /// mismatch or failed statement rolls back the entire related edit.
     pub fn commit(&self, changes: &[Change<'_>]) -> Result<Vec<u64>, String> {
-        if changes.is_empty() || changes.len() > 1024 {
+        self.commit_checked(changes,&[])
+    }
+    pub fn commit_checked(&self, changes:&[Change<'_>],checks:&[RevisionCheck<'_>])->Result<Vec<u64>,String>{
+        if changes.is_empty() || changes.len()+checks.len() > 1024 {
             return Err("Invalid persistence transaction size.".into());
         }
         let mut connection = self.connection()?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failure)?;
+        for check in checks {
+            identifier(check.domain)?;identifier(check.key)?;
+            if revision(&tx,check.domain,check.key)?!=check.expected_revision {
+                return Err("Persistence reference revision conflict. Reload current settings before saving.".into());
+            }
+        }
         let mut seen = std::collections::BTreeSet::new();
         let mut revisions = Vec::with_capacity(changes.len());
         for change in changes {
@@ -332,6 +362,8 @@ fn read_record(connection: &Connection, domain: &str, key: &str) -> Result<Optio
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transaction_tests;
 
 #[cfg(test)]
 pub(crate) fn test_directory() -> tempfile::TempDir {

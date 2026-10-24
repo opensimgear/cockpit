@@ -15,6 +15,10 @@ use std::{
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 
+#[path="host_content/mod.rs"]
+mod content;
+pub use content::SavedPanel;
+
 pub const LEASE_MS: u64 = 1500;
 pub const PANEL_PREPARATION_LEASE_MS: u64 = 30_000;
 pub const PAIRING_MS: u64 = 60_000;
@@ -52,7 +56,6 @@ struct Assignment {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Record {
-    schema_version: u8,
     host_id: String,
     credentials: Vec<Credential>,
     instances: Vec<Assignment>,
@@ -137,6 +140,7 @@ pub struct ResourceCompanion {
 struct Inner {
     record: Record,
     publications: BTreeMap<String, Publication>,
+    saved_heads:BTreeMap<String,String>,
     offer: Option<Offer>,
     code_offer: Option<CodeOffer>,
     pending: BTreeMap<String, Pending>,
@@ -240,12 +244,12 @@ impl Hub {
     pub fn new(host_id: String, sink: Arc<dyn SourceSink>) -> Self {
         Self::from_record(
             Record {
-                schema_version: 1,
                 host_id,
                 credentials: vec![],
                 instances: vec![],
             },
             sink,
+            None,
             None,
         )
         .expect("new host identity must be valid")
@@ -264,49 +268,38 @@ impl Hub {
             path.as_ref().join("companion-host-state.dpapi"),
         )), sink)
     }
-    pub fn with_existing_storage(storage: Arc<dyn StateStorage>, sink: Arc<dyn SourceSink>) -> Result<Option<Self>, String> {
-        let Some(mut bytes) = storage.read()? else { return Ok(None); };
-        let record = serde_json::from_slice(&bytes)
-            .map_err(|_| "Invalid protected companion host state.");
-        bytes.zeroize();
-        Self::from_record(record?, sink, Some(storage)).map(Some)
+    pub fn with_existing_storage(storage:Arc<dyn StateStorage>,sink:Arc<dyn SourceSink>)->Result<Option<Self>,String>{
+        let snapshot=content::load(storage.as_ref())?;
+        let Some(bytes)=snapshot.state else{return Ok(None)};
+        let record=serde_json::from_slice(&bytes).map_err(|_|"Invalid protected companion host state.")?;
+        Self::from_record(record,sink,Some(storage),snapshot.content).map(Some)
     }
-    pub fn with_storage(
-        storage: Arc<dyn StateStorage>,
-        sink: Arc<dyn SourceSink>,
-    ) -> Result<Self, String> {
-        let record = match storage.read()? {
-            Some(mut bytes) => {
-                let result = serde_json::from_slice(&bytes)
-                    .map_err(|_| "Invalid protected companion host state.");
-                bytes.zeroize();
-                result?
-            }
-            None => {
-                let record = Record {
-                    schema_version: 1,
-                    host_id: uuid::Uuid::new_v4().to_string(),
-                    credentials: vec![],
-                    instances: vec![],
-                };
-                storage.write(&serde_json::to_vec(&record).map_err(|e| e.to_string())?)?;
+    pub fn with_storage(storage:Arc<dyn StateStorage>,sink:Arc<dyn SourceSink>)->Result<Self,String>{
+        let snapshot=content::load(storage.as_ref())?;
+        let record=match snapshot.state {
+            Some(bytes)=>serde_json::from_slice(&bytes).map_err(|_|"Invalid protected companion host state.")?,
+            None=>{
+                let record=Record{host_id:uuid::Uuid::new_v4().to_string(),credentials:vec![],instances:vec![]};
+                let bytes=Zeroizing::new(serde_json::to_vec(&record).map_err(|_|"Cannot encode host identity.")?);
+                if let Some(store)=storage.host_snapshot_store(){store.write_host_snapshot(&bytes,b"{\"publications\":[],\"savedHeads\":{}}")?;}else{storage.write(&bytes)?;}
                 record
             }
         };
-        Self::from_record(record, sink, Some(storage))
+        Self::from_record(record,sink,Some(storage),snapshot.content)
     }
     fn from_record(
         record: Record,
         sink: Arc<dyn SourceSink>,
         storage: Option<Arc<dyn StateStorage>>,
+        content:Option<Vec<u8>>,
     ) -> Result<Self, String> {
         ensure(
-            record.schema_version == 1
-                && id(&record.host_id)
+            id(&record.host_id)
                 && record.credentials.len() <= 32
                 && record.instances.len() <= MAX_INSTANCES,
-            "Invalid companion state version/budget.",
+            "Invalid companion state identity/budget.",
         )?;
+        let (publications,saved_heads)=content::decode(content.as_deref())?;
         let mut clients = BTreeSet::new();
         let mut token_hashes = BTreeSet::new();
         for c in &record.credentials {
@@ -353,7 +346,8 @@ impl Hub {
         Ok(Self {
             inner: Arc::new(Mutex::new(Inner {
                 record,
-                publications: BTreeMap::new(),
+                publications,
+                saved_heads,
                 offer: None,
                 code_offer: None,
                 pending: BTreeMap::new(),
@@ -469,13 +463,19 @@ impl Hub {
         // proofs. This fence grants no ownership and is never a wire field.
         self.record_revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if let Some(storage) = &self.storage {
-            let mut bytes = serde_json::to_vec(record).map_err(|e| e.to_string())?;
-            let result = storage.write(&bytes);
-            bytes.zeroize();
+            let bytes = Zeroizing::new(serde_json::to_vec(record).map_err(|e| e.to_string())?);
+            let result = if let Some(store)=storage.host_snapshot_store(){store.write_host_record(&bytes)}else{storage.write(&bytes)};
             result
         } else {
             Ok(())
         }
+    }
+    fn persist_content(&self,record:&Record,inner:&Inner)->Result<(),String>{
+        self.record_revision.fetch_add(1,std::sync::atomic::Ordering::AcqRel);
+        if let Some(storage)=&self.storage {
+            let bytes=Zeroizing::new(serde_json::to_vec(record).map_err(|_|"Cannot encode host state.")?);
+            if let Some(store)=storage.host_snapshot_store(){store.write_host_snapshot(&bytes,&Self::content_bytes(inner)?)}else{storage.write(&bytes)}
+        }else{Ok(())}
     }
     fn disarm(&self, inner: &mut Inner, session_id: &str, reason: &str, remove: bool) {
         if let Some(mut session) = inner.sessions.remove(session_id) {
@@ -738,22 +738,9 @@ impl Hub {
             }
             "companion_publish" => {
                 let p = published.unwrap();
-                Self::retain_publication(&mut inner,p)
+                self.publish_content(&mut inner,p,request["saveAsLatest"]==true)
             }
-            "companion_prune" => {
-                let hashes=request["hashes"].as_array().filter(|a|a.len()<=100).ok_or("Invalid panel retention list.")?;
-                let ids=request["panelIds"].as_array().filter(|a|a.len()<=128).ok_or("Invalid panel identity list.")?;
-                let mut managed=BTreeSet::new();
-                for value in ids {let ui=value.as_str().filter(|s|id(s)).ok_or("Invalid panel identity.")?;managed.insert(ui.to_owned());}
-                let mut retained=BTreeSet::new();
-                for value in hashes { let hash=value.as_str().filter(|s|digest_id(s)).ok_or("Invalid panel retention hash.")?;retained.insert(hash.to_owned()); }
-                retained.extend(inner.record.instances.iter().map(|a|a.publication_hash.clone()));
-                retained.extend(inner.record.instances.iter().filter_map(|a|a.ownership.as_ref().map(|owner|owner.baseline_publication_hash.clone())));
-                retained.extend(inner.sessions.values().map(|s|s.token.publication_hash.clone()));
-                let before=inner.publications.len();
-                inner.publications.retain(|hash,p|!managed.contains(&p.ui_id)||retained.contains(hash));
-                Ok(json!({"removed":before-inner.publications.len()}))
-            }
+            "companion_prune" => self.prune_content(&mut inner,request),
             "companion_unassign" => {
                 let instance=field(request,"instanceId")?;
                 let mut record=inner.record.clone();

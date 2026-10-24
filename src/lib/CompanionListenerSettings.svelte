@@ -27,7 +27,7 @@
     polling = true;
     const version=requestVersion;
     try {
-      const result=(await gatewayRequest({ command: 'companion_status' })).companions ?? {};
+      const result=(await gatewayRequest({ command: 'companion_inventory' })).companions ?? {};
       if(disposed || version!==requestVersion || busy)return;
       if (!result.listener) throw new Error('Companion listener settings are unavailable.');
       hostState=result;

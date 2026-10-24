@@ -138,7 +138,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
     if command=="profile_retired_recovery_status" { return None; }
     if command.starts_with("profile_retired_recovery_") { return Some("claim"); }
     if matches!(command,
-        "companion_status" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
+        "companion_status" | "companion_inventory" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_telemetry_inspect" | "game_integration_settings_save"
@@ -158,7 +158,7 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_library_scan"|"game_background_save"|"companion_status"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_library_scan"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
             |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")

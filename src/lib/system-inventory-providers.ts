@@ -240,7 +240,7 @@ export class SystemInventoryController {
     }) };
   }
   private async companions(now: number): Promise<Capture> {
-    const state = (await this.send({ command: 'companion_status' })).companions;
+    const state = (await this.send({ command: 'companion_inventory' })).companions;
     if (!state?.host) throw Error('Companion inventory unavailable.');
     const observations: SystemObservation[] = [];
     for (const c of rows(state.host.clients)) {

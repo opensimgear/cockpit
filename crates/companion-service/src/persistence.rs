@@ -9,9 +9,22 @@ mod sqlite;
 pub use sqlite::{NativeSealer,SealedSqliteStore};
 
 pub const STATE_BYTES: usize = 8 * 1024 * 1024;
+pub struct HostSnapshot {
+    pub state:Option<zeroize::Zeroizing<Vec<u8>>>,
+    pub content:Option<Vec<u8>>,
+}
+/// Optional atomic host boundary. Ephemeral test adapters need not retain
+/// public archives; native hosts always supply the SQLite implementation.
+pub trait HostSnapshotStore:Send+Sync {
+    fn read_host_snapshot(&self)->Result<HostSnapshot,String>;
+    fn write_host_snapshot(&self,state:&[u8],content:&[u8])->Result<(),String>;
+    fn write_host_record(&self,state:&[u8])->Result<(),String>;
+    fn retained_publications(&self)->Result<std::collections::BTreeSet<String>,String>;
+}
 pub trait StateStorage: Send + Sync {
     fn read(&self) -> Result<Option<Vec<u8>>, String>;
     fn write(&self, bytes: &[u8]) -> Result<(), String>;
+    fn host_snapshot_store(&self)->Option<&dyn HostSnapshotStore>{None}
     /// Explicitly supplied adapters are trusted native boundaries, never web storage.
     fn available(&self) -> Result<(), String> {
         Ok(())
@@ -408,3 +421,6 @@ mod tests {
         assert!(unseal(b"secret").is_err());
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_support;

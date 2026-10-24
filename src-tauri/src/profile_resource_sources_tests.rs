@@ -504,7 +504,7 @@ fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unass
     for removal in ["companion_unassign","companion_revoke"] {
     let (mut sources,temporary)=sources();
     let publication=publication();
-    let record=json!({"schemaVersion":1,"hostId":"inventory-host","credentials":[{"companionId":"paired","name":"Offline screen","tokenHash":"a".repeat(64),"kind":"browser"}],"instances":[{"instanceId":"test-companion","companionId":"paired","publicationHash":publication.publication_hash,"definition":publication.definition("test-companion")}]});
+    let record=json!({"hostId":"inventory-host","credentials":[{"companionId":"paired","name":"Offline screen","tokenHash":"a".repeat(64),"kind":"browser"}],"instances":[{"instanceId":"test-companion","companionId":"paired","publicationHash":publication.publication_hash,"definition":publication.definition("test-companion")}]});
     let hub=osg_companion_service::Hub::with_existing_storage(Arc::new(Memory(Mutex::new(serde_json::to_vec(&record).unwrap()))),sources.companions.clone()).unwrap().unwrap();
     sources.host=Arc::new(crate::companion_host::Runtime::with_profile_metadata(hub.clone(),sources.companions.clone(),temporary.path().into()));
     let items=sources.companion_observations().unwrap();

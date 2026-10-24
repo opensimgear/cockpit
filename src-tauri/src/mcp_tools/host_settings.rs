@@ -3,7 +3,7 @@ use super::*;
 impl Tools {
     pub(super) fn listener_tool(&self,name:&str,args:&Value,client:&str)->Result<Value,Value>{
         let state=if name=="companion_listener_get" {
-            self.native("companion_status",json!({}),client,Some("companions"))?
+            self.native("companion_inventory",json!({}),client,Some("companions"))?
         } else {
             let enabled=args["enabled"]==true;
             let mut settings=select(args,&["expectedSettingsRevision","address","port","advertisedHost","discovery"]);
@@ -24,8 +24,8 @@ mod tests {
         struct BackendFixture;
         impl Backend for BackendFixture {
             fn request(&self,request:Value)->Value {
-                assert!(matches!(request["command"].as_str(),Some("companion_status"|"companion_enable"|"companion_disable")));
-                if request["command"]!="companion_status" {assert_eq!(request["companion"]["expectedSettingsRevision"],7);assert!(request["companion"].get("operationId").is_none());}
+                assert!(matches!(request["command"].as_str(),Some("companion_inventory"|"companion_enable"|"companion_disable")));
+                if request["command"]!="companion_inventory" {assert_eq!(request["companion"]["expectedSettingsRevision"],7);assert!(request["companion"].get("operationId").is_none());}
                 json!({"ok":true,"state":{"companions":{"listener":{"settingsRevision":7,"enabled":request["command"]=="companion_enable"}}}})
             }
             fn guarded(&self,_:Value,_:Value)->Value{panic!("Listener setup never enters output ownership")}

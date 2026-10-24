@@ -55,6 +55,15 @@ async function call(client, name, args = {}) {
 }
 async function ok(client, name, args = {}) { const result = await call(client, name, args); assert.equal(result.ok, true, `${name}: ${JSON.stringify(result)}`); return result.data; }
 const mutation = args => ({ ...args, operationId: randomUUID() });
+async function assertNoCompanionState(page) {
+  const status=await page.invoke('persistence_status'),{DatabaseSync}=await import('node:sqlite');
+  const database=new DatabaseSync(status.path,{readOnly:true});
+  try {
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM records WHERE domain='secrets' AND payload IS NOT NULL").get().count,0,'Passive MCP reads must not create native trust/TLS records');
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM records WHERE domain='companion' AND key='publications'").get().count,0,'Passive MCP reads must not create a host archive');
+  }finally{database.close();}
+}
+
 
 test('real MCP client configures the same running dev Cockpit as its UI', { timeout: 360000 }, async () => {
   let page = await nativePage();
@@ -135,7 +144,12 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const vehicles = await ok(reader, 'game_vehicles_list', { gameId: games.catalogue[0].id, limit: 1 });
     assert.ok(vehicles.catalogueStamp); assert.ok(vehicles.vehicles.length <= 1); assert.ok(vehicles.total >= vehicles.vehicles.length);
     evidence.discovery = { processingOperations: operationsTotal, processingPaginationVerified: true, vehicleCataloguePaged: true };
-    await ok(writer, 'companions_list', { limit: 1 }); await ok(writer, 'companion_panels_list', { limit: 1 });
+    await ok(reader, 'companions_list', { limit: 1 }); const companionPanels=await ok(reader, 'companion_panels_list', { limit: 1 });
+    if(process.env.OSG_MCP_EXPECT_NO_COMPANIONS){
+      assert.deepEqual(companionPanels.panels,[]);
+      const listener=await ok(reader,'companion_listener_get');assert.equal(listener.enabled,false);
+      await assertNoCompanionState(page);evidence.passiveCompanions={emptyCatalogue:true,listenerRead:true,noTrustOrTlsCreation:true};
+    }
     const name = `MCP acceptance ${Date.now()}`;
     const prepared = await ok(writer, 'profile_prepare_changes', { name, expectedRevision: null });
     assert.equal(prepared.effects.saved, false); assert.equal(prepared.validation.valid, true); assert.ok(prepared.diff.totalChanges > 0);
@@ -210,6 +224,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       assert.equal((await ok(writer, 'profile_get', { id: prepared.profileId })).document.name, `${name} saved only`);
       assert.equal((await ok(writer, 'profile_status')).profileSession.owner, null, 'Restart must not replay an applied profile');
       assert.equal((await call(writer, 'operation_status', { operationId: saveArgs.operationId })).error.code, 'operation_unknown');
+      if(process.env.OSG_MCP_EXPECT_NO_COMPANIONS)await assertNoCompanionState(page);
       evidence.restart = { settingsRestored: true, credentialRestored: true, savedProfileRestored: true, appliedRunNotReplayed: true, volatileLedgerReconciled: true };
     }
     evidence.completed = true; evidence.checkedAt = new Date().toISOString();

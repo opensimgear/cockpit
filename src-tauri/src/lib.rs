@@ -25,6 +25,7 @@ mod acr_windows;
 #[path="companion/host/mod.rs"]
 mod companion_host;
 mod firmware_releases;
+#[path="companion/storage/panels.rs"]
 mod companion_panels;
 mod actions;
 pub mod dcs_bios;

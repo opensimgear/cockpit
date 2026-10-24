@@ -44,7 +44,6 @@ struct Services {
 struct Metadata {
     hub: Hub,
     directory: PathBuf,
-    cache_warning: Option<String>,
 }
 pub struct Runtime {
     path: Option<PathBuf>,
@@ -56,6 +55,18 @@ pub struct Runtime {
     upload: Mutex<Option<Upload>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
+}
+fn interface_addresses()->Vec<String>{
+    osg_companion_service::server::local_interfaces()
+            .ok()
+            .and_then(|value| {
+                value.as_array().map(|rows| {
+                    rows.iter()
+                        .filter_map(|row| row["ip"].as_str().map(str::to_owned))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
 }
 impl Runtime {
     pub fn new(path: Option<PathBuf>, provider: Arc<CompanionProvider>) -> Self {
@@ -101,6 +112,14 @@ impl Runtime {
             std::thread::sleep(Duration::from_secs(2));
         });
     }
+    fn existing_metadata(&self)->Result<Option<&Metadata>,String>{
+        if self.stopped.load(Ordering::SeqCst){return Err("Companion service is stopped.".into());}
+        if let Some(metadata)=self.metadata.get(){return Ok(Some(metadata));}
+        let Some(path)=&self.path else{return Ok(None)};
+        let Some(database)=osg_persistence::Database::existing_for_namespace(&path.join("companion-host-state.dpapi"))? else{return Ok(None)};
+        if database.read("secrets","companion-host")?.is_none()&&database.read("companion","publications")?.is_none(){return Ok(None);}
+        self.metadata(false).map(Some)
+    }
     fn metadata(&self, create: bool) -> Result<&Metadata, String> {
         if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
         if let Some(metadata) = self.metadata.get() { return Ok(metadata); }
@@ -116,10 +135,7 @@ impl Runtime {
             (Hub::new(format!("host-{}", uuid::Uuid::new_v4()), self.provider.clone()),
                 std::env::temp_dir().join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
-        let restored=crate::companion_panels::restore_or_quarantine(&hub, &directory)?;
-        let warnings=[restored].into_iter().flatten().collect::<Vec<_>>();
-        let cache_warning=(!warnings.is_empty()).then(||warnings.join(" "));
-        let _ = self.metadata.set(Metadata {hub, directory, cache_warning});
+        let _ = self.metadata.set(Metadata {hub, directory});
         Ok(self.metadata.get().expect("metadata initialized under its gate"))
     }
     fn services(&self) -> Result<&Services, String> {
@@ -129,7 +145,6 @@ impl Runtime {
                 let hub = metadata.hub.clone();
                 let directory = metadata.directory.clone();
                 let server = ServerRuntime::with_browser(hub.clone(), directory.clone(), BROWSER_ASSETS)?;
-                if let Some(warning)=&metadata.cache_warning { server.record_error(warning.clone()); }
                 let saved_listener=crate::companion_settings::Listener::open(&directory)?;
                 let services=Services {
                     hub, server, directory,
@@ -154,17 +169,20 @@ impl Runtime {
             }
         });
     }
+    fn inventory(&self)->Result<Value,String>{
+        if self.stopped.load(Ordering::SeqCst){return Err("Companion service is stopped.".into());}
+        if let Some(Ok(services))=self.services.get(){return self.status(services);}
+        let directory=self.metadata.get().map(|metadata|&metadata.directory).or(self.path.as_ref());
+        let database=directory.map(|directory|osg_persistence::Database::existing_for_namespace(&directory.join("companion-host-state.dpapi"))).transpose()?.flatten();
+        let metadata=self.existing_metadata()?;
+        let host=match metadata{Some(metadata)=>metadata.hub.command(&json!({"command":"companion_status"}))?,None=>json!({"clients":[],"pending":[],"instances":[],"publications":[]})};
+        let(revision,config)=if database.is_some(){crate::companion_settings::Listener::open(directory.ok_or("Companion directory is unavailable.")?)?.refresh()?}else{(0,None)};
+        let firmware=match metadata{Some(metadata) if database.is_some()=>crate::companion_settings::firmware(&metadata.directory)?.1,_=>json!({})};
+        let error=self.services.get().and_then(|result|result.as_ref().err());
+        Ok(json!({"host":host,"listener":{"enabled":false,"configuredEnabled":config.is_some(),"settingsRevision":revision,"config":config,"lastError":error},"firmware":firmware,"usb":{"connected":false},"interfaces":interface_addresses(),"browserUrl":null}))
+    }
     fn status(&self, services: &Services) -> Result<Value, String> {
-        let interfaces: Vec<String> = osg_companion_service::server::local_interfaces()
-            .ok()
-            .and_then(|value| {
-                value.as_array().map(|rows| {
-                    rows.iter()
-                        .filter_map(|row| row["ip"].as_str().map(str::to_owned))
-                        .collect()
-                })
-            })
-            .unwrap_or_default();
+        let interfaces=interface_addresses();
         let (firmware_repository,mut firmware)=crate::companion_settings::firmware(&services.directory)?;
         let previous_firmware=firmware.clone();
         let mut host=services.hub.command(&json!({"command":"companion_status"}))?;
@@ -214,16 +232,13 @@ impl Runtime {
         Ok(self.metadata(false)?.hub.clone())
     }
     pub(crate) fn saved_panel_updates(&self) -> Result<Vec<crate::companion_panels::SavedPanel>,String> {
-        let metadata=self.metadata(false)?;
-        crate::companion_panels::latest(&metadata.hub,&metadata.directory)
+        match self.existing_metadata()?{Some(metadata)=>crate::companion_panels::latest(&metadata.hub),None=>Ok(vec![])}
     }
     pub(crate) fn saved_panel_heads(&self) -> Result<std::collections::BTreeMap<String,String>,String> {
-        let metadata=self.metadata(false)?;
-        crate::companion_panels::saved_heads(&metadata.hub,&metadata.directory)
+        match self.existing_metadata()?{Some(metadata)=>crate::companion_panels::saved_heads(&metadata.hub),None=>Ok(Default::default())}
     }
     pub(crate) fn saved_panel_references(&self) -> Result<Vec<crate::companion_panels::SavedPanel>,String> {
-        let heads=self.saved_panel_heads()?;
-        Ok(self.saved_panel_updates()?.into_iter().filter(|saved|heads.get(&saved.panel_id)==Some(&saved.publication_hash)).collect())
+        Ok(self.existing_metadata()?.map_or_else(Vec::new,|metadata|metadata.hub.saved_panel_references()))
     }
     /// Read-only preparation diagnostics. A recent nonce-verified USB report
     /// can explain failures before session-open; it never supplies a baseline.
@@ -309,20 +324,10 @@ impl Runtime {
     /// Existing pairing metadata only. Inventory must neither create a host nor
     /// start its listener/USB services; read failures are not an empty inventory.
     pub(crate) fn resource_instance_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
-        if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
-        if let Some(metadata) = self.metadata.get() { return Ok(metadata.hub.resource_instance_ids()); }
-        let Some(path) = &self.path else { return Ok(Default::default()); };
-        if !osg_companion_service::persistence::SealedSqliteStore::new(path.join("companion-host-state.dpapi")).exists()? {
-            return Ok(Default::default());
-        }
-        Ok(self.metadata(false)?.hub.resource_instance_ids())
+        Ok(self.existing_metadata()?.map_or_else(Default::default,|metadata|metadata.hub.resource_instance_ids()))
     }
     pub(crate) fn resource_companions(&self) -> Result<Vec<osg_companion_service::ResourceCompanion>,String> {
-        if self.stopped.load(Ordering::SeqCst) { return Err("Companion service is stopped.".into()); }
-        if let Some(metadata)=self.metadata.get(){return Ok(metadata.hub.resource_companions());}
-        let Some(path)=&self.path else{return Ok(vec![])};
-        if !osg_companion_service::persistence::SealedSqliteStore::new(path.join("companion-host-state.dpapi")).exists()?{return Ok(vec![])}
-        Ok(self.metadata(false)?.hub.resource_companions())
+        Ok(self.existing_metadata()?.map_or_else(Vec::new,|metadata|metadata.hub.resource_companions()))
     }
     pub(crate) fn resource_publication(&self, instance_id: &str) -> Result<osg_companion_service::Publication, String> {
         self.metadata.get().ok_or("Companion setup is not initialized; no inventory access starts it.")?
@@ -344,7 +349,7 @@ impl Runtime {
     #[cfg(test)]
     pub(crate) fn with_profile_metadata(hub:Hub, provider:Arc<CompanionProvider>, directory:PathBuf)->Self {
         let mut runtime=Self::new(None,provider);
-        assert!(runtime.metadata.set(Metadata {hub,directory,cache_warning:None}).is_ok());
+        assert!(runtime.metadata.set(Metadata {hub,directory}).is_ok());
         runtime.profile_wire_fixture = true;
         runtime
     }

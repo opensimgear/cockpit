@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { restoreCompanionPanels } from './lib/companion-startup';
   import Notifications from './lib/Notifications.svelte';
   import ActivationProgress from './lib/ActivationProgress.svelte';
   import { notify as showNotification } from './lib/notifications';
@@ -395,7 +394,6 @@
   }
   onMount(() => {
     disposed = false;
-    void restoreCompanionPanels().catch(error => notify(String(error)));
     workspace = new GatewayWorkspace({ onChange: syncWorkspace });
     void workspace.refresh();
     const unsubscribeProfile = profileRuntime.subscribe(next => { if (!disposed) profileState = next; });
