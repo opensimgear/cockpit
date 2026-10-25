@@ -354,8 +354,8 @@ receive development sample data. Normal restarts keep newly saved SQL data.
 ## Fresh development initialization
 
 Debug builds seed the current SQLite layout before native workers start. One
-transaction writes the profile library, generic Toggle source and an unversioned
-development/initialized marker. The library contains protected Default,
+transaction writes the profile library, widget library, designer workspace and
+an unversioned development/initialized marker. The library contains protected Default,
 Dev · Signals, Dev · Workspace and DCS Feature Lab - AH-6J + F/A-18C. Signals has
 two unbound logical devices and
 a rising-edge connection for editing; it contains no live assignments, device
@@ -365,13 +365,18 @@ The DCS example is the recovered Feature Lab portable document in
 `examples/dcs-bios/feature-lab.profile.json`, with both aircraft tabs, 7 resources,
 44 processing nodes, 87 connections and its saved layout. Virtual/desktop output,
 visibility and companion selections remain editable profile declarations. Local
-hardware bindings, companion publications, game setup and runtime ownership are
-not seeded; import or seeding never activates the profile. Bind available resources
-and publish/select a companion panel before using those routes.
+hardware bindings, game setup and runtime ownership are not seeded; import or
+seeding never activates the profile. The designer workspace includes the
+2400 × 1440 DCS WIN Companion panel, its five editable widget sources, the generic
+Toggle and a validated compiled preview. Its generated snapshot lives at
+`examples/dcs-bios/win-companion/workspace.json`; regenerate it with
+`node scripts/dev-companion-seed.mjs`. Pairing and destination assignments remain
+explicit. Bind available resources and save/select a companion panel before
+using those routes.
 
 The marker prevents reseeding on restart, so edits and deleted examples stay
 as saved. A failed/busy transaction writes none of the seed. An existing
-unmarked library requires resetting the development data directory; no importer
+unmarked library or designer workspace requires resetting the development data directory; no importer
 or schema upgrade is provided. Portable profile and widget formats retain their
 current wire validators, while the private SQL profile-library envelope has no
 schema version. Release builds skip development seeding.

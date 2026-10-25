@@ -42,7 +42,8 @@
       "{workspaceRoot}/scripts/*coverage*",
       "{workspaceRoot}/scripts/*acceptance*",
       "{workspaceRoot}/scripts/test-dcs-aircraft-exports.py",
-      "{workspaceRoot}/integration-profiles/**/*"
+      "{workspaceRoot}/integration-profiles/**/*",
+      "{workspaceRoot}/examples/**/*"
     ],
     "rustGlobals": [
       "{workspaceRoot}/rust-toolchain.toml",

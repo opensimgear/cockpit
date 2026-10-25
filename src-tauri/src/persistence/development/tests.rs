@@ -45,7 +45,25 @@ fn fresh_examples_are_persisted_without_runtime_or_security_authority() {
     assert_eq!(dcs.visibility.len(), 1);
     assert_eq!(dcs.companion_assignments.len(), 1);
     assert_eq!(database.profile_index().unwrap().len(), 4);
-    assert!(database.read("widgets", "library").unwrap().is_some());
+    let bundle: Value = serde_json::from_slice(
+        &database.read("widgets", "library").unwrap().unwrap().payload,
+    ).unwrap();
+    let workspace: Value = serde_json::from_slice(
+        &database.read("companion", "designer-workspace").unwrap().unwrap().payload,
+    ).unwrap();
+    crate::widget_library::validate_workspace(&workspace).unwrap();
+    assert_eq!(bundle["definitions"], workspace["sources"]);
+    assert_eq!(workspace["sources"].as_array().unwrap().len(), 6);
+    for id in ["dcs-demo-button", "dcs-demo-altitude", "dcs-demo-percent",
+        "dcs-demo-altitude-warning", "dcs-demo-gauge-frame"] {
+        assert!(workspace["sources"].as_array().unwrap().iter().any(|source| source["id"] == id));
+    }
+    let panel = &workspace["drafts"][0];
+    assert_eq!(panel["id"], "dcs-demo-win");
+    assert_eq!(panel["widgets"].as_array().unwrap().len(), 11);
+    assert_eq!(panel["pages"][0]["width"], 2400);
+    assert_eq!(panel["pages"][0]["height"], 1440);
+    assert_eq!(workspace["publications"]["dcs-demo-win"].as_array().unwrap().len(), 1);
     for (domain, key) in [
         ("secrets", "companion-host"),
         ("security", "mcp"),
@@ -83,6 +101,11 @@ fn restarting_never_overwrites_edits_or_recreates_removed_examples() {
             payload: Some(&bytes),
         }])
         .unwrap();
+    let empty = br#"{"sources":[],"drafts":[],"publications":{}}"#;
+    database.commit(&[Change {
+        domain: "companion", key: "designer-workspace", expected_revision: 1,
+        payload: Some(empty),
+    }]).unwrap();
     let reopened = Database::open(directory.path().join("cockpit.sqlite3")).unwrap();
     seed(&reopened).unwrap();
     assert_eq!(
@@ -94,6 +117,7 @@ fn restarting_never_overwrites_edits_or_recreates_removed_examples() {
         bytes
     );
     assert_eq!(reopened.revision("profiles", "library").unwrap(), 2);
+    assert_eq!(reopened.read("companion", "designer-workspace").unwrap().unwrap().payload, empty);
 }
 #[test]
 fn failed_seed_is_atomic_and_does_not_import_an_existing_library() {
@@ -104,6 +128,7 @@ fn failed_seed_is_atomic_and_does_not_import_an_existing_library() {
     for (domain, key) in [
         ("profiles", "library"),
         ("widgets", "library"),
+        ("companion", "designer-workspace"),
         ("development", "initialized"),
     ] {
         assert_eq!(database.revision(domain, key).unwrap(), 0);
@@ -121,6 +146,18 @@ fn failed_seed_is_atomic_and_does_not_import_an_existing_library() {
         .read("development", "initialized")
         .unwrap()
         .is_none());
+    assert!(database.read("widgets", "library").unwrap().is_none());
+}
+
+#[test]
+fn existing_designer_content_cannot_be_overwritten_by_initialization() {
+    let (_directory, database) = database();
+    database.commit(&[Change {
+        domain: "companion", key: "designer-workspace", expected_revision: 0,
+        payload: Some(br#"{"sources":[],"drafts":[],"publications":{}}"#),
+    }]).unwrap();
+    assert!(seed(&database).unwrap_err().contains("fresh SQLite"));
+    assert!(database.read("development", "initialized").unwrap().is_none());
     assert!(database.read("widgets", "library").unwrap().is_none());
 }
 

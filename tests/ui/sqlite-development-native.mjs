@@ -27,6 +27,11 @@ test('fresh dev initialization seeds SQL once and restart preserves edits',{skip
     assert.ok(!rows.some(r=>['secrets','security','recovery-profile','recovery-output','recovery-desktop','recovery-visibility'].includes(r.domain)));
     assert.ok((await readdir(configRoot)).every(name=>!name.endsWith('.json')));
     const widgets=(await native({command:'widgets_list',offset:0,limit:32})).widgetLibrary;assert.ok(widgets.widgets.some(w=>w.id==='toggle'));
+    for(const id of ['dcs-demo-button','dcs-demo-altitude','dcs-demo-percent','dcs-demo-altitude-warning','dcs-demo-gauge-frame'])assert.ok(widgets.widgets.some(w=>w.id===id),id);
+    const workspace=(await native({command:'designer_workspace_read'})).designerWorkspace.value;
+    const panel=workspace.drafts.find(d=>d.id==='dcs-demo-win');assert.ok(panel);
+    assert.equal(panel.widgets.length,11);assert.equal(panel.pages[0].width,2400);assert.equal(panel.pages[0].height,1440);
+    assert.equal(workspace.publications[panel.id].length,1);
     if(phase==='prepare'){
       assert.equal(demo.name,'Dev · Signals');assert.equal(demo.revision,1);
       const open=page.getByRole('button',{name:'Open profiles',exact:true});

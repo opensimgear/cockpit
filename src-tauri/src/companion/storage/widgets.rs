@@ -1,5 +1,6 @@
 //! Current widget sources and designer snapshots share one SQLite authority.
 use osg_companion_service::{validate_widget_bundle, BUNDLE_BYTES};
+pub(crate) use workspace::validate_workspace;
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,

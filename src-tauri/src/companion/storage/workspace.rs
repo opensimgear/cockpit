@@ -2,6 +2,9 @@
 use super::*;
 #[path = "workspace_validation.rs"]
 mod validation;
+pub(crate) fn validate_workspace(value: &Value) -> Result<(), String> {
+    validation::validate(value)
+}
 pub(super) fn synchronize(mut value: Value, library: &Value) -> Result<Value, String> {
     validation::validate(&value)?;
     let old = value["sources"].as_array().unwrap();

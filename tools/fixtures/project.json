@@ -13,10 +13,12 @@
   "namedInputs": {
     "default": [
       "{workspaceRoot}/scripts/*fixtures.mjs",
+      "{workspaceRoot}/scripts/dev-companion-seed.mjs",
       "{workspaceRoot}/scripts/prepare-widget-fonts.py",
       "{workspaceRoot}/packages/widget-compiler/scripts/**/*",
       "{workspaceRoot}/packages/companion-ui/assets/**/*",
       "{workspaceRoot}/examples/companion/**/*",
+      "{workspaceRoot}/examples/dcs-bios/win-companion/**/*",
       "{workspaceRoot}/apps/companion-esp32/test/*.json",
       "{workspaceRoot}/apps/companion-esp32/network/*profile*",
       "{workspaceRoot}/apps/companion-esp32/render/*profile*",
@@ -37,6 +39,7 @@
           "node packages/widget-compiler/scripts/native-source-fixtures.mjs --check",
           "node packages/widget-compiler/scripts/image-codec-fixtures.mjs --check",
           "node scripts/workspace-fixtures.mjs --check",
+          "node scripts/dev-companion-seed.mjs --check",
           "node scripts/widget-publication-fixtures.mjs --check",
           "node scripts/compiled-acceptance-fixtures.mjs --check",
           "node scripts/widget-lvgl-fixtures.mjs --check",

@@ -51,20 +51,20 @@ fn profiles() -> Result<Library, String> {
     library.validate()?;
     Ok(library)
 }
-fn widgets() -> Result<Value, String> {
-    let toggle: Value = serde_json::from_str(include_str!(
-        "../../../examples/companion/generic-toggle.source.json"
+fn workspace() -> Result<Value, String> {
+    let workspace: Value = serde_json::from_str(include_str!(
+        "../../../examples/dcs-bios/win-companion/workspace.json"
     ))
-    .map_err(|_| "Invalid development widget source.")?;
-    let bundle = json!({"definitions":[toggle]});
-    osg_companion_service::validate_widget_bundle(&bundle)?;
-    Ok(bundle)
+    .map_err(|_| "Invalid development designer workspace.")?;
+    crate::widget_library::validate_workspace(&workspace)?;
+    Ok(workspace)
 }
 pub(crate) fn seed(database: &Database) -> Result<(), String> {
     let rows = database.read_many(&[
         ("development", "initialized"),
         ("profiles", "library"),
         ("widgets", "library"),
+        ("companion", "designer-workspace"),
     ])?;
     if let Some(marker) = &rows[0].1 {
         if marker.payload != b"true" {
@@ -78,8 +78,11 @@ pub(crate) fn seed(database: &Database) -> Result<(), String> {
         return Err("Development examples require a fresh SQLite database. Reset the dev data directory; existing data is not migrated.".into());
     }
     let library = profiles()?.encode()?;
-    let bundle =
-        serde_json::to_vec(&widgets()?).map_err(|_| "Cannot encode development widget sources.")?;
+    let workspace = workspace()?;
+    let bundle = serde_json::to_vec(&json!({"definitions":workspace["sources"]}))
+        .map_err(|_| "Cannot encode development widget sources.")?;
+    let workspace = serde_json::to_vec(&workspace)
+        .map_err(|_| "Cannot encode development designer workspace.")?;
     database.commit(&[
         Change {
             domain: "profiles",
@@ -92,6 +95,12 @@ pub(crate) fn seed(database: &Database) -> Result<(), String> {
             key: "library",
             expected_revision: 0,
             payload: Some(&bundle),
+        },
+        Change {
+            domain: "companion",
+            key: "designer-workspace",
+            expected_revision: 0,
+            payload: Some(&workspace),
         },
         Change {
             domain: "development",

@@ -40,3 +40,31 @@ test('recovered DCS demo persists intact and opens both aircraft tabs in native 
     await page.getByRole('group',{name:'Profile vehicle tabs'}).getByRole('button',{name:'Base',exact:true}).click();
   }finally{await browser.close();}
 });
+
+test('development seed includes editable DCS panel, sources and working compiled preview',async()=>{
+  const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
+  try {
+    const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:1420/'));
+    assert.ok(page,'The native dev Cockpit must be running');
+    const expected=JSON.parse(await readFile(new URL('../../examples/dcs-bios/win-companion/workspace.json',import.meta.url),'utf8'));
+    const saved=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('persistence_workspace',{request:{operation:'read'}}));
+    assert.deepEqual(saved.value,expected);
+    assert.equal(saved.revision,1,'Fresh development workspace must be seeded once');
+    const widgets=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'widgets_list',offset:0,limit:32,clientId:'dcs-seed-native-check'}}));
+    assert.equal(widgets.ok,true);
+    assert.deepEqual(widgets.state.widgetLibrary.widgets.map(w=>w.id).sort(),expected.sources.map(s=>s.id).sort());
+    await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Companions',exact:true}).click();
+    const panel=expected.drafts[0];
+    await page.getByRole('button',{name:`Edit ${panel.title}`,exact:true}).waitFor();
+    for(const source of expected.sources)await page.getByRole('button',{name:`Edit design ${source.title}`,exact:true}).waitFor();
+    await page.getByRole('button',{name:`Edit ${panel.title}`,exact:true}).click();
+    await page.getByRole('heading',{name:panel.title,exact:true}).waitFor();
+    await page.getByText('2400 × 1440',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Try',exact:true}).click();
+    await page.getByText('Compiled Try',{exact:true}).waitFor();
+    await page.locator('.stage canvas').first().waitFor();
+    await mkdir(resolve('.research/dcs-demo-native'),{recursive:true});
+    await page.screenshot({path:resolve('.research/dcs-demo-native/seeded-panel.png')});
+    await page.getByRole('button',{name:'Stop',exact:true}).click();
+  }finally{await browser.close();}
+});
