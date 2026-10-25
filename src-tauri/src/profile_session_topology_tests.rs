@@ -216,8 +216,8 @@ fn transform_summaries_are_bounded_even_for_extreme_numbers_and_never_expose_tex
         },
         Operation::Clamp { min: -1e300, max: 1e300 },
         Operation::Deadzone {
-            center: 1e300,
-            radius: 1e-300,
+            center_percent: 50.0,
+            deadzone_percent: 10.0,
             rounding: Rounding::None,
         },
         Operation::Compare {

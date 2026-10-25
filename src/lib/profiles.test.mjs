@@ -150,7 +150,7 @@ test('every explicit operation has a strict portable shape and no hidden process
     {kind:'declare-quantity',quantity:'Provider-reported altitude MSL',unit:'ft'},
     {kind:'range-map',inputMin:0,inputMax:1,outputMin:0,outputMax:32767,rounding:'nearest'},
     {kind:'unit-convert',from:'ft',to:'m',rounding:'none'},
-    {kind:'deadzone',center:0,radius:1,rounding:'nearest'},{kind:'curve',points:[{input:0,output:0},{input:1,output:1}],rounding:'none'},
+    {kind:'deadzone',centerPercent:50,deadzonePercent:2,rounding:'nearest'},{kind:'curve',points:[{input:0,output:0},{input:1,output:1}],rounding:'none'},
     {kind:'compare',comparison:'greater',threshold:1},{kind:'hysteresis',comparison:'greater-equal',press:10,release:9},
     {kind:'priority',order:['input']},{kind:'event-edge',edge:'rising'},{kind:'select',whenTrue:1,whenFalse:0},
     {kind:'format',decimals:2,prefix:'ALT ',suffix:' m',rounding:'nearest',overflow:'reject'},

@@ -119,15 +119,15 @@ test('native DCS overview hides transforms and counts, edits real signal lanes, 
     for(const head of heads){assert.ok(head.head>head.width*2);assert.equal(head.tip,10);assert.ok(head.dash);}
     const transformId=bundle.lanes.flatMap(lane=>lane.transforms).find(id=>document.processingNodes.find(node=>node.id===id)?.operation.kind==='deadzone');
     await native.evaluate(id=>window.document.querySelector(`[data-transform-id="${id}"]`).click(),transformId);
-    const factor=document.processingNodes.find(node=>node.id===transformId).operation.radius;
-    await until(()=>native.evaluate(value=>{const input=document.querySelector('.lane-settings input[aria-label="Radius"]');if(!input)return false;input.value=String(value);input.dispatchEvent(new Event('change',{bubbles:true}));return true;},factor+1),'Edit deadzone inline');
+    const factor=document.processingNodes.find(node=>node.id===transformId).operation.deadzonePercent;
+    await until(()=>native.evaluate(value=>{const input=document.querySelector('.lane-settings input[aria-label="Deadzone (%)"]');if(!input)return false;input.value=String(value);input.dispatchEvent(new Event('change',{bubbles:true}));return true;},factor+1),'Edit deadzone inline');
     await until(async()=>!(await snapshot()).saveDisabled,'Editing dirties graph');assert.ok((await snapshot()).lanes.length,'Inspector stays open after edit');
     await click('Save profile');await until(async()=>(await snapshot()).saveDisabled,'Save deadzone');
     const edited=(await request({command:'profile_assignments_get',id:profileId})).profiles.document;
-    assert.equal(edited.processingNodes.find(node=>node.id===transformId).operation.radius,factor+1);assert.deepEqual(edited.bindings,laidOut.bindings);
-    await click('Undo');await until(()=>native.evaluate(()=>Number(document.querySelector('.lane-settings input[aria-label="Radius"]')?.value)===0||!!document.querySelector('.lane-settings')), 'Undo retains lane editor');
-    assert.equal(await native.evaluate(()=>Number(document.querySelector('.lane-settings input[aria-label="Radius"]').value)),factor);
-    await click('Redo');assert.equal(await native.evaluate(()=>Number(document.querySelector('.lane-settings input[aria-label="Radius"]').value)),factor+1);
+    assert.equal(edited.processingNodes.find(node=>node.id===transformId).operation.deadzonePercent,factor+1);assert.deepEqual(edited.bindings,laidOut.bindings);
+    await click('Undo');await until(()=>native.evaluate(()=>Number(document.querySelector('.lane-settings input[aria-label="Deadzone (%)"]')?.value)===0||!!document.querySelector('.lane-settings')), 'Undo retains lane editor');
+    assert.equal(await native.evaluate(()=>Number(document.querySelector('.lane-settings input[aria-label="Deadzone (%)"]').value)),factor);
+    await click('Redo');assert.equal(await native.evaluate(()=>Number(document.querySelector('.lane-settings input[aria-label="Deadzone (%)"]').value)),factor+1);
     await native.evaluate(()=>{const panel=document.querySelector('.canvas-lanes-panel');panel.scrollTop=100;});await pause(80);assert.equal(await native.evaluate(()=>Math.abs(document.querySelector('.signal-lanes header').getBoundingClientRect().top-document.querySelector('.canvas-lanes-panel').getBoundingClientRect().top)<3),true,'Source/destination header stays visible while editing');await capture('signal-lanes');
     await native.evaluate(()=>document.querySelector('.canvas-stage').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));await pause(220);assert.equal((await snapshot()).transforms,0);
     await openBundle();

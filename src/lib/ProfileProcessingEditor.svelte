@@ -14,7 +14,7 @@
   const firstOutput=$derived(draft.outputs[0]?.contract);
   const outputSchema=$derived(firstOutput&&'schema'in firstOutput?firstOutput.schema:null);
   $effect(()=>{const next=JSON.stringify(node);if(next!==signature){signature=next;draft=copy(node) as ProfileProcessingNode;}});
-  const heading=(key:string)=>key.replace(/([A-Z])/g,' $1').replace(/^./,letter=>letter.toUpperCase());
+  const heading=(key:string)=>key==='centerPercent'?'Center (%)':key==='deadzonePercent'?'Deadzone (%)':key.replace(/([A-Z])/g,' $1').replace(/^./,letter=>letter.toUpperCase());
   function field(key:string,value:unknown){const outputs=draft.operation.kind==='declare-quantity'&&key==='unit'&&typeof value==='string'?draft.outputs.map(port=>'schema'in port.contract&&(port.contract.schema.type==='integer'||port.contract.schema.type==='number')?{...port,contract:{...port.contract,schema:{...port.contract.schema,unit:value}}}:port):draft.outputs;draft={...draft,operation:{...draft.operation,[key]:value} as ProfileOperation,outputs};}
   function save(){if(!processingNodeError(draft))change(copy(draft));}
   function ruleField(key:string,value:unknown){if(draft.operation.kind==='builtin')draft={...draft,operation:{...draft.operation,rule:{...draft.operation.rule,[key]:value} as typeof draft.operation.rule}};}
@@ -50,7 +50,7 @@
   {:else if packed}<p class="hint">Every argument below is a named state input. Route a source or a visible Constant node to each argument. {draft.operation.kind==='action-pack'?'The separate event input triggers one complete ordered invocation.':'A complete setter invocation is emitted only on an argument change.'}</p>
   {:else}
     {#each Object.entries(draft.operation).filter(([key])=>!['kind','rule','inputs','points','clamp'].includes(key)) as [key,value]}
-      {#if typeof value==='number'}<label>{heading(key)}<input type="number" value={value} step="any" oninput={event=>field(key,Number(event.currentTarget.value))}/></label>
+      {#if typeof value==='number'}<label>{heading(key)}<input type="number" min={key==='centerPercent'||key==='deadzonePercent'?0:undefined} max={key==='centerPercent'||key==='deadzonePercent'?100:undefined} value={value} step="any" oninput={event=>field(key,Number(event.currentTarget.value))}/></label>
       {:else if typeof value==='string'}<label>{heading(key)}{#if ['rounding','comparison','edge','overflow'].includes(key)}<select value={value} onchange={event=>field(key,event.currentTarget.value)}>{#each key==='rounding'?['none','nearest','floor','ceil','truncate']:key==='comparison'?['greater','greater-equal','less','less-equal','equal','not-equal']:key==='edge'?['rising','falling','change']:['reject','truncate'] as option}<option value={option}>{option}</option>{/each}</select>{:else}<input value={value} oninput={event=>field(key,event.currentTarget.value)}/>{/if}</label>{/if}
     {/each}
     {#if draft.operation.kind==='unit-convert'}<label class="check"><input type="checkbox" checked={draft.operation.clamp??false} onchange={event=>field('clamp',event.currentTarget.checked)}/>Clamp to output range</label><p class="hint">Convert units, then limit known values to the declared output range before rounding. Unknown, stale and unavailable values keep their status.</p>{/if}

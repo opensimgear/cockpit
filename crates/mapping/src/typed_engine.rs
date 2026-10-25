@@ -1357,13 +1357,16 @@ impl Phase {
                     }
                     Operation::Invert {} => min + max - value,
                     Operation::Deadzone {
-                        center,
-                        radius,
+                        center_percent,
+                        deadzone_percent,
                         rounding,
-                    } => rounded(
-                        if (value - center).abs() <= *radius {
-                            *center
-                        } else if value > *center {
+                    } => {
+                        let span = max - min;
+                        let center = min + span * (center_percent / 100.0);
+                        let radius = span * (deadzone_percent / 200.0);
+                        rounded(if (value - center).abs() <= radius {
+                            center
+                        } else if value > center {
                             center
                                 + (value - center - radius) * (max - center)
                                     / (max - center - radius)
@@ -1371,9 +1374,8 @@ impl Phase {
                             center
                                 - (center - value - radius) * (center - min)
                                     / (center - min - radius)
-                        },
-                        *rounding,
-                    ),
+                        }, *rounding)
+                    }
                     Operation::Curve { points, rounding } => {
                         let pair = points
                             .windows(2)

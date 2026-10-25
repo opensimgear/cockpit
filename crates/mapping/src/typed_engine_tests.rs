@@ -973,8 +973,8 @@ fn numeric_operations_replay_at_endpoints_and_interiors() {
         ),
         (
             Operation::Deadzone {
-                center: 0.0,
-                radius: 2.0,
+                center_percent: 50.0,
+                deadzone_percent: 20.0,
                 rounding: Rounding::None,
             },
             vec![
@@ -1015,8 +1015,8 @@ fn numeric_operations_replay_at_endpoints_and_interiors() {
     }
     let mut engine = phase(unary(
         Operation::Deadzone {
-            center: 0.0,
-            radius: 2.0,
+            center_percent: 50.0,
+            deadzone_percent: 20.0,
             rounding: Rounding::Nearest,
         },
         integer_contract(0, 10),
@@ -1025,6 +1025,9 @@ fn numeric_operations_replay_at_endpoints_and_interiors() {
     feed(&mut engine, 1, 0, sample(6.0));
     assert_eq!(scalar_output(&engine), 5.0);
 }
+
+#[path = "typed_engine_deadzone_tests.rs"]
+mod deadzone_tests;
 
 #[test]
 fn range_map_property_is_monotonic_bounded_and_explicitly_rounded() {
@@ -2190,12 +2193,38 @@ fn operation_contracts_reject_lossy_rounding_units_and_implicit_policies() {
     ));
     assert!(!operation_valid(
         Operation::Deadzone {
-            center: 0.0,
-            radius: 1.0,
+            center_percent: 50.0,
+            deadzone_percent: 10.0,
             rounding: Rounding::None
         },
         vec![integer_contract(-10, 10)],
         integer_contract(-10, 10)
+    ));
+    for (center_percent, deadzone_percent) in [
+        (-0.1, 10.0),
+        (100.1, 10.0),
+        (50.0, -0.1),
+        (50.0, 100.1),
+        (f64::NAN, 10.0),
+    ] {
+        assert!(!operation_valid(
+            Operation::Deadzone {
+                center_percent,
+                deadzone_percent,
+                rounding: Rounding::Nearest,
+            },
+            vec![number_contract(0.0, 10.0, None)],
+            number_contract(0.0, 10.0, None)
+        ));
+    }
+    assert!(!operation_valid(
+        Operation::Deadzone {
+            center_percent: 50.0,
+            deadzone_percent: 10.0,
+            rounding: Rounding::None,
+        },
+        vec![number_contract(5.0, 5.0, None)],
+        number_contract(5.0, 5.0, None)
     ));
     assert!(!operation_valid(
         Operation::Curve {

@@ -362,8 +362,8 @@ pub(super) fn definitions() -> Value {
                 "kind",
                 "deadzone",
                 vec![
-                    ("center", number()),
-                    ("radius", number()),
+                    ("centerPercent", json!({"type":"number","minimum":0,"maximum":100})),
+                    ("deadzonePercent", json!({"type":"number","minimum":0,"maximum":100})),
                     ("rounding", rounding()),
                 ],
                 &[],
@@ -949,7 +949,8 @@ pub(super) fn operation_catalogue(args: &Value) -> Value {
         let (category,description)=match kind {
             "declare-quantity"=>("quantity","Interpret a unitless raw value as an explicitly named physical quantity without changing its number."),
             "unit-convert"=>("quantity","Convert between supported declared units with explicit rounding and optional clamp."),
-            "scale"|"clamp"|"range-map"|"deadzone"|"invert"|"curve"=>("numeric","Transform explicitly declared numeric values; input/output ranges, units and rounding are checked by the native compiler."),
+            "deadzone"=>("numeric","centerPercent selects the neutral center across the full declared input range. deadzonePercent is the neutral band width as a percentage of that full range. Percentages must be from 0 to 100; values outside the band rescale to retain full travel, with the selected rounding mode."),
+            "scale"|"clamp"|"range-map"|"invert"|"curve"=>("numeric","Transform explicitly declared numeric values; input/output ranges, units and rounding are checked by the native compiler."),
             "compare"|"hysteresis"=>("logic","Produce a boolean condition from a numeric value with explicit thresholds and comparison."),
             "not"|"gate"|"any"|"all"|"priority"|"select"=>("logic","Combine or select explicit declared inputs. Native compilation checks exact input names, count, order, delivery and compatible contracts."),
             "event-edge"|"event-to-state"=>("event","Convert delivery explicitly between state and event; edge/baseline behavior is provided by the native runtime."),

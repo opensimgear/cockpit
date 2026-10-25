@@ -116,8 +116,8 @@ pub enum Operation {
         clamp: bool,
     },
     Deadzone {
-        center: f64,
-        radius: f64,
+        center_percent: f64,
+        deadzone_percent: f64,
         rounding: Rounding,
     },
     Invert {},

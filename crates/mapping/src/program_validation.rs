@@ -367,18 +367,20 @@ pub fn validate_operation(
         }
         Operation::Invert {} if same && input.and_then(numeric).is_some() => Ok(()),
         Operation::Deadzone {
-            center,
-            radius,
+            center_percent,
+            deadzone_percent,
             rounding,
         } if same
-            && finite(&[*center, *radius])
-            && *radius >= 0.0
+            && finite(&[*center_percent, *deadzone_percent])
+            && (0.0..=100.0).contains(center_percent)
+            && (0.0..=100.0).contains(deadzone_percent)
             && input.and_then(numeric).is_some_and(|(min, max, _)| {
-                *center >= min && *center <= max && *radius <= (max - center).max(center - min)
+                let span = max - min;
+                span.is_finite() && span > 0.0
             })
             && (!matches!(output, Some(ScalarSchema::Integer { .. }))
                 || *rounding != Rounding::None
-                || *radius == 0.0) =>
+                || *deadzone_percent == 0.0) =>
         {
             Ok(())
         }

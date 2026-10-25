@@ -2044,8 +2044,8 @@
       "name": "Deadzone",
       "operation": {
         "kind": "deadzone",
-        "center": 0,
-        "radius": 0,
+        "centerPercent": 50,
+        "deadzonePercent": 0,
         "rounding": "none"
       },
       "inputs": [

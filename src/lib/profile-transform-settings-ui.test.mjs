@@ -85,3 +85,20 @@ test('advanced pending script source survives first-input resolution while its d
   h.processing.field('source',source);h.processing.save();assert.deepEqual(plain(value.document.processingNodes[0].draft.configured),['source']);
   const resolved=resolve(value,'transform-1',state()).document.processingNodes[0];assert.equal(resolved.operation.source,source);assert.equal(resolved.inputs[0].contract.schema.unit,'rpm');
 });
+
+test('deadzone settings label and bound percentages, preserving them when the axis is connected',async()=>{
+  const node=create('deadzone','pending-deadzone',{centerPercent:50,deadzonePercent:10}),calls=[];
+  const h=await view(node,{configure:(kind,parameters)=>{calls.push([kind,parameters]);return true;}});
+  assert.match(h.body,/Center \(%\)/);assert.match(h.body,/Deadzone \(%\)/);
+  assert.match(h.body,/min="0" max="100"/);assert.ok(h.body.includes('45–55%'));
+  assert.ok(!h.body.includes('>Radius<'));
+  h.settings.parameter('deadzonePercent',{value:'12.5'});
+  assert.deepEqual(plain(calls),[['deadzone',{deadzonePercent:12.5}]]);
+  for(const [min,max]of [[0,4095],[-32768,32767],[-1,1]]){
+    const value=drop(graph(),'deadzone',{centerPercent:50,deadzonePercent:10});
+    const contract={delivery:'state',schema:{type:'number',min,max,unit:null},freshnessMs:350,fallback:null};
+    const resolved=resolve(value,'transform-1',contract).document.processingNodes[0];
+    assert.equal(resolved.operation.deadzonePercent,10);assert.equal(resolved.operation.centerPercent,50);
+    assert.deepEqual(plain(resolved.inputs[0].contract),contract);
+  }
+});

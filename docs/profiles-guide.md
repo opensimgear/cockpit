@@ -126,6 +126,13 @@ scripts. Select a transformation to edit its parameters. A raw numeric provider
 can use **Interpret raw quantity** before **Convert units**; see the
 [quantity guide](profile-quantities.md).
 
+Deadzone uses percentages of the declared input range. **Center (%)** sets the
+neutral position (50% is the midpoint), and **Deadzone (%)** sets the neutral
+band's full width. A 10% deadzone centered at 50% covers 45–55% of travel on any
+axis scale. Outside the band, values rescale to retain full travel. Integer
+signals use the selected rounding mode. MCP uses the same `centerPercent` and
+`deadzonePercent` operation parameters, each from 0 to 100.
+
 For a game action with arguments, add **Action pack**, connect its event trigger
 and every ordered argument explicitly, then route the invocation to the action.
 **Set on change** is available for setter actions. Constants can supply argument

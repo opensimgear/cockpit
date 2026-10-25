@@ -97,7 +97,7 @@ test('numeric edits reject overflow, unit mismatch, integer precision loss and i
   const scale=make('scale','scale',state(number(0,100)));scale.operation.factor=2;assert.match(error(scale),/output range/);scale.operation.factor=Infinity;assert.ok(error(scale));
   const ranged=make('range-map','range',state(number(0,10)));ranged.operation.inputMin=5;assert.ok(error(ranged));ranged.operation.inputMin=0;ranged.outputs[0].contract.schema.unit='m';assert.match(error(ranged),/units/);
   const precise=make('scale','precision',state(integer(0,10)));precise.operation.factor=.5;assert.match(error(precise),/rounding/);
-  const dead=make('deadzone','dead',state(integer()));dead.operation.radius=20;dead.operation.rounding='none';assert.ok(error(dead));
+  const dead=make('deadzone','dead',state(integer()));dead.operation.deadzonePercent=20;dead.operation.rounding='none';assert.ok(error(dead));
   const curve=make('curve','curve',state(number()));curve.operation.points.reverse();assert.ok(error(curve));
   const hysteresis=make('hysteresis','hysteresis',state(number()));hysteresis.operation.release=hysteresis.operation.press;assert.ok(error(hysteresis));hysteresis.operation.comparison='less-equal';hysteresis.operation.release=100;assertValid(hysteresis);
   const formatted=make('format','format',state(number()));formatted.operation.prefix='\n';assert.ok(error(formatted));
@@ -105,6 +105,20 @@ test('numeric edits reject overflow, unit mismatch, integer precision loss and i
 test('nearest rounding follows native negative-half behavior and supported conversion values cannot be mutated',()=>{
   const node=make('range-map','negative',state(number(-1,0)),state(integer(-1,0)));node.operation.outputMin=-.5;node.operation.outputMax=0;node.outputs[0].contract.schema.min=0;assert.match(error(node),/output range/);
   assert.deepEqual(plain(conversion('ft','m')),[381/1250,0]);const copy=conversion('ft','m');copy[0]=999;assert.deepEqual(plain(conversion('ft','m')),[381/1250,0]);assert.deepEqual(plain(conversion('any','any')),[1,0]);assert.equal(conversion('__proto__','constructor'),null);assert.equal(conversion('ft','seconds'),null);
+});
+
+test('deadzone percentages are independent of input scale and reject invalid ranges and percentages',()=>{
+  for(const schema of [number(-1,1),number(0,100),integer(0,4095),integer()]){
+    const node=make('deadzone','deadzone',state(schema));
+    assert.equal(node.operation.centerPercent,50);assert.equal(node.operation.deadzonePercent,0);
+    node.operation.deadzonePercent=10;assertValid(node);
+    assert.match(summary(node),/Deadzone 10% · center 50%/);
+    for(const key of ['centerPercent','deadzonePercent'])for(const invalid of [-1,101,Infinity,NaN]){
+      const edited=plain(node);edited.operation[key]=invalid;assert.ok(error(edited));
+    }
+    for(const value of [0,100]){node.operation.centerPercent=value;node.operation.deadzonePercent=value;assertValid(node);}
+  }
+  assert.throws(()=>make('deadzone','constant-range',state(number(10,10))),/nonzero input range/);
 });
 test('atomic action pack creates every ordered argument and a distinct arbitrary event input even for reserved-looking argument names',()=>{
   const parameters=[{id:'fire',name:'Fire value',schema:bool},{id:'invoke',name:'Intensity',schema:number(0,100)},{id:'trigger',name:'Trigger label',schema:{type:'text',maxBytes:32,encoding:'utf8'}}],native=action(parameters);

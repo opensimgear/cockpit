@@ -42,7 +42,7 @@ export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 
   | { kind: 'clamp'; min: number; max: number }
   | { kind: 'range-map'; inputMin: number; inputMax: number; outputMin: number; outputMax: number; rounding: ProfileRounding }
   | { kind: 'unit-convert'; from: string; to: string; rounding: ProfileRounding; clamp?: boolean }
-  | { kind: 'deadzone'; center: number; radius: number; rounding: ProfileRounding }
+  | { kind: 'deadzone'; centerPercent: number; deadzonePercent: number; rounding: ProfileRounding }
   | { kind: 'curve'; points: { input: number; output: number }[]; rounding: ProfileRounding }
   | { kind: 'compare'; comparison: ProfileComparison; threshold: number }
   | { kind: 'hysteresis'; press: number; release: number; comparison: ProfileComparison }
@@ -197,7 +197,7 @@ function operation(value: unknown): boolean {
   if (kind === 'clamp') return exact(value, ['kind', 'min', 'max']) && finite(value.min) && finite(value.max) && coefficient(value.min) && coefficient(value.max) && value.min <= value.max;
   if (kind === 'range-map') return exact(value, ['kind', 'inputMin', 'inputMax', 'outputMin', 'outputMax', 'rounding']) && [value.inputMin, value.inputMax, value.outputMin, value.outputMax].every(coefficient) && rounding(value.rounding);
   if (kind === 'unit-convert') return exact(value, ['kind', 'from', 'to', 'rounding', ...(Object.hasOwn(value, 'clamp') ? ['clamp'] : [])]) && boundedText(value.from, 128) && boundedText(value.to, 128) && rounding(value.rounding) && (!Object.hasOwn(value, 'clamp') || typeof value.clamp === 'boolean');
-  if (kind === 'deadzone') return exact(value, ['kind', 'center', 'radius', 'rounding']) && coefficient(value.center) && coefficient(value.radius) && (value.radius as number) >= 0 && rounding(value.rounding);
+  if (kind === 'deadzone') return exact(value, ['kind', 'centerPercent', 'deadzonePercent', 'rounding']) && coefficient(value.centerPercent) && (value.centerPercent as number) >= 0 && (value.centerPercent as number) <= 100 && coefficient(value.deadzonePercent) && (value.deadzonePercent as number) >= 0 && (value.deadzonePercent as number) <= 100 && rounding(value.rounding);
   if (kind === 'curve') return exact(value, ['kind', 'points', 'rounding']) && list(value.points, 32) && value.points.length >= 2 && value.points.every(p => exact(p, ['input', 'output']) && coefficient(p.input) && coefficient(p.output)) && rounding(value.rounding);
   if (kind === 'compare') return exact(value, ['kind', 'comparison', 'threshold']) && comparison(value.comparison) && coefficient(value.threshold);
   if (kind === 'hysteresis') return exact(value, ['kind', 'comparison', 'press', 'release']) && comparison(value.comparison) && coefficient(value.press) && coefficient(value.release);
