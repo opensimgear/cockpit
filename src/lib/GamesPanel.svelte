@@ -9,6 +9,7 @@
   import GameProfileLaunch from './GameProfileLaunch.svelte';
   import type {DeepReadonly,ProfileSummary} from './profiles';
   import {gameContextLabel} from './game-provider-settings';
+  import {gameExecutableDisplayPath,resolveGameExecutablePath} from './games';
   import {resolveGameArtwork} from './game-artwork';
   import GameDiscoveryView from './GameDiscoveryView.svelte';
   import GameBackgroundSettings from './GameBackgroundSettings.svelte';
@@ -23,6 +24,7 @@
     onNavigate?:(gameId:GameId|'')=>void;discoveryView?:boolean;
   }=$props();
   let response=$state<GamesState>(),initializedGameId=$state<GameId|''>('');
+  let initializedInstallationId=$state<string|undefined>();
   let pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
   let providerBusy=$state(false),removeDialog=$state(false);
   let categoriesDialog=$state(false),categoryFilter=$state('');
@@ -34,7 +36,8 @@
   $effect(()=>{if(categoryFilter&&categoryFilter!=='uncategorized'&&!categories[categoryFilter])categoryFilter='';});
   const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
   const selectedArt=$derived(selected?resolveGameArtwork(selected):null);
-  const selectedExecutablePath=$derived(gameDisplayPath(selected?.executable??selected?.manualPath));
+  const selectedInstallationPath=$derived(selected?.installations?.find(installation=>installation.id===selected.selectedInstallationId)?.installPath??selected?.installPath);
+  const selectedExecutablePath=$derived(gameExecutableDisplayPath(selected?.executable??selected?.manualPath,selectedInstallationPath));
   const selectedLiveLabel=$derived(selected?gameIntegrationLiveLabel(selected):'');
   const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up'));
   const locked=$derived(busy||pending||setupRunning||providerBusy);
@@ -45,7 +48,7 @@
   onMount(()=>{if(!status)void send({command:'game_get_state'});});
   $effect(()=>{if(gameState.discovery?.firstStart&&gameState.discovery.status==='ready'&&openedFirstScan!==gameState.discovery.scanId){openedFirstScan=gameState.discovery.scanId;discoveryView=true;}});
   $effect(()=>{if(!status&&gameState.discovery?.status==='scanning'){const timer=window.setInterval(()=>void send({command:'game_get_state'}),750);return()=>window.clearInterval(timer);}});
-  $effect(()=>{if(selected&&initializedGameId!==selected.id)initializeGame(selected);});
+  $effect(()=>{if(selected&&(initializedGameId!==selected.id||initializedInstallationId!==selected.selectedInstallationId))initializeGame(selected);});
   $effect(()=>{if(selected&&selected.id===initializedGameId&&selected.name!==nameBase){if(nameDraft===nameBase)nameDraft=selected.name;nameBase=selected.name;}});
   async function send(command:GameRequest):Promise<GamesState|false>{
     const passive=command.command==='game_get_state';
@@ -60,14 +63,14 @@
     if(result.error)throw new Error(result.error);
     response=result;return result;
   }
-  function initializeGame(game:Game){initializedGameId=game.id;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??game.manualPath??'';nameDraft=game.name;nameBase=game.name;notice='';}
+  function initializeGame(game:Game){initializedGameId=game.id;initializedInstallationId=game.selectedInstallationId;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??game.manualPath??'';nameDraft=game.name;nameBase=game.name;notice='';}
   async function saveName(game:Game){
     if(locked)return;const name=nameDraft.trim();
     if(name===game.name){nameDraft=name;return;}const invalid=gameMetadataError(name,'');if(invalid){notice=invalid;return;}
     try{const result=await send({command:'game_save',gameId:game.id,name});if(result&&!result.error&&selected?.id===game.id){const saved=result.catalogue.find(item=>item.id===game.id);nameDraft=saved?.name??name;nameBase=nameDraft;}}
     catch(error){notice=error instanceof Error?error.message:String(error);}
   }
-  async function commitExecutable(game:Game){if(locked)return;const path=executablePath.trim();if(gameDisplayPath(path)!==gameDisplayPath(game.executable??game.manualPath))await saveExecutable(game,path||null);}
+  async function commitExecutable(game:Game){if(locked)return;const root=game.installations?.find(installation=>installation.id===game.selectedInstallationId)?.installPath??game.installPath;const path=resolveGameExecutablePath(executablePath.trim(),root);if(gameDisplayPath(path)!==gameDisplayPath(game.executable??game.manualPath))await saveExecutable(game,path||null);}
   function chooseGame(game:Game){initializeGame(game);onNavigate?.(game.id);}
   function categoriesSaved(result:GamesState){categoriesDialog=false;response=result;updateGameCatalogue(result.catalogue);}
   async function saveCategory(game:Game,input:HTMLSelectElement){const result=await send({command:'game_category_save',gameId:game.id,categoryId:input.value||null});if(!result||result.error)input.value=game.categoryId??'';}
@@ -115,7 +118,7 @@
           {#if selected.installations?.length}
             <label class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><select aria-label="Detected installations" value={selected.selectedInstallationId??''} onchange={event=>void send({command:'game_installation_select',gameId:selected.id,installationId:event.currentTarget.value})} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.id)}<option value={install.id}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
           {/if}
-          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameDisplayPath(executablePath):selectedExecutablePath} oninput={event=>executablePath=event.currentTarget.value} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){executablePath=selected.executable??selected.manualPath??'';notice='';event.currentTarget.value=gameDisplayPath(executablePath);event.currentTarget.blur();}}} disabled={locked} placeholder={`Choose ${gameExecutableName(selected.id)}…`}/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button>{#if selected.source}<span class="installation-source-badge" title={selected.source} aria-label={`Installation source: ${selected.source}`}>{selected.source}</span>{/if}</div></div>
+          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameExecutableDisplayPath(executablePath,selectedInstallationPath):selectedExecutablePath} oninput={event=>executablePath=event.currentTarget.value} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){executablePath=selected.executable??selected.manualPath??'';notice='';event.currentTarget.value=gameExecutableDisplayPath(executablePath,selectedInstallationPath);event.currentTarget.blur();}}} disabled={locked} placeholder={`Choose ${gameExecutableName(selected.id)}…`}/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button>{#if selected.source}<span class="installation-source-badge" title={selected.source} aria-label={`Installation source: ${selected.source}`}>{selected.source}</span>{/if}</div></div>
           <p class="field-help">Choose {gameExecutableName(selected.id)} in your installation folder.</p>{#if !selected.installed&&selected.manualPath}<p class="field-help">The saved executable could not be found. Choose its new location.</p>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         <div class="category-panel"><label class="editor-label">Category<select aria-label="Game category" disabled={locked} value={selected.categoryId??''} onchange={event=>void saveCategory(selected,event.currentTarget)}><option value="">Uncategorized</option>{#each Object.entries(categories) as [id,title] (id)}<option value={id}>{title}</option>{/each}</select></label><button class="secondary-button" disabled={locked} onclick={()=>categoriesDialog=true}><Icon name="settings" size={14}/>Manage categories</button></div>

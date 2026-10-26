@@ -2,7 +2,7 @@
   import PageHeader from './PageHeader.svelte';
   import Icon from './Icon.svelte';
   import {pickGameExecutable} from './gateway';
-  import {gameDisplayPath,type GamesState,type GameRequest,type GameDiscoveryAction} from './games';
+  import {gameExecutableDisplayPath,type GamesState,type GameRequest,type GameDiscoveryAction} from './games';
   import {discoveryActions,discoverySelectAll,discoveryPathError,discoveryImage} from './game-discovery';
   let {gameState,busy,request,close}:{gameState:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;close:()=>void}=$props();
   let location=$state(''),error=$state(''),scanId=$state(''),drafts=$state<Record<string,Partial<GameDiscoveryAction>>>({}),paths=$state<string[]>([]),openLibraries=$state<Record<string,boolean>>({});
@@ -63,7 +63,7 @@
                   <div class="entry-details"><strong>{entry.name}</strong>
                     {#if entry.message}<p class="entry-message">{entry.message}</p>{/if}
                     {#if entry.action!=='remove'}
-                    <div class="entry-controls"><label class="executable-choice"><span class="sr-only">Executable</span><select aria-label={entry.name+' executable'} disabled={busy||scanning||!selected} value={drafts[entry.id]?.executable??entry.executable??entry.executableCandidates[0]??''} onchange={event=>change(entry.id,{executable:event.currentTarget.value||null})}>{#if !entry.executableCandidates.length}<option value="">No executable found</option>{/if}{#each entry.executableCandidates as executable}<option value={executable}>{gameDisplayPath(executable)}</option>{/each}</select></label>
+                    <div class="entry-controls"><label class="executable-choice"><span class="sr-only">Executable</span><select aria-label={entry.name+' executable'} disabled={busy||scanning||!selected} value={drafts[entry.id]?.executable??entry.executable??entry.executableCandidates[0]??''} onchange={event=>change(entry.id,{executable:event.currentTarget.value||null})}>{#if !entry.executableCandidates.length}<option value="">No executable found</option>{/if}{#each entry.executableCandidates as executable}<option value={executable}>{gameExecutableDisplayPath(executable,entry.installPath)}</option>{/each}</select></label>
                     </div>
                     {/if}
                   </div>

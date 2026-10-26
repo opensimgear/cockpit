@@ -99,6 +99,24 @@ export function gameDisplayPath(path?: string | null): string {
   return /^[a-z]:[\\/]/i.test(path) || path.startsWith('\\\\') ? path.replaceAll('/', '\\') : path;
 }
 
+export function gameExecutableDisplayPath(path?: string | null, installationPath?: string | null): string {
+  const executable = gameDisplayPath(path), installation = gameDisplayPath(installationPath);
+  if (!installation) return executable;
+  const windows = /^[a-z]:[\\/]/i.test(installation) || installation.startsWith('\\\\');
+  const root = installation.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+  const prefix = root + (windows ? '\\' : '/');
+  const matches = windows ? executable.toLowerCase().startsWith(prefix.toLowerCase()) : executable.startsWith(prefix);
+  return matches ? executable.slice(prefix.length) : executable;
+}
+
+export function resolveGameExecutablePath(path: string, installationPath?: string | null): string {
+  if (!path || !installationPath || /^(?:[a-z]:[\\/]|[\\/])/i.test(path)) return path;
+  const installation = gameDisplayPath(installationPath);
+  const windows = /^[a-z]:[\\/]/i.test(installation) || installation.startsWith('\\\\');
+  const root = installation.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+  return root + (windows ? '\\' : '/') + (windows ? path.replaceAll('/', '\\') : path);
+}
+
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
   return [...catalogue];
 }

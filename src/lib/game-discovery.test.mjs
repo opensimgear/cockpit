@@ -53,10 +53,10 @@ async function component(name){
 }
 test('review rows show artwork, name and executable choice, then the action checkbox',async()=>{
  const View=await component('./GameDiscoveryView.svelte');
- const entries=[{id:'add',action:'add',gameId:'new',name:'New title',image,executableCandidates:['C:/Games/New/bin/game.exe']},{id:'update',action:'update',name:'Changed title',executableCandidates:[]},{id:'remove',action:'remove',name:'Gone title',executableCandidates:[]}].map(entry=>({library:'steam',installPath:'C:/Install root hidden',previousPath:'C:/Previous root hidden',...entry}));
+ const entries=[{id:'add',action:'add',gameId:'new',name:'New title',image,installPath:'C:/Games/New',executableCandidates:['C:/Games/New/bin/game.exe']},{id:'update',action:'update',name:'Changed title',executableCandidates:[]},{id:'remove',action:'remove',name:'Gone title',executableCandidates:[]}].map(entry=>({library:'steam',installPath:'C:/Install root hidden',previousPath:'C:/Previous root hidden',...entry}));
  const html=render(View,{props:{gameState:{catalogue:[],discovery:{scanId:'fixture',status:'ready',entries,libraries:[{id:'steam',name:'Steam',status:'complete',found:3}],diagnostics:[]}},busy:false,request(){throw Error('Passive render');},close(){}}}).body;
  const rows=[...html.matchAll(/<article\b[^>]*data-entry-id="([^"]+)"[^>]*>([^]*?)<\/article>/g)];assert.equal(rows.length,3);
- const add=rows[0][2];assert.ok(add.includes('src="'+image+'"'));assert.ok(add.indexOf('entry-art')<add.indexOf('entry-details'));assert.ok(add.indexOf('entry-details')<add.indexOf('entry-choice'));assert.match(add,/<select[^>]*aria-label="New title executable"/);assert.ok(add.includes('>C:\\Games\\New\\bin\\game.exe</option>'));assert.match(add,/<input[^>]*checked[^>]*>/);
+ const add=rows[0][2];assert.ok(add.includes('src="'+image+'"'));assert.ok(add.indexOf('entry-art')<add.indexOf('entry-details'));assert.ok(add.indexOf('entry-details')<add.indexOf('entry-choice'));assert.match(add,/<select[^>]*aria-label="New title executable"/);assert.ok(add.includes('value="C:/Games/New/bin/game.exe"'));assert.ok(add.includes('>bin\\game.exe</option>'));assert.match(add,/<input[^>]*checked[^>]*>/);
  assert.ok(!html.includes('Install root hidden'));assert.ok(!html.includes('Previous root hidden'));
  assert.ok(!rows[1][2].includes('<img'));assert.ok(rows[1][2].includes('No executable found'));
  assert.ok(!rows[2][2].includes('<select'));assert.match(rows[2][2],/aria-label="Remove Gone title"/);assert.ok(!/<input[^>]*checked/.test(rows[2][2]));

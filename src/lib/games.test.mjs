@@ -37,6 +37,38 @@ test('game paths display Windows drive and UNC installations without changing Un
  ])assert.equal(games.gameDisplayPath(input),expected);
 });
 
+test('executable labels omit only a matching installation directory',()=>{
+ for(const [path,root,expected] of [
+  ['C:/Games/DCS/bin/DCS.exe',String.raw`\\?\c:\games\dcs`,String.raw`bin\DCS.exe`],
+  [String.raw`\\?\UNC\server\Games\DCS\bin\DCS.exe`,'\\\\SERVER\\Games\\DCS\\',String.raw`bin\DCS.exe`],
+  ['C:/Games/DCS.exe','C:/','Games\\DCS.exe'],
+  ['C:/Games/DCS/bin/DCS.exe','C:/Games/DC','C:\\Games\\DCS\\bin\\DCS.exe'],
+  ['D:/Other/DCS.exe','C:/Games/DCS','D:\\Other\\DCS.exe'],
+  ['C:/Games/DCS.exe',undefined,'C:\\Games\\DCS.exe'],
+  ['/games/Sim/bin/game','/games/Sim/','bin/game'],
+  ['/games/Sim/bin/game','/Games/Sim','/games/Sim/bin/game'],
+  ['/games/Simulator/game','/games/Sim','/games/Simulator/game'],
+  ['/bin/game','/','bin/game'],
+  ['/games/Sim','/games/Sim','/games/Sim'],
+  [null,'C:/Games',''],
+ ])assert.equal(games.gameExecutableDisplayPath(path,root),expected);
+});
+
+test('relative executable edits resolve to the selected installation while absolute paths stay intact',()=>{
+ for(const [path,root,expected] of [
+  ['bin/game.exe','C:/Games/Sim/','C:\\Games\\Sim\\bin\\game.exe'],
+  [String.raw`bin\game.exe`,String.raw`\\?\C:\Games\Sim`,String.raw`C:\Games\Sim\bin\game.exe`],
+  ['game.exe',String.raw`\\?\UNC\server\Games\Sim`,String.raw`\\server\Games\Sim\game.exe`],
+  ['bin/game','/games/Sim/','/games/Sim/bin/game'],
+  ['bin/game','/','/bin/game'],
+  ['D:/Other/game.exe','C:/Games/Sim','D:/Other/game.exe'],
+  [String.raw`\\server\Games\game.exe`,'C:/Games/Sim',String.raw`\\server\Games\game.exe`],
+  ['/other/game','/games/Sim','/other/game'],
+  ['game.exe',undefined,'game.exe'],
+  ['','C:/Games/Sim',''],
+ ])assert.equal(games.resolveGameExecutablePath(path,root),expected);
+});
+
 test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{
  assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12','assetto-corsa','assetto-corsa-competizione','assetto-corsa-evo']);
  const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,7);assert.equal(visibleGames(catalogue,true).length,7);assert.equal(supportedGames[0].installed,false);

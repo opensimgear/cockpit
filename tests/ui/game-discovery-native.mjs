@@ -84,6 +84,7 @@ test('native discovery reviews libraries, installation copies, moves and explici
     const generic=entries.find(entry=>normalize(entry.installPath)===normalize(foo));
     assert.ok(first&&second&&generic,'Both known copies and generic executable must be discovered.');
     assert.equal(first.integration,'dcs');assert.equal(second.integration,'dcs');assert.equal(generic.integration,null);
+    await expect(row(generic).getByRole('combobox',{name:generic.name+' executable',exact:true}).locator('option').filter({hasText:/^Foo\.exe$/})).toHaveAttribute('value',generic.executable);
     for(const entry of state.discovery.entries){const checkbox=row(entry).getByRole('checkbox');if(entry.action==='remove')await expect(checkbox).not.toBeChecked();else await expect(checkbox).toBeChecked();}
     const accordion=page.locator('.libraries > details.library').first();await accordion.locator(':scope > summary').click();await expect(accordion).not.toHaveAttribute('open','');await page.waitForTimeout(2500);await expect(accordion).not.toHaveAttribute('open','');await accordion.locator(':scope > summary').click();
     evidence.checks.push('A manually closed library accordion stays closed after progress polling completes.');
@@ -113,6 +114,13 @@ test('native discovery reviews libraries, installation copies, moves and explici
     assert.equal(state.catalogue.find(game=>game.id===firstInstalled.game.id).selectedInstallationId,secondInstalled.installation.id);
     await uiGames();await page.getByRole('button',{name:'Open '+renamed+' details',exact:true}).click();
     await expect(page.getByRole('textbox',{name:'Game name',exact:true})).toHaveValue(renamed);
+    const executableField=page.getByRole('textbox',{name:'Game executable',exact:true});await expect(executableField).toHaveValue('Foo.exe');
+    await executableField.fill('AGame.exe');await executableField.press('Enter');
+    await expect.poll(async()=>normalize((await games()).catalogue.find(game=>game.id===createdGenericId).executable)).toBe(normalize(resolve(foo,'AGame.exe')));
+    await expect(executableField).toHaveValue('AGame.exe');await executableField.fill('Foo.exe');await executableField.press('Escape');await expect(executableField).toHaveValue('AGame.exe');
+    await executableField.fill('Foo.exe');await executableField.press('Enter');
+    await expect.poll(async()=>normalize((await games()).catalogue.find(game=>game.id===createdGenericId).executable)).toBe(normalize(resolve(foo,'Foo.exe')));
+    evidence.checks.push('Discovery option labels and executable fields omit installation prefixes; relative edits save full native paths and Escape restores the saved choice.');
     const matching=page.getByRole('region',{name:'Matching profiles',exact:true});
     await expect(matching.getByRole('status')).toHaveCount(0,{timeout:30_000});await expect(matching.getByRole('alert')).toHaveCount(0);
     await screenshot('applied-details');evidence.checks.push('Unified rename and installation selection retain identity; actual matching-profile UI loads without an error.');

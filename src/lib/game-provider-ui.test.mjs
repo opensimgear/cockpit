@@ -75,6 +75,16 @@ test('custom games expose matching profiles, metadata and background editing wit
   for(const label of ['Rescan','Custom game','Not found'])assert.ok(list.includes(label),label);
 });
 
+test('executable fields show installation-relative paths and save relative edits as full paths',async()=>{
+  let handlers;const calls=[],id='custom-11111111-1111-4111-8111-111111111111';
+  const g={id,name:'Fixture game',provider:null,installed:true,launchSupported:false,installPath:'C:/Old',executable:'C:/Games/Fixture/bin/Game.exe',selectedInstallationId:'copy',installations:[{id:'copy',installPath:'C:/Games/Fixture',source:'disk',available:true,executableCandidates:[]}]};
+  const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({initializeGame,commitExecutable,setExecutable(value){executablePath=value;}});</script>'),receive:value=>handlers=value});
+  const html=render(Panel,{props:{status:state(g),selectedGameId:id,busy:false,request:async command=>{calls.push(command);return state({...g,executable:command.executable});}}}).body;
+  const input=html.match(/<input[^>]*aria-label="Game executable"[^>]*>/)?.[0];assert.ok(input);assert.ok(input.includes('value="bin\\Game.exe"'));
+  handlers.initializeGame(g);handlers.setExecutable('bin/Alternate.exe');await handlers.commitExecutable(g);
+  assert.deepEqual(plain(calls),[{command:'game_save',gameId:id,installationId:'copy',executable:'C:\\Games\\Fixture\\bin\\Alternate.exe'}]);
+});
+
 test('inline custom names save only the name and reject invalid names or builtin edits',async()=>{
   let handlers;const calls=[],id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Old name',custom:true,installed:false,manualPath:'C:\\Missing\\Game.exe',launchSupported:false};
   const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({initializeGame,saveName,setName(value){nameDraft=value;},get notice(){return notice;}});</script>'),receive:value=>handlers=value});
@@ -217,7 +227,7 @@ test('discovery groups compact rows inside library accordions with action checkb
  assert.ok(entry.indexOf('entry-details')<entry.indexOf('entry-choice'),'Name and executable precede the right-aligned action control');
  assert.ok(entry.includes('aria-label="Found game executable"'));assert.ok(!entry.includes('type="text"'));
  const title=entry.match(/<strong[^>]*>([^]*?)<\/strong>/)?.[1];assert.equal(title,'Found game');assert.ok(!entry.slice(0,entry.indexOf('<select')).includes('game.exe'),'Executable path is not repeated above the select');
- assert.equal((entry.match(/>C:\\Games\\New\\game\.exe<\/option>/g)??[]).length,1,'Executable path appears once in its select');
+ assert.equal((entry.match(/>game\.exe<\/option>/g)??[]).length,1,'Executable is relative to the detected installation');assert.ok(entry.includes('value="C:/Games/New/game.exe"'),'Option values retain the full path');
 });
 test('every supported library uses a distinct monochrome platform glyph',async()=>{
  const Icon=await component('./Icon.svelte'),glyphs=new Set();
