@@ -20,7 +20,10 @@ test('cleanup removes completed rows, cancels the queue, and protects profile de
   assert.equal(command,'gateway_request');const r=args.request;let state={};
   if(r.command==='controller_list')state={controllers:{session:'cleanup',offset:0,total:sources.length,sources}};
   else if(r.command==='module_usb_list')state={moduleUsb:{offset:0,total:0,modules:[]}};
-  else if(r.command==='system_inventory')state={systemInventory:{observedAt:1,total:0,offset:0,hiddenDevices:[],virtualDevices:[],diagnostics:[],visibilityInspected:true}};
+  else if(r.command==='system_inventory')state={systemInventory:{observedAt:1,total:2,offset:0,hiddenDevices:[],virtualDevices:[
+   {id:'vjoy:1',name:'Connected virtual device',backend:'vjoy',available:true,enabled:true,diagnostics:[]},
+   {id:'vjoy:2',name:'Offline virtual device',backend:'vjoy',available:false,enabled:false,diagnostics:[]},
+  ],diagnostics:[],visibilityInspected:true}};
   else if(r.command==='companion_status')state={companions:{host:{clients:[],instances:[]},usb:{devices:[]}}};
   else if(r.command==='profile_status')state={profiles:{profileSession:{state:'stopped'}}};
   else if(r.command==='game_get_state')state={games:{catalogue:[]}};
@@ -35,7 +38,14 @@ test('cleanup removes completed rows, cancels the queue, and protects profile de
  await page.route(origin+'/__cleanup_test',route=>route.fulfill({contentType:'text/html',body:`<html><body><div id="test"></div><script type="module">import {mount} from '${runtime}';import Devices from '/src/lib/SystemDevices.svelte';import '/src/app.css';mount(Devices,{target:document.querySelector('#test'),props:{active:true,entries:[],openModule(){},openCompanions(){},openIntegration(){},oninventory(){}}});</script></body></html>`}));
  try{
   await page.goto(origin+'/__cleanup_test');
-  await page.getByRole('button',{name:'Cleanup (4)',exact:true}).click();
+  for(const id of ['vjoy:1','vjoy:2']){
+   await page.locator(`[data-component-id="virtual:${id}"]`).click();
+   const details=page.getByRole('region',{name:'Component details',exact:true});
+   await expect(details).toBeVisible();
+   await expect(details.getByRole('button',{name:'Forget device',exact:true})).toHaveCount(0);
+   await page.getByRole('button',{name:'Back to Devices',exact:true}).click();
+  }
+  await page.getByRole('button',{name:'Cleanup (5)',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Cleanup devices'});
   const protectedRow=dialog.getByRole('row').filter({has:page.getByRole('checkbox',{name:'Select Protected',exact:true})});
   await expect(protectedRow).toContainText('Used in profiles');

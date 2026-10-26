@@ -326,7 +326,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(details).toContainText('Creation provenance unknown');
     await expect(details).toContainText('PID 9999');
     await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
-    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toHaveCount(0);
     await backToDevices.click();
     await expect(devices.locator('.system-list')).toBeVisible();
     // Sidebar navigation always opens the inventory, even when Devices is
@@ -453,7 +453,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.locator('[data-component-id="controller:pedals"]')).toHaveAccessibleName(/Connected · Hidden/);
     await devices.locator('[data-component-id="controller:pedals"]').click();
     await expect(details.getByRole('button', { name: 'Configure device', exact: true })).toHaveCount(0);
-    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toHaveCount(0);
     const controllerDetails = details.getByRole('region', { name: 'Selected host controller', exact: true });
     const localName = controllerDetails.getByRole('textbox', { name: 'Local name', exact: true });
     const controllerRole = controllerDetails.getByRole('combobox', { name: 'Role', exact: true });
@@ -648,7 +648,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(deviceConnections).toContainText('COM-fixture-companion');
     await expect(deviceConnections).toContainText('Current connection');
     await expect(deviceConnections).not.toContainText('NETWORK');
-    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toHaveCount(0);
     await details.getByRole('button', { name: 'Manage companion', exact: true }).click();
     await expect(companionName).toHaveValue('Known ESP32 companion');
     await expect(companionSettings.getByLabel('Screen size', { exact: true })).toHaveValue('480 × 320 px');
@@ -1082,8 +1082,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await search.fill('');
     // The shared dialog explains metadata-only virtual cleanup. Unchanged
     // remembered snapshots remain suppressed after reload; reconnect may return.
+    await search.fill('Missing remembered virtual joystick');
     await devices.locator('[data-component-id="virtual:vjoy:4"]').click();
-    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
+    await backToDevices.click();
+    await devices.getByRole('button', { name: /^Cleanup \(/ }).click();
     const dialog = page.getByRole('dialog', { name: 'Cleanup devices', exact: true });
     const confirmCleanup = dialog.getByRole('button', { name: 'Confirm', exact: true });
     await expect(dialog).toContainText('OS device, vJoy layout, driver and bindings are retained');
@@ -1093,7 +1095,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(dialog).toContainText('Used in profiles');
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     fixture.unboundCleanupSources = ['vjoy:4'];
-    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
+    await devices.getByRole('button', { name: /^Cleanup \(/ }).click();
     await dialog.getByRole('checkbox', { name: 'Select Missing remembered virtual joystick', exact: true }).check();
     await expect(confirmCleanup).toBeEnabled();
     await confirmCleanup.click();
@@ -1182,12 +1184,15 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     fixture.ports = fixture.ports.filter(port => port.serialNumber !== serial);
     fixture.states.get(firstGateway).connected = false;
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveAttribute('aria-label', /Offline/, { timeout: 10_000 });
+    await search.fill(firstGateway);
     await graph.locator(`[data-component-id="gateway:${firstGateway}"]`).click();
-    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
+    await backToDevices.click();
+    await devices.getByRole('button', { name: /^Cleanup \(/ }).click();
     await expect(dialog).toContainText('unavailable gateway cannot confirm');
     await expect(confirmCleanup).toBeDisabled();
     await dialog.getByRole('checkbox', { name: 'Select all', exact: true }).check();
     await confirmCleanup.click();
+    await search.fill('');
     await expect(graph.locator(`[data-component-id="gateway:${firstGateway}"]`)).toHaveCount(0);
     await expect(graph.locator(`[data-component-id="module:${firstGateway}/can-output"]`)).toHaveCount(0);
     await expect(graph.locator('[data-component-id="resource:verified-dual"]')).toBeVisible();
@@ -1197,15 +1202,16 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     // Clearing external HidHide rules must retire stale hidden flags and permit local cleanup.
     fixture.native.visibilityInspected = true;
     fixture.native.hiddenDevices.push({ id: 'stale-hide', name: 'Stale HidHide device', instanceId: 'HID\\STALE', present: false, configured: true, hidden: true, diagnostics: [] });
-    await waitForInventoryRefresh(); await list.click(); await search.fill('Stale HidHide');
+    await search.fill(''); await waitForInventoryRefresh(); await list.click(); await search.fill('Stale HidHide');
     await devices.locator('[data-component-id="visibility:stale-hide"]').click();
-    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeDisabled();
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Manage HidHide', exact: true })).toHaveCount(0);
     assert.equal(hidHideOpens,0);
     fixture.native.hiddenDevices = fixture.native.hiddenDevices.filter(device => device.id !== 'stale-hide');
-    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toBeEnabled({ timeout: 10_000 });
-    await expect(details).toContainText('No configured HidHide rule');
-    await details.getByRole('button', { name: 'Forget device', exact: true }).click();
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toHaveCount(0);
+    await expect(details).toContainText('No configured HidHide rule', { timeout: 10_000 });
+    await backToDevices.click();
+    await devices.getByRole('button', { name: /^Cleanup \(/ }).click();
     await dialog.getByRole('checkbox', { name: 'Select Stale HidHide device', exact: true }).check();
     await confirmCleanup.click();
     await expect(devices.locator('[data-component-id="visibility:stale-hide"]')).toHaveCount(0);

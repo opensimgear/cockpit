@@ -166,7 +166,6 @@
       {#each selected.targets.filter(t => t.kind === 'module') as t}<button class="primary-button" onclick={() => openModule(t.gatewayId!, t.id)}>Configure device</button>{/each}
       {#if selected.type === 'companion' && companionId}<button class="secondary-button" onclick={() => openCompanions(companionId)}>Manage companion</button>{/if}
       {#if integrationGameId(selected)}<button class="secondary-button" onclick={() => openIntegration(integrationGameId(selected)!)}>Integration settings</button>{/if}
-      <button class="secondary-button" disabled={busy || !selected.forget.allowed} title={selected.forget.reason} onclick={() => reviewForget([selected])}>Forget device</button>
     </div>
     <div class="detail-summary">
       <section class="panel" aria-label="Device status">

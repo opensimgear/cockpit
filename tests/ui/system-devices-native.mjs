@@ -71,6 +71,7 @@ test('running native Cockpit retains provider records and shares the refined Dev
     await devices.locator(`[data-component-id="${inspected.id}"]`).click();
     const details = devices.getByRole('region', { name: 'Component details', exact: true });
     await expect(details).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toHaveCount(0);
     await expect(devices.locator('.system-list')).not.toBeVisible();
     await expect(devices.getByRole('button', { name: 'Topology', exact: true })).not.toBeVisible();
     await page.screenshot({ path: resolve(artifacts, 'native-system-details.png'), fullPage: true });
