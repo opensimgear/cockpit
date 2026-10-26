@@ -59,7 +59,7 @@
 </script>
 
 <section class="panel preferences-panel listener-settings" aria-label="Companion listener settings">
-  <div class="panel-heading"><h2>Companion listener</h2><span class="quiet-tag" role="status">{busy ? 'Saving…' : !loaded ? 'Loading…' : hostState.listener?.enabled ? 'Listening' : enabled ? 'Waiting to start' : 'Disabled'}</span></div>
+  <div class="panel-heading listener-heading"><h2>Companion listener</h2><div class="listener-state"><span class="quiet-tag" role="status">{busy ? 'Saving…' : !loaded ? 'Loading…' : hostState.listener?.enabled ? 'Listening' : enabled ? 'Waiting to start' : 'Disabled'}</span>{#if hostState.listener?.enabled && hostState.listener.endpoint}<code class="listener-endpoint" title="Listener endpoint">{hostState.listener.endpoint}</code>{/if}</div></div>
   <div class="preference-row">
     <div><strong>Enable companion listener</strong><p>Allow paired Wi-Fi and network companions to connect. Direct USB companions work with this disabled.</p></div>
     <button class="toggle" class:on={enabled} role="switch" aria-label="Enable companion listener" aria-checked={enabled} disabled={busy || !loaded || !enabled && (!address || !!portError)} onclick={() => toggle(!enabled)}><span></span></button>
@@ -75,7 +75,6 @@
     <div><strong>LAN discovery</strong><p>Advertise Cockpit on your local network so companions can find it automatically.</p>{#if hostState.listener?.enabled && hostState.listener.discovery}<p class="listener-detail">Discovery: {String(hostState.listener.discovery)}</p>{/if}</div>
     <button class="toggle" class:on={discovery} role="switch" aria-label="LAN discovery" aria-checked={discovery} aria-describedby="listener-connection-help" disabled={busy || !loaded || enabled} onclick={() => { discovery = !discovery; }}><span></span></button>
   </div>
-  {#if hostState.listener?.enabled && hostState.listener.endpoint}<div class="preference-row"><div><strong>Listener endpoint</strong><p><code>{hostState.listener.endpoint}</code></p></div></div>{/if}
   <div class="preference-row browser-trust">
     <div class="trust-copy">
       <strong>Browser companion HTTPS</strong>
@@ -89,6 +88,10 @@
 </section>
 <style>
   .listener-settings { margin-top: 24px; }
+  .listener-heading { flex-wrap: wrap; gap: 12px; }
+  .listener-state { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .listener-state .quiet-tag { flex-shrink: 0; }
+  .listener-endpoint { min-width: 0; color: var(--soft); line-height: 1.7; }
   .preference-row p { line-height: 1.6; max-width: 620px; overflow-wrap: anywhere; }
   .toggle:disabled { opacity: .45; cursor: not-allowed; }
   .connection-row, .browser-trust { align-items: flex-start; flex-wrap: wrap; }
