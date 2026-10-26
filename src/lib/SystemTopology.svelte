@@ -152,7 +152,7 @@
   .topology-legend span { display: flex; align-items: center; gap: 6px; }
   .topology-legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid var(--accent); }
   .topology-legend .software { border-color: #8fb6e9; border-top-style: dotted; }
-  .topology-viewport { position: relative; height: clamp(420px, 64vh, 760px); min-height: 420px; overflow: hidden; background: var(--bg); background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
+  .topology-viewport { position: relative; height: clamp(420px, 64vh, 760px); min-height: 420px; overflow: hidden; background: var(--bg); background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 20px 20px; cursor: grab; touch-action: none; }
   .topology-viewport.dragging { cursor: grabbing; user-select: none; }
   .topology-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   .topology-world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
