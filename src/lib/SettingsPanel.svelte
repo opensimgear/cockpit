@@ -14,7 +14,7 @@
   const tabs = [
     { id: 'general', label: 'General' },
     { id: 'styling', label: 'Styling' },
-    { id: 'outputs', label: 'Outputs' },
+    { id: 'outputs', label: 'Devices' },
     { id: 'companions', label: 'Companions' },
     { id: 'ai', label: 'AI integration' },
   ] as const;

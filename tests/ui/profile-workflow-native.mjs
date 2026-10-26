@@ -104,7 +104,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(modeBadge).toHaveText('Manual');assert.ok(!/\bstopped\b/i.test(await profileBadge.innerText()));
     await pageActions.screenshot({path:resolve(artifacts,'profile-mode.png')});
     await page.getByRole('button',{name:'Settings',exact:true}).click();
-    await page.getByRole('tab',{name:'Outputs',exact:true}).click();
+    await page.getByRole('tab',{name:'Devices',exact:true}).click();
     const setup=page.getByRole('region',{name:'Controller and desktop output settings'});
     await expect(setup.getByRole('region',{name:'Virtual controllers',exact:true}).getByRole('button',{name:'Configure',exact:true})).toBeVisible();
     await expect(setup.getByRole('region',{name:'Device hiding',exact:true}).getByRole('button',{name:'Manage',exact:true})).toBeVisible();

@@ -218,7 +218,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
 
     await click('Settings','.sidebar-bottom');
     await until(async()=>{if(await native.evaluate(`document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]').length===4`))return true;await clickIfPresent('Settings','.sidebar-bottom');return false;},'Tabbed Settings did not finish opening');
-    assert.deepEqual(await native.evaluate(`[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')].map(tab=>({name:tab.textContent.trim(),selected:tab.getAttribute('aria-selected')==='true'}))`),[{name:'General',selected:true},{name:'Styling',selected:false},{name:'Outputs',selected:false},{name:'Companions',selected:false}],'Settings must open with General first');
+    assert.deepEqual(await native.evaluate(`[...document.querySelectorAll('[role="tablist"][aria-label="Settings sections"] [role="tab"]')].map(tab=>({name:tab.textContent.trim(),selected:tab.getAttribute('aria-selected')==='true'}))`),[{name:'General',selected:true},{name:'Styling',selected:false},{name:'Devices',selected:false},{name:'Companions',selected:false}],'Settings must open with General first');
     const visibleSetting=selector=>native.evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});return!!element&&element.getBoundingClientRect().width>0&&!element.closest('[hidden]');})()`);
     assert.equal(await visibleSetting('[aria-label="Desktop behavior"]'),true);assert.equal(await visibleSetting('[aria-label="Progress notifications"]'),true);assert.equal(await visibleSetting('[aria-label="Arrow style"]'),false);
     await native.evaluate(`document.getElementById('settings-tab-general').focus()`);
@@ -227,11 +227,11 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     await until(()=>native.evaluate(`document.getElementById('settings-tab-styling')?.getAttribute('aria-selected')==='true'&&document.activeElement?.id==='settings-tab-styling'`),'Arrow keys must select and focus the next Settings tab');
     await native.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Home',code:'Home',windowsVirtualKeyCode:36});await native.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Home',code:'Home',windowsVirtualKeyCode:36});
     await until(()=>native.evaluate(`document.getElementById('settings-tab-general')?.getAttribute('aria-selected')==='true'&&document.activeElement?.id==='settings-tab-general'`),'Home must select and focus the first Settings tab');
-    await settingsTab('Outputs');assert.equal(await visibleSetting('[aria-label="Controller and desktop output settings"]'),true);assert.equal(await visibleSetting('[aria-label="Desktop behavior"]'),false);
+    await settingsTab('Devices');assert.equal(await visibleSetting('[aria-label="Controller and desktop output settings"]'),true);assert.equal(await visibleSetting('[aria-label="Desktop behavior"]'),false);
     await settingsTab('Companions');assert.equal(await visibleSetting('[aria-label="Companion listener settings"]'),true);assert.equal(await visibleSetting('[aria-label="Controller and desktop output settings"]'),false);
     await settingsTab('Styling');assert.equal(await visibleSetting('[aria-label="Light theme"]'),true);assert.equal(await visibleSetting('[aria-label="Arrow style"]'),true);await capture('tabbed-styling-settings.png');
     await setArrowStyle('smooth');
-    checks.push('Settings opens on General; desktop and notifications, Styling appearance and arrows, Outputs, and Companions occupy their own accessible tabs');
+    checks.push('Settings opens on General; desktop and notifications, Styling appearance and arrows, Devices, and Companions occupy their own accessible tabs');
 
     await click('Profiles', 'nav[aria-label="Main navigation"]');
     await until(async()=>{if(await clickIfPresent('Add profile'))return true;if(await clickIfPresent('Discard and continue'))return false;await clickIfPresent('← Back to Profiles');return false;},'The profile list did not finish opening',60000);draftOpen = true;

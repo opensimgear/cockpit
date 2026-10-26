@@ -73,7 +73,7 @@
 
 <section class="output-settings" aria-label="Controller and desktop output settings">
   <header class="output-header">
-    <div><h2>Output setup</h2><p>Set up this computer once. Choose mappings and device hiding in Profiles.</p></div>
+    <div><h2>Device management</h2><p>Set up this computer once. Choose mappings and device hiding in Profiles.</p></div>
     <button class="secondary-button" disabled={!!busy} onclick={refresh}><Icon name="refresh" size={14} />{busy === 'refresh' ? 'Refreshing…' : 'Refresh'}</button>
   </header>
   {#if error}<p class="setup-error" role="alert"><Icon name="alert" size={16} /><span>{error}</span></p>{/if}

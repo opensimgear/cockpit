@@ -252,7 +252,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(nav.getByRole('button', { name: 'Overview', exact: true })).toHaveClass(/\bcurrent\b/);
     await devicesNav.click();
     await expect(devicesNav.locator('.nav-count')).toHaveText('14');
-    // Driver management moved to Settings > Outputs. Inventory inspection must
+    // Driver management moved to Settings > Devices. Inventory inspection must
     // neither offer a setup launcher nor open the external HidHide application.
     await expect(page.getByRole('button', { name: 'Manage HidHide', exact: true })).toHaveCount(0);
     assert.equal(hidHideOpens,0);
