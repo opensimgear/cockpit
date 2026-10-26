@@ -65,7 +65,7 @@ test('saved game contexts drive native launch choice, remembered preferences and
     await expect(page.getByRole('heading',{name:gameName,exact:true})).toBeVisible();await expect(matching).toBeVisible();await expect(launchButton()).toBeEnabled();
   }
   async function createProfile(name){
-    await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await list();await page.getByRole('button',{name:'Add',exact:true}).click();
     await page.getByRole('button',{name:'Edit profile name',exact:true}).click();const input=page.getByLabel('Profile name',{exact:true});await input.fill(name);await input.press('Enter');
     await page.getByLabel('Game context',{exact:true}).selectOption(gameId);
     const palette=page.getByRole('complementary',{name:'Component palette',exact:true});

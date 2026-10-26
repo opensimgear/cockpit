@@ -1052,7 +1052,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await historyStep('back'); await expect(profiles.getByRole('button', { name: 'Edit Default', exact: true })).toBeVisible();
     await historyStep('forward'); await expect(profiles.getByRole('heading', { name: 'Default', exact: true, level: 1 })).toBeVisible();
     await historyStep('back');
-    await profiles.getByRole('button', { name: 'Add profile', exact: true }).click();
+    await profiles.getByRole('button', { name: 'Add', exact: true }).click();
     await profiles.getByRole('button', { name: 'Edit profile name', exact: true }).click();
     await profiles.getByLabel('Profile name', { exact: true }).fill('Navigation draft');
     await profiles.getByLabel('Profile name', { exact: true }).press('Enter');

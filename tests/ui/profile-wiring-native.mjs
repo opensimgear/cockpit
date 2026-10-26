@@ -234,7 +234,7 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
     checks.push('Settings opens on General; desktop and notifications, Styling appearance and arrows, Devices, and Companions occupy their own accessible tabs');
 
     await click('Profiles', 'nav[aria-label="Main navigation"]');
-    await until(async()=>{if(await clickIfPresent('Add profile'))return true;if(await clickIfPresent('Discard and continue'))return false;await clickIfPresent('← Back to Profiles');return false;},'The profile list did not finish opening',60000);draftOpen = true;
+    await until(async()=>{if(await clickIfPresent('Add'))return true;if(await clickIfPresent('Discard and continue'))return false;await clickIfPresent('← Back to Profiles');return false;},'The profile list did not finish opening',60000);draftOpen = true;
     await click('Edit profile name');
     await native.evaluate(`(()=>{const input=document.querySelector('.profile-name-input');input.value=${JSON.stringify(name)};input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);
     await save(); draftOpen = false;

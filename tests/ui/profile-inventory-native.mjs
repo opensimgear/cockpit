@@ -111,7 +111,7 @@ test('native unpair removes paired and assigned companion resources from an open
 
     await click('Profiles', 'nav[aria-label="Main navigation"]');
     await until(() => native.evaluate(`!![...document.querySelectorAll('main h1')].find(heading=>heading.textContent==='Profiles')`), 'The native Profile list did not open');
-    await click('Add profile'); draftOpen = true;
+    await click('Add'); draftOpen = true;
     const current = await resources();
     const visiblePalette = await until(async () => { const value = await palette(); return value?.rows.some(row => row.id === component.id && !row.disabled) ? value : null; }, 'The native component palette did not receive the temporary paired companion');
     assert.equal(visiblePalette.rows.some(row => row.id === resource.id), false, 'Legacy per-panel instances must remain absent from the companion palette.');

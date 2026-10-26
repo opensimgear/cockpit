@@ -56,7 +56,7 @@ test('native vehicle tabs isolate their canvases, save, reopen, delete and undo'
     await native.evaluate(`(()=>{const nav=document.querySelector('nav[aria-label="Main navigation"]');[...nav.querySelectorAll('button')].find(button=>button.textContent.trim()==='Profiles').click();})()`);
     await delay(350);
     for(const label of ['Discard and continue','← Back to profile','← Back to Profiles','Discard and continue'])await native.evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(button=>(button.getAttribute('aria-label')??button.textContent.trim())===${JSON.stringify(label)});if(button&&!button.disabled)button.click();})()`);
-    await click('Add profile');await click('Edit profile name');await fill('Profile name',name);await native.evaluate(`document.querySelector('[aria-label="Profile name"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
+    await click('Add');await click('Edit profile name');await fill('Profile name',name);await native.evaluate(`document.querySelector('[aria-label="Profile name"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
     await select('Game context','dcs');await until(async()=>(await tabs()).map(tab=>tab.name).join()==='Base','Base tab missing');
     await click('Add virtual controller','.component-palette');await until(async()=>(await nodes()).length===2,'Base integration/controller missing');
     await addTab('FA-18C_hornet','F/A-18C');assert.equal((await nodes()).length,1);

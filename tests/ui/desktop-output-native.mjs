@@ -38,7 +38,7 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     if(await back.count()){
       await back.click();const discard=page.getByRole('alertdialog').getByRole('button',{name:'Discard and continue',exact:true});if(await discard.count())await discard.click();
     }
-    await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await page.getByRole('button',{name:'Add',exact:true}).click();
     await page.getByRole('button',{name:'Edit profile name',exact:true}).click();
     await page.getByLabel('Profile name',{exact:true}).fill(name);
     await page.getByLabel('Profile name',{exact:true}).press('Enter');

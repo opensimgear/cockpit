@@ -85,7 +85,7 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await expect(page.getByRole('heading',{name:'Profiles',exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Edit Default',exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Edit Default',exact:true})).toBeInViewport();
-    await expect(page.getByRole('button',{name:'Add profile',exact:true})).toBeInViewport();
+    await expect(page.getByRole('button',{name:'Add',exact:true})).toBeInViewport();
     await expect(page.getByRole('button',{name:'Deactivate current profile',exact:true})).toBeInViewport();
     await expect(page.getByText('Selected for runtime',{exact:true})).toHaveCount(0);
     const runtime = page.getByLabel('Runtime profile status');
@@ -101,8 +101,8 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await activateByTab(debug.getByRole('button',{name:'← Back to Profiles',exact:true}),'Leave Profile debug','Space');
     await expect(inspection).not.toBeVisible();
 
-    const add = page.getByRole('button',{name:'Add profile',exact:true});
-    await activateByTab(add,'Add profile','Enter');
+    const add = page.getByRole('button',{name:'Add',exact:true});
+    await activateByTab(add,'Add','Enter');
     await expect(page.getByRole('heading',{name:'New profile',exact:true})).toBeVisible();
     await expect(page.locator('.resource-block')).toHaveCount(0);
     await expect(page.getByRole('button',{name:'Add from inventory',exact:true})).toBeVisible();

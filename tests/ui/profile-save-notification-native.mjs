@@ -92,7 +92,7 @@ test('one real save shows one toast across inventory polling and navigation, whi
     await native.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 20, y: 20 });
     await native.evaluate(`for (const toast of document.querySelectorAll('[aria-label="Notifications"] .toast')) if (toast.querySelector('p')?.textContent.trim().startsWith('Profile saved')) toast.querySelector('button').click()`);
     await native.evaluate(observeToasts);
-    await click('Add profile'); draftOpen = true;
+    await click('Add'); draftOpen = true;
     await click('Edit profile name'); assert.equal(await inputName(name), true);
     await click('Save profile');
     profileId = await until(async () => (await profiles()).find(profile => profile.name === name)?.id, 'The temporary profile was not saved'); draftOpen = false;

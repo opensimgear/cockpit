@@ -70,7 +70,7 @@ test('custom games, backgrounds and installed library imports use the actual nat
     await uiDetails('DCS World');await page.getByRole('region',{name:'Tile background',exact:true}).getByRole('button',{name:'Update image',exact:true}).click();await page.getByRole('dialog',{name:'Update tile background',exact:true}).getByRole('button',{name:'Reset to default',exact:true}).click();
     await expect.poll(async()=>(await games()).catalogue.find(game=>game.id==='dcs')?.background??null).toBeNull();
     evidence.checks.push('Invalid image keeps the previous background; reset works for built-in/custom games and preserves shared assets.');
-    await nav.getByRole('button',{name:'Profiles',exact:true}).click();await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await nav.getByRole('button',{name:'Profiles',exact:true}).click();await page.getByRole('button',{name:'Add',exact:true}).click();
     await page.getByRole('button',{name:'Edit profile name',exact:true}).click();await page.getByLabel('Profile name',{exact:true}).fill(name);await page.getByLabel('Profile name',{exact:true}).press('Enter');
     await page.getByLabel('Game context',{exact:true}).selectOption(gameId);await page.getByRole('button',{name:'Save profile',exact:true}).click();
     await expect(page.getByRole('button',{name:'Save profile',exact:true})).toBeDisabled();

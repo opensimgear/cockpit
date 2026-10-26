@@ -113,7 +113,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     assert.equal((await native({command:'profile_desktop_status'})).desktop.qualified,true);
     assert.equal(await setup.getByLabel('Application scope',{exact:true}).count(),0);
     await setup.screenshot({path:resolve(artifacts,'output-settings.png')});
-    await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await list();await page.getByRole('button',{name:'Add',exact:true}).click();
     await expect(page.getByRole('heading',{name:'New profile',exact:true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Choose resources for new profile'})).toHaveCount(0);
     const palette=page.getByRole('complementary',{name:'Component palette',exact:true});
@@ -179,7 +179,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await navigation.getByRole('button',{name:'Profiles',exact:true}).click();
     await expect(page.getByRole('heading',{name:updated,exact:true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Native graph preflight'})).toHaveCount(0);
-    await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await list();await page.getByRole('button',{name:'Add',exact:true}).click();
     const inactive=`${name} inactive`;names.add(inactive);await renameProfile(inactive);await page.getByRole('button',{name:'Save profile',exact:true}).click();
     await saved();assert.deepEqual((await status()).owner,changed.owner,'Saving another profile must leave the active owner unchanged.');
     const second=(await native({command:'profile_list'})).profiles.profiles.find(profile=>profile.name===inactive);assert.ok(second);

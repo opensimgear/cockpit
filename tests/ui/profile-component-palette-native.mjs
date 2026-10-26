@@ -144,7 +144,7 @@ test('native palette authors an unassigned production companion and inserts conn
 
     await click('Profiles', 'nav[aria-label="Main navigation"]');
     await until(() => native.evaluate(`!![...document.querySelectorAll('.profiles-workspace h1')].find(heading=>heading.textContent==='Profiles')`), 'Open Profiles list before starting acceptance');
-    await click('Add profile'); draftOpen = true;
+    await click('Add'); draftOpen = true;
     await until(() => native.evaluate(`!!document.querySelector('[aria-label="Component palette"]')`), 'New profile did not open the component palette');
     await click('Edit profile name');
     assert.equal(await input('.profile-name-input', name), true);

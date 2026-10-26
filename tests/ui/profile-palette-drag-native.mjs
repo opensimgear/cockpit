@@ -125,7 +125,7 @@ test('native HTML5 palette drags preview and persist exact canvas placement with
     beforeProfiles = (await request({ command: 'profile_list' })).profiles.profiles; beforeAutomatic = await automatic();
     await native.send('Input.setInterceptDrags', { enabled: false });
     await click('Profiles', 'nav[aria-label="Main navigation"]');
-    await click('Add profile'); draftOpen = true;
+    await click('Add'); draftOpen = true;
     await until(() => native.evaluate(`!!document.querySelector('[aria-label="Component palette"]')`), 'Profile editor did not open its palette');
     await click('Edit profile name');
     await native.evaluate(`(()=>{const input=document.querySelector('.profile-name-input');input.value=${JSON.stringify(name)};input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);

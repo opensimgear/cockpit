@@ -26,7 +26,7 @@ test('saved profile context manages integration and canvas groups accept drops w
   async function dragBlockTo(frameId){const heading=blocks.first().locator('.block-heading');await stage.scrollIntoViewIfNeeded();await heading.scrollIntoViewIfNeeded();const from=await heading.boundingBox(),target=frameId?await page.locator(`[data-group-id="${frameId}"]`).boundingBox():await stage.boundingBox();assert.ok(from&&target);const x=frameId?target.x+target.width/2:target.x+target.width-180,y=frameId?target.y+target.height/2:target.y+target.height-145;await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();await page.mouse.move(x,y,{steps:14});await page.mouse.up();}
   let savedId;
   try{
-    await page.reload();await list();await page.getByRole('button',{name:'Add profile',exact:true}).click();
+    await page.reload();await list();await page.getByRole('button',{name:'Add',exact:true}).click();
     await page.getByRole('button',{name:'Edit profile name',exact:true}).click();const profileName=page.getByLabel('Profile name',{exact:true});await profileName.fill(name);await profileName.press('Enter');
     await expect(stage).toBeVisible();await expect(page.getByRole('button',{name:'Activate profile',exact:true})).toHaveCount(0);await expect(page.locator('.profile-runtime.panel,.group-editor')).toHaveCount(0);
     const context=page.getByLabel('Game context',{exact:true});await expect(context.locator('option')).toHaveCount(5);await expect(context).toHaveValue('');await expect(palette.getByLabel('Integrations',{exact:true})).toHaveCount(0);
