@@ -31,6 +31,7 @@
 <style>
   .profile-mode-status{display:inline-flex;align-items:center;gap:12px;min-width:0;max-width:145px;flex-shrink:0;border:0;border-radius:0 5px 5px 0;padding:6px 10px;background:transparent;color:var(--muted);text-align:left;cursor:pointer;}
   .profile-mode-status:hover:enabled{background:var(--surface-raised);color:var(--accent);}
+  .profile-mode-status[aria-pressed=true]{color:var(--accent);}
   .profile-mode-status:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;}
   .profile-mode-status:disabled{cursor:not-allowed;opacity:.6;}
   .badge-copy{display:flex;flex-direction:column;gap:2px;min-width:0;}
