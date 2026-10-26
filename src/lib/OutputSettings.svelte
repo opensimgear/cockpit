@@ -20,6 +20,10 @@
   const hidHideDriver = $derived(inventory?.drivers?.hidhide);
   const virtualIssue = $derived(vjoyDriver?.error || inventory?.diagnostics.find(message => /virtual|vjoy/i.test(message)));
   const virtualSlots = $derived(inventory?.virtualDevices ?? []);
+  const virtualEnabled = $derived(vjoyDriver?.installed === true && !virtualIssue && virtualSlots.length > 0);
+  const hidingSetupIssue = $derived(hidHideDriver?.installed === true && visibility?.selfAccess?.ready === false ? visibility.selfAccess.message : '');
+  const hidingIssue = $derived(visibility?.settingsError || hidHideDriver?.error || hidingSetupIssue);
+  const hidingEnabled = $derived(hidHideDriver?.installed === true && visibility?.enabled && visibility.qualified && !hidingIssue);
 
   async function changeEnablement(event: Event, current: () => boolean, save: (enabled: boolean) => Promise<void>) {
     const input = event.currentTarget as HTMLInputElement;
@@ -49,16 +53,6 @@
       busy = '';
     }
   }
-  async function enableVisibility(enabled: boolean) {
-    if (busy || !visibility) return;
-    busy = 'visibility'; error = '';
-    try {
-      const result = (await gatewayRequest({ command: 'controller_visibility_enable', enabled })).controllers?.visibility;
-      if (!result) throw new Error('Device hiding settings are unavailable.');
-      if (!disposed) visibility = result;
-    } catch (reason) { if (!disposed) error = reason instanceof Error ? reason.message : String(reason); }
-    finally { if (!disposed) busy = ''; }
-  }
   async function enableDesktop(enabled: boolean) {
     if (busy || !desktop) return;
     busy = 'desktop'; error = '';
@@ -87,7 +81,7 @@
     <div class="card-heading">
       <span class="output-icon"><Icon name="gamepad" size={21} /></span>
       <div class="card-title"><h3>Virtual controllers</h3><span>vJoy{#if vjoyDriver?.installed && vjoyDriver.version}<span class="driver-version">{' · '}{vjoyDriver.version}</span>{/if}</span></div>
-      <span class="setup-status" class:attention={!!virtualIssue} role="status">{inventory ? vjoyDriver?.installed === false ? 'Not installed' : virtualIssue ? 'Needs attention' : virtualSlots.length ? `${virtualSlots.length} configured` : 'Not configured' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
+      <span class="setup-status" class:enabled={virtualEnabled} class:attention={!!virtualIssue} role="status">{inventory ? vjoyDriver?.installed === false ? 'Not installed' : virtualIssue ? 'Needs attention' : virtualEnabled ? 'Enabled' : 'Not configured' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
     </div>
     <div class="card-body">
       <p>Publish virtual controller inputs on Windows. Configure a layout here, then add a virtual controller block to a profile.</p>
@@ -103,14 +97,14 @@
     <div class="card-heading">
       <span class="output-icon"><Icon name="eye-off" size={21} /></span>
       <div class="card-title"><h3>Device hiding</h3><span>HidHide{#if hidHideDriver?.installed && hidHideDriver.version}<span class="driver-version">{' · '}{hidHideDriver.version}</span>{/if}</span></div>
-      <label class="output-toggle"><span class="visually-hidden">Enable device hiding on this computer</span><input type="checkbox" role="switch" aria-describedby="device-hiding-help" checked={visibility?.enabled ?? false} disabled={!!busy || !visibility || !visibility.qualified || !!visibility.settingsError} onchange={event => changeEnablement(event, () => visibility?.enabled ?? false, enableVisibility)} /><span class="toggle" class:on={visibility?.enabled ?? false} aria-hidden="true"><span></span></span></label>
+      <span class="setup-status" class:enabled={hidingEnabled} class:attention={!!hidingIssue} role="status">{hidHideDriver?.installed === false ? 'Not installed' : hidingIssue ? 'Needs attention' : visibility ? !visibility.qualified ? 'Unavailable' : hidingEnabled ? 'Enabled' : 'Not configured' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
     </div>
     <div class="card-body">
       <p id="device-hiding-help">Allow profiles to hide their physical controllers while running. Saved device policies remain in each controller’s visibility settings.</p>
-      {#if visibility?.selfAccess}<p class="status-note" role="status">{visibility.selfAccess.message}</p>{/if}
       {#if visibility && !visibility.qualified}<p class="status-note">{visibility.reason}</p>{/if}
       {#if visibility?.settingsError}<p class="setup-error" role="alert"><Icon name="alert" size={14} /><span>{visibility.settingsError}</span></p>{/if}
       {#if hidHideDriver?.error}<p class="status-note">{hidHideDriver.error}</p>{/if}
+      {#if hidingSetupIssue}<p class="status-note">{hidingSetupIssue}</p>{/if}
     </div>
     {#if nativeApp && inventory?.drivers?.supported && hidHideDriver?.installed === false}<div class="card-footer"><OptionalDependencies only="hidhide" disabled={!!busy} oncomplete={refresh} /></div>
     {:else if nativeApp}<div class="card-footer"><span>Inspect driver setup and existing device rules.</span><button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_hidhide')}><Icon name="settings" size={14} />Manage</button></div>{/if}
@@ -143,6 +137,7 @@
   .card-title > span { color: var(--muted); font-size: 9px; }
   .driver-version { color: var(--soft); }
   .setup-status { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); background: var(--input-bg); font-size: 9px; white-space: nowrap; }
+  .setup-status.enabled { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
   .setup-status.attention { color: #d3a078; }
   .card-body { padding: 0 22px 20px; }
   .card-body .status-note { margin-top: 12px; color: var(--soft); }

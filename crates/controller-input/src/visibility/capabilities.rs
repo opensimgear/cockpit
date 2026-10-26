@@ -1,10 +1,10 @@
 //! Scope is explicit. Unsupported visibility never falls back to broader blocking.
 use serde::Serialize;
 
-/// Windows native output is available in all builds. Driver inspection, local
-/// enablement and exact session ownership still decide whether a run can start.
+/// Windows native output is available in all builds. Driver setup, qualification
+/// and exact session ownership still decide whether a run can start.
 pub const WINDOWS_NATIVE_OUTPUTS: bool = cfg!(windows);
-pub const WINDOWS_REASON: &str = "Windows vJoy output and HidHide are available. Install the required driver and enable device hiding in Settings before using it in a profile.";
+pub const WINDOWS_REASON: &str = "Windows HidHide profile visibility is available when HidHide setup is ready. Choose the devices and visibility policies in each profile.";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     Windows,

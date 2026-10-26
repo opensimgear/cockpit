@@ -106,32 +106,6 @@ impl Service {
         }
         Ok(owners)
     }
-    fn game_path(&self, owner: &str) -> Result<PathBuf, String> {
-        if uuid::Uuid::parse_str(owner)
-            .ok()
-            .map(|id| id.to_string())
-            .as_deref()
-            != Some(owner)
-        {
-            return Err("Invalid game visibility owner.".into());
-        }
-        Ok(self
-            .path
-            .as_ref()
-            .and_then(|p| p.parent())
-            .ok_or("Durable visibility recovery storage is required.")?
-            .join(format!("game-visibility-{owner}.json")))
-    }
-    fn game_enabled(&self) -> Result<(), String> {
-        if !self.qualified {
-            return Err("Captured device visibility is not qualified on this platform; no hiding policy was changed.".into());
-        }
-        let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
-        if settings.error.is_some() || !settings.value.enabled {
-            return Err("Enable optional visibility explicitly and repair any settings error before game activation.".into());
-        }
-        Ok(())
-    }
     fn game_policy(&self, intent: &IntentCapture) -> Result<Option<Plan>, String> {
         let preferences = intent.preferences(self.platform)?;
         if self.platform != Platform::Windows {

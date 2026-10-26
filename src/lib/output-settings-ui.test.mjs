@@ -13,13 +13,13 @@ const modules = await loadModules(['./ui-settings-guard','./profile-desktop-runt
 const plain = value => JSON.parse(JSON.stringify(value));
 const initial = () => ({
   desktop: { enabled: false, qualified: true, state: 'stopped', reason: '', scope: { kind: 'application' } },
-  visibility: { enabled: false, qualified: true, settingsError: null, selfAccess: { message: 'Capture access configured.' } },
+  visibility: { enabled: true, qualified: true, settingsError: null, selfAccess: { ready: true, message: 'Capture access configured.' } },
   inventory: { virtualDevices: [{ id: 'vjoy:1', name: 'vJoy Device 1', status: 'free' }], diagnostics: [],
     drivers: { supported: true, vjoy: { installed: true, version: '2.2.2.0', error: null }, hidhide: { installed: true, version: '1.5.230.0', error: null } } },
 });
 async function harness(send, { nativeApp = true, overrides = {} } = {}) {
   const file = new URL('./OutputSettings.svelte', import.meta.url);
-  const source = (await readFile(file, 'utf8')).replace('</script>', 'desktop=seed.desktop;visibility=seed.visibility;inventory=seed.inventory;capture({refresh,enableVisibility,enableDesktop,manageDriver,get state(){return {desktop,visibility,inventory,busy,error};}});</script>');
+  const source = (await readFile(file, 'utf8')).replace('</script>', 'desktop=seed.desktop;visibility=seed.visibility;inventory=seed.inventory;capture({refresh,enableDesktop,manageDriver,get state(){return {desktop,visibility,inventory,busy,error};}});</script>');
   const { js } = compile(source, { filename: file.pathname, generate: 'server' });
   const exports = {}, requests = [], invocations = [], setups = [], seed = { ...initial(), ...overrides };
   let handlers,settingsVersion=1;
@@ -50,16 +50,18 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
 
 test('Settings owns driver tools and machine enablement while application scope belongs to profile blocks', async () => {
   const h = await harness();
-  for (const label of ['Configure', 'Manage', 'Enable device hiding on this computer', 'Enable desktop output on this computer', 'vJoy Device 1', 'free']) assert.ok(h.html.includes(label), label);
+  for (const label of ['Configure', 'Manage', 'Enable desktop output on this computer', 'vJoy Device 1', 'free']) assert.ok(h.html.includes(label), label);
+  assert.ok(!h.html.includes('Enable device hiding on this computer'));
+  assert.ok(!h.html.includes('Capture access configured.'));
+  assert.equal((h.html.match(/role="status">Enabled/g) ?? []).length, 2);
+  assert.ok(!h.html.includes('1 configured'));
   assert.ok(h.html.includes('Choose the application scope in each profile'));
   assert.ok(!h.html.includes('<select'));
   assert.deepEqual(h.requests, []);
   await h.handlers.refresh();
   assert.deepEqual(h.requests.map(request=>request.command),['system_inventory','controller_visibility_status','profile_local_settings_get','profile_desktop_status']);h.requests.length=0;
-  await h.handlers.enableVisibility(true);
   await h.handlers.enableDesktop(true);
   assert.deepEqual(h.requests, [
-    { command: 'controller_visibility_enable', enabled: true },
     { command: 'profile_local_settings_save',scope:'desktop',expectedSettingsRevision:`sha256:${'1'.padStart(64,'0')}`,expectedActiveOwner:null,settings:{enabled:true,scope:{kind:'application'}} },
     {command:'profile_desktop_status'},
   ]);
@@ -70,15 +72,13 @@ test('Settings owns driver tools and machine enablement while application scope 
 
 test('failed setup refresh and enablement report native errors without claiming a saved change', async () => {
   const h = await harness(async () => { throw new Error('Stop the running profile before changing setup.'); });
-  await h.handlers.enableVisibility(true);
-  assert.equal(h.handlers.state.visibility.enabled, false);
-  assert.match(h.handlers.state.error, /Stop the running profile/);
   await h.handlers.enableDesktop(true);
   assert.equal(h.handlers.state.desktop.enabled, false);
+  assert.match(h.handlers.state.error, /Refresh current local settings/);
   await h.handlers.refresh();
   assert.match(h.handlers.state.error, /Stop the running profile/);
   assert.equal(h.handlers.state.busy, '');
-  assert.deepEqual(h.requests.slice(1).map(request => request.command), ['system_inventory', 'controller_visibility_status', 'profile_local_settings_get']);
+  assert.deepEqual(h.requests.map(request => request.command), ['system_inventory', 'controller_visibility_status', 'profile_local_settings_get']);
 });
 
 test('separate output cards retain unavailable reasons and disable unsupported switches', async () => {
@@ -90,7 +90,7 @@ test('separate output cards retain unavailable reasons and disable unsupported s
   for (const label of ['Virtual controllers', 'Device hiding', 'Keyboard and mouse']) assert.ok(h.html.includes(`aria-label="${label}"`));
   for (const reason of ['Desktop output is unsupported.', 'HidHide is not installed.', 'vJoy driver is unavailable.']) assert.ok(h.html.includes(reason));
   const switches = h.html.match(/<input[^>]*role="switch"[^>]*>/g);
-  assert.equal(switches.length, 2);
+  assert.equal(switches.length, 1);
   assert.ok(switches.every(input => /\bdisabled\b/.test(input)));
   assert.deepEqual(h.requests, []);
 });
@@ -111,9 +111,14 @@ test('installed driver versions sit beside their names and setup stays inside mi
   const missing = await harness(null, { overrides: { inventory: { ...initial().inventory, drivers: { supported: true,
     vjoy: { installed: false, version: null, error: null }, hidhide: { installed: false, version: null, error: null } } } } });
   assert.deepEqual(missing.setups, ['vjoy', 'hidhide']);
+  assert.ok(!missing.html.includes('>Enabled</span>'));
   assert.ok(!missing.html.includes('>Configure</button>')); assert.ok(!missing.html.includes('>Manage</button>'));
   const unknown = await harness(null, { overrides: { inventory: { ...initial().inventory, drivers: { ...initial().inventory.drivers,
     vjoy: { installed: null, version: null, error: 'Driver metadata could not be read.' } } } } });
   assert.ok(unknown.html.includes('Driver metadata could not be read.'));
   assert.deepEqual(unknown.setups, [], 'Failed inspection must not claim a driver is missing.');
+  const unready = await harness(null, { overrides: { visibility: { ...initial().visibility, enabled: false,
+    selfAccess: { ready: false, message: 'Restart Cockpit after installing HidHide.' } } } });
+  assert.ok(unready.html.includes('Restart Cockpit after installing HidHide.'));
+  assert.ok(unready.html.includes('Needs attention'));
 });

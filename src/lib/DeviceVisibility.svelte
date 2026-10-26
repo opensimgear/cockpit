@@ -59,7 +59,7 @@
     {/if}
     <p class="notice">{status.reason}</p>
     {#if status.settingsError}<Notification message={'Saved settings need attention: ' + String(status.settingsError)} kind="error" />{/if}
-    <p>Device hiding is {status.enabled ? 'enabled' : 'disabled'} on this computer. Manage HidHide setup and enablement in Settings.</p>
+    <p>Device hiding is {status.enabled ? 'enabled' : 'disabled'} on this computer. Manage HidHide setup in Settings.</p>
     <div class="fields">
       <label>Saved policy<select bind:value={mode} disabled={busy || status.job?.active}>{#each status.modes as option}<option value={option.mode} disabled={!option.supported}>{option.label}{option.supported ? '' : ' · unavailable'}</option>{/each}</select></label>
       {#if mode === 'hide-from-process'}

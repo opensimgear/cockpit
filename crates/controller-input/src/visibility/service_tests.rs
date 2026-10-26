@@ -62,8 +62,30 @@ fn native_windows_readiness_keeps_explicit_visibility_settings_inert() {
     assert!(!service.active());
     assert_eq!(temp.path().read_dir().unwrap().map(|entry|entry.unwrap().file_name()).collect::<Vec<_>>(),vec![std::ffi::OsString::from("cockpit.sqlite3")]);
     if super::super::capabilities::WINDOWS_NATIVE_OUTPUTS {
-        assert!(status["visibility"]["reason"].as_str().unwrap().starts_with("Windows vJoy output and HidHide are available."));
+        assert!(status["visibility"]["reason"].as_str().unwrap().starts_with("Windows HidHide profile visibility is available"));
     }
+}
+
+#[test]
+fn windows_enabled_status_tracks_native_setup_not_legacy_optional_flag() {
+    let (registry, id) = inventory();
+    let temp = crate::test_directory();
+    let mut service = Service::new(Some(temp.path().into()), registry);
+    service.platform = super::super::capabilities::Platform::Windows;
+    service.qualified = true;
+    service.self_access.ready = true;
+
+    let ready = service.request(&json!({"command":"controller_visibility_status","sourceId":id})).unwrap();
+    assert_eq!(ready["visibility"]["enabled"], true);
+
+    service.self_access.ready = false;
+    let setup_error = service.request(&json!({"command":"controller_visibility_status","sourceId":id})).unwrap();
+    assert_eq!(setup_error["visibility"]["enabled"], false);
+
+    service.self_access.ready = true;
+    service.settings.lock().unwrap().error = Some("Visibility settings are corrupt.".into());
+    let settings_error = service.request(&json!({"command":"controller_visibility_status","sourceId":id})).unwrap();
+    assert_eq!(settings_error["visibility"]["enabled"], false);
 }
 #[test]
 fn startup_self_access_guard_preserves_pending_standalone_game_and_invalid_journals() {

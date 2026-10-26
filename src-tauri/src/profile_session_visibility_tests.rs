@@ -441,10 +441,10 @@ fn offline_required_hiding_is_inactive_without_changing_any_external_policy() {
     assert!(io.calls.lock().unwrap().is_empty());
 }
 #[test]
-fn captured_flags_cannot_bypass_native_visibility_enablement() {
+fn captured_flags_cannot_bypass_native_visibility_setup() {
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
     let error = controllers.game_visibility("preflight",&json!({"mode":"hidhide-session","sourceIds":[PHYSICAL],"policies":{PHYSICAL:{"mode":"hide-all"}}})).unwrap_err();
-    assert!(error.contains(if cfg!(windows) { "Enable optional visibility" } else { "not qualified" }), "{error}");
+    assert!(error.contains(if cfg!(windows) { "HidHide setup is not ready" } else { "not qualified" }), "{error}");
     let snapshot = snapshot();
     let error = Visibility::prepare(&plan(&snapshot), &snapshot, &owner(), controllers)
         .err()

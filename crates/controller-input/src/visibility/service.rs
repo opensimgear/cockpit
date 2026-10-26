@@ -82,6 +82,42 @@ impl Service {
         }
         Ok(())
     }
+    fn game_path(&self, owner: &str) -> Result<PathBuf, String> {
+        if uuid::Uuid::parse_str(owner)
+            .ok()
+            .map(|id| id.to_string())
+            .as_deref()
+            != Some(owner)
+        {
+            return Err("Invalid game visibility owner.".into());
+        }
+        Ok(self
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .ok_or("Durable visibility recovery storage is required.")?
+            .join(format!("game-visibility-{owner}.json")))
+    }
+    fn game_enabled(&self) -> Result<(), String> {
+        if !self.qualified {
+            return Err("Captured device visibility is not qualified on this platform; no hiding policy was changed.".into());
+        }
+        let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
+        if settings.error.is_some() {
+            return Err("Repair visibility settings before game activation.".into());
+        }
+        if self.platform == super::capabilities::Platform::Windows {
+            if !self.self_access.ready {
+                return Err(format!(
+                    "HidHide setup is not ready for game activation: {}",
+                    self.self_access.message
+                ));
+            }
+        } else if !settings.value.enabled {
+            return Err("Enable optional visibility explicitly before game activation.".into());
+        }
+        Ok(())
+    }
     pub fn active(&self) -> bool {
         self.game_owner
             .lock()
@@ -143,8 +179,13 @@ impl Service {
             super::session::validate_sources(std::slice::from_ref(source),&current,false).ok()?;
             match &*snapshot { Ok(Some(state)) => Some(json!({"hidden":state.active && super::policy::contains(&state.hidden,instance),"configured":super::policy::contains(&state.hidden,instance),"inverse":state.inverse,"scope":"last-inspected"})), _ => None }
         });
+        let enabled = if self.platform == super::capabilities::Platform::Windows {
+            self.qualified && self.self_access.ready && settings.error.is_none()
+        } else {
+            settings.value.enabled
+        };
         json!({"offset":0,"total":0,"limit":32,"visibility":{
-            "selfAccess":self.self_access,"platform":format!("{:?}",self.platform).to_lowercase(),"modes":super::capabilities::modes(self.platform),"enabled":settings.value.enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
+            "selfAccess":self.self_access,"platform":format!("{:?}",self.platform).to_lowercase(),"modes":super::capabilities::modes(self.platform),"enabled":enabled,"qualified":self.qualified,"effective":effective,"selectedCount":settings.value.devices.values().filter(|p|!matches!(p,Intent::Visible)).count(),"intent":settings.value.devices.get(id).cloned().unwrap_or_default(),
             "selected":settings.value.devices.iter().filter(|(_,p)|!matches!(p,Intent::Visible)).map(|(id,_)|id).take(16).collect::<Vec<_>>(),
             "settingsError":settings.error,"global":global,"job":if self.platform==super::capabilities::Platform::Windows{json!(self.worker.lock().unwrap_or_else(|p|p.into_inner()).snapshot())}else{self.suppression.snapshot()},"recovery":recovery,"launch":self.launch.lock().unwrap_or_else(|p|p.into_inner()).snapshot(),
             "reason":if super::capabilities::WINDOWS_NATIVE_OUTPUTS{super::capabilities::WINDOWS_REASON}else if self.qualified{"Apply affects every instance of the selected executable path. Existing applications may need a qualified device-handle refresh."}else{super::capabilities::reason(self.platform)}

@@ -16,7 +16,7 @@ test('output cards preserve native setup, enablement, error states and compact r
   const compiled = await (await fetch(origin + '/src/lib/OutputSettings.svelte')).text();
   const runtime = compiled.match(/from ["']([^"']*\/svelte\.js[^"']*)["']/)[1];
   const requests = [], invocations = [], errors = [];
-  const visibility = { enabled: false, qualified: true, settingsError: null, selfAccess: { message: 'Capture access configured.' } };
+  const visibility = { enabled: true, qualified: true, settingsError: null, selfAccess: { ready: true, message: 'Capture access configured.' } };
   const desktop = { enabled: false, qualified: true, state: 'stopped', reason: '', scope: { kind: 'application' } };
   const drivers = { supported: true, vjoy: { installed: true, version: '2.2.2.0', error: null }, hidhide: { installed: true, version: '1.5.230.0', error: null } };
   let revision = 1, rejectWrite = false;
@@ -59,19 +59,18 @@ test('output cards preserve native setup, enablement, error states and compact r
     const virtual = setup.getByRole('region', { name: 'Virtual controllers', exact: true });
     const hiding = setup.getByRole('region', { name: 'Device hiding', exact: true });
     const keyboard = setup.getByRole('region', { name: 'Keyboard and mouse', exact: true });
-    const hidingToggle = hiding.getByRole('switch', { name: 'Enable device hiding on this computer', exact: true });
     const desktopToggle = keyboard.getByRole('switch', { name: 'Enable desktop output on this computer', exact: true });
-    await expect(virtual.getByRole('status')).toHaveText('2 configured');
+    await expect(virtual.getByRole('status')).toHaveText('Enabled');
     await expect(virtual).toContainText('busy · Flight simulator');
     await expect(virtual.locator('.card-title')).toContainText('vJoy · 2.2.2.0');
     await expect(virtual.getByRole('button', { name: 'Set up', exact: true })).toHaveCount(0);
     await expect(setup.getByText('Driver installers', { exact: true })).toHaveCount(0);
     assert.equal(invocations.filter(call => call.command === 'optional_dependencies').length, 0, 'Installed drivers do not load installers.');
-    await expect(hidingToggle).toBeEnabled(); await expect(desktopToggle).toBeEnabled();
-    await expect(hiding.locator('.setup-status')).toHaveCount(0);
+    await expect(hiding.getByRole('switch')).toHaveCount(0); await expect(desktopToggle).toBeEnabled();
+    await expect(hiding.getByRole('status')).toHaveText('Enabled');
+    await expect(hiding).not.toContainText('Capture access configured.');
     await expect(keyboard.locator('.setup-status')).toHaveCount(0);
     assert.ok(requests.every(request => !request.command.endsWith('_save') && request.command !== 'controller_visibility_enable'));
-    await hidingToggle.check(); await expect(hidingToggle).toBeChecked();
     await desktopToggle.check(); await expect(desktopToggle).toBeChecked();
     await virtual.getByRole('button', { name: 'Configure', exact: true }).click();
     await hiding.getByRole('button', { name: 'Manage', exact: true }).click();
@@ -82,6 +81,8 @@ test('output cards preserve native setup, enablement, error states and compact r
     await setup.getByRole('button', { name: 'Refresh', exact: true }).click();
     await expect(virtual.getByRole('button', { name: 'Set up', exact: true })).toBeVisible();
     await expect(hiding.getByRole('button', { name: 'Set up', exact: true })).toBeVisible();
+    await expect(virtual.getByRole('status')).toHaveText('Not installed');
+    await expect(hiding.getByRole('status')).toHaveText('Not installed');
     await expect(virtual.getByRole('button', { name: 'Configure', exact: true })).toHaveCount(0);
     await expect(virtual.locator('.driver-version')).toHaveCount(0);
     await expect(setup.locator('details')).toHaveCount(0);
@@ -99,7 +100,7 @@ test('output cards preserve native setup, enablement, error states and compact r
     visibility.qualified = false; visibility.reason = 'HidHide is unavailable on this computer.';
     desktop.qualified = false; desktop.reason = 'Desktop output is unavailable on this platform.';
     await setup.getByRole('button', { name: 'Refresh', exact: true }).click();
-    await expect(hidingToggle).toBeDisabled(); await expect(desktopToggle).toBeDisabled();
+    await expect(hiding.getByRole('switch')).toHaveCount(0); await expect(desktopToggle).toBeDisabled();
     await expect(hiding).toContainText(visibility.reason); await expect(keyboard).toContainText(desktop.reason);
     for (const width of [520, 375]) {
       await page.setViewportSize({ width, height: 1100 });

@@ -14,6 +14,8 @@ fn setup() -> (
     let mut service = Service::new(Some(temp.path().into()), registry.clone());
     service.platform = super::super::super::capabilities::Platform::Windows;
     service.qualified = true;
+    service.self_access.ready = true;
+    service.self_access.message = "HidHide access configured and verified.".into();
     service.factory = Arc::new(move || Ok(Box::new(Fixture(cloned.clone()))));
     service
         .request(&json!({"command":"controller_visibility_enable","enabled":true}))
@@ -106,9 +108,10 @@ fn unqualified_or_mismatched_intent_cannot_change_policy() {
     s.qualified = true;
     s.request(&json!({"command":"controller_visibility_enable","enabled":false}))
         .unwrap();
-    assert!(s.game_request("preflight", &intent).is_err());
-    s.request(&json!({"command":"controller_visibility_enable","enabled":true}))
-        .unwrap();
+    assert!(
+        s.game_request("preflight", &intent).is_ok(),
+        "Windows profile intent is the explicit authorization even when the legacy optional flag is false"
+    );
     for invalid in [
         json!({}),
         json!({"mode":"hidhide-session","sourceIds":[id,id]}),
@@ -141,6 +144,35 @@ fn unqualified_or_mismatched_intent_cannot_change_policy() {
         .file_name()
         .to_string_lossy()
         .starts_with("game-visibility")));
+}
+
+#[test]
+fn windows_profile_preflight_requires_qualification_setup_and_valid_settings() {
+    let (mut s, _temp, _driver, _registry, id) = setup();
+    let intent = captured(&s, &id);
+    s.request(&json!({"command":"controller_visibility_enable","enabled":false}))
+        .unwrap();
+    assert!(s.game_request("preflight", &intent).is_ok());
+
+    s.self_access.ready = false;
+    s.self_access.status = "error";
+    s.self_access.message = "Installed HidHide driver could not be opened.".into();
+    let error = s.game_request("preflight", &intent).unwrap_err();
+    assert!(error.contains("HidHide setup is not ready"), "{error}");
+
+    s.self_access.ready = true;
+    s.factory = Arc::new(|| Err("HidHide driver verification failed.".into()));
+    let error = s.game_request("preflight", &intent).unwrap_err();
+    assert!(error.contains("HidHide driver verification failed"), "{error}");
+
+    s.settings.lock().unwrap().error = Some("Visibility settings are corrupt.".into());
+    let error = s.game_request("preflight", &intent).unwrap_err();
+    assert!(error.contains("Repair visibility settings"), "{error}");
+
+    s.settings.lock().unwrap().error = None;
+    s.qualified = false;
+    let error = s.game_request("preflight", &intent).unwrap_err();
+    assert!(error.contains("not qualified"), "{error}");
 }
 #[test]
 fn policy_change_after_preflight_and_external_change_during_run_are_preserved() {
