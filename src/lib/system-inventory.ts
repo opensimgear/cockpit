@@ -2,6 +2,15 @@
 export type SystemType = 'host' | 'controller' | 'osg' | 'gateway' | 'virtual' | 'integration' | 'companion';
 export type SystemPresence = 'connected' | 'offline' | 'unknown' | 'unavailable';
 export type SystemConnection = { id: string; from: string; to: string; transport: 'usb' | 'can' | 'network' | 'bluetooth' | 'software' | 'unknown'; current: boolean; observed?: boolean; endpoint?: string };
+export type SystemFilters = {
+  types: SystemType[];
+  connections: SystemConnection['transport'][];
+  presence: SystemPresence[];
+  visibility: ('visible' | 'hidden' | 'unknown')[];
+};
+export function emptySystemFilters(): SystemFilters {
+  return { types: [], connections: [], presence: [], visibility: [] };
+}
 export type SystemReference = { kind: string; id: string; name: string };
 export type SystemTarget = { kind: 'module' | 'gateway' | 'controller' | 'usb' | 'integration' | 'companion' | 'virtual' | 'visibility'; id: string; gatewayId?: string };
 export type SystemComponent = {
@@ -29,11 +38,19 @@ export function systemDeviceSubtext(component: SystemComponent): string {
   return component.status.split(' · ').filter(part => part.startsWith('Panel: ') || /^\d+ (controls|inputs)$/.test(part))
     .map(part => part.replace(/^(\d+) controls$/, '$1 inputs')).join(' · ');
 }
-export function filterSystem(components: readonly SystemComponent[], search: string, filter: string, transport = 'all'): SystemComponent[] {
+export function filterSystem(components: readonly SystemComponent[], search: string, filters: SystemFilters = emptySystemFilters()): SystemComponent[] {
   const query = search.trim().toLocaleLowerCase();
-  return components.filter(c => isVisibleSystemComponent(c) && `${c.name} ${c.role} ${c.id} ${systemTypeLabels[c.type]} ${c.status} ${c.connections.map(x => `${x.transport} ${x.endpoint ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(query)
-    && (filter === 'all' || filter === c.type || filter === c.presence || filter === 'hidden' && c.hidden === true)
-    && (transport === 'all' || c.connections.some(connection => connection.transport === transport) || transport === 'unknown' && !c.connections.length));
+  const { types = [], connections: transports = [], presence = [], visibility: visibilities = [] } = filters;
+  return components.filter(c => {
+    const visibility = c.hidden === true ? 'hidden' : c.hidden === false ? 'visible' : 'unknown';
+    const connections = Array.isArray(c.connections) ? c.connections : [];
+    return isVisibleSystemComponent(c)
+      && `${c.name} ${c.role} ${c.id} ${systemTypeLabels[c.type]} ${c.status} ${connections.map(x => `${x.transport} ${x.endpoint ?? ''}`).join(' ')}`.toLocaleLowerCase().includes(query)
+      && (!types.length || types.includes(c.type))
+      && (!transports.length || connections.some(connection => transports.includes(connection.transport)) || transports.includes('unknown') && connections.length === 0)
+      && (!presence.length || presence.includes(c.presence))
+      && (!visibilities.length || visibilities.includes(visibility));
+  });
 }
 /** Panels belong to their companion; integrations appear when the applied profile uses them. */
 export function isVisibleSystemComponent(component: SystemComponent): boolean {

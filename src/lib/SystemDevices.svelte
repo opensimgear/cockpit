@@ -5,17 +5,19 @@
   import PageHeader from './PageHeader.svelte';
 
   import { onMount, tick, type Snippet } from 'svelte';
+  import { slide } from 'svelte/transition';
   import Icon from './Icon.svelte';
   import { systemDeviceIcon } from './system-device-icons';
   import Notification from './Notification.svelte';
   import SystemTopology from './SystemTopology.svelte';
+  import SystemDeviceFilters from './SystemDeviceFilters.svelte';
   import HostControllers from './HostControllers.svelte';
   import SystemUsbDetails from './SystemUsbDetails.svelte';
   import { gatewayRequest } from './gateway';
   import type { GatewayEntry } from './gateway-workspace';
   import type { GameId } from './games';
   import { SystemInventoryController, integrationGameId } from './system-inventory-providers';
-  import { filterSystem, isVisibleSystemComponent, presenceLabels, systemDeviceSubtext, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot } from './system-inventory';
+  import { emptySystemFilters, filterSystem, isVisibleSystemComponent, presenceLabels, systemDeviceSubtext, systemStateLabel, systemTypeLabels, type SystemComponent, type SystemSnapshot } from './system-inventory';
   let { active, entries, gatewayError = '', openModule, openCompanions, openIntegration, gatewayDetails, oninventory, onNavigate }: {
     active: boolean; entries: GatewayEntry[]; openModule: (gatewayId: string, moduleId: string) => void;
     gatewayError?: string;
@@ -25,7 +27,10 @@
   } = $props();
   let snapshot = $state.raw<SystemSnapshot>({ components: [], diagnostics: [], observedAt: 0 });
   const mode = $derived($devicesMode.value);
-  let search = $state(''), filter = $state('all'), transport = $state('all'), selectedId = $state('');
+  let search = $state(''), selectedId = $state('');
+  let filters = $state(emptySystemFilters()), filtersOpen = $state(false), reducedMotion = $state(false);
+  const filterPanelId = $props.id();
+  const filterCount = $derived(Object.values(filters).reduce((sum, values) => sum + values.length, 0));
   let detailsOpen = $state(false);
   let inventoryElement: HTMLDivElement | undefined;
   let busy = $state(false), error = $state(''), confirmation = $state<SystemComponent[]>([]);
@@ -35,7 +40,7 @@
   let refreshTask: Promise<SystemSnapshot> | undefined;
   let controller: SystemInventoryController;
   let reviewEpoch = 0;
-  const visible = $derived(filterSystem(snapshot.components, search, filter, transport));
+  const visible = $derived(filterSystem(snapshot.components, search, filters));
   const components = $derived(snapshot.components.filter(isVisibleSystemComponent));
   const selected = $derived(components.find(c => c.id === selectedId));
   const showingDetails = $derived(detailsOpen && !!selected && active);
@@ -120,11 +125,14 @@
   }
   function dialog(node: HTMLDialogElement) { node.showModal(); node.querySelector<HTMLButtonElement>('[data-cleanup-cancel]')?.focus(); return { destroy: () => node.close() }; }
   onMount(() => {
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateMotion = () => { reducedMotion = motion.matches; };
+    updateMotion(); motion.addEventListener('change', updateMotion);
     controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage: inventoryStorage, onChange: next => { snapshot = next; oninventory(next); } });
     snapshot = controller.snapshot;
     void refresh();
     const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
-    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); controller.dispose(); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
 
@@ -134,11 +142,10 @@
 <PageHeader title="Devices" eyebrow="YOUR CONNECTED SYSTEM" subtitle="Every known component, its current state, and how it connects.">{#snippet actions()}<button class="secondary-button cleanup-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}><Icon name="trash" size={14}/>Cleanup ({eligible.length})</button>{/snippet}</PageHeader>
 <div class="system-toolbar">
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
-  <select aria-label="Filter components" bind:value={filter}><option value="all">All components</option><option value="connected">Connected</option><option value="offline">Offline</option><option value="unknown">Unknown</option><option value="unavailable">Unavailable</option><option value="hidden">Hidden</option>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<option value={type}>{label}</option>{/each}</select>
-  <select aria-label="Filter connections" bind:value={transport}><option value="all">All connections</option><option value="usb">USB</option><option value="can">CAN</option><option value="network">Network</option><option value="bluetooth">Bluetooth</option><option value="software">Virtual</option><option value="unknown">Unknown connection</option></select>
+  <button class="secondary-button filter-button" class:active={filtersOpen || filterCount > 0} aria-expanded={filtersOpen} aria-controls={filterPanelId} aria-label="Filter" title={filterCount ? `Filter (${filterCount} selected)` : 'Filter devices'} onclick={() => { filtersOpen = !filtersOpen; }}><Icon name="sliders" size={17} /></button>
   <div class="mode-switch" role="group" aria-label="Devices presentation"><button disabled={$devicesMode.busy || !$devicesMode.ready} aria-label="List" title="List" class:chosen={mode === 'list'} aria-pressed={mode === 'list'} onclick={() => setMode('list')}><Icon name="grid" size={18} /></button><button disabled={$devicesMode.busy || !$devicesMode.ready} aria-label="Topology" title="Topology" class:chosen={mode === 'topology'} aria-pressed={mode === 'topology'} onclick={() => setMode('topology')}><Icon name="network" size={18} /></button></div>
 </div>
-<div class="type-counts" aria-label="Component counts"><span aria-live="polite">{visible.length} / {components.length} components</span>{#each Object.entries(systemTypeLabels).filter(([type]) => type !== 'host') as [type,label]}<span>{label}: {components.filter(c => c.type === type).length}</span>{/each}</div>
+{#if filtersOpen}<div id={filterPanelId} role="region" aria-label="Device filters" transition:slide={{ duration: reducedMotion ? 0 : 180 }}><SystemDeviceFilters bind:filters /></div>{/if}
 {#if snapshot.diagnostics.length}<details class="provider-diagnostics"><summary>Inventory diagnostics ({snapshot.diagnostics.length})</summary>{#each snapshot.diagnostics as diagnostic}<p>{diagnostic}</p>{/each}</details>{/if}
 {#if mode === 'topology'}
   <SystemTopology components={visible} context={snapshot.components} {selectedId} onselect={select} />
@@ -150,7 +157,7 @@
         {#if systemDeviceSubtext(c)}<div class="component-subtext">{systemDeviceSubtext(c)}</div>{/if}
         <div class="component-transports">{#each [...new Set(c.connections.map(x => x.transport))] as transport}<span class="quiet-tag">{transport === 'software' ? 'Virtual' : transport === 'network' ? 'Network' : transport === 'unknown' ? 'Connection unknown' : transport.toUpperCase()}</span>{:else}<span class="quiet-tag">Connection unknown</span>{/each}</div>
       </button>
-    {:else}<div class="empty-state"><strong>{components.length ? 'No matching components' : busy ? 'Loading known components…' : 'No known components'}</strong><p>Connected, offline and unavailable components appear here when their providers report them.</p><button class="text-button" onclick={() => { search = ''; filter = 'all'; transport = 'all'; }}>Clear filters</button></div>{/each}
+    {:else}<div class="empty-state"><strong>{components.length ? 'No matching components' : busy ? 'Loading known components…' : 'No known components'}</strong><p>Connected, offline and unavailable components appear here when their providers report them.</p><button class="text-button" onclick={() => { search = ''; filters = emptySystemFilters(); }}><Icon name="close" size={13} />Clear filters</button></div>{/each}
   </div>
 {/if}
 </div>
@@ -243,10 +250,11 @@
 
   .system-toolbar,.component-actions { display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px; }
   .mode-switch {display:flex;flex-shrink:0;height:38px;margin-left:auto;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-  .type-counts {display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--soft);margin-bottom:18px}
+  .filter-button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+  .filter-button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; flex-shrink: 0; }
   .mode-switch button {display:grid;place-items:center;width:38px;height:100%;padding:0;background:var(--surface);color:var(--soft);border:0;cursor:pointer}.mode-switch .chosen {background:var(--accent-bg);color:var(--accent)}
-  .system-toolbar .search-field,.system-toolbar select {height:38px}
-  select {background:var(--input-bg);color:inherit;border:1px solid var(--line);padding:10px;border-radius:6px}.search-field {flex:1;min-width:180px}
+  .system-toolbar .search-field {height:38px}
+  .search-field {flex:1;min-width:180px}
   .system-list {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,248px),1fr));gap:14px;align-items:stretch}
   .system-card {display:flex;flex-direction:column;align-items:stretch;gap:18px;min-width:0;min-height:184px;padding:20px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:12px;text-align:left;cursor:pointer;transition:background .15s,border-color .15s}
   .system-card:hover {background:var(--surface-raised);border-color:var(--muted)}

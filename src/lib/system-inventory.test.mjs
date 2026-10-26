@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INVENTORY_STORAGE_KEY, SystemInventoryRegistry, filterSystem, systemStateLabel } from './system-inventory.ts';
+import { INVENTORY_STORAGE_KEY, SystemInventoryRegistry, emptySystemFilters, filterSystem, systemStateLabel } from './system-inventory.ts';
 const observation = (id='wheel', extra={}) => ({id,name:id,type:'controller',role:'wheel',presence:'connected',hidden:null,enabled:null,owner:null,capture:'ready',status:'',diagnostics:[],connections:[{id:'usb:'+id,from:'host',to:id,transport:'usb',current:true}],targets:[],evidence:['local:'+id],references:[],observedAt:1,provider:'controllers',stale:false,forget:{allowed:false,reason:'Connected',effect:'Local record only'},...extra});
 function storage() { const values=new Map();return {getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)}; }
 test('one shared inventory preserves independent state, filters and durable first/last seen',async()=>{
  const disk=storage(),r=new SystemInventoryRegistry(disk);
  await r.update([observation('wheel',{hidden:true,enabled:false})],['controllers'],[],10);
  assert.match(systemStateLabel(r.snapshot.components[0]),/Connected · Hidden via HidHide · Disabled/);
- assert.equal(filterSystem(r.snapshot.components,'wheel','hidden').length,1);
- assert.equal(filterSystem(r.snapshot.components,'','offline').length,0);
+ assert.equal(filterSystem(r.snapshot.components,'',{visibility:['hidden']}).length,1);
+ assert.equal(filterSystem(r.snapshot.components,'',{presence:['offline']}).length,0);
  await r.update([observation()],['controllers'],[],20);
  assert.equal(r.snapshot.components[0].firstSeen,10);assert.equal(r.snapshot.components[0].lastSeen,20);
  const reload=new SystemInventoryRegistry(disk);assert.equal(reload.snapshot.components[0].presence,'unknown');assert.equal(reload.snapshot.components[0].connections[0].current,false);
@@ -58,12 +58,38 @@ test('a controller response alone cannot clear a previously observed HidHide rul
 test('duplicates are rejected; all known types remain searchable without connection evidence',async()=>{
  const r=new SystemInventoryRegistry();await assert.rejects(async()=>await r.update([observation(),observation()],['controllers']),/duplicate/);
  const components=(await r.update(['integration','virtual','gateway','osg','companion'].map(type=>observation(type,{type,connections:[],presence:'unknown'})),[])).components;
- assert.equal(filterSystem(components,'','all').length,4);assert.equal(filterSystem(components,'','virtual').length,1);assert.equal(filterSystem(components,'missing','all').length,0);
+ assert.equal(filterSystem(components,'').length,4);assert.equal(filterSystem(components,'',{types:['virtual']}).length,1);assert.equal(filterSystem(components,'missing').length,0);
 });
 
-test('transport filters include current and remembered routes and unknown unconnected nodes',async()=>{
+test('multi-select filters combine OR within groups and AND across groups and search',async()=>{
  const r=new SystemInventoryRegistry();const components=(await r.update([observation('wheel'),observation('network',{connections:[{from:'host',to:'network',id:'n',transport:'network',current:false}]}),observation('unknown',{connections:[]})],[])).components;
- assert.equal(filterSystem(components,'','all','usb').length,1);assert.equal(filterSystem(components,'','all','network')[0].id,'network');assert.equal(filterSystem(components,'','all','unknown')[0].id,'unknown');
+ assert.equal(filterSystem(components,'',{connections:['usb']}).length,1);
+ assert.equal(filterSystem(components,'',{connections:['network']})[0].id,'network');
+ assert.equal(filterSystem(components,'',{connections:['unknown']})[0].id,'unknown');
+ assert.deepEqual(filterSystem(components,'',{connections:['usb','network']}).map(c=>c.id),['wheel','network']);
+ assert.deepEqual(filterSystem(components,'network',{types:['controller','virtual'],presence:['connected','offline']}).map(c=>c.id),['network']);
+ assert.deepEqual(filterSystem(components,'',{connections:['usb','network'],types:['virtual']}).map(c=>c.id),[]);
+});
+
+test('empty filters clear all groups and unknown visibility is distinct from visible',()=>{
+ const items=[
+  observation('hidden',{hidden:true}),
+  observation('visible',{hidden:false}),
+  observation('unknown',{hidden:null,connections:[]}),
+  observation('missing-routes',{hidden:null,connections:undefined}),
+  observation('unknown-route',{hidden:null,connections:[{id:'u',from:'?',to:'?',transport:'unknown',current:false}]}),
+  observation('host',{type:'host'}),
+  observation('companion-instance:radio',{type:'companion'}),
+  observation('unbound',{type:'integration',evidence:[]}),
+ ];
+ const filters=emptySystemFilters();
+ assert.deepEqual(filters,{types:[],connections:[],presence:[],visibility:[]});
+ filters.types.push('virtual');
+ assert.deepEqual(emptySystemFilters(),{types:[],connections:[],presence:[],visibility:[]});
+ assert.deepEqual(filterSystem(items,'',{visibility:['visible']}).map(c=>c.id),['visible']);
+ assert.deepEqual(filterSystem(items,'',{visibility:['hidden','unknown']}).map(c=>c.id),['hidden','unknown','missing-routes','unknown-route']);
+ assert.deepEqual(filterSystem(items,'',{types:['controller'],visibility:['hidden','unknown'],connections:['usb','unknown']}).map(c=>c.id),['hidden','unknown','missing-routes','unknown-route']);
+ assert.deepEqual(filterSystem(items,'').map(c=>c.id),['hidden','visible','unknown','missing-routes','unknown-route']);
 });
 
 test('unavailable providers and restart clear current input/configuration ownership rather than repeating old claims',async()=>{
@@ -177,9 +203,9 @@ test('legacy tombstones remain readable and malformed persisted tombstones canno
 
 test('bound integrations appear without telemetry and panels stay on companions',async()=>{
  const items=[observation('integration:acr',{type:'integration',presence:'unknown',evidence:['active-bindings']}),observation('integration:dcs',{type:'integration'}),observation('companion-instance:panel',{type:'companion'}),observation('companion:tablet',{type:'companion',status:'Panel: Radio'})];
- assert.deepEqual(filterSystem(items,'','all').map(c=>c.id),['integration:acr','companion:tablet']);
- assert.deepEqual(filterSystem(items,'Radio','all').map(c=>c.id),['companion:tablet']);
- assert.equal(filterSystem([{...items[0],stale:true}],'','all').length,0);
+ assert.deepEqual(filterSystem(items,'').map(c=>c.id),['integration:acr','companion:tablet']);
+ assert.deepEqual(filterSystem(items,'Radio').map(c=>c.id),['companion:tablet']);
+ assert.equal(filterSystem([{...items[0],stale:true}],'').length,0);
 });
 
 test('device inventory excludes unpaired setup records and drops revoked installations',async()=>{
@@ -188,10 +214,10 @@ test('device inventory excludes unpaired setup records and drops revoked install
  const setup=observation('companion-usb:COM7',{type:'companion',provider:'companions'});
  const pending=observation('companion-pending:request',{type:'companion',provider:'companions'});
  await registry.update([paired,setup,pending],['companions']);
- assert.deepEqual(filterSystem(registry.snapshot.components,'','all').map(c=>c.id),['companion:tablet']);
- const reloaded=new SystemInventoryRegistry(disk);assert.deepEqual(filterSystem(reloaded.snapshot.components,'','all').map(c=>c.id),['companion:tablet']);
- await reloaded.update([],[],['Companions unavailable']);assert.equal(filterSystem(reloaded.snapshot.components,'','all').length,1);
- await reloaded.update([],['companions']);assert.equal(filterSystem(reloaded.snapshot.components,'','all').length,0);
+ assert.deepEqual(filterSystem(registry.snapshot.components,'').map(c=>c.id),['companion:tablet']);
+ const reloaded=new SystemInventoryRegistry(disk);assert.deepEqual(filterSystem(reloaded.snapshot.components,'').map(c=>c.id),['companion:tablet']);
+ await reloaded.update([],[],['Companions unavailable']);assert.equal(filterSystem(reloaded.snapshot.components,'').length,1);
+ await reloaded.update([],['companions']);assert.equal(filterSystem(reloaded.snapshot.components,'').length,0);
 });
 test('a stale registry cannot resurrect another windows acknowledged Forget tombstone',async()=>{
  const disk=storage(),first=new SystemInventoryRegistry(disk),second=new SystemInventoryRegistry(disk),item=offline('shared');

@@ -611,12 +611,12 @@ test('integration visibility follows immutable applied bindings even while telem
  let edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];
  h.custom.set('profile_runtime_topology',request=>({profileTopology:{schemaVersion:1,owner,appliedSnapshot:snapshot,programHash:'sha256:'+'b'.repeat(64),capturedUs:'1',offset:0,total:request.section==='nodes'?2:edges.length,section:request.section,items:request.section==='nodes'?[{id:'acr',name:'ACR',kind:'game',summary:'Integration'},{id:'radio',name:'Radio',kind:'companion',summary:'Panel'}]:edges}}));
  await h.controller.refresh();
- let visible=filterSystem(h.controller.snapshot.components,'','all');
+ let visible=filterSystem(h.controller.snapshot.components,'');
  assert.ok(visible.some(c=>c.id==='integration:assetto-corsa-rally'));
  assert.ok(!visible.some(c=>c.id==='integration:dcs'||c.id.startsWith('companion-instance:')));
  assert.match(h.component('companion:tablet').status,/Panel: Radio/);
- edges=[];await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'','all').some(c=>c.type==='integration'));
- edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];h.state.runtime={state:'stopped',owner:null,appliedSnapshot:null};await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'','all').some(c=>c.type==='integration'));
+ edges=[];await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'').some(c=>c.type==='integration'));
+ edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];h.state.runtime={state:'stopped',owner:null,appliedSnapshot:null};await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'').some(c=>c.type==='integration'));
 });
 
 test('offline companions expose configured transports on first load and retain them across polls',async()=>{

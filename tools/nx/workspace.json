@@ -63,6 +63,7 @@
         "src/lib/system-*.mjs",
         "src/lib/system-*.svelte",
         "src/lib/System*.svelte",
+        "src/lib/filters/**/*",
         "src/lib/host-controller*.ts",
         "src/lib/host-controller*.mjs",
         "src/lib/host-controller*.svelte",

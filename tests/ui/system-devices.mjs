@@ -120,12 +120,25 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
   const base = () => ({ connected: false, running: false, needsReconnect: false, modules: [], ports: fixture.ports,
     games: fixture.games, companions: fixture.companions, profiles: listing });
   const result = fields => ({ ok: true, state: { ...base(), ...clone(fields) } });
+  const uiPreferences = { entries: Object.fromEntries(Object.entries({
+    theme: false, 'devices-mode': 'list', 'canvas-navigation': { wheelAction: 'pan' },
+    'canvas-styling': { arrowStyle: 'smooth', cornerRadius: 24 }, remembered: null,
+    tray: { closeToTray: false, minimizeToTray: false }, progress: { delivery: 'system', position: 'bottom-right' },
+  }).map(([key, value]) => [key, { revision: 0, value }])) };
   await page.route('**/api/gateway/**', async route => { unexpected.push('HTTP fallback bypassed fixture IPC'); await route.abort(); });
   await page.exposeFunction('__osgNativeInvoke', async (command, args) => {
+    if (command === 'persistence_ui_read') return clone(uiPreferences);
     if (command === 'optional_dependencies') return { supported: false, dependencies: [] };
     if (command === 'open_hidhide') { hidHideOpens++; return; }
     if (command !== 'gateway_request') throw Error(`Unexpected invocation: ${command}`);
     const request = clone(args.request); requests.push(request);
+    if (request.command === 'ui_preferences_save') {
+      const previous = uiPreferences.entries[request.key];
+      assert.equal(request.expectedRevision, previous.revision);
+      const saved = { revision: previous.revision + 1, value: clone(request.value) };
+      uiPreferences.entries[request.key] = saved;
+      return result({ uiPreferences: saved });
+    }
     const offset = request.offset ?? 0;
     if (request.command === 'profile_activation_current') return result({ profileActivation: null });
     if (request.command === 'profile_game_candidates') return result({ profiles: { gameId: request.gameId, profiles: [], preferredProfileId: null } });
@@ -175,7 +188,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
       total: fixture.native.hiddenDevices.length + fixture.native.controllerAssociations.length,
       hiddenDevices: offset === 0 ? fixture.native.hiddenDevices : [], controllerAssociations: offset === 0 ? [] : fixture.native.controllerAssociations,
       nextOffset: offset === 0 ? fixture.native.hiddenDevices.length : null } });
-    if (request.command === 'companion_status') return result({ companions: fixture.companions });
+    if (['companion_inventory', 'companion_status'].includes(request.command)) return result({ companions: fixture.companions });
     if (['companion_usb_ports','companion_usb_update_prepare'].includes(request.command)) {
       fixture.companions.usbPorts=[{port:'COM-fixture-companion',name:'Fixture USB',vid:0x1a86,pid:0x7523}];
       return result({companions:fixture.companions});
@@ -247,8 +260,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(nav.getByRole('button', { name: 'Topology', exact: true })).toHaveCount(0);
     const devices = page.getByRole('region', { name: 'System devices', exact: true });
     const search = page.getByRole('textbox', { name: 'Search components', exact: true });
-    const filter = page.getByRole('combobox', { name: 'Filter components', exact: true });
-    const connections = page.getByRole('combobox', { name: 'Filter connections', exact: true });
+    await devices.getByRole('button', { name: 'Filter', exact: true }).click();
+    const filters = devices.getByRole('region', { name: 'Device filters', exact: true });
+    const types = filters.getByRole('group', { name: 'Type', exact: true });
+    const connections = filters.getByRole('group', { name: 'Connection type', exact: true });
+    const statuses = filters.getByRole('group', { name: 'Status', exact: true });
+    const visibility = filters.getByRole('group', { name: 'Visibility', exact: true });
     const list = page.getByRole('button', { name: 'List', exact: true }), topology = page.getByRole('button', { name: 'Topology', exact: true });
     await expect(page.getByRole('button', { name: 'Refresh devices', exact: true })).toHaveCount(0);
     async function waitForInventoryRefresh() {
@@ -300,22 +317,22 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(offlineTile).toHaveCSS('text-align', 'left');
     await offlineTile.evaluate(node => node.classList.add('component-tile'));
     await page.screenshot({ path: resolve(artifacts, 'system-tiles.png'), fullPage: true });
-    await expect(devices.locator('.type-counts')).toContainText('Physical · Third-party: 3');
-    await expect(devices.locator('.type-counts')).toContainText('Physical · OSG: 4');
-    await expect(devices.locator('.type-counts')).toContainText('Gateway · OSG: 2');
+    await expect(devices.getByLabel('Component counts', { exact: true })).toHaveCount(0);
+    await expect(devices.getByRole('combobox', { name: 'Filter components', exact: true })).toHaveCount(0);
+    await expect(devices.getByRole('combobox', { name: 'Filter connections', exact: true })).toHaveCount(0);
     fixture.controllerDelayMs = 300;
     const previousControllerPages = fixture.completedControllerPages;
     await expect.poll(() => fixture.completedControllerPages, { timeout: 8_000 }).toBeGreaterThan(previousControllerPages + 1);
-    await expect(filter).toBeEnabled();
+    await expect(types.getByRole('checkbox').first()).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Refresh devices', exact: true })).toHaveCount(0);
     await expect(page.getByText('Refreshing…', { exact: true })).toHaveCount(0);
     fixture.controllerDelayMs = 0;
-    await connections.selectOption('can');
+    await connections.getByRole('checkbox', { name: 'CAN', exact: true }).check();
     await expect(devices.locator('.system-list [data-component-id]')).toHaveCount(3);
-    await topology.click(); await expect(connections).toHaveValue('can');
+    await topology.click(); await expect(connections.getByRole('checkbox', { name: 'CAN', exact: true })).toBeChecked();
     await expect(devices.locator(`[data-component-id="gateway:${firstGateway}"]`)).toBeVisible();
     await expect(devices.locator(`[data-component-id="gateway:${secondGateway}"]`)).toBeVisible();
-    await list.click(); await expect(connections).toHaveValue('can'); await connections.selectOption('all');
+    await list.click(); await expect(connections.getByRole('checkbox', { name: 'CAN', exact: true })).toBeChecked(); await connections.getByRole('checkbox', { name: 'CAN', exact: true }).uncheck();
     await devices.locator('[data-component-id="virtual:vjoy:3"]').click();
     const details = page.getByRole('region', { name: 'Component details', exact: true });
     const backToDevices = devices.getByRole('button', { name: 'Back to Devices', exact: true });
@@ -340,8 +357,8 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(list).toHaveAttribute('aria-pressed', 'true');
     await expect(virtualTile).toHaveAttribute('aria-pressed', 'true');
     await search.fill('External busy virtual joystick');
-    await filter.selectOption('virtual');
-    await connections.selectOption('software');
+    await types.getByRole('checkbox', { name: 'Virtual', exact: true }).check();
+    await connections.getByRole('checkbox', { name: 'Virtual', exact: true }).check();
     await virtualTile.click();
     await expect(details).toBeVisible();
     await nav.getByRole('button', { name: 'Overview', exact: true }).click();
@@ -350,10 +367,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(details).not.toBeVisible();
     await expect(devices.locator('.system-list')).toBeVisible();
     await expect(search).toHaveValue('External busy virtual joystick');
-    await expect(filter).toHaveValue('virtual');
-    await expect(connections).toHaveValue('software');
+    await expect(types.getByRole('checkbox', { name: 'Virtual', exact: true })).toBeChecked();
+    await expect(connections.getByRole('checkbox', { name: 'Virtual', exact: true })).toBeChecked();
     await expect(virtualTile).toHaveAttribute('aria-pressed', 'true');
-    await search.fill(''); await filter.selectOption('all'); await connections.selectOption('all');
+    await search.fill(''); await filters.getByRole('button', { name: 'Clear', exact: true }).click();
     await topology.click();
     const graph = page.getByRole('region', { name: 'System topology', exact: true });
     await expect(graph).toBeVisible();
@@ -448,7 +465,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(graph.locator('[data-component-id="gateway:stm32:00112233445566778899aabb"]')).toBeVisible();
     await list.click(); await expect(search).toHaveValue('Dual transport panel');
     await expect(devices.locator('[data-component-id]')).toHaveCount(1);
-    await search.fill(''); await filter.selectOption('hidden');
+    await search.fill(''); await visibility.getByRole('checkbox', { name: 'Hidden', exact: true }).check();
     await expect(devices.locator('[data-component-id]')).toHaveCount(1);
     await expect(devices.locator('[data-component-id="controller:pedals"]')).toHaveAccessibleName(/Connected · Hidden/);
     await devices.locator('[data-component-id="controller:pedals"]').click();
@@ -480,9 +497,9 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await page.screenshot({ path: resolve(artifacts, 'component-controller-narrow.png'), fullPage: true });
     await page.setViewportSize({ width: 1500, height: 1100 });
     await backToDevices.click();
-    await topology.click(); await expect(filter).toHaveValue('hidden');
+    await topology.click(); await expect(visibility.getByRole('checkbox', { name: 'Hidden', exact: true })).toBeChecked();
     await expect(graph.locator('[data-component-id="controller:pedals"]')).toHaveAttribute('aria-pressed', 'true');
-    await list.click(); await filter.selectOption('all');
+    await list.click(); await filters.getByRole('button', { name: 'Clear', exact: true }).click();
     // Provider failure keeps prior records explicitly uncertain, independently
     // of successful integration/USB/native inspection.
     fixture.failControllers = true; await waitForInventoryRefresh();
@@ -1103,7 +1120,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await waitForInventoryRefresh(); await expect(devices.locator('[data-component-id="virtual:vjoy:4"]')).toHaveCount(0);
     // Bulk cleanup offers a selectable table. Cancel and unchecked rows never
     // mutate devices, while each checked row is revalidated before removal.
-    await filter.selectOption('offline'); await search.fill('Remembered'); await topology.click();
+    await statuses.getByRole('checkbox', { name: 'Offline', exact: true }).check(); await search.fill('Remembered'); await topology.click();
     await page.getByRole('button', { name: 'Cleanup (2)', exact: true }).click();
     await expect(dialog).toContainText('Remembered wheel'); await expect(dialog).toContainText('Remembered throttle');
     await expect(dialog).toContainText('retained-throttle-binding');
@@ -1168,7 +1185,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     assert.equal(requests.filter(request => request.command === 'controller_forget' && request.sourceId === 'remembered-throttle').length, 2);
     await expect(selectThrottle).toHaveCount(0);
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await filter.selectOption('all'); await search.fill(''); await list.click();
+    await filters.getByRole('button', { name: 'Clear', exact: true }).click(); await search.fill(''); await list.click();
     // Mode survives remount and page reload; no inspection acquired ownership.
     await topology.click(); await page.reload(); await nav.getByRole('button', { name: /^Devices(?:\s|$)/ }).click();
     await expect(graph).toBeVisible(); await expect(search).toHaveValue('');

@@ -24,7 +24,7 @@ test('cleanup removes completed rows, cancels the queue, and protects profile de
    {id:'vjoy:1',name:'Connected virtual device',backend:'vjoy',available:true,enabled:true,diagnostics:[]},
    {id:'vjoy:2',name:'Offline virtual device',backend:'vjoy',available:false,enabled:false,diagnostics:[]},
   ],diagnostics:[],visibilityInspected:true}};
-  else if(r.command==='companion_status')state={companions:{host:{clients:[],instances:[]},usb:{devices:[]}}};
+  else if(r.command==='companion_inventory')state={companions:{host:{clients:[],instances:[]},usb:{devices:[]}}};
   else if(r.command==='profile_status')state={profiles:{profileSession:{state:'stopped'}}};
   else if(r.command==='game_get_state')state={games:{catalogue:[]}};
   else if(r.command==='profile_resources_list')state={profileResources:{session:'cleanup',revision:'1',offset:0,total:0,resources:[]}};
