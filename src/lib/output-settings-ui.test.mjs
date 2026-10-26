@@ -14,13 +14,14 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const initial = () => ({
   desktop: { enabled: false, qualified: true, state: 'stopped', reason: '', scope: { kind: 'application' } },
   visibility: { enabled: false, qualified: true, settingsError: null, selfAccess: { message: 'Capture access configured.' } },
-  inventory: { virtualDevices: [{ id: 'vjoy:1', name: 'vJoy Device 1', status: 'free' }], diagnostics: [] },
+  inventory: { virtualDevices: [{ id: 'vjoy:1', name: 'vJoy Device 1', status: 'free' }], diagnostics: [],
+    drivers: { supported: true, vjoy: { installed: true, version: '2.2.2.0', error: null }, hidhide: { installed: true, version: '1.5.230.0', error: null } } },
 });
 async function harness(send, { nativeApp = true, overrides = {} } = {}) {
   const file = new URL('./OutputSettings.svelte', import.meta.url);
   const source = (await readFile(file, 'utf8')).replace('</script>', 'desktop=seed.desktop;visibility=seed.visibility;inventory=seed.inventory;capture({refresh,enableVisibility,enableDesktop,manageDriver,get state(){return {desktop,visibility,inventory,busy,error};}});</script>');
   const { js } = compile(source, { filename: file.pathname, generate: 'server' });
-  const exports = {}, requests = [], invocations = [], seed = { ...initial(), ...overrides };
+  const exports = {}, requests = [], invocations = [], setups = [], seed = { ...initial(), ...overrides };
   let handlers,settingsVersion=1;
   const native=async request=>{
     if(send)return send(request,seed);
@@ -35,6 +36,7 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
     require(name) {
       if (name === 'svelte/internal/server') return server;
       if (name === 'svelte') return svelte;
+      if (name === './OptionalDependencies.svelte') return { default: (_payload, props) => { setups.push(props.only); } };
       if (name.endsWith('.svelte')) return { default: () => {} };
       if (name === '@tauri-apps/api/core') return { isTauri: () => nativeApp, invoke: async command => { invocations.push(command); } };
       if (modules.has(name)) return modules.get(name);
@@ -43,7 +45,7 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
     },
   });
   const html = render(exports.default).body;
-  return { html, handlers, requests, invocations };
+  return { html, handlers, requests, invocations, setups };
 }
 
 test('Settings owns driver tools and machine enablement while application scope belongs to profile blocks', async () => {
@@ -99,4 +101,19 @@ test('browser settings explain where native driver tools are available', async (
   assert.ok(!h.html.includes('>Configure</button>'));
   assert.ok(!h.html.includes('>Manage</button>'));
   assert.deepEqual(h.invocations, []);
+});
+
+test('installed driver versions sit beside their names and setup stays inside missing driver cards', async () => {
+  const installed = await harness();
+  assert.ok(installed.html.includes('2.2.2.0')); assert.ok(installed.html.includes('1.5.230.0'));
+  assert.deepEqual(installed.setups, []);
+  assert.ok(!installed.html.includes('Driver installers'));
+  const missing = await harness(null, { overrides: { inventory: { ...initial().inventory, drivers: { supported: true,
+    vjoy: { installed: false, version: null, error: null }, hidhide: { installed: false, version: null, error: null } } } } });
+  assert.deepEqual(missing.setups, ['vjoy', 'hidhide']);
+  assert.ok(!missing.html.includes('>Configure</button>')); assert.ok(!missing.html.includes('>Manage</button>'));
+  const unknown = await harness(null, { overrides: { inventory: { ...initial().inventory, drivers: { ...initial().inventory.drivers,
+    vjoy: { installed: null, version: null, error: 'Driver metadata could not be read.' } } } } });
+  assert.ok(unknown.html.includes('Driver metadata could not be read.'));
+  assert.deepEqual(unknown.setups, [], 'Failed inspection must not claim a driver is missing.');
 });

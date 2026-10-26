@@ -9,6 +9,11 @@ import { gameIntegrationLabel, type GameId } from './games.ts';
 import { SystemInventoryRegistry, type InventoryStorage, type SystemObservation, type SystemComponent, type SystemSnapshot, type SystemTarget } from './system-inventory.ts';
 
 export type NativeSystemInventory = {
+  drivers: {
+    supported: boolean;
+    vjoy: { installed: boolean | null; version: string | null; error: string | null };
+    hidhide: { installed: boolean | null; version: string | null; error: string | null };
+  };
   observedAt?: number;
   visibilityInspected?: boolean;
   offset?: number; total?: number; nextOffset?: number | null;

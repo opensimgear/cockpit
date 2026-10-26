@@ -18,6 +18,7 @@ test('output cards preserve native setup, enablement, error states and compact r
   const requests = [], invocations = [], errors = [];
   const visibility = { enabled: false, qualified: true, settingsError: null, selfAccess: { message: 'Capture access configured.' } };
   const desktop = { enabled: false, qualified: true, state: 'stopped', reason: '', scope: { kind: 'application' } };
+  const drivers = { supported: true, vjoy: { installed: true, version: '2.2.2.0', error: null }, hidhide: { installed: true, version: '1.5.230.0', error: null } };
   let revision = 1, rejectWrite = false;
   const version = () => `sha256:${String(revision).padStart(64, '0')}`;
   const snapshot = () => ({ scope: 'desktop', gameId: null, revision: version(), settings: { enabled: desktop.enabled, scope: desktop.scope }, profileSession: { owner: null } });
@@ -28,12 +29,15 @@ test('output cards preserve native setup, enablement, error states and compact r
       { id: 'vjoy', name: 'vJoy', version: '2.2', purpose: 'Virtual controller driver.' },
       { id: 'hidhide', name: 'HidHide', version: '1.5', purpose: 'Physical controller visibility.' },
     ] };
-    if (command === 'optional_dependency_install') return 'Installer opened.';
+    if (command === 'optional_dependency_install') {
+      drivers[args.id] = { installed: true, version: args.id === 'vjoy' ? '2.2.2.0' : '1.5.230.0', error: null };
+      return 'Installer finished.';
+    }
     if (['open_vjoy', 'open_hidhide'].includes(command)) return;
     assert.equal(command, 'gateway_request');
     const request = args.request; requests.push(request);
     let state;
-    if (request.command === 'system_inventory') state = { systemInventory: { diagnostics: [], virtualDevices: [
+    if (request.command === 'system_inventory') state = { systemInventory: { drivers, diagnostics: [], virtualDevices: [
       { id: 'vjoy:1', name: 'vJoy Device 1', status: 'free' }, { id: 'vjoy:2', name: 'vJoy Device 2', status: 'busy', owner: 'Flight simulator' },
     ] } };
     else if (request.command === 'controller_visibility_status') state = { controllers: { visibility } };
@@ -59,6 +63,10 @@ test('output cards preserve native setup, enablement, error states and compact r
     const desktopToggle = keyboard.getByRole('switch', { name: 'Enable desktop output on this computer', exact: true });
     await expect(virtual.getByRole('status')).toHaveText('2 configured');
     await expect(virtual).toContainText('busy · Flight simulator');
+    await expect(virtual.locator('.card-title')).toContainText('vJoy · 2.2.2.0');
+    await expect(virtual.getByRole('button', { name: 'Set up', exact: true })).toHaveCount(0);
+    await expect(setup.getByText('Driver installers', { exact: true })).toHaveCount(0);
+    assert.equal(invocations.filter(call => call.command === 'optional_dependencies').length, 0, 'Installed drivers do not load installers.');
     await expect(hidingToggle).toBeEnabled(); await expect(desktopToggle).toBeEnabled();
     assert.ok(requests.every(request => !request.command.endsWith('_save') && request.command !== 'controller_visibility_enable'));
     await hidingToggle.check(); await expect(hiding.getByRole('status').first()).toHaveText('Enabled');
@@ -66,14 +74,21 @@ test('output cards preserve native setup, enablement, error states and compact r
     await virtual.getByRole('button', { name: 'Configure', exact: true }).click();
     await hiding.getByRole('button', { name: 'Manage', exact: true }).click();
     assert.ok(invocations.some(call => call.command === 'open_vjoy')); assert.ok(invocations.some(call => call.command === 'open_hidhide'));
-    const installers = setup.locator('.optional-dependencies');
-    await expect(installers).not.toHaveAttribute('open', '');
-    await installers.locator('summary').click();
-    await expect(installers).toContainText('Windows administrator approval');
-    await installers.getByRole('group', { name: 'vJoy', exact: true }).getByRole('button', { name: 'Set up', exact: true }).click();
-    assert.ok(invocations.some(call => call.command === 'optional_dependency_install' && call.args.id === 'vjoy'));
-    await installers.locator('summary').click();
     await page.screenshot({ path: resolve(artifacts, 'outputs-desktop.png'), fullPage: true });
+    drivers.vjoy = { installed: false, version: null, error: null };
+    drivers.hidhide = { installed: false, version: null, error: null };
+    await setup.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await expect(virtual.getByRole('button', { name: 'Set up', exact: true })).toBeVisible();
+    await expect(hiding.getByRole('button', { name: 'Set up', exact: true })).toBeVisible();
+    await expect(virtual.getByRole('button', { name: 'Configure', exact: true })).toHaveCount(0);
+    await expect(virtual.locator('.driver-version')).toHaveCount(0);
+    await expect(setup.locator('details')).toHaveCount(0);
+    await page.screenshot({ path: resolve(artifacts, 'outputs-missing-drivers.png'), fullPage: true });
+    await virtual.getByRole('button', { name: 'Set up', exact: true }).click();
+    assert.ok(invocations.some(call => call.command === 'optional_dependency_install' && call.args.id === 'vjoy'));
+    await expect(virtual.locator('.card-title')).toContainText('vJoy · 2.2.2.0');
+    await expect(virtual.getByRole('button', { name: 'Set up', exact: true })).toHaveCount(0);
+    await expect(virtual.getByRole('button', { name: 'Configure', exact: true })).toBeEnabled();
     rejectWrite = true;
     await desktopToggle.click();
     await expect(setup.getByRole('alert')).toContainText('revision conflict');

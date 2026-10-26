@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use std::{sync::Mutex, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 #[path = "system_inventory_associations.rs"]
 mod associations;
+#[path = "optional_dependencies/installed.rs"]
+mod installed;
 pub(crate) use associations::collect as controller_associations;
 
 pub(crate) struct Runtime {
@@ -42,6 +44,11 @@ impl Runtime {
         } else {
             compose(Default::default(), Ok(vec![]), Ok((vec![],vec![])))
         };
+        value["drivers"] = if self.native {
+            installed::inspect()
+        } else {
+            installed::unsupported()
+        };
         if value["controllerAssociations"].is_null() {value["controllerAssociations"]=json!([]);}
         *snapshot = Some((observed, value.clone()));
         page(&value,offset,limit)
@@ -57,7 +64,7 @@ fn page(value:&Value,offset:usize,limit:usize)->Result<Value,String> {
         let hidden=selected.iter().filter(|(association,_)|!*association).map(|(_,value)|value).collect::<Vec<_>>();
         let related=selected.iter().filter(|(association,_)|*association).map(|(_,value)|value).collect::<Vec<_>>();
         let response=json!({"observedAt":value["observedAt"],"virtualDevices":value["virtualDevices"],
-            "diagnostics":value["diagnostics"],"visibilityInspected":value["visibilityInspected"],"hiddenDevices":hidden,"controllerAssociations":related,"offset":offset,"total":items.len(),
+            "diagnostics":value["diagnostics"],"visibilityInspected":value["visibilityInspected"],"drivers":value["drivers"],"hiddenDevices":hidden,"controllerAssociations":related,"offset":offset,"total":items.len(),
             "hiddenTotal":devices.len(),"associationTotal":associations.len(),"nextOffset":if next<items.len(){Some(next)}else{None}});
         if serde_json::to_vec(&response).map_err(|e|e.to_string())?.len()<=60_000 {return Ok(response);}
         if selected.len()<=1 {return Err("System inventory metadata exceeds the native reply budget.".into());}
@@ -171,12 +178,14 @@ mod tests {
     #[test]
     fn hidden_inventory_pages_preserve_all_devices_within_native_transport_budget() {
         let devices=(0..100).map(|id|json!({"id":id,"ancestors":["a".repeat(4000)]})).collect::<Vec<_>>();
-        let inventory=json!({"observedAt":1,"virtualDevices":[],"hiddenDevices":devices,"diagnostics":[]});
+        let drivers = json!({"supported":true,"vjoy":{"installed":true,"version":"1.2.3.4","error":null},"hidhide":{"installed":false,"version":null,"error":null}});
+        let inventory=json!({"observedAt":1,"virtualDevices":[],"hiddenDevices":devices,"diagnostics":[],"drivers":drivers});
         let mut offset=0;
         let mut count=0;
         loop {
             let response=page(&inventory,offset,32).unwrap();
             assert!(response.to_string().len()<=60_000);
+            assert_eq!(response["drivers"]["vjoy"]["version"],"1.2.3.4");
             assert_eq!(response["total"],100);
             count+=response["hiddenDevices"].as_array().unwrap().len();
             let Some(next)=response["nextOffset"].as_u64() else {break;};
@@ -211,6 +220,15 @@ mod tests {
         assert!(value["virtualDevices"].is_array());
         assert!(value["hiddenDevices"].is_array());
         assert!(value["controllerAssociations"].is_array());
+        assert_eq!(
+            value["drivers"]["supported"],
+            cfg!(all(target_os = "windows", target_arch = "x86_64"))
+        );
+        for driver in ["vjoy","hidhide"] {
+            assert!(value["drivers"][driver]["installed"].is_boolean() || value["drivers"][driver]["installed"].is_null());
+            assert!(value["drivers"][driver]["version"].is_string() || value["drivers"][driver]["version"].is_null());
+            assert!(value["drivers"][driver]["error"].is_string() || value["drivers"][driver]["error"].is_null());
+        }
         assert_eq!(value,runtime.request(&request,&controllers,|_|panic!("Cached inspection must not observe providers again")).unwrap());
         for fields in [json!({"offset":4097}),json!({"offset":-1}),json!({"limit":0}),json!({"limit":33}),json!({"observedAt":0})] {
             let mut invalid=request.clone();for (key,value) in fields.as_object().unwrap(){invalid[key]=value.clone();}
