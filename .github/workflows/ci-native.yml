@@ -314,6 +314,9 @@ jobs:
           # Reuse the instrumented desktop build from the preceding coverage step.
           CARGO_TARGET_DIR: ${{ github.workspace }}/.research/module-usb-coverage/target
         run: python scripts/companion-coverage.py
+      - name: Installed game libraries and MCP have at least 71 percent line coverage
+        if: runner.os == 'Windows'
+        run: python scripts/game-library-coverage.py
       - name: Build Windows desktop and service binaries
         if: runner.os == 'Windows'
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin osg-gateway-service --bin osg-cockpit
@@ -369,6 +372,10 @@ jobs:
             .research/companion-coverage/summary.json
             .research/companion-coverage/*-tests.log
             .research/companion-coverage/*-lines.txt
+            .research/game-library-coverage/summary.json
+            .research/game-library-coverage/source-hashes.json
+            .research/game-library-coverage/*-lines.txt
+            .research/game-library-coverage/tests.log
             .research/companion-c4/native-acceptance.json
             .research/companion-c5/native-feedback-acceptance.json
 

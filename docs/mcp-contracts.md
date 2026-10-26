@@ -55,7 +55,8 @@ All write rows also require `operationId` unless noted as passive preparation.
 | `profile_create`, `profile_duplicate`, `profile_import`, `profile_rename`, `profile_delete` · write | Name, source `id` or typed document as advertised; rename/delete require `expectedRevision` | Same named `profile_*` commands. Native bounds, fresh-copy/import identities, Default protection, revision checks, storage validation, and deletion admission apply. No implicit reset. |
 | `resources_list`, `resource_inspect`, `resource_search_ports` · read | `page`; exact `resourceId` for inspect/search; search text | `profile_resources_list`, `profile_resources_inspect`. Search scans one exact bounded resource and rejects changing capability stamps; retained metadata never grants writer authority. |
 | `processing_operations_list` · read | Optional `search`, category enum, `page` | Native `Operation` type definitions, expanded parameter schemas, stable hashes. No execution or output acquisition. Compatibility still requires compiler validation of declared ports. |
-| `games_list`, `game_vehicles_list` · read | `page`; exact `gameId` plus optional `search` for vehicles | `game_get_state`. Game summaries omit nested vehicle arrays and provide a lookup tool/count; vehicle pages carry retained catalogue/setup stamp and current context without selecting a vehicle or starting a provider. |
+| `games_list`, `game_discovery_status`, `game_vehicles_list` · read | `page`; discovery status requires exact `scanId`; vehicles require `gameId` plus optional `search` | `game_get_state`. Game summaries omit nested vehicle arrays and provide a lookup tool/count; discovery status pages the current scan snapshot and rejects stale scan IDs; vehicle pages carry retained catalogue/setup stamp and current context without selecting a vehicle or starting a provider. |
+| `game_discovery_start`, `game_discovery_apply`, `game_save`, `game_remove`, `game_installation_select` · write | Start accepts optional `paths`; status uses `scanId` and page; Apply requires exact `scanId` and bounded typed `actions`; metadata changes require exact game/installation selectors. Every write uses `operationId`. | Shared native game discovery starts asynchronously and returns the scan identity/snapshot immediately. Status exposes progress, candidates, defaults and diagnostics. Apply atomically revalidates and commits selected Add/Update/Remove actions. Save edits one discovered game's metadata, Remove deletes one registration, and installation selection updates only the preferred installation; none launches a game. Writes return bounded receipts, without catalogue images, so operation replay remains stable. Discovery pages expose `hasArtwork` and omit image bytes. |
 | `game_telemetry_inspect` · read | Optional game/search/group and `page` | `game_telemetry_inspect`. Passive bounded current/cached channel inspection; no provider start. |
 | `game_aircraft_resource` · write | Exact installed `vehicleId` | `profile_dcs_vehicle_resource`. Explicit aircraft catalogue registration changes inventory discovery; accepts no file path and does not activate a provider/profile/game. |
 | `companions_list`, `companion_panels_list`, `companion_inspect` · read | `page`; inspect requires native resource ID and immutable publication hash | Native resource inventory plus `profile_companion_catalogue` / `profile_companion_inspect`. Device identities and retained verified panel publications remain distinct. |
@@ -84,6 +85,10 @@ The exact local-setting scopes are `game-provider`, `desktop`, `selection-mode`,
 `game-rule`, and `game-preference`. Their native field sets are documented by the
 workflow resource and enforced in
 [profile_local_settings.rs](../src-tauri/src/profile_local_settings.rs).
+Game IDs in saved rules and profile eligibility use lowercase ASCII letters,
+digits and hyphens, are 1–96 bytes, and start with a letter or digit. Recognized
+IDs such as `dcs` and `x-plane-11` remain canonical game identities; discovery
+may also register any syntactically valid unknown ID without a custom prefix.
 
 ## Error and lifetime invariants
 

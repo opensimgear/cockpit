@@ -62,7 +62,7 @@ pub(super) fn collect(
     directory: &Path,
 ) -> Result<Vec<Asset>, String> {
     let mut paths = BTreeMap::new();
-    if let Some(record) = database.read("games", "installations")? {
+    if let Some(record) = database.read("games", "library")? {
         let settings: crate::game_installations::Settings =
             serde_json::from_slice(&record.payload).map_err(|_| "Invalid saved game registry.")?;
         settings.validate()?;

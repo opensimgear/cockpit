@@ -1,7 +1,7 @@
 <script lang="ts">
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
-  import {supportedGames,type GameId} from './games';
+  import {gameCatalogue,type GameId} from './games';
   import {GameTelemetryClient,GameTelemetryController,preferredTelemetryGame,telemetryAge,telemetryContext,telemetryStatus,telemetryValue} from './game-telemetry';
   let {active=true,controller:supplied}:{active?:boolean;controller?:GameTelemetryController}=$props();
   const provided=untrack(()=>supplied),inspector=provided??new GameTelemetryController(new GameTelemetryClient(async request=>(await gatewayRequest(request)).gameTelemetry));
@@ -33,7 +33,7 @@
 
 <section class="game-telemetry" aria-label="Incoming game telemetry">
   <div class="telemetry-toolbar">
-    <label>Game<select aria-label="Telemetry game" value={gameId} onchange={event=>chooseGame(event.currentTarget.value)}>{#if !gameId}<option value="">Choose automatically</option>{/if}{#each supportedGames as supported (supported.id)}{@const summary=view.report?.games.find(game=>game.id===supported.id)}<option value={supported.id}>{supported.name}{summary?` · ${telemetryStatus(summary.status)}`:''}</option>{/each}</select></label>
+    <label>Game<select aria-label="Telemetry game" value={gameId} onchange={event=>chooseGame(event.currentTarget.value)}>{#if !gameId}<option value="">Choose automatically</option>{/if}{#each $gameCatalogue.filter(item=>item.provider) as supported (supported.id)}{@const summary=view.report?.games.find(game=>game.id===supported.id)}<option value={supported.id}>{supported.name}{summary?` · ${telemetryStatus(summary.status)}`:''}</option>{/each}</select></label>
     <label class="telemetry-search">Find a channel<input type="search" aria-label="Search game telemetry" placeholder="Channel, label, or native field" maxlength="200" bind:value={search} oninput={()=>offset=0}/></label>
     <button class="secondary-button" disabled={!canRead||view.loading} onclick={()=>inspector.refresh()}>{view.loading?'Reading…':'Refresh telemetry'}</button>
   </div>

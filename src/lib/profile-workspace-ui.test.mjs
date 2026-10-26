@@ -1,6 +1,8 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import {webcrypto} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules}from'./test-module-loader.mjs';
 const modules=await loadModules(['./persistence/ui-preferences','./ui-settings-guard','./profile-discovery','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview','./profile-game-context','./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-telemetry','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-graph-history','./profile-processing','./profile-transform-drafts','./profile-canvas-construction','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser','./profile-vehicle-conflicts']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 modules.set('./notifications',{notify:()=>{throw new Error('Rendering must not replay save notifications.');}});
 modules.set('./profile-palette',(await loadModules(['./profile-palette'])).get('./profile-palette'));
 const noRequest=()=>{throw new Error('Rendering/navigation must not send a native request.');};
@@ -302,7 +304,7 @@ test('profile editor keeps history with Save and game context first in the compo
  const context=body.match(/<select[^>]*aria-label="Game context"[^>]*>([^]*?)<\/select>/)?.[1];assert.ok(context);assert.match(context,/<option value=""[^>]*>None<\/option>/);
  const column=body.indexOf('class="profile-components-column'),contextPosition=body.indexOf('aria-label="Game context"'),palettePosition=body.indexOf('aria-label="Component palette"');
  assert.ok(column>=0&&column<contextPosition&&contextPosition<palettePosition);
- for(const game of modules.get('./games').supportedGames)assert.ok(context.includes(`value="${game.id}"`),game.name);
+ for(const game of discoveredGames)assert.ok(context.includes(`value="${game.id}"`),game.name);
  const runtime=body.match(/<section[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];assert.ok(runtime!==undefined);assert.ok(!runtime.includes('Game context'));assert.ok(!runtime.includes('Activate profile'));assert.ok(!body.includes('class="group-editor"'));
  const historyGroups=[...body.matchAll(/<div\b([^>]*aria-label="Edit history"[^>]*)>([^]*?)<\/div>/g)];assert.equal(historyGroups.length,1);assert.match(historyGroups[0][1],/role="group"/);
  for(const label of ['Undo','Redo']){const control=historyGroups[0][2].match(new RegExp(`<button\\b[^>]*aria-label="${label}"[^>]*>([^]*?)<\\/button>`));assert.ok(control,label);assert.match(control[1],/<svg\b/);}
@@ -312,14 +314,14 @@ test('profile editor keeps history with Save and game context first in the compo
 
 test('custom profile contexts appear in selectors and remain explicitly unavailable after local game removal',async()=>{
  const games=modules.get('./games'),id='custom-11111111-1111-4111-8111-111111111111',custom={id,name:'Local custom game',provider:null,custom:true,installed:true,launchSupported:true};
- games.updateGameCatalogue([...games.supportedGames,custom]);
+ games.updateGameCatalogue([...discoveredGames,custom]);
  try{
   const h=harness(),document=blankProfile(uid(22),'Custom context'),value=modules.get('./profile-game-context').profileSetGameContext({document,assignments:[]},id,[]);
   h.docs.set(document.id,value.document);await h.store.refresh();await h.store.open(document.id);
   const first=html(h.store,h.client);assert.ok(first.includes(`value="${id}"`));assert.ok(first.includes(custom.name));assert.ok(!first.includes('aria-label="Profile vehicle tabs"'));assert.equal(value.document.resources.length,0);
-  games.updateGameCatalogue(games.supportedGames);const missing=html(h.store,h.client),option=missing.match(new RegExp(`<option[^>]*value="${id}"[^>]*>([^]*?)<\\/option>`));
+  games.updateGameCatalogue(discoveredGames);const missing=html(h.store,h.client),option=missing.match(new RegExp(`<option[^>]*value="${id}"[^>]*>([^]*?)<\\/option>`));
   assert.ok(option);assert.match(option[0],/disabled/);assert.match(option[1],/Local custom game · Unavailable/);assert.deepEqual(plain(h.store.state.editor.document.eligibility.gameIds),[id]);
- }finally{games.updateGameCatalogue(games.supportedGames);}
+ }finally{games.updateGameCatalogue(discoveredGames);}
 });
 
 test('vehicle tab buttons keep removal inside the tab and the selected vehicle picker starts the content',async()=>{

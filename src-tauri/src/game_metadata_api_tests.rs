@@ -1,388 +1,221 @@
 use super::*;
-use crate::{
-    game_discovery::{Platform, ProcessIdentity},
-    game_library::{Candidate, Scan},
-};
+use crate::game_discovery::{Platform, ProcessIdentity};
+use crate::game_installations::{GameRecord, Installation, LibrarySource, Settings};
 use std::collections::BTreeMap;
+
+const GAME: &str = "game-fixture-123";
 
 struct MetadataOnly;
 impl Platform for MetadataOnly {
-    fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<Value> {
-        osg_profiles::activation::SUPPORTED_GAME_IDS
-            .iter()
-            .map(|id| {
-                json!({
-                    "id":id,"name":id,"provider":if *id=="dcs" {"dcs-bios"} else {*id},
-                    "installed":manual.contains_key(*id),"executable":manual.get(*id),
-                    "processMonitoringSupported":false,"launchSupported":false,
-                })
-            })
-            .collect()
+    fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+        vec![]
     }
     fn validate(&self, _: &str, path: &str) -> Result<(), String> {
-        crate::game_discovery::validate_custom_executable(path).map(|_| ())
+        crate::game_discovery::validate_executable(path).map(|_| ())
     }
     fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> {
         panic!("metadata cannot launch")
     }
     fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> {
-        panic!("metadata cannot scan processes")
+        panic!("metadata cannot inspect processes")
     }
     fn alive(&self, _: &ProcessIdentity) -> Result<bool, String> {
         panic!("metadata cannot acquire process authority")
     }
 }
+
+fn seeded_settings(directory: &Path) -> Settings {
+    let install_a = directory.join("install-a");
+    let install_b = directory.join("install-b");
+    fs::create_dir_all(&install_a).unwrap();
+    fs::create_dir_all(&install_b).unwrap();
+    let executable_a = install_a.join("Game.exe");
+    let executable_b = install_b.join("Game.exe");
+    fs::write(&executable_a, b"fixture a").unwrap();
+    fs::write(&executable_b, b"fixture b").unwrap();
+    let installation = |root: &Path, executable: &Path, source_id: &str| Installation {
+        root: root.canonicalize().unwrap().to_string_lossy().into_owned(),
+        executable: Some(
+            executable
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        executables: vec![executable
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()],
+        sources: vec![LibrarySource {
+            client: "disk".into(),
+            app_id: source_id.into(),
+            install_path: root.canonicalize().unwrap().to_string_lossy().into_owned(),
+            launcher: None,
+        }],
+    };
+    Settings {
+        revision: 1,
+        discovery_initialized: true,
+        games: BTreeMap::from([(
+            GAME.into(),
+            GameRecord {
+                name: "Fixture Game".into(),
+                installations: BTreeMap::from([
+                    (
+                        "install-a".into(),
+                        installation(&install_a, &executable_a, "fixture-a"),
+                    ),
+                    (
+                        "install-b".into(),
+                        installation(&install_b, &executable_b, "fixture-b"),
+                    ),
+                ]),
+                selected_installation: Some("install-a".into()),
+                integration: None,
+                default_background: None,
+            },
+        )]),
+        ..Settings::default()
+    }
+}
+
 fn fixture() -> (GamesRuntime, tempfile::TempDir) {
     let directory = crate::test_directory();
-    let runtime = GamesRuntime::new(
+    let paths = Paths::in_directory(directory.path());
+    let initial = seeded_settings(directory.path());
+    crate::game_installations::Store::new(paths.installations.clone())
+        .save(&initial)
+        .unwrap();
+    let runtime = GamesRuntime::test_runtime(
         Arc::new(|request| panic!("metadata cannot dispatch output: {request}")),
-        Paths::in_directory(directory.path()),
+        paths,
         Arc::new(MetadataOnly),
     );
+    runtime.seed_test_catalogue(crate::game_discovery::merged_catalogue(
+        &MetadataOnly,
+        &initial,
+    ));
     (runtime, directory)
 }
-fn executable(directory: &Path, name: &str) -> String {
-    let path = directory.join(name);
-    fs::write(&path, b"fixture").unwrap();
-    path.to_str().unwrap().into()
-}
-fn artwork(directory: &Path) -> PathBuf {
-    let path = directory.join("header.png");
-    image::RgbImage::from_pixel(80, 60, image::Rgb([35, 70, 120]))
-        .save(&path)
-        .unwrap();
-    path
-}
-fn candidate(directory: &Path, app: &str, executable_candidates: Vec<String>) -> Candidate {
-    Candidate {
-        id: format!("steam:{app}"),
-        client: "steam".into(),
-        name: "Imported game".into(),
-        install_path: directory.to_str().unwrap().into(),
-        executable_candidates,
-        game_id: None,
-        kind: "unknown".into(),
-        app_id: app.into(),
-        launcher: None,
-        artwork: None,
-    }
-}
-fn scan(candidates: Vec<Candidate>) -> impl FnOnce() -> Scan {
-    move || Scan {
-        candidates,
-        diagnostics: vec!["Fixture discovery only".into()],
-    }
-}
-fn saved(runtime: &GamesRuntime) -> crate::game_installations::Settings {
+
+fn saved(runtime: &GamesRuntime) -> Settings {
     runtime.inner.settings.lock().unwrap().saved.clone()
 }
-fn added(runtime: &GamesRuntime) -> String {
+
+#[test]
+fn game_metadata_edits_persist_and_installation_selection_is_independent() {
+    let (runtime, _directory) = fixture();
     runtime
-        .inner
-        .settings
-        .lock()
-        .unwrap()
-        .added_game_id
-        .clone()
-        .unwrap()
+        .metadata_request(&json!({"command":"game_save","gameId":GAME,"name":"Renamed Game"}))
+        .unwrap();
+    assert_eq!(saved(&runtime).games[GAME].name, "Renamed Game");
+    runtime.metadata_request(&json!({"command":"game_installation_select","gameId":GAME,"installationId":"install-b"})).unwrap();
+    let persisted = saved(&runtime);
+    assert_eq!(
+        persisted.games[GAME].selected_installation.as_deref(),
+        Some("install-b")
+    );
+    assert_eq!(
+        runtime.inner.installations.load().unwrap(),
+        Some(persisted.clone())
+    );
+    runtime.shutdown();
 }
 
 #[test]
-fn inline_name_edits_preserve_missing_executables_and_cannot_rename_builtins() {
+fn executable_edits_are_confined_to_the_selected_installation_and_atomic() {
     let (runtime, directory) = fixture();
-    let path = executable(directory.path(),"Renamed.exe");
-    runtime.request(&json!({"command":"game_custom_save","name":"Original","executable":path})).unwrap();
-    let id = added(&runtime);
-    let previous = saved(&runtime).custom_games[&id].executable.clone();
-    fs::remove_file(&path).unwrap();
-    runtime.request(&json!({"command":"game_custom_save","gameId":id,"name":"Inline name"})).unwrap();
+    let before = saved(&runtime);
+    let inside = directory.path().join("install-a").join("Alternate.exe");
+    fs::write(&inside, b"alternate runtime").unwrap();
+    runtime.metadata_request(&json!({"command":"game_save","gameId":GAME,"installationId":"install-a","executable":inside})).unwrap();
     let updated = saved(&runtime);
-    assert_eq!(updated.custom_games[&id].name,"Inline name");
-    assert_eq!(updated.custom_games[&id].executable,previous);
-    assert_eq!(runtime.inner.installations.load().unwrap().unwrap(),updated);
-    for request in [json!({"command":"game_custom_save","gameId":"dcs","name":"Renamed"}),json!({"command":"game_custom_save","gameId":id,"name":""})] {
-        assert!(runtime.request(&request).is_err());assert_eq!(saved(&runtime),updated);
-    }
-}
-
-#[test]
-fn preview_crop_save_is_durable_and_rejected_edits_keep_the_previous_background() {
-    let (runtime, directory) = fixture();
-    let source = artwork(directory.path());
-    let data = crate::game_artwork::preview(Some(source.to_str().unwrap()),None).unwrap();
-    let crop = json!({"x":0.0,"y":0.125,"width":1.0,"height":0.75});
-    runtime.request(&json!({"command":"game_background_save","gameId":"dcs","imageData":data,"crop":crop})).unwrap();
-    let before = saved(&runtime);
-    assert_eq!(serde_json::to_value(before.backgrounds["dcs"].crop).unwrap(),crop);
-    assert_eq!(runtime.inner.installations.load().unwrap().unwrap(),before);
+    assert_eq!(
+        updated.games[GAME].installations["install-a"]
+            .executable
+            .as_deref(),
+        Some(inside.canonicalize().unwrap().to_str().unwrap())
+    );
     for request in [
-        json!({"command":"game_background_save","gameId":"dcs","imageData":data,"crop":{"x":0.5,"y":0.125,"width":1.0,"height":0.75}}),
-        json!({"command":"game_background_save","gameId":"dcs","imageData":data,"crop":crop,"path":source}),
-        json!({"command":"game_background_save","gameId":"dcs","crop":crop}),
-        json!({"command":"game_background_save","gameId":"dcs","imageData":"invalid","crop":crop}),
-    ] { assert!(runtime.request(&request).is_err());assert_eq!(saved(&runtime),before); }
-    runtime.request(&json!({"command":"game_background_save","gameId":"dcs","positionX":20})).unwrap();
-    assert!(saved(&runtime).backgrounds["dcs"].crop.is_none());
-    assert_eq!(saved(&runtime).backgrounds["dcs"].position_x,20.0);
-}
-
-#[test]
-fn categories_persist_rename_clear_and_preserve_game_identity() {
-    let (runtime, _directory) = fixture();
-    let category = "11111111-1111-4111-8111-111111111111";
-    runtime.request(&json!({"command":"game_categories_save","categories":{category:"Racing"},"expectedCategories":{}})).unwrap();
-    runtime.request(&json!({"command":"game_category_save","gameId":"dcs","categoryId":category})).unwrap();
-    runtime.request(&json!({"command":"game_custom_save","name":"My game","executable":null,"categoryId":category})).unwrap();
-    let id = added(&runtime);
-    runtime.request(&json!({"command":"game_custom_save","gameId":id,"name":"Renamed game","executable":null})).unwrap();
-    runtime.request(&json!({"command":"game_categories_save","categories":{category:"Driving"},"expectedCategories":{category:"Racing"}})).unwrap();
-    let persisted = runtime.inner.installations.load().unwrap().unwrap();
-    assert_eq!(persisted.categories[category], "Driving");
-    assert_eq!(persisted.game_categories[&id], category);
-    assert_eq!(persisted.game_categories["dcs"], category);
-    assert_eq!(persisted.custom_games[&id].name, "Renamed game");
-    assert_eq!(runtime.status()["catalogue"].as_array().unwrap().iter().find(|game| game["id"] == id).unwrap()["categoryId"], category);
-    runtime.request(&json!({"command":"game_custom_remove","gameId":id})).unwrap();
-    assert!(!saved(&runtime).game_categories.contains_key(&id));
-    runtime.request(&json!({"command":"game_categories_save","categories":{},"expectedCategories":{category:"Driving"}})).unwrap();
-    assert!(saved(&runtime).game_categories.is_empty());
-    assert!(runtime.status()["catalogue"].as_array().unwrap().iter().all(|game| game["categoryId"].is_null()));
-}
-
-#[test]
-fn invalid_or_stale_categories_leave_assignments_and_persistence_unchanged() {
-    let (runtime, _directory) = fixture();
-    let category = "11111111-1111-4111-8111-111111111111";
-    runtime.request(&json!({"command":"game_categories_save","categories":{category:"Racing"},"expectedCategories":{}})).unwrap();
-    runtime.request(&json!({"command":"game_category_save","gameId":"dcs","categoryId":category})).unwrap();
-    let before = saved(&runtime);
-    for request in [
-        json!({"command":"game_categories_save","categories":{},"expectedCategories":{}}),
-        json!({"command":"game_categories_save","categories":{category:""},"expectedCategories":{category:"Racing"}}),
-        json!({"command":"game_categories_save","categories":{category:"A".repeat(49)},"expectedCategories":{category:"Racing"}}),
-        json!({"command":"game_categories_save","categories":{category:"Racing","22222222-2222-4222-8222-222222222222":"racing"},"expectedCategories":{category:"Racing"}}),
-        json!({"command":"game_category_save","gameId":"dcs","categoryId":"missing"}),
-        json!({"command":"game_category_save","gameId":"unknown","categoryId":category}),
-        json!({"command":"game_category_save","gameId":"dcs","categoryId":category,"processSession":"forged"}),
-        json!({"command":"game_custom_save","name":"Invalid category","executable":null,"categoryId":"missing"}),
+        json!({"command":"game_save","gameId":GAME,"installationId":"install-a","executable":"relative.exe"}),
+        json!({"command":"game_save","gameId":GAME,"installationId":"install-a","executable":directory.path().join("outside.exe")}),
+        json!({"command":"game_save","gameId":GAME,"installationId":"missing-install","executable":null}),
+        json!({"command":"game_save","gameId":GAME,"name":""}),
+        json!({"command":"game_save","gameId":"game-unknown","name":"Unknown"}),
     ] {
-        assert!(runtime.request(&request).is_err(), "{request}");
-        assert_eq!(saved(&runtime), before);
-        assert_eq!(runtime.inner.installations.load().unwrap().unwrap(), before);
+        assert!(runtime.metadata_request(&request).is_err(), "{request}");
+        assert_eq!(saved(&runtime), updated);
     }
-    runtime.request(&json!({"command":"game_category_save","gameId":"dcs","categoryId":null})).unwrap();
-    assert!(!saved(&runtime).game_categories.contains_key("dcs"));
+    assert_ne!(before, updated);
+    runtime.shutdown();
 }
 
 #[test]
-fn staged_metadata_rejects_stale_cross_runtime_and_busy_commits_without_losing_newer_settings() {
+fn categories_and_backgrounds_follow_game_ownership_and_remove_atomically() {
     let (runtime, directory) = fixture();
-    let first = executable(directory.path(), "Staged.exe");
+    let category = uuid::Uuid::new_v4().to_string();
+    let mut categories = serde_json::Map::new();
+    categories.insert(category.clone(), json!("Racing"));
+    runtime
+        .metadata_request(&json!({"command":"game_categories_save","categories":categories,"expectedCategories":{}}))
+        .unwrap();
     runtime
         .metadata_request(
-            &json!({"command":"game_custom_save","name":"Original","executable":first}),
+            &json!({"command":"game_category_save","gameId":GAME,"categoryId":category.clone()}),
         )
         .unwrap();
-    let id = added(&runtime);
-    let source = artwork(directory.path());
-    let stale = runtime
-        .prepare_metadata(&json!({"command":"game_background_save","gameId":"dcs","path":source}))
+    let image = directory.path().join("header.png");
+    image::RgbImage::from_pixel(80, 60, image::Rgb([35, 70, 120]))
+        .save(&image)
         .unwrap();
-    let asset = directory.path().join("game-artwork").join(
-        stale.next.backgrounds["dcs"]
-            .image
-            .trim_start_matches("artwork:"),
-    );
-    runtime.metadata_request(&json!({"command":"game_custom_save","gameId":id,"name":"Newer name","executable":first})).unwrap();
-    assert!(asset.is_file(),"An outstanding preparation protects its managed artwork from a different commit's collection");
-    let newer = saved(&runtime);
+    runtime.metadata_request(&json!({"command":"game_background_save","gameId":GAME,"path":image,"positionX":20.0,"positionY":75.0})).unwrap();
+    let before_remove = saved(&runtime);
+    assert_eq!(before_remove.game_categories[GAME], category);
+    assert!(before_remove.backgrounds.contains_key(GAME));
+    assert!(runtime
+        .metadata_request(
+            &json!({"command":"game_category_save","gameId":GAME,"categoryId":"missing"})
+        )
+        .is_err());
+    assert_eq!(saved(&runtime), before_remove);
+    runtime
+        .metadata_request(&json!({"command":"game_remove","gameId":GAME}))
+        .unwrap();
+    let removed = saved(&runtime);
+    assert!(!removed.games.contains_key(GAME));
+    assert!(!removed.game_categories.contains_key(GAME));
+    assert!(!removed.backgrounds.contains_key(GAME));
+    assert!(runtime
+        .metadata_request(&json!({"command":"game_remove","gameId":GAME}))
+        .is_err());
+    runtime.shutdown();
+}
+
+#[test]
+fn prepared_edits_reject_stale_and_busy_commits_without_losing_newer_state() {
+    let (runtime, _directory) = fixture();
+    let stale = runtime
+        .prepare_metadata(&json!({"command":"game_save","gameId":GAME,"name":"Stale"}))
+        .unwrap();
+    runtime
+        .metadata_request(&json!({"command":"game_save","gameId":GAME,"name":"Current"}))
+        .unwrap();
+    let current = saved(&runtime);
     assert!(runtime
         .commit_metadata(stale)
         .unwrap_err()
-        .contains("changed while"));
-    assert_eq!(saved(&runtime), newer);
-    let proposal = runtime
-        .prepare_metadata(
-            &json!({"command":"game_custom_save","gameId":id,"name":"Busy","executable":first}),
-        )
+        .contains("changed during preparation"));
+    assert_eq!(saved(&runtime), current);
+    let prepared = runtime
+        .prepare_metadata(&json!({"command":"game_save","gameId":GAME,"name":"Busy"}))
         .unwrap();
     let admission = runtime.admission.lock().unwrap();
     assert!(runtime
-        .commit_metadata(proposal)
+        .commit_metadata(prepared)
         .unwrap_err()
         .contains("busy"));
     drop(admission);
-    assert_eq!(saved(&runtime), newer);
-    let proposal=runtime.prepare_metadata(&json!({"command":"game_custom_save","gameId":id,"name":"Other runtime","executable":first})).unwrap();
-    let (other, _) = fixture();
-    assert!(other
-        .commit_metadata(proposal)
-        .unwrap_err()
-        .contains("another native runtime"));
-    assert_eq!(saved(&runtime), newer);
-    other.shutdown();
-    runtime.finish_metadata();
-    assert!(!asset.exists());
-    runtime.shutdown();
-}
-
-#[test]
-fn manual_edits_and_all_game_backgrounds_are_atomic_and_durable() {
-    let (runtime, directory) = fixture();
-    let first = executable(directory.path(), "First.exe");
-    runtime
-        .metadata_request(
-            &json!({"command":"game_custom_save","name":"  First game  ","executable":first}),
-        )
-        .unwrap();
-    let id = added(&runtime);
-    assert_eq!(saved(&runtime).custom_games[&id].name, "First game");
-    let source = artwork(directory.path());
-    for game in ["dcs", id.as_str()] {
-        runtime.metadata_request(&json!({"command":"game_background_save","gameId":game,"path":source,"positionX":20.0})).unwrap();
-        runtime
-            .metadata_request(
-                &json!({"command":"game_background_save","gameId":game,"positionY":80.0}),
-            )
-            .unwrap();
-        let background = saved(&runtime).backgrounds[game].clone();
-        assert_eq!((background.position_x, background.position_y), (20.0, 80.0));
-    }
-    let retained = saved(&runtime);
-    for request in [
-        json!({"command":"game_background_save","gameId":"dcs","positionX":-1}),
-        json!({"command":"game_background_save","gameId":"dcs","path":42}),
-        json!({"command":"game_background_save","gameId":"unknown","path":null}),
-        json!({"command":"game_custom_save","gameId":id,"name":"Renamed","executable":first,"processSession":"forged"}),
-        json!({"command":"game_custom_save","name":"Duplicate","executable":first}),
-        json!({"command":"game_custom_save","name":"Missing executable"}),
-        json!({"command":"game_custom_save","name":"Bad executable","executable":42}),
-        json!({"command":"game_custom_save","gameId":"custom-forged","name":"Forged","executable":null}),
-        json!({"command":"game_custom_remove","gameId":"unknown"}),
-    ] {
-        assert!(runtime.metadata_request(&request).is_err(), "{request}");
-        assert_eq!(saved(&runtime), retained);
-    }
-    let relocated = executable(directory.path(), "Moved.exe");
-    runtime.metadata_request(&json!({"command":"game_custom_save","gameId":id,"name":"Renamed","executable":relocated})).unwrap();
-    assert_eq!(added(&runtime), id);
-    assert_eq!(saved(&runtime).custom_games[&id].name, "Renamed");
-    fs::remove_file(source).unwrap();
-    assert_eq!(
-        runtime.inner.installations.load().unwrap(),
-        Some(saved(&runtime))
-    );
-    runtime
-        .metadata_request(&json!({"command":"game_background_save","gameId":"dcs","path":null}))
-        .unwrap();
-    assert!(!saved(&runtime).backgrounds.contains_key("dcs"));
-    runtime
-        .metadata_request(&json!({"command":"game_custom_remove","gameId":id}))
-        .unwrap();
-    assert!(!saved(&runtime).custom_games.contains_key(&id));
-    assert!(!saved(&runtime).backgrounds.contains_key(&id));
-    runtime.shutdown();
-}
-
-#[test]
-fn reviewed_import_resolves_ambiguity_and_rescans_keep_identity_and_override() {
-    let (runtime, directory) = fixture();
-    let first = executable(directory.path(), "First.exe");
-    let second = executable(directory.path(), "Second.exe");
-    let mut imported = candidate(directory.path(), "42", vec![first.clone(), second]);
-    imported.artwork = Some(artwork(directory.path()));
-    runtime
-        .metadata_request_with_scan(
-            &json!({"command":"game_library_scan"}),
-            scan(vec![imported.clone()]),
-        )
-        .unwrap();
-    assert!(
-        saved(&runtime).custom_games.is_empty(),
-        "discovery alone cannot import"
-    );
-    assert_eq!(
-        runtime
-            .inner
-            .settings
-            .lock()
-            .unwrap()
-            .library_candidates
-            .len(),
-        1
-    );
-    runtime
-        .metadata_request_with_scan(
-            &json!({"command":"game_library_import","candidateId":"steam:42"}),
-            scan(vec![imported.clone()]),
-        )
-        .unwrap();
-    let id = added(&runtime);
-    assert!(saved(&runtime).custom_games[&id].executable.is_none());
-    assert!(saved(&runtime).default_backgrounds.contains_key(&id));
-    runtime
-        .metadata_request(&json!({"command":"game_background_save","gameId":id,"positionX":25.0}))
-        .unwrap();
-    let background = saved(&runtime).backgrounds[&id].clone();
-    runtime
-        .metadata_request_with_scan(
-            &json!({"command":"game_library_import","candidateId":"steam:42","executable":first}),
-            scan(vec![imported.clone()]),
-        )
-        .unwrap();
-    assert_eq!(added(&runtime), id);
-    assert!(saved(&runtime).custom_games[&id].executable.is_some());
-    imported.executable_candidates.clear();
-    runtime
-        .metadata_request_with_scan(
-            &json!({"command":"game_library_import","candidateId":"steam:42"}),
-            scan(vec![imported]),
-        )
-        .unwrap();
-    assert_eq!(saved(&runtime).custom_games.len(), 1);
-    assert!(saved(&runtime).custom_games[&id].executable.is_some());
-    assert_eq!(saved(&runtime).backgrounds[&id], background);
-    let retained = saved(&runtime);
-    assert!(runtime
-        .metadata_request_with_scan(
-            &json!({"command":"game_library_import","candidateId":"steam:42"}),
-            scan(vec![])
-        )
-        .is_err());
-    assert_eq!(saved(&runtime), retained, "stale preview must not commit");
-    runtime.shutdown();
-}
-
-#[test]
-fn library_import_reuses_manual_and_integrated_game_identities() {
-    let (runtime, directory) = fixture();
-    let first = executable(directory.path(), "Manual.exe");
-    let builtin = executable(directory.path(), "DCS.exe");
-    runtime
-        .metadata_request(
-            &json!({"command":"game_custom_save","name":"My name","executable":first}),
-        )
-        .unwrap();
-    let id = added(&runtime);
-    let manual = candidate(directory.path(), "42", vec![first]);
-    runtime
-        .metadata_request_with_scan(
-            &json!({"command":"game_library_import","candidateId":"steam:42"}),
-            scan(vec![manual]),
-        )
-        .unwrap();
-    assert_eq!(added(&runtime), id);
-    assert_eq!(saved(&runtime).custom_games[&id].name, "My name");
-    let mut integrated = candidate(directory.path(), "223750", vec![builtin]);
-    integrated.game_id = Some("dcs".into());
-    runtime
-        .metadata_request_with_scan(
-            &json!({"command":"game_library_import","candidateId":"steam:223750"}),
-            scan(vec![integrated]),
-        )
-        .unwrap();
-    assert_eq!(added(&runtime), "dcs");
-    assert_eq!(saved(&runtime).custom_games.len(), 1);
-    assert!(saved(&runtime).manual_installations.contains_key("dcs"));
+    assert_eq!(saved(&runtime), current);
     runtime.shutdown();
 }

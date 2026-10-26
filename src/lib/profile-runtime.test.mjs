@@ -1,3 +1,4 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ProfileRuntimeClient, nativeProfileStatus,nativeProfileActivation } from './profile-runtime.ts';
@@ -44,14 +45,14 @@ test('activation serializes an explicit inactive guard or independent exact acti
 });
 test('invalid requests never reach native transport and a native rejection is not retried or converted to success',async()=>{
   let calls=0;const client=new ProfileRuntimeClient(async()=>{calls++;throw new Error('required resource missing');});
-  for(const [target,revision,game]of[['wrong',1], [id,0],[id,Infinity],[id,Number.MAX_SAFE_INTEGER+1],[id,1,'wrong'],[id,1,null]])assert.throws(()=>client.apply(target,revision,game),/exact saved/);
+  for(const [target,revision,game]of[['wrong',1], [id,0],[id,Infinity],[id,Number.MAX_SAFE_INTEGER+1],[id,1,'invalid/path'],[id,1,null]])assert.throws(()=>client.apply(target,revision,game),/exact saved/);
   assert.equal(calls,0);
-  for(const expectedOwner of [false,'active',{},[],{...running().owner,session:'old'},{...running().owner,generation:0},{...running().owner,generation:1.5},{...running().owner,generation:Number.MAX_SAFE_INTEGER+1},{...running().owner,profileId:'wrong'},{...running().owner,profileRevision:0},{...running().owner,gameId:'wrong'},{...running().owner,gameId:undefined}])assert.throws(()=>client.apply(id,3,undefined,expectedOwner),/exact saved/);
+  for(const expectedOwner of [false,'active',{},[],{...running().owner,session:'old'},{...running().owner,generation:0},{...running().owner,generation:1.5},{...running().owner,generation:Number.MAX_SAFE_INTEGER+1},{...running().owner,profileId:'wrong'},{...running().owner,profileRevision:0},{...running().owner,gameId:'invalid/path'},{...running().owner,gameId:undefined}])assert.throws(()=>client.apply(id,3,undefined,expectedOwner),/exact saved/);
   assert.equal(calls,0,'A malformed confirmation must never reach native transport.');
   await assert.rejects(client.apply(id,1),/required resource missing/);assert.equal(calls,1);
 });
 test('malformed and inconsistent native evidence cannot become running UI state',()=>{
-  const invalid=[null,[],{}, {...stopped(),state:'ready'}, {...stopped(),state:'paused'},{...stopped(),fault:''},{...stopped(),degradation:['\0']},{...stopped(),degradation:Array(1025).fill('error')}, {...stopped(),appliedSnapshot:{profileId:id,revision:0,semanticHash:'hash'}},{...running(),owner:{...running().owner,gameId:'unknown'}},{...running(),owner:{...running().owner,generation:0}},{...running(),owner:{...running().owner,session:'old'}},{...running(),appliedSnapshot:{...running().appliedSnapshot,semanticHash:'hash'}},{...running(),state:'stopped'},{...running(),appliedSnapshot:null},{...running(),owner:null},{...running(),owner:{...running().owner,profileRevision:2}},{...running(),owner:{...running().owner,profileId:run}}];
+  const invalid=[null,[],{}, {...stopped(),state:'ready'}, {...stopped(),state:'paused'},{...stopped(),fault:''},{...stopped(),degradation:['\0']},{...stopped(),degradation:Array(1025).fill('error')}, {...stopped(),appliedSnapshot:{profileId:id,revision:0,semanticHash:'hash'}},{...running(),owner:{...running().owner,gameId:'invalid/path'}},{...running(),owner:{...running().owner,generation:0}},{...running(),owner:{...running().owner,session:'old'}},{...running(),appliedSnapshot:{...running().appliedSnapshot,semanticHash:'hash'}},{...running(),state:'stopped'},{...running(),appliedSnapshot:null},{...running(),owner:null},{...running(),owner:{...running().owner,profileRevision:2}},{...running(),owner:{...running().owner,profileId:run}}];
   for(const value of invalid)assert.throws(()=>nativeProfileStatus(value),/malformed|inconsistent/,JSON.stringify(value));
   assert.equal(nativeProfileStatus({...running(),owner:{...running().owner,gameId:'dcs'}}).owner.gameId,'dcs');
 });

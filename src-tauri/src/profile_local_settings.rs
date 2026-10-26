@@ -13,9 +13,7 @@ fn fields(value: &Value, allowed: &[&str]) -> Result<(), String> {
     Ok(())
 }
 fn game(request: &Value) -> Result<&str, String> {
-    request["gameId"].as_str().filter(|game| matches!(*game,
-        "dcs" | "x-plane-11" | "x-plane-12" | "assetto-corsa-rally" |
-        "assetto-corsa" | "assetto-corsa-competizione" | "assetto-corsa-evo"))
+    request["gameId"].as_str().filter(|game| osg_profiles::activation::valid_game_id(game))
         .ok_or_else(||"Choose a supported game for local settings.".into())
 }
 
@@ -115,3 +113,7 @@ impl GatewayManager {
         self.local_settings_snapshot(request)
     }
 }
+
+#[cfg(test)]
+#[path = "profile_local_settings_tests.rs"]
+mod tests;

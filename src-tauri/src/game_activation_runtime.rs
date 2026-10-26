@@ -10,18 +10,26 @@ impl GamesRuntime {
         if !osg_profiles::activation::valid_game_id(game_id) {
             return Err("Choose a valid native game identity.".into());
         }
-        self.inner.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.iter()
-            .find(|game| game["id"] == game_id).cloned()
-            .ok_or_else(|| "The selected game is no longer registered on this computer.".into())
-    }
-    fn process_monitoring_supported(&self) -> bool {
         self.inner
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .catalogue
             .iter()
-            .any(|game| game["processMonitoringSupported"] == true)
+            .find(|game| game["id"] == game_id)
+            .cloned()
+            .ok_or_else(|| "The selected game is no longer registered on this computer.".into())
+    }
+    fn process_monitoring_supported(&self) -> bool {
+        self.inner.platform.process_monitoring_supported()
+            || self
+                .inner
+                .settings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .catalogue
+                .iter()
+                .any(|game| game["processMonitoringSupported"] == true)
     }
     pub(super) fn start_activation_observer(&self) {
         if self.inner.guard_installation_metadata().is_err() || !self.process_monitoring_supported()
@@ -33,12 +41,16 @@ impl GamesRuntime {
             .name("profile-game-context".into())
             .spawn(move || {
                 while !inner.closed.load(Ordering::Acquire) {
-                    let games = inner
-                        .settings
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .catalogue
-                        .clone();
+                    let games = if inner.guard_installation_metadata().is_ok() {
+                        inner
+                            .settings
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .catalogue
+                            .clone()
+                    } else {
+                        vec![]
+                    };
                     inner.activation.observe(inner.platform.as_ref(), &games);
                     for _ in 0..5 {
                         if inner.closed.load(Ordering::Acquire) {

@@ -217,6 +217,35 @@ fn backup_captures_only_referenced_artwork_and_preserves_offline_hashes() {
     let bytes = b"bounded managed image";
     let hash = assets::digest(bytes);
     let mut settings = crate::game_installations::Settings::default();
+    let game_root = runtime.root.join("fixture-game");
+    let executable = game_root.join("DCS.exe");
+    std::fs::create_dir_all(&game_root).unwrap();
+    std::fs::write(&executable, b"fixture executable").unwrap();
+    let root = game_root.to_string_lossy().into_owned();
+    let executable = executable.to_string_lossy().into_owned();
+    settings.games.insert(
+        "dcs".into(),
+        crate::game_installations::GameRecord {
+            name: "DCS".into(),
+            installations: std::collections::BTreeMap::from([(
+                "dcs-install".into(),
+                crate::game_installations::Installation {
+                    root: root.clone(),
+                    executable: Some(executable.clone()),
+                    executables: vec![executable],
+                    sources: vec![crate::game_installations::LibrarySource {
+                        client: "disk".into(),
+                        app_id: "backup-fixture".into(),
+                        install_path: root,
+                        launcher: None,
+                    }],
+                },
+            )]),
+            selected_installation: Some("dcs-install".into()),
+            integration: Some("dcs".into()),
+            default_background: None,
+        },
+    );
     settings.backgrounds.insert(
         "dcs".into(),
         crate::game_artwork::Background {
@@ -229,7 +258,7 @@ fn backup_captures_only_referenced_artwork_and_preserves_offline_hashes() {
     set(
         &runtime,
         "games",
-        "installations",
+        "library",
         &serde_json::to_vec(&settings).unwrap(),
     );
     assert!(runtime.create(0).is_err());

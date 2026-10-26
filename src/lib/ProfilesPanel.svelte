@@ -26,7 +26,7 @@
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
   import {ProfileLearningClient}from'./profile-learning';
   import type {DeepReadonly} from './profiles';
-  import { supportedGames, gameCatalogue as registeredGames, isGameId, gameHasIntegration, type Game, type GameId } from './games';
+  import { gameCatalogue as registeredGames, isGameId, gameHasIntegration, type Game, type GameId } from './games';
   let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, libraryClient:suppliedLibrary, companionClient:suppliedCompanion, openGameSettings, active=true, onNavigate }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient;libraryClient?:ProfileLibraryClient;companionClient?:Pick<ProfileCompanionAuthoringClient,'catalogue'|'inspect'>; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean; onNavigate?: (profileId:string|null)=>void } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
@@ -49,7 +49,7 @@
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let companionCatalogue=$state.raw<DeepReadonly<ProfileCompanionCatalogue>|null>(null),companionPanelsBusy=$state(false),companionPanelsError=$state(''),companionDropBusy=$state(false),companionCatalogueEpoch=0,companionDropEpoch=0;
   let editingName = $state(false), nameDraft = $state('');
-  let gameCatalogue=$state.raw<Game[]>(supportedGames),vehicleError=$state(''),activeVehicleTabId=$state(''),addingVehicleTab=$state(false),customVehicle=$state(false),vehicleIdDraft=$state(''),vehicleNameDraft=$state('');
+  let gameCatalogue=$state.raw<Game[]>([]),vehicleError=$state(''),activeVehicleTabId=$state(''),addingVehicleTab=$state(false),customVehicle=$state(false),vehicleIdDraft=$state(''),vehicleNameDraft=$state('');
   let vehicleTabsElement=$state.raw<HTMLDivElement|undefined>();
   let vehicleSelect=$state.raw<HTMLSelectElement|undefined>();
   let dcsCatalogues=$state.raw<Record<string,DeepReadonly<ResourceSummary>>>({}),dcsCatalogueBusy=$state(false),dcsCatalogueError=$state(''),dcsCatalogueRevision=$state(0);

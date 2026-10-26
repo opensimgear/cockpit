@@ -91,7 +91,7 @@ fn identity_uses_exact_game_ids_and_normalizes_xplane_paths() {
 fn closed_games_list_dcs_aliases_and_installed_xplane_aircraft() {
     let scratch = scratch();
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
-    let mut dcs = json!({"id":"dcs"});
+    let mut dcs = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
     tracker.observe(&dcs, &connection(5010), None, "setup", false, 1);
     tracker.decorate(&mut dcs);
     assert_eq!(dcs["currentVehicle"], Value::Null);
@@ -112,7 +112,7 @@ fn closed_games_list_dcs_aliases_and_installed_xplane_aircraft() {
         "",
     )
     .unwrap();
-    let mut xp = json!({"id":"x-plane-12","installPath":scratch.path()});
+    let mut xp = json!({"id":"x-plane-12","integrationCompatible":true,"integrationKey":"x-plane-12","provider":"x-plane","installPath":scratch.path()});
     tracker.observe(&xp, &json!({}), None, "setup", false, 2);
     tracker.decorate(&mut xp);
     assert_eq!(
@@ -125,7 +125,7 @@ fn closed_games_list_dcs_aliases_and_installed_xplane_aircraft() {
 fn changing_selected_installation_hides_the_previous_live_car_before_observer_refresh() {
     let scratch = scratch();
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
-    let mut game = json!({"id":"assetto-corsa","installed":true,"installPath":scratch.path().join("AC"),"executable":scratch.path().join("AC/acs.exe")});
+    let mut game = json!({"id":"assetto-corsa","integrationCompatible":true,"integrationKey":"assetto-corsa","provider":"assetto-corsa","installed":true,"installPath":scratch.path().join("AC"),"executable":scratch.path().join("AC/acs.exe")});
     tracker.observe(&game, &json!({}), None, "setup", false, 1);
     tracker.entries.get_mut("assetto-corsa").unwrap().current =
         Some(json!({"id":"lotus_elise_sc","name":"lotus_elise_sc"}));
@@ -203,4 +203,51 @@ fn introspection_and_profile_share_unicast_exports_without_stealing_frames() {
     assert_eq!(observer.poll(100).unwrap(), Some("A-10C_2".into()));
     assert_eq!(receive(&profile), Some(second));
     assert_eq!(observer.poll(1601).unwrap(), None);
+}
+
+#[test]
+fn generic_title_aliases_use_bound_vehicle_dialects_and_keep_independent_title_maps() {
+    let scratch = scratch();
+    let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
+    let mut dcs = json!({"id":"my-flight-sim","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
+    tracker.observe(&dcs, &connection(5010), None, "setup", false, 1);
+    tracker.decorate(&mut dcs);
+    assert_eq!(dcs["vehicleSupport"]["supported"], true);
+    assert!(dcs["vehicleSupport"]["vehicles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|vehicle| vehicle["id"] == "A-10C_2"));
+    assert!(!tracker.entries.contains_key("dcs"));
+    fs::create_dir_all(scratch.path().join("Aircraft/Custom Plane")).unwrap();
+    fs::write(
+        scratch.path().join("Aircraft/Custom Plane/My_Plane.acf"),
+        "I\n1200 Version\nACF",
+    )
+    .unwrap();
+    let mut xp = json!({"id":"another-flight-sim","integrationCompatible":true,"integrationKey":"x-plane-11","provider":"x-plane","installPath":scratch.path()});
+    tracker.observe(&xp, &json!({}), None, "setup", false, 2);
+    tracker.decorate(&mut xp);
+    assert_eq!(
+        xp["vehicleSupport"]["vehicles"],
+        json!([{"id":"Aircraft/Custom Plane/My_Plane.acf","name":"My Plane"}])
+    );
+    let mut ac = json!({"id":"racing-title","integrationCompatible":true,"integrationKey":"assetto-corsa","provider":"assetto-corsa"});
+    tracker.observe(&ac, &json!({}), None, "setup", false, 3);
+    tracker.decorate(&mut ac);
+    assert_eq!(ac["vehicleSupport"]["kind"], "car");
+    assert_eq!(tracker.entries["racing-title"].integration, "assetto-corsa");
+    ac["integrationKey"] = Value::Null;
+    tracker.decorate(&mut ac);
+    assert_eq!(ac["vehicleSupport"]["supported"], false);
+}
+#[test]
+fn remembered_vehicle_titles_use_generic_ids_and_remain_bounded() {
+    let mut games = serde_json::Map::new();
+    for index in 0..512 {
+        games.insert(format!("title-{index}"), json!([]));
+    }
+    assert!(validate_saved(&json!({"schemaVersion":1,"games":games})).is_ok());
+    games.insert("one-more".into(), json!([]));
+    assert!(validate_saved(&json!({"schemaVersion":1,"games":games})).is_err());
 }

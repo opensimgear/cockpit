@@ -6,13 +6,13 @@
   import {gameDisplayPath,gameIntegrationUserFolder,type Game,type GameRequest,type GamesState} from './games';
   import {prepareProviderSettingsSave,providerSettingsDraft,providerSettingsEqual,providerSettingsError,rebaseProviderSettingsDraft,settleProviderSettingsSave,type DcsConnection,type ProviderSettingsDraft,type XPlaneConnection} from './game-provider-settings';
   let {game,busy,userFolder=$bindable(''),request,onBusyChange}:{game:Game;busy:boolean;userFolder?:string;request:(request:GameRequest)=>Promise<GamesState|false>;onBusyChange?:(busy:boolean)=>void}=$props();
-  function settingsForGame(value:Game):ProviderSettingsDraft{return {...providerSettingsDraft(value),userFolder:value.id==='dcs'?gameIntegrationUserFolder(value):''};}
+  function settingsForGame(value:Game):ProviderSettingsDraft{return {...providerSettingsDraft(value),userFolder:value.provider==='dcs-bios'?gameIntegrationUserFolder(value):''};}
   let base=$state<ProviderSettingsDraft>(settingsForGame(untrack(()=>game))),draft=$state<ProviderSettingsDraft>(settingsForGame(untrack(()=>game)));
   let saving=$state(false),picking=$state(false),attempted=$state(false);
   let queued:ProviderSettingsDraft|null=null,disposed=false,epoch=0,contextId=untrack(()=>game.id);
   const error=$derived(attempted?providerSettingsError(draft):'');
-  const dcs=$derived(draft.gameId==='dcs'?draft.connection as DcsConnection:null);
-  const xplane=$derived(draft.gameId.startsWith('x-plane-')?draft.connection as XPlaneConnection:null);
+  const dcs=$derived(game.provider==='dcs-bios'?draft.connection as DcsConnection:null);
+  const xplane=$derived(game.provider==='x-plane'?draft.connection as XPlaneConnection:null);
   function reportBusy(){onBusyChange?.(saving||picking);}
   onDestroy(()=>{disposed=true;epoch++;queued=null;onBusyChange?.(false);});
   function syncSettings(){
@@ -21,7 +21,7 @@
     if(!saving&&saved.baseRevision!==base.baseRevision){draft=rebaseProviderSettingsDraft(draft,base,saved);if(queued)queued=rebaseProviderSettingsDraft(queued,base,saved);base=saved;}
   }
   $effect(syncSettings);
-  $effect(()=>{if(game.id==='dcs')userFolder=draft.userFolder;});
+  $effect(()=>{if(game.provider==='dcs-bios')userFolder=draft.userFolder;});
   $effect(()=>{if(!busy&&!saving&&!picking)void flush();});
   function commit(){
     if(disposed||busy||picking)return;

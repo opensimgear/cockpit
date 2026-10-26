@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_coverage_sources import expand_includes, measure_module, source_stamp
 
 
 MODULES = ["profile_companion_retention", "profile_retired_recovery", "profile_game_orchestration_runtime", "profile_game_orchestration", "profile_session_launch_host", "profile_session_action_host", "profile_session_topology", "profile_session_launch", "profile_session_actions", "profile_session_visibility_host", "profile_companion_authoring", "profile_session_action_lease", "profile_automatic", "profile_game_launch", "profile_session_companion_host", "output_leases", "module_console", "module_usb", "module_usb_fleet", "module_configuration_routes",
@@ -44,13 +46,6 @@ MODULES.append("companion/storage/panels")
 TEST_FILTERS.append("companion_panels::tests")
 MODULES.append("window_persistence")
 TEST_FILTERS.append("window_persistence::tests")
-
-
-def source_stamp(paths, root):
-    return {str(path.relative_to(root)): {
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "modifiedNs": path.stat().st_mtime_ns,
-    } for path in paths}
 
 
 def run(args, root, env=None):
@@ -150,7 +145,9 @@ def tracked_source_paths(root, measured, focused):
     tracked.extend(root / f"crates/controller-input/src/visibility/{name}.rs" for name in
                    ["mod", "game", "game_tests", "game_handoff_tests", "handoff", "handoff_tests",
                     "journal", "policy", "runtime", "service", "service_tests"])
-    return tracked
+    tracked.extend([root / "scripts/native_coverage_sources.py", root / "scripts/test_native_coverage_sources.py",
+                    root / "scripts/desktop-output-coverage.py"])
+    return expand_includes(tracked)
 
 
 def main():
@@ -208,31 +205,18 @@ def main():
     summary = {}
     for module in measured:
         source = root / f"src-tauri/src/{module}.rs"
-        annotated = run([llvm / f"llvm-cov{suffix}", "show", binary,
-                         f"-instr-profile={profile}", "-show-line-counts-or-regions", source], root)
+        result, annotated = measure_module(source, lambda path: run([
+            llvm / f"llvm-cov{suffix}", "show", binary, f"-instr-profile={profile}",
+            "-show-line-counts-or-regions", path], root), root)
         (output / f"{module.replace(chr(47), chr(45))}-lines.txt").write_text(annotated, encoding="utf-8")
-        lines = source.read_text(encoding="utf-8").splitlines()
-        end = next((i + 1 for i, line in enumerate(lines) if line == "#[cfg(test)]"), len(lines) + 1)
-        counts = {}
-        for line in annotated.splitlines():
-            match = re.match(r"^\s*(\d+)\|\s*([^|]+)\|", line)
-            if not match or int(match[1]) >= end:
-                continue
-            count = match[2].strip()
-            if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?[kMGT]?", count):
-                counts[int(match[1])] = float(count.rstrip("kMGT")) > 0
-        if not counts:
-            raise RuntimeError(f"No production coverage recorded for {module}.")
-        covered = sum(counts.values())
-        percent = 100 * covered / len(counts)
-        summary[module] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
-        print(f"{module}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
+        summary[module] = result
+        print(f"{module}: {result['covered']}/{result['lines']} production lines ({result['percent']:.2f}%)", flush=True)
     (output / "evidence.json").write_text(json.dumps({"sources": final_stamp, "testFilters": filters,
         "testInvocations": invocations,
         "executable": str(binary), "executableSha256": binary_hash, "cargoArtifact": binaries[0],
         "measuredModules": measured, "focused": bool(args.module), "rustc": run(["rustc", "-vV"], root)}, indent=2) + "\n", encoding="utf-8")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    if any(item["percent"] < 71 for item in summary.values()):
+    if any(item["covered"] * 100 < item["lines"] * 71 for item in summary.values()):
         raise SystemExit("Every native USB/inventory/compiler module requires at least 71% production line coverage.")
 
 

@@ -97,7 +97,7 @@ impl Fixture {
             std::fs::write(&paths.provider_setup, serde_json::to_vec(&json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":crate::game_integration_setup::dcs_connection(&catalogue),"aircraftModule":"A-10C"}}})).unwrap()).unwrap();
             crate::persistence::test_support::record(&paths.provider_setup,"games","setup",&std::fs::read(&paths.provider_setup).unwrap());
         }
-        manager.games = Arc::new(crate::games::GamesRuntime::new(
+        manager.games = Arc::new(crate::games::GamesRuntime::test_runtime(
             Arc::new(|request| {
                 assert_eq!(
                     request["command"], "integration_get_state",

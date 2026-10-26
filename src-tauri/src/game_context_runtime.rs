@@ -5,6 +5,7 @@ use crate::game_context::{ContextToken, GamePreparation, Observation, ProfileOwn
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGame {
     pub proof: GamePreparation,
+    pub integration_key: String,
     pub connection: Value,
     pub catalogue: Value,
     pub aircraft_module: Option<String>,
@@ -12,7 +13,10 @@ pub(crate) struct PreparedGame {
 impl GamesRuntime {
     /// Foreground desktop output needs exact process identity independently of
     /// optional simulator telemetry setup and catalogue qualification.
-    pub(crate) fn desktop_process(&self, id: &str) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
+    pub(crate) fn desktop_process(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::game_discovery::ProcessIdentity>, String> {
         let game = self.registered_profile_game(id)?;
         let process = self.inner.platform.find(&game)?;
         match process {
@@ -24,10 +28,10 @@ impl GamesRuntime {
         &self,
         id: &str,
     ) -> Result<Option<PreparedGame>, String> {
-        self.registered_profile_game(id)?;
+        let registered = self.registered_profile_game(id)?;
         // A context-only game is a valid profile owner and desktop scope, but
         // never acquires simulator preparation or provider command authority.
-        if !osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id) {
+        if crate::game_discovery::integration_key(&registered).is_none() {
             return Ok(None);
         }
         self.inner.refresh_game_contexts(true);
@@ -40,16 +44,38 @@ impl GamesRuntime {
         else {
             return Ok(None);
         };
-        let game = self.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).catalogue.iter()
-            .find(|game|game["id"] == id).cloned().ok_or("The selected game installation changed.")?;
+        let game = self
+            .inner
+            .settings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .catalogue
+            .iter()
+            .find(|game| game["id"] == id)
+            .cloned()
+            .ok_or("The selected game installation changed.")?;
         if let Err(error) = self.inner.setup.validate_native_build(&game, true) {
-            self.inner.contexts.lock().unwrap_or_else(|p|p.into_inner()).invalidate_preparation(&proof, error.clone());
+            self.inner
+                .contexts
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .invalidate_preparation(&proof, error.clone());
             return Err(error);
         }
         let (connection, revision, saved_aircraft_module) =
-            self.inner.setup.provider_connection_snapshot(id)?;
-        let catalogue = self.inner.setup.resource_integration_catalogue_for_vehicle(id, proof.vehicle_id.as_deref())?;
-        let aircraft_module = if id == "dcs" {
+            self.inner.setup.provider_connection_snapshot(
+                crate::game_discovery::integration_key(&game)
+                    .ok_or("The game integration binding changed.")?,
+            )?;
+        let catalogue = self
+            .inner
+            .setup
+            .resource_integration_catalogue_for_vehicle(
+                crate::game_discovery::integration_key(&game)
+                    .ok_or("The game integration binding changed.")?,
+                proof.vehicle_id.as_deref(),
+            )?;
+        let aircraft_module = if crate::game_discovery::integration_key(&game) == Some("dcs") {
             catalogue["aircraftModule"].as_str().map(str::to_owned)
         } else {
             saved_aircraft_module
@@ -64,6 +90,9 @@ impl GamesRuntime {
         }
         self.validate_game_preparation(&proof)?;
         Ok(Some(PreparedGame {
+            integration_key: crate::game_discovery::integration_key(&game)
+                .ok_or("The game integration binding changed.")?
+                .into(),
             proof,
             connection,
             catalogue,
@@ -99,12 +128,17 @@ impl GamesRuntime {
             if self.inner.runtime_vehicle_id(&proof.game_id) != proof.vehicle_id {
                 return Err("The loaded DCS aircraft changed; acquire its current module before using this branch.".into());
             }
-            if self.inner.setup.provider_setup_revision(&proof.game_id)
+            let integration = crate::game_discovery::integration_key(&game)
+                .ok_or("The game integration binding changed.")?;
+            if self.inner.setup.provider_setup_revision(integration)
                 != proof.provider_setup_revision
                 || self
                     .inner
                     .setup
-                    .current_catalogue_revision_for_vehicle(&proof.game_id, proof.vehicle_id.as_deref())
+                    .current_catalogue_revision_for_vehicle(
+                        integration,
+                        proof.vehicle_id.as_deref(),
+                    )
                     .as_ref()
                     != Some(&proof.catalogue_revision)
             {
@@ -170,7 +204,9 @@ impl GamesRuntime {
             // native freshness window. Keep exact process checks and telemetry
             // draining independent of that work, without extending either lease.
             let polling = thread::spawn(move || {
-                while !polling_inner.closed.load(Ordering::Acquire) && !polling_stop.load(Ordering::Acquire) {
+                while !polling_inner.closed.load(Ordering::Acquire)
+                    && !polling_stop.load(Ordering::Acquire)
+                {
                     polling_inner.poll_vehicle_telemetry();
                     thread::sleep(Duration::from_millis(100));
                 }
@@ -196,16 +232,21 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner());
         for game in games {
             let id = game["id"].as_str().unwrap_or("").to_owned();
-            if !osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id.as_str()) {
+            if crate::game_discovery::integration_key(game).is_none() {
                 if let Some(game) = game.as_object_mut() {
                     game.remove("integrationContext");
                 }
                 continue;
             }
-            if id == "dcs" {
+            if crate::game_discovery::integration_key(game) == Some("dcs") {
                 let active_module = self.current_vehicle_id(&id).and_then(|vehicle| {
-                    self.inner.setup.integration_catalogue_metadata_for_vehicle(&id, Some(&vehicle)).ok()
-                        .and_then(|catalogue| catalogue["aircraftModule"].as_str().map(str::to_owned))
+                    self.inner
+                        .setup
+                        .integration_catalogue_metadata_for_vehicle("dcs", Some(&vehicle))
+                        .ok()
+                        .and_then(|catalogue| {
+                            catalogue["aircraftModule"].as_str().map(str::to_owned)
+                        })
                 });
                 game["integrationSetup"]["aircraftModuleAutomatic"] = json!(true);
                 game["integrationSetup"]["activeAircraftModule"] = json!(active_module);
@@ -224,7 +265,11 @@ impl GamesRuntime {
         }
     }
     pub(crate) fn resource_integration_catalogue(&self, id: &str) -> Result<Value, String> {
-        self.inner.setup.resource_integration_catalogue(id)
+        let game = self.registered_profile_game(id)?;
+        self.inner.setup.resource_integration_catalogue(
+            crate::game_discovery::integration_binding(&game)
+                .ok_or("Attach a compatible integration first.")?,
+        )
     }
     /// P4's native coordinator supplies the immutable applied owner. This method
     /// is deliberately absent from IPC and does not start integration workers.
@@ -265,23 +310,53 @@ impl GamesRuntime {
 impl Inner {
     fn poll_vehicle_telemetry(&self) {
         let games = if self.guard_installation_metadata().is_ok() {
-            self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.iter()
-                .filter(|game| game["id"].as_str().is_some_and(|id| osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id)))
-                .cloned().collect()
+            self.settings
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .catalogue
+                .iter()
+                .filter(|game| crate::game_discovery::integration_key(game).is_some())
+                .cloned()
+                .collect()
         } else {
             vec![]
         };
-        self.vehicles.lock().unwrap_or_else(|p| p.into_inner()).poll_verified(
-            &games,
-            |id| self.setup.provider_setup_revision(id),
-            |process| self.platform.alive(process).unwrap_or(false),
-        );
+        self.vehicles
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .poll_verified(
+                &games,
+                |id| {
+                    let key = games
+                        .iter()
+                        .find(|game| game["id"] == id)
+                        .and_then(crate::game_discovery::integration_key)
+                        .unwrap_or("");
+                    self.setup.provider_setup_revision(key)
+                },
+                |process| self.platform.alive(process).unwrap_or(false),
+            );
     }
     fn runtime_vehicle_id(&self, id: &str) -> Option<String> {
         // Other games already select their profile vehicle independently. DCS
         // additionally binds decoder/command authority to its exact aircraft.
-        (id == "dcs").then(|| self.vehicles.lock().unwrap_or_else(|p| p.into_inner()).current(id))
-            .flatten().and_then(|vehicle| vehicle["id"].as_str().map(str::to_owned))
+        (self
+            .settings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .catalogue
+            .iter()
+            .find(|game| game["id"] == id)
+            .and_then(crate::game_discovery::integration_key)
+            == Some("dcs"))
+        .then(|| {
+            self.vehicles
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .current(id)
+        })
+        .flatten()
+        .and_then(|vehicle| vehicle["id"].as_str().map(str::to_owned))
     }
     pub(super) fn refresh_game_contexts(&self, force_setup: bool) {
         let epoch = match self
@@ -300,9 +375,17 @@ impl Inner {
             .unwrap_or_else(|p| p.into_inner())
             .catalogue
             .iter()
-            .filter(|game| game["id"].as_str().is_some_and(|id| osg_profiles::activation::SUPPORTED_GAME_IDS.contains(&id)))
+            .filter(|game| crate::game_discovery::integration_key(game).is_some())
             .cloned()
             .collect::<Vec<_>>();
+        let bound_ids = games
+            .iter()
+            .filter_map(|game| game["id"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>();
+        self.contexts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain_bindings(&bound_ids);
         let mut checked = self
             .context_setup_check
             .lock()
@@ -317,7 +400,10 @@ impl Inner {
             let Some(id) = game["id"].as_str() else {
                 continue;
             };
-            let revision = self.setup.provider_setup_revision(id);
+            let Some(integration) = crate::game_discovery::integration_key(&game) else {
+                continue;
+            };
+            let revision = self.setup.provider_setup_revision(integration);
             let supported = self.platform.integration_setup_supported()
                 && game["processMonitoringSupported"]
                     .as_bool()
@@ -344,15 +430,28 @@ impl Inner {
             );
             let vehicle_process = process.as_ref().ok().cloned().flatten();
             let error = process.as_ref().err().cloned();
-            let connection = self.setup.provider_connection_snapshot(id).ok().map(|(connection, _, _)|connection);
+            let connection = self
+                .setup
+                .provider_connection_snapshot(integration)
+                .ok()
+                .map(|(connection, _, _)| connection);
             if let Some(connection) = connection {
-                self.vehicles.lock().unwrap_or_else(|p|p.into_inner()).observe(
-                    &game, &connection, vehicle_process, &revision,
-                    supported && game["integrationSetup"]["state"] == "ready", epoch,
-                );
+                self.vehicles
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .observe(
+                        &game,
+                        &connection,
+                        vehicle_process,
+                        &revision,
+                        supported && game["integrationSetup"]["state"] == "ready",
+                        epoch,
+                    );
             }
             let vehicle_id = self.runtime_vehicle_id(id);
-            let catalogue = self.setup.integration_catalogue_metadata_for_vehicle(id, vehicle_id.as_deref());
+            let catalogue = self
+                .setup
+                .integration_catalogue_metadata_for_vehicle(integration, vehicle_id.as_deref());
             let setup_matches = game["integrationSetup"]["providerSetupRevision"].as_str()
                 == Some(revision.as_str());
             let observation = Observation {
@@ -360,7 +459,7 @@ impl Inner {
                 supported,
                 setup_ready: setup_matches
                     && game["integrationSetup"]["state"] == "ready"
-                    && (!id.starts_with("assetto-corsa")
+                    && (!integration.starts_with("assetto-corsa")
                         || game["integrationSetup"]["verified"] == true),
                 provider_setup_revision: revision.clone(),
                 catalogue_revision: catalogue
@@ -379,430 +478,5 @@ impl Inner {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::game_discovery::ProcessIdentity;
-    use std::collections::BTreeMap;
-    struct Scratch {
-        path: PathBuf,
-        _directory: tempfile::TempDir,
-    }
-    impl Scratch {
-        fn new() -> Self {
-            let directory = crate::test_directory();
-            Self {
-                path: directory.path().to_owned(),
-                _directory: directory,
-            }
-        }
-    }
-    struct FakePlatform {
-        process: Mutex<Option<ProcessIdentity>>,
-        failed: AtomicBool,
-        reads: std::sync::atomic::AtomicUsize,
-    }
-    impl FakePlatform {
-        fn new() -> Self {
-            Self {
-                process: Mutex::new(Some(ProcessIdentity {
-                    pid: 42,
-                    path: "/fixture/X-Plane.exe".into(),
-                    epoch: 10,
-                })),
-                failed: AtomicBool::new(false),
-                reads: std::sync::atomic::AtomicUsize::new(0),
-            }
-        }
-    }
-    impl Platform for FakePlatform {
-        fn integration_setup_supported(&self) -> bool {
-            self.reads.fetch_add(1, Ordering::SeqCst);
-            true
-        }
-        fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
-            self.reads.fetch_add(1, Ordering::SeqCst);
-            vec![
-                json!({"id":"x-plane-12","name":"X-Plane 12","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe","launchSupported":true,"processMonitoringSupported":true}),
-            ]
-        }
-        fn validate(&self, _: &str, path: &str) -> Result<(), String> {
-            self.reads.fetch_add(1, Ordering::SeqCst);
-            if path == "/fixture/X-Plane.exe" {
-                Ok(())
-            } else {
-                Err("Wrong executable".into())
-            }
-        }
-        fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> {
-            Err("Unexpected launch".into())
-        }
-        fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> {
-            self.reads.fetch_add(1, Ordering::SeqCst);
-            if self.failed.load(Ordering::Acquire) {
-                Err("Process inspection failed".into())
-            } else {
-                Ok(self.process.lock().unwrap().clone())
-            }
-        }
-        fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {
-            self.reads.fetch_add(1, Ordering::SeqCst);
-            Ok(self.process.lock().unwrap().as_ref() == Some(identity))
-        }
-    }
-    fn owner(game: Option<&str>) -> ProfileOwner {
-        ProfileOwner {
-            session: "9f4d5357-4592-4111-a8ec-44ff38160d87".into(),
-            profile_id: "7b10d24e-7610-4083-a7d0-21ea12b24d23".into(),
-            applied_revision: 1,
-            run_generation: 1,
-            game_id: game.map(str::to_owned),
-        }
-    }
-    fn runtime(scratch: &Scratch) -> (GamesRuntime, Arc<FakePlatform>, Arc<Mutex<Vec<String>>>) {
-        let platform = Arc::new(FakePlatform::new());
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let unexpected = calls.clone();
-        let panel: CleanupIo = Arc::new(move |request| {
-            unexpected
-                .lock()
-                .unwrap()
-                .push(request["command"].as_str().unwrap_or("").to_owned());
-            panic!("Context metadata must never call cleanup or a retired provider: {request}");
-        });
-        let runtime =
-            GamesRuntime::new(panel, Paths::in_directory(&scratch.path), platform.clone());
-        let revision = runtime.inner.setup.provider_setup_revision("x-plane-12");
-        runtime.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":revision,"connection":crate::xplane::defaults(12)})).unwrap();
-        (runtime, platform, calls)
-    }
-    #[test]
-    fn desktop_process_identity_is_available_without_provider_setup_and_pid_reuse_changes_scope_evidence(){
-        let scratch=Scratch::new();let platform=Arc::new(FakePlatform::new());
-        let runtime=GamesRuntime::new(Arc::new(|request|panic!("Process observation must not set up a provider or submit output: {request}")),Paths::in_directory(&scratch.path),platform.clone());
-        assert!(runtime.prepare_profile_game_context("x-plane-12").unwrap().is_none());
-        let captured=runtime.desktop_process("x-plane-12").unwrap().unwrap();assert_eq!(captured.pid,42);assert_eq!(captured.epoch,10);
-        platform.process.lock().unwrap().as_mut().unwrap().epoch=11;
-        let current=runtime.desktop_process("x-plane-12").unwrap().unwrap();assert_eq!(current.pid,captured.pid);assert_ne!(current,captured);
-        platform.failed.store(true,Ordering::Release);assert!(runtime.desktop_process("x-plane-12").is_err());platform.failed.store(false,Ordering::Release);
-        *platform.process.lock().unwrap()=None;assert!(runtime.desktop_process("x-plane-12").unwrap().is_none());
-        assert!(runtime.desktop_process("unknown").is_err());runtime.shutdown();
-    }
-    #[test]
-    fn native_process_does_not_activate_without_matching_applied_owner() {
-        let scratch = Scratch::new();
-        let (runtime, _, _) = runtime(&scratch);
-        assert!(runtime.profile_game_context("x-plane-12").is_err());
-        runtime
-            .set_profile_context_owner(Some(owner(Some("dcs"))))
-            .unwrap();
-        assert!(runtime.profile_game_context("x-plane-12").is_err());
-        runtime
-            .set_profile_context_owner(Some(owner(None)))
-            .unwrap();
-        assert!(runtime.profile_game_context("x-plane-12").is_err());
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        let token = runtime.profile_game_context("x-plane-12").unwrap();
-        assert_eq!(token.process.pid, 42);
-        assert_eq!(token.process.epoch, 10);
-        assert!(runtime.validate_profile_game_context(&token).is_ok());
-        runtime.shutdown();
-    }
-    #[test]
-    fn owner_publication_does_no_discovery_and_admission_still_rechecks_the_process() {
-        let scratch = Scratch::new();
-        let (runtime, platform, calls) = runtime(&scratch);
-        // Isolate the publication call from the independently running native
-        // observers; preparation and admission below still use real Runtime paths.
-        runtime.inner.closed.store(true, Ordering::Release);
-        for observer in [&runtime.observer, &runtime.activation_observer] {
-            if let Some(observer) = observer.lock().unwrap().take() {
-                observer.join().unwrap();
-            }
-        }
-        runtime.inner.closed.store(false, Ordering::Release);
-        let prepared = runtime
-            .prepare_profile_game_context("x-plane-12")
-            .unwrap()
-            .unwrap();
-        *runtime.inner.context_setup_check.lock().unwrap() = None;
-        let before = platform.reads.load(Ordering::SeqCst);
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        assert_eq!(
-            platform.reads.load(Ordering::SeqCst),
-            before,
-            "Publishing the applied owner must not perform synchronous native discovery"
-        );
-        assert!(runtime.inner.context_setup_check.lock().unwrap().is_none());
-        let token = runtime
-            .admit_prepared_game_context(&prepared.proof)
-            .unwrap();
-        assert_eq!(token.process, prepared.proof.process);
-        assert!(platform.reads.load(Ordering::SeqCst) > before);
-        platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
-        assert_eq!(
-            runtime
-                .admit_prepared_game_context(&prepared.proof)
-                .unwrap_err(),
-            "The prepared game process exited, was replaced or became ambiguous."
-        );
-        assert!(runtime
-            .inner
-            .contexts
-            .lock()
-            .unwrap()
-            .token("x-plane-12")
-            .is_err());
-        assert!(calls.lock().unwrap().is_empty());
-        runtime.shutdown();
-    }
-    #[test]
-    fn preparation_is_native_read_only_and_admission_requires_matching_applied_owner() {
-        let scratch = Scratch::new();
-        let (runtime, _, calls) = runtime(&scratch);
-        let prepared = runtime
-            .prepare_profile_game_context("x-plane-12")
-            .unwrap()
-            .unwrap();
-        assert_eq!(prepared.proof.process.pid, 42);
-        assert_eq!(prepared.connection["version"], 12);
-        assert!(runtime.profile_game_context("x-plane-12").is_err());
-        assert!(runtime
-            .admit_prepared_game_context(&prepared.proof)
-            .is_err());
-        runtime
-            .set_profile_context_owner(Some(owner(Some("dcs"))))
-            .unwrap();
-        assert!(runtime
-            .admit_prepared_game_context(&prepared.proof)
-            .is_err());
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        let token = runtime
-            .admit_prepared_game_context(&prepared.proof)
-            .unwrap();
-        assert!(runtime
-            .validate_admitted_game_context(&token, &prepared.proof)
-            .is_ok());
-        assert!(calls.lock().unwrap().is_empty());
-        runtime.shutdown();
-    }
-    #[test]
-    fn preparation_loss_revokes_before_dispatch_without_waiting_for_observer() {
-        let scratch = Scratch::new();
-        let (runtime, platform, _) = runtime(&scratch);
-        let prepared = runtime
-            .prepare_profile_game_context("x-plane-12")
-            .unwrap()
-            .unwrap();
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        let token = runtime
-            .admit_prepared_game_context(&prepared.proof)
-            .unwrap();
-        platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
-        assert!(runtime
-            .validate_admitted_game_context(&token, &prepared.proof)
-            .is_err());
-        assert!(runtime
-            .inner
-            .contexts
-            .lock()
-            .unwrap()
-            .token("x-plane-12")
-            .is_err());
-        let fresh = runtime
-            .prepare_profile_game_context("x-plane-12")
-            .unwrap()
-            .unwrap();
-        assert_ne!(fresh.proof.session, prepared.proof.session);
-        let revision = runtime.inner.setup.provider_setup_revision("x-plane-12");
-        let mut connection = crate::xplane::defaults(12);
-        connection["freshnessMs"] = json!(2000);
-        runtime.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":revision,"connection":connection})).unwrap();
-        assert!(runtime.validate_game_preparation(&fresh.proof).is_err());
-        *platform.process.lock().unwrap() = None;
-        assert!(runtime
-            .prepare_profile_game_context("x-plane-12")
-            .unwrap()
-            .is_none());
-        runtime.shutdown();
-    }
-    #[test]
-    fn late_old_stage_failure_preserves_the_admitted_replacement_process_and_owner() {
-        let scratch = Scratch::new();
-        let (runtime, platform, _) = runtime(&scratch);
-        let old = runtime
-            .prepare_profile_game_context("x-plane-12")
-            .unwrap()
-            .unwrap();
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
-        let current = runtime
-            .prepare_profile_game_context("x-plane-12")
-            .unwrap()
-            .unwrap();
-        let mut next = owner(Some("x-plane-12"));
-        next.run_generation += 1;
-        runtime
-            .set_profile_context_owner(Some(next.clone()))
-            .unwrap();
-        let token = runtime.admit_prepared_game_context(&current.proof).unwrap();
-        assert_eq!(token.owner, next);
-        assert!(runtime.validate_game_preparation(&old.proof).is_err());
-        runtime
-            .validate_admitted_game_context(&token, &current.proof)
-            .unwrap();
-        assert_eq!(runtime.profile_game_context("x-plane-12").unwrap(), token);
-        *platform.process.lock().unwrap() = None;
-        assert!(runtime.validate_game_preparation(&current.proof).is_err());
-        assert!(runtime
-            .inner
-            .contexts
-            .lock()
-            .unwrap()
-            .token("x-plane-12")
-            .is_err());
-        runtime.shutdown();
-    }
-    #[test]
-    fn process_replacement_and_exit_withdraw_context_without_retired_provider_calls() {
-        let scratch = Scratch::new();
-        let (runtime, platform, calls) = runtime(&scratch);
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        let token = runtime.profile_game_context("x-plane-12").unwrap();
-        platform.process.lock().unwrap().as_mut().unwrap().epoch += 1;
-        assert!(runtime.validate_profile_game_context(&token).is_err());
-        let replacement = runtime.profile_game_context("x-plane-12").unwrap();
-        assert_ne!(replacement.session, token.session);
-        *platform.process.lock().unwrap() = None;
-        assert!(runtime.validate_profile_game_context(&replacement).is_err());
-        assert!(calls.lock().unwrap().is_empty());
-        runtime.shutdown();
-    }
-    #[test]
-    fn settings_save_synchronously_revokes_context_without_background_or_legacy_state() {
-        let scratch = Scratch::new();
-        let (runtime, _, calls) = runtime(&scratch);
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        let token = runtime.profile_game_context("x-plane-12").unwrap();
-        let mut connection = crate::xplane::defaults(12);
-        connection["freshnessMs"] = json!(2000);
-        runtime.request(&json!({"command":"game_integration_settings_save","gameId":"x-plane-12","expectedSetupRevision":token.provider_setup_revision,"connection":connection})).unwrap();
-        assert!(runtime
-            .inner
-            .contexts
-            .lock()
-            .unwrap()
-            .validate(&token)
-            .is_err());
-        assert_ne!(
-            runtime
-                .profile_game_context("x-plane-12")
-                .unwrap()
-                .provider_setup_revision,
-            token.provider_setup_revision
-        );
-        assert!(calls.lock().unwrap().is_empty());
-        runtime.shutdown();
-    }
-    #[test]
-    fn inspection_failure_and_pause_revoke_authority_without_legacy_output_stop() {
-        let scratch = Scratch::new();
-        let (runtime, platform, calls) = runtime(&scratch);
-        runtime
-            .set_profile_context_owner(Some(owner(Some("x-plane-12"))))
-            .unwrap();
-        let token = runtime.profile_game_context("x-plane-12").unwrap();
-        platform.failed.store(true, Ordering::Release);
-        assert!(runtime.validate_profile_game_context(&token).is_err());
-        platform.failed.store(false, Ordering::Release);
-        let fresh = runtime.profile_game_context("x-plane-12").unwrap();
-        runtime.set_profile_context_owner(None).unwrap();
-        assert!(runtime.validate_profile_game_context(&fresh).is_err());
-        assert!(calls.lock().unwrap().is_empty());
-        runtime.shutdown();
-    }
-    struct DcsPlatform;
-    impl Platform for DcsPlatform {
-        fn integration_setup_supported(&self) -> bool { true }
-        fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
-            vec![json!({"id":"dcs","name":"DCS World","provider":"dcs-bios","installed":true,"executable":"/fixture/DCS.exe","launchSupported":true,"processMonitoringSupported":true})]
-        }
-        fn validate(&self, id: &str, path: &str) -> Result<(), String> {
-            if id == "dcs" && path == "/fixture/DCS.exe" { Ok(()) } else { Err("Wrong DCS executable".into()) }
-        }
-        fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> { Err("Unexpected launch".into()) }
-        fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> {
-            Ok(Some(ProcessIdentity { pid: 42, path: "/fixture/DCS.exe".into(), epoch: 10 }))
-        }
-        fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> { Ok(self.find(&json!({}))?.as_ref() == Some(identity)) }
-    }
-    #[test]
-    fn loaded_dcs_aircraft_selects_module_without_saved_selection_and_editor_reads_do_not_revoke_it() {
-        let scratch = Scratch::new();
-        let target = scratch.path.join("DCS");
-        std::fs::create_dir(&target).unwrap();
-        crate::dcs_setup::fixture_module(&target);
-        std::fs::write(target.join("Scripts/Export.lua"), b"dofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n").unwrap();
-        crate::dcs_setup::fixture_exports(&target);
-        let catalogue_path = target.join("Scripts/DCS-BIOS/doc/json");
-        std::fs::copy(catalogue_path.join("A-10C.json"), catalogue_path.join("F-16C_50.json")).unwrap();
-        let aliases_path = catalogue_path.join("AircraftAliases.json");
-        let mut aliases = crate::dcs_bios::read_json(&aliases_path, crate::dcs_bios::MAX_DOCUMENT).unwrap();
-        aliases["F-16C_50"] = json!(["F-16C_50"]);
-        aliases["ViperAlias"] = json!(["F-16C_50"]);
-        std::fs::write(&aliases_path, serde_json::to_vec(&aliases).unwrap()).unwrap();
-        let paths = Paths::in_directory(&scratch.path);
-        let settings_path = paths.provider_setup.clone();
-        let saved = json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":crate::game_integration_setup::dcs_connection(&catalogue_path),"aircraftModule":"A-10C"}}});
-        std::fs::write(&settings_path, serde_json::to_vec(&saved).unwrap()).unwrap();
-        crate::persistence::test_support::record(&settings_path,"games","setup",&serde_json::to_vec(&saved).unwrap());
-        let before = std::fs::read(&settings_path).unwrap();
-        let runtime = GamesRuntime::new(Arc::new(|request| panic!("DCS catalogue/vehicle introspection must not submit output: {request}")), paths, Arc::new(DcsPlatform));
-        runtime.inner.closed.store(true, Ordering::Release);
-        for observer in [&runtime.observer, &runtime.activation_observer] {
-            if let Some(observer) = observer.lock().unwrap().take() { observer.join().unwrap(); }
-        }
-        runtime.inner.closed.store(false, Ordering::Release);
-        runtime.set_test_vehicle("dcs", Some("A-10C"));
-        let first = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
-        assert_eq!(first.aircraft_module.as_deref(), Some("A-10C"));
-        runtime.set_profile_context_owner(Some(owner(Some("dcs")))).unwrap();
-        let token = runtime.admit_prepared_game_context(&first.proof).unwrap();
-        let browsed = runtime.resource_dcs_vehicle_catalogue("F-16C_50").unwrap();
-        assert_eq!(browsed["aircraftModule"], "F-16C_50");
-        runtime.validate_admitted_game_context(&token, &first.proof).unwrap();
-        assert_eq!(std::fs::read(&settings_path).unwrap(), before);
-        runtime.set_test_vehicle("dcs", Some("ViperAlias"));
-        assert!(runtime.validate_admitted_game_context(&token, &first.proof).is_err());
-        let replacement = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
-        assert_eq!(replacement.aircraft_module.as_deref(), Some("F-16C_50"));
-        assert_eq!(replacement.proof.vehicle_id.as_deref(), Some("ViperAlias"));
-        runtime.admit_prepared_game_context(&replacement.proof).unwrap();
-        runtime.set_test_vehicle("dcs", Some("F-16C_50"));
-        assert!(runtime.validate_game_preparation(&replacement.proof).is_err(), "An alias transition must fence the previous flight even when its module is unchanged");
-        let current = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
-        assert_eq!(current.aircraft_module, replacement.aircraft_module);
-        assert_ne!(current.proof.session, replacement.proof.session);
-        let display = runtime.resource_catalogue();
-        assert_eq!(display[0]["integrationSetup"]["activeAircraftModule"], "F-16C_50");
-        runtime.set_test_vehicle("dcs", None);
-        assert!(runtime.validate_game_preparation(&current.proof).is_err());
-        let base = runtime.prepare_profile_game_context("dcs").unwrap().unwrap();
-        assert_eq!(base.aircraft_module.as_deref(), Some("CommonData"));
-        assert_eq!(std::fs::read(&settings_path).unwrap(), before);
-        runtime.shutdown();
-    }
-}
+#[path = "game_context_runtime_tests.rs"]
+mod tests;

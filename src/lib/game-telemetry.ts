@@ -1,4 +1,4 @@
-import {isBuiltinGameId as isGameId,type GameId} from './games';
+import {isGameId,type GameId} from './games';
 import type {DeepReadonly} from './profiles';
 
 export type GameTelemetryScalar=string|number|boolean|null;

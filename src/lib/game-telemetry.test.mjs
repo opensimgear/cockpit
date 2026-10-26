@@ -1,7 +1,9 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {loadModules} from './test-module-loader.mjs';
-const modules=await loadModules(['./game-telemetry']);
+const modules=await loadModules(['./games','./game-telemetry']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const {GameTelemetryClient,GameTelemetryController,telemetryAge,telemetryValue,telemetryStatus,preferredTelemetryGame}=modules.get('./game-telemetry');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const channel=(overrides={})=>({id:'vehicle.speed',label:'Vehicle speed',category:'physics',type:'number',unit:'m/s',status:'known',value:0,ageMs:0,nativeField:'speedKmh',provider:'shared-memory',...overrides});
@@ -10,8 +12,8 @@ const report=(overrides={})=>({schemaVersion:1,games:[game(overrides)]});
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
-test('context-only games cannot enter provider telemetry reports or selections',async()=>{
-  const id='custom-11111111-1111-4111-8111-111111111111';
+test('malformed game ids cannot enter provider telemetry reports or selections',async()=>{
+  const id='invalid/path';
   const client=new GameTelemetryClient(async()=>report({id}));
   await assert.rejects(()=>client.inspect({offset:0,limit:64}),/invalid or incomplete/);
   const controller=new GameTelemetryController({inspect(){throw new Error('No telemetry request expected');}});

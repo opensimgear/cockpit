@@ -185,7 +185,7 @@ fn request_is_strict_bounded_and_has_no_browser_graph_token_or_sample_fields() {
         ("generation", json!(0)),
         ("profileRevision", json!(0)),
         ("generation", json!(9_007_199_254_740_992u64)),
-        ("gameId", json!("unknown")),
+        ("gameId", json!("Invalid Game")),
         ("extra", Value::Null),
     ] {
         let mut bad = base.clone();

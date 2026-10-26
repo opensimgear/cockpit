@@ -1,3 +1,4 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
@@ -9,7 +10,8 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./persistence/ui-preferences','./ui-settings-guard','./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-background-crop','./game-telemetry','./game-provider-settings','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices','./system-inventory',]);
+const modules=await loadModules(['./game-discovery','./persistence/ui-preferences','./ui-settings-guard','./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-background-crop','./game-telemetry','./game-provider-settings','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices','./system-inventory',]);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const noRequest=()=>{throw new Error('Opening Games must not acquire hardware, read configurations or start a runtime.');};
 const components=new Map();
 function evaluate(code,filename,require,extra={}){
@@ -37,7 +39,7 @@ async function appView(view='games',selectedGameId=''){
   const source=original.replace("let view = $state<View>('overview');",`let view = $state<View>(${JSON.stringify(view)});`).replace('let games = $state<GamesState>();','let games = $state<GamesState>(fixtureGameState);').replace("let selectedGameId = $state<GameId | ''>('');","let selectedGameId = $state<GameId | ''>(fixtureSelectedGame);");
   assert.notEqual(source,original);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),GamesPanel=await component('./GamesPanel.svelte'),Icon=await component('./Icon.svelte');let props;const debugPanels=[];
-  const game={...modules.get('./games').supportedGames.find(game=>game.id==='dcs'),installed:true,launchSupported:true,executable:'C:\\DCS\\bin\\DCS.exe',integrationSetup:{state:'setup-required',message:'Fixture provider has not been set up.',providerSetupRevision:`sha256:${'1'.repeat(64)}`,connection:modules.get('./game-provider-settings').defaultProviderConnection('dcs')},integrationContext:{status:'waiting-profile',message:'No verified matching game context.',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}};
+  const game={...discoveredGames.find(game=>game.id==='dcs'),installed:true,launchSupported:true,executable:'C:\\DCS\\bin\\DCS.exe',integrationSetup:{state:'setup-required',message:'Fixture provider has not been set up.',providerSetupRevision:`sha256:${'1'.repeat(64)}`,connection:modules.get('./game-provider-settings').defaultProviderConnection('dcs')},integrationContext:{status:'waiting-profile',message:'No verified matching game context.',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}};
   const App=evaluate(js.code,filename.pathname,name=>{
     if(name==='svelte/internal/server')return server;
     if(name==='svelte')return svelte;

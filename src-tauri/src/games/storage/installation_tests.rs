@@ -1,42 +1,61 @@
 use super::*;
-use std::fs;
+use std::{collections::BTreeMap, fs};
 
 fn settings() -> Settings {
     Settings {
-        schema_version: 1,
-        manual_installations: BTreeMap::from([(
+        revision: 3,
+        discovery_initialized: true,
+        scan_roots: vec!["C:\\Games".into()],
+        games: BTreeMap::from([(
             "dcs".into(),
-            "C:\\Games\\DCS\\bin\\DCS.exe".into(),
+            GameRecord {
+                name: "DCS".into(),
+                installations: BTreeMap::from([(
+                    "dcs-install".into(),
+                    Installation {
+                        root: "C:\\Games\\DCS".into(),
+                        executable: Some("C:\\Games\\DCS\\bin\\DCS.exe".into()),
+                        executables: vec!["C:\\Games\\DCS\\bin\\DCS.exe".into()],
+                        sources: vec![LibrarySource {
+                            client: "disk".into(),
+                            app_id: "local-dcs".into(),
+                            install_path: "C:\\Games\\DCS".into(),
+                            launcher: None,
+                        }],
+                    },
+                )]),
+                selected_installation: Some("dcs-install".into()),
+                integration: None,
+                default_background: None,
+            },
         )]),
         ..Settings::default()
     }
 }
+
 #[test]
-fn fresh_store_does_not_read_seed_or_modify_an_old_profile_library() {
+fn fresh_store_ignores_retired_profile_library_and_round_trips_unified_games() {
     let directory = crate::test_directory();
     let old = directory.path().join("games.json");
-    let legacy=br#"{"schemaVersion":1,"profiles":[{"id":"old","devices":["unsafe"]}],"defaultProfiles":{"dcs":"old"},"manualInstallations":{"dcs":"C:\\Old\\DCS.exe"}}"#;
+    let legacy =
+        br#"{"profiles":[{"id":"old","devices":["unsafe"]}],"defaultProfiles":{"dcs":"old"}}"#;
     fs::write(&old, legacy).unwrap();
     let store = Store::new(directory.path().join("game-installations-v1.json"));
     assert_eq!(store.load().unwrap(), None);
-    let fresh = Settings::default();
-    assert!(fresh.manual_installations.is_empty());
-    store.save(&fresh).unwrap();
+    let value = settings();
+    store.save(&value).unwrap();
     assert_eq!(
         Store::new(directory.path().join("game-installations-v1.json"))
             .load()
             .unwrap(),
-        Some(fresh)
+        Some(value.clone())
     );
     assert_eq!(fs::read(old).unwrap(), legacy);
-    let value: serde_json::Value =
-        serde_json::from_slice(&serde_json::to_vec(&store.load().unwrap().unwrap()).unwrap())
-            .unwrap();
-    assert_eq!(
-        value,
-        serde_json::json!({"schemaVersion":1,"manualInstallations":{}})
-    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(json["games"]["dcs"]["selectedInstallation"], "dcs-install");
 }
+
 #[test]
 fn stale_game_settings_cannot_overwrite_a_committed_edit() {
     let directory = crate::test_directory();
@@ -47,90 +66,114 @@ fn stale_game_settings_cannot_overwrite_a_committed_edit() {
     let stale = Store::new(path.clone());
     stale.load().unwrap();
     let mut edited = original.clone();
-    edited
-        .manual_installations
-        .insert("x-plane-12".into(), "C:\\X-Plane\\X-Plane.exe".into());
+    edited.games.get_mut("dcs").unwrap().name = "DCS Updated".into();
     first.save(&edited).unwrap();
     assert!(stale.save(&original).unwrap_err().contains("conflict"));
-    assert_eq!(Store::new(path.clone()).load().unwrap(), Some(edited));
-    assert!(!path.exists());
+    assert_eq!(Store::new(path).load().unwrap(), Some(edited));
 }
+
 #[test]
-fn strict_envelope_rejects_profiles_tokens_duplicate_keys_and_oversized_files() {
+fn strict_envelope_rejects_unknown_duplicate_and_oversized_metadata_without_rewriting() {
     let directory = crate::test_directory();
     let path = directory.path().join("game-installations-v1.json");
     let store = Store::new(path.clone());
     for bytes in [
-        r#"{"schemaVersion":1,"manualInstallations":{},"profiles":[]}"#,
-        r#"{"schemaVersion":1,"manualInstallations":{},"defaultProfiles":{}}"#,
-        r#"{"schemaVersion":1,"manualInstallations":{},"owner":"forged"}"#,
-        r#"{"schemaVersion":1,"manualInstallations":{"dcs":"C:\\one.exe","dcs":"C:\\two.exe"}}"#,
-        r#"{"schemaVersion":1,"schemaVersion":1,"manualInstallations":{}}"#,
-        r#"{"schemaVersion":1,"manualInstallations":{"unknown":"C:\\one.exe"}}"#,
-        r#"{"schemaVersion":2,"manualInstallations":{}}"#,
-        r#"{"schemaVersion":1}"#,
+        r#"{"revision":0,"games":{},"profiles":[]}"#,
+        r#"{"revision":0,"games":{},"owner":"forged"}"#,
+        r#"{"revision":0,"games":{},"revision":1}"#,
+        r#"{"revision":0,"games":{"dcs":{},"dcs":{}}}"#,
+        r#"{"revision":0,"games":{}}"#,
+        r#"{"revision":0,"games":{},"formatVersion":2}"#,
         "malformed",
     ] {
         fs::write(&path, bytes).unwrap();
-        crate::persistence::test_support::record(&path, "games", "installations", bytes.as_bytes());
+        crate::persistence::test_support::record(&path, "games", "library", bytes.as_bytes());
         assert!(store.load().is_err(), "{bytes}");
         assert_eq!(fs::read(&path).unwrap(), bytes.as_bytes());
     }
-    crate::persistence::test_support::record(
-        &path,
-        "games",
-        "installations",
-        &vec![b' '; MAX_BYTES + 1],
-    );
+    crate::persistence::test_support::record(&path, "games", "library", &vec![b' '; MAX_BYTES + 1]);
     assert!(store.load().unwrap_err().contains("Oversized"));
 }
+
 #[test]
-fn paths_are_bounded_absolute_and_cannot_smuggle_runtime_or_extra_games() {
-    for invalid in ["", "relative.exe", "C:relative.exe", "C:\\bad\n.exe"] {
-        let mut value = settings();
-        value
-            .manual_installations
-            .insert("dcs".into(), invalid.into());
-        assert!(value.validate().is_err(), "{invalid}");
-    }
+fn unified_registry_validates_generic_ids_installation_sources_and_distinct_roots() {
     let mut value = settings();
-    value.manual_installations.insert(
-        "dcs".into(),
-        format!("C:\\{}", "x".repeat(MAX_EXECUTABLE_BYTES)),
+    value.games.insert(
+        "game-unknown-123".into(),
+        GameRecord {
+            name: "Unknown title".into(),
+            installations: BTreeMap::new(),
+            selected_installation: None,
+            integration: None,
+            default_background: None,
+        },
     );
-    assert!(value.validate().is_err());
-    value.manual_installations.insert(
+    value.validate().unwrap();
+    let too_long = format!("g{}", "a".repeat(96));
+    for invalid in [
+        "-game",
+        "Upper",
+        "game_name",
+        "game/name",
+        too_long.as_str(),
+    ] {
+        let mut invalid_settings = settings();
+        let game = invalid_settings.games.remove("dcs").unwrap();
+        invalid_settings.games.insert(invalid.into(), game);
+        assert!(invalid_settings.validate().is_err(), "{invalid}");
+    }
+    let mut invalid = settings();
+    invalid
+        .games
+        .get_mut("dcs")
+        .unwrap()
+        .installations
+        .get_mut("dcs-install")
+        .unwrap()
+        .sources[0]
+        .install_path = "relative".into();
+    assert!(invalid.validate().is_err());
+    let mut duplicate_root = settings();
+    let game = duplicate_root.games["dcs"].clone();
+    duplicate_root.games.insert("game-copy".into(), game);
+    assert!(duplicate_root.validate().is_err());
+}
+
+#[test]
+fn category_and_background_records_require_registered_game_owners() {
+    let mut value = settings();
+    let category_id = uuid::Uuid::new_v4().to_string();
+    value
+        .categories
+        .insert(category_id.clone(), "Racing".into());
+    value.game_categories.insert("dcs".into(), category_id);
+    value.backgrounds.insert(
         "dcs".into(),
-        format!("C:\\{}", "x".repeat(MAX_EXECUTABLE_BYTES - 3)),
+        crate::game_artwork::Background {
+            image: format!("artwork:{}.jpg", "a".repeat(64)),
+            position_x: 20.0,
+            position_y: 75.0,
+            crop: None,
+        },
     );
     value.validate().unwrap();
     value
-        .manual_installations
-        .insert("fifth".into(), "C:\\unknown.exe".into());
+        .game_categories
+        .insert("missing-game".into(), "missing-category".into());
     assert!(value.validate().is_err());
-    value = settings();
-    value.schema_version = 0;
+    value.game_categories.clear();
+    value.backgrounds.insert(
+        "missing-game".into(),
+        crate::game_artwork::Background {
+            image: format!("artwork:{}.jpg", "a".repeat(64)),
+            position_x: 50.0,
+            position_y: 50.0,
+            crop: None,
+        },
+    );
     assert!(value.validate().is_err());
-    assert!(Store::new(PathBuf::from("relative/settings.json"))
-        .load()
-        .is_err());
-    let directory = crate::test_directory();
-    assert!(Store::new(directory.path().to_owned()).load().is_err());
-    assert!(Store::new(PathBuf::from(format!(
-        "{}{}sub{}..{}settings.json",
-        directory.path().display(),
-        std::path::MAIN_SEPARATOR,
-        std::path::MAIN_SEPARATOR,
-        std::path::MAIN_SEPARATOR
-    )))
-    .load()
-    .is_err());
-    let parent = directory.path().join("file");
-    fs::write(&parent, b"file").unwrap();
-    assert!(Store::new(parent.join("settings.json"))
-        .save(&settings())
-        .is_err());
 }
+
 #[test]
 fn symbolic_target_and_parent_are_never_followed() {
     let directory = crate::test_directory();
@@ -141,7 +184,7 @@ fn symbolic_target_and_parent_are_never_followed() {
     crate::persistence::test_support::record(
         &target,
         "games",
-        "installations",
+        "library",
         &fs::read(&target).unwrap(),
     );
     Store::new(target.clone()).load().unwrap();
@@ -161,8 +204,6 @@ fn symbolic_target_and_parent_are_never_followed() {
     link(&real, &parent, true).unwrap();
     #[cfg(windows)]
     {
-        // A junction exercises reparse rejection without requiring the
-        // symlink privilege or developer mode on Windows CI.
         for path in [&parent, &real] {
             assert!(!path
                 .to_string_lossy()
@@ -190,6 +231,7 @@ fn symbolic_target_and_parent_are_never_followed() {
         .is_err());
     assert_eq!(fs::read(target).unwrap(), retained);
 }
+
 #[test]
 fn native_canonical_metadata_paths_keep_their_actual_platform_prefix() {
     let directory = crate::test_directory();
@@ -198,76 +240,4 @@ fn native_canonical_metadata_paths_keep_their_actual_platform_prefix() {
     assert!(store.load().unwrap().is_none());
     store.save(&settings()).unwrap();
     assert_eq!(store.load().unwrap(), Some(settings()));
-}
-
-#[test]
-fn dynamic_game_registry_round_trips_and_preserves_legacy_overrides() {
-    let directory = crate::test_directory();
-    let store = Store::new(directory.path().join("installations.json"));
-    let mut value = settings();
-    let id = "custom-11111111-1111-4111-8111-111111111111";
-    value.custom_games.insert(
-        id.into(),
-        CustomGame {
-            name: "A custom game".into(),
-            executable: Some("C:\\Games\\Custom.exe".into()),
-            library: Some(LibrarySource {
-                client: "steam".into(),
-                app_id: "42".into(),
-                install_path: "C:\\Games".into(),
-                launcher: Some("C:\\Steam\\steam.exe".into()),
-            }),
-            default_background: None,
-        },
-    );
-    value.backgrounds.insert(
-        "dcs".into(),
-        crate::game_artwork::Background {
-            image: format!("artwork:{}.jpg", "a".repeat(64)),
-            position_x: 20.0,
-            position_y: 75.0,
-            crop: None,
-        },
-    );
-    store.save(&value).unwrap();
-    assert_eq!(store.load().unwrap(), Some(value));
-    assert!(valid_game_id(id));
-    assert!(valid_game_id("dcs"));
-    assert!(!valid_game_id("custom-anything"));
-}
-
-#[test]
-fn registry_rejects_duplicate_records_missing_background_owners_and_excess_games() {
-    let directory = crate::test_directory();
-    let path = directory.path().join("installations.json");
-    let store = Store::new(path.clone());
-    let id = "custom-11111111-1111-4111-8111-111111111111";
-    let record = r#"{"name":"Game","executable":null}"#;
-    fs::write(&path,format!(r#"{{"schemaVersion":1,"manualInstallations":{{}},"customGames":{{"{id}":{record},"{id}":{record}}}}}"#)).unwrap();
-    crate::persistence::test_support::record(&path,"games","installations",&std::fs::read(&path).unwrap());
-    assert!(store.load().is_err());
-    let mut value = Settings::default();
-    value.backgrounds.insert(
-        id.into(),
-        crate::game_artwork::Background {
-            image: format!("artwork:{}.jpg", "a".repeat(64)),
-            position_x: 50.0,
-            position_y: 50.0,
-            crop: None,
-        },
-    );
-    assert!(value.validate().is_err());
-    value.backgrounds.clear();
-    for index in 0..250 {
-        value.custom_games.insert(
-            format!("custom-{}", uuid::Uuid::from_u128(index)),
-            CustomGame {
-                name: format!("Game {index}"),
-                executable: None,
-                library: None,
-                default_background: None,
-            },
-        );
-    }
-    assert!(value.validate().unwrap_err().contains("count bound"));
 }

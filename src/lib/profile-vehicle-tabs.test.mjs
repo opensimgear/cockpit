@@ -1,7 +1,9 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadModules} from './test-module-loader.mjs';
-const modules=await loadModules(['./profile-vehicle-tabs','./profile-editor','./profiles','./profile-game-context']);
+const modules=await loadModules(['./games','./profile-vehicle-tabs','./profile-editor','./profiles','./profile-game-context']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const {profileAddVehicleTab,profileRemoveVehicleTab,profileChangeVehicleTab,profileTabDocument,profileTabNodeIds,profileStampVehicleNodes,profileVehicleDocument}=modules.get('./profile-vehicle-tabs');
 const {blankProfile,addProfileResources}=modules.get('./profile-editor');
 const {profileDocumentError}=modules.get('./profiles');

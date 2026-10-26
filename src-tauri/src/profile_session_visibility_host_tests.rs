@@ -230,7 +230,7 @@ fn actual_host_retains_exact_cleanup_after_conflict_and_releases_it_after_restor
     use crate::profile_session_visibility::tests::owned_run;
     let directory = crate::test_directory();
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
-    let games = Arc::new(crate::games::GamesRuntime::new(
+    let games = Arc::new(crate::games::GamesRuntime::test_runtime(
         Arc::new(|_| json!({"ok":false})),
         {
             let fixture_metadata_path = directory.path().join("games.json");
@@ -311,7 +311,7 @@ fn actual_host_final_admission_validates_applied_hide_owner_before_any_neutraliz
         Arc::new(|_| vec![]),
         false,
     ));
-    let games = Arc::new(crate::games::GamesRuntime::new(
+    let games = Arc::new(crate::games::GamesRuntime::test_runtime(
         Arc::new(|_| json!({"ok":false})),
         {
             let fixture_metadata_path = directory.path().join("games.json");

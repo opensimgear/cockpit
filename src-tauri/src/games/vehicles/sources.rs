@@ -60,7 +60,7 @@ pub(super) fn xplane_catalogue(game: &Value) -> Vec<Value> {
             {
                 if let Ok(relative) = entry.path().strip_prefix(root) {
                     if let Some(value) = vehicle(
-                        game["id"].as_str().unwrap_or(""),
+                        crate::game_discovery::integration_key(game).unwrap_or(""),
                         &relative.to_string_lossy(),
                     ) {
                         result.push(value);

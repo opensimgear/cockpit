@@ -32,6 +32,7 @@ fn empty_plan() -> ExecutionPlan {
 }
 fn prepared(id: &str, connection: Value, catalogue: Value) -> PreparedGame {
     PreparedGame {
+        integration_key: id.into(),
         proof: GamePreparation {
             session: uuid::Uuid::new_v4().to_string(),
             game_id: id.into(),
@@ -700,7 +701,12 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
         fs::write(&paths.provider_setup,serde_json::to_vec(&json!({"schemaVersion":1,"games":{"assetto-corsa-rally":{
             "connection":{"source":"shared-memory","freshnessMs":1500},"configuredFingerprint":fingerprint,"verifiedFingerprint":fingerprint
         }}})).unwrap()).unwrap();
-    crate::persistence::test_support::record(&paths.provider_setup,"games","setup",&std::fs::read(&paths.provider_setup).unwrap());
+        crate::persistence::test_support::record(
+            &paths.provider_setup,
+            "games",
+            "setup",
+            &std::fs::read(&paths.provider_setup).unwrap(),
+        );
         let full_path = executable
             .to_string_lossy()
             .replace(['\\', '/'], &separator.to_string());
@@ -712,7 +718,7 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
                 epoch: 10,
             },
         });
-        let games = GamesRuntime::new(
+        let games = GamesRuntime::test_runtime(
             Arc::new(|request| panic!("Acquisition must not mutate game configuration: {request}")),
             paths,
             platform,
@@ -816,7 +822,7 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
             epoch: 10,
         })),
     });
-    let games = GamesRuntime::new(
+    let games = GamesRuntime::test_runtime(
         Arc::new(
             |_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}}),
         ),
@@ -976,7 +982,12 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     let mut connection = crate::game_integration_setup::dcs_connection(&catalogue);
     connection["freshnessMs"] = json!(100);
     fs::write(&paths.provider_setup, serde_json::to_vec(&json!({"schemaVersion":1,"games":{"dcs":{"userFolder":target,"connection":connection,"aircraftModule":"A-10C"}}})).unwrap()).unwrap();
-    crate::persistence::test_support::record(&paths.provider_setup,"games","setup",&std::fs::read(&paths.provider_setup).unwrap());
+    crate::persistence::test_support::record(
+        &paths.provider_setup,
+        "games",
+        "setup",
+        &std::fs::read(&paths.provider_setup).unwrap(),
+    );
     let platform = Arc::new(GuardClock {
         thread: std::thread::current().id(),
         armed: AtomicBool::new(false),
@@ -984,7 +995,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
         validation_cost: AtomicU64::new(2_000_000),
         process_checks: AtomicUsize::new(0),
     });
-    let games = GamesRuntime::new(
+    let games = GamesRuntime::test_runtime(
         Arc::new(|request| panic!("Acquisition guards must not submit output: {request}")),
         paths,
         platform.clone(),
@@ -1507,7 +1518,7 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
         catalogue_guard.expire_for_test();
         let folder = crate::test_directory();
         let metadata = folder.path().join("games.json");
-        let games = GamesRuntime::new(
+        let games = GamesRuntime::test_runtime(
             Arc::new(|_| json!({"ok":true})),
             crate::games::Paths {
                 installations: metadata.with_extension("installations-v1.json"),

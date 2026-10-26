@@ -38,7 +38,7 @@ impl Platform for FakePlatform {
     }
 }
 fn game() -> Value {
-    json!({"id":"dcs","provider":"dcs-bios","installed":true})
+    json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios","installed":true})
 }
 fn wait_setup(runtime: &GameIntegrationSetup) {
     // These fixtures verify completion, not setup latency. Instrumented suites
@@ -71,7 +71,7 @@ fn acr_game(scratch: &Scratch) -> Value {
         b"Authored executable identity fixture, never launched",
     )
     .unwrap();
-    json!({"id":"assetto-corsa-rally","provider":"assetto-corsa-rally","installed":true,"executable":executable})
+    json!({"id":"assetto-corsa-rally","integrationCompatible":true,"integrationKey":"assetto-corsa-rally","provider":"assetto-corsa-rally","installed":true,"executable":executable})
 }
 fn acr_record(runtime: &GameIntegrationSetup, game: &Value, qualified: bool) -> Value {
     let identity =
@@ -85,7 +85,7 @@ fn ac_catalogue_game(root: &Path) -> Value {
     fs::create_dir_all(root.join("content/cars")).unwrap();
     let executable = root.join("acs.exe");
     fs::write(&executable, b"Unlaunched AC car catalogue setup fixture").unwrap();
-    json!({"id":"assetto-corsa","provider":"assetto-corsa","installed":true,
+    json!({"id":"assetto-corsa","integrationCompatible":true,"integrationKey":"assetto-corsa","provider":"assetto-corsa","installed":true,
         "installPath":root,"executable":executable,"currentVehicle":null,
         "vehicleSupport":{"vehicles":[]}})
 }

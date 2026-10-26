@@ -98,6 +98,21 @@ pub(crate) fn preview(path: Option<&str>, url: Option<&str>) -> Result<String, S
     ))
 }
 
+/// Small transient thumbnails keep scan snapshots bounded without publishing assets.
+pub(crate) fn discovery_preview(path: &Path) -> Result<String, String> {
+    let image = decoded(&local_bytes(path.to_str().ok_or("Invalid artwork path.")?)?)?;
+    for size in [384, 320, 256, 192, 128] {
+        let mut bytes = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 85)
+            .encode_image(&image.thumbnail(size, size).to_rgb8())
+            .map_err(|error| error.to_string())?;
+        if bytes.len() <= THUMBNAIL_LIMIT {
+            return Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes)));
+        }
+    }
+    Err("Discovery artwork exceeds the thumbnail budget.".into())
+}
+
 pub(super) fn preview_bytes(data: &str) -> Result<Vec<u8>, String> {
     let encoded = data
         .strip_prefix("data:image/jpeg;base64,")

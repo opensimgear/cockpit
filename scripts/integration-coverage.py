@@ -9,6 +9,9 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_coverage_sources import measure_module
 
 
 def source_stamp(root):
@@ -23,6 +26,7 @@ def source_stamp(root):
             paths.update((crate / 'src').rglob('*.sql'))
             paths.update(path for path in [crate / 'Cargo.toml', crate / 'Cargo.lock'] if path.is_file())
     paths.update(root / name for name in ['src-tauri/build.rs', 'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'rust-toolchain.toml'] if (root / name).is_file())
+    paths.update(root / 'scripts' / name for name in ['integration-coverage.py', 'native_coverage_sources.py', 'test_native_coverage_sources.py', 'desktop-output-coverage.py'] if (root / 'scripts' / name).is_file())
     return {str(path.relative_to(root)): {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'modifiedNs': path.stat().st_mtime_ns} for path in sorted(paths)}
 
 
@@ -51,7 +55,7 @@ def test_only_lines(source):
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    module_names = ['game_telemetry.rs', 'xplane.rs', 'xplane_installation.rs', 'games/telemetry/windows_source/mod.rs', 'games/telemetry/windows_source/platform.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'games/storage/installations.rs', 'game_discovery.rs', 'games/artwork/mod.rs', 'games/artwork/sources.rs', 'games/artwork/model.rs', 'game_library.rs', 'game_metadata_api.rs', 'companion_game_owner.rs', 'retained_game_companions.rs', 'persistence/paths.rs', 'profile_retired_game_io.rs', 'companion/storage/widgets.rs', 'companion/storage/workspace.rs', 'companion/storage/workspace_validation.rs', 'mcp_tools/workspace.rs', 'companion/storage/host_settings.rs', 'mcp_tools/host_settings.rs', 'mcp/server/mod.rs', 'mcp/server/auth.rs', 'mcp/server/credentials.rs', 'mcp/server/transport.rs', 'mcp/storage/credentials.rs', 'mcp_tools/integration_settings.rs']
+    module_names = ['game_telemetry.rs', 'xplane.rs', 'xplane_installation.rs', 'games/telemetry/windows_source/mod.rs', 'games/telemetry/windows_source/platform.rs', 'output_leases.rs', 'runtime.rs', 'games.rs', 'games/storage/installations.rs', 'game_discovery.rs', 'games/artwork/mod.rs', 'games/artwork/sources.rs', 'games/artwork/model.rs', 'games/library/mod.rs', 'game_metadata_api.rs', 'companion_game_owner.rs', 'retained_game_companions.rs', 'persistence/paths.rs', 'profile_retired_game_io.rs', 'companion/storage/widgets.rs', 'companion/storage/workspace.rs', 'companion/storage/workspace_validation.rs', 'mcp_tools/workspace.rs', 'companion/storage/host_settings.rs', 'mcp_tools/host_settings.rs', 'mcp/server/mod.rs', 'mcp/server/auth.rs', 'mcp/server/credentials.rs', 'mcp/server/transport.rs', 'mcp/storage/credentials.rs', 'mcp_tools/integration_settings.rs']
     module_names.extend(['profile_session_journal.rs', 'profile_retired_recovery.rs', 'persistence/development.rs','persistence/backup/mod.rs','persistence/backup/model.rs','persistence/backup/assets.rs','persistence/backup/startup.rs','persistence/backup/gateway.rs','persistence/backup/trust.rs'])
     module_names.extend(['persistence/ui/mod.rs', 'persistence/ui/validation.rs', 'persistence/ui/window_writer.rs', 'persistence/ui/commands.rs', 'window_persistence.rs'])
     parser.add_argument('--module', action='append', choices=module_names, help='Focused local coverage; CI measures every module.')
@@ -107,30 +111,18 @@ def main():
              '-o', str(profile)], root)
     sources = [root / 'src-tauri/src' / name for name in args.module or module_names]
     sources = [source for source in sources if not (source.name == "platform.rs" and os.name != "nt")]
-    annotated = command([str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
-                         '-show-line-counts-or-regions', *map(str, sources)], root)
-    (output / 'lines.txt').write_text(annotated, encoding='utf-8')
-    source_paths = {str(path).replace('\\', '/'): path for path in sources}
-    counts, current = {}, ''
-    for line in annotated.splitlines():
-        heading = line[:-1].replace('\\', '/') if line.endswith(':') else ''
-        if heading in source_paths:
-            current = str(source_paths[heading].relative_to(root))
-        if match := re.match(r'^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\s*\|', line):
-            counts.setdefault(current, {})[int(match[1])] = float(match[2].rstrip('kMGT'))
-    report = {}
+    report, annotations = {}, []
     for source in sources:
-        excluded = test_only_lines(source.read_text(encoding='utf-8'))
-        measured = {line: count for line, count in counts.get(str(source.relative_to(root)), {}).items() if line not in excluded}
-        if not measured:
-            raise RuntimeError(f'No production coverage recorded for {source.name}.')
-        covered = sum(count > 0 for count in measured.values())
-        percent = 100 * covered / len(measured)
-        report[str(source.relative_to(root))] = {'covered': covered, 'lines': len(measured), 'percent': round(percent, 2)}
-        print(f'{source.name}: {covered}/{len(measured)} production lines ({percent:.2f}%)', flush=True)
+        result, annotated = measure_module(source, lambda path: command([
+            str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
+            '-show-line-counts-or-regions', str(path)], root), root)
+        report[str(source.relative_to(root))] = result
+        annotations.append(annotated)
+        print(f"{source.name}: {result['covered']}/{result['lines']} production lines ({result['percent']:.2f}%)", flush=True)
+    (output / 'lines.txt').write_text('\n'.join(annotations), encoding='utf-8')
     (output / 'integration-summary.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     (output / 'evidence.json').write_text(json.dumps({'testBinary': binaries[0], 'testInvocations': invocations, 'profile': str(profile), 'sources': final_stamp, 'measuredModules': [source.name for source in sources]}, indent=2) + '\n', encoding='utf-8')
-    if any(item['percent'] < 71 for item in report.values()):
+    if any(item['covered'] * 100 < item['lines'] * 71 for item in report.values()):
         raise SystemExit('Each integration production module must meet 71% production line coverage.')
 
 

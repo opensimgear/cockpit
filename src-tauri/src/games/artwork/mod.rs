@@ -59,7 +59,7 @@ fn storage(root: &Path) -> Result<PathBuf, String> {
     }
     Ok(directory)
 }
-fn thumbnail(bytes: &[u8]) -> Result<Vec<u8>, String> {
+fn decoded(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| format!("Cannot read background image: {error}"))?;
@@ -77,6 +77,10 @@ fn thumbnail(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let image = reader
         .decode()
         .map_err(|error| format!("Cannot decode background image: {error}"))?;
+    Ok(image)
+}
+fn thumbnail(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let image=decoded(bytes)?;
     let mut size = 640;
     loop {
         let scaled = image.thumbnail(size, size).to_rgb8();
@@ -148,7 +152,7 @@ impl Drop for Staging {
     }
 }
 mod sources;
-pub(crate) use sources::preview;
+pub(crate) use sources::{discovery_preview, preview};
 use sources::*;
 
 pub(crate) fn import_preview(root: &Path, data: &str, crop: Crop) -> Result<Background, String> {
@@ -286,11 +290,11 @@ pub(crate) fn retain<'a>(root: &Path, references: impl Iterator<Item = &'a Backg
     // The caller's cache can be older than another process's commit. Read the
     // authority under the cross-process asset lease before deleting any bytes.
     let Ok(database) =
-        osg_persistence::Database::for_namespace(&root.join("game-installations-v1.json"))
+        osg_persistence::Database::for_namespace(&root.join("game-library.json"))
     else {
         return;
     };
-    let Ok(record) = database.read("games", "installations") else {
+    let Ok(record) = database.read("games", "library") else {
         return;
     };
     let retained = if let Some(record) = record {
@@ -308,7 +312,7 @@ pub(crate) fn retain<'a>(root: &Path, references: impl Iterator<Item = &'a Backg
             .chain(settings.default_backgrounds.values())
             .chain(
                 settings
-                    .custom_games
+                    .games
                     .values()
                     .filter_map(|game| game.default_background.as_ref()),
             )

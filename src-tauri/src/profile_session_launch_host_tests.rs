@@ -68,7 +68,7 @@ impl Fixture {
             std::sync::atomic::AtomicBool::new(true),
             std::sync::atomic::AtomicBool::new(false),
         ));
-        let games = Arc::new(crate::games::GamesRuntime::new(
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(
             Arc::new(
                 |_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}}),
             ),
@@ -305,7 +305,7 @@ fn a_newer_setup_observation_preserves_its_preparation_when_an_old_refresh_compl
         published,
         release_next: Mutex::new(next_release),
     });
-    let games = crate::games::GamesRuntime::new(
+    let games = crate::games::GamesRuntime::test_runtime(
         Arc::new(|request| panic!("Read-only process proof must not invoke an output: {request}")),
         crate::games::Paths::in_directory(directory.path()),
         platform,

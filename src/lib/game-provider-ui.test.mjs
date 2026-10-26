@@ -1,3 +1,4 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -8,7 +9,8 @@ import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./ui-settings-guard','./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-background-crop','./game-provider-settings','./game-settings-navigation']);
+const modules = await loadModules(['./game-discovery','./ui-settings-guard','./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-background-crop','./game-provider-settings','./game-settings-navigation']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
 async function component(name, hook) {
@@ -32,7 +34,7 @@ async function component(name, hook) {
   if (!hook) componentModules.set(name,exports.default);return exports.default;
 }
 const GamesPanel = await component('./GamesPanel.svelte');
-const { supportedGames } = modules.get('./games');
+const supportedGames = discoveredGames;
 const { defaultProviderConnection } = modules.get('./game-provider-settings');
 const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup:{state:'setup-required',message:'Configure this provider',providerSetupRevision:`sha256:${'1'.repeat(64)}`,userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}},integrationContext:{status:'waiting-profile',message:'An active matching profile is required',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
 const state = g => ({catalogue:[g],cleanup:{phase:'idle'}});
@@ -41,7 +43,7 @@ test('game metadata dialogs receive the original actionable native failure while
   let handlers;const failure=new Error('Deactivate this game context before changing its executable.');
   const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({send});</script>'),receive:value=>handlers=value});
   render(Panel,{props:{status:state(game('dcs')),busy:false,request:async()=>{throw failure;}}}).body;
-  for(const command of ['game_custom_save','game_background_save','game_library_scan','game_library_import'])await assert.rejects(()=>handlers.send({command}),error=>error===failure);
+  for(const command of ['game_save','game_background_save','game_discovery_start','game_discovery_apply'])await assert.rejects(()=>handlers.send({command}),error=>error===failure);
   assert.equal(await handlers.send({command:'game_get_state'}),false);
 });
 
@@ -49,9 +51,9 @@ test('custom Installation edits preserve the registration identity and name and 
   let handlers,reject=false;const calls=[],id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Relocated custom game',provider:null,custom:true,installed:false,executable:null,manualPath:'C:\\Old\\Game.exe',launchSupported:false};
   const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({saveExecutable,get notice(){return notice;}});</script>'),receive:value=>handlers=value});
   render(Panel,{props:{status:state(g),selectedGameId:id,busy:false,request:async value=>{calls.push(JSON.parse(JSON.stringify(value)));if(reject)throw new Error('Choose an existing absolute game executable (.exe).');return state({...g,executable:value.executable,installed:true});}}}).body;
-  await handlers.saveExecutable(g,'C:\\New\\Game.exe');assert.deepEqual(calls[0],{command:'game_custom_save',gameId:id,name:g.name,executable:'C:\\New\\Game.exe'});
+  await handlers.saveExecutable(g,'C:\\New\\Game.exe');assert.deepEqual(calls[0],{command:'game_save',gameId:id,executable:'C:\\New\\Game.exe'});
   reject=true;await handlers.saveExecutable(g,'C:\\Missing\\Game.exe');assert.match(handlers.notice,/Choose an existing absolute game executable/);
-  reject=false;await handlers.saveExecutable(supportedGames[0],'C:\\Games\\DCS.exe');assert.deepEqual(calls[2],{command:'game_installation',gameId:'dcs',executable:'C:\\Games\\DCS.exe'});
+  reject=false;await handlers.saveExecutable(supportedGames[0],'C:\\Games\\DCS.exe');assert.deepEqual(calls[2],{command:'game_save',gameId:'dcs',executable:'C:\\Games\\DCS.exe'});
 });
 
 test('successful custom and builtin installation saves adopt the exact canonical native path',async()=>{
@@ -70,25 +72,23 @@ test('custom games expose matching profiles, metadata and background editing wit
   assert.ok(!html.includes('Game executable path'));assert.ok(!/>Edit<\/button>/.test(html));assert.equal((html.match(/aria-label="Game executable"/g)??[]).length,1);
   for(const absent of ['Integration setup','Install integration','Native telemetry not verified','Current aircraft','Current car'])assert.ok(!html.includes(absent),absent);
   const list=render(GamesPanel,{props:{status:state(g),busy:false,request:noRequest}}).body;
-  for(const label of ['Add game','Import from library','Custom game','Choose executable'])assert.ok(list.includes(label),label);
+  for(const label of ['Rescan','Custom game','Not found'])assert.ok(list.includes(label),label);
 });
 
 test('inline custom names save only the name and reject invalid names or builtin edits',async()=>{
   let handlers;const calls=[],id='custom-11111111-1111-4111-8111-111111111111',g={id,name:'Old name',custom:true,installed:false,manualPath:'C:\\Missing\\Game.exe',launchSupported:false};
   const Panel=await component('./GamesPanel.svelte',{source:value=>value.replace('</script>','captureGameRequests({initializeGame,saveName,setName(value){nameDraft=value;},get notice(){return notice;}});</script>'),receive:value=>handlers=value});
   render(Panel,{props:{status:state(g),selectedGameId:id,busy:false,request:async value=>{calls.push(JSON.parse(JSON.stringify(value)));return state({...g,name:value.name});}}}).body;
-  handlers.initializeGame(g);handlers.setName('New name');await handlers.saveName(g);assert.deepEqual(calls,[{command:'game_custom_save',gameId:id,name:'New name'}]);
+  handlers.initializeGame(g);handlers.setName('New name');await handlers.saveName(g);assert.deepEqual(calls,[{command:'game_save',gameId:id,name:'New name'}]);
   handlers.setName(' ');await handlers.saveName(g);assert.equal(calls.length,1);assert.match(handlers.notice,/game name/);
-  handlers.setName('Builtin rename');await handlers.saveName(supportedGames[0]);assert.equal(calls.length,1);
-  const builtin=render(GamesPanel,{props:{status:state(game('dcs')),selectedGameId:'dcs',busy:false,request:noRequest}}).body;assert.ok(!builtin.includes('aria-label="Game name"'));
+  handlers.setName('Discovered rename');await handlers.saveName(supportedGames[0]);assert.equal(calls.length,2);
+  const builtin=render(GamesPanel,{props:{status:state(game('dcs')),selectedGameId:'dcs',busy:false,request:noRequest}}).body;assert.ok(builtin.includes('aria-label="Game name"'));
 });
 
 test('missing custom executables retain their saved path in details and relocation dialogs',async()=>{
   const id='custom-11111111-1111-4111-8111-111111111111',manualPath='C:\\OldGames\\MissingGame.exe',g={id,name:'Moved game',provider:null,custom:true,installed:false,executable:null,manualPath,launchSupported:false};
   const details=render(GamesPanel,{props:{status:state(g),selectedGameId:id,busy:false,request:noRequest}}).body;
   assert.ok(details.includes(manualPath));assert.ok(details.includes('The saved executable could not be found. Choose its new location.'));
-  const Dialog=await component('./GameCustomDialog.svelte'),dialog=render(Dialog,{props:{game:g,request:noRequest,close:noRequest,saved:noRequest}}).body;
-  assert.ok(dialog.includes(`value="${manualPath}"`));assert.ok(dialog.includes('Edit game'));
 });
 
 test('DCS game details group native locations and autosaved network settings without aircraft or manual save controls',()=>{
@@ -166,4 +166,61 @@ test('closed or replaced provider editors ignore late saves and picker responses
 
 test('native folder choices autosave and cancelled pickers leave settings untouched',async()=>{
   const view=await providerView(game('dcs'),{pick(kind){return kind==='catalogue'?'C:\\NewDCS-BIOS\\doc\\json':null;}});await view.handlers.browseFolder('saved-games');assert.equal(view.calls.length,0);await view.handlers.browseFolder('catalogue');await settle();assert.equal(view.calls.length,1);assert.equal(view.calls[0].connection.cataloguePath,'C:\\NewDCS-BIOS\\doc\\json');assert.deepEqual(view.picks.map(args=>args[0]),['saved-games','catalogue']);assert.equal(view.busyChanges.at(-1),false);assert.deepEqual(view.notifications,[]);
+});
+
+const discoveryFixture=()=>({scanId:'scan-1',status:'ready',firstStart:true,libraries:[{id:'steam',name:'Steam',status:'complete',found:2},{id:'local',name:'Local paths',status:'complete',found:1}],entries:[{id:'add',name:'Found game',action:'add',library:'Steam',installPath:'C:/Games/New',executableCandidates:['C:/Games/New/game.exe']},{id:'update',name:'Moved game',action:'update',library:'Local paths',installPath:'C:/Games/Moved',previousPath:'C:/Games/Old',executableCandidates:[]},{id:'remove',name:'Missing game',action:'remove',library:'Steam',installPath:'C:/Games/Missing',executableCandidates:[]}],diagnostics:[]});
+test('discovery detail renders library sections, two review lists and opt-in removals',async()=>{
+ const View=await component('./GameDiscoveryView.svelte');
+ const html=render(View,{props:{gameState:{catalogue:[],discovery:discoveryFixture()},busy:false,request:noRequest,close:noRequest}}).body;
+ for(const label of ['Local paths','Steam','New and changed installations','Removed installations','Add location','Apply'])assert.ok(html.includes(label),label);
+ assert.ok(!html.includes('Previous:'));assert.ok(!html.includes('C:\\Games\\Old'));
+ assert.ok(!html.includes('<code'),'Installation roots are not repeated in review rows');
+ const checkboxes=html.match(/<input\b[^>]*type="checkbox"[^>]*>/g)??[];
+ const entryCheckboxes=checkboxes.filter(input=>/aria-label="(?:Add|Update|Remove) /.test(input));
+ assert.equal(entryCheckboxes.length,3);
+ assert.equal(entryCheckboxes.filter(input=>/\bchecked\b/.test(input)).length,2);
+ const libraryCheckboxes=checkboxes.filter(input=>input.includes('Select all games in '));
+ assert.equal(libraryCheckboxes.length,2);
+ assert.ok(!/\bchecked\b/.test(libraryCheckboxes.find(input=>input.includes('Steam'))));
+ assert.ok(/\bchecked\b/.test(libraryCheckboxes.find(input=>input.includes('Local paths'))));
+ assert.ok(!html.includes('Import from library'));
+});
+test('first discovery shows progress on the list instead of an empty-catalogue message',()=>{
+ const discovery={...discoveryFixture(),status:'scanning',entries:[]};discovery.libraries[1].status='scanning';
+ const html=render(GamesPanel,{props:{status:{catalogue:[],discovery},busy:false,request:noRequest}}).body;
+ assert.ok(html.includes('role="status"'));assert.ok(html.includes('Discovering your games'));assert.ok(html.includes('View results'));
+ assert.ok(!html.includes('No games found'));
+});
+
+test('first scan offers another pending unknown title as a match without a saved catalogue',async()=>{
+ const View=await component('./GameDiscoveryView.svelte'),discovery=discoveryFixture();
+ discovery.entries=[{id:'steam',gameId:'steam-flight',name:'Flight Simulator',action:'add',library:'Steam',installPath:'C:/Steam/Flight',executableCandidates:[]},{id:'disk',gameId:'disk-flight',name:'FlightSim',action:'add',library:'Local paths',installPath:'D:/Flight',executableCandidates:[]}];
+ const html=render(View,{props:{gameState:{catalogue:[],discovery},busy:false,request:noRequest,close:noRequest}}).body;
+ const dropdown=html.match(/<select[^>]*aria-label="FlightSim game"[^>]*>([^]*?)<\/select>/)?.[1];
+ assert.ok(dropdown);assert.ok(dropdown.includes('value="steam-flight"'));assert.ok(dropdown.includes('Flight Simulator'));
+ assert.equal((dropdown.match(/value="disk-flight"/g)??[]).length,1,'current pending title appears only as New game');
+});
+
+test('discovery groups compact rows inside library accordions with action checkboxes on the right',async()=>{
+ const View=await component('./GameDiscoveryView.svelte');const html=render(View,{props:{gameState:{catalogue:[],discovery:discoveryFixture()},busy:false,request:noRequest,close:noRequest}}).body;
+ const steamStart=html.indexOf('data-library="steam"'),localStart=html.indexOf('data-library="local"');
+ assert.ok(steamStart>=0&&localStart>steamStart);
+ const steam=html.slice(steamStart,localStart),local=html.slice(localStart);
+ assert.ok(steam.includes('Found game')&&steam.includes('Missing game'));assert.ok(!steam.includes('Moved game'));
+ assert.ok(local.includes('Moved game'));assert.ok(steam.includes('data-platform="steam"'));
+ for(const action of ['Add Found game','Update Moved game','Remove Missing game'])assert.ok(html.includes('aria-label="'+action+'"'));
+ const entry=steam.slice(steam.indexOf('data-entry-id="add"'),steam.indexOf('data-entry-id="remove"'));
+ assert.ok(entry.indexOf('entry-art')>=0,'Artwork or its placeholder forms the first column');
+ assert.ok(entry.indexOf('entry-art')<entry.indexOf('entry-details'),'Artwork precedes the name and executable column');
+ assert.ok(entry.indexOf('entry-details')<entry.indexOf('entry-choice'),'Name and executable precede the right-aligned action control');
+ assert.ok(entry.includes('aria-label="Found game executable"'));assert.ok(!entry.includes('type="text"'));
+ const title=entry.match(/<strong[^>]*>([^]*?)<\/strong>/)?.[1];assert.equal(title,'Found game');assert.ok(!entry.slice(0,entry.indexOf('<select')).includes('game.exe'),'Executable path is not repeated above the select');
+ assert.equal((entry.match(/>C:\\Games\\New\\game\.exe<\/option>/g)??[]).length,1,'Executable path appears once in its select');
+});
+test('every supported library uses a distinct monochrome platform glyph',async()=>{
+ const Icon=await component('./Icon.svelte'),glyphs=new Set();
+ for(const name of ['steam','epic','battlenet','ea','ubisoft','gog','xbox','disk']){
+  const html=render(Icon,{props:{name}}).body;assert.ok(html.includes(name==='disk'?'stroke="currentColor"':'fill="currentColor"'));glyphs.add(html);
+ }
+ assert.equal(glyphs.size,8);
 });

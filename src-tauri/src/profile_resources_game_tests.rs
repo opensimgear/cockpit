@@ -17,6 +17,7 @@ fn metadata(game: &str) -> Observation {
         }],
         attributes: attributes([
             ("gameId", game.into()),
+            ("integrationKey", game.into()),
             ("providerSetupRevision", "setup-1".into()),
             ("catalogueRevision", "catalogue-1".into()),
             ("gameContextStatus", "waiting-profile".into()),
@@ -110,14 +111,26 @@ fn runtime() -> Runtime {
 
 #[test]
 fn assetto_delivery_scopes_require_their_own_exact_verified_game_metadata() {
-    for game in ["assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo", "assetto-corsa-rally"] {
+    for game in [
+        "assetto-corsa",
+        "assetto-corsa-competizione",
+        "assetto-corsa-evo",
+        "assetto-corsa-rally",
+    ] {
         let metadata = metadata(game);
         let current = BTreeMap::from([(game.to_owned(), metadata.clone())]);
         let delivery = delivery(game, "assetto-reader", 1);
         assert!(game_metadata_valid(&metadata, game));
         assert!(validate_game_catalogues(&delivery, &current).is_ok());
-        for foreign in ["assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo", "assetto-corsa-rally"] {
-            if foreign == game { continue; }
+        for foreign in [
+            "assetto-corsa",
+            "assetto-corsa-competizione",
+            "assetto-corsa-evo",
+            "assetto-corsa-rally",
+        ] {
+            if foreign == game {
+                continue;
+            }
             let mut changed = delivery.clone();
             changed.scope = format!("profile-game:{foreign}");
             assert!(validate_game_catalogues(&changed, &current).is_err());
@@ -125,140 +138,388 @@ fn assetto_delivery_scopes_require_their_own_exact_verified_game_metadata() {
     }
 }
 
-fn aircraft_metadata(module:&str)->Observation {
-    let mut item=metadata("dcs");let key=format!("dcs:{module}");
-    item.key=key.clone();item.name=module.into();item.evidence[0].value=key.clone();
-    item.attributes.insert("aircraftModule".into(),module.into());
-    item.attributes.insert("catalogueRevision".into(),format!("catalogue-{module}"));
-    item.route.as_mut().unwrap().id=format!("game:{key}");item
+fn aircraft_metadata(module: &str) -> Observation {
+    let mut item = metadata("dcs");
+    let key = format!("dcs:{module}");
+    item.key = key.clone();
+    item.name = module.into();
+    item.evidence[0].value = key.clone();
+    item.attributes
+        .insert("aircraftModule".into(), module.into());
+    item.attributes
+        .insert("catalogueRevision".into(), format!("catalogue-{module}"));
+    item.route.as_mut().unwrap().id = format!("game:{key}");
+    item
 }
-fn catalogue_delivery(items:&[Observation],reader:&str,revision:u64)->ProviderBatch {
-    let mut value=delivery("dcs",reader,revision);
-    value.observations=items.iter().map(|metadata|{
-        let mut item=metadata.clone();item.attributes.remove("gameContextStatus");item.attributes.remove("processVerified");
-        item.attributes.insert("gamePreparationSession".into(),"shared-native-proof".into());
-        item.attributes.insert("gameReaderSession".into(),reader.into());
-        let route=item.route.as_mut().unwrap();route.id=format!("profile-game:{}",item.key);route.priority=100;route.baseline_ready=true;route.writable=true;
-        route.attributes=item.attributes.clone();item
-    }).collect();value
+fn catalogue_delivery(items: &[Observation], reader: &str, revision: u64) -> ProviderBatch {
+    let mut value = delivery("dcs", reader, revision);
+    value.observations = items
+        .iter()
+        .map(|metadata| {
+            let mut item = metadata.clone();
+            item.attributes.remove("gameContextStatus");
+            item.attributes.remove("processVerified");
+            item.attributes.insert(
+                "gamePreparationSession".into(),
+                "shared-native-proof".into(),
+            );
+            item.attributes
+                .insert("gameReaderSession".into(), reader.into());
+            let route = item.route.as_mut().unwrap();
+            route.id = format!("profile-game:{}", item.key);
+            route.priority = 100;
+            route.baseline_ready = true;
+            route.writable = true;
+            route.attributes = item.attributes.clone();
+            item
+        })
+        .collect();
+    value
 }
 #[test]
 fn one_aircraft_reader_publishes_commondata_and_its_module_as_independent_resources() {
-    let runtime=runtime();let module=aircraft_metadata("F-86F Sabre");
-    let mut common=metadata("dcs");common.attributes.insert("aircraftModule".into(),"CommonData".into());
-    common.ports.as_mut().unwrap().ports.retain(|port|port.direction==Direction::Output);
-    common.ports=Some(PortUpdate::complete(common.ports.take().unwrap().ports).unwrap());
-    Runtime::adopt(&runtime.state,vec![
-        ("game:dcs".into(),Ok(batch("game:dcs","metadata",2,vec![common.clone()]))),
-        ("game:dcs:F-86F Sabre".into(),Ok(batch("game:dcs:F-86F Sabre","module-catalogue",1,vec![module.clone()])))
-    ]);
-    let overlay=catalogue_delivery(&[common.clone(),module.clone()],"reader",1);
+    let runtime = runtime();
+    let module = aircraft_metadata("F-86F Sabre");
+    let mut common = metadata("dcs");
+    common
+        .attributes
+        .insert("aircraftModule".into(), "CommonData".into());
+    common
+        .ports
+        .as_mut()
+        .unwrap()
+        .ports
+        .retain(|port| port.direction == Direction::Output);
+    common.ports = Some(PortUpdate::complete(common.ports.take().unwrap().ports).unwrap());
+    Runtime::adopt(
+        &runtime.state,
+        vec![
+            (
+                "game:dcs".into(),
+                Ok(batch("game:dcs", "metadata", 2, vec![common.clone()])),
+            ),
+            (
+                "game:dcs:F-86F Sabre".into(),
+                Ok(batch(
+                    "game:dcs:F-86F Sabre",
+                    "module-catalogue",
+                    1,
+                    vec![module.clone()],
+                )),
+            ),
+        ],
+    );
+    let overlay = catalogue_delivery(&[common.clone(), module.clone()], "reader", 1);
     runtime.publish_profile_game_delivery(overlay).unwrap();
-    let state=runtime.state.lock().unwrap();
-    let resources=state.registry.list(0,64).unwrap().resources;
-    assert_eq!(resources.len(),2);assert_ne!(resources[0].id,resources[1].id);
-    let aircraft=resources.iter().find(|resource|resource.attributes.get("aircraftModule").map(String::as_str)==Some("F-86F Sabre")).unwrap();
-    let common_resource=resources.iter().find(|resource|resource.id!=aircraft.id).unwrap();
-    let hash=module.ports.as_ref().unwrap().ports[0].contract_hash().unwrap();
-    let prepared=state.registry.prepare_game_metadata_port(&aircraft.id,"altitude",&hash,osg_profiles::resources::Access::Read,"dcs").unwrap();
-    assert_eq!(prepared.resolved().scope,"game:dcs:F-86F Sabre");
-    let token=state.registry.token(&aircraft.id,"altitude",osg_profiles::resources::Access::Read).unwrap();
-    assert_eq!(token.route_id,"profile-game:dcs:F-86F Sabre");
-    assert!(state.registry.token(&common_resource.id,"command",osg_profiles::resources::Access::Invoke).is_err());
+    let state = runtime.state.lock().unwrap();
+    let resources = state.registry.list(0, 64).unwrap().resources;
+    assert_eq!(resources.len(), 2);
+    assert_ne!(resources[0].id, resources[1].id);
+    let aircraft = resources
+        .iter()
+        .find(|resource| {
+            resource
+                .attributes
+                .get("aircraftModule")
+                .map(String::as_str)
+                == Some("F-86F Sabre")
+        })
+        .unwrap();
+    let common_resource = resources
+        .iter()
+        .find(|resource| resource.id != aircraft.id)
+        .unwrap();
+    let hash = module.ports.as_ref().unwrap().ports[0]
+        .contract_hash()
+        .unwrap();
+    let prepared = state
+        .registry
+        .prepare_game_metadata_port(
+            &aircraft.id,
+            "altitude",
+            &hash,
+            osg_profiles::resources::Access::Read,
+            "dcs",
+        )
+        .unwrap();
+    assert_eq!(prepared.resolved().scope, "game:dcs:F-86F Sabre");
+    let token = state
+        .registry
+        .token(
+            &aircraft.id,
+            "altitude",
+            osg_profiles::resources::Access::Read,
+        )
+        .unwrap();
+    assert_eq!(token.route_id, "profile-game:dcs:F-86F Sabre");
+    assert!(state
+        .registry
+        .token(
+            &common_resource.id,
+            "command",
+            osg_profiles::resources::Access::Invoke
+        )
+        .is_err());
     drop(state);
-    let mut incompatible=catalogue_delivery(&[common,module],"reader",2);
-    incompatible.observations[1].attributes.insert("aircraftModule".into(),"F-14".into());
-    incompatible.observations[1].route.as_mut().unwrap().attributes=incompatible.observations[1].attributes.clone();
+    let mut incompatible = catalogue_delivery(&[common, module], "reader", 2);
+    incompatible.observations[1]
+        .attributes
+        .insert("aircraftModule".into(), "F-14".into());
+    incompatible.observations[1]
+        .route
+        .as_mut()
+        .unwrap()
+        .attributes = incompatible.observations[1].attributes.clone();
     assert!(runtime.publish_profile_game_delivery(incompatible).is_err());
     assert!(runtime.validate_delivery(&token).is_err());
 }
 #[test]
 fn inactive_aircraft_metadata_cannot_authorize_a_reader_or_revoke_another_module() {
-    let runtime=runtime();let active=aircraft_metadata("A-10C");let mut inactive=aircraft_metadata("F-14");
-    inactive.attributes.insert("processVerified".into(),"false".into());
-    Runtime::adopt(&runtime.state,vec![("game:dcs:A-10C".into(),Ok(batch("game:dcs:A-10C","metadata-a",1,vec![active.clone()])))]);
-    runtime.publish_profile_game_delivery(catalogue_delivery(&[active.clone()],"active-reader",1)).unwrap();
-    Runtime::adopt(&runtime.state,vec![("game:dcs:F-14".into(),Ok(batch("game:dcs:F-14","metadata-b",1,vec![inactive.clone()])))]);
-    assert!(runtime.validate_profile_game_delivery("dcs","active-reader").is_ok());
-    assert!(runtime.publish_profile_game_delivery(catalogue_delivery(&[inactive],"other-reader",1)).is_err());
-    assert!(runtime.validate_profile_game_delivery("dcs","active-reader").is_ok());
-    let mut changed=active;changed.attributes.insert("processVerified".into(),"false".into());
-    Runtime::adopt(&runtime.state,vec![("game:dcs:A-10C".into(),Ok(batch("game:dcs:A-10C","metadata-a",2,vec![changed])))]);
-    assert!(runtime.validate_profile_game_delivery("dcs","active-reader").is_err());
+    let runtime = runtime();
+    let active = aircraft_metadata("A-10C");
+    let mut inactive = aircraft_metadata("F-14");
+    inactive
+        .attributes
+        .insert("processVerified".into(), "false".into());
+    Runtime::adopt(
+        &runtime.state,
+        vec![(
+            "game:dcs:A-10C".into(),
+            Ok(batch(
+                "game:dcs:A-10C",
+                "metadata-a",
+                1,
+                vec![active.clone()],
+            )),
+        )],
+    );
+    runtime
+        .publish_profile_game_delivery(catalogue_delivery(&[active.clone()], "active-reader", 1))
+        .unwrap();
+    Runtime::adopt(
+        &runtime.state,
+        vec![(
+            "game:dcs:F-14".into(),
+            Ok(batch(
+                "game:dcs:F-14",
+                "metadata-b",
+                1,
+                vec![inactive.clone()],
+            )),
+        )],
+    );
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "active-reader")
+        .is_ok());
+    assert!(runtime
+        .publish_profile_game_delivery(catalogue_delivery(&[inactive], "other-reader", 1))
+        .is_err());
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "active-reader")
+        .is_ok());
+    let mut changed = active;
+    changed
+        .attributes
+        .insert("processVerified".into(), "false".into());
+    Runtime::adopt(
+        &runtime.state,
+        vec![(
+            "game:dcs:A-10C".into(),
+            Ok(batch("game:dcs:A-10C", "metadata-a", 2, vec![changed])),
+        )],
+    );
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "active-reader")
+        .is_err());
 }
 
 #[test]
 fn dcs_publication_withdrawal_revokes_only_exact_command_tokens_and_preserves_live_telemetry() {
     let runtime = runtime();
-    let mut native_metadata=metadata("dcs");
-    let mut other=native_metadata.ports.as_ref().unwrap().ports[1].clone();
-    other.id="command-other".into();
-    if let PortContract::Action { endpoint, .. } = &mut other.contract { *endpoint="command-other".into(); }
-    native_metadata.ports.as_mut().unwrap().ports.push(other.clone());
-    native_metadata.ports = Some(PortUpdate::complete(native_metadata.ports.take().unwrap().ports).unwrap());
-    Runtime::adopt(&runtime.state,vec![("game:dcs".into(),Ok(batch("game:dcs","metadata",2,vec![native_metadata])))]);
-    let current = |reader:&str, revision| {
-        let mut value=delivery("dcs",reader,revision);
-        value.observations[0].route.as_mut().unwrap().writable=true;
-        value.observations[0].ports.as_mut().unwrap().ports.push(other.clone());
-        value.observations[0].ports = Some(PortUpdate::complete(value.observations[0].ports.take().unwrap().ports).unwrap());
+    let mut native_metadata = metadata("dcs");
+    let mut other = native_metadata.ports.as_ref().unwrap().ports[1].clone();
+    other.id = "command-other".into();
+    if let PortContract::Action { endpoint, .. } = &mut other.contract {
+        *endpoint = "command-other".into();
+    }
+    native_metadata
+        .ports
+        .as_mut()
+        .unwrap()
+        .ports
+        .push(other.clone());
+    native_metadata.ports =
+        Some(PortUpdate::complete(native_metadata.ports.take().unwrap().ports).unwrap());
+    Runtime::adopt(
+        &runtime.state,
+        vec![(
+            "game:dcs".into(),
+            Ok(batch("game:dcs", "metadata", 2, vec![native_metadata])),
+        )],
+    );
+    let current = |reader: &str, revision| {
+        let mut value = delivery("dcs", reader, revision);
+        value.observations[0].route.as_mut().unwrap().writable = true;
+        value.observations[0]
+            .ports
+            .as_mut()
+            .unwrap()
+            .ports
+            .push(other.clone());
+        value.observations[0].ports =
+            Some(PortUpdate::complete(value.observations[0].ports.take().unwrap().ports).unwrap());
         value
     };
-    runtime.publish_profile_game_delivery(current("reader-one",1)).unwrap();
-    let (id,command,unrelated,telemetry) = {
-        let state=runtime.state.lock().unwrap();
-        let id=state.registry.list(0,32).unwrap().resources.into_iter()
-            .find(|r|r.connections.iter().any(|c|c.route.id=="profile-game:dcs")).unwrap().id;
-        (id.clone(),state.registry.token(&id,"command",Access::Invoke).unwrap(),
-            state.registry.token(&id,"command-other",Access::Invoke).unwrap(),
-            state.registry.token(&id,"altitude",Access::Read).unwrap())
+    runtime
+        .publish_profile_game_delivery(current("reader-one", 1))
+        .unwrap();
+    let (id, command, unrelated, telemetry) = {
+        let state = runtime.state.lock().unwrap();
+        let id = state
+            .registry
+            .list(0, 32)
+            .unwrap()
+            .resources
+            .into_iter()
+            .find(|r| {
+                r.connections
+                    .iter()
+                    .any(|c| c.route.id == "profile-game:dcs")
+            })
+            .unwrap()
+            .id;
+        (
+            id.clone(),
+            state
+                .registry
+                .token(&id, "command", Access::Invoke)
+                .unwrap(),
+            state
+                .registry
+                .token(&id, "command-other", Access::Invoke)
+                .unwrap(),
+            state.registry.token(&id, "altitude", Access::Read).unwrap(),
+        )
     };
     runtime.validate_delivery(&command).unwrap();
-    assert!(runtime.withdraw_profile_game_commands("dcs","foreign-reader",&["command".into()]).is_err());
-    assert!(runtime.withdraw_profile_game_commands("dcs","reader-one",&["unknown".into()]).is_err());
+    assert!(runtime
+        .withdraw_profile_game_commands("dcs", "foreign-reader", &["command".into()])
+        .is_err());
+    assert!(runtime
+        .withdraw_profile_game_commands("dcs", "reader-one", &["unknown".into()])
+        .is_err());
     runtime.validate_delivery(&command).unwrap();
-    runtime.withdraw_profile_game_commands("dcs","reader-one",&["command".into()]).unwrap();
+    runtime
+        .withdraw_profile_game_commands("dcs", "reader-one", &["command".into()])
+        .unwrap();
     assert!(runtime.validate_delivery(&command).is_err());
     runtime.validate_delivery(&unrelated).unwrap();
     runtime.validate_delivery(&telemetry).unwrap();
-    runtime.validate_profile_game_delivery("dcs","reader-one").unwrap();
-    runtime.publish_profile_game_delivery(current("reader-one",2)).unwrap();
-    assert!(runtime.validate_delivery(&command).is_err(),"Fresh telemetry cannot re-enable a withdrawn command");
+    runtime
+        .validate_profile_game_delivery("dcs", "reader-one")
+        .unwrap();
+    runtime
+        .publish_profile_game_delivery(current("reader-one", 2))
+        .unwrap();
+    assert!(
+        runtime.validate_delivery(&command).is_err(),
+        "Fresh telemetry cannot re-enable a withdrawn command"
+    );
     runtime.validate_delivery(&telemetry).unwrap();
-    let expected=[&telemetry,&command,&unrelated].into_iter().map(|token|PortExpectation {
-        profile_port_id:token.port_id.clone(),observed_port_id:token.port_id.clone(),expected_contract_hash:token.contract_hash.clone()
-    }).collect();
-    let captured=runtime.snapshot_for_compile(vec![LocalAssignment{resource_id:"game".into(),source_id:id.clone(),ports:expected}]).unwrap();
-    assert!(captured.resources[0].tokens.iter().any(|t|t==&telemetry));
-    assert!(!captured.resources[0].tokens.iter().any(|t|t==&command));
-    runtime.publish_profile_game_delivery(current("reader-two",1)).unwrap();
-    let replacement=runtime.state.lock().unwrap().registry.token(&id,"command",Access::Invoke).unwrap();
+    let expected = [&telemetry, &command, &unrelated]
+        .into_iter()
+        .map(|token| PortExpectation {
+            profile_port_id: token.port_id.clone(),
+            observed_port_id: token.port_id.clone(),
+            expected_contract_hash: token.contract_hash.clone(),
+        })
+        .collect();
+    let captured = runtime
+        .snapshot_for_compile(vec![LocalAssignment {
+            resource_id: "game".into(),
+            source_id: id.clone(),
+            ports: expected,
+        }])
+        .unwrap();
+    assert!(captured.resources[0].tokens.iter().any(|t| t == &telemetry));
+    assert!(!captured.resources[0].tokens.iter().any(|t| t == &command));
+    runtime
+        .publish_profile_game_delivery(current("reader-two", 1))
+        .unwrap();
+    let replacement = runtime
+        .state
+        .lock()
+        .unwrap()
+        .registry
+        .token(&id, "command", Access::Invoke)
+        .unwrap();
     runtime.validate_delivery(&replacement).unwrap();
-    assert!(runtime.withdraw_profile_game_commands("dcs","reader-one",&["command".into()]).is_err());
+    assert!(runtime
+        .withdraw_profile_game_commands("dcs", "reader-one", &["command".into()])
+        .is_err());
     runtime.validate_delivery(&replacement).unwrap();
     runtime.shutdown();
 }
 
 #[test]
-fn cached_delivery_check_observes_replacement_metadata_loss_and_closed_inventory_without_discovery() {
-    let runtime=runtime();
-    assert!(runtime.validate_profile_game_delivery("dcs","reader-one").is_err());
-    runtime.publish_profile_game_delivery(delivery("dcs","reader-one",1)).unwrap();
-    for _ in 0..20 { runtime.validate_profile_game_delivery("dcs","reader-one").unwrap(); }
-    assert!(runtime.validate_profile_game_delivery("dcs","other-reader").is_err());
-    assert!(runtime.validate_profile_game_delivery("x-plane-12","reader-one").is_err());
-    runtime.publish_profile_game_delivery(delivery("dcs","reader-two",1)).unwrap();
-    assert!(runtime.validate_profile_game_delivery("dcs","reader-one").is_err());
-    runtime.validate_profile_game_delivery("dcs","reader-two").unwrap();
-    Runtime::adopt(&runtime.state,vec![("game:dcs".into(),Err("Native metadata capture failed.".into()))]);
-    assert!(runtime.validate_profile_game_delivery("dcs","reader-two").is_err());
-    Runtime::adopt(&runtime.state,vec![("game:dcs".into(),Ok(batch("game:dcs","metadata",3,vec![metadata("dcs")])))]);
-    runtime.publish_profile_game_delivery(delivery("dcs","reader-three",1)).unwrap();
-    runtime.state.lock().unwrap().read_only=true;
-    assert!(runtime.validate_profile_game_delivery("dcs","reader-three").is_err());
-    runtime.state.lock().unwrap().read_only=false;
+fn cached_delivery_check_observes_replacement_metadata_loss_and_closed_inventory_without_discovery()
+{
+    let runtime = runtime();
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "reader-one")
+        .is_err());
+    runtime
+        .publish_profile_game_delivery(delivery("dcs", "reader-one", 1))
+        .unwrap();
+    for _ in 0..20 {
+        runtime
+            .validate_profile_game_delivery("dcs", "reader-one")
+            .unwrap();
+    }
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "other-reader")
+        .is_err());
+    assert!(runtime
+        .validate_profile_game_delivery("x-plane-12", "reader-one")
+        .is_err());
+    runtime
+        .publish_profile_game_delivery(delivery("dcs", "reader-two", 1))
+        .unwrap();
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "reader-one")
+        .is_err());
+    runtime
+        .validate_profile_game_delivery("dcs", "reader-two")
+        .unwrap();
+    Runtime::adopt(
+        &runtime.state,
+        vec![(
+            "game:dcs".into(),
+            Err("Native metadata capture failed.".into()),
+        )],
+    );
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "reader-two")
+        .is_err());
+    Runtime::adopt(
+        &runtime.state,
+        vec![(
+            "game:dcs".into(),
+            Ok(batch("game:dcs", "metadata", 3, vec![metadata("dcs")])),
+        )],
+    );
+    runtime
+        .publish_profile_game_delivery(delivery("dcs", "reader-three", 1))
+        .unwrap();
+    runtime.state.lock().unwrap().read_only = true;
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "reader-three")
+        .is_err());
+    runtime.state.lock().unwrap().read_only = false;
     runtime.shutdown();
-    assert!(runtime.validate_profile_game_delivery("dcs","reader-three").is_err());
+    assert!(runtime
+        .validate_profile_game_delivery("dcs", "reader-three")
+        .is_err());
 }
 
 #[test]

@@ -4,7 +4,7 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
     let scratch = scratch();
     let path = scratch.path().join("vehicles.json");
     let mut tracker = Tracker::new(path.clone());
-    let dcs = json!({"id":"dcs"});
+    let dcs = json!({"id":"flight-title","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
     let mut network = dcs_bios::Network::parse(&connection(5010)).unwrap();
     network.listen_port = 0;
     let source = dcs_bios::Transport::open_network(&network).unwrap();
@@ -21,7 +21,7 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
     .unwrap();
     let decoder = dcs_profile::ExportSession::from_sources(catalogue, 1500, vec![]).unwrap();
     tracker.observe(&dcs, &connection(5010), Some(process()), "setup", false, 2);
-    tracker.entries.get_mut("dcs").unwrap().reader = Some(Reader::Dcs {
+    tracker.entries.get_mut("flight-title").unwrap().reader = Some(Reader::Dcs {
         source,
         decoder,
         guard,
@@ -38,19 +38,19 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
         .unwrap();
     for _ in 0..100 {
         tracker.poll();
-        if tracker.current("dcs").is_some() {
+        if tracker.current("flight-title").is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert_eq!(tracker.current("dcs").unwrap()["id"], "A-10C");
+    assert_eq!(tracker.current("flight-title").unwrap()["id"], "A-10C");
     tracker.observe(&dcs, &connection(5010), None, "setup", false, 1);
-    assert!(tracker.current("dcs").is_some());
+    assert!(tracker.current("flight-title").is_some());
     tracker.observe(&dcs, &connection(5010), None, "setup", false, 3);
-    assert_eq!(tracker.current("dcs"), None);
+    assert_eq!(tracker.current("flight-title"), None);
     tracker.writer.as_ref().unwrap().flush().unwrap();
     let restored = Tracker::new(path);
-    assert_eq!(restored.current("dcs"), None);
+    assert_eq!(restored.current("flight-title"), None);
     let mut dcs = dcs;
     restored.decorate(&mut dcs);
     assert_eq!(dcs["vehicleSupport"]["vehicles"][0]["id"], "A-10C");
@@ -63,7 +63,7 @@ fn independent_process_checks_survive_slow_catalogue_observation_but_never_exten
         let reserve = UdpSocket::bind("127.0.0.1:0").unwrap();
         let port = reserve.local_addr().unwrap().port();
         drop(reserve);
-        let game = json!({"id":"dcs","installed":true,"executable":"DCS.exe"});
+        let game = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios","installed":true,"executable":"DCS.exe"});
         let games = vec![game.clone()];
         let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
         tracker.observe(&game, &connection(port), Some(process()), "setup", true, 1);
@@ -166,29 +166,25 @@ fn rally_catalogue_remembers_only_qualified_native_car_models_and_stale_withdraw
     let scratch = scratch();
     let path = scratch.path().join("vehicles.json");
     let mut tracker = Tracker::new(path.clone());
-    let game = json!({"id":"assetto-corsa-rally"});
+    let game = json!({"id":"racing-title","integrationCompatible":true,"integrationKey":"assetto-corsa-rally","provider":"assetto-corsa-rally"});
     tracker.observe(&game, &json!({}), Some(process()), "rally-setup", false, 1);
     let mut source = game_telemetry::FixtureSource::new();
     source.push(rally_sample(1, "Lancia Delta")).unwrap();
     source.push(rally_sample(2, "Lancia Delta")).unwrap();
-    tracker
-        .entries
-        .get_mut("assetto-corsa-rally")
-        .unwrap()
-        .reader = Some(Reader::Rally {
+    tracker.entries.get_mut("racing-title").unwrap().reader = Some(Reader::Rally {
         source: Box::new(source),
         decoder: game_telemetry::Session::new(1500).unwrap(),
     });
     tracker.poll();
-    assert_eq!(tracker.current("assetto-corsa-rally"), None);
+    assert_eq!(tracker.current("racing-title"), None);
     tracker.poll();
     assert_eq!(
-        tracker.current("assetto-corsa-rally").unwrap()["id"],
+        tracker.current("racing-title").unwrap()["id"],
         "Lancia Delta"
     );
     tracker.origin -= Duration::from_millis(1501);
     tracker.poll();
-    assert_eq!(tracker.current("assetto-corsa-rally"), None);
+    assert_eq!(tracker.current("racing-title"), None);
     tracker.writer.as_ref().unwrap().flush().unwrap();
     let restored = Tracker::new(path);
     let mut game = game;
@@ -226,9 +222,14 @@ fn invalid_retention_is_visible_without_blocking_live_observations_or_rewriting_
     let directory = crate::test_directory();
     let path = directory.path().join("vehicles.json");
     fs::write(&path, b"{invalid").unwrap();
-    crate::persistence::test_support::record(&path,"games","vehicles",&std::fs::read(&path).unwrap());
+    crate::persistence::test_support::record(
+        &path,
+        "games",
+        "vehicles",
+        &std::fs::read(&path).unwrap(),
+    );
     let mut tracker = Tracker::new(path.clone());
-    let mut game = json!({"id":"assetto-corsa-rally"});
+    let mut game = json!({"id":"assetto-corsa-rally","integrationCompatible":true,"integrationKey":"assetto-corsa-rally","provider":"assetto-corsa-rally"});
     tracker.set_test_vehicle("assetto-corsa-rally", Some("Lancia Delta"));
     tracker.decorate(&mut game);
     assert_eq!(game["currentVehicle"]["id"], "Lancia Delta");
@@ -242,7 +243,12 @@ fn remembered_vehicle_import_is_bounded_validated_and_never_restores_live_author
     let path = directory.path().join("vehicles.json");
     let saved = json!({"schemaVersion":1,"games":{"dcs":[{"id":"A-10C","name":"A-10C"}],"assetto-corsa":[{"id":"lotus","name":"lotus"}]}});
     fs::write(&path, saved.to_string()).unwrap();
-    crate::persistence::test_support::record(&path,"games","vehicles",&std::fs::read(&path).unwrap());
+    crate::persistence::test_support::record(
+        &path,
+        "games",
+        "vehicles",
+        &std::fs::read(&path).unwrap(),
+    );
     let mut tracker = Tracker::new(path.clone());
     assert!(tracker.retention_error.is_none());
     assert_eq!(tracker.current("dcs"), None);
@@ -251,7 +257,7 @@ fn remembered_vehicle_import_is_bounded_validated_and_never_restores_live_author
     assert_eq!(restored.seen, tracker.seen);
     for invalid in [
         json!({"schemaVersion":2,"games":{}}),
-        json!({"schemaVersion":1,"games":{"unknown":[]}}),
+        json!({"schemaVersion":1,"games":{"Invalid ID":[]}}),
         json!({"schemaVersion":1,"games":{"dcs":[{"id":"NONE"}]}}),
         json!({"schemaVersion":1,"games":{"dcs":[{"id":"A"},{"id":"A"}]}}),
         json!({"schemaVersion":1,"games":{"dcs":vec![json!({"id":"A"});MAX_VEHICLES+1]}}),
@@ -278,8 +284,7 @@ fn injected_vehicle_remains_until_fixture_changes_it() {
     let directory = crate::test_directory();
     let mut tracker = Tracker::new(directory.path().join("vehicles.json"));
     tracker.set_test_vehicle("dcs", Some("FA-18C_hornet"));
-    tracker.entries.get_mut("dcs").unwrap().observed =
-        Instant::now() - Duration::from_secs(3);
+    tracker.entries.get_mut("dcs").unwrap().observed = Instant::now() - Duration::from_secs(3);
     tracker.poll_verified(&[], |_| String::new(), |_| false);
     assert_eq!(tracker.current("dcs").unwrap()["id"], "FA-18C_hornet");
     tracker.set_test_vehicle("dcs", None);

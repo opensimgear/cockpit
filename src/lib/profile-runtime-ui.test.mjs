@@ -1,3 +1,4 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
@@ -8,7 +9,8 @@ import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./profile-runtime','./profile-runtime-controller']);
+const modules=await loadModules(['./games','./profiles','./profile-runtime','./profile-runtime-controller']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const {ProfileRuntimeClient}=modules.get('./profile-runtime'),{ProfileRuntimeController}=modules.get('./profile-runtime-controller');
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`;
 const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});

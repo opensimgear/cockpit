@@ -45,6 +45,14 @@ mod inspection;
 mod provider_settings;
 mod provision;
 mod requests;
+/// Resolve a title's explicit binding before entering the adapter's dialect.
+fn bound_game(game: &Value) -> Result<Value, String> {
+    let key = crate::game_discovery::integration_binding(game)
+        .ok_or("Attach a compatible integration to this game first.")?;
+    let mut bound = game.clone();
+    bound["id"] = json!(key);
+    Ok(bound)
+}
 impl GameIntegrationSetup {
     pub(crate) fn new(path: PathBuf, native: bool) -> Self {
         let store = settings_repository(&path);
@@ -87,6 +95,9 @@ impl GameIntegrationSetup {
         game: &Value,
         force_hash: bool,
     ) -> Result<(), String> {
+        crate::game_discovery::integration_key(game)
+            .ok_or("Choose a compatible game executable before preparing its integration.")?;
+        let game = bound_game(game)?;
         let id = game["id"].as_str().unwrap_or("");
         if !id.starts_with("assetto-corsa") {
             return Ok(());
@@ -127,7 +138,13 @@ impl GameIntegrationSetup {
     pub(crate) fn decorate(&self, catalogue: &mut [Value]) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         for game in catalogue {
-            let id = game["id"].as_str().unwrap_or("");
+            let Ok(bound) = bound_game(game) else {
+                if let Some(object) = game.as_object_mut() {
+                    object.remove("integrationSetup");
+                }
+                continue;
+            };
+            let id = bound["id"].as_str().unwrap_or("");
             let cached = self
                 .inner
                 .states
@@ -136,7 +153,7 @@ impl GameIntegrationSetup {
                 .get(id)
                 .cloned();
             let mut status = cached.unwrap_or_else(|| {
-                let status = self.inner.inspect(game, None);
+                let status = self.inner.inspect(&bound, None);
                 self.inner
                     .states
                     .lock()
@@ -169,7 +186,10 @@ impl GameIntegrationSetup {
             return;
         }
         for game in catalogue {
-            let status = self.inner.inspect(game, None);
+            let Ok(game) = bound_game(game) else {
+                continue;
+            };
+            let status = self.inner.inspect(&game, None);
             self.inner
                 .states
                 .lock()

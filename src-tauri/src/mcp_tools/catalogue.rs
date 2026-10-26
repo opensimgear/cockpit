@@ -1,9 +1,12 @@
 use super::*;
-#[path="companion_catalogue.rs"]
+#[path = "companion_catalogue.rs"]
 mod companion;
 
 fn string(max: usize) -> Value {
     json!({"type":"string","minLength":1,"maxLength":max,"pattern":"^[^\\u0000-\\u001f\\u007f]*$"})
+}
+fn game_id() -> Value {
+    json!({"type":"string","format":"game-id","minLength":1,"maxLength":96,"pattern":"^[a-z0-9][a-z0-9-]{0,95}$"})
 }
 fn integer(min: u64, max: u64) -> Value {
     json!({"type":"integer","minimum":min,"maximum":max})
@@ -86,7 +89,13 @@ pub fn catalogue() -> Vec<Value> {
         tool("resource_search_ports","Search command/telemetry/action port metadata within one exact resource, returning a bounded matching page. Refresh after capabilityStamp changes.",fields(vec![("resourceId",string(36)),("search",string(200))],page()),&["resourceId","search"]),
         tool("processing_operations_list","Discover/search native processing operations and their exact typed parameter schemas before adding a ProcessingNode. Returns stable schema hashes and bounded metadata; the shared native compiler decides compatibility with declared input/output port contracts. This is passive metadata and executes no operation.",fields(vec![("search",json!({"type":"string","maxLength":200})),("category",choice(&["numeric","logic","event","text","action","quantity","script","other"]))],page()),&[]),
         tool("games_list","List supported and installed games, provider readiness, setup revisions and current vehicle context. This does not launch a game.",page(),&[]),
-        tool("game_vehicles_list","Search/page one game's retained native aircraft/car catalogue without selecting a vehicle, registering resources or starting a provider. Includes current native vehicle context and a catalogue/setup stamp; these metadata do not prove current live readiness.",fields(vec![("gameId",string(64)),("search",json!({"type":"string","maxLength":200}))],page()),&["gameId"]),
+        tool("game_discovery_start","Start asynchronous local game discovery. Returns the current scan ID and snapshot immediately; use game_discovery_status to poll and game_discovery_apply to commit explicitly selected Add/Update actions. No catalogue changes occur before Apply.",vec![("paths",json!({"type":"array","maxItems":64,"items":{"type":"string","minLength":1,"maxLength":4096}}))],&[]),
+        tool("game_discovery_status","Read progress, discovered entries and diagnostics for one exact discovery scan. Results are paged; Add/Update entries default selected and Remove entries default unselected.",fields(vec![("scanId",string(36))],page()),&["scanId"]),
+        tool("game_discovery_apply","Atomically apply selected discovery Add/Update/Remove actions after reviewing the exact scan. Native code revalidates the scan and installation evidence; stale scans fail without partial changes.",vec![("scanId",string(36)),("actions",json!({"type":"array","maxItems":512,"items":{"type":"object","additionalProperties":false,"properties":{"id":string(256),"selected":{"type":"boolean"},"executable":{"type":["string","null"],"maxLength":4096},"replaceInstallationId":{"type":["string","null"],"maxLength":256},"gameId":game_id()},"required":["id","selected"]}}))],&["scanId","actions"]),
+        tool("game_save","Update metadata or selected installation for one already discovered game. This does not launch a game or start a provider.",vec![("gameId",game_id()),("name",string(128)),("installationId",string(256)),("executable",json!({"type":["string","null"],"maxLength":4096}))],&["gameId"]),
+        tool("game_remove","Remove one registered game and its installations from the local catalogue.",vec![("gameId",game_id())],&["gameId"]),
+        tool("game_installation_select","Select one discovered installation for a registered game without launching it.",vec![("gameId",game_id()),("installationId",string(256))],&["gameId","installationId"]),
+        tool("game_vehicles_list","Search/page one game's retained native aircraft/car catalogue without selecting a vehicle, registering resources or starting a provider. Includes current native vehicle context and a catalogue/setup stamp; these metadata do not prove current live readiness.",fields(vec![("gameId",game_id()),("search",json!({"type":"string","maxLength":200}))],page()),&["gameId"]),
         tool("game_telemetry_inspect","Read bounded passive telemetry values and canonical channel metadata from one game. This does not start a provider or apply a profile.",fields(vec![("gameId",string(64)),("search",json!({"type":"string","maxLength":200})),("group",json!({"type":"string","maxLength":256}))],page()),&[]),
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
@@ -110,7 +119,7 @@ pub fn catalogue() -> Vec<Value> {
         tool("profile_prepare_changes","Prepare and compile an ephemeral draft without saving, selecting or activating. Supply either profileId plus expectedRevision and typed edits; a full document plus explicit null/numeric expectedRevision; or name plus expectedRevision:null for a new graph. Local assignments remain separate. Returns draftId, deterministic diff, validation and native compiler diagnostics. Read cockpit://schemas/profile and cockpit://guide/configuration first.",vec![("profileId",string(36)),("expectedRevision",nullable_revision()),("name",string(80)),("document",schema::reference("ProfileDocument")),("edits",json!({"type":"array","maxItems":256,"items":schema::reference("Edit")})),("assignments",json!({"type":"array","maxItems":64,"items":schema::reference("LocalAssignment")}))],&["expectedRevision"]),
         tool("profile_save_prepared","Atomically persist the exact prepared document and local assignments with its captured expectedRevision. A save never applies or reapplies outputs. Drafts expire after 30 minutes and belong to this client.",vec![("draftId",string(36))],&["draftId"]),
         tool("compilation_inspect","Page diagnostics or compiled trace from a recent native preview. Cached previews never authorize Apply; fresh native admission is mandatory.",fields(vec![("compilationId",string(36)),("section",choice(&["diagnostics","nodes","order","sources","sinks","branches","controllers","visibility"]))],page()),&["compilationId","section"]),
-        tool("profile_apply","Explicitly activate one exact saved revision. Requires observed expectedActiveOwner (including explicit null) and fresh native resource admission. operationId also identifies activation progress. Save remains separate.",vec![("id",string(36)),("expectedRevision",revision()),("expectedActiveOwner",owner()),("gameId",string(64))],&["id","expectedRevision","expectedActiveOwner"]),
+        tool("profile_apply","Explicitly activate one exact saved revision. Requires observed expectedActiveOwner (including explicit null) and fresh native resource admission. operationId also identifies activation progress. Save remains separate.",vec![("id",string(36)),("expectedRevision",revision()),("expectedActiveOwner",owner()),("gameId",game_id())],&["id","expectedRevision","expectedActiveOwner"]),
         tool("activation_status","Inspect exact native activation progress, cancellation capability and outcome without waiting for admission locks.",vec![("activationId",string(36))],&["activationId"]),
         tool("activation_current","Inspect current native activation or automatic switch progress. Null means no retained current operation.",vec![],&[]),
         tool("activation_cancel","Cancel an exact pending native activation. Its epoch fence cannot deactivate a newer applied owner. Cleanup is never cancelled.",vec![("activationId",string(36))],&["activationId"]),
@@ -130,43 +139,54 @@ pub fn catalogue() -> Vec<Value> {
         tool("usb_module_config_read","Read configuration using an exact current native USB route token.",vec![("key",string(256)),("route",object())],&["key","route"]),
         tool("usb_module_config_change","Perform a typed direct USB module setup action with its exact current native route, client claim and profile owner. Stale boot/route tokens fail closed.",vec![("key",string(256)),("route",object()),("action",choice(&["claim","release","apply","apply_save","save","discard","reset"])),("config",schema::runtime_config()),("expectedActiveOwner",owner())],&["key","route","action","expectedActiveOwner"]),
         tool("device_config_prepare","Read one exact gateway/USB module configuration, validate a complete candidate with the native config encoder, and return a deterministic reviewable diff. Performs no claim, apply or save. Gateway selectors are gatewayId+moduleId; USB selectors are key+current route. The resulting baseline is review context; explicit setup rechecks native ownership, boot and route, and firmware semantic acceptance remains an Apply result.",vec![("transport",choice(&["gateway","usb"])),("gatewayId",string(100)),("moduleId",string(80)),("key",string(256)),("route",object()),("config",schema::runtime_config())],&["transport","config"]),
-        tool("local_settings_get","Read revisioned machine-local game-provider, desktop or automatic-selection preferences. Path-bearing provider preferences never enter a portable profile.",vec![("scope",scope()),("gameId",string(64))],&["scope"]),
-        tool("local_settings_save","Save typed machine-local preferences with the exact settings revision and observed active owner. Scope-specific native validation rejects unknown fields; provider paths are preferences, never arbitrary file access. Read the workflow resource for scope settings.",vec![("scope",scope()),("gameId",string(64)),("expectedSettingsRevision",string(128)),("expectedActiveOwner",owner()),("settings",object())],&["scope","expectedSettingsRevision","expectedActiveOwner","settings"]),
+        tool("local_settings_get","Read revisioned machine-local game-provider, desktop or automatic-selection preferences. Path-bearing provider preferences never enter a portable profile.",vec![("scope",scope()),("gameId",game_id())],&["scope"]),
+        tool("local_settings_save","Save typed machine-local preferences with the exact settings revision and observed active owner. Scope-specific native validation rejects unknown fields; provider paths are preferences, never arbitrary file access. Read the workflow resource for scope settings.",vec![("scope",scope()),("gameId",game_id()),("expectedSettingsRevision",string(128)),("expectedActiveOwner",owner()),("settings",object())],&["scope","expectedSettingsRevision","expectedActiveOwner","settings"]),
     ];
-    tools.extend(companion::catalogue());tools
+    tools.extend(companion::catalogue());
+    tools
 }
 
 pub fn is_mutation(name: &str) -> bool {
-    super::companion_controls::mutation(name)||matches!(
-        name,
-        "storage_create" | "storage_remove" | "storage_restore" | "storage_restart" | "profile_create"
-            | "ui_preferences_save"
-            | "widget_save"
-            | "mcp_settings_update"
-            | "mcp_credential_create"
-            | "mcp_credential_rotate"
-            | "mcp_credential_revoke"
-            | "companion_listener_save"
-            | "designer_workspace_begin"
-            | "designer_workspace_chunk"
-            | "designer_workspace_commit"
-            | "designer_workspace_abort"
-            | "profile_duplicate"
-            | "profile_rename"
-            | "profile_delete"
-            | "profile_import"
-            | "profile_save_prepared"
-            | "profile_apply"
-            | "activation_cancel"
-            | "profile_stop"
-            | "profile_recover"
-            | "gateway_session"
-            | "gateway_config_change"
-            | "usb_module_session"
-            | "usb_module_config_change"
-            | "local_settings_save"
-            | "game_aircraft_resource"
-    )
+    super::companion_controls::mutation(name)
+        || matches!(
+            name,
+            "storage_create"
+                | "storage_remove"
+                | "storage_restore"
+                | "storage_restart"
+                | "profile_create"
+                | "ui_preferences_save"
+                | "widget_save"
+                | "mcp_settings_update"
+                | "mcp_credential_create"
+                | "mcp_credential_rotate"
+                | "mcp_credential_revoke"
+                | "companion_listener_save"
+                | "designer_workspace_begin"
+                | "designer_workspace_chunk"
+                | "designer_workspace_commit"
+                | "designer_workspace_abort"
+                | "profile_duplicate"
+                | "profile_rename"
+                | "profile_delete"
+                | "profile_import"
+                | "profile_save_prepared"
+                | "profile_apply"
+                | "activation_cancel"
+                | "profile_stop"
+                | "profile_recover"
+                | "game_discovery_apply"
+                | "game_discovery_start"
+                | "game_save"
+                | "game_remove"
+                | "game_installation_select"
+                | "gateway_session"
+                | "gateway_config_change"
+                | "usb_module_session"
+                | "usb_module_config_change"
+                | "local_settings_save"
+                | "game_aircraft_resource"
+        )
 }
 
 pub fn result_schema() -> Value {
@@ -272,6 +292,9 @@ fn validate_at(
             || schema.get("pattern").is_some() && text.chars().any(char::is_control)
         {
             return Err(format!("{path} must be bounded printable text."));
+        }
+        if schema["format"] == "game-id" && !osg_profiles::activation::valid_game_id(text) {
+            return Err(format!("{path} must be a valid game identity."));
         }
     }
     if value.is_number() {

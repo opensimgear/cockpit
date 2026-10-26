@@ -202,7 +202,7 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
         let resources = Arc::new(crate::profile_resources::Runtime::new(None, Arc::new(|_| vec![]), false));
         resources.refresh_native().unwrap();
         let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
-        let games = Arc::new(crate::games::GamesRuntime::new(
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(
             Arc::new(|_| panic!("No physical I/O")),
             crate::games::Paths {
                 installations: directory.path().join("installations.json"),
@@ -915,7 +915,7 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
     ));
     resources.refresh_native().unwrap();
     let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
-    let games = Arc::new(crate::games::GamesRuntime::new(
+    let games = Arc::new(crate::games::GamesRuntime::test_runtime(
         Arc::new(|_| panic!("No physical cleanup I/O")),
         crate::games::Paths {
             installations: directory.path().join("installations.json"),

@@ -20,6 +20,8 @@ mod host_settings;
 mod companion_controls;
 #[path="mcp_tools/integration_settings.rs"]
 mod integration_settings;
+#[path = "mcp_tools/game_library.rs"]
+mod game_library;
 #[path = "mcp_tools/catalogue.rs"]
 mod definitions;
 #[path = "mcp_tools/schema.rs"]
@@ -329,6 +331,12 @@ impl Tools {
             }),
             "resource_search_ports" => self.search_ports(args, client),
             "processing_operations_list" => Ok(schema::operation_catalogue(args)),
+            "game_discovery_start" => self.game_discovery_start(args, client),
+            "game_discovery_status" => self.game_discovery_status(args, client),
+            "game_discovery_apply" => self.game_discovery_apply(args, client),
+            "game_save" => self.game_save(args, client),
+            "game_remove" => self.game_remove(args, client),
+            "game_installation_select" => self.game_installation_select(args, client),
             "games_list" => {
                 let mut data = forward("game_get_state", &[], Some("games"))?;
                 if let Some(games) = data["catalogue"].as_array_mut() {

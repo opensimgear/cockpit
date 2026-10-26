@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Run real setup paths and require at least 71% production line coverage per module."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from native_coverage_sources import measure_module, source_stamp
 
 
 def command(arguments, cwd, env=None):
@@ -38,7 +40,7 @@ def main():
                     'profile_session_stage.rs', 'profile_session_inputs.rs',
                     'profile_session_scripts.rs', 'profile_session_virtual.rs',
                     'profile_hid_publication.rs', 'profile_session_dcs_hid.rs',
-                    'games/storage/car_catalogue.rs', 'games/vehicles/mod.rs', 'games/vehicles/sources.rs', 'profile_desktop_settings.rs']
+                    'games/storage/car_catalogue.rs', 'games/vehicles/mod.rs', 'games/vehicles/sources.rs', 'games/vehicles/views.rs', 'profile_desktop_settings.rs']
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=root / '.research/setup-coverage')
     parser.add_argument('--module', action='append', choices=module_names,
@@ -47,8 +49,9 @@ def main():
                         help='Focused local test filter; CI defaults to the complete native suite.')
     args = parser.parse_args()
     sources = [root / 'src-tauri/src' / name for name in args.module or module_names]
-    source_hashes = {str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
-                     for source in sources}
+    tracked = sources + [Path(__file__).resolve(), root / 'scripts/native_coverage_sources.py',
+                         root / 'scripts/test_native_coverage_sources.py', root / 'scripts/desktop-output-coverage.py']
+    source_hashes = source_stamp(tracked, root)
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     archive = os.environ.get('OSG_DCS_SETUP_ARCHIVE')
@@ -89,32 +92,17 @@ def main():
     profile = output / 'coverage.profdata'
     command([str(llvm / f'llvm-profdata{suffix}'), 'merge', '-sparse', *map(str, profiles.glob('*.profraw')),
              '-o', str(profile)], root)
-    if source_hashes != {str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
-                         for source in sources}:
+    if source_hashes != source_stamp(tracked, root):
         raise RuntimeError('Setup/context sources changed during coverage; rebuild and rerun the gate.')
-    annotated = command([str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
-                         '-show-line-counts-or-regions', *map(str, sources)], root)
-    (output / 'lines.txt').write_text(annotated, encoding='utf-8')
-    source_paths = {str(path).replace('\\', '/'): path for path in sources}
-    # llvm-cov omits the file heading when exactly one source was requested.
-    counts, current = {}, str(sources[0].relative_to(root)) if len(sources) == 1 else ''
-    for line in annotated.splitlines():
-        heading = line[:-1].replace('\\', '/') if line.endswith(':') else ''
-        if heading in source_paths:
-            current = str(source_paths[heading].relative_to(root))
-        if match := re.match(r'^\s*(\d+)\|\s*(\d+(?:\.\d+)?[kMGT]?)\|', line):
-            # llvm-cov abbreviates large hit counts; line coverage needs only zero/nonzero.
-            counts.setdefault(current, {})[int(match[1])] = int(match[2] != '0')
-    report = {}
+    report, annotations = {}, []
     for source in sources:
-        end = production_end(source.read_text(encoding='utf-8').splitlines())
-        measured = {line: count for line, count in counts.get(str(source.relative_to(root)), {}).items() if line < end}
-        if not measured:
-            raise RuntimeError(f'No production coverage recorded for {source.name}.')
-        covered = sum(count > 0 for count in measured.values())
-        percent = 100 * covered / len(measured)
-        report[str(source.relative_to(root))] = {'covered': covered, 'lines': len(measured), 'percent': round(percent, 2)}
-        print(f'{source.name}: {covered}/{len(measured)} production lines ({percent:.2f}%)', flush=True)
+        result, annotated = measure_module(source, lambda path: command([
+            str(llvm / f'llvm-cov{suffix}'), 'show', binaries[0], f'-instr-profile={profile}',
+            '-show-line-counts-or-regions', str(path)], root), root)
+        report[str(source.relative_to(root))] = result
+        annotations.append(annotated)
+        print(f"{source.name}: {result['covered']}/{result['lines']} production lines ({result['percent']:.2f}%)", flush=True)
+    (output / 'lines.txt').write_text('\n'.join(annotations), encoding='utf-8')
     (output / 'setup-summary.json').write_text(json.dumps(report, indent=2) + '\n')
     (output / 'source-hashes.json').write_text(json.dumps(source_hashes, indent=2) + '\n', encoding='utf-8')
     if any(item['covered'] * 100 < 71 * item['lines'] for item in report.values()):

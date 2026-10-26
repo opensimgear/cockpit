@@ -1,6 +1,5 @@
 export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane';
-export type BuiltinGameId = 'dcs' | 'assetto-corsa-rally' | 'assetto-corsa' | 'assetto-corsa-competizione' | 'assetto-corsa-evo' | 'x-plane-11' | 'x-plane-12';
-export type GameId = BuiltinGameId | `custom-${string}`;
+export type GameId = string;
 export type GameCrop = {x:number;y:number;width:number;height:number};
 export type GameBackground = { crop?: GameCrop; image: string; positionX: number; positionY: number };
 export type GameCategories = Record<string, string>;
@@ -12,7 +11,9 @@ export function categoryError(categories: GameCategories): string {
 export function filterGamesByCategory(games: readonly Game[], category: string): Game[] {
   return games.filter(game => !category || (category === 'uncategorized' ? !game.categoryId : game.categoryId === category));
 }
-export type GameLibraryCandidate = { id: string; client: string; name: string; installPath: string; executableCandidates: string[]; gameId?: BuiltinGameId; kind: 'game' | 'unknown' | 'tool'; appId?: string };
+export function gameLibraryClientName(client: string): string {
+  return ({steam: 'Steam', epic: 'Epic Games', battlenet: 'Battle.net', ea: 'EA app', ubisoft: 'Ubisoft Connect', gog: 'GOG', xbox: 'Xbox'} as Record<string, string>)[client] ?? client;
+}
 export type GameIntegrationSetup = {
   state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
   installed?: boolean; removable?: boolean; removalMessage?: string;
@@ -32,37 +33,24 @@ export type GameIntegrationContext = {
 };
 export type GameVehicle = { id: string; name: string };
 export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car'; vehicles: GameVehicle[]; message?: string };
-export type Game = { id: GameId; name: string; categoryId?: string | null; provider?: GameProvider | null; custom?: boolean; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; installations?: { executable: string; installPath: string; source: string }[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
+export type Game = { id: GameId; name: string; categoryId?: string | null; provider?: GameProvider | null; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; integrationKey?: string; selectedInstallationId?: string; installations?: GameInstallation[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
 export type DetectedGame = { gameId: GameId; name: string };
-export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; libraryCandidates?: GameLibraryCandidate[]; libraryDiagnostics?: string[]; addedGameId?: GameId; manualInstallations?: Record<string, string>; error?: string | null };
-export type GameCommandName = 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_custom_save' | 'game_custom_remove' | 'game_background_save' | 'game_library_scan' | 'game_library_import' | 'game_get_state' | 'game_scan' | 'game_installation' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
+export type GameInstallation = { id: string; executable?: string; installPath: string; source: string; sources?: string[]; available: boolean; executableCandidates: string[] };
+export type GameDiscoveryEntry = {
+  image?: string | null; id: string; action: 'add' | 'update' | 'remove'; selected: boolean; gameId?: string; installationId?: string; name: string; library: string; installPath: string; previousPath?: string; executableCandidates: string[]; executable?: string; updateKind?: 'add-installation' | 'replace-path'; integration?: string; message?: string };
+export type GameDiscovery = { scanId: string; status: 'idle' | 'scanning' | 'ready' | 'applied' | 'failed'; libraries: { id: string; name: string; status: 'queued' | 'scanning' | 'complete' | 'unavailable' | 'failed'; found: number; message?: string }[]; entries: GameDiscoveryEntry[]; diagnostics: string[]; firstStart: boolean };
+export type GameDiscoveryAction = { id: string; selected: boolean; executable?: string | null; replaceInstallationId?: string | null; gameId?: string };
+export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; discovery?: GameDiscovery; addedGameId?: GameId; error?: string | null };
+export type GameCommandName = 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_save' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; name?: string; path?: string | null; positionX?: number; positionY?: number; candidateId?: string; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
-
-export const supportedGames: Game[] = [
-  { id: 'dcs', name: 'DCS World', provider: 'dcs-bios', installed: false, launchSupported: false },
-  { id: 'assetto-corsa-rally', name: 'Assetto Corsa Rally', provider: 'assetto-corsa-rally', installed: false, launchSupported: false },
-  { id: 'x-plane-11', name: 'X-Plane 11', provider: 'x-plane', installed: false, launchSupported: false },
-  { id: 'x-plane-12', name: 'X-Plane 12', provider: 'x-plane', installed: false, launchSupported: false },
-  { id: 'assetto-corsa', name: 'Assetto Corsa', provider: 'assetto-corsa', installed: false, launchSupported: false },
-  { id: 'assetto-corsa-competizione', name: 'Assetto Corsa Competizione', provider: 'assetto-corsa-competizione', installed: false, launchSupported: false },
-  { id: 'assetto-corsa-evo', name: 'Assetto Corsa EVO', provider: 'assetto-corsa-evo', installed: false, launchSupported: false },
-];
+export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export function isGameId(value: unknown): value is GameId {
-  return isBuiltinGameId(value) || isCustomGameId(value);
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,95}$/.test(value);
 }
-
-export function isBuiltinGameId(value: unknown): value is BuiltinGameId {
-  return typeof value === 'string' && supportedGames.some(game => game.id === value);
-}
-/** Persisted profiles and owners remain readable while the registry is loading or unavailable. */
-export function isCustomGameId(value: unknown): value is `custom-${string}` {
-  return typeof value === 'string' && /^custom-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
-}
-let registeredGames: readonly Game[] = supportedGames;
+let registeredGames: readonly Game[] = [];
 const catalogueListeners = new Set<(games: readonly Game[]) => void>();
-const knownNames = new Map(supportedGames.map(game => [game.id, game.name]));
+const knownNames = new Map<string, string>();
 /** All selectors consume one native catalogue; pure helpers do not depend on Svelte. */
 export const gameCatalogue = {
   subscribe(listener: (games: readonly Game[]) => void): () => void {
@@ -79,23 +67,21 @@ export function getGameCatalogue(): readonly Game[] { return registeredGames; }
 export function isRegisteredGameId(value: unknown): value is GameId { return isGameId(value) && registeredGames.some(game => game.id === value); }
 export function gameName(id: string): string { return knownNames.get(id as GameId) ?? id; }
 export function gameHasIntegration(game: Game | undefined): boolean { return !!game?.provider; }
-export function customGameError(name: string, executable: string): string {
+export function gameMetadataError(name: string, executable: string): string {
   const title = name.trim();
   if (!title || [...title].length > 80 || /[\u0000-\u001f\u007f-\u009f]/.test(title)) return 'Enter a game name between 1 and 80 characters.';
   if (executable.trim() && !/^(?:[a-zA-Z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+|\/)/.test(executable.trim())) return 'Enter an absolute executable path.';
   if (/[\u0000-\u001f\u007f-\u009f]/.test(executable)) return 'The executable path must not contain control characters.';
   return '';
 }
-/** Installation controls keep custom registrations on their metadata API. */
 export function gameInstallationRequest(game: Game, executable: string | null): GameRequest {
-  return isCustomGameId(game.id)
-    ? { command: 'game_custom_save', gameId: game.id, name: game.name, executable }
-    : { command: 'game_installation', gameId: game.id, executable };
+  return { command: 'game_save', gameId: game.id, ...(game.selectedInstallationId ? { installationId: game.selectedInstallationId } : {}), executable };
 }
-
 export function isSharedMemoryGame(gameId: unknown): boolean {
-  return isBuiltinGameId(gameId) && gameId.startsWith('assetto-corsa');
+  const game = registeredGames.find(game => game.id === gameId);
+  return !!game?.provider?.startsWith('assetto-corsa');
 }
+function sharedMemoryGame(game: Game): boolean { return !!game.provider?.startsWith('assetto-corsa'); }
 
 export function gameExecutableName(gameId: GameId): string {
   return gameId.startsWith('x-plane-') ? 'X-Plane.exe' : gameId === 'dcs' ? 'DCS.exe'
@@ -114,16 +100,16 @@ export function gameDisplayPath(path?: string | null): string {
 }
 
 export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
-  return catalogue.filter(game => showAll || game.installed || isCustomGameId(game.id));
+  return [...catalogue];
 }
 
 export function gameIntegrationLabel(game: Game): string {
   if (!gameHasIntegration(game)) return 'Bindings and profile activation';
   if (!game.installed) return 'Game not installed';
   if (!game.integrationSetup) return 'Integration not checked';
-  if (game.id === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && game.integrationSetup.connection?.source === 'synthetic') return 'Synthetic test telemetry configured';
-  if (isSharedMemoryGame(game.id) && ['ready', 'needs-attention'].includes(game.integrationSetup.state) && game.integrationSetup.connection?.source === 'shared-memory' && !gameIntegrationNativeVerified(game)) return 'Telemetry configured · verification needed';
-  if (isSharedMemoryGame(game.id) && game.integrationSetup.state === 'ready' && !gameIntegrationNativeVerified(game)) return 'Native telemetry not verified';
+  if (game.provider === 'assetto-corsa-rally' && game.integrationSetup.state === 'ready' && game.integrationSetup.connection?.source === 'synthetic') return 'Synthetic test telemetry configured';
+  if (sharedMemoryGame(game) && ['ready', 'needs-attention'].includes(game.integrationSetup.state) && game.integrationSetup.connection?.source === 'shared-memory' && !gameIntegrationNativeVerified(game)) return 'Telemetry configured · verification needed';
+  if (sharedMemoryGame(game) && game.integrationSetup.state === 'ready' && !gameIntegrationNativeVerified(game)) return 'Native telemetry not verified';
   const labels: Record<GameIntegrationSetup['state'], string> = {
     'not-installed': 'Game not installed', 'setup-required': 'Integration setup required',
     'setting-up': 'Setting up integration', ready: 'Integration ready',
@@ -133,11 +119,11 @@ export function gameIntegrationLabel(game: Game): string {
 }
 
 export function gameIntegrationNativeVerified(game: Game): boolean {
-  return isSharedMemoryGame(game.id) && game.integrationSetup?.verified === true && game.integrationSetup.connection?.source === 'shared-memory';
+  return sharedMemoryGame(game) && game.integrationSetup?.verified === true && game.integrationSetup.connection?.source === 'shared-memory';
 }
 
 export function gameIntegrationReady(game: Game): boolean {
-  return game.installed && game.integrationSetup?.state === 'ready' && (game.id === 'dcs' || game.provider === 'x-plane' || gameIntegrationNativeVerified(game));
+  return game.installed && game.integrationSetup?.state === 'ready' && (game.provider === 'dcs-bios' || game.provider === 'x-plane' || gameIntegrationNativeVerified(game));
 }
 
 export function gameIntegrationInstalled(game: Game): boolean {
@@ -149,7 +135,7 @@ export function gameIntegrationVerificationLabel(game: Game): string {
 }
 
 export function gameIntegrationLiveLabel(game: Game): string {
-  if (game.id === 'assetto-corsa-rally' && game.integrationSetup?.connection?.source === 'synthetic') return game.integrationSetup.live === 'receiving' ? 'Receiving synthetic test data' : game.integrationSetup.live === 'stale' ? 'Synthetic test data is stale' : 'Waiting for synthetic test data';
+  if (game.provider === 'assetto-corsa-rally' && game.integrationSetup?.connection?.source === 'synthetic') return game.integrationSetup.live === 'receiving' ? 'Receiving synthetic test data' : game.integrationSetup.live === 'stale' ? 'Synthetic test data is stale' : 'Waiting for synthetic test data';
   return game.integrationSetup?.live === 'receiving' ? 'Receiving game data'
     : game.integrationSetup?.live === 'stale' ? 'Game data is stale' : '';
 }
@@ -168,11 +154,11 @@ export function gameIntegrationFolderError(folder: string): string {
 }
 
 export function gameIntegrationTargetError(game: Game, folder: string): string {
-  return game.id === 'dcs' ? gameIntegrationFolderError(folder) : '';
+  return game.provider === 'dcs-bios' ? gameIntegrationFolderError(folder) : '';
 }
 
 export function gameIntegrationSetupRequest(game: Game, command: 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove', folder: string): GameRequest {
-  return { command, gameId: game.id, ...(game.id === 'dcs' && folder.trim() ? { userFolder: folder.trim() } : {}) };
+  return { command, gameId: game.id, ...(game.provider === 'dcs-bios' && folder.trim() ? { userFolder: folder.trim() } : {}) };
 }
 
 export function gameIntegrationSetupBlockedReason(game: Game, profileBlockedReason: string): string {
@@ -180,7 +166,7 @@ export function gameIntegrationSetupBlockedReason(game: Game, profileBlockedReas
   if (game.integrationSetup?.state === 'unsupported-platform') return game.integrationSetup.message;
   if (game.integrationSetup?.state === 'setting-up') return 'Integration setup is in progress.';
   if (game.integrationSetup?.recoveryNeeded) return 'Recover the interrupted setup before trying again.';
-  if (game.id === 'dcs' && game.integrationSetup?.repairable === false) return game.integrationSetup.message;
+  if (game.provider === 'dcs-bios' && game.integrationSetup?.repairable === false) return game.integrationSetup.message;
   if (profileBlockedReason) return profileBlockedReason;
   return '';
 }

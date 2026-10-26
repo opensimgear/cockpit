@@ -261,7 +261,7 @@ fn assetto_setup_preserves_separate_build_evidence_and_requires_native_verificat
             b"Unlaunched authored executable identity fixture",
         )
         .unwrap();
-        let game = json!({"id":id,"provider":id,"installed":true,"executable":executable,"installPath":scratch.0});
+        let game = json!({"id":id,"integrationCompatible":true,"integrationKey":id,"provider":id,"installed":true,"executable":executable,"installPath":scratch.0});
         runtime
             .request(
                 &json!({"command":"game_integration_setup","connection":{"freshnessMs":1800}}),

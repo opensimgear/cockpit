@@ -1,5 +1,20 @@
 use super::*;
 #[test]
+fn discovery_images_are_small_transient_jpegs_and_invalid_artwork_is_rejected() {
+    let directory=crate::test_directory();
+    let source=directory.path().join("landscape.png");
+    image::RgbImage::from_fn(640,360,|x,y|image::Rgb([(x/3) as u8,(y/2) as u8,120])).save(&source).unwrap();
+    let preview=discovery_preview(&source).unwrap();
+    let bytes=preview_bytes(&preview).unwrap();
+    assert!(bytes.len()<=THUMBNAIL_LIMIT);
+    let image=image::load_from_memory(&bytes).unwrap();
+    assert_eq!((image.width(),image.height()),(384,216));
+    assert!(!directory.path().join("game-artwork").exists());
+    fs::write(&source,b"not an image").unwrap();
+    assert!(discovery_preview(&source).is_err());
+    assert!(discovery_preview(&directory.path().join("missing.png")).is_err());
+}
+#[test]
 fn transient_previews_and_crops_preserve_bounds_shape_and_exact_managed_bytes() {
     let directory = crate::test_directory();
     let source = sample(directory.path());
@@ -164,8 +179,9 @@ fn collection_uses_current_sqlite_references_and_honours_another_process_lease()
     let directory = crate::test_directory();
     let root = directory.path();
     let background = import(root, sample(root).to_str().unwrap(), 50.0, 50.0).unwrap();
-    let store = crate::game_installations::Store::new(root.join("game-installations-v1.json"));
+    let store = crate::game_installations::Store::new(root.join("game-library.json"));
     let mut settings = crate::game_installations::Settings::default();
+    settings.games.insert("dcs".into(),crate::game_installations::GameRecord{name:"DCS".into(),installations:Default::default(),selected_installation:None,integration:None,default_background:None});
     settings
         .backgrounds
         .insert("dcs".into(), background.clone());

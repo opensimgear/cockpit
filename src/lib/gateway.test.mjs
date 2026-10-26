@@ -1,3 +1,4 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -372,9 +373,9 @@ test('generic executable and tile image pickers forward only their local selecti
 
 test('native game catalogue replies update selectable custom games without enabling unsupported providers',async()=>{
   const id='custom-11111111-1111-4111-8111-111111111111',custom={id,name:'Custom game',provider:null,installed:false,launchSupported:false};
-  const api=transport({result:{ok:true,state:{games:{catalogue:[...gameMetadata.supportedGames,custom]}}}});
+  const api=transport({result:{ok:true,state:{games:{catalogue:[...discoveredGames,custom]}}}});
   await api.gatewayRequest({command:'game_get_state'});assert.equal(gameMetadata.isRegisteredGameId(id),true);assert.equal(gameMetadata.gameHasIntegration(custom),false);
-  gameMetadata.updateGameCatalogue(gameMetadata.supportedGames);
+  gameMetadata.updateGameCatalogue(discoveredGames);
 });
 
 test('discovery is one aggregate request and never changes or disconnects either connection', async () => {

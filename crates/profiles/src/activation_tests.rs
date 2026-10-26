@@ -154,8 +154,12 @@ fn strict_bounded_documents_and_observations_reject_browser_authority() {
         assert!(validate_rules(&[bad]).is_err());
     }
     let mut bad = r.clone();
-    bad.identity.game_id = "untrusted".into();
+    bad.identity.game_id = "Untrusted".into();
     assert!(validate_rules(&[bad]).is_err());
+    // Game identity syntax is generic. A valid but unknown key can be retained
+    // in rules; only the native watcher can produce a VerifiedGame observation.
+    let generic = rule("flight-sim-unknown", &a, 0);
+    assert!(validate_rules(&[generic]).is_ok());
     let mut duplicate = vec![observed("dcs", "one"), observed("dcs", "two")];
     assert!(select(
         SelectionMode::Automatic,
@@ -214,28 +218,38 @@ fn repeated_observation_or_failed_apply_does_not_replay_effects() {
 }
 
 #[test]
-fn automatic_selection_accepts_rules_and_observations_for_all_supported_games() {
+fn automatic_selection_accepts_rules_and_observations_for_recognized_and_discovered_games() {
     let profile = new_document("All supported games").unwrap();
     let profiles = vec![default_document(), profile.clone()];
-    let rules = SUPPORTED_GAME_IDS.iter().enumerate().map(|(index, game)|rule(game, &profile, index as i16)).collect::<Vec<_>>();
-    let games = SUPPORTED_GAME_IDS.iter().map(|game|observed(game, game)).collect::<Vec<_>>();
+    let ids = ["dcs", "x-plane-11", "game-0123abcd"];
+    let rules = ids
+        .iter()
+        .enumerate()
+        .map(|(index, game)| rule(game, &profile, index as i16))
+        .collect::<Vec<_>>();
+    let games = ids
+        .iter()
+        .map(|game| observed(game, game))
+        .collect::<Vec<_>>();
     validate_rules(&rules).unwrap();
-    assert_eq!(rules.len(), 7);
-    let Decision::Select(selected) = choose(&rules, &games, &profiles) else { panic!("All seven supported game rules must be selectable"); };
-    assert_eq!(selected.game_id.as_deref(), Some("assetto-corsa-evo"));
+    assert_eq!(rules.len(), ids.len());
+    let Decision::Select(selected) = choose(&rules, &games, &profiles) else {
+        panic!("All recognized and discovered game rules must be selectable");
+    };
+    assert_eq!(selected.game_id.as_deref(), Some("game-0123abcd"));
 }
 
 #[test]
-fn custom_identity_is_stable_syntax_without_machine_local_membership() {
-    let custom = "custom-01234567-89ab-4cde-8fab-0123456789ab";
+fn generic_identity_is_stable_syntax_without_machine_local_membership() {
+    let custom = "game-0123456789abcdef";
     assert!(valid_game_id(custom));
     identity(custom).validate().unwrap();
     for invalid in [
-        "custom-01234567-89AB-4CDE-8FAB-0123456789AB",
-        "custom-0123456789ab4cde8fab0123456789ab",
-        "01234567-89ab-4cde-8fab-0123456789ab",
-        "custom-not-a-uuid",
-        "custom-01234567-89ab-4cde-8fab-0123456789ab/other",
+        "Game",
+        "-game",
+        "game_name",
+        "game/name",
+        "game-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     ] {
         assert!(!valid_game_id(invalid), "{invalid}");
         assert!(identity(invalid).validate().is_err());
@@ -244,9 +258,13 @@ fn custom_identity_is_stable_syntax_without_machine_local_membership() {
     profile.eligibility.game_ids = vec![custom.into()];
     crate::validate_document(&profile).unwrap();
     let rules = [rule(custom, &profile, 0)];
-    assert_eq!(choose(&rules, &[], &[profile.clone()]), Decision::Select(Target::default()),
-        "an unavailable registration remains readable without matching a process");
-    let Decision::Select(target) = choose(&rules, &[observed(custom, "native-custom")], &[profile]) else {
+    assert_eq!(
+        choose(&rules, &[], &[profile.clone()]),
+        Decision::Select(Target::default()),
+        "an unavailable registration remains readable without matching a process"
+    );
+    let Decision::Select(target) = choose(&rules, &[observed(custom, "native-custom")], &[profile])
+    else {
         panic!("A verified custom process must select its saved profile");
     };
     assert_eq!(target.game_id.as_deref(), Some(custom));
@@ -255,20 +273,42 @@ fn custom_identity_is_stable_syntax_without_machine_local_membership() {
 #[test]
 fn game_and_rule_bounds_are_independent_of_the_integration_count() {
     let profile = new_document("Large library").unwrap();
-    let rules = (0..MAX_RULES).map(|index| {
-        let game = format!("custom-{}", uuid::Uuid::from_u128(index as u128 + 1));
-        rule(&game, &profile, index as i16)
-    }).collect::<Vec<_>>();
+    let rules = (0..MAX_RULES)
+        .map(|index| {
+            let game = format!("game-{}", uuid::Uuid::from_u128(index as u128 + 1));
+            rule(&game, &profile, index as i16)
+        })
+        .collect::<Vec<_>>();
     validate_rules(&rules).unwrap();
-    let games = rules.iter().take(MAX_GAMES).map(|rule| VerifiedGame {
-        identity: rule.identity.clone(), process_session: "verified-native-session".into(),
-    }).collect::<Vec<_>>();
-    let Decision::Select(target) = choose(&rules, &games, &[profile.clone()]) else { panic!("large library"); };
-    assert_eq!(target.game_id, Some(rules[MAX_GAMES - 1].identity.game_id.clone()));
+    let games = rules
+        .iter()
+        .take(MAX_GAMES)
+        .map(|rule| VerifiedGame {
+            identity: rule.identity.clone(),
+            process_session: "verified-native-session".into(),
+        })
+        .collect::<Vec<_>>();
+    let Decision::Select(target) = choose(&rules, &games, &[profile.clone()]) else {
+        panic!("large library");
+    };
+    assert_eq!(
+        target.game_id,
+        Some(rules[MAX_GAMES - 1].identity.game_id.clone())
+    );
     let mut too_many = rules.clone();
-    too_many.push(rule(&format!("custom-{}", uuid::Uuid::new_v4()), &profile, 0));
+    too_many.push(rule(&format!("game-{}", uuid::Uuid::new_v4()), &profile, 0));
     assert!(validate_rules(&too_many).is_err());
     let mut observations = games;
-    observations.push(VerifiedGame { identity: rules[MAX_GAMES].identity.clone(), process_session: "one-more".into() });
-    assert!(select(SelectionMode::Automatic, Locks::default(), &rules, &observations, &[profile]).is_err());
+    observations.push(VerifiedGame {
+        identity: rules[MAX_GAMES].identity.clone(),
+        process_session: "one-more".into(),
+    });
+    assert!(select(
+        SelectionMode::Automatic,
+        Locks::default(),
+        &rules,
+        &observations,
+        &[profile]
+    )
+    .is_err());
 }

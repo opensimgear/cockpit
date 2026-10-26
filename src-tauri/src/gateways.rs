@@ -142,7 +142,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_telemetry_inspect" | "game_integration_settings_save"
-        | "game_categories_save" | "game_category_save" | "game_library_scan" | "game_background_save" | "game_custom_save" | "game_custom_remove" | "game_library_import"
+        | "game_categories_save" | "game_category_save" | "game_discovery_start" | "game_background_save" | "game_save" | "game_remove" | "game_discovery_apply"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
     Some(command)
@@ -158,7 +158,7 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_library_scan"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_discovery_start"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
             |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
@@ -320,7 +320,10 @@ impl GatewayManager {
             let setup_anchor = std::path::PathBuf::from(setup_anchor);
             game_paths.provider_setup = setup_anchor.with_extension("integration-setup.json");
         }
+        #[cfg(not(test))]
         let games = Arc::new(crate::games::GamesRuntime::new(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform)));
+        #[cfg(test)]
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(game_panel, game_paths, Arc::new(crate::game_discovery::NativePlatform)));
         let resource_sessions = sessions.clone();
         let resource_requests = sessions.clone();
         let resource_ports = provider.clone();
@@ -606,13 +609,13 @@ impl GatewayManager {
     }
     fn guard_game_registration(&self, request: &Value) -> Result<(), String> {
         let command = request["command"].as_str().unwrap_or("");
-        if matches!(command, "game_custom_save" | "game_custom_remove" | "game_library_import") {
+        if matches!(command, "game_save" | "game_remove" | "game_discovery_apply" | "game_installation_select") {
             if self.profile_pending.load(Ordering::Acquire) != 0 {
                 return Err("Wait for profile activation or launch to finish before changing game registrations.".into());
             }
             let session = self.profile_session.lock().unwrap_or_else(|poison| poison.into_inner());
             if let Some(active_game) = session.active_game_context() {
-                if request["gameId"] == active_game || command == "game_library_import" {
+                if request["gameId"] == active_game || command == "game_discovery_apply" {
                     return Err("Deactivate the selected game profile before changing its registration or importing installations.".into());
                 }
             }
@@ -756,10 +759,10 @@ impl GatewayManager {
                 Err(error) => self.error(&error,None),
             };
         }
-        if matches!(command, "game_get_state" | "game_library_scan") {
+        if matches!(command, "game_get_state" | "game_discovery_start") {
             return self.request_inner_at(request, None, native_authorization.as_ref(), passive_profile_reads);
         }
-        if matches!(command, "game_categories_save" | "game_category_save" | "game_custom_save" | "game_custom_remove" | "game_background_save" | "game_library_import") {
+        if matches!(command, "game_categories_save" | "game_category_save" | "game_save" | "game_remove" | "game_background_save" | "game_discovery_apply" | "game_installation_select") {
             return self.game_metadata_request(&request, native_authorization.as_ref());
         }
         // Passive game inspection cannot delay profile takeover or emergency
@@ -824,7 +827,7 @@ impl GatewayManager {
             matches!(status.state, crate::profile_session::State::Running | crate::profile_session::State::Degraded)
                 && status.owner.as_ref().is_some_and(|owner| request["document"]["id"] == owner.profile_id)
         };
-        let profile_mutation = editor_save || panel_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_draft_save" | "profile_local_settings_save" | "game_installation" | "game_integration_settings_save" | "profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_game_preference_save" | "profile_game_preference_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
+        let profile_mutation = editor_save || panel_save || request["command"].as_str().is_some_and(|command| command.starts_with("profile_desktop_") && !matches!(command,"profile_desktop_status"|"profile_desktop_preview"|"profile_desktop_audit_checkpoint"|"profile_desktop_audit_marker")) || matches!(request["command"].as_str(), Some("profile_draft_save" | "profile_local_settings_save" | "game_installation_select" | "game_integration_settings_save" | "profile_apply" | "profile_game_launch" | "profile_stop" | "profile_recover" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_game_preference_save" | "profile_game_preference_remove" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" | "integration_stop" | "dcs_stop" | "controller_visibility_restore"));
         // Created before admission guards so notification follows their release,
         // including staged Apply's early-return paths.
         let _wake = profile_mutation.then(|| WakeProfileOnDrop(&self.profile_wake));
@@ -1170,7 +1173,7 @@ impl GatewayManager {
                 Err(error) => self.error(&error, None),
             };
             response["state"]["games"] = self.games.status();
-            if response["ok"] == true && matches!(command.as_str(), "game_custom_save" | "game_custom_remove" | "game_library_import" | "game_installation") {
+            if response["ok"] == true && matches!(command.as_str(), "game_save" | "game_remove" | "game_discovery_apply" | "game_installation_select") {
                 self.profile_wake.notify();
             }
             return response;
@@ -2230,12 +2233,22 @@ mod tests {
     #[test]
     fn game_telemetry_inspection_bypasses_admission_and_never_changes_native_control_epoch() {
         let (manager,provider)=setup();
+        manager.games.seed_test_catalogue(vec![json!({
+            "id":"assetto-corsa-evo",
+            "name":"Assetto Corsa EVO",
+            "provider":"assetto-corsa",
+            "integrationKey":"assetto-corsa-evo",
+            "integrationCompatible":true,
+            "installed":true,
+            "launchSupported":false,
+            "processMonitoringSupported":true
+        })]);
         let profile=manager.profile_admission.write().unwrap();
         let game=manager.game_admission.write().unwrap();
         let epoch=manager.profile_admission_epoch.load(Ordering::Acquire);
         let response=request(&manager,"game_telemetry_inspect",None,json!({"gameId":"assetto-corsa-evo","search":"engine.rpm","limit":8}));
         assert_eq!(response["ok"],true,"{response}");
-        assert_eq!(response["state"]["gameTelemetry"]["games"].as_array().unwrap().len(),7);
+        assert_eq!(response["state"]["gameTelemetry"]["games"].as_array().unwrap().len(),1);
         assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
         assert!(provider.adapters.lock().unwrap().is_empty());
         assert_eq!(manager.request(json!({"command":"game_telemetry_inspect"}))["ok"],false);

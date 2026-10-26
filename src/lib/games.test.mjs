@@ -1,23 +1,26 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./games']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const games=modules.get('./games');
-const {supportedGames,gameExecutableName,visibleGames,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason}=games;
+const supportedGames=discoveredGames;
+const {gameExecutableName,visibleGames,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason}=games;
 const plain=value=>JSON.parse(JSON.stringify(value));
 const dcs=()=>({...supportedGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
 test('native custom registry keeps selectable membership distinct from persistent IDs and survives missing executables',()=>{
  const id='custom-11111111-1111-4111-8111-111111111111',custom={id,name:'A custom game',provider:null,installed:false,launchSupported:false};
  const seen=[];const stop=games.gameCatalogue.subscribe(value=>seen.push(value.length));
- assert.equal(games.isGameId(id),true);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId('custom-invalid'),false);
+ assert.equal(games.isGameId(id),true);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId('invalid/path'),false);
  games.updateGameCatalogue([...supportedGames,custom]);assert.equal(games.getGameCatalogue().length,8);assert.equal(games.isRegisteredGameId(id),true);
  assert.equal(games.gameName(id),'A custom game');assert.equal(games.gameName('missing'),'missing');assert.equal(games.gameHasIntegration(custom),false);
  assert.equal(gameExecutableName(id),'game executable');assert.equal(visibleGames([custom],false).length,1);assert.equal(gameIntegrationLabel(custom),'Bindings and profile activation');
- assert.deepEqual(plain(games.gameInstallationRequest(custom,'C:\\Games\\Moved.exe')),{command:'game_custom_save',gameId:id,name:'A custom game',executable:'C:\\Games\\Moved.exe'});
- assert.deepEqual(plain(games.gameInstallationRequest(supportedGames[0],null)),{command:'game_installation',gameId:'dcs',executable:null});
- assert.equal(games.customGameError('Game','C:\\Games\\game.exe'),'');assert.equal(games.customGameError('Game',''),'');assert.ok(games.customGameError('',''));assert.ok(games.customGameError('Game','relative.exe'));assert.ok(games.customGameError('Game','C:\\game\n.exe'));
+ assert.deepEqual(plain(games.gameInstallationRequest(custom,'C:\\Games\\Moved.exe')),{command:'game_save',gameId:id,executable:'C:\\Games\\Moved.exe'});
+ assert.deepEqual(plain(games.gameInstallationRequest(supportedGames[0],null)),{command:'game_save',gameId:'dcs',executable:null});
+ assert.equal(games.gameMetadataError('Game','C:\\Games\\game.exe'),'');assert.equal(games.gameMetadataError('Game',''),'');assert.ok(games.gameMetadataError('',''));assert.ok(games.gameMetadataError('Game','relative.exe'));assert.ok(games.gameMetadataError('Game','C:\\game\n.exe'));
  games.updateGameCatalogue(supportedGames);assert.equal(games.isRegisteredGameId(id),false);assert.equal(games.isGameId(id),true);assert.equal(games.gameName(id),'A custom game');assert.deepEqual(seen,[7,8,7]);stop();
 });
 
@@ -36,7 +39,7 @@ test('game paths display Windows drive and UNC installations without changing Un
 
 test('metadata library lists actual supported games and never constructs a profile or activation request',async()=>{
  assert.deepEqual(plain(supportedGames.map(game=>game.id)),['dcs','assetto-corsa-rally','x-plane-11','x-plane-12','assetto-corsa','assetto-corsa-competizione','assetto-corsa-evo']);
- const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,1);assert.equal(visibleGames(catalogue,true).length,7);assert.equal(supportedGames[0].installed,false);
+ const catalogue=plain(supportedGames);catalogue[0].installed=true;assert.equal(visibleGames(catalogue,false).length,7);assert.equal(visibleGames(catalogue,true).length,7);assert.equal(supportedGames[0].installed,false);
  const executables={'dcs':'DCS.exe','assetto-corsa-rally':'acr.exe','x-plane-11':'X-Plane.exe','x-plane-12':'X-Plane.exe','assetto-corsa':'acs.exe','assetto-corsa-competizione':'AC2-Win64-Shipping.exe','assetto-corsa-evo':'AssettoCorsaEVO.exe'};
  for(const game of supportedGames)assert.equal(gameExecutableName(game.id),executables[game.id]);
  for(const name of ['newGameProfile','cloneGameProfile','captureGameCompanions','gameProfileError','defaultGameProfile'])assert.equal(games[name],undefined);
@@ -88,7 +91,7 @@ test('current provider setup and native profile ownership guard integration with
 
 
 test('category filtering includes built-in and custom games and distinguishes uncategorized',()=>{
-  const id='custom-11111111-1111-4111-8111-111111111111',catalogue=[{id,name:'Custom',categoryId:'racing'},games.supportedGames[0],{...games.supportedGames[1],categoryId:'racing'}];
+  const id='custom-11111111-1111-4111-8111-111111111111',catalogue=[{id,name:'Custom',categoryId:'racing'},discoveredGames[0],{...discoveredGames[1],categoryId:'racing'}];
   assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'')).map(game=>game.id),catalogue.map(game=>game.id));
   assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'racing')).map(game=>game.id),[id,'assetto-corsa-rally']);
   assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'uncategorized')).map(game=>game.id),['dcs']);

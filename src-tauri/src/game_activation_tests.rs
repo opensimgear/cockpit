@@ -83,7 +83,7 @@ fn native_games_status_separates_missing_installations_from_real_scan_errors() {
     }
     *platform.catalogue.lock().unwrap() = catalogue;
     let directory = crate::test_directory();
-    let runtime = crate::games::GamesRuntime::new(
+    let runtime = crate::games::GamesRuntime::test_runtime(
         std::sync::Arc::new(|_| panic!("Detection cannot call device/provider output")),
         crate::games::Paths::in_directory(directory.path()),
         platform.clone(),
@@ -224,7 +224,7 @@ fn stale_unsupported_malformed_and_duplicate_catalogues_never_grant_authority() 
 fn actual_games_runtime_detects_external_start_and_exit_without_ui_or_provider_setup() {
     let platform = std::sync::Arc::new(fake());
     let directory = crate::test_directory();
-    let runtime = crate::games::GamesRuntime::new(
+    let runtime = crate::games::GamesRuntime::test_runtime(
         std::sync::Arc::new(|_| {
             panic!("Process observation must not call provider or device output")
         }),

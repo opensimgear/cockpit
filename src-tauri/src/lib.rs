@@ -2,6 +2,7 @@
 mod game_installations;
 #[path="games/artwork/mod.rs"]
 mod game_artwork;
+#[path="games/library/mod.rs"]
 mod game_library;
 mod retained_game_companions;
 #[path="persistence/paths.rs"]

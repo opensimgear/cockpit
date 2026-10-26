@@ -53,3 +53,13 @@ This file is a scope and provenance index, not a replacement for the full licens
 texts and copyright notices accompanying third-party material. Preserve the
 applicable full notices when redistributing or packaging those portions. Existing
 upstream permissions, including any commercial permissions, remain unaffected.
+
+
+## Game platform icons
+
+Steam, Epic Games, Battle.net, EA, Ubisoft and GOG brand SVG paths are from
+[Simple Icons 15.16.0](https://github.com/simple-icons/simple-icons/tree/15.16.0),
+provided under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+The unmodified Xbox brand SVG path is from [Font Awesome Free 7.3.1](https://github.com/FortAwesome/Font-Awesome),
+Copyright 2026 Fonticons, Inc., licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+These assets identify their respective game platforms and render in the current UI color.

@@ -194,7 +194,7 @@ impl Fixture {
             }],
         }];
         let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
-        let games = Arc::new(crate::games::GamesRuntime::new(
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(
             Arc::new(
                 |_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}}),
             ),

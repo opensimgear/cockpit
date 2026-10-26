@@ -130,7 +130,7 @@ impl Live {
             vec![("companions".into(), result)]
         });
         let resources = Arc::new(crate::profile_resources::Runtime::new(None, collect, true));
-        let games = Arc::new(crate::games::GamesRuntime::new(
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(
             Arc::new(|_| panic!("No hardware/provider IO")),
             crate::games::Paths::in_directory(&directory),
             Arc::new(NoGames),

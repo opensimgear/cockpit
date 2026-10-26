@@ -1,15 +1,17 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./games','./game-provider-settings','./profile-runtime','./profile-automatic','./game-profile-context','./profile-inspection','./profile-canvas']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const games=modules.get('./games'),settings=modules.get('./game-provider-settings');
 const added=['assetto-corsa','assetto-corsa-competizione','assetto-corsa-evo'];
 const profileId='11111111-1111-4111-8111-111111111111',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`;
 
 test('each Assetto title uses its own verified native shared-memory setup and bounded timing settings',()=>{
   for(const id of added){
-    const game={...games.supportedGames.find(game=>game.id===id),installed:true,integrationSetup:{state:'ready',verified:false,message:'Verification needed',providerSetupRevision:hash,connection:{source:'shared-memory',freshnessMs:1500}}};
+    const game={...discoveredGames.find(game=>game.id===id),installed:true,integrationSetup:{state:'ready',verified:false,message:'Verification needed',providerSetupRevision:hash,connection:{source:'shared-memory',freshnessMs:1500}}};
     assert.equal(game.provider,id);
     assert.equal(games.gameIntegrationReady(game),false);
     assert.equal(games.gameIntegrationLabel(game),'Telemetry configured · verification needed');
@@ -39,7 +41,7 @@ test('new game identities survive runtime ownership, inspection, canvas, profile
 });
 
 test('automatic status accepts one rule for every supported game and rejects overflow',()=>{
-  const ids=games.supportedGames.map(game=>game.id);
+  const ids=discoveredGames.map(game=>game.id);
   const rules=ids.map(gameId=>({identity:{gameId,executable:`C:\\Games\\${gameId}\\${games.gameExecutableName(gameId)}`},profileId,priority:1,enabled:true}));
   const status={schemaVersion:1,mode:'automatic',manualProfileId:profileId,rules,status:'conflict',message:'Choose one running game.',conflicts:ids,lastAttempt:null,target:null,readOnly:false};
   const capture=modules.get('./profile-automatic').captureAutomaticStatus;

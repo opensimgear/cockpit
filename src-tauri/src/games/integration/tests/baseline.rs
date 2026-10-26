@@ -4,7 +4,7 @@ fn remove_native_api_configuration_resets_readiness_without_changing_game_files(
     let scratch = Scratch::new();
     let path = scratch.0.join("setup.json");
     let runtime = GameIntegrationSetup::new(path.clone(), true);
-    let xplane = json!({"id":"x-plane-12","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe"});
+    let xplane = json!({"id":"x-plane-12","integrationCompatible":true,"integrationKey":"x-plane-12","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe"});
     runtime
         .request(
             &json!({"command":"game_integration_setup"}),
@@ -90,7 +90,7 @@ fn xplane_setup_is_repeatable_preserves_overrides_and_separates_live_status() {
     let scratch = Scratch::new();
     let path = scratch.0.join("setup.json");
     let setup = GameIntegrationSetup::new(path.clone(), true);
-    let game = json!({"id":"x-plane-11","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe"});
+    let game = json!({"id":"x-plane-11","integrationCompatible":true,"integrationKey":"x-plane-11","provider":"x-plane","installed":true,"executable":"/fixture/X-Plane.exe"});
     assert_eq!(setup.inner.inspect(&game, None)["state"], "setup-required");
     let request = json!({"command":"game_integration_setup","connection":{"port":49005,"updateHz":5,"freshnessMs":2000}});
     setup
@@ -181,7 +181,7 @@ fn invalid_saved_settings_remain_visible_after_recheck_and_are_not_overwritten()
 fn checks_and_cancel_have_no_provisioning_side_effects() {
     let scratch = Scratch::new();
     let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
-    let missing = json!({"id":"dcs","provider":"dcs-bios","installed":false});
+    let missing = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios","installed":false});
     runtime
         .request(
             &json!({"command":"game_integration_check"}),

@@ -25,7 +25,7 @@
   import ManualActions from './lib/ManualActions.svelte';
   import GamesPanel from './lib/GamesPanel.svelte';
   import OverviewPanel from './lib/OverviewPanel.svelte';
-  import { supportedGames, isGameId, type GameId, type GamesState, type GameRequest } from './lib/games';
+  import { isGameId, type GameId, type GamesState, type GameRequest } from './lib/games';
   import { OPEN_GAME_SETTINGS_EVENT, RETURN_FROM_GAME_SETTINGS_EVENT, gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings, type GameSettingsVisit } from './lib/game-settings-navigation';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
@@ -69,7 +69,7 @@
   let navigationHistory: ReturnType<typeof createCockpitHistory> | undefined;
   let applyingHistory = false, activeSettingsKey = '';
   const settingsOrigins = new Map<string, {visit:GameSettingsVisit<SettingsOrigin>;route:CockpitRoute}>();
-  const selectedGameName = $derived((games?.catalogue ?? supportedGames).find(game => game.id === selectedGameId)?.name);
+  const selectedGameName = $derived((games?.catalogue ?? []).find(game => game.id === selectedGameId)?.name);
   const section = $derived(view === 'device' ? 'devices' : view);
   const sectionLabel = $derived(navigation.find(item => item.id === section)?.label ?? 'Settings');
   function navigate(section: View) {
@@ -183,6 +183,7 @@
   }
   let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
+  let gamesDiscoveryOpen=$state(false);
   let gamesPolling = false;
   const profileRuntime = new ProfileRuntimeController(new ProfileRuntimeClient(async request => {
     return (await gatewayRequest(request)).profiles?.profileSession;
@@ -376,7 +377,7 @@
     void sendGames({ command: 'game_get_state' }, true);
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
     const profileTimer = setInterval(() => { void refreshProfileStatus(); }, 1000);
-    const gamesTimer = setInterval(() => { void sendGames({ command: 'game_get_state' }, true); }, 1000);
+    const gamesTimer = setInterval(() => { if(view==='games'&&gamesDiscoveryOpen&&games?.discovery?.status!=='scanning')return;void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     const openSettingsEvent = (event: Event) => {
       if (!(event instanceof CustomEvent)) return;
@@ -515,7 +516,7 @@
         {:else if view === 'companions'}
           <!-- Companion editors stay mounted for history navigation. -->
         {:else if view === 'games'}
-          <GamesPanel bind:selectedGameId onNavigate={gameId=>{selectedGameId=gameId;recordRoute();}} status={games} profiles={profileSummaries} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
+          <GamesPanel bind:selectedGameId bind:discoveryView={gamesDiscoveryOpen} onNavigate={gameId=>{selectedGameId=gameId;recordRoute();}} status={games} profiles={profileSummaries} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'devices'}
           <!-- Shared inventory stays mounted during configuration. -->
         {:else if view === 'device' && selected}

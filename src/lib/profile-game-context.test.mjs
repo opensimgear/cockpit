@@ -1,7 +1,9 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {loadModules} from './test-module-loader.mjs';
-const modules=await loadModules(['./profile-game-context','./profile-editor','./profile-graph-history','./profiles']);
+const modules=await loadModules(['./games','./profile-game-context','./profile-editor','./profile-graph-history','./profiles']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const {profileSetGameContext,profileGameContext,profileGameContextNeedsSync,profileAddVehicleIntegration,profileGameTabInventory,profileDcsResourceMatchesVehicle,profileReconcileDcsVehicleCatalogue,profileChangeVehicleIntegration}=modules.get('./profile-game-context');
 const {blankProfile,ProfileEditorStore}=modules.get('./profile-editor'),{ProfileGraphHistory}=modules.get('./profile-graph-history');
 const id='11111111-1111-4111-8111-111111111111',plain=value=>JSON.parse(JSON.stringify(value));
@@ -73,7 +75,7 @@ test('context persists without inventory and acquires only an empty integration 
  const next=profileSetGameContext(draft(),'dcs',[]);assert.equal(next.document.resources[0].name,'DCS World');assert.deepEqual(plain(next.assignments),[]);assert.equal(profileGameContextNeedsSync(next,[]),false);assert.equal(profileGameContextNeedsSync(next,inventory),true);
  const assigned=profileSetGameContext(next,'dcs',inventory);assert.equal(assigned.document.resources[0].id,next.document.resources[0].id);assert.equal(assigned.assignments[0].sourceId,'native:dcs');assert.equal(profileGameContextNeedsSync(assigned,inventory),false);
  assert.equal(profileGameContextNeedsSync({document:{...blankProfile(id),eligibility:{gameIds:['dcs']}},assignments:[]},[]),true);
- assert.throws(()=>profileSetGameContext(draft(),'unknown',inventory),/supported game/);
+ assert.throws(()=>profileSetGameContext(draft(),'unknown',inventory),/discovered game/);
  const full=draft();full.document.resources=Array.from({length:64},(_,index)=>({id:`resource-${index}`,name:'Device',kind:'device',required:false,ports:[]}));assert.throws(()=>profileSetGameContext(full,'dcs',inventory),/64 resources/);assert.equal(full.document.eligibility.gameIds.length,0);
 });
 

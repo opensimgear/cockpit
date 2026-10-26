@@ -552,7 +552,7 @@ impl NativeFixture {
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let games = Arc::new(crate::games::GamesRuntime::new(
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(
             Arc::new(|_| json!({"ok":false})),
             {
                 let fixture_metadata_path = directory.path().join("games.json");

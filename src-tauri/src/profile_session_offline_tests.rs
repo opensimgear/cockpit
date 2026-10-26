@@ -49,7 +49,7 @@ impl Fixture {
         let descriptor = observed(false, false, false).ports.unwrap().ports.remove(0);
         let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
         let metadata = directory.path().join("games.json");
-        let games = Arc::new(crate::games::GamesRuntime::new(Arc::new(|_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}})),
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(Arc::new(|_| json!({"ok":true,"state":{"integration":{"running":false},"dcsBios":{"running":false}}})),
             crate::games::Paths { installations: metadata.with_extension("installations.json"), provider_setup: metadata.with_extension("setup.json"), recovery: metadata.with_extension("recovery.json") }, Arc::new(NoGame)));
         let companions = Arc::new(crate::companion_host::Runtime::new(None, Arc::new(osg_mapping_host::companions::CompanionProvider::new(Arc::new(|| 0)))));
         let epoch = Arc::new(AtomicU64::new(1));

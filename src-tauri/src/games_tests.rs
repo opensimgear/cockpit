@@ -1,14 +1,18 @@
 use super::*;
-use crate::game_discovery::ProcessIdentity;
-use std::collections::BTreeMap;
-use std::sync::atomic::AtomicUsize;
+use crate::{
+    game_discovery::ProcessIdentity,
+    game_installations::{GameRecord, Installation, LibrarySource, Settings},
+};
+use std::{collections::BTreeMap, fs, sync::atomic::AtomicUsize};
+
+const GAME: &str = "dcs";
 #[derive(Default)]
 struct FakePlatform {
     calls: AtomicUsize,
 }
 impl Platform for FakePlatform {
-    fn catalogue(&self, manual: &BTreeMap<String, String>) -> Vec<Value> {
-        GAMES.iter().map(|id|json!({"id":id,"name":id,"provider":if *id=="dcs"{"dcs-bios"}else{*id},"installed":true,"executable":manual.get(*id).cloned().unwrap_or_else(||format!("C:\\Games\\{id}\\game.exe")),"launchSupported":true,"processMonitoringSupported":false})).collect()
+    fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> {
+        vec![]
     }
     fn validate(&self, _: &str, path: &str) -> Result<(), String> {
         if path.starts_with("C:\\") || Path::new(path).is_absolute() {
@@ -18,11 +22,11 @@ impl Platform for FakePlatform {
         }
     }
     fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> {
-        panic!("Retired launcher must never execute")
+        panic!("Metadata must never launch")
     }
     fn spawn_process(&self, _: &Value) -> Result<(), String> {
         self.calls.fetch_add(1, Ordering::AcqRel);
-        panic!("Metadata/cleanup must never spawn")
+        panic!("Metadata must never spawn")
     }
     fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> {
         Ok(None)
@@ -34,122 +38,170 @@ impl Platform for FakePlatform {
 fn no_io() -> CleanupIo {
     Arc::new(|request| panic!("No cleanup call expected: {request}"))
 }
+
+fn seed_registry(root: &Path) -> Settings {
+    let first_root = root.join("first");
+    let second_root = root.join("second");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    let first_exe = first_root.join("DCS.exe");
+    let second_exe = second_root.join("DCS.exe");
+    fs::write(&first_exe, b"fixture").unwrap();
+    fs::write(&second_exe, b"fixture").unwrap();
+    let installation = |path: &Path, exe: &Path, source: &str| Installation {
+        root: path.canonicalize().unwrap().to_string_lossy().into_owned(),
+        executable: Some(exe.canonicalize().unwrap().to_string_lossy().into_owned()),
+        executables: vec![exe.canonicalize().unwrap().to_string_lossy().into_owned()],
+        sources: vec![LibrarySource {
+            client: "disk".into(),
+            app_id: source.into(),
+            install_path: path.canonicalize().unwrap().to_string_lossy().into_owned(),
+            launcher: None,
+        }],
+    };
+    Settings {
+        revision: 1,
+        discovery_initialized: true,
+        games: BTreeMap::from([(
+            GAME.into(),
+            GameRecord {
+                name: "DCS".into(),
+                installations: BTreeMap::from([
+                    (
+                        "dcs-first".into(),
+                        installation(&first_root, &first_exe, "dcs-first"),
+                    ),
+                    (
+                        "dcs-second".into(),
+                        installation(&second_root, &second_exe, "dcs-second"),
+                    ),
+                ]),
+                selected_installation: Some("dcs-first".into()),
+                integration: Some("dcs".into()),
+                default_background: None,
+            },
+        )]),
+        ..Settings::default()
+    }
+}
+fn seeded_runtime(directory: &Path, platform: Arc<FakePlatform>) -> GamesRuntime {
+    let paths = Paths::in_directory(directory);
+    let settings = seed_registry(directory);
+    crate::game_installations::Store::new(paths.installations.clone())
+        .save(&settings)
+        .unwrap();
+    GamesRuntime::test_runtime(no_io(), paths, platform)
+}
+
 #[test]
-fn fresh_runtime_ignores_old_profile_store_and_never_seeds_authoring_state() {
+fn fresh_runtime_ignores_retired_profile_store_and_has_no_seeded_games() {
     let directory = crate::test_directory();
     let old = directory.path().join("games.json");
-    let legacy = br#"{"profiles":"malicious old data","manualInstallations":{"dcs":"old"}}"#;
+    let legacy = br#"{"profiles":"malicious old data","preferences":{"untrusted":true}}"#;
     fs::write(&old, legacy).unwrap();
-    let paths = Paths::in_directory(directory.path());
-    let runtime = GamesRuntime::new(no_io(), paths, Arc::new(FakePlatform::default()));
+    let runtime = GamesRuntime::test_runtime(
+        no_io(),
+        Paths::in_directory(directory.path()),
+        Arc::new(FakePlatform::default()),
+    );
     let status = runtime.status();
     assert!(status.get("cleanup").is_none());
     assert!(status.get("session").is_none());
     assert!(status.get("profiles").is_none());
-    assert!(status.get("defaultProfiles").is_none());
-    assert_eq!(status["manualInstallations"], json!({}));
-    assert!(status["error"].is_null());
+    assert!(status["catalogue"].as_array().unwrap().is_empty());
+    assert_eq!(status["discovery"]["status"], "idle");
     assert_eq!(fs::read(old).unwrap(), legacy);
-    assert!(!directory.path().join("game-installations-v1.json").exists());
+    runtime.shutdown();
 }
 
 #[test]
-fn custom_metadata_is_durable_and_never_acquires_provider_or_hardware_capabilities() {
+fn discovered_game_metadata_persists_across_restart_and_removal_cleans_related_records() {
     let directory = crate::test_directory();
-    let executable = directory.path().join("Custom.exe");
-    fs::write(&executable, b"fixture").unwrap();
     let platform = Arc::new(FakePlatform::default());
-    let runtime = GamesRuntime::new(
-        no_io(),
-        Paths::in_directory(directory.path()),
-        platform.clone(),
-    );
+    let runtime = seeded_runtime(directory.path(), platform.clone());
     runtime
-        .request(
-            &json!({"command":"game_custom_save","name":"Custom game","executable":executable}),
-        )
+        .request(&json!({"command":"game_save","gameId":GAME,"name":"Renamed DCS"}))
         .unwrap();
-    let status = runtime.status();
-    let id = status["addedGameId"].as_str().unwrap().to_owned();
-    assert!(crate::game_installations::is_custom_id(&id));
-    let game = status["catalogue"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|game| game["id"] == id)
-        .unwrap();
-    assert_eq!(game["provider"], Value::Null);
-    assert_eq!(game["integrationSupported"], false);
-    assert_eq!(game["custom"], true);
-    assert_eq!(game["installed"], true);
-    runtime.request(&json!({"command":"game_custom_save","gameId":id,"name":"Renamed","executable":executable})).unwrap();
-    runtime.shutdown();
-    drop(runtime);
-    let runtime = GamesRuntime::new(
-        no_io(),
-        Paths::in_directory(directory.path()),
-        platform.clone(),
-    );
-    let status = runtime.status();
+    runtime.request(&json!({"command":"game_installation_select","gameId":GAME,"installationId":"dcs-second"})).unwrap();
     assert_eq!(
-        status["catalogue"]
+        runtime.status()["catalogue"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|game| game["id"] == id)
-            .unwrap()["name"],
-        "Renamed"
+            .find(|game| game["id"] == GAME)
+            .unwrap()["selectedInstallationId"],
+        "dcs-second"
     );
-    assert!(runtime
-        .request(&json!({"command":"game_custom_save","name":"Duplicate","executable":executable}))
-        .unwrap_err()
-        .contains("already belongs"));
-    assert!(runtime
-        .request(&json!({"command":"game_installation","gameId":"dcs","executable":executable}))
-        .unwrap_err()
-        .contains("already belongs"));
-    runtime
-        .request(&json!({"command":"game_custom_remove","gameId":id}))
-        .unwrap();
-    assert!(!runtime.status()["catalogue"]
+    runtime.shutdown();
+    drop(runtime);
+    let runtime = GamesRuntime::test_runtime(
+        no_io(),
+        Paths::in_directory(directory.path()),
+        platform.clone(),
+    );
+    let game = runtime.status()["catalogue"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|game| game["id"] == id));
+        .find(|game| game["id"] == GAME)
+        .unwrap()
+        .clone();
+    assert_eq!(game["name"], "Renamed DCS");
+    assert_eq!(game["selectedInstallationId"], "dcs-second");
+    runtime
+        .request(&json!({"command":"game_remove","gameId":GAME}))
+        .unwrap();
+    assert!(runtime.status()["catalogue"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|game| game["id"] != GAME));
+    assert!(!runtime
+        .inner
+        .installations
+        .load()
+        .unwrap()
+        .unwrap()
+        .games
+        .contains_key(GAME));
     assert_eq!(platform.calls.load(Ordering::Acquire), 0);
     runtime.shutdown();
 }
+
 #[test]
 fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
     let directory = crate::test_directory();
     let platform = Arc::new(FakePlatform::default());
-    let runtime = GamesRuntime::new(
-        no_io(),
-        Paths::in_directory(directory.path()),
-        platform.clone(),
-    );
+    let runtime = seeded_runtime(directory.path(), platform.clone());
+    runtime.seed_test_catalogue(vec![json!({
+        "id":GAME,
+        "name":"Telemetry Fixture",
+        "provider":"assetto-corsa-evo",
+        "integrationKey":"assetto-corsa-evo",
+        "integrationCompatible":true,
+        "installed":true,
+        "integrationSetup":{"state":"ready"},
+        "launchSupported":false,
+        "processMonitoringSupported":true
+    })]);
     let before = runtime.status();
-    let report = runtime.inspect_telemetry(&json!({"command":"game_telemetry_inspect","gameId":"assetto-corsa-evo","search":"engine.rpm","limit":16})).unwrap();
+    let report = runtime.inspect_telemetry(&json!({"command":"game_telemetry_inspect","gameId":GAME,"search":"engine.rpm","limit":16})).unwrap();
     assert_eq!(report["schemaVersion"], 1);
-    assert_eq!(report["games"].as_array().unwrap().len(), 7);
-    let evo = report["games"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|game| game["id"] == "assetto-corsa-evo")
-        .unwrap();
-    assert_eq!(evo["total"], 1);
-    assert_eq!(evo["channels"][0]["id"], "engine.rpm");
-    assert_eq!(evo["channels"][0]["unit"], "rpm");
-    assert_eq!(evo["channels"][0]["status"], "unknown");
-    assert_eq!(evo["channels"][0]["value"], Value::Null);
-    assert_eq!(runtime.status()["cleanup"], before["cleanup"]);
+    assert_eq!(report["games"].as_array().unwrap().len(), 1);
+    let game = &report["games"][0];
+    assert_eq!(game["id"], GAME);
+    assert_eq!(game["total"], 1);
+    assert_eq!(game["channels"][0]["id"], "engine.rpm");
+    assert_eq!(game["channels"][0]["unit"], "rpm");
+    assert_eq!(game["channels"][0]["status"], "unknown");
+    assert_eq!(game["channels"][0]["value"], Value::Null);
+    assert_eq!(runtime.status()["discovery"], before["discovery"]);
     assert_eq!(platform.calls.load(Ordering::Acquire), 0);
     for extra in [
         json!({"limit":0}),
         json!({"limit":129}),
         json!({"offset":65537}),
-        json!({"gameId":"unknown"}),
+        json!({"gameId":"Unknown"}),
         json!({"search":"a".repeat(201)}),
         json!({"activate":true}),
     ] {
@@ -162,52 +214,11 @@ fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
     }
     runtime.shutdown();
 }
-#[test]
-fn manual_installations_save_restart_remove_and_corruption_is_preserved() {
-    let directory = crate::test_directory();
-    let paths = Paths::in_directory(directory.path());
-    let file = paths.installations.clone();
-    let runtime = GamesRuntime::new(no_io(), paths, Arc::new(FakePlatform::default()));
-    runtime.request(&json!({"command":"game_installation","gameId":"dcs","executable":"C:\\Chosen\\DCS.exe"})).unwrap();
-    runtime.shutdown();
-    drop(runtime);
-    let runtime = GamesRuntime::new(
-        no_io(),
-        Paths::in_directory(directory.path()),
-        Arc::new(FakePlatform::default()),
-    );
-    assert_eq!(
-        runtime.status()["manualInstallations"]["dcs"],
-        "C:\\Chosen\\DCS.exe"
-    );
-    assert!(runtime
-        .request(&json!({"command":"game_installation","gameId":"dcs","executable":"relative"}))
-        .is_err());
-    assert!(runtime
-        .request(&json!({"command":"game_installation","gameId":"dcs"}))
-        .is_err());
-    runtime
-        .request(&json!({"command":"game_installation","gameId":"dcs","executable":null}))
-        .unwrap();
-    assert_eq!(runtime.status()["manualInstallations"], json!({}));
-    runtime.shutdown();
-    drop(runtime);
-    fs::write(&file, b"malformed retained metadata").unwrap();
-    let runtime = GamesRuntime::new(no_io(),Paths::in_directory(directory.path()),Arc::new(FakePlatform::default()));
-    assert!(runtime.status()["error"].is_null(), "retired files cannot replace the database");
-    assert_eq!(runtime.status()["manualInstallations"],json!({}));runtime.shutdown();drop(runtime);
-    let db=osg_persistence::Database::for_namespace(&file).unwrap();
-    db.commit(&[osg_persistence::Change{domain:"games",key:"installations",expected_revision:db.revision("games","installations").unwrap(),payload:Some(b"malformed active metadata")}]).unwrap();
-    let runtime=GamesRuntime::new(no_io(),Paths::in_directory(directory.path()),Arc::new(FakePlatform::default()));
-    assert!(runtime.status()["error"].is_string());
-    assert!(runtime.request(&json!({"command":"game_installation","gameId":"dcs","executable":"C:\\Chosen\\DCS.exe"})).is_err());
-    assert_eq!(fs::read(file).unwrap(),b"malformed retained metadata");
-    runtime.request(&json!({"command":"game_scan"})).unwrap();
-}
+
 #[test]
 fn game_get_state_does_not_wait_for_metadata_admission_and_keeps_request_validation() {
     let directory = crate::test_directory();
-    let runtime = Arc::new(GamesRuntime::new(
+    let runtime = Arc::new(GamesRuntime::test_runtime(
         no_io(),
         Paths::in_directory(directory.path()),
         Arc::new(FakePlatform::default()),
@@ -216,29 +227,31 @@ fn game_get_state_does_not_wait_for_metadata_admission_and_keeps_request_validat
     let reading = runtime.clone();
     let (completed, responses) = std::sync::mpsc::channel();
     let reader = thread::spawn(move || {
-        completed.send([
-            reading.request(&json!({"command":"game_get_state"})),
-            reading.request(&json!({"command":"game_get_state","profileId":"forged"})),
-            reading.request(&json!({"command":"game_get_state","clientId":"x".repeat(65_536)})),
-        ]).unwrap();
+        completed
+            .send([
+                reading.request(&json!({"command":"game_get_state"})),
+                reading.request(&json!({"command":"game_get_state","profileId":"forged"})),
+            ])
+            .unwrap();
     });
     let response = responses.recv_timeout(Duration::from_secs(2));
     drop(admission);
     reader.join().unwrap();
-    let [valid, unknown, oversized] = response.expect("Passive state must not wait for metadata admission");
+    let [valid, unknown] = response.expect("Passive state must not wait for metadata admission");
     assert!(valid.is_ok());
-    assert!(unknown.unwrap_err().contains("Unknown game metadata request field"));
-    assert!(oversized.unwrap_err().contains("Invalid game metadata request"));
+    assert!(unknown.unwrap_err().contains("Unknown game status field"));
     runtime.shutdown();
-    assert!(runtime.request(&json!({"command":"game_get_state"})).unwrap_err().contains("closed"));
-    assert!(fs::read_dir(directory.path()).unwrap().all(|entry|matches!(entry.unwrap().file_name().to_str(),Some("cockpit.sqlite3"|"game-artwork.lock"))));
+    assert!(runtime
+        .request(&json!({"command":"game_get_state"}))
+        .unwrap_err()
+        .contains("closed"));
 }
 
 #[test]
-fn retired_commands_and_unknown_metadata_fields_have_no_effects_or_files() {
+fn retired_commands_and_unknown_metadata_fields_have_no_effects_or_hardware_calls() {
     let directory = crate::test_directory();
     let platform = Arc::new(FakePlatform::default());
-    let runtime = GamesRuntime::new(
+    let runtime = GamesRuntime::test_runtime(
         no_io(),
         Paths::in_directory(directory.path()),
         platform.clone(),
@@ -250,31 +263,38 @@ fn retired_commands_and_unknown_metadata_fields_have_no_effects_or_files() {
         "game_launch",
         "game_activate",
         "game_deactivate",
+        "game_installation",
     ] {
         assert!(runtime
-            .request(&json!({"command":command,"gameId":"dcs","gameProfile":{"malicious":true}}))
-            .unwrap_err()
-            .contains("retired"));
+            .request(&json!({"command":command,"gameId":GAME,"gameProfile":{"malicious":true}}))
+            .is_err());
     }
     assert!(runtime
         .request(&json!({"command":"game_get_state","profileId":"forged"}))
         .is_err());
     assert!(runtime
-        .request(&json!({"command":"game_installation","gameId":"unknown","executable":null}))
+        .request(&json!({"command":"game_save","gameId":"unknown","name":"x"}))
         .is_err());
     assert!(runtime.request(&json!({"command":"unknown"})).is_err());
     assert!(runtime.guard_profile_takeover().is_ok());
     assert_eq!(platform.calls.load(Ordering::Acquire), 0);
-    assert!(fs::read_dir(directory.path()).unwrap().all(|entry|matches!(entry.unwrap().file_name().to_str(),Some("cockpit.sqlite3"|"game-artwork.lock"))));
+    runtime.shutdown();
 }
 
 #[test]
-fn retired_cleanup_journals_are_ignored_without_migration_or_hardware_calls(){
-    let directory=crate::test_directory();let paths=Paths::in_directory(directory.path());
-    let retired=paths.recovery.clone();fs::write(&retired,b"discarded legacy data").unwrap();
-    let runtime=GamesRuntime::new(no_io(),paths,Arc::new(FakePlatform::default()));
-    assert!(runtime.status().get("cleanup").is_none());assert!(runtime.guard_profile_takeover().is_ok());
-    for command in ["game_recover","game_abandon"]{assert!(runtime.request(&json!({"command":command,"preserveCurrentSetup":true})).is_err());}
-    assert_eq!(fs::read(&retired).unwrap(),b"discarded legacy data");
+fn retired_cleanup_journals_are_ignored_without_migration_or_hardware_calls() {
+    let directory = crate::test_directory();
+    let paths = Paths::in_directory(directory.path());
+    let retired = paths.recovery.clone();
+    fs::write(&retired, b"discarded legacy data").unwrap();
+    let runtime = GamesRuntime::test_runtime(no_io(), paths, Arc::new(FakePlatform::default()));
+    assert!(runtime.status().get("cleanup").is_none());
+    assert!(runtime.guard_profile_takeover().is_ok());
+    for command in ["game_recover", "game_abandon"] {
+        assert!(runtime
+            .request(&json!({"command":command,"preserveCurrentSetup":true}))
+            .is_err());
+    }
+    assert_eq!(fs::read(&retired).unwrap(), b"discarded legacy data");
     assert!(!directory.path().join("games.cleanup.lock").exists());
 }

@@ -60,8 +60,10 @@ fn installed_xplane_provider_catalogue_benchmark() {
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        let path =
-            std::env::temp_dir().canonicalize().unwrap().join(format!("osg-provider-settings-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("osg-provider-settings-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
@@ -72,7 +74,7 @@ impl Drop for Scratch {
     }
 }
 fn game(id: &str) -> Value {
-    json!({"id":id,"provider":if id=="dcs"{"dcs-bios"}else if id.starts_with("x-plane-"){"x-plane"}else{id},"installed":false,"executable":null,"launchSupported":false})
+    json!({"id":id,"integrationKey":id,"integrationCompatible":false,"provider":if id=="dcs"{"dcs-bios"}else if id.starts_with("x-plane-"){"x-plane"}else{id},"installed":false,"executable":null,"launchSupported":false})
 }
 fn save(setup: &GameIntegrationSetup, id: &str, connection: Value) -> Result<(), String> {
     setup.save_provider_settings(&json!({"command":"game_integration_settings_save","gameId":id,"expectedSetupRevision":setup.provider_setup_revision(id),"connection":connection}),&game(id))

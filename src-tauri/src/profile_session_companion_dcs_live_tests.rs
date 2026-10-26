@@ -271,7 +271,7 @@ impl DcsLive {
             },
             present: AtomicBool::new(true),
         });
-        let games = Arc::new(crate::games::GamesRuntime::new(
+        let games = Arc::new(crate::games::GamesRuntime::test_runtime(
             Arc::new(|_| panic!("No hardware or retired provider IO")),
             crate::games::Paths::in_directory(&directory),
             process.clone(),

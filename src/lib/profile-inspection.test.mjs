@@ -1,5 +1,7 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from'node:assert/strict';import test from'node:test';import{loadModules}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./profile-inspection']);const{ProfileInspectorClient,captureProfileOwner,profileOwnersEqual}=modules.get('./profile-inspection');
+const modules=await loadModules(['./games','./profiles','./profile-inspection']);const{ProfileInspectorClient,captureProfileOwner,profileOwnersEqual}=modules.get('./profile-inspection');
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const id='11111111-1111-4111-8111-111111111111',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'1'.repeat(64)}`;
 const owner=()=>({session,generation:3,profileId:id,profileRevision:7,gameId:'dcs'}),scalar=value=>({status:'known',value:{kind:'scalar',value}});
 const port=(id='altitude')=>({endpoint:{nodeId:'aircraft',portId:id},direction:'output',contract:{delivery:'state',schema:{type:'number',min:-1000,max:100000,unit:'ft'},freshnessMs:1500,fallback:null},sample:scalar(1500),observedUs:'1000000'});
@@ -17,7 +19,7 @@ test('exact action tuples and scalar schemas stay typed; observing a sink does n
   const display=page();display.ports[0]={...port(),direction:'input',contract:{...action,readable:true,parameters:[{id:'text',name:'Text',schema:{type:'text',maxBytes:20,encoding:'utf8'}}],display:{columns:2,rows:1,encoding:'utf8'}},sample:{status:'known',value:{kind:'action-pack',value:{arguments:[{id:'text',value:'éé'}]}}}};await new ProfileInspectorClient(async()=>display).inspect(owner());display.ports[0].sample.value.value.arguments[0].value='ééé';await assert.rejects(new ProfileInspectorClient(async()=>display).inspect(owner()),/do not match/);
 });
 test('invalid owner/filter/page requests never reach native and requests contain no browser samples or activation fields',async()=>{
-  let calls=0;const client=new ProfileInspectorClient(async()=>{calls++;return page();});for(const bad of [{...owner(),generation:0},{...owner(),session:'wrong'},{...owner(),profileRevision:1.5},{...owner(),gameId:'other'},{...owner(),generation:Number.MAX_SAFE_INTEGER+1},{...owner(),authority:'token'}])await assert.rejects(client.inspect(bad),/exact current/);
+  let calls=0;const client=new ProfileInspectorClient(async()=>{calls++;return page();});for(const bad of [{...owner(),generation:0},{...owner(),session:'wrong'},{...owner(),profileRevision:1.5},{...owner(),gameId:'invalid/path'},{...owner(),generation:Number.MAX_SAFE_INTEGER+1},{...owner(),authority:'token'}])await assert.rejects(client.inspect(bad),/exact current/);
   for(const args of [[''],['a/b'],[undefined,-1],[undefined,1025],[undefined,0,0],[undefined,0,65],[undefined,0,1.1]])await assert.rejects(client.inspect(owner(),...args),/bounded/);assert.equal(calls,0);assert.throws(()=>captureProfileOwner({...owner(),profileId:'WRONG'}),/exact current/);
 });
 test('stale run/revision, malformed schemas, unsafe counters and ill-typed samples cannot be displayed as current',async()=>{

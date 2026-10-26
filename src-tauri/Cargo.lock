@@ -3438,6 +3438,7 @@ dependencies = [
  "osg-persistence",
  "osg-profiles",
  "osg-virtual-controller",
+ "quick-xml",
  "rmcp",
  "serde",
  "serde_json",

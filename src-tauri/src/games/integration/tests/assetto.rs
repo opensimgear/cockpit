@@ -302,7 +302,7 @@ fn other_assetto_setup_providers_never_create_the_original_ac_car_catalogue() {
     ] {
         let executable = scratch.0.join(filename);
         fs::write(&executable, b"Unlaunched other-Assetto setup fixture").unwrap();
-        let game = json!({"id":id,"provider":id,"installed":true,"executable":executable});
+        let game = json!({"id":id,"integrationCompatible":true,"integrationKey":id,"provider":id,"installed":true,"executable":executable});
         runtime
             .request(
                 &json!({"command":"game_integration_setup"}),

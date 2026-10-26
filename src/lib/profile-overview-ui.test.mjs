@@ -1,3 +1,4 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
@@ -10,13 +11,14 @@ import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./persistence/ui-preferences','./ui-settings-guard','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'a'.repeat(64)}`;
 const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
 const automatic=(mode='manual')=>({schemaVersion:1,mode,manualProfileId:modules.get('./profiles').DEFAULT_PROFILE_ID,rules:[],status:mode==='manual'?'manual':'waiting',message:'Native profile selection policy.',conflicts:[],lastAttempt:null,target:null,readOnly:false});
 const running=()=>({...stopped(),state:'running',appliedSnapshot:{profileId:id,revision:3,semanticHash:hash},owner:{session,generation:4,profileId:id,profileRevision:3,gameId:'dcs'}});
 const view=status=>({status,pending:null,loading:false,stale:!status,error:'',statusError:''});
 const profiles=[{id,name:'Applied saved rig',revision:9,isDefault:false,semanticHash:hash},{id:other,name:'Unapplied editor selection',revision:7,isDefault:false,semanticHash:hash}];
-const games=()=>({catalogue:[{...modules.get('./games').supportedGames[0],installed:true,integrationContext:{status:'ready',message:'The native owner has the matching game context.',processVerified:true,contextSession:session,providerSetupRevision:hash,catalogueRevision:hash},integrationSetup:{state:'ready',message:'Provider configured.',live:'waiting'}}],detectedGames:[{gameId:'dcs',name:'DCS World'}],detectionErrors:[],cleanup:{phase:'idle'}});
+const games=()=>({catalogue:[{...discoveredGames[0],installed:true,integrationContext:{status:'ready',message:'The native owner has the matching game context.',processVerified:true,contextSession:session,providerSetupRevision:hash,catalogueRevision:hash},integrationSetup:{state:'ready',message:'Provider configured.',live:'waiting'}}],detectedGames:[{gameId:'dcs',name:'DCS World'}],detectionErrors:[],cleanup:{phase:'idle'}});
 const plain=value=>JSON.parse(JSON.stringify(value)),settle=()=>new Promise(resolve=>setImmediate(resolve));
 const noRequest=()=>{throw new Error('Rendering must not request native effects.');};
 function evaluate(code,filename,require,extra={}){const exports={};vm.runInNewContext(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,...extra,require},{filename});return exports.default;}
@@ -26,7 +28,7 @@ const overview=(profileState,extra={})=>render(Overview,{props:{games:games(),pr
 
 test('overview distinguishes a successful empty Windows detection from missing status and actual process scan failures',()=>{
  const empty={...games(),detectedGames:[],detectionErrors:[]};
- empty.catalogue.push({...modules.get('./games').supportedGames[3],installed:false,profileContext:{status:'not-installed'}});
+ empty.catalogue.push({...discoveredGames[3],installed:false,profileContext:{status:'not-installed'}});
  const html=overview(view(stopped()),{games:empty});
  assert.ok(html.includes('No game running'));assert.ok(!html.includes('Detection unavailable'));
  const failed={...empty,detectionErrors:['Cannot inspect game process: access denied']};notifications.length=0;

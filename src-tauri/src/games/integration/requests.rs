@@ -6,6 +6,8 @@ impl GameIntegrationSetup {
         game: &Value,
         platform: Arc<dyn Platform>,
     ) -> Result<(), String> {
+        let bound = bound_game(game)?;
+        let game = &bound;
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         if self.inner.closed.load(Ordering::Acquire) {
             return Err("The integration setup runtime has closed.".into());
@@ -23,6 +25,7 @@ impl GameIntegrationSetup {
             return self.save_provider_settings(request, game);
         }
         if command == "game_integration_check"
+            && game["integrationCompatible"] != false
             && id.starts_with("assetto-corsa")
             && self.inner.native
             && self.inner.settings_error.is_none()
@@ -68,6 +71,13 @@ impl GameIntegrationSetup {
         }
         if command == "game_integration_remove" {
             return self.remove(request, game, platform);
+        }
+        if command == "game_integration_setup"
+            && crate::game_discovery::integration_key(game).is_none()
+        {
+            return Err(
+                "Choose a compatible executable before setting up this integration.".into(),
+            );
         }
         if command == "game_integration_setup" && id.starts_with("x-plane-") {
             if game["installed"] != true {

@@ -31,7 +31,7 @@ export function profileGameTabInventory(document:DeepReadonly<ProfileDocument>,i
 
 /** The saved context and its integration block change together in one Undo edit. */
 export function profileSetGameContext(value:DeepReadonly<ProfileGraphDraft>,gameId:GameId|'',inventory:readonly DeepReadonly<ResourceSummary>[]):ProfileGraphDraft {
-  if(gameId&&!isRegisteredGameId(gameId))throw Error('Choose a supported game context or None.');
+  if(gameId&&!isRegisteredGameId(gameId))throw Error('Choose a discovered game context or None.');
   let next=JSON.parse(JSON.stringify(value)) as ProfileGraphDraft;
   if(profileGameContext(value.document)!==gameId)for(const tab of [...(next.document.vehicleTabs??[])])next=profileRemoveVehicleTab(next.document,next.assignments,tab.id);
   const before=canvasNodes(next.document,next.assignments,inventory),baseIds=profileTabNodeIds(next.document),games=next.document.resources.filter(resource=>resource.kind==='game'&&baseIds.has(resource.id));

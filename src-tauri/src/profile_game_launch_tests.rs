@@ -76,7 +76,7 @@ fn fixture() -> (
 ) {
     let directory = crate::test_directory();
     let platform = Arc::new(PlatformFixture::new());
-    let runtime = GamesRuntime::new(
+    let runtime = GamesRuntime::test_runtime(
         Arc::new(|_| panic!("launch helper must not touch hardware/provider commands")),
         {
             let fixture_metadata_path = directory.path().join("games.json");

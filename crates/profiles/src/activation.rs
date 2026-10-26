@@ -5,7 +5,6 @@ use crate::{session::SelectionMode, ProfileDocument, DEFAULT_PROFILE_ID};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const SUPPORTED_GAME_IDS: [&str; 7] = ["dcs", "assetto-corsa-rally", "x-plane-11", "x-plane-12", "assetto-corsa", "assetto-corsa-competizione", "assetto-corsa-evo"];
 /// Catalogue observations and persisted rules have separate bounds. Rules may
 /// retain an unavailable/removed registration so the operator can reassign it.
 pub const MAX_GAMES: usize = 256;
@@ -15,10 +14,12 @@ pub const MAX_RULES: usize = 512;
 /// must remain readable when a machine-local registration is unavailable.
 /// Operations which discover or launch a game also resolve the native registry.
 pub fn valid_game_id(id: &str) -> bool {
-    SUPPORTED_GAME_IDS.contains(&id)
-        || id.strip_prefix("custom-").is_some_and(|value| {
-            uuid::Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
-        })
+    let bytes = id.as_bytes();
+    (1..=96).contains(&bytes.len())
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,7 +31,8 @@ pub struct GameIdentity {
 }
 impl GameIdentity {
     pub fn validate(&self) -> Result<(), String> {
-        if !valid_game_id(&self.game_id) || self.executable.is_empty()
+        if !valid_game_id(&self.game_id)
+            || self.executable.is_empty()
             || self.executable.len() > 32768
             || self.executable.chars().any(char::is_control)
             || !((self.executable.as_bytes().get(1) == Some(&b':')
@@ -140,9 +142,7 @@ pub fn select(
         ));
     }
     if locks.emergency_stopped {
-        return Ok(Decision::Hold(
-            "Stop prevents automatic activation.".into(),
-        ));
+        return Ok(Decision::Hold("Stop prevents automatic activation.".into()));
     }
     if mode != SelectionMode::Automatic {
         return Ok(Decision::Hold(

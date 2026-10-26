@@ -1,3 +1,4 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
@@ -8,7 +9,8 @@ import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
-const modules=await loadModules(['./game-telemetry','./games']);
+const modules=await loadModules(['./games','./game-telemetry','./games']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
 const {GameTelemetryController}=modules.get('./game-telemetry');
 const noRequest=()=>{throw Error('Rendering telemetry must not send a native request.');};
 const channel=(overrides={})=>({id:'vehicle.speed',label:'Vehicle speed',category:'physics',type:'number',unit:'m/s',status:'known',value:0,ageMs:50,nativeField:'speedKmh',provider:'shared-memory',description:'Speed in common SI units.',...overrides});

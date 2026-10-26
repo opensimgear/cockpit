@@ -119,6 +119,9 @@ impl Inner {
         if !self.native {
             return json!({"state":"unsupported-platform","message":"Native game integration setup requires Windows. Profile editing and installation metadata remain available."});
         }
+        if game["integrationCompatible"] == false {
+            return json!({"state":"setup-required","message":"Choose a compatible executable from this installation before preparing telemetry.","verified":false});
+        }
         if game["installed"] != true {
             return json!({"state":"not-installed","message":"Find the game installation first."});
         }

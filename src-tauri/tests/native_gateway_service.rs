@@ -51,15 +51,22 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     assert!(request.to_string().len() < 65_536);
     let response = exchange("large-frame", request);
     assert_eq!(response["ok"], false);
-    assert!(response["error"].as_str().unwrap().contains("retired"), "{response}");
+    assert!(
+        response["error"].as_str().unwrap().contains("retired"),
+        "{response}"
+    );
 
-    let mut request = json!({"command":"game_get_state","clientId":"cockpit-service-boundary-test","padding":""});
+    let mut request =
+        json!({"command":"game_get_state","clientId":"cockpit-service-boundary-test","padding":""});
     let overhead = request.to_string().len();
     request["padding"] = json!("x".repeat(65_536 - overhead));
     assert_eq!(request.to_string().len(), 65_536);
     let at_limit = exchange("at-limit", request.clone());
     assert_eq!(at_limit["ok"], false);
-    assert_ne!(at_limit["error"], "Invalid gateway request.", "The full payload reaches native schema validation: {at_limit}");
+    assert_ne!(
+        at_limit["error"], "Invalid gateway request.",
+        "The full payload reaches native schema validation: {at_limit}"
+    );
 
     request["padding"] = json!("x".repeat(65_537 - overhead));
     assert_eq!(request.to_string().len(), 65_537);
@@ -80,11 +87,17 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
     );
     assert_eq!(games["ok"], true);
     let catalogue = games["state"]["games"]["catalogue"].as_array().unwrap();
-    let mut ids = catalogue.iter().map(|game| game["id"].as_str().unwrap()).collect::<Vec<_>>();
-    ids.sort_unstable();
-    let mut supported = osg_profiles::activation::SUPPORTED_GAME_IDS.to_vec();
-    supported.sort_unstable();
-    assert_eq!(ids, supported);
+    let ids = catalogue
+        .iter()
+        .map(|game| game["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids.len(),
+        ids.iter().collect::<std::collections::BTreeSet<_>>().len()
+    );
+    assert!(ids
+        .iter()
+        .all(|id| osg_profiles::activation::valid_game_id(id)));
     let game_state = games["state"]["games"].as_object().unwrap();
     for retired_field in ["profiles", "defaultProfiles", "session", "cleanup"] {
         assert!(!game_state.contains_key(retired_field), "{retired_field}");
@@ -112,14 +125,24 @@ fn correlated_requests_reach_the_full_payload_limit_without_losing_the_service()
         json!({"command":"profile_export","clientId":"cockpit-service-boundary-test","id":id}),
     );
     assert_eq!(exported["ok"], true, "{exported}");
-    assert_eq!(exported["state"]["profiles"]["document"]["name"], "Renamed service test");
-    for command in ["game_profile_save", "mapping_import_begin", "integration_get_state"] {
+    assert_eq!(
+        exported["state"]["profiles"]["document"]["name"],
+        "Renamed service test"
+    );
+    for command in [
+        "game_profile_save",
+        "mapping_import_begin",
+        "integration_get_state",
+    ] {
         let rejected = exchange(
             command,
             json!({"command":command,"clientId":"cockpit-service-boundary-test"}),
         );
         assert_eq!(rejected["ok"], false, "{rejected}");
-        assert!(rejected["error"].as_str().unwrap().contains("retired"), "{rejected}");
+        assert!(
+            rejected["error"].as_str().unwrap().contains("retired"),
+            "{rejected}"
+        );
     }
     assert!(!scratch.join("games.json").exists());
     assert!(!scratch.join("mappings").exists());

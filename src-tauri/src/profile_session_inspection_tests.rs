@@ -228,7 +228,7 @@ fn request_schema_rejects_foreign_fields_invalid_owners_and_unbounded_pages() {
         ("session", json!("forged")),
         ("generation", json!(0)),
         ("profileRevision", json!(0)),
-        ("gameId", json!("wrong-game")),
+        ("gameId", json!("Invalid Game")),
         ("profileId", json!("other")),
         ("generation", json!(9_007_199_254_740_992u64)),
     ] {

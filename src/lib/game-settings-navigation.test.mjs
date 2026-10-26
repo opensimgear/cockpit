@@ -1,15 +1,17 @@
+import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
-const modules = await loadModules(['./runtime-config','./panel-input-metadata','./games','./game-settings-navigation']);
-const { supportedGames } = modules.get('./games');
+const modules = await loadModules(['./games','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation']);
+modules.get('./games').updateGameCatalogue(discoveredGames);
+const supportedGames = discoveredGames;
 const { gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings } = modules.get('./game-settings-navigation');
 
 test('each provider has one game-owned settings deep link', () => {
   for (const game of supportedGames) assert.equal(gameSettingsFromHash(gameSettingsHref(game.id)), game.id);
-  for (const hash of ['', '#dcs-bios', '#games/other/integration', '#games/dcs', '#games/dcs/integration/extra', '#games/%64cs/integration']) assert.equal(gameSettingsFromHash(hash), null);
-  assert.throws(() => gameSettingsHref('other'), /supported game/);
-  assert.throws(() => visitGameSettings('other', {}), /supported game/);
+  for (const hash of ['', '#dcs-bios', '#games/invalid%2Fpath/integration', '#games/dcs', '#games/dcs/integration/extra', '#games/%64cs/integration']) assert.equal(gameSettingsFromHash(hash), null);
+  assert.throws(() => gameSettingsHref('invalid/path'), /supported game/);
+  assert.throws(() => visitGameSettings('invalid/path', {}), /supported game/);
 });
 test('settings navigation preserves the editor store and newer unsaved edits by reference', () => {
   const editor = { document: { name: 'Unsaved profile', bindings: ['existing-edge'] }, appliedRevision: 2 };
@@ -27,5 +29,5 @@ test('graph links carry only a supported game and opaque return state', () => {
   const link = gameSettingsLink({ gameId: 'dcs', returnState: store });
   assert.equal(link.returnState, store);
   assert.equal(gameSettingsLink({ gameId: 'x-plane-12' }).gameId, 'x-plane-12');
-  for (const invalid of [null, [], false, {}, { gameId: 'other' }, { gameId: 'dcs', apply: true }, { gameId: 'dcs', profileDocument: {} }]) assert.equal(gameSettingsLink(invalid), null);
+  for (const invalid of [null, [], false, {}, { gameId: 'invalid/path' }, { gameId: 'dcs', apply: true }, { gameId: 'dcs', profileDocument: {} }]) assert.equal(gameSettingsLink(invalid), null);
 });

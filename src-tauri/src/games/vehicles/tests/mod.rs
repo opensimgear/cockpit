@@ -52,3 +52,4 @@ fn poll(reader: &mut Reader, now_ms: u64) -> Option<String> {
 
 mod catalogues;
 mod telemetry;
+mod views;
