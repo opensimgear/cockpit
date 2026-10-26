@@ -5,27 +5,37 @@
   import {ProfileAutomaticClient} from './profile-automatic';
   import {ProfileAutomaticController} from './profile-automatic-controller';
   import {gameCatalogue,gameName} from './games';
-  import type {DeepReadonly,ProfileSelectionMode,ProfileSummary} from './profiles';
-  let{profiles,active=true,controller:supplied}:{profiles:readonly DeepReadonly<ProfileSummary>[];active?:boolean;controller?:ProfileAutomaticController}=$props();
+  import Icon from './Icon.svelte';
+  import {notify} from './notifications';
+  import type {ProfileSelectionMode} from './profiles';
+  let{active=true,controller:supplied}:{active?:boolean;controller?:ProfileAutomaticController}=$props();
   const settingsRequest=guardUiSettings(gatewayRequest);
   const provided=untrack(()=>supplied),controller=provided??new ProfileAutomaticController(new ProfileAutomaticClient(async request=>{const result=(await settingsRequest(request)).profiles;if(!result)throw new Error('Native automatic profile selection is unavailable.');return result;}));
   let view=$state.raw(controller.state),mounted=$state(false);
   const blocked=$derived(!active||!view.status||view.stale||view.status.readOnly||!!view.pending);
-  const description='Manual activates profiles when you choose. Automatic activates matching game contexts. Set a remembered profile in game settings when several match.';
+  const modeLabel=$derived(!view.status || view.stale && !view.pending ? 'Mode unavailable' : view.status.mode==='automatic' ? 'Auto' : 'Manual');
+  const modeTitle=$derived(view.pending ? 'Saving profile mode…' : view.error || (view.status?.readOnly ? 'Profile mode is read-only. Resolve the native storage error before changing it.' : !view.status || view.stale ? 'Current native profile selection mode is unavailable.' : [
+    `Switch to ${view.status.mode==='automatic'?'Manual':'Auto'} profile selection.`,
+    view.status.conflicts.length ? `Conflicting games: ${view.status.conflicts.map(id=>$gameCatalogue.find(game=>game.id===id)?.name??gameName(id)).join(', ')}. Review matching profiles and remembered choices in game settings.` : view.status.status==='failed' ? view.status.message : '',
+  ].filter(Boolean).join(' ')));
   function mountStatus(){mounted=true;const stop=controller.subscribe(next=>view=next);return()=>{mounted=false;stop();};}
   onMount(mountStatus);onDestroy(()=>{if(!provided)controller.dispose();});
   function watchStatus(){if(!mounted||!active)return;const refresh=()=>{if(!document.hidden)void controller.refresh();};refresh();document.addEventListener('visibilitychange',refresh);const timer=window.setInterval(refresh,1000);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};}
   $effect(watchStatus);
-  async function select(mode:ProfileSelectionMode){if(blocked)return;await controller.selectionMode(mode);}
+  async function select(mode:ProfileSelectionMode){if(blocked)return;if(!await controller.selectionMode(mode))notify(controller.state.error,'error');}
   async function toggleMode(){await select(view.status?.mode==='automatic'?'manual':'automatic');}
 </script>
-<div class="automatic-controls">
-  <div class="mode-choice" role="group" aria-label="Profile selection mode" title={description}><span class="mode-label">Profile mode</span><span class:current={view.status?.mode==='manual'}>Manual</span><button type="button" class="mode-switch" role="switch" aria-label="Automatic profile selection" aria-checked={view.status?.mode==='automatic'} disabled={blocked} onclick={toggleMode}><span class="switch-thumb"></span></button><span class:current={view.status?.mode==='automatic'}>Automatic</span></div>
-  {#if !view.status}<p role="status">Waiting for native profile mode.</p>{/if}
-  {#if view.status?.conflicts.length}<p class="automatic-warning" role="status">Conflicting games: {view.status.conflicts.map(id=>$gameCatalogue.find(game=>game.id===id)?.name??gameName(id)).join(', ')}. Review matching profiles and remembered choices in game settings.</p>{:else if view.status?.status==='failed'}<p class="automatic-warning" role="status">{view.status.message}</p>{/if}
-  {#if view.status?.readOnly}<p class="automatic-warning" role="status">Profile mode is read-only. Resolve the native storage error before changing it.</p>{/if}
-  {#if view.pending}<p role="status">Saving profile mode…</p>{/if}{#if view.error}<p class="automatic-warning" role="status">{view.error} <button class="text-button" disabled={view.loading||!!view.pending} onclick={()=>controller.refresh()}>Refresh mode</button></p>{/if}
-</div>
+<button type="button" class="header-status profile-mode-status" aria-label="Automatic profile selection" aria-pressed={view.status?.mode==='automatic'} aria-busy={!!view.pending} title={modeTitle} disabled={blocked} onclick={toggleMode}>
+  <span class="badge-copy"><span class="badge-label">Profile mode</span><strong class="mode-value">{modeLabel}</strong></span><Icon name="swap" size={13}/>
+</button>
 <style>
-  .automatic-controls{max-width:440px;}.mode-choice{display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--muted);}.mode-label{margin-right:7px;color:var(--soft);}.mode-choice .current{color:var(--accent);}.mode-switch{position:relative;flex-shrink:0;width:38px;height:22px;border:1px solid var(--line);border-radius:12px;background:var(--surface-raised);padding:2px;transition:background 120ms,border-color 120ms;}.mode-switch[aria-checked=true]{background:var(--accent-bg);border-color:var(--accent);}.switch-thumb{display:block;width:16px;height:16px;border-radius:50%;background:var(--muted);transition:transform 120ms,background 120ms;}.mode-switch[aria-checked=true] .switch-thumb{transform:translateX(16px);background:var(--accent);}.mode-switch:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}.automatic-controls p{font-size:10px;color:var(--muted);line-height:1.8;margin:9px 0 0;}.automatic-warning{color:#c9ab7b!important;}.automatic-controls .text-button{font-size:10px;}
+  .header-status{display:inline-flex;align-items:center;gap:12px;min-width:0;max-width:220px;border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:var(--surface);color:var(--muted);text-align:left;cursor:pointer;}
+  .header-status:hover:enabled{border-color:var(--accent);background:var(--surface-raised);color:var(--accent);}
+  .header-status:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+  .header-status:disabled{cursor:not-allowed;opacity:.6;}
+  .badge-copy{display:flex;flex-direction:column;gap:2px;min-width:0;}
+  .badge-label{color:var(--muted);font-size:8px;white-space:nowrap;}
+  strong{color:var(--soft);font-size:10px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  @media(max-width:800px){.header-status{max-width:145px;}}
+  @media(max-width:520px){.header-status{padding:5px 6px;gap:5px;max-width:100px;}.badge-label{font-size:7px;}strong{font-size:9px;}}
 </style>

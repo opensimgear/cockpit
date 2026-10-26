@@ -25,6 +25,7 @@
     network: ['M9 3h6v5H9zM3 16h6v5H3zM15 16h6v5h-6zM12 8v4M6 16v-4h12v4'],
     bluetooth: ['M7 7l10 10-5 4V3l5 4L7 17'],
     refresh: ['M20 8a8 8 0 0 0-14-3L3 8m0-5v5h5M4 16a8 8 0 0 0 14 3l3-3m0 5v-5h-5'],
+    swap: ['M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4'],
     search: ['M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0m-2 6 6 6'],
     fit: ['M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5'],
     layout: ['M3 3h6v6H3zM15 3h6v6h-6zM9 15h6v6H9zM6 9v3h12V9M12 12v3'],

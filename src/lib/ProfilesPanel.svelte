@@ -7,7 +7,6 @@
   import ProfileComponentPalette from './ProfileComponentPalette.svelte';
   import ProfileVehicleConflicts from './ProfileVehicleConflicts.svelte';
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
-  import ProfileAutomaticControls from './ProfileAutomaticControls.svelte';
   import ProfileLibraryTools from './ProfileLibraryTools.svelte';
   import type{ProfileSummary}from'./profiles';
   import type{ProfileLibraryClient}from'./profile-library';
@@ -233,7 +232,7 @@
 <section class="profiles-workspace" aria-label="Profiles">
   <div class="profile-content">
   {#if workspace.view==='list'}
-    <PageHeader title="Profiles" eyebrow="YOUR OPERATING SETUPS" subtitle="Edit Default or create an independent profile for your rig.">{#snippet actions()}<div class="page-actions"><ProfileAutomaticControls profiles={workspace.profiles} {active}/><button class="secondary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly||rows.length>=32} onclick={()=>libraryTools?.askImport()}><Icon name="upload" size={14}/>Import profile</button><button class="primary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={add}><Icon name="plus" size={14}/> Add profile</button></div>{/snippet}</PageHeader>
+    <PageHeader title="Profiles" eyebrow="YOUR OPERATING SETUPS" subtitle="Edit Default or create an independent profile for your rig.">{#snippet actions()}<div class="page-actions"><button class="secondary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly||rows.length>=32} onclick={()=>libraryTools?.askImport()}><Icon name="upload" size={14}/>Import profile</button><button class="primary-button" disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={add}><Icon name="plus" size={14}/> Add profile</button></div>{/snippet}</PageHeader>
   {:else if editor}
     <PageHeader title={editor.document.name||'Untitled profile'} eyebrow={editor.baseRevision===null?'NEW PROFILE DRAFT':'PROFILE EDITOR'} subtitle={`${dirty?'Unsaved changes. ':''}${appliedSnapshot?.profileId===editor.document.id?'Saving updates this active profile.':'Activate this profile when ready.'}`} onback={back} backLabel="Back to Profiles" backDisabled={workspace.busy}>
       {#snippet titleContent()}{#if editingName}<input class="profile-name-input" aria-label="Profile name" maxlength="80" bind:value={nameDraft} use:focusName onblur={finishName} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();finishName();}else if(event.key==='Escape'){event.preventDefault();editingName=false;}}}/>{:else if editor.document.id!==DEFAULT_PROFILE_ID}<button class="profile-title-button" aria-label="Edit profile name" title="Edit profile name" disabled={!canRename} onclick={editName}><span>{editor.document.name||'Untitled profile'}</span><Icon name="pencil" size={18}/></button>{:else}{editor.document.name}{/if}{/snippet}

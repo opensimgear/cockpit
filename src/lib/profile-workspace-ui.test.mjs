@@ -136,7 +136,7 @@ test('Profiles enters a Default-only list with visible Add and native keyboard-o
  assert.match(body,/<button[^>]*title="Activate saved profile \(hardware only\)"[^>]*aria-label="Activate Default"[^>]*disabled/);
  assert.match(plainHtml,/<strong[^>]*>Default<\/strong>\s*<(span|small)\b[^>]*>Built-in<\/\1>/);
  assert.ok(!body.includes('Built-in · editable'));assert.doesNotMatch(plainHtml,/>Saved profile<\/(?:span|small)>/);
- assert.ok(body.includes('aria-label="Profile selection mode"'));assert.ok(body.includes('Runtime profile status'));assert.ok(!body.includes('Saved revision'));assert.ok(!body.includes('Profile canvas'));assert.deepEqual(h.calls,[]);
+ assert.doesNotMatch(body,/aria-label="(?:Profile selection mode|Automatic profile selection)"|profile-mode-status/);assert.ok(body.includes('Runtime profile status'));assert.ok(!body.includes('Saved revision'));assert.ok(!body.includes('Profile canvas'));assert.deepEqual(h.calls,[]);
 });
 
 test('tile activation applies only the explicit saved target without editor navigation and respects current native admission',async()=>{
@@ -291,10 +291,10 @@ test('actual Add handler opens an empty editor immediately without requiring or 
  }
 });
 
-test('profile mode switch shares the Add action bar and appears only once on the list',async()=>{
+test('profile list keeps Add and Import actions while mode selection remains outside the list and editor',async()=>{
  const h=harness();await h.store.refresh();const body=html(h.store,h.client),actions=body.match(/<div\b[^>]*class="[^"]*\bpage-actions\b[^"]*"[^>]*>([^]*?)<\/div><\/div>/)?.[1],runtimeCard=body.match(/<section\b[^>]*aria-label="Runtime profile status"[^>]*>([^]*?)<\/section>/)?.[1];
- assert.ok(actions);assert.match(actions,/<button\b[^>]*role="switch"[^>]*aria-label="Automatic profile selection"/);assert.ok(!actions.includes('Debug'));assert.ok(actions.includes('Add profile'));assert.ok(runtimeCard);assert.ok(!runtimeCard.includes('Profile selection mode'));assert.ok(!runtimeCard.includes('Activate a saved profile from its tile'));assert.equal((body.match(/aria-label="Profile selection mode"/g)??[]).length,1);assert.deepEqual(h.calls,[]);
- await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.ok(!editorBody.includes('aria-label="Profile selection mode"'));assert.ok(!editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
+ assert.ok(actions);assert.ok(!actions.includes('Debug'));assert.ok(actions.includes('Add profile'));assert.ok(actions.includes('Import profile'));assert.ok(runtimeCard);assert.ok(!runtimeCard.includes('Activate a saved profile from its tile'));assert.doesNotMatch(body,/aria-label="(?:Profile selection mode|Automatic profile selection)"|profile-mode-status/);assert.deepEqual(h.calls,[]);
+ await h.store.open(DEFAULT_PROFILE_ID);const editorBody=html(h.store,h.client);assert.doesNotMatch(editorBody,/aria-label="(?:Profile selection mode|Automatic profile selection)"|profile-mode-status/);assert.ok(!editorBody.includes('Activate this profile when ready. Saving it keeps the current active profile.'));
 });
 
 test('profile editor keeps history with Save and game context first in the components column',async()=>{

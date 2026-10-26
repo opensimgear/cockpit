@@ -1,16 +1,16 @@
 <script lang="ts">
   import type { GamesState } from './games';
-  import type { DeepReadonly, ProfileSelectionMode, ProfileSummary } from './profiles';
+  import type { DeepReadonly, ProfileSummary } from './profiles';
   import type { RuntimeControlState } from './profile-runtime-controller';
+  import type { ProfileAutomaticController } from './profile-automatic-controller';
+  import ProfileAutomaticControls from './ProfileAutomaticControls.svelte';
 
-  let { games, gamesStale, profileState, profiles, profileMode, profileModeStale = true, profileModeError = '' }: {
+  let { games, gamesStale, profileState, profiles, automaticController }: {
     games: GamesState | undefined;
     gamesStale: boolean;
     profileState: DeepReadonly<RuntimeControlState>;
     profiles: DeepReadonly<ProfileSummary[]>;
-    profileMode: ProfileSelectionMode | null;
-    profileModeStale?: boolean;
-    profileModeError?: string;
+    automaticController?: ProfileAutomaticController;
   } = $props();
 
   const detected = $derived(gamesStale ? [] : games?.detectedGames ?? []);
@@ -23,7 +23,6 @@
   const profileStatus = $derived(profileState.pending ? 'Updating…' : status ? stateLabels[status.state] : 'Unavailable');
   const profileLabel = $derived(applied ? profile?.name ?? `Profile ${applied.profileId.slice(0, 8)}` : status ? 'No profile active' : 'Unavailable');
   const profileTitle = $derived(applied ? [profileLabel, profileStatus].filter(Boolean).join(' · ') : profileState.statusError || profileStatus || 'No profile active.');
-  const modeLabel = $derived(profileModeStale || !profileMode ? 'Mode unavailable' : profileMode === 'automatic' ? 'Automatic' : 'Manual');
 </script>
 
 <div class="header-statuses" aria-live="polite" aria-atomic="true">
@@ -35,9 +34,7 @@
     <span class="badge-dot" class:active={status?.state === 'running'} class:attention={!!status && ['degraded', 'faulted', 'recovery-needed', 'awaiting-game'].includes(status.state)}></span>
     <span class="badge-copy"><span class="badge-label">{profileStatus ? `Active profile · ${profileStatus}` : 'Active profile'}</span><strong>{profileLabel}</strong></span>
   </span>
-  <span class="header-status profile-mode-status" title={profileModeStale || !profileMode ? profileModeError || 'Current native profile selection mode is unavailable.' : `${modeLabel} profile selection`}>
-    <span class="badge-copy"><span class="badge-label">Profile mode</span><strong class="mode-value">{modeLabel}</strong></span>
-  </span>
+  <ProfileAutomaticControls controller={automaticController}/>
 </div>
 
 <style>
