@@ -244,7 +244,9 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2022, macos-14]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    # Windows also builds desktop/service binaries and runs companion acceptance
+    # after coverage; a cold runner exhausted 35 minutes during the final build.
+    timeout-minutes: ${{ matrix.os == 'windows-2022' && 60 || 35 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-python@v5
