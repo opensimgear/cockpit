@@ -80,11 +80,11 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     if(await modeSwitch.getAttribute('aria-pressed')==='true')await modeSwitch.click();
     await expect(modeSwitch).toHaveAttribute('aria-pressed','false');
     await expect(profileBadge.getByText('No profile active',{exact:true})).toBeVisible();
-    await expect(page.locator('.topbar .header-status')).toHaveCount(3);
-    await expect(page.locator('.topbar .header-status').nth(2)).toHaveClass(/\bprofile-mode-status\b/);
-    await expect(page.locator('.topbar .profile-status + .profile-mode-status')).toHaveCount(1);
+    await expect(page.locator('.topbar .header-status')).toHaveCount(2);
+    await expect(profileBadge.locator('.badge-separator')).toBeVisible();
+    await expect(profileBadge.locator('.profile-mode-status')).toHaveCount(1);
     await expect(modeCard.getByText('Profile mode',{exact:true})).toBeVisible();
-    await expect(profileBadge.locator('.mode-badge,.mode-value,.profile-mode-status')).toHaveCount(0);
+    await expect(profileBadge.locator('.mode-value')).toHaveCount(1);
     await expect(page.getByRole('button',{name:'About Cockpit',exact:true,includeHidden:true})).toHaveCount(0);
     await expect(page.getByRole('heading',{name:'Built around your hardware.',exact:true,includeHidden:true})).toHaveCount(0);
     await expect(page.getByText('WELCOME TO YOUR COCKPIT',{exact:true})).toHaveCount(0);
@@ -235,7 +235,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(page.getByRole('button',{name:/^Deactivate /})).toHaveCount(0);
     assert.ok(!/\b(running|stopped)\b/i.test(await profileList.innerText()),'The profile tiles must use activation terminology.');
     assert.deepEqual(errors,[]);
-    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,modeInPageActions:false,healthyRuntimeCardHidden:true,debugIcon:true,activeTileFirst:true,remainingTilesMutedAndEnabled:true,deactivationRestoredOrder:normalOrder,headerModeCard:true,headerModeIsAdjacentThirdCard:true,headerAboutRemoved:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,saveNotifications:true,savedBannerAbsent:true,selectedBadgeAbsent:true,activeSave:{before:activated.owner,after:changed.owner},desktopQualified:desktopActive.qualified,desktopRuntimeAcquired:!!desktopActive.runtime,debugSeparated:true,activation:{cancelPreservedOwner:changed.owner,switchedOwner:switched.owner,deactivated:inactiveStatus},pageErrors:errors},null,2)+'\n');
+    await writeFile(resolve(artifacts,'evidence.json'),JSON.stringify({profileId:first.id,directEmptyEditor:true,profileModeToggle:true,modeInPageActions:false,healthyRuntimeCardHidden:true,debugIcon:true,activeTileFirst:true,remainingTilesMutedAndEnabled:true,deactivationRestoredOrder:normalOrder,headerModeCard:true,headerModeMergedWithProfile:true,headerAboutRemoved:true,headerStoppedRemoved:true,scope:document.desktopOutputs[0].scope,inactiveSavePreservedOwner:true,saveNotifications:true,savedBannerAbsent:true,selectedBadgeAbsent:true,activeSave:{before:activated.owner,after:changed.owner},desktopQualified:desktopActive.qualified,desktopRuntimeAcquired:!!desktopActive.runtime,debugSeparated:true,activation:{cancelPreservedOwner:changed.owner,switchedOwner:switched.owner,deactivated:inactiveStatus},pageErrors:errors},null,2)+'\n');
   }catch(error){await page.screenshot({path:resolve(artifacts,'failure.png'),fullPage:true});throw error;}
   finally{
     try{await native({command:'profile_stop'});const library=(await native({command:'profile_list'})).profiles;for(const profile of library.profiles.filter(profile=>names.has(profile.name)))await native({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});await list();await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect.poll(async()=>(await tiles.locator('.profile-copy strong').allTextContents()).filter(name=>names.has(name))).toEqual([]);}
