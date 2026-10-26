@@ -3,6 +3,7 @@
   import { invoke, isTauri } from '@tauri-apps/api/core';
   import Icon from './Icon.svelte';
   import Notification from './Notification.svelte';
+  import { notify } from './notifications';
   import { createMcpSettings, mcpClientConfig, mcpPortError, mcpStatusLabel, type McpScope, type McpSettingsState } from './mcp';
 
   let preferences = $state.raw<McpSettingsState>({ native: false, loaded: false, status: null, busy: '', error: '', message: '', secret: null });
@@ -12,6 +13,7 @@
   let initialized = false;
   let observedPort = 54438;
   const settings = createMcpSettings(invoke, isTauri(), next => {
+    if (next.message && next.message !== preferences.message && !next.error && !next.status?.error) notify(next.message);
     preferences = next;
     if (next.status) {
       if (!initialized || next.status.enabled || port === observedPort) port = next.status.port;
@@ -79,7 +81,7 @@
       <div class="preference-row client-config-row"><div class="client-config"><strong>Client configuration</strong><p id="mcp-config-help">Use these HTTP connection settings in a compatible MCP client. Replace YOUR_COCKPIT_TOKEN with your saved token. Replacing a token immediately revokes the original when successful.</p><textarea class="text-input config-value" aria-label="MCP client configuration" aria-describedby="mcp-config-help" readonly spellcheck="false" value={config}></textarea>{#if preferences.status.protocolVersions.length}<p class="protocols">Protocol versions: {preferences.status.protocolVersions.join(', ')}</p>{/if}</div><button class="secondary-button" disabled={unavailable} onclick={() => { void copy('config'); }}><Icon name="copy" size={14} />Copy configuration</button></div>
     {/if}
     {#if error}<div class="settings-result"><Notification message={error} kind="error" /><button class="secondary-button" disabled={!!preferences.busy} onclick={() => { void settings.load(); }}>Refresh status</button></div>
-    {:else if preferences.message}<div class="preference-row"><p role="status">{preferences.message}</p></div>{/if}
+    {/if}
   {/if}
 </section>
 

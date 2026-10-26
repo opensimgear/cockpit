@@ -40,7 +40,7 @@ export function notify(message: string, kind: Notification['kind'] = 'info') {
     const timer = timers.get(id) ?? { deadline: 0, reasons: new Set<NotificationPauseReason>() };
     clearTimer(timer);
     timers.set(id, timer);
-    const durationMs = kind === 'info' ? 6000 : 12000;
+    const durationMs = 3000;
     const paused = timer.reasons.size > 0;
     const notification: Notification = { id, message, kind, durationMs, remainingMs: durationMs, paused, timerVersion: (existing?.timerVersion ?? 0) + 1 };
     if (!paused) schedule(id, timer, durationMs);
