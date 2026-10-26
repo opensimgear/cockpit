@@ -1,4 +1,5 @@
 use super::*;
+#[path="completion.rs"] mod completion;
 pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
     let _admission=runtime.admission.try_lock().map_err(|_|"Game metadata is busy. Retry discovery after the current update.")?;
     if !known(request,&["command","clientId","paths"]) {return Err("Unknown discovery start field.".into());}
@@ -31,7 +32,7 @@ pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
                 let failed=scan.diagnostics.iter().any(|message|message.contains("could not be read")||message.contains("inaccessible")||message.contains("malformed")||message.contains("not installed"));
                 let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
                 if let Some(library)=review.libraries.iter_mut().find(|library|library.id==*client) {
-                    library.status=if failed{"failed"}else{"complete"}.into();library.found=scan.candidates.len();
+                    library.status=if failed{"failed"}else{"preparing"}.into();library.found=scan.candidates.len();
                     library.message=failed.then(||"Some installation records could not be read; removals are withheld.".into());
                 }
                 if !failed {successful.insert((*client).to_owned());}
@@ -42,16 +43,11 @@ pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
                 for (client,_) in crate::game_library::CLIENTS {if !clients.iter().any(|(id,_)|id==client) {successful.insert((*client).into());}}
             }
             let mut entries=super::reconcile::reconcile(&saved,candidates,&successful);
-            let mut image_bytes=0;
             for entry in &mut entries {
                 if !clients.iter().any(|(id,_)|*id==entry.library) {entry.library="disk".into();}
-                if image_bytes<2*1024*1024 {
-                    entry.image=entry.artwork.as_deref().and_then(|path|crate::game_artwork::discovery_preview(path).ok());
-                    image_bytes+=entry.image.as_ref().map_or(0,String::len);
-                }
             }
-            let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
-            if review.scan_id==scan_id {review.entries=entries;review.status="ready".into();}
+            if !completion::publish_entries(&inner.discovery,&scan_id,entries) {return;}
+            completion::prepare_artwork(&inner.discovery,&scan_id,||inner.closed.load(Ordering::Acquire),|path|crate::game_artwork::discovery_preview(path).ok());
         }));
         if outcome.is_err() {
             let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());review.status="failed".into();review.diagnostics.push("Game discovery failed. Rescan to try again.".into());

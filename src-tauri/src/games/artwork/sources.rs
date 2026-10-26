@@ -1,4 +1,7 @@
 use super::*;
+#[path = "discovery_cache.rs"]
+mod discovery_cache;
+
 pub(super) fn local_bytes(path: &str) -> Result<Vec<u8>, String> {
     let source = Path::new(path);
     if !source.is_absolute() || path.len() > 4096 || path.chars().any(char::is_control) {
@@ -100,6 +103,17 @@ pub(crate) fn preview(path: Option<&str>, url: Option<&str>) -> Result<String, S
 
 /// Small transient thumbnails keep scan snapshots bounded without publishing assets.
 pub(crate) fn discovery_preview(path: &Path) -> Result<String, String> {
+    if let Ok(metadata) = fs::metadata(path) {
+        if let Ok(modified) = metadata.modified() {
+            return discovery_cache::get_or_prepare(path, modified, metadata.len(), || {
+                prepare_discovery_preview(path)
+            });
+        }
+    }
+    prepare_discovery_preview(path)
+}
+
+fn prepare_discovery_preview(path: &Path) -> Result<String, String> {
     let image = decoded(&local_bytes(path.to_str().ok_or("Invalid artwork path.")?)?)?;
     for size in [384, 320, 256, 192, 128] {
         let mut bytes = Vec::new();

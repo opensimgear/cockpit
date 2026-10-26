@@ -1,5 +1,17 @@
 use super::*;
 #[test]
+fn discovery_cache_does_not_hide_replaced_or_deleted_source_images() {
+    let directory = crate::test_directory();
+    let source = sample(directory.path());
+    let original = discovery_preview(&source).unwrap();
+    assert_eq!(discovery_preview(&source).unwrap(), original);
+    fs::remove_file(&source).unwrap();
+    assert!(discovery_preview(&source).is_err());
+    image::RgbImage::from_pixel(320, 200, image::Rgb([200, 10, 10]))
+        .save(&source).unwrap();
+    assert_ne!(discovery_preview(&source).unwrap(), original);
+}
+#[test]
 fn discovery_images_are_small_transient_jpegs_and_invalid_artwork_is_rejected() {
     let directory=crate::test_directory();
     let source=directory.path().join("landscape.png");

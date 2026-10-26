@@ -10,6 +10,7 @@
   let showLocations=$state(false);
   const discovery=$derived(gameState.discovery);
   const scanning=$derived(discovery?.status==='scanning');
+  const preparing=$derived(scanning&&!!discovery?.libraries.length&&discovery.libraries.every(library=>library.status!=='queued'&&library.status!=='scanning'));
   const entries=$derived(discovery?.entries??[]);
   const actions=$derived(discoveryActions(entries,drafts));
   const selectedIds=$derived(new Set(actions.filter(action=>action.selected).map(action=>action.id)));
@@ -36,15 +37,15 @@
   </section>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if scanning}<p class="scan-status" role="status">Scanning libraries… Results appear as each library completes.</p>{/if}
+  {#if scanning}<p class="scan-status" role="status">{preparing?(entries.length?'Preparing artwork… Discovered games are shown below.':'Matching discovered installations…'):'Scanning libraries…'}</p>{/if}
   <div class="libraries" aria-label="Library scan progress">
     {#each discovery?.libraries??[] as library (library.id)}
       {@const libraryEntries=entries.filter(entry=>[library.id.toLowerCase(),library.name.toLowerCase()].includes(entry.library.toLowerCase()))}
       {@const selectedCount=libraryEntries.filter(entry=>selectedIds.has(entry.id)).length}
       <details class="panel library" data-library={library.id} open={openLibraries[library.id]??(libraryEntries.length>0||library.status==='scanning')} ontoggle={event=>{openLibraries={...openLibraries,[library.id]:event.currentTarget.open};}}>
-        <summary class="library-heading"><span class="platform-icon" data-platform={library.id}><Icon name={library.id==='local'?'disk':library.id} size={23}/></span><span class="library-name">{library.name}<small>{library.found} installations found · {libraryEntries.length} changes</small></span><span class="library-status" class:scanning={library.status==='scanning'}><Icon name={library.status==='complete'?'check':library.status==='scanning'?'refresh':library.status==='failed'?'alert':'info'} size={14}/>{library.status}</span><span class="library-chevron"><Icon name="chevron" size={15}/></span></summary>
+        <summary class="library-heading"><span class="platform-icon" data-platform={library.id}><Icon name={library.id==='local'?'disk':library.id} size={23}/></span><span class="library-name">{library.name}<small>{library.found} installations found · {libraryEntries.length} changes</small></span><span class="library-status" class:scanning={library.status==='scanning'||library.status==='preparing'}><Icon name={library.status==='complete'?'check':library.status==='scanning'||library.status==='preparing'?'refresh':library.status==='failed'?'alert':'info'} size={14}/>{library.status}</span><span class="library-chevron"><Icon name="chevron" size={15}/></span></summary>
         <div class="library-content">
-          {#if library.status==='scanning'}<progress aria-label={library.name+' scan progress'}></progress>{/if}
+          {#if library.status==='scanning'||library.status==='preparing'}<progress aria-label={library.name+' scan progress'}></progress>{/if}
           {#if library.message}<p class="library-message">{library.message}</p>{/if}
           <div class="library-selection"><label class="entry-choice"><span>Select all</span><input type="checkbox" aria-label={'Select all games in '+library.name} checked={libraryEntries.length>0&&selectedCount===libraryEntries.length} indeterminate={selectedCount>0&&selectedCount<libraryEntries.length} disabled={busy||scanning||discovery?.status!=='ready'||!libraryEntries.length} onchange={event=>{drafts=discoverySelectAll(libraryEntries,drafts,event.currentTarget.checked);}}/></label></div>
           {#each [{title:'New and changed installations',items:libraryEntries.filter(entry=>entry.action!=='remove')},{title:'Removed installations',items:libraryEntries.filter(entry=>entry.action==='remove')}] as group}
