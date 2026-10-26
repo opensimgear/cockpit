@@ -64,11 +64,9 @@ fn steam_multiple_libraries_reuse_builtin_ids_and_discover_nested_art_without_im
         b"fixture",
     )
     .unwrap();
-    fs::write(
-        root.join("appcache/librarycache/42/hashed_header.jpg"),
-        b"image",
-    )
-    .unwrap();
+    image::RgbImage::from_pixel(640, 360, image::Rgb([40, 80, 120]))
+        .save(root.join("appcache/librarycache/42/hashed_header.jpg"))
+        .unwrap();
     fs::create_dir_all(root.join("steamapps/common/DCS")).unwrap();
     fs::write(
         root.join("steamapps/appmanifest_223750.acf"),

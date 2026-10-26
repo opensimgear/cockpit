@@ -8,23 +8,63 @@ fn discovery_cache_does_not_hide_replaced_or_deleted_source_images() {
     fs::remove_file(&source).unwrap();
     assert!(discovery_preview(&source).is_err());
     image::RgbImage::from_pixel(320, 200, image::Rgb([200, 10, 10]))
-        .save(&source).unwrap();
+        .save(&source)
+        .unwrap();
     assert_ne!(discovery_preview(&source).unwrap(), original);
 }
 #[test]
 fn discovery_images_are_small_transient_jpegs_and_invalid_artwork_is_rejected() {
-    let directory=crate::test_directory();
-    let source=directory.path().join("landscape.png");
-    image::RgbImage::from_fn(640,360,|x,y|image::Rgb([(x/3) as u8,(y/2) as u8,120])).save(&source).unwrap();
-    let preview=discovery_preview(&source).unwrap();
-    let bytes=preview_bytes(&preview).unwrap();
-    assert!(bytes.len()<=THUMBNAIL_LIMIT);
-    let image=image::load_from_memory(&bytes).unwrap();
-    assert_eq!((image.width(),image.height()),(384,216));
+    let directory = crate::test_directory();
+    let source = directory.path().join("landscape.png");
+    image::RgbImage::from_fn(640, 360, |x, y| {
+        image::Rgb([(x / 3) as u8, (y / 2) as u8, 120])
+    })
+    .save(&source)
+    .unwrap();
+    let preview = discovery_preview(&source).unwrap();
+    let bytes = discovery_preview_bytes(&preview).unwrap();
+    assert!(bytes.len() <= DISCOVERY_PREVIEW_LIMIT);
+    let image = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((image.width(), image.height()), (640, 360));
     assert!(!directory.path().join("game-artwork").exists());
-    fs::write(&source,b"not an image").unwrap();
+    fs::write(&source, b"not an image").unwrap();
     assert!(discovery_preview(&source).is_err());
     assert!(discovery_preview(&directory.path().join("missing.png")).is_err());
+}
+#[test]
+fn discovery_previews_preserve_high_dpi_pixels_without_upscaling_sources() {
+    let directory = crate::test_directory();
+    let source = directory.path().join("hero.png");
+    image::RgbImage::from_fn(1920, 640, |x, y| {
+        image::Rgb([(x / 8) as u8, (y / 3) as u8, 120])
+    })
+    .save(&source)
+    .unwrap();
+    let preview = discovery_preview(&source).unwrap();
+    assert!(preview_bytes(&preview).is_err());
+    let bytes = discovery_preview_bytes(&preview).unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (960, 320));
+    image::RgbImage::from_pixel(180, 100, image::Rgb([100, 120, 140]))
+        .save(&source)
+        .unwrap();
+    let bytes = discovery_preview_bytes(&discovery_preview(&source).unwrap()).unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (180, 100));
+    let mut bytes = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new(&mut bytes)
+        .encode_image(&image::RgbImage::new(961, 1))
+        .unwrap();
+    assert!(discovery_preview_bytes(&format!(
+        "data:image/jpeg;base64,{}",
+        STANDARD.encode(bytes)
+    ))
+    .is_err());
+    assert!(discovery_preview_bytes(&format!(
+        "data:image/jpeg;base64,{}",
+        "A".repeat(DISCOVERY_PREVIEW_LIMIT * 2)
+    ))
+    .is_err());
 }
 #[test]
 fn transient_previews_and_crops_preserve_bounds_shape_and_exact_managed_bytes() {
@@ -193,7 +233,16 @@ fn collection_uses_current_sqlite_references_and_honours_another_process_lease()
     let background = import(root, sample(root).to_str().unwrap(), 50.0, 50.0).unwrap();
     let store = crate::game_installations::Store::new(root.join("game-library.json"));
     let mut settings = crate::game_installations::Settings::default();
-    settings.games.insert("dcs".into(),crate::game_installations::GameRecord{name:"DCS".into(),installations:Default::default(),selected_installation:None,integration:None,default_background:None});
+    settings.games.insert(
+        "dcs".into(),
+        crate::game_installations::GameRecord {
+            name: "DCS".into(),
+            installations: Default::default(),
+            selected_installation: None,
+            integration: None,
+            default_background: None,
+        },
+    );
     settings
         .backgrounds
         .insert("dcs".into(), background.clone());

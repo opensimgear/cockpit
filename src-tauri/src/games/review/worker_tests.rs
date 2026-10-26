@@ -1,0 +1,139 @@
+use super::*;
+use crate::{game_discovery::{Platform, ProcessIdentity}, game_library::{Candidate, Scan}};
+use std::{collections::BTreeMap, sync::mpsc};
+
+struct EmptyPlatform;
+impl Platform for EmptyPlatform {
+    fn catalogue(&self, _: &BTreeMap<String, String>) -> Vec<Value> { vec![] }
+    fn validate(&self, _: &str, _: &str) -> Result<(), String> { Ok(()) }
+    fn launch(&self, _: &Value) -> Result<ProcessIdentity, String> { Err("Not used in discovery tests.".into()) }
+    fn find(&self, _: &Value) -> Result<Option<ProcessIdentity>, String> { Ok(None) }
+    fn alive(&self, _: &ProcessIdentity) -> Result<bool, String> { Ok(false) }
+}
+
+fn runtime() -> (GamesRuntime, tempfile::TempDir) {
+    let directory = crate::test_directory();
+    let runtime = GamesRuntime::test_runtime(
+        Arc::new(|_| json!({})),
+        crate::games::Paths::in_directory(directory.path()),
+        Arc::new(EmptyPlatform),
+    );
+    (runtime, directory)
+}
+
+fn candidate(root: &Path, client: &str, app_id: &str) -> Candidate {
+    std::fs::create_dir_all(root).unwrap();
+    let executable = root.join("Game.exe");
+    std::fs::write(&executable, b"fixture").unwrap();
+    Candidate {
+        id: format!("{client}:{app_id}"),
+        client: client.into(),
+        name: "Fixture title".into(),
+        install_path: root.to_string_lossy().into_owned(),
+        executable_candidates: vec![executable.to_string_lossy().into_owned()],
+        preferred_executable: None,
+        game_id: None,
+        kind: "game".into(),
+        app_id: app_id.into(),
+        launcher: None,
+        artwork: None,
+    }
+}
+
+fn wait_for(runtime: &GamesRuntime, expected: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let discovery = runtime.status()["discovery"].clone();
+        if discovery["status"] == expected { return discovery; }
+        assert!(Instant::now() < deadline, "discovery status did not become {expected}: {discovery}");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn injected_scans_publish_rows_retain_failures_and_reject_a_parallel_scan() {
+    let (runtime, directory) = runtime();
+    let mut steam = candidate(&directory.path().join("steam"), "steam", "123");
+    let artwork = directory.path().join("header.jpg");
+    image::RgbImage::from_pixel(920, 430, image::Rgb([170, 80, 40])).save(&artwork).unwrap();
+    steam.artwork = Some(artwork);
+    let installation = steam.install_path.clone();
+    let disk = candidate(&directory.path().join("disk"), "disk", "fixture");
+    let (entered, waiting) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let started = json!({"command":"game_discovery_start","paths":[]});
+    start_with(
+        &runtime,
+        &started,
+        vec![("steam", "Steam"), ("disk", "Local paths")],
+        move |client, _| {
+            if client == "steam" {
+                entered.send(()).unwrap();
+                resume.recv().unwrap();
+                Scan {
+                    candidates: vec![steam.clone()],
+                    diagnostics: vec!["Steam manifest could not be read.".into()],
+                }
+            } else {
+                Scan { candidates: vec![disk.clone()], diagnostics: vec![] }
+            }
+        },
+    ).unwrap();
+    waiting.recv_timeout(Duration::from_secs(2)).expect("scan closure should start");
+
+    let parallel = start_with(
+        &runtime,
+        &started,
+        vec![("disk", "Local paths")],
+        |_, _| panic!("the running guard must reject before invoking a scan"),
+    );
+    release.send(()).unwrap();
+    assert!(parallel.unwrap_err().contains("already running"));
+
+    let ready = wait_for(&runtime, "ready");
+    assert_eq!(ready["entries"].as_array().unwrap().len(), 2);
+    assert_eq!(ready["libraries"][0]["status"], "failed");
+    assert_eq!(ready["libraries"][1]["status"], "complete");
+    assert!(ready["entries"].as_array().unwrap().iter().any(|entry| entry["image"].is_string()));
+    assert!(crate::game_artwork::installation_preview(runtime.inner.installations.root(), &installation).is_some());
+    assert!(runtime.inner.settings.lock().unwrap().saved.games.is_empty());
+    assert!(runtime.status()["catalogue"].as_array().unwrap().is_empty());
+    runtime.shutdown();
+}
+
+#[test]
+fn panicked_scan_fails_cleanly_and_a_new_scan_can_finish() {
+    let (runtime, directory) = runtime();
+    let request = json!({"command":"game_discovery_start","paths":[]});
+    start_with(
+        &runtime,
+        &request,
+        vec![("disk", "Local paths")],
+        |_, _| panic!("injected scan failure"),
+    ).unwrap();
+    let failed = wait_for(&runtime, "failed");
+    assert_eq!(failed["diagnostics"][0], "Game discovery failed. Rescan to try again.");
+
+    let discovered = candidate(&directory.path().join("retry"), "disk", "retry");
+    start_with(
+        &runtime,
+        &request,
+        vec![("disk", "Local paths")],
+        move |_, _| Scan { candidates: vec![discovered.clone()], diagnostics: vec![] },
+    ).unwrap();
+    let ready = wait_for(&runtime, "ready");
+    assert_eq!(ready["entries"].as_array().unwrap().len(), 1);
+    assert!(runtime.inner.settings.lock().unwrap().saved.games.is_empty());
+    runtime.shutdown();
+}
+
+#[test]
+fn public_start_rejects_invalid_requests_without_launching_a_worker() {
+    let (runtime, _directory) = runtime();
+    let error = start(&runtime, &json!({"command":"game_discovery_start","unexpected":true}))
+        .unwrap_err();
+    assert!(error.contains("Unknown discovery start field"));
+    assert_eq!(runtime.status()["discovery"]["status"], "idle");
+    assert!(runtime.discovery_worker.lock().unwrap().is_none());
+    runtime.shutdown();
+}

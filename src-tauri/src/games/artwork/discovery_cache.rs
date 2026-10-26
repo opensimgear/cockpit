@@ -6,6 +6,7 @@ use std::{
 };
 
 const MAX_ENTRIES: usize = 256;
+const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Key {
@@ -26,18 +27,36 @@ struct Cache {
 }
 
 impl Cache {
+    fn get(&mut self, key: &Key) -> Option<String> {
+        self.clock = self.clock.wrapping_add(1);
+        let used = self.clock;
+        let entry = self.entries.get_mut(key)?;
+        entry.used = used;
+        Some(entry.preview.clone())
+    }
+
     fn insert(&mut self, key: Key, preview: String) {
         self.clock = self.clock.wrapping_add(1);
         let used = self.clock;
         self.entries.retain(|existing, _| existing.path != key.path);
-        if self.entries.len() >= MAX_ENTRIES {
+        if preview.len() > MAX_BYTES {
+            return;
+        }
+        let mut bytes = self
+            .entries
+            .values()
+            .map(|entry| entry.preview.len())
+            .sum::<usize>();
+        while self.entries.len() >= MAX_ENTRIES || bytes + preview.len() > MAX_BYTES {
             if let Some(oldest) = self
                 .entries
                 .iter()
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(key, _)| key.clone())
             {
-                self.entries.remove(&oldest);
+                if let Some(removed) = self.entries.remove(&oldest) {
+                    bytes -= removed.preview.len();
+                }
             }
         }
         self.entries.insert(key, Entry { preview, used });
@@ -49,7 +68,19 @@ fn global() -> &'static Mutex<Cache> {
     CACHE.get_or_init(Default::default)
 }
 
-pub(super) fn get_or_prepare(
+/// Lookup only: callers on the status path must never prepare an image.
+pub(super) fn get(path: &Path, modified: SystemTime, len: u64) -> Option<String> {
+    global()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .get(&Key {
+            path: path.to_path_buf(),
+            modified,
+            len,
+        })
+}
+
+pub(in super::super) fn get_or_prepare(
     path: &Path,
     modified: SystemTime,
     len: u64,
@@ -61,14 +92,9 @@ pub(super) fn get_or_prepare(
         len,
     };
     // Check the cache under lock, then run preparation without it. Insertion is serialized.
-    let mut cache = global().lock().unwrap_or_else(|poison| poison.into_inner());
-    cache.clock = cache.clock.wrapping_add(1);
-    let used = cache.clock;
-    if let Some(entry) = cache.entries.get_mut(&key) {
-        entry.used = used;
-        return Ok(entry.preview.clone());
+    if let Some(preview) = get(path, modified, len) {
+        return Ok(preview);
     }
-    drop(cache);
 
     let preview = prepare()?;
     let mut cache = global().lock().unwrap_or_else(|poison| poison.into_inner());
@@ -98,6 +124,10 @@ mod tests {
         assert_eq!(make().unwrap(), "preview");
         assert_eq!(make().unwrap(), "preview");
         assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert_eq!(get(path, stamp(1), 12).as_deref(), Some("preview"));
+        assert!(get(path, stamp(2), 12).is_none());
+        assert!(get(path, stamp(1), 13).is_none());
+        assert_eq!(count.load(Ordering::SeqCst), 1);
 
         get_or_prepare(path, stamp(2), 12, || {
             count.fetch_add(1, Ordering::SeqCst);
@@ -105,6 +135,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 2);
+        assert_eq!(get(path, stamp(2), 12).as_deref(), Some("changed"));
+        assert!(get(path, stamp(1), 12).is_none());
     }
 
     #[test]
@@ -131,5 +163,32 @@ mod tests {
             cache.insert(key, "x".into());
         }
         assert_eq!(cache.entries.len(), MAX_ENTRIES);
+    }
+    #[test]
+    fn high_resolution_previews_have_a_total_byte_budget() {
+        let mut cache = Cache::default();
+        for index in 0..3 {
+            cache.insert(
+                Key {
+                    path: format!("large-{index}").into(),
+                    modified: stamp(1),
+                    len: 1,
+                },
+                "x".repeat(3 * 1024 * 1024),
+            );
+        }
+        assert_eq!(cache.entries.len(), 2);
+        assert!(
+            cache
+                .entries
+                .values()
+                .map(|entry| entry.preview.len())
+                .sum::<usize>()
+                <= MAX_BYTES
+        );
+        assert!(cache
+            .entries
+            .keys()
+            .all(|key| key.path != Path::new("large-0")));
     }
 }

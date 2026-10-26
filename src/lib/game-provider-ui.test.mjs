@@ -192,13 +192,15 @@ test('first discovery shows progress on the list instead of an empty-catalogue m
  assert.ok(!html.includes('No games found'));
 });
 
-test('first scan offers another pending unknown title as a match without a saved catalogue',async()=>{
+test('discovery keeps game names and executable choices without manual match controls',async()=>{
  const View=await component('./GameDiscoveryView.svelte'),discovery=discoveryFixture();
  discovery.entries=[{id:'steam',gameId:'steam-flight',name:'Flight Simulator',action:'add',library:'Steam',installPath:'C:/Steam/Flight',executableCandidates:[]},{id:'disk',gameId:'disk-flight',name:'FlightSim',action:'add',library:'Local paths',installPath:'D:/Flight',executableCandidates:[]}];
  const html=render(View,{props:{gameState:{catalogue:[],discovery},busy:false,request:noRequest,close:noRequest}}).body;
- const dropdown=html.match(/<select[^>]*aria-label="FlightSim game"[^>]*>([^]*?)<\/select>/)?.[1];
- assert.ok(dropdown);assert.ok(dropdown.includes('value="steam-flight"'));assert.ok(dropdown.includes('Flight Simulator'));
- assert.equal((dropdown.match(/value="disk-flight"/g)??[]).length,1,'current pending title appears only as New game');
+ assert.ok(!html.includes('Match and installation'));
+ assert.ok(!html.includes('aria-label="FlightSim game"'));
+ assert.ok(html.includes('aria-label="FlightSim executable"'));
+ assert.ok(html.includes('Flight Simulator'));
+
 });
 
 test('discovery groups compact rows inside library accordions with action checkboxes on the right',async()=>{

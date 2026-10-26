@@ -1,4 +1,22 @@
 use super::*;
+
+fn same_source(
+    left: &crate::game_installations::LibrarySource,
+    right: &crate::game_installations::LibrarySource,
+) -> bool {
+    left.client == right.client
+        && left.app_id == right.app_id
+        && path_key(&left.install_path) == path_key(&right.install_path)
+        && left.launcher.as_deref().map(path_key) == right.launcher.as_deref().map(path_key)
+}
+
+fn runtime_keys(paths: &[String]) -> BTreeSet<String> {
+    paths
+        .iter()
+        .map(|path| path_key(path))
+        .collect()
+}
+
 pub(super) fn reconcile(
     saved: &crate::game_installations::Settings,
     candidates: Vec<Candidate>,
@@ -10,7 +28,7 @@ pub(super) fn reconcile(
         .filter(|candidate| candidate.kind != "tool")
     {
         grouped
-            .entry(crate::game_discovery::normalized_path(
+            .entry(path_key(
                 &candidate.install_path,
             ))
             .or_default()
@@ -84,8 +102,8 @@ pub(super) fn reconcile(
                     .get(&game_id)
                     .and_then(|game| game.integration.as_ref())
                     == Some(key)
-            }) && sources.iter().all(|source| old.sources.contains(source))
-                && runtimes == old.executables
+            }) && sources.iter().all(|source| old.sources.iter().any(|previous| same_source(source, previous)))
+                && runtime_keys(&runtimes) == runtime_keys(&old.executables)
                 && old
                     .executable
                     .as_ref()

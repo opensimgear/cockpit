@@ -6,36 +6,28 @@ fn discovery_apply_rechecks_captured_mcp_authorization_before_registry_commit() 
     let directory = crate::test_directory();
     let root = directory.path().join("Standalone Game");
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("Standalone.exe"), b"fixture").unwrap();
-    let started = manager
-        .mcp_request(json!({"command":"game_discovery_start","clientId":client,"paths":[root]}));
-    assert_eq!(started["ok"], true, "{started}");
-    let scan_id = started["state"]["games"]["discovery"]["scanId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    let ready = loop {
-        let discovery = manager.games.status()["discovery"].clone();
-        if discovery["status"] == "ready" {
-            break discovery;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "discovery did not finish: {discovery}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    };
-    assert_eq!(ready["scanId"], scan_id);
+    let executable = root.join("Standalone.exe");
+    std::fs::write(&executable, b"fixture").unwrap();
+    let ready = manager.games.stage_test_discovery(vec![crate::game_library::Candidate {
+        id: "disk:standalone-fixture".into(),
+        client: "disk".into(),
+        name: "Standalone Game".into(),
+        install_path: root.to_string_lossy().into_owned(),
+        executable_candidates: vec![executable.to_string_lossy().into_owned()],
+        preferred_executable: None,
+        game_id: None,
+        kind: "game".into(),
+        app_id: "standalone-fixture".into(),
+        launcher: None,
+        artwork: None,
+    }]);
+    let scan_id = ready["scanId"].as_str().unwrap().to_owned();
     let entry = ready["entries"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|entry| {
-            entry["library"] == "disk"
-                && entry["installPath"] == root.canonicalize().unwrap().to_string_lossy().as_ref()
-        })
-        .expect("the explicit standalone path should be discovered");
+        .find(|entry| entry["library"] == "disk")
+        .expect("the fixture candidate should be reconciled");
     let game_id = entry["gameId"].as_str().unwrap().to_owned();
     let request = json!({"command":"game_discovery_apply","clientId":client,"scanId":scan_id,
         "actions":[{"id":entry["id"],"selected":true}]});

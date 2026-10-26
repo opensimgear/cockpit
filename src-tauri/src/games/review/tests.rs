@@ -1,5 +1,7 @@
 use super::*;
 use std::fs;
+#[path = "unchanged_runtime_tests.rs"]
+mod unchanged_runtime_tests;
 fn candidate(root: &Path, client: &str, app_id: &str, title: Option<&str>) -> Candidate {
     fs::create_dir_all(root).unwrap();
     fs::write(root.join("Game.exe"), b"fixture").unwrap();

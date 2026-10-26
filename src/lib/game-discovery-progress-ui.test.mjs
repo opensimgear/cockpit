@@ -57,3 +57,22 @@ test('completed reviews show the prepared rows without lingering scan progress',
   assert.ok(!output.match(/<input[^>]*aria-label="Add Example"[^>]*>/)?.[0].includes('disabled'));
   assert.match(output,/<article[^>]*data-entry-id="example"/);
 });
+
+test('ready reviews hide empty result groups and empty libraries',()=>{
+  const output=html('ready',[library('steam','complete'),{...library('disk','complete'),found:0}],[entry]);
+  assert.ok(output.includes('Steam New and changed installations'));
+  assert.ok(!output.includes('Removed installations'));
+  assert.ok(!output.includes('Other detected installations'));
+  assert.ok(!output.includes('data-library="disk"'));
+  assert.ok(!output.includes('Match and installation'));
+  const removed=html('ready',[library('steam','complete')],[{...entry,action:'remove'}]);
+  assert.ok(removed.includes('Steam Removed installations'));
+  assert.ok(!removed.includes('New and changed installations'));
+});
+
+test('empty libraries remain visible during scanning and when they have diagnostics',()=>{
+  const checking=html('scanning',[{...library('disk','scanning'),found:0}]);
+  assert.ok(checking.includes('data-library="disk"'));
+  const failed=html('ready',[{...library('disk','failed'),found:0,message:'Folder is inaccessible'}]);
+  assert.ok(failed.includes('Folder is inaccessible'));
+});

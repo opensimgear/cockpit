@@ -270,6 +270,28 @@ impl GamesRuntime {
         runtime
     }
     #[cfg(test)]
+    pub(crate) fn stage_test_discovery(
+        &self,
+        candidates: Vec<crate::game_library::Candidate>,
+    ) -> Value {
+        let saved = self
+            .inner
+            .settings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .saved
+            .clone();
+        let review = discovery_review::Review {
+            scan_id: uuid::Uuid::new_v4().to_string(),
+            status: "ready".into(),
+            entries: discovery_review::test_reconcile(&saved, candidates),
+            revision: saved.revision,
+            ..Default::default()
+        };
+        *self.inner.discovery.lock().unwrap_or_else(|p| p.into_inner()) = review.clone();
+        serde_json::to_value(review).expect("test discovery review serializes")
+    }
+    #[cfg(test)]
     pub(crate) fn register_test_game(&self,name:&str,path:&str)->String {
         use crate::game_installations::{GameRecord,Installation,LibrarySource};
         use std::collections::BTreeMap;

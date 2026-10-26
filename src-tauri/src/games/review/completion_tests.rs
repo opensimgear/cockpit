@@ -186,3 +186,30 @@ fn artwork_budget_does_not_overflow_or_hide_the_discovered_rows() {
     );
     assert_eq!(review.status, "ready");
 }
+
+#[test]
+fn unchanged_installation_artwork_is_prepared_once_without_creating_actions() {
+    let state = Mutex::new(state());
+    let path = PathBuf::from("C:/Art/unchanged.jpg");
+    let mut prepared = vec![];
+    assert!(prepare_artwork_with_sources(&state, "scan", &[path.clone(), path.clone()], || false, |source| {
+        prepared.push(source.to_owned());
+        Some("thumbnail".into())
+    }));
+    assert_eq!(prepared, vec![path]);
+    let review = state.lock().unwrap();
+    assert!(review.entries.is_empty());
+    assert_eq!(review.status, "ready");
+}
+
+#[test]
+fn extra_source_previews_share_the_artwork_budget() {
+    let state = Mutex::new(state());
+    let mut calls = 0;
+    assert!(prepare_artwork_with_sources(&state, "scan", &["first.jpg".into(), "second.jpg".into()], || false, |_| {
+        calls += 1;
+        Some("x".repeat(ARTWORK_BUDGET))
+    }));
+    assert_eq!(calls, 1);
+    assert_eq!(state.lock().unwrap().status, "ready");
+}

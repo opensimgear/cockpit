@@ -7,6 +7,19 @@ mod reconcile;
 mod worker;
 pub(super) use worker::start;
 
+#[cfg(test)]
+pub(super) fn test_reconcile(
+    saved: &crate::game_installations::Settings,
+    candidates: Vec<Candidate>,
+) -> Vec<Entry> {
+    let successful = crate::game_library::CLIENTS
+        .iter()
+        .map(|(id, _)| (*id).to_owned())
+        .chain(std::iter::once("disk".to_owned()))
+        .collect();
+    reconcile::reconcile(saved, candidates, &successful)
+}
+
 #[derive(Clone,Debug,Serialize)]
 #[serde(rename_all="camelCase")]
 pub(super) struct Library {
@@ -41,7 +54,8 @@ pub(super) fn key(prefix:&str,value:&str)->String {
 pub(super) fn absent(path:&str)->bool {
     std::fs::metadata(path).is_err_and(|error|error.kind()==std::io::ErrorKind::NotFound)
 }
-pub(super) fn same_path(left:&str,right:&str)->bool {crate::game_discovery::normalized_path(left)==crate::game_discovery::normalized_path(right)}
+fn path_key(path:&str)->String {crate::game_discovery::normalized_path(path).trim_end_matches('\\').to_owned()}
+pub(super) fn same_path(left:&str,right:&str)->bool {path_key(left)==path_key(right)}
 
 pub(super) fn apply(saved:&crate::game_installations::Settings,review:&Review,request:&Value)->Result<crate::game_installations::Settings,String> {
     if review.status!="ready" || request["scanId"]!=review.scan_id || saved.revision!=review.revision {

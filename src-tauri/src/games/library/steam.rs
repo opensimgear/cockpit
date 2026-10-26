@@ -2,32 +2,72 @@ use super::*;
 
 fn steam_art(root: &Path, app_id: u32) -> Option<PathBuf> {
     let cache = root.join("appcache/librarycache");
-    for relative in [
+    let mut candidates = [
         format!("{app_id}_library_hero.jpg"),
         format!("{app_id}_header.jpg"),
+        format!("{app_id}_header_2x.jpg"),
         format!("{app_id}_library_600x900.jpg"),
-        format!("{app_id}/library_hero.jpg"),
-        format!("{app_id}/header.jpg"),
-    ] {
-        let path = cache.join(relative);
-        if regular(&path, false) {
-            return Some(path);
+    ]
+    .into_iter()
+    .map(|relative| cache.join(relative))
+    .collect::<Vec<_>>();
+    // Current Steam uses app-id/content-hash/library_header.jpg. Stay inside
+    // that app's cache and inspect only one bounded level of hash directories.
+    let app = cache.join(app_id.to_string());
+    if regular(&app, true) {
+        for path in sorted_children(&app).into_iter().take(128) {
+            if regular(&path, true)
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        matches!(name.len(), 32 | 40 | 64)
+                            && name.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+            {
+                candidates.extend(sorted_children(&path).into_iter().take(32));
+            } else {
+                candidates.push(path);
+            }
         }
     }
-    // Recent Steam caches place content-hashed artwork inside an app-id folder.
-    sorted_children(&cache.join(app_id.to_string()))
+    candidates
         .into_iter()
-        .find(|path| {
-            regular(path, false)
-                && path.file_name().is_some_and(|name| {
-                    let name = name.to_string_lossy().to_lowercase();
-                    (name.contains("hero") || name.contains("header"))
-                        && matches!(
-                            path.extension().and_then(|ext| ext.to_str()),
-                            Some("jpg" | "png" | "webp")
-                        )
-                })
-        })
+        .filter_map(|path| steam_art_rank(&path).map(|rank| (rank, path)))
+        .max_by_key(|(rank, _)| *rank)
+        .map(|(_, path)| path)
+}
+
+fn steam_art_rank(path: &Path) -> Option<(u64, bool)> {
+    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    if !regular(path, false)
+        || name.contains("blur")
+        || !(name.contains("header")
+            || name.contains("hero")
+            || name.contains("capsule")
+            || name.contains("600x900"))
+        || !matches!(path.extension()?.to_str()?, "jpg" | "png" | "webp")
+        || fs::metadata(path).ok()?.len() > 16 * 1024 * 1024
+    {
+        return None;
+    }
+    let (width, height) = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()?;
+    if width == 0 || height == 0 || width > 8192 || height > 8192 {
+        return None;
+    }
+    // Compare pixels remaining after our 960px preview and 16:9 card crop.
+    // This lets a 920px header beat a panoramic hero or a tall cover when sharper.
+    let edge = width.max(height).max(960) as u64;
+    let crop_width = (width as u64 * 960 / edge).min(height as u64 * 960 * 16 / edge / 9);
+    Some((
+        crop_width,
+        name.contains("header") || (name.contains("capsule") && width > height),
+    ))
 }
 pub(super) fn steam_candidates(roots: &[PathBuf], scan: &mut Scan) {
     let mut seen = BTreeSet::new();
@@ -123,5 +163,48 @@ pub(super) fn steam_candidates(roots: &[PathBuf], scan: &mut Scan) {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod artwork_tests {
+    use super::*;
+    #[test]
+    fn best_actual_card_resolution_wins_across_flat_and_hashed_cache_layouts() {
+        let temp = crate::test_directory();
+        let cache = temp.path().join("appcache/librarycache");
+        fs::create_dir_all(&cache).unwrap();
+        let save = |relative: &str, width, height| {
+            let path = cache.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            image::RgbImage::new(width, height).save(&path).unwrap();
+            path
+        };
+        save("42_library_hero.jpg", 1920, 620);
+        save("42_library_600x900.jpg", 300, 450);
+        save("42/header.jpg", 460, 215);
+        let header = save(
+            "42/abcdef0123456789abcdef0123456789abcdef01/library_header.jpg",
+            920,
+            430,
+        );
+        save(
+            "42/abcdef0123456789abcdef0123456789abcdef01/library_hero_blur.jpg",
+            1920,
+            1080,
+        );
+        save(
+            "42/abcdef0123456789abcdef0123456789abcdef01/logo.png",
+            1920,
+            1080,
+        );
+        save("43/header.jpg", 4000, 2000);
+        assert_eq!(steam_art(temp.path(), 42), Some(header.clone()));
+        fs::remove_file(header).unwrap();
+        assert_eq!(
+            steam_art(temp.path(), 42),
+            Some(cache.join("42_library_hero.jpg"))
+        );
+        assert!(steam_art(temp.path(), 99).is_none());
     }
 }

@@ -16,6 +16,8 @@ const THUMBNAIL_LIMIT: usize = 12 * 1024;
 const MAX_ASSETS: usize = 1024;
 
 mod model;
+mod installation_cache;
+pub(crate) use installation_cache::{cache_installation_preview, installation_preview};
 use model::*;
 pub(crate) use model::{Background,Crop};
 fn redirected(metadata: &fs::Metadata) -> bool {
@@ -152,7 +154,7 @@ impl Drop for Staging {
     }
 }
 mod sources;
-pub(crate) use sources::{discovery_preview, preview};
+pub(crate) use sources::{cached_discovery_preview, discovery_preview, preview};
 use sources::*;
 
 pub(crate) fn import_preview(root: &Path, data: &str, crop: Crop) -> Result<Background, String> {
@@ -267,6 +269,12 @@ pub(crate) fn decorate(root: &Path, catalogue: &mut [Value]) {
                 Err(_) => {
                     game.as_object_mut().map(|object| object.remove(key));
                 }
+            }
+        }
+        if game["background"]["image"].as_str().is_none() {
+            if let Some(image) = game["installPath"].as_str()
+                .and_then(|installation| installation_preview(root, installation)) {
+                game["defaultBackground"] = serde_json::json!({"image":image,"positionX":50,"positionY":50});
             }
         }
     }

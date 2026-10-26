@@ -1,6 +1,16 @@
 use super::*;
 #[path="completion.rs"] mod completion;
 pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
+    start_with(runtime,request,crate::game_library::installed_clients(),|client,roots| {
+        crate::game_library::scan_client(client,roots)
+    })
+}
+fn start_with(
+    runtime:&GamesRuntime,
+    request:&Value,
+    clients:Vec<(&'static str,&'static str)>,
+    scan_client:impl Fn(&str,&[PathBuf])->crate::game_library::Scan+Send+'static,
+)->Result<(),String> {
     let _admission=runtime.admission.try_lock().map_err(|_|"Game metadata is busy. Retry discovery after the current update.")?;
     if !known(request,&["command","clientId","paths"]) {return Err("Unknown discovery start field.".into());}
     runtime.inner.guard_installation_metadata()?;
@@ -11,7 +21,6 @@ pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
     let saved=runtime.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).saved.clone();
     let mut review=runtime.inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
     if review.status=="scanning" {return Err("Game discovery is already running.".into());}
-    let clients=crate::game_library::installed_clients();
     let scan_id=uuid::Uuid::new_v4().to_string();
     *review=Review{scan_id:scan_id.clone(),status:"scanning".into(),libraries:clients.iter().map(|(id,name)|Library{id:(*id).into(),name:(*name).into(),status:"queued".into(),found:0,message:None}).collect(),entries:vec![],diagnostics:vec![],first_start:!saved.discovery_initialized,revision:saved.revision,paths:paths.clone()};
     drop(review);
@@ -28,7 +37,7 @@ pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
                     if review.scan_id!=scan_id {return;}
                     if let Some(library)=review.libraries.iter_mut().find(|library|library.id==*client) {library.status="scanning".into();}
                 }
-                let scan=crate::game_library::scan_client(client,&roots);
+                let scan=scan_client(client,&roots);
                 let failed=scan.diagnostics.iter().any(|message|message.contains("could not be read")||message.contains("inaccessible")||message.contains("malformed")||message.contains("not installed"));
                 let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
                 if let Some(library)=review.libraries.iter_mut().find(|library|library.id==*client) {
@@ -42,12 +51,25 @@ pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
             if successful.contains("disk") {
                 for (client,_) in crate::game_library::CLIENTS {if !clients.iter().any(|(id,_)|id==client) {successful.insert((*client).into());}}
             }
+            let mut artwork=std::collections::BTreeMap::new();
+            for candidate in &candidates {
+                if let Some(path)=&candidate.artwork {
+                    artwork.entry(path_key(&candidate.install_path)).or_insert_with(||(candidate.install_path.clone(),path.clone()));
+                }
+            }
+            let extra_sources=artwork.values().map(|(_,path)|path.clone()).collect::<Vec<_>>();
             let mut entries=super::reconcile::reconcile(&saved,candidates,&successful);
             for entry in &mut entries {
                 if !clients.iter().any(|(id,_)|*id==entry.library) {entry.library="disk".into();}
             }
             if !completion::publish_entries(&inner.discovery,&scan_id,entries) {return;}
-            completion::prepare_artwork(&inner.discovery,&scan_id,||inner.closed.load(Ordering::Acquire),|path|crate::game_artwork::discovery_preview(path).ok());
+            completion::prepare_artwork_with_sources(&inner.discovery,&scan_id,&extra_sources,||inner.closed.load(Ordering::Acquire),|path| {
+                let image=crate::game_artwork::discovery_preview(path).ok()?;
+                for (root,_) in artwork.values().filter(|(_,source)|source==path) {
+                    let _=crate::game_artwork::cache_installation_preview(inner.installations.root(),root,&image);
+                }
+                Some(image)
+            });
         }));
         if outcome.is_err() {
             let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());review.status="failed".into();review.diagnostics.push("Game discovery failed. Rescan to try again.".into());
@@ -56,3 +78,7 @@ pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
     if let Some(previous)=runtime.discovery_worker.lock().unwrap_or_else(|p|p.into_inner()).replace(worker) {let _=previous.join();}
     Ok(())
 }
+
+#[cfg(test)]
+#[path="worker_tests.rs"]
+mod tests;

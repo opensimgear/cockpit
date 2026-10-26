@@ -1,6 +1,9 @@
 use super::*;
 #[path = "discovery_cache.rs"]
-mod discovery_cache;
+pub(super) mod discovery_cache;
+
+pub(super) const DISCOVERY_PREVIEW_LIMIT: usize = 128 * 1024;
+pub(super) const DISCOVERY_PREVIEW_EDGE: u32 = 960;
 
 pub(super) fn local_bytes(path: &str) -> Result<Vec<u8>, String> {
     let source = Path::new(path);
@@ -101,7 +104,16 @@ pub(crate) fn preview(path: Option<&str>, url: Option<&str>) -> Result<String, S
     ))
 }
 
-/// Small transient thumbnails keep scan snapshots bounded without publishing assets.
+/// Returns only an already-prepared image for the source's current file stamp.
+pub(crate) fn cached_discovery_preview(path: &Path) -> Option<String> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    discovery_cache::get(path, metadata.modified().ok()?, metadata.len())
+}
+
+/// Bounded transient previews retain enough pixels for cards on high DPI displays.
 pub(crate) fn discovery_preview(path: &Path) -> Result<String, String> {
     if let Ok(metadata) = fs::metadata(path) {
         if let Ok(modified) = metadata.modified() {
@@ -114,37 +126,57 @@ pub(crate) fn discovery_preview(path: &Path) -> Result<String, String> {
 }
 
 fn prepare_discovery_preview(path: &Path) -> Result<String, String> {
-    let image = decoded(&local_bytes(path.to_str().ok_or("Invalid artwork path.")?)?)?;
-    for size in [384, 320, 256, 192, 128] {
-        let mut bytes = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 85)
-            .encode_image(&image.thumbnail(size, size).to_rgb8())
-            .map_err(|error| error.to_string())?;
-        if bytes.len() <= THUMBNAIL_LIMIT {
-            return Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes)));
+    discovery_bytes(&local_bytes(path.to_str().ok_or("Invalid artwork path.")?)?)
+}
+
+pub(super) fn discovery_bytes(source: &[u8]) -> Result<String, String> {
+    let image = decoded(source)?;
+    for size in [DISCOVERY_PREVIEW_EDGE, 800, 640, 480, 320] {
+        let scaled = if image.width() > size || image.height() > size {
+            image.thumbnail(size, size).to_rgb8()
+        } else {
+            image.to_rgb8()
+        };
+        // Preserve display pixels before reducing dimensions for detailed artwork.
+        for quality in [90, 82] {
+            let mut bytes = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, quality)
+                .encode_image(&scaled)
+                .map_err(|error| error.to_string())?;
+            if bytes.len() <= DISCOVERY_PREVIEW_LIMIT {
+                return Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes)));
+            }
         }
     }
     Err("Discovery artwork exceeds the thumbnail budget.".into())
 }
 
 pub(super) fn preview_bytes(data: &str) -> Result<Vec<u8>, String> {
+    bounded_preview_bytes(data, THUMBNAIL_LIMIT, 640)
+}
+
+pub(super) fn discovery_preview_bytes(data: &str) -> Result<Vec<u8>, String> {
+    bounded_preview_bytes(data, DISCOVERY_PREVIEW_LIMIT, DISCOVERY_PREVIEW_EDGE)
+}
+
+fn bounded_preview_bytes(data: &str, byte_limit: usize, edge: u32) -> Result<Vec<u8>, String> {
     let encoded = data
         .strip_prefix("data:image/jpeg;base64,")
         .ok_or("The background preview is invalid. Load the image again.")?;
-    if encoded.len() > THUMBNAIL_LIMIT * 4 / 3 + 4 {
+    if encoded.len() > byte_limit * 4 / 3 + 4 {
         return Err("The background preview exceeds its size bound.".into());
     }
     let bytes = STANDARD
         .decode(encoded)
         .map_err(|_| "The background preview is invalid.")?;
-    if bytes.len() > THUMBNAIL_LIMIT {
+    if bytes.len() > byte_limit {
         return Err("The background preview exceeds its size bound.".into());
     }
     let (width, height) =
         image::ImageReader::with_format(Cursor::new(&bytes), image::ImageFormat::Jpeg)
             .into_dimensions()
             .map_err(|_| "The background preview is not a JPEG image.")?;
-    if width == 0 || height == 0 || width > 640 || height > 640 {
+    if width == 0 || height == 0 || width > edge || height > edge {
         return Err("The background preview exceeds its dimension bound.".into());
     }
     Ok(bytes)

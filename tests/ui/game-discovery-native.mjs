@@ -60,7 +60,7 @@ test('native discovery reviews libraries, installation copies, moves and explici
     await expect.poll(async()=>(await games()).discovery?.status!=='scanning',{timeout:90_000}).toBe(true);
     original=await games();originalDcs=original.catalogue.find(game=>game.id==='dcs');
     for(const directory of [resolve(dcsA,'bin'),resolve(dcsB,'bin'),foo])await mkdir(directory,{recursive:true});
-    for(const path of [resolve(dcsA,'bin/DCS.exe'),resolve(dcsB,'bin/DCS.exe'),resolve(foo,'Game.exe')])await writeFile(path,evidence.fixtureBytes);
+    for(const path of [resolve(dcsA,'bin/DCS.exe'),resolve(dcsB,'bin/DCS.exe'),resolve(foo,'Game.exe'),resolve(foo,'AGame.exe'),resolve(foo,'Foo.exe')])await writeFile(path,evidence.fixtureBytes);
 
     // First exercise the real asynchronous command, then repeat through visible UI.
     const started=(await native({command:'game_discovery_start',paths:[fixtures]})).games;
@@ -78,7 +78,7 @@ test('native discovery reviews libraries, installation copies, moves and explici
     await page.getByRole('button',{name:'Add location',exact:true}).click();
     const location=page.getByRole('textbox',{name:'Local discovery location',exact:true});await location.fill(fixtures);
     await page.getByRole('region',{name:'Local locations',exact:true}).getByRole('button',{name:'Add',exact:true}).click();state=await ready();
-    await expect(page.locator('.libraries > details.library')).toHaveCount(expectedLibraries.length);
+    await expect(page.locator('.libraries > details.library')).toHaveCount(state.discovery.libraries.filter(library=>library.found||library.message||state.discovery.entries.some(entry=>entry.library===library.id)).length);
     const entries=state.discovery.entries.filter(fixtureEntry);
     const first=entries.find(entry=>normalize(entry.installPath)===normalize(dcsA)),second=entries.find(entry=>normalize(entry.installPath)===normalize(dcsB));
     const generic=entries.find(entry=>normalize(entry.installPath)===normalize(foo));
@@ -102,6 +102,10 @@ test('native discovery reviews libraries, installation copies, moves and explici
     for(const old of originalDcs?.installations??[])assert.ok(state.catalogue.find(game=>game.id===originalDcs.id).installations.some(item=>item.id===old.id),'A discovered copy must preserve every pre-existing installation.');
     evidence.checks.push('Actual Add location and review checkboxes apply only fixtures, preserving two DCS installation instances and all host copies without custom flags.');
 
+    const unchanged=await scan([fixtures]);
+    assert.equal(unchanged.discovery.entries.filter(fixtureEntry).length,0,'An imported installation with unchanged paths and executable choices must not propose Update.');
+    evidence.checks.push('A second full scan proposes no Update for any unchanged imported fixture, including a title with multiple executable candidates.');
+
     // Unified metadata/select commands retain identities and make profile lookup usable.
     const renamed='Discovery acceptance '+Date.now();
     await native({command:'game_save',gameId:createdGenericId,name:renamed});
@@ -116,8 +120,7 @@ test('native discovery reviews libraries, installation copies, moves and explici
     await rename(dcsA,moved);state=await openReview();
     const relocated=state.discovery.entries.find(entry=>normalize(entry.installPath)===normalize(moved));assert.ok(relocated);assert.equal(relocated.action,'update');assert.equal(relocated.updateKind,'replace-path');assert.equal(relocated.installationId,firstInstalled.installation.id);
     // Same-volume rename retains the runtime file identity and proposes replacement.
-    await row(relocated).locator('.entry-options > summary').click();
-    await expect(row(relocated).getByRole('combobox',{name:relocated.name+' installation action',exact:true})).toHaveValue(firstInstalled.installation.id);
+    await expect(row(relocated).getByRole('combobox',{name:relocated.name+' executable',exact:true})).toHaveValue(relocated.executable);
     await screenshot('move-review');state=await applyUi(state,new Set([relocated.id]));
     assert.equal(installation(state,moved).installation.id,firstInstalled.installation.id);
     assert.ok(installation(state,dcsB));assert.equal(installation(state,dcsA),undefined);

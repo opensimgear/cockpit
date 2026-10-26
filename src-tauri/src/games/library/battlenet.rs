@@ -10,6 +10,9 @@ use std::{
 const MAX_DATABASE_BYTES: u64 = 1024 * 1024;
 const MAX_PRODUCTS: usize = 512;
 
+#[path = "battlenet_artwork.rs"]
+mod artwork;
+
 #[derive(Default)]
 struct Product {
     uid: String,
@@ -26,7 +29,9 @@ pub(super) fn scan(scan: &mut Scan) {
         .map(|root| root.join("Battle.net/Agent/product.db"))
         .collect::<Vec<_>>();
     paths.push(PathBuf::from(r"C:\ProgramData\Battle.net\Agent\product.db"));
+    let first = scan.candidates.len();
     scan_paths(&paths, scan);
+    artwork::assign(&mut scan.candidates[first..], &artwork::cache_roots());
 }
 
 /// Scan product database files. Kept path-based so tests can exercise real

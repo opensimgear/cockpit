@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from native_coverage_sources import measure_module, source_stamp
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULES = [f"games/library/{name}.rs" for name in ["mod", "steam", "epic", "battlenet", "registry", "xbox", "disk", "platforms", "executable_ranking", "artwork"]] + [
+MODULES = [f"games/library/{name}.rs" for name in ["mod", "steam", "epic", "battlenet", "battlenet_artwork", "registry", "xbox", "disk", "platforms", "executable_ranking", "artwork"]] + [
     "games/review/mod.rs", "games/review/reconcile.rs", "games/review/worker.rs", "games/review/completion.rs",
     "games/storage/installations.rs", "game_metadata_api.rs", "game_discovery.rs", "games.rs",
     "game_context_runtime.rs", "games/integration/mod.rs", "games/integration/requests.rs",

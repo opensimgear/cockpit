@@ -60,9 +60,9 @@ test('review rows show artwork, name and executable choice, then the action chec
  assert.ok(!html.includes('Install root hidden'));assert.ok(!html.includes('Previous root hidden'));
  assert.ok(!rows[1][2].includes('<img'));assert.ok(rows[1][2].includes('No executable found'));
  assert.ok(!rows[2][2].includes('<select'));assert.match(rows[2][2],/aria-label="Remove Gone title"/);assert.ok(!/<input[^>]*checked/.test(rows[2][2]));
- assert.ok(html.includes('Match and installation'));assert.match(html,/<details[^>]*data-library="steam"[^>]*open/);
+ assert.ok(!html.includes('Match and installation'));assert.match(html,/<details[^>]*data-library="steam"[^>]*open/);
  assert.match(html,/<input[^>]*aria-label="Select all games in Steam"[^>]*>/);
- const source=await readFile(new URL('./GameDiscoveryView.svelte',import.meta.url),'utf8');assert.ok(source.includes('grid-template-columns:144px minmax(0,1fr) auto'));assert.ok(source.includes('align-items:center;gap:14px'));assert.ok(source.includes('min-height:80px;max-height:112px'));assert.ok(source.includes('object-position:center'));assert.ok(!source.includes('padding-top:3px'));assert.ok(source.includes('failedImages={...failedImages,[image]:true}'));assert.ok(source.includes('openLibraries[library.id]??'));assert.ok(!source.includes('gameDisplayPath(entry.installPath)'));
+ const source=await readFile(new URL('./GameDiscoveryView.svelte',import.meta.url),'utf8');assert.ok(source.includes('grid-template-columns:144px minmax(0,1fr) auto'));assert.ok(source.includes('align-items:center;gap:14px'));assert.ok(source.includes('font-size:15px'));assert.ok(source.includes('.entry-details{min-width:0;align-self:stretch}'));assert.ok(source.includes('min-height:80px;max-height:112px'));assert.ok(source.includes('object-position:center'));assert.ok(!source.includes('padding-top:3px'));assert.ok(source.includes('failedImages={...failedImages,[image]:true}'));assert.ok(source.includes('openLibraries[library.id]??'));assert.ok(!source.includes('gameDisplayPath(entry.installPath)'));
 });
 test('local discovery accepts absolute folders and executables and rejects unsafe paths',()=>{
  for(const path of ['C:/Games','/home/pilot/games',String.raw`\\server\games`])assert.equal(discoveryPathError(path),'');
