@@ -16,7 +16,7 @@
   import GameCategoriesDialog from './GameCategoriesDialog.svelte';
   import {filterGamesByCategory,gameMetadataError} from './games';
   import {cropImageStyle} from './game-background-crop';
-  import {gameHasIntegration,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameExecutableName,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,type Game,type GameId,type GameRequest,type GamesState} from './games';
+  import {gameHasIntegration,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,type Game,type GameId,type GameRequest,type GamesState} from './games';
   let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),discoveryView=$bindable(false),onNavigate}: {
     status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
     profiles?:DeepReadonly<ProfileSummary[]>;
@@ -35,7 +35,6 @@
   const games=$derived(filterGamesByCategory(gameState.catalogue,categoryFilter));
   $effect(()=>{if(categoryFilter&&categoryFilter!=='uncategorized'&&!categories[categoryFilter])categoryFilter='';});
   const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
-  const selectedArt=$derived(selected?resolveGameArtwork(selected):null);
   const selectedInstallationPath=$derived(selected?.installations?.find(installation=>installation.id===selected.selectedInstallationId)?.installPath??selected?.installPath);
   const selectedExecutablePath=$derived(gameExecutableDisplayPath(selected?.executable??selected?.manualPath,selectedInstallationPath));
   const selectedLiveLabel=$derived(selected?gameIntegrationLiveLabel(selected):'');
@@ -100,8 +99,8 @@
   {#if discoveryView}
     <GameDiscoveryView {gameState} busy={locked} request={send} close={()=>discoveryView=false}/>
   {:else if selected}
-    <PageHeader title={selected.name} eyebrow={selected.categoryId?categories[selected.categoryId]:selectedArt!.category==='Game'?'Game':`${selectedArt!.category} simulation`} subtitle={`${selected.installed ? 'Installation found' : 'Installation not found'} · ${selectedArt!.telemetryLabel}`} onback={allGames} backLabel="All games">
-      {#snippet leading()}<div class={['game-detail-mark', { racing: selectedArt!.category !== 'Flight' }]}><Icon name={selectedArt!.category === 'Flight' ? 'command' : selectedArt!.category === 'Game' ? 'gamepad' : 'wheel'} size={32} /></div>{/snippet}
+    <PageHeader title={selected.name} eyebrow={selected.categoryId?categories[selected.categoryId]:undefined} subtitle={selected.installed?'Installation found':'Installation not found'} onback={allGames} backLabel="All games">
+      {#snippet leading()}<div class="game-detail-mark"><Icon name="gamepad" size={32}/></div>{/snippet}
       {#snippet titleContent()}<input class="game-name-input" aria-label="Game name" title="Rename game" maxlength="80" value={initializedGameId===selected.id?nameDraft:selected.name} disabled={locked} oninput={event=>nameDraft=event.currentTarget.value} onblur={()=>void saveName(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){nameDraft=selected.name;nameBase=selected.name;notice='';event.currentTarget.value=selected.name;event.currentTarget.blur();}}}/>{/snippet}
       {#snippet actions()}{#if returnToEditor}<button class="text-button" onclick={returnToEditor}><Icon name="back" size={14}/>{returnLabel ?? 'Return to profile'}</button>{/if}<div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}>
         {#snippet actions()}<button class="secondary-button destructive-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/snippet}
@@ -118,7 +117,7 @@
           {#if selected.installations?.length}
             <label class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><select aria-label="Detected installations" value={selected.selectedInstallationId??''} onchange={event=>void send({command:'game_installation_select',gameId:selected.id,installationId:event.currentTarget.value})} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.id)}<option value={install.id}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
           {/if}
-          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameExecutableDisplayPath(executablePath,selectedInstallationPath):selectedExecutablePath} oninput={event=>executablePath=event.currentTarget.value} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){executablePath=selected.executable??selected.manualPath??'';notice='';event.currentTarget.value=gameExecutableDisplayPath(executablePath,selectedInstallationPath);event.currentTarget.blur();}}} disabled={locked} placeholder={`Choose ${gameExecutableName(selected.id)}…`}/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button>{#if selected.source}<span class="installation-source-badge" title={selected.source} aria-label={`Installation source: ${selected.source}`}>{selected.source}</span>{/if}</div></div>
+          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameExecutableDisplayPath(executablePath,selectedInstallationPath):selectedExecutablePath} oninput={event=>executablePath=event.currentTarget.value} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){executablePath=selected.executable??selected.manualPath??'';notice='';event.currentTarget.value=gameExecutableDisplayPath(executablePath,selectedInstallationPath);event.currentTarget.blur();}}} disabled={locked} placeholder="Choose an executable…"/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button>{#if selected.source}<span class="installation-source-badge" title={selected.source} aria-label={`Installation source: ${selected.source}`}>{selected.source}</span>{/if}</div></div>
           {#if !selected.installed&&selected.manualPath}<p class="field-help">The saved executable could not be found. Choose its new location.</p>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         <div class="category-panel"><label class="editor-label">Category<select aria-label="Game category" disabled={locked} value={selected.categoryId??''} onchange={event=>void saveCategory(selected,event.currentTarget)}><option value="">Uncategorized</option>{#each Object.entries(categories) as [id,title] (id)}<option value={id}>{title}</option>{/each}</select></label><button class="secondary-button" disabled={locked} onclick={()=>categoriesDialog=true}><Icon name="settings" size={14}/>Manage categories</button></div>
@@ -190,11 +189,10 @@
         {@const art=resolveGameArtwork(game)}
         <article class={['game-tile', { unavailable: !game.installed }]}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
-            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{/if}<div class="art-shade"></div>{#if game.categoryId}<span class="art-category">{categories[game.categoryId]}</span>{:else}<span class="art-category">{art.category}</span>{/if}
+            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{:else}<span class="game-art-placeholder"><Icon name="gamepad" size={42}/></span>{/if}<div class="art-shade"></div>{#if game.categoryId&&categories[game.categoryId]}<span class="art-category">{categories[game.categoryId]}</span>{/if}
             </div>
             <div class="tile-copy">
               <div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div>
-              <p>{art.description}</p>
               <div class="tile-footer">
                 <span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span>
                 <span class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></span>
@@ -247,6 +245,7 @@
   .game-tile:hover, .game-tile:focus-within { border-color: var(--accent); }
   .tile-details { display: block; width: 100%; padding: 0; text-align: left; color: var(--text); background: transparent; }
   .tile-details:focus-visible { outline-offset: -4px; }
+  .game-art-placeholder{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted)}
   .game-art { aspect-ratio: 16 / 9; background: linear-gradient(135deg,var(--accent-bg),var(--surface-raised)); position: relative; overflow: hidden; }
   .game-art-image { width:100%;height:100%;object-fit:cover;display:block; }
   .art-shade { position:absolute;inset:0;background:linear-gradient(180deg,#07101940 0%,transparent 40%); }
@@ -255,7 +254,6 @@
   .tile-title { display:flex;justify-content:space-between;align-items:center;gap:12px; }
   .tile-title h2 { font-size:15px;font-weight:600;letter-spacing:-.2px;line-height:1.45; }
   .tile-title :global(svg) { color:var(--muted);flex-shrink:0; }
-  .tile-copy p { color: var(--muted); font-size: 10px; margin-top: 9px; line-height: 1.5; }
   .tile-footer { border-top: 1px solid var(--faint-line); margin-top: 19px; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 9px; gap: 12px; }
   .tile-status { display: flex; align-items: center; gap: 6px; color: var(--accent); flex-shrink: 0; white-space: nowrap; }
   .tile-status span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
@@ -282,7 +280,6 @@
 
 
   .game-detail-mark {color:#a1c5d7;width:65px;height:65px;flex-shrink:0;border-radius:12px;border:1px solid var(--line);background:var(--surface-raised);display:grid;place-items:center;}
-  .game-detail-mark.racing { color: #c8b292; }
 
 
 

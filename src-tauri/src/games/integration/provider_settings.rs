@@ -262,19 +262,8 @@ impl GameIntegrationSetup {
         }
         let id = game["id"]
             .as_str()
-            .filter(|id| {
-                matches!(
-                    *id,
-                    "dcs"
-                        | "x-plane-11"
-                        | "x-plane-12"
-                        | "assetto-corsa-rally"
-                        | "assetto-corsa"
-                        | "assetto-corsa-competizione"
-                        | "assetto-corsa-evo"
-                )
-            })
-            .ok_or("Choose a supported game.")?;
+            .filter(|id| crate::game_discovery::integration_provider(id).is_some())
+            .ok_or("Choose an available telemetry integration.")?;
         if request.as_object().is_none_or(|object| {
             object.keys().any(|key| {
                 ![

@@ -14,14 +14,14 @@ fn launch_request(game: &Value) -> Result<LaunchRequest, String> {
             .ok_or("Choose a game executable before launching.")?,
     )?;
     let key = integration_key(game);
-    if let Some(spec) = key.and_then(|key| supported(key).ok()) {
+    if let Some(spec) = key.and_then(|key| integration_definition(key).ok()) {
         validated_executable(spec, &executable)?;
     }
     if let Some(app_id) = game["steamAppId"]
         .as_u64()
         .filter(|id| *id > 0 && *id <= u32::MAX as u64)
     {
-        if let Some(spec) = key.and_then(|key| supported(key).ok()) {
+        if let Some(spec) = key.and_then(|key| integration_definition(key).ok()) {
             if app_id != spec.steam_id as u64 || spec.provider == "x-plane" {
                 return Err(
                     "Steam launch route does not match the selected integration installation."
@@ -108,7 +108,7 @@ fn find_game_process(
     }
     // Steam starts AC's persistent menu before a user chooses a car and track.
     // It counts as a launched game, but never as the shared-memory producer.
-    let spec = supported("assetto-corsa")?;
+    let spec = integration_definition("assetto-corsa")?;
     let selected = game["executable"]
         .as_str()
         .ok_or("Choose an Assetto Corsa installation.")?;

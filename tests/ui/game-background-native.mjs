@@ -11,7 +11,7 @@ test('disk and URL backgrounds use a bounded aspect-preserving crop popup in the
   const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
   const page=browser.contexts().flatMap(context=>context.pages()).find(page=>page.url().includes(process.env.OSG_NATIVE_APP_URL??'127.0.0.1:1421'));assert.ok(page);page.setDefaultTimeout(15_000);
   const artifacts=resolve('.research/game-background-native');await mkdir(artifacts,{recursive:true});
-  const portrait=resolve(artifacts,'portrait.png'),jpeg=await readFile('public/game-art/dcs.jpg'),requests=[];
+  const portrait=resolve(artifacts,'portrait.png'),jpeg=await readFile('tests/fixtures/artwork/landscape.jpg'),requests=[];
   const server=createServer((req,res)=>{requests.push(req.url);if(req.url==='/redirect'){res.writeHead(302,{Location:'/image.jpg'});res.end();}else if(req.url==='/image.jpg'){res.writeHead(200,{'Content-Type':'image/jpeg'});res.end(jpeg);}else{res.writeHead(200,{'Content-Type':'text/plain'});res.end('not an image');}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const url=`http://127.0.0.1:${server.address().port}`;
   const errors=[],evidence={actualNativeCockpit:true,hardwareValidation:false,checks:[]};const pageError=error=>errors.push(error.message);page.on('pageerror',pageError);

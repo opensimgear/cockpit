@@ -8,11 +8,11 @@ const isGame = isGameId;
 
 /** Local navigation data only. The origin stays owned by its editor/store. */
 export function visitGameSettings<T>(gameId: GameId, origin: T): GameSettingsVisit<T> {
-  if (!isGame(gameId)) throw new Error('Choose a supported game.');
+  if (!isGame(gameId)) throw new Error('Choose a valid game ID.');
   return { gameId, origin };
 }
 export function gameSettingsHref(gameId: GameId): string {
-  if (!isGame(gameId)) throw new Error('Choose a supported game.');
+  if (!isGame(gameId)) throw new Error('Choose a valid game ID.');
   return `#games/${gameId}/integration`;
 }
 export function gameSettingsFromHash(hash: string): GameId | null {

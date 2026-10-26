@@ -14,7 +14,7 @@ fn fields(value: &Value, allowed: &[&str]) -> Result<(), String> {
 }
 fn game(request: &Value) -> Result<&str, String> {
     request["gameId"].as_str().filter(|game| osg_profiles::activation::valid_game_id(game))
-        .ok_or_else(||"Choose a supported game for local settings.".into())
+        .ok_or_else(||"Choose a valid game identity for local settings.".into())
 }
 
 impl GatewayManager {

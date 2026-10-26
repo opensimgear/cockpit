@@ -1,5 +1,19 @@
 use super::*;
 #[test]
+fn plain_game_id_cannot_be_used_as_a_telemetry_integration() {
+    let scratch = Scratch::new();
+    let setup = GameIntegrationSetup::new(scratch.0.join("setup.json"), false);
+    let expected = "Choose an available telemetry integration.";
+    assert_eq!(
+        setup.resource_integration_catalogue("discovered-title").unwrap_err(),
+        expected,
+    );
+    assert_eq!(
+        setup.save_provider_settings(&json!({}), &json!({"id":"discovered-title"})).unwrap_err(),
+        expected,
+    );
+}
+#[test]
 #[ignore = "Read-only installed SDK benchmark; set OSG_XPLANE_TEST_EXECUTABLE."]
 fn installed_xplane_provider_catalogue_benchmark() {
     let executable =

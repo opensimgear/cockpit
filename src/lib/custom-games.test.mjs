@@ -43,16 +43,19 @@ test('custom context saves eligibility without telemetry resources and preserves
   assert.deepEqual(plain(profileSetGameContext(draft,'',[]).document.eligibility.gameIds),[]);
 });
 
-test('unavailable custom entries stay visible and artwork resolves custom/default/bundled/fallback in order',()=>{
+test('all discovered titles resolve manual and platform artwork equally without a seeded fallback',()=>{
   const game=custom();game.installed=false;
-  assert.equal(games.visibleGames([game],false).length,1);assert.equal(games.gameIntegrationLabel(game),'Bindings and profile activation');assert.equal(games.gameIntegrationReady(game),false);
-  assert.equal(resolveGameArtwork(game).wordmark,game.name);assert.equal(resolveGameArtwork(game).image,'');
+  assert.equal(games.gameIntegrationLabel(game),'Bindings and profile activation');assert.equal(games.gameIntegrationReady(game),false);
+  assert.equal(resolveGameArtwork(game).image,'');
   game.defaultBackground={image:'data:image/jpeg;base64,default',positionX:20,positionY:80};
   assert.equal(resolveGameArtwork(game).image,game.defaultBackground.image);
   game.background={image:'data:image/jpeg;base64,override',positionX:70,positionY:10};
   assert.equal(resolveGameArtwork(game).image,game.background.image);assert.equal(resolveGameArtwork(game).positionX,70);
-  const builtin={...discoveredGames[0],background:game.background};
-  assert.equal(resolveGameArtwork(builtin).image,game.background.image);assert.equal(resolveGameArtwork({...builtin,background:null}).image,'/game-art/dcs.jpg');
+  for(const integrated of discoveredGames){
+    assert.equal(resolveGameArtwork({...integrated,background:game.background}).image,game.background.image);
+    assert.equal(resolveGameArtwork(integrated).image,'');
+    assert.equal(resolveGameArtwork({...integrated,defaultBackground:game.defaultBackground}).image,game.defaultBackground.image);
+  }
 });
 
 test('runtime owners, automatic selection, matching profiles and navigation retain valid custom IDs without registry authority',()=>{

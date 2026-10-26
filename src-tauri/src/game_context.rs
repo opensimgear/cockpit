@@ -221,7 +221,7 @@ impl Broker {
     }
     pub(crate) fn preparation(&self, id: &str) -> Result<Option<GamePreparation>, String> {
         if !crate::game_discovery::valid_id(id) {
-            return Err("Choose a supported game context.".into());
+            return Err("Choose a valid game context.".into());
         }
         Ok(self
             .games

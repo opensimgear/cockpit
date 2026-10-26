@@ -84,12 +84,6 @@ export function isSharedMemoryGame(gameId: unknown): boolean {
 }
 function sharedMemoryGame(game: Game): boolean { return !!game.provider?.startsWith('assetto-corsa'); }
 
-export function gameExecutableName(gameId: GameId): string {
-  return gameId.startsWith('x-plane-') ? 'X-Plane.exe' : gameId === 'dcs' ? 'DCS.exe'
-    : gameId === 'assetto-corsa' ? 'acs.exe' : gameId === 'assetto-corsa-competizione' ? 'AC2-Win64-Shipping.exe'
-    : gameId === 'assetto-corsa-evo' ? 'AssettoCorsaEVO.exe' : gameId === 'assetto-corsa-rally' ? 'acr.exe' : 'game executable';
-}
-
 export function gameDisplayPath(path?: string | null): string {
   path = path ?? '';
   if (path.startsWith('\\\\?\\')) {
@@ -116,10 +110,6 @@ export function resolveGameExecutablePath(path: string, installationPath?: strin
   const windows = /^[a-z]:[\\/]/i.test(installation) || installation.startsWith('\\\\');
   const root = installation.replace(windows ? /[\\/]+$/ : /\/+$/, '');
   return root + (windows ? '\\' : '/') + (windows ? path.replaceAll('/', '\\') : path);
-}
-
-export function visibleGames(catalogue: Game[], showAll: boolean): Game[] {
-  return [...catalogue];
 }
 
 export function gameIntegrationLabel(game: Game): string {

@@ -60,6 +60,8 @@ fn persisted_discovery_is_the_only_title_universe_and_binding_is_optional() {
     assert_eq!(plain.len(),1);
     assert_eq!(plain[0]["id"],"discovered-title");
     assert!(plain[0]["provider"].is_null());
+    assert_eq!(plain[0]["integrationAvailable"], false);
+    assert!(plain[0].get("integrationSupported").is_none());
     settings.games.get_mut("discovered-title").unwrap().integration = Some("dcs".into());
     let bound = merged_catalogue(&NativePlatform,&settings);
     assert_eq!(bound[0]["integrationKey"],"dcs");

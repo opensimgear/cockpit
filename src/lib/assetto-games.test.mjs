@@ -35,14 +35,14 @@ test('new game identities survive runtime ownership, inspection, canvas, profile
     assert.equal(modules.get('./profile-canvas').canvasGameId({observation:{attributes:{gameId}}}),gameId);
     const summary={id:profileId,name:'Racing rig',revision:1,isDefault:false,semanticHash:hash,gameIds:[gameId]};
     assert.equal(modules.get('./game-profile-context').captureGameProfileCandidates({gameId,profiles:[summary],preferredProfileId:profileId},gameId).gameId,gameId);
-    const automatic={schemaVersion:1,mode:'automatic',manualProfileId:profileId,rules:[{identity:{gameId,executable:`C:\\Games\\${gameId}\\${games.gameExecutableName(gameId)}`},profileId,priority:1,enabled:true}],status:'waiting',message:'Waiting for game.',conflicts:[],lastAttempt:null,target:null,readOnly:false};
+    const automatic={schemaVersion:1,mode:'automatic',manualProfileId:profileId,rules:[{identity:{gameId,executable:`C:\\Games\\${gameId}\\game.exe`},profileId,priority:1,enabled:true}],status:'waiting',message:'Waiting for game.',conflicts:[],lastAttempt:null,target:null,readOnly:false};
     assert.equal(modules.get('./profile-automatic').captureAutomaticStatus(automatic).rules[0].identity.gameId,gameId);
   }
 });
 
-test('automatic status accepts one rule for every supported game and rejects overflow',()=>{
+test('automatic status accepts one rule for every registered game and rejects overflow',()=>{
   const ids=discoveredGames.map(game=>game.id);
-  const rules=ids.map(gameId=>({identity:{gameId,executable:`C:\\Games\\${gameId}\\${games.gameExecutableName(gameId)}`},profileId,priority:1,enabled:true}));
+  const rules=ids.map(gameId=>({identity:{gameId,executable:`C:\\Games\\${gameId}\\game.exe`},profileId,priority:1,enabled:true}));
   const status={schemaVersion:1,mode:'automatic',manualProfileId:profileId,rules,status:'conflict',message:'Choose one running game.',conflicts:ids,lastAttempt:null,target:null,readOnly:false};
   const capture=modules.get('./profile-automatic').captureAutomaticStatus;
   assert.equal(capture(status).rules.length,7);

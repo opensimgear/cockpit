@@ -313,7 +313,7 @@ export class SystemInventoryController {
       return observation(id, `${game.name} · ${game.provider}`, 'integration', 'integrations', now, { role: game.provider ?? undefined, presence: receiving ? 'connected' : !game.installed || setup?.state === 'unsupported-platform' ? 'unavailable' : 'unknown',
         status: gameIntegrationLabel(game), diagnostics: [setup?.message, setup?.liveMessage].filter((x): x is string => !!x), evidence: [`integration:${game.id}`, ...(activeGame === game.id ? ['active-bindings'] : [])], targets: [target('integration', game.id)],
         connections: [{ ...link(id, 'host', 'software', receiving, endpoints || undefined), observed: receiving || this.snapshot.components.find(previous => previous.id === id)?.connections.some(connection => connection.observed !== false && connection.endpoint === (endpoints || undefined)) || false }],
-        forget: { allowed: false, reason: 'This integration is in the supported catalogue. Manage installation and settings in game details.', effect: '' } });
+        forget: { allowed: false, reason: 'Manage this telemetry integration in game details.', effect: '' } });
     }), diagnostics: state.error ? [state.error] : [] };
   }
   private async native(now: number): Promise<Capture> {

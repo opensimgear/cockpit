@@ -27,7 +27,7 @@ test('custom registration, artwork and profile context survive a native app rest
       for(const game of (await games()).catalogue.filter(game=>game.name==='Custom restart acceptance'))await native({command:'game_custom_remove',gameId:game.id});
       const added=(await native({command:'game_custom_save',name:'Custom restart acceptance',executable:fixture})).games;
       const gameId=added.addedGameId;
-      const background=(await native({command:'game_background_save',gameId,path:resolve('public/game-art/dcs.jpg'),positionX:17,positionY:83})).games.catalogue.find(game=>game.id===gameId).background;
+      const background=(await native({command:'game_background_save',gameId,path:resolve('tests/fixtures/artwork/landscape.jpg'),positionX:17,positionY:83})).games.catalogue.find(game=>game.id===gameId).background;
       const document=(await native({command:'profile_create',name:'Custom restart acceptance'})).profiles.document;
       document.eligibility={gameIds:[gameId]};
       await native({command:'profile_editor_save',document,assignments:[],expectedRevision:document.revision});

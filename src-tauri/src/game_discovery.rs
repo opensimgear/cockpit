@@ -110,22 +110,23 @@ pub(crate) fn exclusive_xplane(expected: &ProcessIdentity) -> Result<(), String>
     Ok(())
 }
 
-struct RecognizedGame {
+struct IntegrationDefinition {
     id: &'static str,
     name: &'static str,
     provider: &'static str,
     steam_id: u32,
     executables: &'static [&'static str],
 }
-const GAMES: &[RecognizedGame] = &[
-    RecognizedGame {
+// Adapter recognition metadata, independent of the open-ended saved game registry.
+const INTEGRATIONS: &[IntegrationDefinition] = &[
+    IntegrationDefinition {
         id: "dcs",
         name: "DCS World",
         provider: "dcs-bios",
         steam_id: 223750,
         executables: &["bin/DCS.exe", "bin-mt/DCS.exe"],
     },
-    RecognizedGame {
+    IntegrationDefinition {
         id: "assetto-corsa-rally",
         name: "Assetto Corsa Rally",
         provider: "assetto-corsa-rally",
@@ -133,21 +134,21 @@ const GAMES: &[RecognizedGame] = &[
         // The Unreal runtime is preferred over a root bootstrap executable.
         executables: &["acr/Binaries/Win64/acr.exe", "acr.exe"],
     },
-    RecognizedGame {
+    IntegrationDefinition {
         id: "x-plane-11",
         name: "X-Plane 11",
         provider: "x-plane",
         steam_id: 269950,
         executables: &["X-Plane.exe"],
     },
-    RecognizedGame {
+    IntegrationDefinition {
         id: "x-plane-12",
         name: "X-Plane 12",
         provider: "x-plane",
         steam_id: 2014780,
         executables: &["X-Plane.exe"],
     },
-    RecognizedGame {
+    IntegrationDefinition {
         id: "assetto-corsa",
         name: "Assetto Corsa",
         provider: "assetto-corsa",
@@ -155,14 +156,14 @@ const GAMES: &[RecognizedGame] = &[
         // The launcher does not publish driving telemetry; watch the simulator.
         executables: &["acs.exe", "acs_x86.exe"],
     },
-    RecognizedGame {
+    IntegrationDefinition {
         id: "assetto-corsa-competizione",
         name: "Assetto Corsa Competizione",
         provider: "assetto-corsa-competizione",
         steam_id: 805550,
         executables: &["AC2/Binaries/Win64/AC2-Win64-Shipping.exe", "AC2.exe"],
     },
-    RecognizedGame {
+    IntegrationDefinition {
         id: "assetto-corsa-evo",
         name: "Assetto Corsa EVO",
         provider: "assetto-corsa-evo",
@@ -170,25 +171,18 @@ const GAMES: &[RecognizedGame] = &[
         executables: &["AssettoCorsaEVO.exe"],
     },
 ];
-fn supported(id: &str) -> Result<&'static RecognizedGame, String> {
-    GAMES
+fn integration_definition(id: &str) -> Result<&'static IntegrationDefinition, String> {
+    INTEGRATIONS
         .iter()
         .find(|g| g.id == id)
-        .ok_or_else(|| "Choose a supported game.".into())
+        .ok_or_else(|| "Choose an available telemetry integration.".into())
 }
 
 pub(crate) fn executable_picker(game_id: &str) -> Result<(String, &'static str), String> {
     if !valid_id(game_id) {
         return Err("Choose a valid game identity.".into());
     }
-    let Ok(game) = supported(game_id) else {
-        return Ok(("Choose the game's runtime executable".into(), "Game.exe"));
-    };
-    let executable = game.executables[0].rsplit('/').next().unwrap();
-    Ok((
-        format!("Choose {} executable ({executable})", game.name),
-        executable,
-    ))
+    Ok(("Choose the game's runtime executable".into(), "Game.exe"))
 }
 
 #[derive(Default)]
@@ -231,7 +225,7 @@ pub(crate) fn library_steam_roots() -> Vec<PathBuf> {
     native::roots().steam
 }
 pub(crate) fn recognized_for_steam(app_id: u32) -> Option<&'static str> {
-    GAMES
+    INTEGRATIONS
         .iter()
         .find(|game| game.steam_id == app_id)
         .map(|game| game.id)

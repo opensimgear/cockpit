@@ -145,7 +145,7 @@ pub(crate) fn library_paths(root: &Path) -> Vec<PathBuf> {
     }
     paths
 }
-fn steam_installation(game: &RecognizedGame, library: &Path) -> Option<PathBuf> {
+fn steam_installation(game: &IntegrationDefinition, library: &Path) -> Option<PathBuf> {
     let manifest = read_vdf(&library.join(format!("steamapps/appmanifest_{}.acf", game.steam_id)))?;
     let state = manifest.get("AppState")?;
     if state.get("appid")?.text()?.parse::<u32>().ok()? != game.steam_id {
@@ -166,7 +166,7 @@ fn discover(roots: &Roots, manual: &BTreeMap<String, String>) -> Vec<Value> {
         .find(|p| p.is_file());
     for steam in &roots.steam {
         for library in library_paths(steam) {
-            for game in GAMES {
+            for game in INTEGRATIONS {
                 if let Some(root) = steam_installation(game, &library) {
                     if let Some(install) = installation(game, &root) {
                         steam_installs.push((game.id, install));
@@ -175,7 +175,7 @@ fn discover(roots: &Roots, manual: &BTreeMap<String, String>) -> Vec<Value> {
             }
         }
     }
-    GAMES.iter().map(|game| {
+    INTEGRATIONS.iter().map(|game| {
         let selected = manual.get(game.id).filter(|s| !s.trim().is_empty());
         let mut source = "not-found";
         let found = if let Some(selected) = selected {

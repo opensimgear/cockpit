@@ -161,8 +161,8 @@ async fn pick_game_executable(
     current_path: Option<String>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let (title, executable) = if game_id.is_empty() || game_id.starts_with("custom-") {
-        ("Choose game executable".to_owned(), "")
+    let (title, executable) = if game_id.is_empty() {
+        ("Choose the game's runtime executable".to_owned(), "Game.exe")
     } else {
         game_discovery::executable_picker(&game_id)?
     };

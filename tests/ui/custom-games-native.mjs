@@ -49,7 +49,7 @@ test('custom games, backgrounds and installed library imports use the actual nat
     assert.match(gameId,/^custom-/);assert.equal(game.provider,null);assert.equal(game.integrationSetup,undefined);
     await expect(page.getByRole('region',{name:'Game integration setup',exact:true})).toHaveCount(0);
     evidence.checks.push('Add executable/name in native UI; no integration setup or fake provider.');
-    const source=resolve(artifacts,'background-source.jpg');await copyFile('public/game-art/dcs.jpg',source);
+    const source=resolve(artifacts,'background-source.jpg');await copyFile('tests/fixtures/artwork/landscape.jpg',source);
     for(const target of [{id:gameId,name},{id:'dcs',name:'DCS World'}]){
       if(target.id!==gameId){await uiGames();const show=page.getByRole('switch',{name:'Show all supported',exact:true});if(await show.isVisible())await show.check();await page.getByRole('button',{name:/Open DCS World details/}).click();}
       const tileBackground=page.getByRole('region',{name:'Tile background',exact:true});await tileBackground.getByRole('button',{name:'Update image',exact:true}).click();const backgrounds=page.getByRole('dialog',{name:'Update tile background',exact:true});await backgrounds.getByLabel('Tile background image path',{exact:true}).fill(source);await backgrounds.getByRole('button',{name:'Use image',exact:true}).click();

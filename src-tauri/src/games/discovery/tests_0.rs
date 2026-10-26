@@ -58,30 +58,20 @@
         );
     }
     #[test]
-    fn executable_picker_uses_the_selected_game_and_rejects_unknown_games() {
-        for (game, name, exe) in [
-            ("dcs", "DCS World", "DCS.exe"),
-            ("assetto-corsa-rally", "Assetto Corsa Rally", "acr.exe"),
-            ("assetto-corsa", "Assetto Corsa", "acs.exe"),
-            (
-                "assetto-corsa-competizione",
-                "Assetto Corsa Competizione",
-                "AC2-Win64-Shipping.exe",
-            ),
-            (
-                "assetto-corsa-evo",
-                "Assetto Corsa EVO",
-                "AssettoCorsaEVO.exe",
-            ),
-            ("x-plane-11", "X-Plane 11", "X-Plane.exe"),
-            ("x-plane-12", "X-Plane 12", "X-Plane.exe"),
+    fn executable_picker_treats_all_valid_game_ids_equally() {
+        for game in [
+            "dcs", "assetto-corsa-rally", "assetto-corsa",
+            "assetto-corsa-competizione", "assetto-corsa-evo",
+            "x-plane-11", "x-plane-12", "discovered-title", "custom-title",
         ] {
-            let (title, filename) = executable_picker(game).unwrap();
-            assert_eq!(filename, exe);
-            assert!(title.contains(name));
+            assert_eq!(
+                executable_picker(game).unwrap(),
+                ("Choose the game's runtime executable".into(), "Game.exe"),
+            );
         }
-        assert!(executable_picker("unknown").is_ok());
-        assert!(executable_picker("Invalid ID").is_err());
+        for invalid in ["", "Invalid ID", "../game", &"a".repeat(97)] {
+            assert!(executable_picker(invalid).is_err());
+        }
     }
     #[test]
     fn xplane_steam_versions_manual_copies_and_launch_use_the_selected_installation() {

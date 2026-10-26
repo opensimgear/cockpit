@@ -6,7 +6,7 @@ impl GameIntegrationSetup {
         game: &Value,
         platform: Arc<dyn Platform>,
     ) -> Result<(), String> {
-        let id = game["id"].as_str().ok_or("Choose a supported game.")?;
+        let id = game["id"].as_str().ok_or("Choose an available telemetry integration.")?;
         if self.pending() {
             return Err(
                 "Recover the interrupted DCS integration operation before removing integration."
@@ -15,7 +15,7 @@ impl GameIntegrationSetup {
         }
         if id != "dcs" {
             if !(id.starts_with("assetto-corsa") || matches!(id, "x-plane-11" | "x-plane-12")) {
-                return Err("Choose a supported integration to remove.".into());
+                return Err("Choose an available telemetry integration to remove.".into());
             }
             // These providers use the game's native APIs and install no game files.
             let mut saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());

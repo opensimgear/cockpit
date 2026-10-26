@@ -6,7 +6,7 @@ pub(crate) fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 pub(crate) fn integration_provider(key: &str) -> Option<&'static str> {
-    GAMES
+    INTEGRATIONS
         .iter()
         .find(|game| game.id == key)
         .map(|game| game.provider)
@@ -27,7 +27,7 @@ pub(crate) fn recognize_installation(
     root: &Path,
     executables: &[String],
 ) -> Option<(String, String, String)> {
-    GAMES
+    INTEGRATIONS
         .iter()
         .find(|game| {
             installation(game, root).is_some()
@@ -44,7 +44,7 @@ pub(crate) fn merged_catalogue(
     settings.games.iter().map(|(id, record)| {
         let selected = match record.selected_installation.as_deref() { Some(key)=>record.installations.get(key), None=>record.installations.values().next() };
         let executable = selected.and_then(|install|install.executable.as_deref()).and_then(|path|validate_executable(path).ok()).and_then(|path|path_string(&path));
-        let capability = record.integration.as_deref().and_then(|key|supported(key).ok());
+        let capability = record.integration.as_deref().and_then(|key|integration_definition(key).ok());
         let spec = capability.filter(|spec|executable.as_deref().is_some_and(|path|validated_executable(spec,Path::new(path)).is_ok()));
         let integration = spec.map(|spec|spec.id);
         let source = selected.and_then(|install|install.sources.iter().find(|source|source.client == "steam")).or_else(||selected.and_then(|install|install.sources.first()));
@@ -55,7 +55,7 @@ pub(crate) fn merged_catalogue(
         let paths = preferred_process_paths(integration,paths,executable.as_deref());
         let installations = record.installations.iter().map(|(key,install)|json!({"id":key,"root":install.root,"installPath":install.root,"executable":install.executable,"executableCandidates":install.executables,"source":install.sources.first().map(|source|source.client.as_str()).unwrap_or("disk"),"sources":install.sources,"available":install.executable.as_deref().is_some_and(|path|validate_executable(path).is_ok())})).collect::<Vec<_>>();
         let launch = cfg!(windows) && executable.is_some() && (!required_steam || steam_ready) && (steam.is_none() || steam_ready);
-        json!({"id":id,"name":record.name,"integrationKey":record.integration,"provider":capability.map(|spec|spec.provider),"integrationAvailable":capability.is_some(),"integrationSupported":capability.is_some(),"integrationCompatible":spec.is_some(),
+        json!({"id":id,"name":record.name,"integrationKey":record.integration,"provider":capability.map(|spec|spec.provider),"integrationAvailable":capability.is_some(),"integrationCompatible":spec.is_some(),
             "installed":executable.is_some(),"executable":executable,"installPath":selected.map(|install|&install.root),"source":source.map(|source|source.client.as_str()).unwrap_or("disk"),"manualPath":executable,
             "installations":installations,"selectedInstallationId":record.selected_installation,"launchSupported":launch,"processMonitoringSupported":cfg!(windows),
             "launchUnavailableReason":if !cfg!(windows){Some("Game launch and process monitoring require Windows.")}else if executable.is_none(){Some("Choose an available game executable.")}else if !launch{Some("The installation's launcher is unavailable.")}else{None},
@@ -88,7 +88,7 @@ fn preferred_process_paths(
 fn paths_match(left: &str, right: &str) -> bool {
     normalized_path(left) == normalized_path(right)
 }
-fn validated_executable(game: &RecognizedGame, path: &Path) -> Result<PathBuf, String> {
+fn validated_executable(game: &IntegrationDefinition, path: &Path) -> Result<PathBuf, String> {
     let expected = game.executables[0].rsplit('/').next().unwrap();
     if !path.is_absolute()
         || !path.file_name().and_then(|p| p.to_str()).is_some_and(|p| {
@@ -123,7 +123,7 @@ fn validated_executable(game: &RecognizedGame, path: &Path) -> Result<PathBuf, S
     Ok(path)
 }
 fn installation(
-    game: &RecognizedGame,
+    game: &IntegrationDefinition,
     selection: &Path,
 ) -> Option<(PathBuf, Vec<PathBuf>, PathBuf)> {
     if selection.is_file() {

@@ -12,17 +12,8 @@ impl GameIntegrationSetup {
         id: &str,
         vehicle: Option<&str>,
     ) -> Result<Value, String> {
-        if !matches!(
-            id,
-            "dcs"
-                | "x-plane-11"
-                | "x-plane-12"
-                | "assetto-corsa-rally"
-                | "assetto-corsa"
-                | "assetto-corsa-competizione"
-                | "assetto-corsa-evo"
-        ) {
-            return Err("Choose a supported game.".into());
+        if crate::game_discovery::integration_provider(id).is_none() {
+            return Err("Choose an available telemetry integration.".into());
         }
         let (record, revision) = self.provider_snapshot(id);
         let module = if id == "dcs" {

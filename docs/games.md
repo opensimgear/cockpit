@@ -5,10 +5,10 @@ exposes typed telemetry ports to the unified profile graph. See [X-Plane setup, 
 qualification limits](x-plane.md). Native launch/telemetry currently requires
 Windows; live simulator and physical hardware qualification remains pending.
 
-Open **Games** to review games discovered from supported launchers and local
+Open **Games** to review installed games discovered from launchers and local
 installation paths, edit provider settings and launch a game with the saved
-unified-profile selection. There are no built-in or custom game classes: the
-catalogue is formed from discovered installations. On first startup Cockpit scans
+unified-profile selection. Every installed game uses the same metadata, launch
+and profile flow; optional telemetry integrations add capabilities where available.`nOn first startup Cockpit scans
 all installed supported clients and known paths automatically. A launcher client
 appears only when its own executable is present as a regular local `.exe`; local
 path discovery remains available without a launcher. The game list shows scan
@@ -33,6 +33,7 @@ or delete categories. Assign one category in any game's details. The category se
 tile preview and executable controls. **Filter games by category** shows all games, a chosen
 category or only uncategorized games, alongside discovery status filters.
 
+Category badges are assigned manually. They do not define a separate game class.
 Category names and assignments are saved locally. Renaming keeps assignments;
 deleting a category leaves its games uncategorized. Cancelling the category
 manager leaves the saved list unchanged.
@@ -52,8 +53,9 @@ also move/resize the focused control; Shift uses larger steps. The image keeps
 its aspect ratio and the entire frame stays within its bounds. **Fit image**
 restores the largest crop that fits. **Save background** commits the image and
 crop together; **Cancel** leaves the current background unchanged.
-**Reset to default**, beside **From URL**, returns to bundled artwork, discovered client artwork or a
-neutral title background.
+Images follow this priority: manually assigned image, discovered client artwork,
+then a neutral placeholder. **Reset to default**, beside **From URL**, returns to
+the highest-priority available image.
 
 Cockpit copies a bounded thumbnail into its application storage. Moving the
 original source file or changing the source URL cannot break the saved background. Rescans,
@@ -92,10 +94,8 @@ artwork is a bounded, transient local preview and is not saved by Apply; when
 there is no image, the review shows a local placeholder and platform icon.
 Platform icon artwork provenance and licenses are listed in
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
-DCS World, Assetto Corsa, Assetto Corsa Competizione, Assetto Corsa EVO,
-Assetto Corsa Rally, X-Plane 11 and X-Plane 12 have separate catalogue identities.
-Integrated tiles default to bundled publisher imagery; image sources are recorded in
-[`public/game-art/sources.json`](../public/game-art/sources.json).
+Optional telemetry integrations are available for some installed games; integration
+availability does not create a separate game class.
 
 ## Vehicle discovery
 

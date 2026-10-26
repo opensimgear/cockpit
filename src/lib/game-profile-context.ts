@@ -19,7 +19,7 @@ export function captureGameProfileCandidates(value:unknown,gameId:GameId):DeepRe
 }
 export class GameProfileContextClient{
   constructor(private send:GameProfileContextSend){}
-  private async request(request:GameProfileContextRequest):Promise<DeepReadonly<GameProfileCandidates>>{if(!game(request.gameId))throw new Error('Choose a supported game.');return captureGameProfileCandidates(await this.send(request),request.gameId);}
+  private async request(request:GameProfileContextRequest):Promise<DeepReadonly<GameProfileCandidates>>{if(!game(request.gameId))throw new Error('Choose a valid game ID.');return captureGameProfileCandidates(await this.send(request),request.gameId);}
   candidates(gameId:GameId){return this.request({command:'profile_game_candidates',gameId});}
   async savePreference(gameId:GameId,profileId:string){if(!uuid(profileId))throw new Error('Choose a matching saved profile.');const result=await this.request({command:'profile_game_preference_save',gameId,profileId});if(result.preferredProfileId!==profileId)throw new Error('The remembered profile choice was not confirmed.');return result;}
   async removePreference(gameId:GameId){const result=await this.request({command:'profile_game_preference_remove',gameId});if(result.preferredProfileId!==null)throw new Error('Removing the remembered profile choice was not confirmed.');return result;}

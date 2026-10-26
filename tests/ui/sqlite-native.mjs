@@ -108,7 +108,7 @@ test('game metadata, artwork, provider and output preferences survive native res
       const game=(await games()).catalogue.find(game=>game.name===name); assert.ok(game);
       const renamed=name+' saved'; await page.getByLabel('Game name',{exact:true}).fill(renamed);await page.getByLabel('Game name',{exact:true}).press('Enter');
       await expect.poll(async()=>(await games()).catalogue.find(item=>item.id===game.id)?.name).toBe(renamed);
-      const background=(await native({command:'game_background_save',gameId:game.id,path:resolve('public/game-art/dcs.jpg'),positionX:17,positionY:83})).games.catalogue.find(item=>item.id===game.id).background;
+      const background=(await native({command:'game_background_save',gameId:game.id,path:resolve('tests/fixtures/artwork/landscape.jpg'),positionX:17,positionY:83})).games.catalogue.find(item=>item.id===game.id).background;
       const xp=(await games()).catalogue.find(game=>game.id==='x-plane-12');
       const connection={...xp.integrationSetup.connection,freshnessMs:1900};
       await native({command:'game_integration_settings_save',gameId:xp.id,expectedSetupRevision:xp.integrationSetup.providerSetupRevision,connection});

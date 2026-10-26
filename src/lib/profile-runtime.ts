@@ -80,7 +80,7 @@ export class ProfileRuntimeClient {
   status(): Promise<DeepReadonly<NativeProfileStatus>> { return this.request({ command: 'profile_status' }); }
   apply(id: string, expectedRevision: number, gameId?: ProfileGameId, expectedActiveOwner?:DeepReadonly<NativeProfileOwner>|null,activationId?:string): Promise<DeepReadonly<NativeProfileStatus>> {
     if (!uuid(id) || !revision(expectedRevision) || gameId !== undefined && !game(gameId) || expectedActiveOwner!==undefined&&expectedActiveOwner!==null&&!owner(expectedActiveOwner)||activationId!==undefined&&!uuid(activationId)) {
-      throw new Error('Apply requires an exact saved profile revision and a supported optional game context.');
+      throw new Error('Apply requires an exact saved profile revision and a valid optional game ID.');
     }
     return this.request({ command: 'profile_apply', id, expectedRevision, ...(gameId === undefined ? {} : { gameId }), ...(expectedActiveOwner===undefined?{}:{expectedActiveOwner:expectedActiveOwner===null?null:JSON.parse(JSON.stringify(expectedActiveOwner))}),...(activationId?{activationId}:{}) });
   }

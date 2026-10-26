@@ -21,7 +21,7 @@
             "AppState { appid 3917090 installdir \"C:\\Rally\" }",
         ] {
             scratch.write("Library/steamapps/appmanifest_3917090.acf", manifest);
-            assert!(steam_installation(&GAMES[1], &library).is_none());
+            assert!(steam_installation(&INTEGRATIONS[1], &library).is_none());
         }
         scratch.write(
             "Library/steamapps/appmanifest_3917090.acf",
@@ -66,11 +66,11 @@
         assert!(discover(&roots, &manual).is_empty());
         let manual = BTreeMap::from([("dcs".into(), " ".into())]);
         assert_eq!(discover(&roots, &manual)[0]["source"], "standalone");
-        assert!(installation(&GAMES[0], Path::new("relative")).is_none());
-        assert!(validated_executable(&GAMES[0], &scratch.write("wrong.exe", "")).is_err());
+        assert!(installation(&INTEGRATIONS[0], Path::new("relative")).is_none());
+        assert!(validated_executable(&INTEGRATIONS[0], &scratch.write("wrong.exe", "")).is_err());
         let custom = scratch.write("custom/DCS.exe", "");
         assert_eq!(
-            installation(&GAMES[0], &custom).unwrap().2,
+            installation(&INTEGRATIONS[0], &custom).unwrap().2,
             scratch.0.join("custom")
         );
     }
@@ -111,7 +111,7 @@
         assert!(process_paths(&json!({"id":"dcs","executable":"missing"})).is_err());
         let root_executable = scratch.write("RallyRoot/acr.exe", "");
         assert_eq!(
-            installation(&GAMES[1], &root_executable).unwrap().2,
+            installation(&INTEGRATIONS[1], &root_executable).unwrap().2,
             scratch.0.join("RallyRoot")
         );
         assert_eq!(

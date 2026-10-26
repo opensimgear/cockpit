@@ -27,7 +27,7 @@ export function captureAutomaticStatus(value:unknown):DeepReadonly<ProfileAutoma
 export function captureAutomaticProfiles(value:unknown):DeepReadonly<ProfileSummary[]>{
   try{return captureProfileSummaries(value);}catch{throw new Error('The unified saved-profile list is malformed. Refresh Profiles before choosing a rule.');}
 }
-/** Browser requests contain a supported game ID, never an executable or process capability. */
+/** Browser requests contain a valid game ID, never an executable or process capability. */
 export class ProfileAutomaticClient{
   constructor(private send:ProfileAutomaticSend){}
   private async request(request:ProfileAutomaticRequest):Promise<DeepReadonly<ProfileAutomaticStatus>>{const result=await this.send(request);return captureAutomaticStatus(object(result)?result.automatic:undefined);}
@@ -35,8 +35,8 @@ export class ProfileAutomaticClient{
   async profiles():Promise<DeepReadonly<ProfileSummary[]>>{const result=await this.send({command:'profile_list'});return captureAutomaticProfiles(object(result)?result.profiles:undefined);}
   async selectionMode(value:ProfileSelectionMode):Promise<DeepReadonly<ProfileAutomaticStatus>>{if(!mode(value))throw new Error('Choose Manual or Automatic explicitly.');const status=await this.request({command:'profile_selection_mode',mode:value});if(status.mode!==value)throw new Error('Native selection mode did not confirm the explicit choice.');return status;}
   async saveRule(gameId:AutomaticGameId,profileId:string,weight:number,enabled:boolean):Promise<DeepReadonly<ProfileAutomaticStatus>>{
-    if(!game(gameId)||!uuid(profileId)||!priority(weight)||typeof enabled!=='boolean')throw new Error('Choose a supported game, saved profile and integer priority from -32768 to 32767.');
+    if(!game(gameId)||!uuid(profileId)||!priority(weight)||typeof enabled!=='boolean')throw new Error('Choose a valid game ID, saved profile and integer priority from -32768 to 32767.');
     const status=await this.request({command:'profile_game_rule_save',gameId,profileId,priority:weight,enabled});const saved=status.rules.find(rule=>rule.identity.gameId===gameId);if(!saved||saved.profileId!==profileId||saved.priority!==weight||saved.enabled!==enabled)throw new Error('The native rule reply does not confirm the exact saved rule.');return status;
   }
-  async removeRule(gameId:AutomaticGameId):Promise<DeepReadonly<ProfileAutomaticStatus>>{if(!game(gameId))throw new Error('Choose a supported game rule.');const status=await this.request({command:'profile_game_rule_remove',gameId});if(status.rules.some(rule=>rule.identity.gameId===gameId))throw new Error('Native did not confirm this rule was removed.');return status;}
+  async removeRule(gameId:AutomaticGameId):Promise<DeepReadonly<ProfileAutomaticStatus>>{if(!game(gameId))throw new Error('Choose a valid game rule.');const status=await this.request({command:'profile_game_rule_remove',gameId});if(status.rules.some(rule=>rule.identity.gameId===gameId))throw new Error('Native did not confirm this rule was removed.');return status;}
 }

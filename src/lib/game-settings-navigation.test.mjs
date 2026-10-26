@@ -4,14 +4,14 @@ import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
 const modules = await loadModules(['./games','./runtime-config','./panel-input-metadata','./games','./game-settings-navigation']);
 modules.get('./games').updateGameCatalogue(discoveredGames);
-const supportedGames = discoveredGames;
+const catalogueGames = discoveredGames;
 const { gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings } = modules.get('./game-settings-navigation');
 
 test('each provider has one game-owned settings deep link', () => {
-  for (const game of supportedGames) assert.equal(gameSettingsFromHash(gameSettingsHref(game.id)), game.id);
+  for (const game of catalogueGames) assert.equal(gameSettingsFromHash(gameSettingsHref(game.id)), game.id);
   for (const hash of ['', '#dcs-bios', '#games/invalid%2Fpath/integration', '#games/dcs', '#games/dcs/integration/extra', '#games/%64cs/integration']) assert.equal(gameSettingsFromHash(hash), null);
-  assert.throws(() => gameSettingsHref('invalid/path'), /supported game/);
-  assert.throws(() => visitGameSettings('invalid/path', {}), /supported game/);
+  assert.throws(() => gameSettingsHref('invalid/path'), /valid game ID/);
+  assert.throws(() => visitGameSettings('invalid/path', {}), /valid game ID/);
 });
 test('settings navigation preserves the editor store and newer unsaved edits by reference', () => {
   const editor = { document: { name: 'Unsaved profile', bindings: ['existing-edge'] }, appliedRevision: 2 };
@@ -24,7 +24,7 @@ test('settings navigation preserves the editor store and newer unsaved edits by 
   assert.equal(editor.appliedRevision, 2);
   assert.deepEqual(editor.document.bindings, ['existing-edge']);
 });
-test('graph links carry only a supported game and opaque return state', () => {
+test('graph links carry only a valid game ID and opaque return state', () => {
   const store = { draft: 'current draft' };
   const link = gameSettingsLink({ gameId: 'dcs', returnState: store });
   assert.equal(link.returnState, store);

@@ -20,7 +20,7 @@ impl GameIntegrationSetup {
         if self.busy() {
             return Err("Wait for integration setup or cancel it first.".into());
         }
-        let id = game["id"].as_str().ok_or("Choose a supported game.")?;
+        let id = game["id"].as_str().ok_or("Choose an available telemetry integration.")?;
         if command == "game_integration_settings_save" {
             return self.save_provider_settings(request, game);
         }

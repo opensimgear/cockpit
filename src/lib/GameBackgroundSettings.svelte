@@ -30,7 +30,7 @@
     if(pending||busy||!sourceImage)return;error='';
     const positionX=sourceImage===art.image?art.positionX:50,positionY=sourceImage===art.image?art.positionY:50;
     if(sourceImage.startsWith('data:image/jpeg;base64,')){editor={image:sourceImage,crop,positionX,positionY};return;}
-    // Bundled assets work in packaged builds without native filesystem URLs.
+    // Normalize other raster sources to the bounded preview format.
     pending=true;
     try{
       const image=new Image();image.src=sourceImage;await image.decode();let size=640,data='';
