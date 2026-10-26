@@ -101,7 +101,7 @@
   </section>
   <section class="panel output-card" aria-label="Device hiding">
     <div class="card-heading">
-      <span class="output-icon"><Icon name="lock" size={21} /></span>
+      <span class="output-icon"><Icon name="eye-off" size={21} /></span>
       <div class="card-title"><h3>Device hiding</h3><span>HidHide{#if hidHideDriver?.installed && hidHideDriver.version}<span class="driver-version">{' · '}{hidHideDriver.version}</span>{/if}</span></div>
       <span class="setup-status" class:attention={!!visibility?.settingsError || !!hidHideDriver?.error} class:enabled={visibility?.enabled && visibility.qualified && !visibility.settingsError && hidHideDriver?.installed !== false} role="status">{hidHideDriver?.installed === false ? 'Not installed' : visibility ? visibility.settingsError ? 'Needs attention' : !visibility.qualified ? 'Unavailable' : visibility.enabled ? 'Enabled' : 'Disabled' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
       <label class="output-toggle"><span class="visually-hidden">Enable device hiding on this computer</span><input type="checkbox" role="switch" aria-describedby="device-hiding-help" checked={visibility?.enabled ?? false} disabled={!!busy || !visibility || !visibility.qualified || !!visibility.settingsError} onchange={event => changeEnablement(event, () => visibility?.enabled ?? false, enableVisibility)} /><span class="toggle" class:on={visibility?.enabled ?? false} aria-hidden="true"><span></span></span></label>
@@ -118,7 +118,7 @@
   </section>
   <section class="panel output-card" aria-label="Keyboard and mouse">
     <div class="card-heading">
-      <span class="output-icon"><Icon name="monitor" size={21} /></span>
+      <span class="output-icon"><Icon name="keyboard" size={21} /></span>
       <div class="card-title"><h3>Keyboard and mouse</h3><span>Desktop output</span></div>
       <span class="setup-status" class:attention={!!desktop?.error} class:enabled={desktop?.enabled && desktop.qualified && !desktop.error} role="status">{desktop ? desktop.error ? 'Needs attention' : !desktop.qualified ? 'Unavailable' : desktop.enabled ? 'Enabled' : 'Disabled' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
       <label class="output-toggle"><span class="visually-hidden">Enable desktop output on this computer</span><input type="checkbox" role="switch" aria-describedby="desktop-output-help" checked={desktop?.enabled ?? false} disabled={!!busy || !desktop || !desktop.qualified || !!desktop.error} onchange={event => changeEnablement(event, () => desktop?.enabled ?? false, enableDesktop)} /><span class="toggle" class:on={desktop?.enabled ?? false} aria-hidden="true"><span></span></span></label>
