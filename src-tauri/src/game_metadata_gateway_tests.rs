@@ -1,4 +1,28 @@
 #[test]
+fn tag_taxonomy_commit_rechecks_authorization_and_preserves_empty_persisted_map() {
+    let manager = GatewayManager::mcp_test_manager();
+    let client = crate::mcp_tools::native_client("tag-taxonomy-revocation");
+    manager.mcp_authorize_client(&client, true);
+    let before = manager.games.status()["tags"].clone();
+    let request = json!({"command":"game_tag_definitions_save","clientId":client,
+        "tags":{},"expectedTags":before});
+    let authorization = manager.capture_mcp_authorization(&client).unwrap();
+    manager.mcp_authorize_client(&client, false);
+    let denied = manager.game_metadata_request(&request, authorization.as_ref());
+    assert_eq!(denied["ok"], false, "{denied}");
+    assert_eq!(manager.games.status()["tags"], before);
+    manager.mcp_authorize_client(&client, true);
+    let accepted = manager.mcp_request(request.clone());
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    assert_eq!(accepted["state"]["games"]["tags"], json!({}));
+    assert_eq!(manager.games.status()["tags"], json!({}));
+    let stale = manager.mcp_request(request);
+    assert_eq!(stale["ok"], false, "{stale}");
+    assert_eq!(manager.games.status()["tags"], json!({}));
+    manager.shutdown();
+}
+
+#[test]
 fn discovery_apply_rechecks_captured_mcp_authorization_before_registry_commit() {
     let manager = GatewayManager::mcp_test_manager();
     let client = crate::mcp_tools::native_client("discovery-apply-revocation");

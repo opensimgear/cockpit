@@ -26,17 +26,26 @@ title. Cockpit does not claim that every unfamiliar executable can be identified
 automatically. An installation without a verified runtime cannot provide process
 identity for launch, automatic selection or scoped output.
 
-## Categories
+## Tags
 
-Use **Manage categories** in the games list or a game's details to add, rename
-or delete categories. Assign one category in any game's details. The category selector shares the **Installation** card with the
-tile preview and executable controls. **Filter games by category** shows all games, a chosen
-category or only uncategorized games, alongside discovery status filters.
+Games can have multiple tags. The initial, editable taxonomy contains 47 major
+genres and styles, including Racing, Flight, Simulation, FPS, RPG, RTS, Strategy,
+Survival, Sports and VR. Games are not tagged automatically. Editing or emptying
+the taxonomy is permanent; restarting does not restore removed tags.
 
-Category badges are assigned manually. They do not define a separate game class.
-Category names and assignments are saved locally. Renaming keeps assignments;
-deleting a category leaves its games uncategorized. Cancelling the category
-manager leaves the saved list unchanged.
+The **Game tags** field contains selected badges. Type to search, select a
+suggestion or press Enter to add it, and use a badge's remove button or Backspace
+in an empty field to remove a tag. **Manage** opens the taxonomy editor, where
+tags can be added, renamed or deleted. Renaming preserves assignments; deletion
+removes only that tag, preserving a game's remaining tags. Cancelling leaves
+the taxonomy unchanged.
+
+The game list can filter by any selected tag, including **Untagged**, alongside
+library and integration filters. Tag names and assignments are saved locally.
+MCP exposes `game_tags_list`, `game_tag_definitions_save` and `game_tags_save`;
+both saves require the expected current values and an operation ID. Run
+`OSG_GAME_TAGS_NATIVE=1 pnpm games:tags:native` against the native dev cockpit for
+the tag UI, persistence and MCP acceptance check.
 
 ## Tile backgrounds
 

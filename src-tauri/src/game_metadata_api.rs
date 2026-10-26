@@ -42,16 +42,13 @@ impl GamesRuntime {
                 }
                 scan_id=Some(review.scan_id);
             }
-            "game_categories_save"=>{
-                fields(request,&["categories","expectedCategories"])?;
-                if request["expectedCategories"]!=json!(captured.categories) {return Err("Categories changed elsewhere. Close this dialog and try again.".into());}
-                next.categories=serde_json::from_value(request["categories"].clone()).map_err(|_|"Choose a valid category list.")?;
-                next.game_categories.retain(|_,category|next.categories.contains_key(category));
+            "game_tag_definitions_save"=>{
+                fields(request,&["tags","expectedTags"])?;
+                crate::game_installations::tags::save_definitions(&mut next,request)?;
             }
-            "game_category_save"=>{
-                fields(request,&["gameId","categoryId"])?;
-                let id=request["gameId"].as_str().filter(|id|next.games.contains_key(*id)).ok_or("Choose a discovered game.")?;
-                match request.get("categoryId") {Some(Value::Null)=>{next.game_categories.remove(id);},Some(Value::String(category)) if next.categories.contains_key(category)=>{next.game_categories.insert(id.into(),category.clone());},_=>return Err("Choose an existing category or Uncategorized.".into())}
+            "game_tags_save"=>{
+                fields(request,&["gameId","tagIds","expectedTagIds"])?;
+                crate::game_installations::tags::save_assignment(&mut next,request)?;
             }
             "game_save"=>{
                 fields(request,&["gameId","name","installationId","executable"])?;
@@ -77,7 +74,7 @@ impl GamesRuntime {
                 fields(request,&["gameId"])?;
                 let id=request["gameId"].as_str().ok_or("Choose a discovered game.")?;
                 if next.games.remove(id).is_none() {return Err("Choose a discovered game.").map_err(String::from);}
-                next.backgrounds.remove(id);next.default_backgrounds.remove(id);next.game_categories.remove(id);
+                next.backgrounds.remove(id);next.default_backgrounds.remove(id);next.game_tags.remove(id);
             }
             "game_installation_select"=>{
                 fields(request,&["gameId","installationId"])?;

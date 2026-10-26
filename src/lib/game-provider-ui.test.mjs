@@ -39,17 +39,17 @@ const { defaultProviderConnection } = modules.get('./game-provider-settings');
 const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup:{state:'setup-required',message:'Configure this provider',providerSetupRevision:`sha256:${'1'.repeat(64)}`,userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}},integrationContext:{status:'waiting-profile',message:'An active matching profile is required',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
 const state = g => ({catalogue:[g],cleanup:{phase:'idle'}});
 
-test('all games share presentation and only assigned categories and integration capabilities add badges',()=>{
-  const titles=[{id:'dcs',name:'Renamed flight title',provider:null,installed:true,launchSupported:false},{id:'assetto-corsa',name:'Renamed driving title',provider:'assetto-corsa',installed:true,launchSupported:false},{id:'game-any-title',name:'Another title',provider:null,installed:true,launchSupported:false},{id:'game-assigned',name:'Assigned title',provider:null,categoryId:'mine',installed:true,launchSupported:false}];
-  const status={catalogue:titles,categories:{mine:'My category'}};
+test('all games share presentation and only assigned tags add tile badges',()=>{
+  const titles=[{id:'dcs',name:'Renamed flight title',provider:null,installed:true,launchSupported:false},{id:'assetto-corsa',name:'Renamed driving title',provider:'assetto-corsa',installed:true,launchSupported:false},{id:'game-any-title',name:'Another title',provider:null,installed:true,launchSupported:false},{id:'game-assigned',name:'Assigned title',provider:null,tagIds:['mine','racing'],installed:true,launchSupported:false}];
+  const status={catalogue:titles,tags:{mine:'My tag',racing:'Racing'}};
   const html=render(GamesPanel,{props:{status,busy:false,request:noRequest}}).body;
-  const badges=[...html.matchAll(/<span[^>]*class="art-category[^>]*>([^]*?)<\/span>/g)].map(match=>match[1]);assert.deepEqual(badges,['My category']);
+  const badges=[...html.matchAll(/<span[^>]*class="art-tag(?:\s[^"]*)?"[^>]*>([^]*?)<\/span>/g)].map(match=>match[1]);assert.deepEqual(badges,['My tag','Racing']);
   assert.ok(!html.includes('/game-art/'));assert.equal((html.match(/class="game-art-placeholder/g)??[]).length,titles.length);
   for(const title of titles){
     const detail=render(GamesPanel,{props:{status,selectedGameId:title.id,busy:false,request:noRequest}}).body;
     assert.ok(detail.includes('aria-label="Game name"'));assert.ok(detail.includes('aria-label="Game executable"'));assert.ok(detail.includes('placeholder="Choose an executable…"'));
     assert.ok(!detail.includes('Flight simulation'));assert.ok(!detail.includes('Racing simulation'));
-    assert.equal(detail.includes('class="header-eyebrow'),!!title.categoryId);
+    assert.ok(detail.includes('Game tags'));assert.ok(!detail.includes('class="header-eyebrow'));
   }
 });
 

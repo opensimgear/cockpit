@@ -140,13 +140,9 @@ fn unified_registry_validates_generic_ids_installation_sources_and_distinct_root
 }
 
 #[test]
-fn category_and_background_records_require_registered_game_owners() {
+fn tag_and_background_records_require_registered_game_owners() {
     let mut value = settings();
-    let category_id = uuid::Uuid::new_v4().to_string();
-    value
-        .categories
-        .insert(category_id.clone(), "Racing".into());
-    value.game_categories.insert("dcs".into(), category_id);
+    value.game_tags.insert("dcs".into(), vec!["racing".into(), "simulation".into()]);
     value.backgrounds.insert(
         "dcs".into(),
         crate::game_artwork::Background {
@@ -158,10 +154,10 @@ fn category_and_background_records_require_registered_game_owners() {
     );
     value.validate().unwrap();
     value
-        .game_categories
-        .insert("missing-game".into(), "missing-category".into());
+        .game_tags
+        .insert("missing-game".into(), vec!["racing".into()]);
     assert!(value.validate().is_err());
-    value.game_categories.clear();
+    value.game_tags.clear();
     value.backgrounds.insert(
         "missing-game".into(),
         crate::game_artwork::Background {

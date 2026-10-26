@@ -202,30 +202,21 @@ fn executable_edits_are_confined_to_the_selected_installation_and_atomic() {
 }
 
 #[test]
-fn categories_and_backgrounds_follow_game_ownership_and_remove_atomically() {
+fn tags_and_backgrounds_follow_game_ownership_and_remove_atomically() {
     let (runtime, directory) = fixture();
-    let category = uuid::Uuid::new_v4().to_string();
-    let mut categories = serde_json::Map::new();
-    categories.insert(category.clone(), json!("Racing"));
-    runtime
-        .metadata_request(&json!({"command":"game_categories_save","categories":categories,"expectedCategories":{}}))
-        .unwrap();
-    runtime
-        .metadata_request(
-            &json!({"command":"game_category_save","gameId":GAME,"categoryId":category.clone()}),
-        )
-        .unwrap();
+    runtime.metadata_request(&json!({"command":"game_tags_save","gameId":GAME,
+        "tagIds":["racing","simulation"],"expectedTagIds":[]})).unwrap();
     let image = directory.path().join("header.png");
     image::RgbImage::from_pixel(80, 60, image::Rgb([35, 70, 120]))
         .save(&image)
         .unwrap();
     runtime.metadata_request(&json!({"command":"game_background_save","gameId":GAME,"path":image,"positionX":20.0,"positionY":75.0})).unwrap();
     let before_remove = saved(&runtime);
-    assert_eq!(before_remove.game_categories[GAME], category);
+    assert_eq!(before_remove.game_tags[GAME], vec!["racing", "simulation"]);
     assert!(before_remove.backgrounds.contains_key(GAME));
     assert!(runtime
         .metadata_request(
-            &json!({"command":"game_category_save","gameId":GAME,"categoryId":"missing"})
+            &json!({"command":"game_tags_save","gameId":GAME,"tagIds":["missing"],"expectedTagIds":["racing","simulation"]})
         )
         .is_err());
     assert_eq!(saved(&runtime), before_remove);
@@ -234,7 +225,7 @@ fn categories_and_backgrounds_follow_game_ownership_and_remove_atomically() {
         .unwrap();
     let removed = saved(&runtime);
     assert!(!removed.games.contains_key(GAME));
-    assert!(!removed.game_categories.contains_key(GAME));
+    assert!(!removed.game_tags.contains_key(GAME));
     assert!(!removed.backgrounds.contains_key(GAME));
     assert!(runtime
         .metadata_request(&json!({"command":"game_remove","gameId":GAME}))
@@ -292,3 +283,5 @@ fn prepared_edits_reject_stale_and_busy_commits_without_losing_newer_state() {
     assert_eq!(saved(&runtime), current);
     runtime.shutdown();
 }
+
+#[path="games/tags/metadata_tests.rs"] mod tag_tests;

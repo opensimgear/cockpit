@@ -214,7 +214,7 @@ impl GamesRuntime {
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"categories":settings.saved.categories,"discovery":self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()).clone(),"addedGameId":settings.added_game_id,"error":settings.error})
+        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"tags":settings.saved.tags,"discovery":self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()).clone(),"addedGameId":settings.added_game_id,"error":settings.error})
     }
     pub(crate) fn recovery_pending(&self)->bool{self.inner.setup.pending()}
     pub(crate) fn active(&self)->bool{self.inner.setup.busy()}
@@ -226,7 +226,7 @@ impl GamesRuntime {
         let command=request["command"].as_str().ok_or("Choose a game operation.")?;
         if self.inner.closed.load(Ordering::Acquire){return Err("The game runtime has closed.".into());}
         if command=="game_discovery_start" {return discovery_review::start(self,request);}
-        if matches!(command,"game_discovery_apply"|"game_save"|"game_remove"|"game_installation_select"|"game_categories_save"|"game_category_save"|"game_background_save") {return self.metadata_request(request);}
+        if matches!(command,"game_discovery_apply"|"game_save"|"game_remove"|"game_installation_select"|"game_tag_definitions_save"|"game_tags_save"|"game_background_save") {return self.metadata_request(request);}
         if command=="game_get_state" {
             if !known(request,&["command","clientId"]) {return Err("Unknown game status field.".into());}return Ok(());
         }

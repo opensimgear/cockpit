@@ -2,6 +2,82 @@ use super::*;
 use std::sync::Mutex;
 
 #[test]
+fn games_list_keeps_multiple_and_empty_tag_ids() {
+    let (tools, _) = fixture(json!({"ok":true,"state":{"games":{"tags":{"racing":"Racing"},"catalogue":[
+        {"id":"game-a","tagIds":["racing","simulation"]},{"id":"game-b","tagIds":[]}
+    ]}}}));
+    let listed = tools.call("games_list", json!({}), "reader");
+    assert_eq!(listed["ok"], true, "{listed}");
+    assert_eq!(listed["data"]["catalogue"][0]["tagIds"], json!(["racing","simulation"]));
+    assert_eq!(listed["data"]["catalogue"][1]["tagIds"], json!([]));
+}
+
+#[test]
+fn game_tags_tools_expose_taxonomy_and_replay_exact_native_mutations() {
+    let (tools, backend) = fixture(json!({"ok":true,"state":{"games":{"tags":{"genre":"Genre"},"catalogue":[{"id":"assetto-corsa","name":"Assetto Corsa","tagIds":["genre"]}]}}}));
+    let listed = tools.call("game_tags_list", json!({}), "reader");
+    assert_eq!(listed["ok"], true, "{listed}");
+    assert_eq!(listed["data"]["tags"]["genre"], "Genre");
+    assert_eq!(backend.requests.lock().unwrap()[0]["command"], "game_get_state");
+
+    for name in ["game_tag_definitions_save", "game_tags_save"] {
+        let definition = catalogue().into_iter().find(|tool| tool["name"] == name).unwrap();
+        assert_eq!(definition["annotations"]["readOnlyHint"], false);
+        assert!(definition["inputSchema"]["required"].as_array().unwrap().contains(&json!("operationId")));
+        assert!(is_mutation(name));
+    }
+    assert!(!is_mutation("game_tags_list"));
+    let names = catalogue().into_iter().filter_map(|tool| tool["name"].as_str().map(str::to_owned)).collect::<Vec<_>>();
+    assert!(!names.iter().any(|name| matches!(name.as_str(), "game_categories_save" | "game_category_save")));
+
+    let definitions_args = json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca427","tags":{"genre":"Genre"},"expectedTags":{}});
+    let saved = tools.call("game_tag_definitions_save", definitions_args.clone(), "writer");
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!(saved["data"]["tags"]["genre"], "Genre");
+    assert_eq!(tools.call("game_tag_definitions_save", definitions_args, "writer"), saved);
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "replay must not execute native mutation twice");
+    assert_eq!(requests[1]["command"], "game_tag_definitions_save");
+    assert_eq!(requests[1]["tags"]["genre"], "Genre");
+    assert_eq!(requests[1]["expectedTags"], json!({}));
+    assert!(requests[1].get("operationId").is_none());
+}
+
+#[test]
+fn game_tag_saves_validate_ids_bounds_duplicates_and_forward_expected_state() {
+    let (tools, backend) = fixture(json!({"ok":true,"state":{"games":{"tags":{},"catalogue":[{"id":"assetto-corsa","name":"Assetto Corsa","tagIds":["genre","racing"]}]}}}));
+    let args = json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca428","gameId":"assetto-corsa","tagIds":["genre","racing"],"expectedTagIds":["genre"]});
+    let result = tools.call("game_tags_save", args.clone(), "writer");
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(result["data"]["tagIds"], json!(["genre","racing"]));
+    assert_eq!(tools.call("game_tags_save", args, "writer"), result);
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["command"], "game_tags_save");
+    assert_eq!(requests[0]["gameId"], "assetto-corsa");
+    assert_eq!(requests[0]["tagIds"], json!(["genre","racing"]));
+    assert_eq!(requests[0]["expectedTagIds"], json!(["genre"]));
+    drop(requests);
+
+    for invalid in [
+        json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca429","gameId":"assetto-corsa","tagIds":["genre","genre"],"expectedTagIds":[]}),
+        json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca429","gameId":"assetto-corsa","tagIds":["Bad ID"],"expectedTagIds":[]}),
+        json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca429","gameId":"assetto-corsa","tagIds":[],"expectedTagIds":[],"extra":true}),
+    ] {
+        assert_eq!(tools.call("game_tags_save", invalid, "writer")["error"]["code"], "invalid_arguments");
+    }
+    let mut too_many = serde_json::Map::new();
+    for index in 0..129 { too_many.insert(format!("tag-{index}"), json!("Tag")); }
+    let invalid = tools.call("game_tag_definitions_save", json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca430","tags":too_many,"expectedTags":{}}), "writer");
+    assert_eq!(invalid["error"]["code"], "invalid_arguments");
+    let invalid = tools.call("game_tag_definitions_save", json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca431","tags":{"bad id":"Valid"},"expectedTags":{}}), "writer");
+    assert_eq!(invalid["error"]["code"], "invalid_arguments");
+    let invalid = tools.call("game_tag_definitions_save", json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca432","tags":{"genre":""},"expectedTags":{}}), "writer");
+    assert_eq!(invalid["error"]["code"], "invalid_arguments");
+    assert_eq!(backend.requests.lock().unwrap().len(), 1, "invalid input must be rejected before native access");
+}
+
+#[test]
 fn artwork_tools_forward_exact_ids_and_save_bounded_replayable_receipts() {
     let (tools, backend) = fixture(json!({"ok":true,"state":{"gameArtwork":{"gameId":"game-fixture","items":[{"id":"a".repeat(64),"label":"Cover","image":"thumbnail"}],"total":1,"nextOffset":null}}}));
     let list = tools.call("game_artwork_list", json!({"gameId":"game-fixture","limit":4}), "reader");

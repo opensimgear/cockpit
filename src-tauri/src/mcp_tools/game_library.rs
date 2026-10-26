@@ -159,6 +159,37 @@ impl Tools {
         metadata_receipt(&data, args["gameId"].as_str().unwrap_or(""), false)
     }
 
+    pub(super) fn game_tags_list(&self, client: &str) -> Result<Value, Value> {
+        let data = self.native("game_get_state", json!({}), client, Some("games"))?;
+        let tags = data.get("tags").filter(|tags| tags.is_object()).ok_or_else(|| {
+            failure("invalid_native_result", "The native game state returned no tag taxonomy.", false)
+        })?;
+        Ok(json!({"tags":tags}))
+    }
+
+    pub(super) fn game_tag_definitions_save(&self, args: &Value, client: &str) -> Result<Value, Value> {
+        let data = self.native(
+            "game_tag_definitions_save",
+            select(args, &["tags", "expectedTags"]),
+            client,
+            Some("games"),
+        )?;
+        let tags = data.get("tags").filter(|tags| tags.is_object()).ok_or_else(|| {
+            failure("invalid_native_result", "The native game tag save returned no taxonomy.", false)
+        })?;
+        Ok(json!({"tags":tags}))
+    }
+
+    pub(super) fn game_tags_save(&self, args: &Value, client: &str) -> Result<Value, Value> {
+        let data = self.native(
+            "game_tags_save",
+            select(args, &["gameId", "tagIds", "expectedTagIds"]),
+            client,
+            Some("games"),
+        )?;
+        metadata_receipt(&data, args["gameId"].as_str().unwrap_or(""), false)
+    }
+
     pub(super) fn game_save(&self, args: &Value, client: &str) -> Result<Value, Value> {
         let data = self.native(
             "game_save",
@@ -208,6 +239,7 @@ fn metadata_receipt(data: &Value, game_id: &str, remove: bool) -> Result<Value, 
     Ok(json!({
         "gameId":game_id,
         "name":game.and_then(|game|game.get("name")).cloned().unwrap_or(Value::Null),
+        "tagIds":game.and_then(|game|game.get("tagIds")).cloned().unwrap_or_else(|| json!([])),
         "selectedInstallationId":game.and_then(|game|game.get("selectedInstallationId")).cloned().unwrap_or(Value::Null),
         "removed":remove && game.is_none()
     }))

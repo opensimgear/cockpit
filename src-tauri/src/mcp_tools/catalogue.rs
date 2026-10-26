@@ -88,13 +88,16 @@ pub fn catalogue() -> Vec<Value> {
         tool("resource_inspect","Inspect current/retained native port descriptors, contracts and stable identity evidence. These metadata do not grant output ownership.",fields(vec![("resourceId",string(36))],page()),&["resourceId"]),
         tool("resource_search_ports","Search command/telemetry/action port metadata within one exact resource, returning a bounded matching page. Refresh after capabilityStamp changes.",fields(vec![("resourceId",string(36)),("search",string(200))],page()),&["resourceId","search"]),
         tool("processing_operations_list","Discover/search native processing operations and their exact typed parameter schemas before adding a ProcessingNode. Returns stable schema hashes and bounded metadata; the shared native compiler decides compatibility with declared input/output port contracts. This is passive metadata and executes no operation.",fields(vec![("search",json!({"type":"string","maxLength":200})),("category",choice(&["numeric","logic","event","text","action","quantity","script","other"]))],page()),&[]),
-        tool("games_list","List supported and installed games, provider readiness, setup revisions and current vehicle context. This does not launch a game.",page(),&[]),
+        tool("games_list","List discovered games with their tagIds, provider readiness, setup revisions and current vehicle context. This does not launch a game.",page(),&[]),
         tool("game_discovery_start","Start asynchronous local game discovery. Returns the current scan ID and snapshot immediately; use game_discovery_status to poll and game_discovery_apply to commit explicitly selected Add/Update actions. No catalogue changes occur before Apply.",vec![("paths",json!({"type":"array","maxItems":64,"items":{"type":"string","minLength":1,"maxLength":4096}}))],&[]),
         tool("game_discovery_status","Read progress, discovered entries and diagnostics for one exact discovery scan. Results are paged; Add/Update entries default selected and Remove entries default unselected.",fields(vec![("scanId",string(36))],page()),&["scanId"]),
         tool("game_discovery_apply","Atomically apply selected discovery Add/Update/Remove actions after reviewing the exact scan. Native code revalidates the scan and installation evidence; stale scans fail without partial changes.",vec![("scanId",string(36)),("actions",json!({"type":"array","maxItems":512,"items":{"type":"object","additionalProperties":false,"properties":{"id":string(256),"selected":{"type":"boolean"},"executable":{"type":["string","null"],"maxLength":4096},"replaceInstallationId":{"type":["string","null"],"maxLength":256},"gameId":game_id()},"required":["id","selected"]}}))],&["scanId","actions"]),
         tool("game_artwork_list","List cached artwork for the exact library identities attached to one imported game. Returns thumbnail images and opaque IDs; use game_artwork_preview before aligning and saving an image.",fields(vec![("gameId",game_id())],page()),&["gameId"]),
         tool("game_artwork_preview","Load a full bounded image for an artwork ID returned by game_artwork_list. No saved image changes until game_background_save.",vec![("gameId",game_id()),("artworkId",string(64))],&["gameId","artworkId"]),
         tool("game_background_save","Save a game's image and normalized 16:9 crop from game_artwork_preview, or reset with path:null. Returns a bounded receipt. This does not launch a game.",vec![("gameId",game_id()),("imageData",string(174792)),("crop",json!({"type":"object","additionalProperties":false,"properties":{"x":{"type":"number","minimum":0,"maximum":1},"y":{"type":"number","minimum":0,"maximum":1},"width":{"type":"number","exclusiveMinimum":0,"maximum":1},"height":{"type":"number","exclusiveMinimum":0,"maximum":1}},"required":["x","y","width","height"]})),("path",json!({"type":["string","null"],"maxLength":4096})),("positionX",json!({"type":"number","minimum":0,"maximum":100})),("positionY",json!({"type":"number","minimum":0,"maximum":100}))],&["gameId"]),
+        tool("game_tags_list","List the shared game tag taxonomy without changing game metadata.",vec![],&[]),
+        tool("game_tag_definitions_save","Replace the complete game tag taxonomy using exact expectedTags for optimistic concurrency. Tag IDs use the generic game ID syntax; names are 1–48 printable characters; at most 128 tags are allowed.",vec![("tags",json!({"type":"object","maxProperties":128,"propertyNames":{"type":"string","format":"game-id"},"additionalProperties":{"type":"string","minLength":1,"maxLength":48}})),("expectedTags",json!({"type":"object","maxProperties":128,"propertyNames":{"type":"string","format":"game-id"},"additionalProperties":{"type":"string","minLength":1,"maxLength":48}}))],&["tags","expectedTags"]),
+        tool("game_tags_save","Replace one game's complete tag ID list using exact expectedTagIds for optimistic concurrency. Tag IDs use the generic game ID syntax; at most 32 unique IDs are allowed.",vec![("gameId",game_id()),("tagIds",json!({"type":"array","maxItems":32,"uniqueItems":true,"items":game_id()})),("expectedTagIds",json!({"type":"array","maxItems":32,"uniqueItems":true,"items":game_id()}))],&["gameId","tagIds","expectedTagIds"]),
         tool("game_save","Update metadata or selected installation for one already discovered game. This does not launch a game or start a provider.",vec![("gameId",game_id()),("name",string(128)),("installationId",string(256)),("executable",json!({"type":["string","null"],"maxLength":4096}))],&["gameId"]),
         tool("game_remove","Remove one registered game and its installations from the local catalogue.",vec![("gameId",game_id())],&["gameId"]),
         tool("game_installation_select","Select one discovered installation for a registered game without launching it.",vec![("gameId",game_id()),("installationId",string(256))],&["gameId","installationId"]),
@@ -182,6 +185,8 @@ pub fn is_mutation(name: &str) -> bool {
                 | "game_discovery_start"
                 | "game_background_save"
                 | "game_save"
+                | "game_tag_definitions_save"
+                | "game_tags_save"
                 | "game_remove"
                 | "game_installation_select"
                 | "gateway_session"
@@ -319,6 +324,13 @@ fn validate_at(
         {
             return Err(format!("{path} exceeds its item budget."));
         }
+        if schema["uniqueItems"] == true {
+            for (index, item) in items.iter().enumerate() {
+                if items[..index].contains(item) {
+                    return Err(format!("{path} must not contain duplicate items."));
+                }
+            }
+        }
         for (index, item) in items.iter().enumerate() {
             let prefix = schema["prefixItems"]
                 .as_array()
@@ -338,7 +350,17 @@ fn validate_at(
         }
     }
     if let Some(object) = value.as_object() {
+        if schema["maxProperties"].as_u64().is_some_and(|max| object.len() as u64 > max)
+            || schema["minProperties"].as_u64().is_some_and(|min| (object.len() as u64) < min)
+        {
+            return Err(format!("{path} exceeds its property budget."));
+        }
         let properties = schema["properties"].as_object();
+        if let Some(key_schema) = schema.get("propertyNames") {
+            for key in object.keys() {
+                validate_at(root, key_schema, &json!(key), &format!("{path} key"), depth + 1)?;
+            }
+        }
         if schema["additionalProperties"] == false {
             if let Some(key) = object
                 .keys()

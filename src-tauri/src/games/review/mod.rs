@@ -140,7 +140,7 @@ pub(super) fn apply(saved:&crate::game_installations::Settings,review:&Review,re
         if game.selected_installation.is_none() {game.selected_installation=Some(installation_id);}
     }
     next.games.retain(|_,game|!game.installations.is_empty());
-    next.game_categories.retain(|id,_|next.games.contains_key(id));
+    next.game_tags.retain(|id,_|next.games.contains_key(id));
     next.backgrounds.retain(|id,_|next.games.contains_key(id));
     next.default_backgrounds.retain(|id,_|next.games.contains_key(id));
     for path in &review.paths {if !next.scan_roots.contains(path) {next.scan_roots.push(path.clone());}}

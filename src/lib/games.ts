@@ -3,14 +3,33 @@ export type GameId = string;
 export type GameCrop = {x:number;y:number;width:number;height:number};
 export type GameBackground = { crop?: GameCrop; image: string; positionX: number; positionY: number };
 export type GameArtworkOption = {id:string;label:string;image:string};
-export type GameCategories = Record<string, string>;
-export function categoryError(categories: GameCategories): string {
-  const names = Object.values(categories).map(name => name.trim().toLowerCase());
-  return names.length > 64 || new Set(names).size !== names.length || Object.values(categories).some(name => !name.trim() || [...name.trim()].length > 48 || /[\u0000-\u001f\u007f-\u009f]/.test(name))
-    ? 'Use up to 64 categories with distinct names between 1 and 48 characters.' : '';
+export type GameTags = Record<string, string>;
+export const UNTAGGED_TAG_FILTER = '@untagged';
+export function tagError(tags: GameTags): string {
+  const names = Object.values(tags).map(name => name.trim().toLowerCase());
+  return names.length > 128 || new Set(names).size !== names.length || Object.values(tags).some(name => !name.trim() || [...name.trim()].length > 48 || /[\u0000-\u001f\u007f-\u009f]/.test(name))
+    ? 'Use up to 128 tags with distinct names between 1 and 48 characters.' : '';
 }
-export function filterGamesByCategory(games: readonly Game[], category: string): Game[] {
-  return games.filter(game => !category || (category === 'uncategorized' ? !game.categoryId : game.categoryId === category));
+export function filterGamesByTag(games: readonly Game[], tag: string): Game[] {
+  return games.filter(game => !tag || (tag === UNTAGGED_TAG_FILTER ? !game.tagIds?.length : game.tagIds?.includes(tag)));
+}
+export type GameListFilterState = {tags:string[];libraries:string[];integrations:('available'|'unavailable')[]};
+export function emptyGameListFilters():GameListFilterState { return {tags:[],libraries:[],integrations:[]}; }
+function gameLibraries(game:Game):string[] {
+  const installations=game.installations?.length?game.installations:[{source:game.source,sources:[]}];
+  return [...new Set(installations.flatMap(installation=>{
+    const sources=[...new Set([installation.source,...(installation.sources??[]).map(source=>source.client)].filter((source):source is string=>!!source).map(source=>['local','manual','standalone'].includes(source)?'disk':source))];
+    const platforms=sources.filter(source=>source!=='disk');
+    return platforms.length?platforms:['disk'];
+  }))];
+}
+export function gameListLibraries(games:readonly Game[]):{value:string;label:string}[] {
+  return [...new Set(games.flatMap(gameLibraries))].map(value=>({value,label:value==='disk'?'Local':gameLibraryClientName(value)})).sort((left,right)=>left.label.localeCompare(right.label));
+}
+export function filterGameList(games:readonly Game[], filters:GameListFilterState):Game[] {
+  return games.filter(game=>(!filters.tags.length||filters.tags.some(tag=>tag===UNTAGGED_TAG_FILTER?!game.tagIds?.length:game.tagIds?.includes(tag)))
+    &&(!filters.libraries.length||gameLibraries(game).some(library=>filters.libraries.includes(library)))
+    &&(!filters.integrations.length||filters.integrations.includes(gameHasIntegration(game)?'available':'unavailable')));
 }
 export function gameLibraryClientName(client: string): string {
   return ({steam: 'Steam', epic: 'Epic Games', battlenet: 'Battle.net', ea: 'EA app', ubisoft: 'Ubisoft Connect', gog: 'GOG', xbox: 'Xbox'} as Record<string, string>)[client] ?? client;
@@ -34,17 +53,18 @@ export type GameIntegrationContext = {
 };
 export type GameVehicle = { id: string; name: string };
 export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car'; vehicles: GameVehicle[]; message?: string };
-export type Game = { id: GameId; name: string; categoryId?: string | null; provider?: GameProvider | null; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; integrationKey?: string; selectedInstallationId?: string; installations?: GameInstallation[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
+export type Game = { id: GameId; name: string; tagIds?: string[]; provider?: GameProvider | null; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; integrationKey?: string; selectedInstallationId?: string; installations?: GameInstallation[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
 export type DetectedGame = { gameId: GameId; name: string };
-export type GameInstallation = { id: string; executable?: string; installPath: string; source: string; sources?: string[]; available: boolean; executableCandidates: string[] };
+export type GameLibrarySource = { client:string;appId:string;installPath:string;launcher?:string };
+export type GameInstallation = { id: string; executable?: string; installPath: string; source: string; sources?: GameLibrarySource[]; available: boolean; executableCandidates: string[] };
 export type GameDiscoveryEntry = {
   image?: string | null; id: string; action: 'add' | 'update' | 'remove'; selected: boolean; gameId?: string; installationId?: string; name: string; library: string; installPath: string; previousPath?: string; executableCandidates: string[]; executable?: string; updateKind?: 'add-installation' | 'replace-path'; integration?: string; message?: string };
 export type GameDiscovery = { scanId: string; status: 'idle' | 'scanning' | 'ready' | 'applied' | 'failed'; libraries: { id: string; name: string; status: 'queued' | 'scanning' | 'preparing' | 'complete' | 'unavailable' | 'failed'; found: number; message?: string }[]; entries: GameDiscoveryEntry[]; diagnostics: string[]; firstStart: boolean };
 export type GameDiscoveryAction = { id: string; selected: boolean; executable?: string | null; replaceInstallationId?: string | null; gameId?: string };
-export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; discovery?: GameDiscovery; addedGameId?: GameId; error?: string | null };
-export type GameCommandName = 'game_artwork_list' | 'game_artwork_preview' | 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_save' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
+export type GamesState = { backgroundPreview?: {image:string}; tags?: GameTags; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; discovery?: GameDiscovery; addedGameId?: GameId; error?: string | null };
+export type GameCommandName = 'game_artwork_list' | 'game_artwork_preview' | 'game_background_preview' | 'game_tag_definitions_save' | 'game_tags_save' | 'game_save' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
+export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; tags?: GameTags; expectedTags?: GameTags; expectedTagIds?: string[]; tagIds?: string[]; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export function isGameId(value: unknown): value is GameId {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,95}$/.test(value);

@@ -120,12 +120,19 @@ test('current provider setup and native profile ownership guard integration with
 
 
 
-test('category filtering includes built-in and custom games and distinguishes uncategorized',()=>{
-  const id='custom-11111111-1111-4111-8111-111111111111',catalogue=[{id,name:'Custom',categoryId:'racing'},discoveredGames[0],{...discoveredGames[1],categoryId:'racing'}];
-  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'')).map(game=>game.id),catalogue.map(game=>game.id));
-  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'racing')).map(game=>game.id),[id,'assetto-corsa-rally']);
-  assert.deepEqual(plain(games.filterGamesByCategory(catalogue,'uncategorized')).map(game=>game.id),['dcs']);
-  assert.equal(games.filterGamesByCategory(catalogue,'deleted').length,0);
-  for(const categories of [{},{a:'Racing',b:'Flight simulation'}])assert.equal(games.categoryError(categories),'');
-  for(const categories of [{a:''},{a:'Racing',b:' racing '},{a:'x'.repeat(49)},{a:'Bad\nname'},Object.fromEntries(Array.from({length:65},(_,i)=>[i,`Category ${i}`]))])assert.ok(games.categoryError(categories));
+test('tag filtering includes built-in and custom games and distinguishes untagged',()=>{
+  const id='custom-11111111-1111-4111-8111-111111111111',catalogue=[{id,name:'Custom',tagIds:['racing','simulation']},discoveredGames[0],{...discoveredGames[1],tagIds:['racing','simulation']}];
+  assert.deepEqual(plain(games.filterGamesByTag(catalogue,'')).map(game=>game.id),catalogue.map(game=>game.id));
+  assert.deepEqual(plain(games.filterGamesByTag(catalogue,'racing')).map(game=>game.id),[id,'assetto-corsa-rally']);
+  assert.deepEqual(plain(games.filterGamesByTag(catalogue,games.UNTAGGED_TAG_FILTER)).map(game=>game.id),['dcs']);
+  assert.equal(games.filterGamesByTag(catalogue,'deleted').length,0);
+  for(const tags of [{},{a:'Racing',b:'Flight simulation'}])assert.equal(games.tagError(tags),'');
+  for(const tags of [{a:''},{a:'Racing',b:' racing '},{a:'x'.repeat(49)},{a:'Bad\nname'},Object.fromEntries(Array.from({length:129},(_,i)=>[i,`Tag ${i}`]))])assert.ok(games.tagError(tags));
+});
+
+
+test('a real untagged tag ID remains separate from the empty-tag filter',()=>{
+  const catalogue=[{id:'tagged',tagIds:['untagged']},{id:'empty',tagIds:[]},{id:'missing'}];
+  assert.deepEqual(plain(games.filterGamesByTag(catalogue,'untagged')).map(game=>game.id),['tagged']);
+  assert.deepEqual(plain(games.filterGamesByTag(catalogue,games.UNTAGGED_TAG_FILTER)).map(game=>game.id),['empty','missing']);
 });

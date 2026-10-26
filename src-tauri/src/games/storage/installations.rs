@@ -43,15 +43,22 @@ pub(crate) struct GameRecord {
     pub selected_installation:Option<String>, pub integration:Option<String>,
     pub default_background:Option<crate::game_artwork::Background>,
 }
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub(crate) struct Settings {
     pub revision:u64, pub discovery_initialized:bool, pub scan_roots:Vec<String>,
     #[serde(deserialize_with="distinct_map")] pub games:BTreeMap<String,GameRecord>,
-    #[serde(deserialize_with="distinct_map")] pub categories:BTreeMap<String,String>,
-    #[serde(deserialize_with="distinct_map")] pub game_categories:BTreeMap<String,String>,
+    #[serde(deserialize_with="distinct_map")] pub tags:BTreeMap<String,String>,
+    #[serde(deserialize_with="distinct_map")] pub game_tags:BTreeMap<String,Vec<String>>,
     #[serde(deserialize_with="distinct_map")] pub backgrounds:BTreeMap<String,crate::game_artwork::Background>,
     #[serde(deserialize_with="distinct_map")] pub default_backgrounds:BTreeMap<String,crate::game_artwork::Background>,
+}
+#[path="../tags/mod.rs"] pub(crate) mod tags;
+impl Default for Settings {
+    fn default()->Self {
+        Self {revision:0,discovery_initialized:false,scan_roots:vec![],games:BTreeMap::new(),
+            tags:tags::defaults(),game_tags:BTreeMap::new(),backgrounds:BTreeMap::new(),default_backgrounds:BTreeMap::new()}
+    }
 }
 fn distinct_map<'de,D:Deserializer<'de>,T:Deserialize<'de>>(deserializer:D)->Result<BTreeMap<String,T>,D::Error> {
     struct Entries<T>(std::marker::PhantomData<T>);
@@ -70,12 +77,7 @@ fn distinct_map<'de,D:Deserializer<'de>,T:Deserialize<'de>>(deserializer:D)->Res
 }
 impl Settings {
     pub(crate) fn validate(&self)->Result<(),String> {
-        let mut names=BTreeSet::new();
-        if self.categories.len()>64 || self.categories.iter().any(|(id,name)|
-            uuid::Uuid::parse_str(id).is_err() || name.trim()!=name || name.is_empty() || name.chars().count()>48
-                || name.chars().any(char::is_control) || !names.insert(name.to_lowercase())) {
-            return Err("Use up to 64 distinct named categories.".into());
-        }
+        tags::validate_definitions(&self.tags)?;
         if self.scan_roots.len()>64 || self.scan_roots.iter().any(|path|!executable(path)) || self.games.len()>MAX_GAMES {
             return Err("Game discovery locations exceed their bounds.".into());
         }
@@ -99,8 +101,9 @@ impl Settings {
             }
             if let Some(background)=&game.default_background {background.validate()?;}
         }
-        if self.game_categories.iter().any(|(id,category)|!self.games.contains_key(id)||!self.categories.contains_key(category)) {
-            return Err("Choose a discovered game and an existing category.".into());
+        for (id,ids) in &self.game_tags {
+            if !self.games.contains_key(id) {return Err("Choose a discovered game for its tags.".into());}
+            tags::validate_assignment(ids, &self.tags)?;
         }
         for (id,background) in self.backgrounds.iter().chain(self.default_backgrounds.iter()) {
             if !self.games.contains_key(id) {return Err("Choose a discovered game for its background.".into());}

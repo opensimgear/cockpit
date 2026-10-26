@@ -60,7 +60,7 @@ pub(crate) fn merged_catalogue(
             "installations":installations,"selectedInstallationId":record.selected_installation,"launchSupported":launch,"processMonitoringSupported":cfg!(windows),
             "launchUnavailableReason":if !cfg!(windows){Some("Game launch and process monitoring require Windows.")}else if executable.is_none(){Some("Choose an available game executable.")}else if !launch{Some("The installation's launcher is unavailable.")}else{None},
             "steamAppId":steam.and_then(|source|source.app_id.parse::<u32>().ok()),"steamExecutable":steam.and_then(|source|source.launcher.as_deref()),"processExecutables":paths,
-            "categoryId":settings.game_categories.get(id),"background":settings.backgrounds.get(id),"defaultBackground":settings.default_backgrounds.get(id).or(record.default_background.as_ref())})
+            "tagIds":settings.game_tags.get(id).cloned().unwrap_or_default(),"background":settings.backgrounds.get(id),"defaultBackground":settings.default_backgrounds.get(id).or(record.default_background.as_ref())})
     }).collect()
 }
 fn preferred_process_paths(
