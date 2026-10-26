@@ -5,6 +5,10 @@ use crate::{
     transport::{Factory, NativeFactory, PortInfo},
 };
 use serde_json::{json, Value};
+
+/// A metadata write may carry one already-bounded discovery artwork preview
+/// (128 KiB JPEG plus its base64 and JSON envelope).
+pub(crate) const GAME_METADATA_REQUEST_LIMIT: usize = 256 * 1024;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -624,7 +628,7 @@ impl GatewayManager {
     }
     fn game_metadata_request(&self, request: &Value, native_authorization: Option<&McpAuthorization>) -> Value {
         if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.", None); }
-        if !request.is_object() || request.to_string().len() > 65_536
+        if !request.is_object() || request.to_string().len() > GAME_METADATA_REQUEST_LIMIT
             || !request["clientId"].as_str().is_some_and(|id| crate::protocol::identifier(id, 16, 80)) {
             return self.error("Invalid game metadata client or request.", None);
         }
@@ -746,6 +750,15 @@ impl GatewayManager {
         }
         // Passive state and client-library discovery retain request validation
         // without holding profile/game admission during metadata reads.
+        if matches!(command, "game_artwork_list" | "game_artwork_preview") {
+            if request.to_string().len() > 8192 || !request["clientId"].as_str().is_some_and(|id| crate::protocol::identifier(id, 16, 80)) {
+                return self.error("Invalid game artwork request.", None);
+            }
+            return match self.games.artwork_options(&request) {
+                Ok(artwork) => json!({"ok":true,"state":{"gameArtwork":artwork}}),
+                Err(error) => self.error(&error, None),
+            };
+        }
         if command == "game_background_preview" {
             if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.",None); }
             if request.to_string().len()>65_536 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80))

@@ -1,8 +1,9 @@
 //! Read-only discovery of locally installed client libraries. No account tokens,
 //! network requests, client configuration writes or automatic imports occur.
 use crate::game_discovery::{self, Vdf};
-mod battlenet;
 mod artwork;
+mod artwork_choices;
+mod battlenet;
 mod disk;
 mod epic;
 pub(crate) mod executable_ranking;
@@ -24,6 +25,8 @@ const MAX_CANDIDATES: usize = 512;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_SCAN_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DIAGNOSTICS: usize = 64;
+
+pub(crate) use artwork_choices::{ArtworkChoice, artwork_choices};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

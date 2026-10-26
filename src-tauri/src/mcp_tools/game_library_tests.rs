@@ -1,6 +1,32 @@
 use super::*;
 use std::sync::Mutex;
 
+#[test]
+fn artwork_tools_forward_exact_ids_and_save_bounded_replayable_receipts() {
+    let (tools, backend) = fixture(json!({"ok":true,"state":{"gameArtwork":{"gameId":"game-fixture","items":[{"id":"a".repeat(64),"label":"Cover","image":"thumbnail"}],"total":1,"nextOffset":null}}}));
+    let list = tools.call("game_artwork_list", json!({"gameId":"game-fixture","limit":4}), "reader");
+    assert_eq!(list["ok"], true, "{list}");
+    assert_eq!(list["data"]["items"][0]["label"], "Cover");
+    *backend.response.lock().unwrap() = json!({"ok":true,"state":{"gameArtwork":{"image":"preview"}}});
+    let preview = tools.call("game_artwork_preview", json!({"gameId":"game-fixture","artworkId":"a".repeat(64)}), "reader");
+    assert_eq!(preview["data"]["image"], "preview");
+    assert!(!is_mutation("game_artwork_list"));
+    assert!(!is_mutation("game_artwork_preview"));
+    assert!(is_mutation("game_background_save"));
+    *backend.response.lock().unwrap() = json!({"ok":true,"state":{"games":{"catalogue":[{"id":"game-fixture","name":"Fixture","background":{"image":"large image bytes"}}]}}});
+    let args = json!({"operationId":"394545e5-b5b1-4ca7-8e44-80609e47972b","gameId":"game-fixture","path":null});
+    let saved = tools.call("game_background_save", args.clone(), "writer");
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!(saved["data"]["gameId"], "game-fixture");
+    assert!(saved["data"].get("background").is_none());
+    let calls = backend.requests.lock().unwrap().len();
+    assert_eq!(tools.call("game_background_save", args, "writer"), saved);
+    assert_eq!(backend.requests.lock().unwrap().len(), calls);
+    assert_eq!(backend.requests.lock().unwrap()[1]["artworkId"], "a".repeat(64));
+    assert!(backend.requests.lock().unwrap()[2].get("operationId").is_none());
+}
+
+
 #[derive(Default)]
 struct Fixture {
     requests: Mutex<Vec<Value>>,

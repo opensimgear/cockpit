@@ -104,6 +104,56 @@ fn saved(runtime: &GamesRuntime) -> Settings {
 }
 
 #[test]
+fn library_artwork_browsing_previews_and_pages_without_publishing_metadata() {
+    let (runtime, directory) = fixture();
+    let root = directory.path().join("install-a");
+    let cover = root.join("cover.png");
+    image::RgbImage::new(480, 800).save(&cover).unwrap();
+    image::RgbImage::new(960, 540).save(root.join("header.jpg")).unwrap();
+    fs::write(root.join("folder.jpg"), b"invalid raster").unwrap();
+    let before = saved(&runtime);
+    let first = runtime.artwork_options(&json!({"command":"game_artwork_list","gameId":GAME,"limit":1})).unwrap();
+    assert_eq!(first["total"], 2);
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["nextOffset"], 1);
+    assert_eq!(runtime.artwork_options(&json!({"command":"game_artwork_list","gameId":GAME,"limit":1})).unwrap(), first);
+    assert!(first["items"][0]["image"].as_str().unwrap().starts_with("data:image/jpeg;base64,"));
+    let second = runtime.artwork_options(&json!({"command":"game_artwork_list","gameId":GAME,"offset":1,"limit":1})).unwrap();
+    assert!(second["nextOffset"].is_null());
+    let artwork_id = first["items"][0]["id"].as_str().unwrap();
+    let preview = runtime.artwork_options(&json!({"command":"game_artwork_preview","gameId":GAME,"artworkId":artwork_id})).unwrap();
+    assert!(preview["image"].as_str().unwrap().starts_with("data:image/jpeg;base64,"));
+    for request in [
+        json!({"command":"game_artwork_list","gameId":GAME,"limit":0}),
+        json!({"command":"game_artwork_list","gameId":GAME,"offset":65}),
+        json!({"command":"game_artwork_list","gameId":GAME,"path":cover}),
+        json!({"command":"game_artwork_list","gameId":"other-game"}),
+        json!({"command":"game_artwork_preview","gameId":GAME,"artworkId":"bad"}),
+        json!({"command":"game_artwork_preview","gameId":GAME,"artworkId":"0".repeat(64)}),
+    ] { assert!(runtime.artwork_options(&request).is_err(), "{request}"); }
+    fs::remove_file(cover).unwrap();
+    assert!(runtime.artwork_options(&json!({"command":"game_artwork_preview","gameId":GAME,"artworkId":artwork_id})).is_err());
+    assert_eq!(saved(&runtime), before);
+    runtime.shutdown();
+    assert!(runtime.artwork_options(&json!({"command":"game_artwork_list","gameId":GAME})).is_err());
+}
+
+fn high_resolution_artwork_preview() -> String {
+    use base64::Engine;
+    let mut bytes = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90)
+        .encode_image(&image::RgbImage::new(960, 540)).unwrap();
+    // Valid JPEG comment segments exercise the transport bound without
+    // depending on compression ratios of a particular codec build.
+    let padding = vec![b'a'; 90_000 - bytes.len()];
+    for chunk in padding.chunks(60_000) {
+        let length = ((chunk.len() + 2) as u16).to_be_bytes();
+        bytes.splice(2..2, [vec![0xff, 0xfe, length[0], length[1]], chunk.to_vec()].concat());
+    }
+    format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[test]
 fn game_metadata_edits_persist_and_installation_selection_is_independent() {
     let (runtime, _directory) = fixture();
     runtime
@@ -189,6 +239,29 @@ fn categories_and_backgrounds_follow_game_ownership_and_remove_atomically() {
     assert!(runtime
         .metadata_request(&json!({"command":"game_remove","gameId":GAME}))
         .is_err());
+    runtime.shutdown();
+}
+
+#[test]
+fn high_resolution_discovery_artwork_can_be_saved_as_a_background() {
+    let (runtime, _directory) = fixture();
+    let image = high_resolution_artwork_preview();
+    let request = json!({
+        "command":"game_background_save",
+        "gameId":GAME,
+        "imageData":image,
+        "crop":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}
+    });
+    assert!(request.to_string().len() > 65_536);
+    assert!(request.to_string().len() <= crate::gateways::GAME_METADATA_REQUEST_LIMIT);
+    runtime.metadata_request(&request).unwrap();
+    let background = &saved(&runtime).backgrounds[GAME];
+    let bytes = fs::read(runtime.inner.installations.root().join("game-artwork").join(
+        background.image.strip_prefix("artwork:").unwrap(),
+    ))
+    .unwrap();
+    assert!(bytes.len() <= 128 * 1024);
+    assert_eq!(background.crop.unwrap().width, 1.0);
     runtime.shutdown();
 }
 

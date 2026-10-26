@@ -54,6 +54,54 @@ fn discovery_apply_rechecks_captured_mcp_authorization_before_registry_commit() 
 }
 
 #[test]
+fn metadata_gateway_accepts_bounded_high_resolution_preview_envelopes() {
+    let manager = GatewayManager::mcp_test_manager();
+    let client = crate::mcp_tools::native_client("large-background-preview");
+    manager.mcp_authorize_client(&client, true);
+    let request = json!({
+        "command":"game_background_save",
+        "clientId":client,
+        "gameId":"game-fixture-123",
+        "imageData":format!("data:image/jpeg;base64,{}", "A".repeat(90_000)),
+        "crop":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}
+    });
+    assert!(request.to_string().len() > 65_536);
+    assert!(request.to_string().len() <= crate::gateways::GAME_METADATA_REQUEST_LIMIT);
+    let response = manager.mcp_request(request);
+    assert_eq!(response["ok"], false, "unknown game should still be rejected");
+    assert_eq!(response["error"], "Choose an existing game background.", "{response}");
+    manager.shutdown();
+}
+
+#[test]
+fn artwork_gateway_rejects_invalid_envelopes_without_acquiring_control() {
+    let manager = Arc::new(GatewayManager::mcp_test_manager());
+    let client = crate::mcp_tools::native_client("artwork-inspection");
+    manager.mcp_authorize_client(&client, true);
+    let epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+    let game = manager.game_admission.write().unwrap();
+    let profile = manager.profile_admission.write().unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let reading = manager.clone();
+    let reader = std::thread::spawn(move || {
+        let responses = [
+            reading.mcp_request(json!({"command":"game_artwork_list","clientId":client,"gameId":"missing-game"})),
+            reading.request(json!({"command":"game_artwork_list","gameId":"missing-game"})),
+            reading.mcp_request(json!({"command":"game_artwork_preview","clientId":client,"gameId":"missing-game","artworkId":"x".repeat(9000)})),
+        ];
+        sender.send(responses).unwrap();
+    });
+    let responses = receiver.recv_timeout(Duration::from_secs(2));
+    drop(game);drop(profile);reader.join().unwrap();
+    let [missing, anonymous, oversized] = responses.expect("Artwork inspection must bypass control admission");
+    assert_eq!(missing["error"], "Choose a discovered game.");
+    assert_eq!(anonymous["error"], "Invalid game artwork request.");
+    assert_eq!(oversized["error"], "Invalid game artwork request.");
+    assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire), epoch);
+    manager.shutdown();
+}
+
+#[test]
 fn game_get_state_bypasses_manager_admission_and_keeps_envelope_validation() {
     struct CachedCatalogue;
     impl crate::game_discovery::Platform for CachedCatalogue {

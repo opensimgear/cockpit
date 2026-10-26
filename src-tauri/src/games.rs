@@ -76,6 +76,8 @@ mod dcs_catalogues;
 pub(crate) mod launch;
 #[path = "game_metadata_api.rs"]
 mod metadata_api;
+#[path = "games/artwork_options.rs"]
+mod artwork_options;
 #[path="games/review/mod.rs"]
 mod discovery_review;
 pub(crate) use metadata_api::PreparedMetadata;

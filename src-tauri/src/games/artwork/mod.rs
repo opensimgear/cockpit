@@ -159,7 +159,7 @@ use sources::*;
 
 pub(crate) fn import_preview(root: &Path, data: &str, crop: Crop) -> Result<Background, String> {
     crop.validate()?;
-    let bytes = preview_bytes(data)?;
+    let bytes = discovery_preview_bytes(data)?;
     let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
         .map_err(|error| error.to_string())?;
     let ratio = crop.width * image.width() as f64 / (crop.height * image.height() as f64);
@@ -244,7 +244,7 @@ fn resolved(root: &Path, reference: &str) -> Result<String, String> {
         return Ok(value.clone());
     }
     let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-    if redirected(&metadata) || !metadata.is_file() || metadata.len() > THUMBNAIL_LIMIT as u64 {
+    if redirected(&metadata) || !metadata.is_file() || metadata.len() > DISCOVERY_PREVIEW_LIMIT as u64 {
         return Err("Managed artwork asset is unavailable.".into());
     }
     let bytes = fs::read(&path).map_err(|error| error.to_string())?;

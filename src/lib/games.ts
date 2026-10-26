@@ -2,6 +2,7 @@ export type GameProvider = 'dcs-bios' | 'assetto-corsa-rally' | 'assetto-corsa' 
 export type GameId = string;
 export type GameCrop = {x:number;y:number;width:number;height:number};
 export type GameBackground = { crop?: GameCrop; image: string; positionX: number; positionY: number };
+export type GameArtworkOption = {id:string;label:string;image:string};
 export type GameCategories = Record<string, string>;
 export function categoryError(categories: GameCategories): string {
   const names = Object.values(categories).map(name => name.trim().toLowerCase());
@@ -41,7 +42,7 @@ export type GameDiscoveryEntry = {
 export type GameDiscovery = { scanId: string; status: 'idle' | 'scanning' | 'ready' | 'applied' | 'failed'; libraries: { id: string; name: string; status: 'queued' | 'scanning' | 'preparing' | 'complete' | 'unavailable' | 'failed'; found: number; message?: string }[]; entries: GameDiscoveryEntry[]; diagnostics: string[]; firstStart: boolean };
 export type GameDiscoveryAction = { id: string; selected: boolean; executable?: string | null; replaceInstallationId?: string | null; gameId?: string };
 export type GamesState = { backgroundPreview?: {image:string}; categories?: GameCategories; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; discovery?: GameDiscovery; addedGameId?: GameId; error?: string | null };
-export type GameCommandName = 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_save' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
+export type GameCommandName = 'game_artwork_list' | 'game_artwork_preview' | 'game_background_preview' | 'game_categories_save' | 'game_category_save' | 'game_save' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
 export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; categories?: GameCategories; expectedCategories?: GameCategories; categoryId?: string | null; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 

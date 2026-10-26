@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import type {GameCrop} from './games';
   import {boundedCrop,maximumCrop,positionedCrop,moveCrop,resizeCropCorner,cropImageStyle,type CropCorner} from './game-background-crop';
   let {image,name,initialCrop,positionX=50,positionY=50,pending=false,error='',save,close}:{image:string;name:string;initialCrop?:GameCrop;positionX?:number;positionY?:number;pending?:boolean;error?:string;save:(crop:GameCrop)=>void;close:()=>void}=$props();
@@ -25,8 +26,8 @@
       </div>{/if}
     </div>
   </div>
-  <div class="crop-controls"><button type="button" class="secondary-button" disabled={!ready||pending} onclick={()=>crop=maximumCrop(width,height)}>Fit image</button></div>
-  <div class="crop-footer"><div class="crop-preview" aria-label="Cropped tile preview"><img src={image} alt="" style={cropImageStyle(crop)}/><strong>{name}</strong></div><div class="actions"><button class="secondary-button" disabled={pending} onclick={close}>Cancel</button><button class="primary-button" disabled={!ready||pending||!!loadError} onclick={()=>save(crop)}>{pending?'Saving…':'Save background'}</button></div></div>
+  <div class="crop-controls"><button type="button" class="secondary-button" disabled={!ready||pending} onclick={()=>crop=maximumCrop(width,height)}><Icon name="fit" size={14}/>Fit image</button></div>
+  <div class="crop-footer"><div class="crop-preview" aria-label="Cropped tile preview"><img src={image} alt="" style={cropImageStyle(crop)}/><strong>{name}</strong></div><div class="actions"><button class="secondary-button" disabled={pending} onclick={close}><Icon name="close" size={14}/>Cancel</button><button class="primary-button" disabled={!ready||pending||!!loadError} onclick={()=>save(crop)}><Icon name="save" size={14}/>{pending?'Saving…':'Save background'}</button></div></div>
   {#if error||loadError}<p class="crop-error" role="alert">{error||loadError}</p>{/if}
 </section>
 

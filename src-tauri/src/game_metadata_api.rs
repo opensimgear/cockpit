@@ -22,7 +22,7 @@ impl GamesRuntime {
     }
     pub(crate) fn prepare_metadata(&self,request:&Value)->Result<PreparedMetadata,String> {
         if self.inner.closed.load(Ordering::Acquire) {return Err("The game metadata runtime has closed.".into());}
-        if !request.is_object() || request.to_string().len()>65536 {return Err("Invalid game metadata request.".into());}
+        if !request.is_object() || request.to_string().len()>crate::gateways::GAME_METADATA_REQUEST_LIMIT {return Err("Invalid game metadata request.".into());}
         self.inner.guard_installation_metadata()?;
         let staging=crate::game_artwork::staging(self.inner.installations.root())?;
         let (captured,catalogue)={let settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());(settings.saved.clone(),settings.catalogue.clone())};

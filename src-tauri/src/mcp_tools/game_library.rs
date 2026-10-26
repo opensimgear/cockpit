@@ -154,6 +154,11 @@ impl Tools {
         Ok(json!({"scanId":scan_id,"status":status,"gameCount":game_count}))
     }
 
+    pub(super) fn game_background_save(&self, args: &Value, client: &str) -> Result<Value, Value> {
+        let data = self.native("game_background_save", select(args, &["gameId", "imageData", "crop", "path", "positionX", "positionY"]), client, Some("games"))?;
+        metadata_receipt(&data, args["gameId"].as_str().unwrap_or(""), false)
+    }
+
     pub(super) fn game_save(&self, args: &Value, client: &str) -> Result<Value, Value> {
         let data = self.native(
             "game_save",

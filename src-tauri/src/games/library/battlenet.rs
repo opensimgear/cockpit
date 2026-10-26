@@ -1,5 +1,5 @@
 //! Read-only Battle.net discovery from the launcher's local protobuf database.
-use super::{canonical_text, clean_name, executable_candidates, regular, Candidate, Scan};
+use super::{Candidate, Scan, canonical_text, clean_name, executable_candidates, regular};
 use std::{
     collections::BTreeSet,
     fs,
@@ -165,6 +165,14 @@ fn known_name(code: &str) -> Option<&'static str> {
         "anbs" => "Diablo Immortal",
         _ => return None,
     })
+}
+
+pub(super) fn artwork_choices(code: &str, roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
+    artwork::choices(roots, code)
+}
+
+pub(super) fn artwork_cache_roots() -> Vec<PathBuf> {
+    artwork::cache_roots()
 }
 
 /// Minimal protobuf wire reader: supports varint and length-delimited fields,

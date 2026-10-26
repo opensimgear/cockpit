@@ -1,6 +1,6 @@
 //! Battle.net's cached catalogue maps product/type IDs to hashed local images.
 //! Read only public catalogue fragments and raster assets, never account stores.
-use super::super::{regular, sorted_children, Candidate};
+use super::super::{Candidate, regular, sorted_children};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -223,6 +223,144 @@ fn lookup(roots: &[PathBuf], codes: &BTreeSet<String>) -> BTreeMap<String, PathB
         .into_iter()
         .map(|(code, (_, path))| (code, path))
         .collect()
+}
+
+/// Enumerate cached image assets named by the exact Battle.net product id.
+/// Unlike automatic artwork ranking, this includes every catalogue field and
+/// locale so a user can choose logos, portraits, and alternate key art too.
+pub(super) fn choices(roots: &[PathBuf], code: &str) -> Vec<(String, PathBuf)> {
+    if code.is_empty()
+        || code.len() > 64
+        || !code
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+    {
+        return Vec::new();
+    }
+    let mut found = BTreeMap::<PathBuf, String>::new();
+    let mut inspected = 0;
+    let mut remaining = MAX_CATALOGUE_BYTES;
+    'roots: for root in roots.iter().take(4).filter(|root| regular(root, true)) {
+        for first in sorted_children(root).into_iter().filter(|path| {
+            regular(path, true)
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| hex(name, 2))
+        }) {
+            for second in sorted_children(&first).into_iter().filter(|path| {
+                regular(path, true)
+                    && path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| hex(name, 2))
+            }) {
+                for path in sorted_children(&second) {
+                    inspected += 1;
+                    if inspected > MAX_FILES || remaining == 0 || found.len() >= 64 {
+                        break 'roots;
+                    }
+                    if !regular(&path, false)
+                        || !path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| hex(name, 32) || hex(name, 64))
+                    {
+                        continue;
+                    }
+                    let Some(data) = fragment(&path, &mut remaining) else {
+                        continue;
+                    };
+                    let Some(products) = data["products"].as_array() else {
+                        continue;
+                    };
+                    let Some(files) = data["files"].as_object() else {
+                        continue;
+                    };
+                    for product in products
+                        .iter()
+                        .take(512)
+                        .filter(|product| product_matches(product, code))
+                    {
+                        let Some(fields) = product["base"].as_object() else {
+                            continue;
+                        };
+                        for (field, reference) in fields {
+                            if field.len() > 64 || field.chars().any(char::is_control) {
+                                continue;
+                            }
+                            let Some(reference) = reference.as_str() else {
+                                continue;
+                            };
+                            for (locale, assets) in files {
+                                if locale.len() > 16 || !locale.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+                                    continue;
+                                }
+                                let asset = &assets[reference];
+                                let Some(hash) = asset["hash"].as_str() else {
+                                    continue;
+                                };
+                                let Some(image) = raster(root, hash) else {
+                                    continue;
+                                };
+                                if !usable_choice_dimensions(&image) {
+                                    continue;
+                                }
+                                let locale_name = locale_label(locale);
+                                let label = if locale_name.is_empty() {
+                                    pretty_field(field)
+                                } else {
+                                    format!("{} ({locale_name})", pretty_field(field))
+                                };
+                                found.entry(image).or_insert(label);
+                                if found.len() >= 64 {
+                                    break 'roots;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|(path, label)| (label, path))
+        .collect()
+}
+
+fn usable_choice_dimensions(path: &Path) -> bool {
+    image::ImageReader::open(path)
+        .ok()
+        .and_then(|reader| reader.with_guessed_format().ok())
+        .and_then(|reader| reader.into_dimensions().ok())
+        .is_some_and(|(width, height)| {
+            width >= 32 && height >= 32 && width <= 8192 && height <= 8192
+        })
+}
+
+fn pretty_field(value: &str) -> String {
+    value
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn locale_label(value: &str) -> &str {
+    match value {
+        "enUS" => "English (US)",
+        "enGB" => "English (UK)",
+        "default" => "Default",
+        _ => value,
+    }
 }
 
 #[cfg(test)]

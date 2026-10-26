@@ -38,6 +38,66 @@ fn steam_art(root: &Path, app_id: u32) -> Option<PathBuf> {
         .map(|(_, path)| path)
 }
 
+/// Return every recognizable raster image inside one app's Steam cache.
+/// The app-id directory is the identity boundary; neighboring app caches are
+/// never traversed. Both modern hash folders and older flat names are read.
+pub(super) fn steam_art_choices(root: &Path, app_id: u32) -> Vec<PathBuf> {
+    let cache = root.join("appcache/librarycache");
+    let mut candidates = Vec::new();
+    for name in [
+        "library_hero",
+        "header",
+        "header_2x",
+        "library_600x900",
+        "library_capsule",
+        "library_logo",
+        "logo",
+        "icon",
+        "library_header",
+        "library_capsule_2x",
+    ] {
+        for extension in ["jpg", "png", "webp"] {
+            candidates.push(cache.join(format!("{app_id}_{name}.{extension}")));
+        }
+    }
+    let app = cache.join(app_id.to_string());
+    if regular(&app, true) {
+        for path in sorted_children(&app).into_iter().take(128) {
+            if regular(&path, true)
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        matches!(name.len(), 32 | 40 | 64)
+                            && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+            {
+                candidates.extend(sorted_children(&path).into_iter().take(64));
+            } else {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates
+        .into_iter()
+        .filter(|path| steam_art_name(path) && super::artwork_choices::valid_raster(path))
+        .take(64)
+        .collect()
+}
+
+fn steam_art_name(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    !name.contains("blur")
+        && ["header", "hero", "capsule", "600x900", "logo", "icon"]
+            .iter()
+            .any(|kind| name.contains(kind))
+}
+
 fn steam_art_rank(path: &Path) -> Option<(u64, bool)> {
     let name = path.file_name()?.to_str()?.to_ascii_lowercase();
     if !regular(path, false)
