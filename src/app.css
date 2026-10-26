@@ -62,7 +62,7 @@ nav button.current, .sidebar-link.current { color: var(--accent); background: va
 .topbar-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .icon-button { background: transparent; padding: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); border-radius: 4px; }
 .icon-button:hover { background: var(--surface-raised); color: var(--text); }
-main { width: 100%; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+main { width: 100%; flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .main-content { padding: 32px 34px; max-width: 1680px; margin: 0 auto; width: 100%; }
 .eyebrow { color: var(--muted); font-weight: 600; font-size: 8px; letter-spacing: 1.7px; display: block; }
 h1 { margin-top: 10px; font-size: 31px; font-weight: 560; letter-spacing: -1.15px; line-height: 1.3; }
