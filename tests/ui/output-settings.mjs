@@ -72,7 +72,7 @@ test('output cards preserve native setup, enablement, error states and compact r
     await expect(keyboard.locator('.setup-status')).toHaveCount(0);
     assert.ok(requests.every(request => !request.command.endsWith('_save') && request.command !== 'controller_visibility_enable'));
     await desktopToggle.check(); await expect(desktopToggle).toBeChecked();
-    await virtual.getByRole('button', { name: 'Configure', exact: true }).click();
+    await virtual.getByRole('button', { name: 'Manage', exact: true }).click();
     await hiding.getByRole('button', { name: 'Manage', exact: true }).click();
     assert.ok(invocations.some(call => call.command === 'open_vjoy')); assert.ok(invocations.some(call => call.command === 'open_hidhide'));
     await page.screenshot({ path: resolve(artifacts, 'outputs-desktop.png'), fullPage: true });
@@ -83,7 +83,7 @@ test('output cards preserve native setup, enablement, error states and compact r
     await expect(hiding.getByRole('button', { name: 'Set up', exact: true })).toBeVisible();
     await expect(virtual.getByRole('status')).toHaveText('Not installed');
     await expect(hiding.getByRole('status')).toHaveText('Not installed');
-    await expect(virtual.getByRole('button', { name: 'Configure', exact: true })).toHaveCount(0);
+    await expect(virtual.getByRole('button', { name: 'Manage', exact: true })).toHaveCount(0);
     await expect(virtual.locator('.driver-version')).toHaveCount(0);
     await expect(setup.locator('details')).toHaveCount(0);
     await page.screenshot({ path: resolve(artifacts, 'outputs-missing-drivers.png'), fullPage: true });
@@ -91,7 +91,7 @@ test('output cards preserve native setup, enablement, error states and compact r
     assert.ok(invocations.some(call => call.command === 'optional_dependency_install' && call.args.id === 'vjoy'));
     await expect(virtual.locator('.card-title')).toContainText('vJoy · 2.2.2.0');
     await expect(virtual.getByRole('button', { name: 'Set up', exact: true })).toHaveCount(0);
-    await expect(virtual.getByRole('button', { name: 'Configure', exact: true })).toBeEnabled();
+    await expect(virtual.getByRole('button', { name: 'Manage', exact: true })).toBeEnabled();
     rejectWrite = true;
     await desktopToggle.click();
     await expect(setup.getByRole('alert')).toContainText('revision conflict');

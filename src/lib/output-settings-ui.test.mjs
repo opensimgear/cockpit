@@ -50,7 +50,7 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
 
 test('Settings owns driver tools and machine enablement while application scope belongs to profile blocks', async () => {
   const h = await harness();
-  for (const label of ['Configure', 'Manage', 'Enable desktop output on this computer', 'vJoy Device 1', 'free']) assert.ok(h.html.includes(label), label);
+  for (const label of ['Manage', 'Enable desktop output on this computer', 'vJoy Device 1', 'free']) assert.ok(h.html.includes(label), label);
   assert.ok(!h.html.includes('Enable device hiding on this computer'));
   assert.ok(!h.html.includes('Capture access configured.'));
   assert.equal((h.html.match(/role="status">Enabled/g) ?? []).length, 2);
@@ -98,7 +98,6 @@ test('separate output cards retain unavailable reasons and disable unsupported s
 test('browser settings explain where native driver tools are available', async () => {
   const h = await harness(null, { nativeApp: false });
   assert.ok(h.html.includes('Driver installers and configuration apps open from the native Cockpit desktop app.'));
-  assert.ok(!h.html.includes('>Configure</button>'));
   assert.ok(!h.html.includes('>Manage</button>'));
   assert.deepEqual(h.invocations, []);
 });
@@ -112,7 +111,7 @@ test('installed driver versions sit beside their names and setup stays inside mi
     vjoy: { installed: false, version: null, error: null }, hidhide: { installed: false, version: null, error: null } } } } });
   assert.deepEqual(missing.setups, ['vjoy', 'hidhide']);
   assert.ok(!missing.html.includes('>Enabled</span>'));
-  assert.ok(!missing.html.includes('>Configure</button>')); assert.ok(!missing.html.includes('>Manage</button>'));
+  assert.ok(!missing.html.includes('>Manage</button>'));
   const unknown = await harness(null, { overrides: { inventory: { ...initial().inventory, drivers: { ...initial().inventory.drivers,
     vjoy: { installed: null, version: null, error: 'Driver metadata could not be read.' } } } } });
   assert.ok(unknown.html.includes('Driver metadata could not be read.'));

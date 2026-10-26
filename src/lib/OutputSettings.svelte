@@ -91,7 +91,7 @@
       {:else if inventory && vjoyDriver?.installed !== false}<p class="status-note">No configured vJoy controllers detected. Configure a controller layout in the vJoy app.</p>{/if}
     </div>
     {#if nativeApp && inventory?.drivers?.supported && vjoyDriver?.installed === false}<div class="card-footer"><OptionalDependencies only="vjoy" disabled={!!busy} oncomplete={refresh} /></div>
-    {:else if nativeApp}<div class="card-footer"><span>Open the vJoy configuration app. Windows may ask for administrator approval.</span><button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_vjoy')}><Icon name="settings" size={14} />Configure</button></div>{/if}
+    {:else if nativeApp}<div class="card-footer"><span>Open the vJoy configuration app. Windows may ask for administrator approval.</span><button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_vjoy')}><Icon name="settings" size={14} />Manage</button></div>{/if}
   </section>
   <section class="panel output-card" aria-label="Device hiding">
     <div class="card-heading">
