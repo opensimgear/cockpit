@@ -17,8 +17,8 @@ export async function desktopUiConflict({page,writer,ok,mutation}) {
     await page.evaluate(()=>[...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='Settings').click());
     await until(()=>page.evaluate(()=>!!document.querySelector('#settings-tab-outputs')),'Outputs settings tab is missing');
     await page.evaluate(()=>document.querySelector('#settings-tab-outputs').click());
-    await until(()=>page.evaluate(()=>[...document.querySelectorAll('.output-settings button')].some(button=>button.textContent.trim()==='Refresh output setup'&&!button.disabled)),'Output setup did not finish reading');
-    await page.evaluate(()=>[...document.querySelectorAll('.output-settings button')].find(button=>button.textContent.trim()==='Refresh output setup').click());
+    await until(()=>page.evaluate(()=>[...document.querySelectorAll('.output-settings button')].some(button=>button.textContent.trim()==='Refresh'&&!button.disabled)),'Output setup did not finish reading');
+    await page.evaluate(()=>[...document.querySelectorAll('.output-settings button')].find(button=>button.textContent.trim()==='Refresh').click());
     await until(()=>page.evaluate(enabled=>{
       const label=[...document.querySelectorAll('.output-settings label')].find(label=>label.textContent.includes('Enable desktop output on this computer'));
       const input=label?.querySelector('input');return input&&!input.disabled&&input.checked===enabled;

@@ -14,34 +14,131 @@ pub(crate) fn list() -> Value {
     json!({"supported": cfg!(all(target_os = "windows", target_arch = "x86_64")), "dependencies": catalog()})
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConfigurationApp {
+    HidHide,
+    VJoy,
+}
+
+impl ConfigurationApp {
+    fn relative_path(self) -> &'static str {
+        match self {
+            Self::HidHide => "Nefarius Software Solutions/HidHide/x64/HidHideClient.exe",
+            Self::VJoy => "vJoy/x64/vJoyConf.exe",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::HidHide => "HidHide",
+            Self::VJoy => "vJoy configuration",
+        }
+    }
+
+    fn missing_message(self) -> &'static str {
+        match self {
+            Self::HidHide => {
+                "HidHide configuration client is not installed. Set up HidHide in Settings first."
+            }
+            Self::VJoy => "vJoy configuration is not installed. Set up vJoy in Settings first.",
+        }
+    }
+}
+
+fn configuration_path(root: &Path, app: ConfigurationApp) -> std::path::PathBuf {
+    root.join(app.relative_path())
+}
+
+fn configuration_outcome(
+    app: ConfigurationApp,
+    success: bool,
+    code: Option<i32>,
+    stderr: &str,
+) -> Result<(), String> {
+    if success {
+        return Ok(());
+    }
+    if code == Some(1223) {
+        return Err(format!(
+            "Windows elevation for {} was cancelled. You can try again when ready.",
+            app.label()
+        ));
+    }
+    let detail = stderr.trim();
+    if detail.is_empty() {
+        Err(format!(
+            "Could not open {} (PowerShell exit code {}).",
+            app.label(),
+            code.map_or_else(|| "unavailable".to_owned(), |value| value.to_string())
+        ))
+    } else {
+        Err(format!("Could not open {}: {detail}", app.label()))
+    }
+}
+
+#[cfg(windows)]
+const CONFIG_LAUNCH_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+try {
+    Start-Process -FilePath $env:OSG_CONFIG_APP -Verb RunAs | Out-Null
+    exit 0
+} catch {
+    if ($_.Exception.NativeErrorCode -eq 1223 -or $_.Exception.HResult -eq -2147023673) { exit 1223 }
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}"#;
+
+/// Ask Windows to elevate only one of the installed, fixed-path configuration clients.
+/// The executable path is passed to PowerShell as environment data, not interpolated
+/// into its command text. This lets tools that require administrator rights show UAC.
+#[cfg(windows)]
+fn launch_configuration(app: ConfigurationApp) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    let root = std::env::var_os("ProgramW6432")
+        .or_else(|| std::env::var_os("ProgramFiles"))
+        .ok_or("Windows Program Files directory is unavailable.")?;
+    let path = configuration_path(Path::new(&root), app);
+    if !path.is_file() {
+        return Err(app.missing_message().into());
+    }
+    let system =
+        std::env::var_os("SystemRoot").ok_or("Windows system directory is unavailable.")?;
+    let result = std::process::Command::new(
+        Path::new(&system).join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+    )
+    .args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        CONFIG_LAUNCH_SCRIPT,
+    ])
+    .env("OSG_CONFIG_APP", &path)
+    .creation_flags(0x08000000)
+    .output()
+    .map_err(|error| format!("Could not request elevation for {}: {error}", app.label()))?;
+
+    configuration_outcome(
+        app,
+        result.status.success(),
+        result.status.code(),
+        &String::from_utf8_lossy(&result.stderr),
+    )
+}
+
+#[cfg(not(windows))]
+fn launch_configuration(_app: ConfigurationApp) -> Result<(), String> {
+    Err("Configuration tools are available in the Windows desktop app.".into())
+}
+
 /// Open only the installed upstream configuration client; never accept a caller path.
 pub(crate) fn open_hidhide() -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let root = std::env::var_os("ProgramW6432").or_else(|| std::env::var_os("ProgramFiles")).ok_or("Windows Program Files directory is unavailable.")?;
-        let path = Path::new(&root).join("Nefarius Software Solutions/HidHide/x64/HidHideClient.exe");
-        if !path.is_file() { return Err("HidHide configuration client is not installed. Set up HidHide in Settings first.".into()); }
-        std::process::Command::new(path).creation_flags(0x08000000).spawn().map_err(|e| format!("Could not open HidHide: {e}"))?;
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    { Err("HidHide management is available in the Windows desktop app.".into()) }
+    launch_configuration(ConfigurationApp::HidHide)
 }
 
 /// Open the installed vJoy layout editor from its fixed upstream location.
 pub(crate) fn open_vjoy() -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let root = std::env::var_os("ProgramW6432").or_else(|| std::env::var_os("ProgramFiles")).ok_or("Windows Program Files directory is unavailable.")?;
-        let path = Path::new(&root).join("vJoy/x64/vJoyConf.exe");
-        if !path.is_file() { return Err("vJoy configuration is not installed. Set up vJoy in Settings first.".into()); }
-        std::process::Command::new(path).creation_flags(0x08000000).spawn().map_err(|e| format!("Could not open vJoy configuration: {e}"))?;
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    { Err("vJoy configuration is available in the Windows desktop app.".into()) }
+    launch_configuration(ConfigurationApp::VJoy)
 }
 
 fn dependency(id: &str) -> Result<Value, String> {
@@ -189,5 +286,98 @@ mod tests {
         assert!(outcome(Some(1602)).is_err());
         assert!(outcome(Some(5)).is_err());
         assert!(outcome(None).is_err());
+    }
+
+    #[test]
+    fn configuration_tools_resolve_only_the_expected_installed_paths() {
+        let root = Path::new("C:/Program Files");
+        assert_eq!(
+            configuration_path(root, ConfigurationApp::VJoy),
+            root.join("vJoy/x64/vJoyConf.exe")
+        );
+        assert_eq!(
+            configuration_path(root, ConfigurationApp::HidHide),
+            root.join("Nefarius Software Solutions/HidHide/x64/HidHideClient.exe")
+        );
+        assert!(ConfigurationApp::VJoy
+            .missing_message()
+            .contains("Set up vJoy"));
+        assert!(ConfigurationApp::HidHide
+            .missing_message()
+            .contains("Set up HidHide"));
+    }
+
+    #[test]
+    fn configuration_launch_reports_success_cancellation_and_failures() {
+        assert!(configuration_outcome(ConfigurationApp::VJoy, true, Some(0), "").is_ok());
+        assert!(
+            configuration_outcome(ConfigurationApp::VJoy, false, Some(1223), "")
+                .unwrap_err()
+                .contains("cancelled")
+        );
+        assert!(
+            configuration_outcome(ConfigurationApp::VJoy, false, Some(1), "access denied")
+                .unwrap_err()
+                .contains("access denied")
+        );
+        assert!(
+            configuration_outcome(ConfigurationApp::HidHide, false, None, "")
+                .unwrap_err()
+                .contains("exit code unavailable")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn configuration_launch_hands_off_path_and_reports_mocked_uac_cancellation() {
+        use std::process::Command;
+
+        let system = std::env::var_os("SystemRoot").expect("Windows system directory");
+        let log =
+            std::env::temp_dir().join(format!("osg-config-launch-{}.log", std::process::id()));
+        let prelude = r#"function Start-Process {
+    param([string]$FilePath, [string]$Verb)
+    Set-Content -LiteralPath $env:OSG_TEST_LOG -Value ($FilePath + '|' + $Verb)
+    if ($env:OSG_TEST_CANCEL -eq '1') { throw [System.Runtime.InteropServices.Marshal]::GetExceptionForHR(-2147023673) }
+}"#;
+        let script = format!("{prelude}\n{CONFIG_LAUNCH_SCRIPT}");
+        let run = |cancel: bool| {
+            Command::new(Path::new(&system).join("System32/WindowsPowerShell/v1.0/powershell.exe"))
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &script,
+                ])
+                .env("OSG_CONFIG_APP", r"C:\Program Files\Fake Config\tool.exe")
+                .env("OSG_TEST_LOG", &log)
+                .env("OSG_TEST_CANCEL", if cancel { "1" } else { "0" })
+                .output()
+                .expect("run mocked PowerShell launcher")
+        };
+
+        let started = run(false);
+        assert!(
+            started.status.success(),
+            "{}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap().trim(),
+            r"C:\Program Files\Fake Config\tool.exe|RunAs"
+        );
+
+        let cancelled = run(true);
+        assert_eq!(cancelled.status.code(), Some(1223));
+        assert!(configuration_outcome(
+            ConfigurationApp::VJoy,
+            cancelled.status.success(),
+            cancelled.status.code(),
+            &String::from_utf8_lossy(&cancelled.stderr)
+        )
+        .unwrap_err()
+        .contains("cancelled"));
+        std::fs::remove_file(log).unwrap();
     }
 }

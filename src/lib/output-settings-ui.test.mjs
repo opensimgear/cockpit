@@ -16,11 +16,11 @@ const initial = () => ({
   visibility: { enabled: false, qualified: true, settingsError: null, selfAccess: { message: 'Capture access configured.' } },
   inventory: { virtualDevices: [{ id: 'vjoy:1', name: 'vJoy Device 1', status: 'free' }], diagnostics: [] },
 });
-async function harness(send) {
+async function harness(send, { nativeApp = true, overrides = {} } = {}) {
   const file = new URL('./OutputSettings.svelte', import.meta.url);
   const source = (await readFile(file, 'utf8')).replace('</script>', 'desktop=seed.desktop;visibility=seed.visibility;inventory=seed.inventory;capture({refresh,enableVisibility,enableDesktop,manageDriver,get state(){return {desktop,visibility,inventory,busy,error};}});</script>');
   const { js } = compile(source, { filename: file.pathname, generate: 'server' });
-  const exports = {}, requests = [], invocations = [], seed = initial();
+  const exports = {}, requests = [], invocations = [], seed = { ...initial(), ...overrides };
   let handlers,settingsVersion=1;
   const native=async request=>{
     if(send)return send(request,seed);
@@ -36,7 +36,7 @@ async function harness(send) {
       if (name === 'svelte/internal/server') return server;
       if (name === 'svelte') return svelte;
       if (name.endsWith('.svelte')) return { default: () => {} };
-      if (name === '@tauri-apps/api/core') return { isTauri: () => true, invoke: async command => { invocations.push(command); } };
+      if (name === '@tauri-apps/api/core') return { isTauri: () => nativeApp, invoke: async command => { invocations.push(command); } };
       if (modules.has(name)) return modules.get(name);
       if (name === './gateway') return { gatewayRequest: async request => { requests.push(plain(request));return native(request); } };
       throw Error(name);
@@ -48,7 +48,7 @@ async function harness(send) {
 
 test('Settings owns driver tools and machine enablement while application scope belongs to profile blocks', async () => {
   const h = await harness();
-  for (const label of ['Configure vJoy', 'Manage HidHide', 'Enable device hiding on this computer', 'Enable desktop output on this computer', 'vJoy Device 1: free']) assert.ok(h.html.includes(label), label);
+  for (const label of ['Configure', 'Manage', 'Enable device hiding on this computer', 'Enable desktop output on this computer', 'vJoy Device 1', 'free']) assert.ok(h.html.includes(label), label);
   assert.ok(h.html.includes('Choose the application scope in each profile'));
   assert.ok(!h.html.includes('<select'));
   assert.deepEqual(h.requests, []);
@@ -77,4 +77,26 @@ test('failed setup refresh and enablement report native errors without claiming 
   assert.match(h.handlers.state.error, /Stop the running profile/);
   assert.equal(h.handlers.state.busy, '');
   assert.deepEqual(h.requests.slice(1).map(request => request.command), ['system_inventory', 'controller_visibility_status', 'profile_local_settings_get']);
+});
+
+test('separate output cards retain unavailable reasons and disable unsupported switches', async () => {
+  const h = await harness(null, { overrides: {
+    desktop: { ...initial().desktop, qualified: false, reason: 'Desktop output is unsupported.' },
+    visibility: { ...initial().visibility, qualified: false, reason: 'HidHide is not installed.' },
+    inventory: { virtualDevices: [], diagnostics: ['vJoy driver is unavailable.'] },
+  } });
+  for (const label of ['Virtual controllers', 'Device hiding', 'Keyboard and mouse']) assert.ok(h.html.includes(`aria-label="${label}"`));
+  for (const reason of ['Desktop output is unsupported.', 'HidHide is not installed.', 'vJoy driver is unavailable.']) assert.ok(h.html.includes(reason));
+  const switches = h.html.match(/<input[^>]*role="switch"[^>]*>/g);
+  assert.equal(switches.length, 2);
+  assert.ok(switches.every(input => /\bdisabled\b/.test(input)));
+  assert.deepEqual(h.requests, []);
+});
+
+test('browser settings explain where native driver tools are available', async () => {
+  const h = await harness(null, { nativeApp: false });
+  assert.ok(h.html.includes('Driver installers and configuration apps open from the native Cockpit desktop app.'));
+  assert.ok(!h.html.includes('>Configure</button>'));
+  assert.ok(!h.html.includes('>Manage</button>'));
+  assert.deepEqual(h.invocations, []);
 });

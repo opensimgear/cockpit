@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke, isTauri } from '@tauri-apps/api/core';
   import OptionalDependencies from './OptionalDependencies.svelte';
+  import Icon from './Icon.svelte';
   import { gatewayRequest } from './gateway';
   import {guardUiSettings} from './ui-settings-guard';
   import { desktopStatus, type DesktopStatus } from './profile-desktop-runtime';
@@ -17,6 +18,12 @@
   const nativeApp = isTauri();
   const virtualIssue = $derived(inventory?.diagnostics.find(message => /virtual|vjoy/i.test(message)));
   const virtualSlots = $derived(inventory?.virtualDevices ?? []);
+
+  async function changeEnablement(event: Event, current: () => boolean, save: (enabled: boolean) => Promise<void>) {
+    const input = event.currentTarget as HTMLInputElement;
+    await save(input.checked);
+    input.checked = current();
+  }
 
   async function refresh() {
     if (busy) return;
@@ -68,38 +75,94 @@
   onMount(() => { void refresh(); return () => { disposed = true; }; });
 </script>
 
-<section class="panel output-settings" aria-label="Controller and desktop output settings">
-  <div class="panel-heading"><h2>Controller and desktop output</h2><button class="text-button" disabled={!!busy} onclick={refresh}>Refresh output setup</button></div>
-  <p>Set up this computer once, then choose mappings and device hiding in Profiles.</p>
-  <div class="output-row">
-    <div><h3>vJoy virtual controllers</h3><p>Virtual controller output is enabled on Windows. Install vJoy, configure its controller layout, then add a virtual controller block to a profile.</p>
-      {#if inventory}
-        <p role="status">{virtualIssue ?? (virtualSlots.length ? `${virtualSlots.length} configured virtual controller${virtualSlots.length === 1 ? '' : 's'} detected.` : 'No configured vJoy controllers detected. Set up vJoy and configure a controller layout.')}</p>
-        {#if virtualSlots.length}<ul>{#each virtualSlots as slot (slot.id)}<li>{slot.name}: {slot.status}{slot.owner ? ` · ${slot.owner}` : ''}</li>{/each}</ul>{/if}
-      {:else}<p>Refresh output setup to inspect the installed driver.</p>{/if}
+<section class="output-settings" aria-label="Controller and desktop output settings">
+  <header class="output-header">
+    <div><h2>Output setup</h2><p>Set up this computer once. Choose mappings and device hiding in Profiles.</p></div>
+    <button class="secondary-button" disabled={!!busy} onclick={refresh}><Icon name="refresh" size={14} />{busy === 'refresh' ? 'Refreshing…' : 'Refresh'}</button>
+  </header>
+  {#if error}<p class="setup-error" role="alert"><Icon name="alert" size={16} /><span>{error}</span></p>{/if}
+  <section class="panel output-card" aria-label="Virtual controllers">
+    <div class="card-heading">
+      <span class="output-icon"><Icon name="gamepad" size={21} /></span>
+      <div class="card-title"><h3>Virtual controllers</h3><span>vJoy</span></div>
+      <span class="setup-status" class:attention={!!virtualIssue} role="status">{inventory ? virtualIssue ? 'Needs attention' : virtualSlots.length ? `${virtualSlots.length} configured` : 'Not configured' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
     </div>
-    {#if nativeApp}<button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_vjoy')}>Configure vJoy</button>{/if}
-  </div>
-  <div class="output-row">
-    <div><h3>HidHide device hiding</h3><p>Allow profiles to hide their physical controllers while running. Saved device policies remain in each controller’s visibility settings.</p>
-      {#if visibility?.selfAccess}<p role="status">{visibility.selfAccess.message}</p>{/if}
-      {#if visibility?.settingsError}<p class="error" role="alert">{visibility.settingsError}</p>{/if}
+    <div class="card-body">
+      <p>Publish virtual controller inputs on Windows. Configure a layout here, then add a virtual controller block to a profile.</p>
+      {#if virtualIssue}<p class="status-note">{virtualIssue}</p>{/if}
+      {#if inventory && virtualSlots.length}
+        <ul class="virtual-slots" aria-label="Configured virtual controllers">{#each virtualSlots as slot (slot.id)}<li><strong>{slot.name}</strong><span>{slot.status}{slot.owner ? ` · ${slot.owner}` : ''}</span></li>{/each}</ul>
+      {:else if inventory}<p class="status-note">No configured vJoy controllers detected. Set up vJoy and configure a controller layout.</p>{/if}
     </div>
-    <label class="check"><input type="checkbox" checked={visibility?.enabled ?? false} disabled={!!busy || !visibility || !visibility.qualified || !!visibility.settingsError} onchange={event => enableVisibility(event.currentTarget.checked)} />Enable device hiding on this computer</label>
-    {#if nativeApp}<button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_hidhide')}>Manage HidHide</button>{/if}
-  </div>
-  <div class="output-row">
-    <div><h3>Keyboard and mouse output</h3><p>Allow profiles to send keyboard shortcuts, mouse buttons and pointer movement. Choose the application scope in each profile’s keyboard and mouse block.</p>
-      {#if desktop}<p role="status">{desktop.qualified ? (desktop.enabled ? 'Desktop output enabled.' : 'Desktop output disabled.') : desktop.reason}</p>{/if}
-      {#if desktop?.error}<p class="error" role="alert">{desktop.error}</p>{/if}
+    {#if nativeApp}<div class="card-footer"><span>Open the vJoy configuration app. Windows may ask for administrator approval.</span><button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_vjoy')}><Icon name="settings" size={14} />Configure</button></div>{/if}
+  </section>
+  <section class="panel output-card" aria-label="Device hiding">
+    <div class="card-heading">
+      <span class="output-icon"><Icon name="lock" size={21} /></span>
+      <div class="card-title"><h3>Device hiding</h3><span>HidHide</span></div>
+      <span class="setup-status" class:attention={!!visibility?.settingsError} class:enabled={visibility?.enabled && visibility.qualified && !visibility.settingsError} role="status">{visibility ? visibility.settingsError ? 'Needs attention' : !visibility.qualified ? 'Unavailable' : visibility.enabled ? 'Enabled' : 'Disabled' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
+      <label class="output-toggle"><span class="visually-hidden">Enable device hiding on this computer</span><input type="checkbox" role="switch" aria-describedby="device-hiding-help" checked={visibility?.enabled ?? false} disabled={!!busy || !visibility || !visibility.qualified || !!visibility.settingsError} onchange={event => changeEnablement(event, () => visibility?.enabled ?? false, enableVisibility)} /><span class="toggle" class:on={visibility?.enabled ?? false} aria-hidden="true"><span></span></span></label>
     </div>
-    <label class="check"><input type="checkbox" checked={desktop?.enabled ?? false} disabled={!!busy || !desktop || !desktop.qualified || !!desktop.error} onchange={event => enableDesktop(event.currentTarget.checked)} />Enable desktop output on this computer</label>
-  </div>
+    <div class="card-body">
+      <p id="device-hiding-help">Allow profiles to hide their physical controllers while running. Saved device policies remain in each controller’s visibility settings.</p>
+      {#if visibility?.selfAccess}<p class="status-note" role="status">{visibility.selfAccess.message}</p>{/if}
+      {#if visibility && !visibility.qualified}<p class="status-note">{visibility.reason}</p>{/if}
+      {#if visibility?.settingsError}<p class="setup-error" role="alert"><Icon name="alert" size={14} /><span>{visibility.settingsError}</span></p>{/if}
+    </div>
+    {#if nativeApp}<div class="card-footer"><span>Inspect driver setup and existing device rules.</span><button class="secondary-button" disabled={!!busy} onclick={() => manageDriver('open_hidhide')}><Icon name="settings" size={14} />Manage</button></div>{/if}
+  </section>
+  <section class="panel output-card" aria-label="Keyboard and mouse">
+    <div class="card-heading">
+      <span class="output-icon"><Icon name="monitor" size={21} /></span>
+      <div class="card-title"><h3>Keyboard and mouse</h3><span>Desktop output</span></div>
+      <span class="setup-status" class:attention={!!desktop?.error} class:enabled={desktop?.enabled && desktop.qualified && !desktop.error} role="status">{desktop ? desktop.error ? 'Needs attention' : !desktop.qualified ? 'Unavailable' : desktop.enabled ? 'Enabled' : 'Disabled' : busy === 'refresh' ? 'Checking…' : 'Not inspected'}</span>
+      <label class="output-toggle"><span class="visually-hidden">Enable desktop output on this computer</span><input type="checkbox" role="switch" aria-describedby="desktop-output-help" checked={desktop?.enabled ?? false} disabled={!!busy || !desktop || !desktop.qualified || !!desktop.error} onchange={event => changeEnablement(event, () => desktop?.enabled ?? false, enableDesktop)} /><span class="toggle" class:on={desktop?.enabled ?? false} aria-hidden="true"><span></span></span></label>
+    </div>
+    <div class="card-body">
+      <p id="desktop-output-help">Allow profiles to send keyboard shortcuts, mouse buttons and pointer movement. Choose the application scope in each profile’s keyboard and mouse block.</p>
+      {#if desktop && !desktop.qualified}<p class="status-note">{desktop.reason}</p>{/if}
+      {#if desktop?.error}<p class="setup-error" role="alert"><Icon name="alert" size={14} /><span>{desktop.error}</span></p>{/if}
+    </div>
+  </section>
   <OptionalDependencies />
-  {#if !nativeApp}<p>Driver installers and the HidHide configuration app open from the native Cockpit desktop app.</p>{/if}
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if !nativeApp}<p class="browser-note"><Icon name="info" size={14} /><span>Driver installers and configuration apps open from the native Cockpit desktop app.</span></p>{/if}
 </section>
 
 <style>
-  .output-settings{padding:22px;margin-bottom:22px}.panel-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}h2{font-size:12px}h3{font-size:11px;font-weight:550;margin:0 0 8px}p,li{font-size:10px;line-height:1.8;color:var(--muted)}.output-row{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:18px 0;border-top:1px solid var(--line)}.output-row>div{flex:1;min-width:min(100%,280px)}.output-row p{margin:6px 0}.check{display:flex;align-items:center;gap:8px;font-size:10px}.check input{accent-color:var(--accent)}ul{padding-left:18px;margin:8px 0}.error{color:#d3a078}button{font-size:10px}
+  .output-settings { display: grid; gap: 20px; margin-bottom: 24px; }
+  .output-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+  h2 { font-size: 14px; font-weight: 570; margin: 0 0 8px; }
+  .output-header p, .card-body p { color: var(--muted); font-size: 10px; line-height: 1.8; }
+  .output-header button { flex-shrink: 0; }
+  .card-heading { display: flex; align-items: center; gap: 12px; padding: 20px 22px 14px; }
+  .output-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border: 1px solid var(--line); border-radius: 8px; color: var(--accent); background: var(--input-bg); }
+  .card-title { flex: 1; min-width: 0; }
+  h3 { font-size: 12px; font-weight: 550; margin: 0 0 5px; }
+  .card-title > span { color: var(--muted); font-size: 9px; }
+  .setup-status { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); background: var(--input-bg); font-size: 9px; white-space: nowrap; }
+  .setup-status.enabled { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+  .setup-status.attention { color: #d3a078; }
+  .card-body { padding: 0 22px 20px; }
+  .card-body .status-note { margin-top: 12px; color: var(--soft); }
+  .virtual-slots { list-style: none; margin: 16px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--input-bg); }
+  .virtual-slots li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+  .virtual-slots li + li { border-top: 1px solid var(--line); }
+  .virtual-slots strong { font-weight: 500; color: var(--soft); }
+  .virtual-slots li > span { color: var(--muted); text-align: right; }
+  .card-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 22px; border-top: 1px solid var(--line); }
+  .card-footer > span { color: var(--muted); font-size: 9px; line-height: 1.7; }
+  .card-footer button { flex-shrink: 0; }
+  .output-toggle { display: grid; position: relative; place-items: center; width: 32px; height: 32px; flex-shrink: 0; cursor: pointer; }
+  .output-toggle input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+  .output-toggle .toggle { pointer-events: none; }
+  .output-toggle input:focus-visible + .toggle { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .output-toggle input:disabled { cursor: not-allowed; }
+  .output-toggle:has(input:disabled) .toggle { opacity: .45; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .setup-error, .browser-note { display: flex; align-items: flex-start; gap: 9px; font-size: 10px; line-height: 1.8; overflow-wrap: anywhere; }
+  .setup-error { color: #d3a078; }
+  .card-body .setup-error { margin-top: 12px; }
+  .setup-error :global(svg), .browser-note :global(svg) { margin-top: 2px; flex-shrink: 0; }
+  .browser-note { color: var(--muted); }
+  @media(max-width:520px) { .output-header { flex-wrap: wrap; gap: 12px; } .card-heading { padding: 18px 16px 14px; gap: 9px; flex-wrap: wrap; } .output-icon { width: 30px; height: 30px; } .card-title { flex-basis: calc(100% - 48px); } .card-heading > .setup-status { margin-left: 39px; } .output-toggle { margin-left: auto; } .card-body { padding: 0 16px 18px; } .card-footer { flex-wrap: wrap; padding: 14px 16px; } .card-footer button { margin-left: auto; } .virtual-slots li { align-items: flex-start; flex-direction: column; gap: 4px; } .virtual-slots li > span { text-align: left; } }
 </style>
