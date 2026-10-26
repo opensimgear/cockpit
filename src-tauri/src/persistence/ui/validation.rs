@@ -22,7 +22,7 @@ pub(crate) fn validate(key:&str,value:&Value)->Result<(),String>{match key {
     "theme"=>ensure(value.is_boolean()),
     "devices-mode"=>ensure(matches!(value.as_str(),Some("list"|"topology"))),
     "canvas-navigation"=>{exact(value,&["wheelAction"],&[])?;ensure(matches!(value["wheelAction"].as_str(),Some("pan"|"zoom")))},
-    "canvas-styling"=>{exact(value,&["arrowStyle","cornerRadius","collapseParallelWires"],&[])?;ensure(matches!(value["arrowStyle"].as_str(),Some("smooth"|"orthogonal"))&&value["cornerRadius"].as_f64().is_some_and(|n|n.is_finite()&&(0.0..=100.0).contains(&n))&&value["collapseParallelWires"].is_boolean())},
+    "canvas-styling"=>{exact(value,&["arrowStyle","cornerRadius"],&[])?;ensure(matches!(value["arrowStyle"].as_str(),Some("smooth"|"orthogonal"))&&value["cornerRadius"].as_f64().is_some_and(|n|n.is_finite()&&(0.0..=100.0).contains(&n)))},
     "tray"=>{exact(value,&["closeToTray","minimizeToTray"],&[])?;ensure(value["closeToTray"].is_boolean()&&value["minimizeToTray"].is_boolean())},
     "progress"=>{exact(value,&["delivery","position"],&[])?;ensure(matches!(value["delivery"].as_str(),Some("system"|"window"))&&matches!(value["position"].as_str(),Some("bottom-right"|"bottom-left"|"top-right"|"top-left")))},
     "windows"=>{if value.is_null(){return Ok(());}let geometry:WindowGeometry=serde_json::from_value(value.clone()).map_err(|_|"Invalid window geometry.")?;ensure(geometry.x.unsigned_abs()<=100_000&&geometry.y.unsigned_abs()<=100_000&&(160..=32768).contains(&geometry.width)&&(120..=32768).contains(&geometry.height)&&geometry.scale_factor.is_finite()&&(0.25..=8.0).contains(&geometry.scale_factor))},

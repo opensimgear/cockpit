@@ -24,7 +24,7 @@ fn location(key:&str)->Result<(&str,&str),String>{
 fn limit(key:&str)->usize{if key=="remembered"{1024*1024}else{8192}}
 fn defaults(key:&str)->Value{match key {
     "theme"=>json!(false),"devices-mode"=>json!("list"),"canvas-navigation"=>json!({"wheelAction":"pan"}),
-    "canvas-styling"=>json!({"arrowStyle":"smooth","cornerRadius":24,"collapseParallelWires":true}),
+    "canvas-styling"=>json!({"arrowStyle":"smooth","cornerRadius":24}),
     "tray"=>json!({"closeToTray":false,"minimizeToTray":false}),"progress"=>json!({"delivery":"system","position":"bottom-right"}),_=>Value::Null,
 }}
 impl Preferences {

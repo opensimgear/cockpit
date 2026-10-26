@@ -22,7 +22,7 @@ function html(store = createCanvasNavigationStore(null), styling = createCanvasS
     if (name === 'svelte') return svelte;
     if (name.endsWith('.svelte')) return { default: () => {} };
     if (name === './canvas-navigation') return { ...modules.get(name), canvasNavigation: store, setWheelAction: store.setWheelAction };
-    if (name === './canvas-styling') return { ...modules.get(name), canvasStyling: styling, setArrowStyle: styling.setArrowStyle, setCornerRadius: styling.setCornerRadius, setCollapseParallelWires: styling.setCollapseParallelWires };
+    if (name === './canvas-styling') return { ...modules.get(name), canvasStyling: styling, setArrowStyle: styling.setArrowStyle, setCornerRadius: styling.setCornerRadius };
     if (modules.has(name)) return modules.get(name);
     throw Error(`Settings must not issue native or profile requests while rendering: ${name}`);
   } }, { filename: file.pathname });
@@ -64,31 +64,20 @@ test('a navigation storage failure is shown beside the still-usable local settin
   assert.match(general(html(store)), /Canvas navigation could not be saved locally/);
 });
 
-test('Styling owns the enabled collapse preference with its signal-count explanation', () => {
+test('Styling has no parallel-connection preference', () => {
   const body = html(), content = styling(body);
-  assert.match(content, /Collapse parallel connections/);
-  assert.match(content, /Share trunks at common input or output points, with a signal count and branches to each block\./);
-  const checkbox = content.match(/<input\b[^>]*type="checkbox"[^>]*>/)?.[0];
-  assert.ok(checkbox);
-  assert.match(checkbox, /aria-labelledby="arrow-collapse-label"/);
-  assert.match(checkbox, /aria-describedby="arrow-collapse-help"/);
-  assert.match(checkbox, /\bchecked(?:[\s=>]|$)/);
+  assert.doesNotMatch(content, /Collapse parallel connections|arrow-collapse/);
+  assert.doesNotMatch(content, /type="checkbox"/);
   assert.doesNotMatch(general(body), /Collapse parallel connections/);
 });
 
-test('collapse changes stay local and independent of arrow style, radius, and navigation', () => {
+test('arrow style and radius remain independently editable', () => {
   const navigation = createCanvasNavigationStore(null), store = createCanvasStylingStore(null);
   store.setArrowStyle('orthogonal');
   store.setCornerRadius(17);
-  store.setCollapseParallelWires(false);
-  let content = styling(html(navigation, store));
-  let checkbox = content.match(/<input\b[^>]*type="checkbox"[^>]*>/)?.[0];
-  assert.ok(checkbox); assert.doesNotMatch(checkbox, /\bchecked(?:[\s=>]|$)/);
+  const content = styling(html(navigation, store));
+  assert.doesNotMatch(content, /type="checkbox"/);
   assert.match(content, /<option\b[^>]*value="orthogonal"[^>]*selected[^>]*>/);
   assert.match(content, /aria-label="Arrow corner radius"[^>]*value="17"/);
   assert.match(general(html(navigation, store)), /<option\b[^>]*value="pan"[^>]*selected[^>]*>/);
-  store.setCollapseParallelWires(true);
-  content = styling(html(navigation, store));
-  checkbox = content.match(/<input\b[^>]*type="checkbox"[^>]*>/)?.[0];
-  assert.match(checkbox, /\bchecked(?:[\s=>]|$)/);
 });

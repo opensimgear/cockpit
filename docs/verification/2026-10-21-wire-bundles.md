@@ -1,10 +1,9 @@
-# Collapsed parallel connections experiment
+# Collapsed parallel connections
 
 Extended by [shared input and output trunks](2026-10-21-shared-wire-trunks.md).
 
-Settings → Styling → Arrows now has **Collapse parallel connections**, enabled
-by default. It is an app-local view preference; toggling it does not edit a
-profile, add history entries, or change the signal graph.
+Parallel connections are always collapsed in the canvas. Canvas styling keeps
+only the arrow style and corner radius preferences; there is no collapse toggle.
 
 Wires sharing both physical attachment points on the same directed node pair
 draw as one line with a count badge. Logical ports sharing a resource-card footer
@@ -44,6 +43,6 @@ $env:OSG_NATIVE_CDP_URL='http://127.0.0.1:9227'
 pnpm profiles:wire-bundles:native
 ```
 
-The existing routing and graph-construction native suites explicitly select the
-individual-wire view and restore the previous styling afterward, preserving
-their full per-wire geometry and editing coverage.
+The older routing, construction, bundle and trunk suites target the former
+detailed canvas. The current overview canvas and the removal of the collapse
+preference are verified in [the always-collapsed arrows record](2026-10-26-always-collapsed-arrows.md).

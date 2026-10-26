@@ -12,7 +12,7 @@ const node=(id,x,y,width=100,height=100)=>({id,position:{x,y},width,height});
 const wire=(id,from,to)=>({id,from:{nodeId:from,portId:id},to:{nodeId:to,portId:id}});
 function fixture(style='smooth',bindings=[wire('a','source','one'),wire('b','source','two'),wire('c','source','three')],nodes=[node('source',0,200),node('one',500,0),node('two',500,200),node('three',500,400)]){
   const routes=diagramRoutes(nodes,bindings,100,100,{style});
-  return {nodes,routes,bundles:bundleDiagramRoutes(routes,true)};
+  return {nodes,routes,bundles:bundleDiagramRoutes(routes)};
 }
 function checkEndpoints(before,after){for(const bundle of after){const original=before.find(value=>value.id===bundle.id);assert.deepEqual(plain(bundle.route.points[0]),plain(original.route.points[0]));assert.deepEqual(plain(bundle.route.points.at(-1)),plain(original.route.points.at(-1)));assert.equal(bundle.members,original.members);}}
 function trunkMembers(result){return result.trunks.map(trunk=>trunk.members.map(route=>route.binding.id));}
@@ -54,7 +54,7 @@ test('a blocked backward branch retains its westbound tangent through the multi-
   const nodes=[node('source',600,500),node('one',0,0),node('two',0,200),node('blocker',250,-100,150,400)];
   const points=[[[700,580],[740,580],[740,-140],[-40,-140],[-40,80],[0,80]],[[700,580],[760,580],[760,380],[-40,380],[-40,280],[0,280]]];
   const routes=points.map((value,index)=>({binding:wire(index?'b':'a','source',index?'two':'one'),points:value.map(([x,y])=>({x,y})),path:`original-${index}`,cornerRadius:24,manual:false,customBlocked:false}));
-  const bundles=bundleDiagramRoutes(routes,true),result=build(bundles,nodes,100,100,'smooth',24);
+  const bundles=bundleDiagramRoutes(routes),result=build(bundles,nodes,100,100,'smooth',24);
   assert.ok(result.trunks.some(trunk=>trunk.id.endsWith(':stem')));
   const route=result.bundles.find(bundle=>bundle.id==='a').route,values=route.path.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi).map(Number);
   assert.ok((values.length-2)/6>5,'The card blocks a single central cubic, retaining a multi-curve detour');

@@ -6,7 +6,7 @@
   import OutputSettings from './OutputSettings.svelte';
   import CompanionListenerSettings from './CompanionListenerSettings.svelte';
   import McpSettings from './McpSettings.svelte';
-  import { canvasStyling, setArrowStyle, setCornerRadius, setCollapseParallelWires, type CanvasArrowStyle } from './canvas-styling';
+  import { canvasStyling, setArrowStyle, setCornerRadius, type CanvasArrowStyle } from './canvas-styling';
   import { canvasNavigation, setWheelAction, type CanvasWheelAction } from './canvas-navigation';
   import { diagramPendingPath } from './profile-diagram';
 
@@ -72,10 +72,6 @@
       <label class="style-field"><span class="field-label">Arrow style</span><select disabled={$canvasStyling.saving || $canvasStyling.ready === false} aria-label="Arrow style" aria-describedby="arrow-style-help" value={$canvasStyling.arrowStyle} onchange={event => setArrowStyle(event.currentTarget.value as CanvasArrowStyle)}><option value="smooth">Fully smooth (Bézier)</option><option value="orthogonal">Horizontal / vertical</option></select></label>
 
     </div>
-    <div class="preference-row">
-      <div><strong id="arrow-collapse-label">Collapse parallel connections</strong><p id="arrow-collapse-help">Share trunks at common input or output points, with a signal count and branches to each block.</p></div>
-      <input type="checkbox" disabled={$canvasStyling.saving || $canvasStyling.ready === false} aria-labelledby="arrow-collapse-label" aria-describedby="arrow-collapse-help" checked={$canvasStyling.collapseParallelWires} onchange={event => setCollapseParallelWires(event.currentTarget.checked)} />
-    </div>
     {#if $canvasStyling.arrowStyle === 'orthogonal'}
       <div class="preference-row">
         <div><strong>Corner radius</strong><p id="arrow-corner-radius-help">Round the corners between horizontal and vertical segments. Set to 0 for square corners.</p></div>
@@ -128,6 +124,5 @@
   .preview-line,.preview-head{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
   .arrow-preview circle{fill:currentColor}
   .preference-row .storage-error{color:var(--text)}
-  .arrows-settings input[type="checkbox"]{width:18px;height:18px;flex-shrink:0;accent-color:var(--accent);cursor:pointer}
   @media(max-width:620px){.preference-row{flex-wrap:wrap}.style-field{min-width:min(100%,200px)}.settings-tabs button{padding:12px 13px}}
 </style>

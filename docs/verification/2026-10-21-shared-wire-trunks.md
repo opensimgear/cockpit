@@ -1,9 +1,8 @@
 # Shared input and output trunks
 
-The existing **Collapse parallel connections** preference now also shares trunks
-between connections with a common physical output or input point. Named ports on
-different rows remain separate. Logical signals and saved route metadata are
-unchanged.
+Parallel connections share trunks when they have a common physical output or
+input point. Named ports on different rows remain separate. Logical signals and
+saved route metadata are unchanged.
 
 The renderer places a common stem and a vertical spine in a clear corridor, then
 taps branches where their existing guides can reach the other blocks. Source and
@@ -46,7 +45,7 @@ evidence is under:
 
 The construction harness explicitly foregrounds the native window and verifies
 keyboard focus before its existing Settings-tab arrow-key check. The real DCS
-demo was left open with trunks enabled and its saved document verified unchanged.
+demo was left open with shared trunks displayed and its saved document verified unchanged.
 
 ```powershell
 $env:OSG_NATIVE_CDP_URL='http://127.0.0.1:9227'

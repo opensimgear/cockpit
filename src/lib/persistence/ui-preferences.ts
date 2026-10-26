@@ -5,7 +5,7 @@ export type UiValues = {
   theme: boolean;
   'devices-mode': 'list' | 'topology';
   'canvas-navigation': { wheelAction: 'pan' | 'zoom' };
-  'canvas-styling': { arrowStyle: 'smooth' | 'orthogonal'; cornerRadius: number; collapseParallelWires: boolean };
+  'canvas-styling': { arrowStyle: 'smooth' | 'orthogonal'; cornerRadius: number };
   remembered: { components: unknown[]; forgotten: Record<string, unknown> } | null;
   tray: { closeToTray: boolean; minimizeToTray: boolean };
   progress: { delivery: 'system' | 'window'; position: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' };
@@ -18,7 +18,7 @@ export type UiTransport = {
 };
 const defaults: UiValues = {
   theme: false, 'devices-mode': 'list', 'canvas-navigation': { wheelAction: 'pan' },
-  'canvas-styling': { arrowStyle: 'smooth', cornerRadius: 24, collapseParallelWires: true }, remembered: null,
+  'canvas-styling': { arrowStyle: 'smooth', cornerRadius: 24 }, remembered: null,
   tray: { closeToTray: false, minimizeToTray: false }, progress: { delivery: 'system', position: 'bottom-right' },
 };
 const revision = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
@@ -32,7 +32,7 @@ export function validateUiValue<K extends UiKey>(key: K, value: unknown): UiValu
     case 'theme': valid = typeof value === 'boolean'; break;
     case 'devices-mode': valid = value === 'list' || value === 'topology'; break;
     case 'canvas-navigation': valid = exact(value, ['wheelAction']) && ['pan', 'zoom'].includes(String(value.wheelAction)); break;
-    case 'canvas-styling': valid = exact(value, ['arrowStyle', 'cornerRadius', 'collapseParallelWires']) && ['smooth', 'orthogonal'].includes(String(value.arrowStyle)) && typeof value.cornerRadius === 'number' && Number.isFinite(value.cornerRadius) && value.cornerRadius >= 0 && value.cornerRadius <= 100 && typeof value.collapseParallelWires === 'boolean'; break;
+    case 'canvas-styling': valid = exact(value, ['arrowStyle', 'cornerRadius']) && ['smooth', 'orthogonal'].includes(String(value.arrowStyle)) && typeof value.cornerRadius === 'number' && Number.isFinite(value.cornerRadius) && value.cornerRadius >= 0 && value.cornerRadius <= 100; break;
     case 'remembered': valid = value === null || exact(value, ['components', 'forgotten']) && Array.isArray(value.components) && value.components.length <= 1024 && object(value.forgotten) && Object.keys(value.forgotten).length <= 4096; break;
     case 'tray': valid = exact(value, ['closeToTray', 'minimizeToTray']) && typeof value.closeToTray === 'boolean' && typeof value.minimizeToTray === 'boolean'; break;
     case 'progress': valid = exact(value, ['delivery', 'position']) && ['system', 'window'].includes(String(value.delivery)) && ['bottom-right', 'bottom-left', 'top-right', 'top-left'].includes(String(value.position)); break;

@@ -76,14 +76,11 @@ test('canvas collapses shared physical endpoints while a selected signal retains
  document.resources.find(node=>node.id==='can-two').ports.push(port('receive-a','input'),port('receive-b','input'));
  document.bindings=['a','b'].map(id=>({id:`route-${id}`,from:{nodeId:'can-one',portId:'button'},to:{nodeId:'can-two',portId:`receive-${id}`}}));
  document.editor.positions=[{nodeId:'can-one',x:0,y:0},{nodeId:'can-two',x:700,y:100}];
- const before=plain(document),store=modules.get('./canvas-styling').canvasStyling;let previous;store.subscribe(value=>previous=value)();
+ const before=plain(document);
  const paths=body=>(body.match(/<path[^>]*class="signal-edge(?:\s|")/g)??[]).length;
- try{
-   store.setCollapseParallelWires(true);
-   const collapsed=await canvasHarness(document,{selectedId:'',selectConnection(){}});assert.equal(paths(collapsed.body),1);assert.match(collapsed.body,/data-bundle-count="2"/);assert.match(collapsed.body,/Choose from 2 connections/);assert.match(collapsed.body,/connection-bundle-badge/);assert.deepEqual(collapsed.edits,[]);
-   const selected=await canvasHarness(document,{selectedId:'',selectedEdgeId:'route-b',selectConnection(){},reconnectConnection(){}});assert.equal(paths(selected.body),2);assert.equal((selected.body.match(/data-bundle-count="1"/g)??[]).length,2);assert.match(selected.body,/data-reconnect-binding="route-b"/);assert.doesNotMatch(selected.body,/data-reconnect-binding="route-a"/);
-   store.setCollapseParallelWires(false);const expanded=await canvasHarness(document,{selectedId:'',selectConnection(){}});assert.equal(paths(expanded.body),2);assert.deepEqual(expanded.edits,[]);assert.deepEqual(document,before);
- }finally{store.setCollapseParallelWires(previous.collapseParallelWires);}
+ const collapsed=await canvasHarness(document,{selectedId:'',selectConnection(){}});assert.equal(paths(collapsed.body),1);assert.match(collapsed.body,/data-bundle-count="2"/);assert.match(collapsed.body,/Choose from 2 connections/);assert.match(collapsed.body,/connection-bundle-badge/);assert.deepEqual(collapsed.edits,[]);
+ const selected=await canvasHarness(document,{selectedId:'',selectedEdgeId:'route-b',selectConnection(){},reconnectConnection(){}});assert.equal(paths(selected.body),2);assert.equal((selected.body.match(/data-bundle-count="1"/g)??[]).length,2);assert.match(selected.body,/data-reconnect-binding="route-b"/);assert.doesNotMatch(selected.body,/data-reconnect-binding="route-a"/);
+ assert.deepEqual(document,before);
 });
 
 test('canvas exposes empty, named groups without the former membership form and deletion keeps every component',async()=>{

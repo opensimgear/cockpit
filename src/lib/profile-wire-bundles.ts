@@ -24,11 +24,9 @@ function compareIds(a: { binding: { id: string } }, b: { binding: { id: string }
  */
 export function bundleDiagramRoutes<T extends DiagramWireRoute>(
   routes: readonly T[],
-  enabled: boolean,
   selectedBindingId: string | null = null,
 ): DiagramWireBundle<T>[] {
   const singleton = (route: T): DiagramWireBundle<T> => ({ id: route.binding.id, route, members: [route] });
-  if (!enabled) return routes.map(singleton);
 
   const groups = new Map<string, T[]>(), ungrouped: T[] = [], selected: T[] = [];
   for (const route of routes) {

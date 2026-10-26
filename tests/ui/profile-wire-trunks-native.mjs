@@ -194,6 +194,7 @@ test('native Feature Lab merges common port trunks while preserving branches, in
     const reply = await window.__TAURI_INTERNALS__.invoke('gateway_request', { request: { ...value, clientId: 'profile-wire-trunks-native' } });
     if (!reply.ok) throw new Error(`${value.command}: ${reply.error}`); return reply.state;
   }, value);
+  const canvasStyling = () => native.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke('persistence_ui_read')).entries['canvas-styling']);
   const snapshot = () => native.evaluate(canvasSnapshot);
   const click = (label, scope = '.profiles-workspace') => until(() => native.evaluate((label, scope) => {
     const button = [...(document.querySelector(scope)?.querySelectorAll('button') ?? [])].find(button => (button.getAttribute('aria-label') ?? button.textContent.trim()) === label);
@@ -213,12 +214,16 @@ test('native Feature Lab merges common port trunks while preserving branches, in
     await writeFile(resolve(artifacts, filename), Buffer.from(shot.data, 'base64'));
   };
   const open = async () => {
-    await native.evaluate(() => [...document.querySelectorAll('nav[aria-label="Main navigation"] button')].find(button => button.textContent.trim() === 'Profiles')?.click());
     await until(() => native.evaluate(name => {
       const stage = document.querySelector('.canvas-stage');
       if (document.querySelector('.profile-title-button')?.textContent.trim() === name && stage?.getBoundingClientRect().width > 0) return true;
-      const edit = [...document.querySelectorAll('.profiles-workspace button')].find(button => button.getAttribute('aria-label') === `Edit ${name}`);
-      if (edit) edit.click(); else [...document.querySelectorAll('.profiles-workspace button')].find(button => button.textContent.trim() === '← Back to Profiles')?.click();
+      const workspace = document.querySelector('.profiles-workspace');
+      if (!workspace) {
+        [...document.querySelectorAll('nav[aria-label="Main navigation"] button')].find(button => button.textContent.trim() === 'Profiles')?.click();
+        return false;
+      }
+      const edit = [...workspace.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === `Edit ${name}`);
+      if (edit) edit.click(); else [...workspace.querySelectorAll('button')].find(button => button.textContent.trim() === '← Back to Profiles')?.click();
       return false;
     }, name), 'Open the disposable Feature Lab copy');
     await native.evaluate(() => { if(document.querySelector('.canvas-stage')?.dataset.view==='overview')document.querySelector('[aria-label="Toggle detailed graph"]').click(); });
@@ -232,26 +237,23 @@ test('native Feature Lab merges common port trunks while preserving branches, in
     assert.equal(state.undoDisabled, true, `${description} does not enter Undo history`);
     assert.equal(state.redoDisabled, true, `${description} does not enter Redo history`);
   };
-  const preferences = async (style, collapsed) => {
+  const preferences = async style => {
     await assertClean('Changing view preferences');
     await click('Settings', '.sidebar-bottom'); await click('Styling', '[role="tablist"][aria-label="Settings sections"]');
-    await until(() => native.evaluate(({ style, collapsed }) => {
+    await until(() => native.evaluate(style => {
       const select = document.querySelector('select[aria-label="Arrow style"]');
-      const checkbox = document.querySelector('input[type="checkbox"][aria-labelledby="arrow-collapse-label"]') ?? document.querySelector('input[type="checkbox"][aria-label="Collapse parallel connections"]') ?? [...document.querySelectorAll('label')].find(label => label.textContent.includes('Collapse parallel connections'))?.querySelector('input[type="checkbox"]');
-      if (!select || !checkbox) return false;
+      if (!select) return false;
       select.value = style; select.dispatchEvent(new Event('change', { bubbles: true }));
-      if (checkbox.checked !== collapsed) checkbox.click();
       return true;
-    }, { style, collapsed }), 'Styling includes the parallel-connection preference');
-    const persisted = await native.evaluate(() => JSON.parse(localStorage.getItem('osg-canvas-styling')));
-    assert.equal(persisted.collapseParallelWires, collapsed, 'Bundle preference is persisted locally');
-    assert.equal(persisted.arrowStyle, style);
+    }, style), 'Styling includes the arrow-style preference');
+    const persisted = await until(async () => { const row = await canvasStyling(); return row?.value?.arrowStyle === style ? row : null; }, 'Arrow style was not persisted through native UI preferences');
+    assert.deepEqual(Object.keys(persisted.value).sort(), ['arrowStyle', 'cornerRadius'], 'Canvas styling persists only the supported preferences');
     await open();
     await until(async () => {
       const state = await snapshot();
-      return state.edges.length > 0 && state.edges.every(edge => edge.style === style) && (collapsed ? state.trunks.length > 0 : state.edges.length === 73 && state.trunks.length === 0);
-    }, `${style} ${collapsed ? 'shared trunk' : 'individual'} routes must render`);
-    await assertClean('Changing arrow style or collapsing wires');
+      return state.edges.length > 0 && state.edges.every(edge => edge.style === style) && state.trunks.length > 0;
+    }, `${style} collapsed routes and shared trunks must render`);
+    await assertClean('Changing arrow style');
   };
   const badge = () => until(() => native.evaluate(() => {
     const stage = document.querySelector('.canvas-stage').getBoundingClientRect();
@@ -379,7 +381,7 @@ test('native Feature Lab merges common port trunks while preserving branches, in
   try {
     await native.send('Runtime.enable');
     await until(() => native.evaluate(() => document.readyState === 'complete' && typeof window.__TAURI_INTERNALS__?.invoke === 'function'), 'The native cockpit must finish startup');
-    originalStyling = await native.evaluate(() => localStorage.getItem('osg-canvas-styling'));
+    originalStyling = await canvasStyling();
     const original = (await request({ command: 'profile_assignments_get', id: sourceId })).profiles;
     baseBindings = await native.evaluate(async document => {
       const { profileTabDocument } = await import('/src/lib/profile-vehicle-tabs.ts'); return profileTabDocument(document, '').bindings;
@@ -391,7 +393,7 @@ test('native Feature Lab merges common port trunks while preserving branches, in
     const savedBefore = (await request({ command: 'profile_assignments_get', id: profileId })).profiles.document;
     await native.send('Page.reload', { ignoreCache: true }); await open(); await native.send('Page.bringToFront');
     for (const style of ['smooth', 'orthogonal']) {
-      await preferences(style, true);
+      await preferences(style);
       const collapsed = await snapshot(); assertRepresentation(collapsed, baseBindings.map(binding => binding.id), `${style} collapsed view`);
       assert.ok(collapsed.edges.length < 73); assert.ok(collapsed.edges.some(edge => edge.count >= 2));
       assert.ok(collapsed.badges.length > 0); assert.ok(collapsed.badges.every(badge => badge.role === 'button'), 'Wire counts are accessible controls');
@@ -415,13 +417,12 @@ test('native Feature Lab merges common port trunks while preserving branches, in
       const selectedId = selectedBundle.members[0]; await selectMember(selectedId); await capture(`${style}-member-selected.png`);
       await click('Close connection actions', '.wire-actions');
       await until(async () => !(await snapshot()).endpoints.length, 'Closing connection actions restores the collapsed view');
-      await preferences(style, false);
-      const expanded = await snapshot(); assertRepresentation(expanded, baseBindings.map(binding => binding.id), `${style} individual view`);
-      assert.equal(expanded.edges.length, 73); assert.ok(expanded.edges.every(edge => edge.count === 1)); assert.equal(expanded.badges.length, 0);
-      assert.equal(expanded.trunks.length, 0); assert.equal(expanded.trunkHits.length, 0); assert.equal(expanded.trunkBadges.length, 0);
-      await preferences(style, true);
+      const afterSelection = await snapshot();
+      assertRepresentation(afterSelection, baseBindings.map(binding => binding.id), `${style} after independent signal selection`);
+      assert.ok(afterSelection.edges.some(edge => edge.count > 1), 'Closing signal actions restores the always-collapsed view');
+      assert.ok(afterSelection.trunks.length > 0, 'Shared trunks remain available after individual signal inspection');
       const savedAfter = (await request({ command: 'profile_assignments_get', id: profileId })).profiles.document;
-      assert.deepEqual(savedAfter, savedBefore, 'Bundle toggles, arrow style changes and inspection leave the saved graph untouched');
+      assert.deepEqual(savedAfter, savedBefore, 'Arrow style changes and inspection leave the saved graph untouched');
       const interaction = await drag(style);
       // Undo leaves a Redo step for the actual block edit. Reopen the saved
       // document so the next style starts with a genuinely empty history.
@@ -431,7 +432,7 @@ test('native Feature Lab merges common port trunks while preserving branches, in
         escapeMembers: escapeBundle.members, blankMembers: blankBundle.members, selectedId, interaction });
       console.log(`${style}: ${collapsed.edges.length} branches and ${collapsed.trunks.length} shared trunks represent 73 signals; individual selection and live drag pass`);
     }
-    await preferences('orthogonal', true);
+    await preferences('orthogonal');
     const deletionBundle = await openBundle(), deletedId = deletionBundle.members[0]; await selectMember(deletedId);
     await click('Disconnect', '.wire-actions');
     const afterDelete = await until(async () => { const state = await snapshot(); return state.edges.reduce((sum, edge) => sum + edge.count, 0) === 72 ? state : null; }, 'Disconnect removes the selected logical signal only');
@@ -461,7 +462,10 @@ test('native Feature Lab merges common port trunks while preserving branches, in
       const current = (await request({ command: 'profile_assignments_get', id: profileId })).profiles;
       await request({ command: 'profile_delete', id: profileId, expectedRevision: current.document.revision });
     }
-    if (originalStyling !== undefined) await native.evaluate(value => { value === null ? localStorage.removeItem('osg-canvas-styling') : localStorage.setItem('osg-canvas-styling', value); }, originalStyling).catch(() => {});
+    if (originalStyling) {
+      const current = await canvasStyling();
+      if (JSON.stringify(current.value) !== JSON.stringify(originalStyling.value)) await request({ command: 'ui_preferences_save', key: 'canvas-styling', expectedRevision: current.revision, value: originalStyling.value });
+    }
     await native.send('Page.reload', { ignoreCache: true }).catch(() => {}); native.close();
   }
 });

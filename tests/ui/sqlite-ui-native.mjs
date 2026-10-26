@@ -40,7 +40,7 @@ test('actual Cockpit SQLite UI preferences, Forget, tray and geometry survive re
   await page.getByLabel('Canvas mouse wheel',{exact:true}).selectOption('zoom');await stored('canvas-navigation',value=>value.wheelAction==='zoom');
   await page.getByRole('tab',{name:'Styling',exact:true}).click();await page.getByLabel('Arrow style',{exact:true}).selectOption('orthogonal');await stored('canvas-styling',value=>value.arrowStyle==='orthogonal');
   const radius=page.getByLabel('Arrow corner radius',{exact:true});await radius.fill('17');await radius.press('Tab');await stored('canvas-styling',value=>value.cornerRadius===17);
-  const collapse=page.getByRole('checkbox',{name:'Collapse parallel connections'});if(await collapse.isChecked())await collapse.click();await stored('canvas-styling',value=>value.collapseParallelWires===false);
+  await stored('canvas-styling',value=>Object.keys(value).sort().join(',')==='arrowStyle,cornerRadius');
   await page.getByRole('tab',{name:'General',exact:true}).click();await page.getByLabel('Progress notification style',{exact:true}).selectOption('window');await stored('progress',value=>value.delivery==='window');await page.getByLabel('Progress notification position',{exact:true}).selectOption('top-left');await stored('progress',value=>value.position==='top-left');
   const desktop=await invoke('desktop_preferences');assert.equal(desktop.trayAvailable,true);
   for(const name of ['Close to tray','Minimize to tray']){const button=page.getByRole('switch',{name,exact:true});if(await button.getAttribute('aria-checked')!=='true')await button.click();await stored('tray',value=>value[name==='Close to tray'?'closeToTray':'minimizeToTray']===true);}

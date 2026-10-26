@@ -93,8 +93,8 @@
     if(segmentPreview&&segmentDrag){const preview=diagramRoutes(routeNodes,visibleDocument.bindings.filter(binding=>binding.id===segmentDrag!.bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:visibleDocument.editor.wireRoutes})[0];return preview?committedRoutes.map(route=>route.binding.id===preview.binding.id?preview:route):committedRoutes;}
     return dragged||groupPreview?canvasPreviewRoutes(committedRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius):committedRoutes;
   });
-  const bundledRoutes=$derived(bundleDiagramRoutes([...routes.filter(route=>route.binding.id!==selectedEdgeId),...routes.filter(route=>route.binding.id===selectedEdgeId)],$canvasStyling.collapseParallelWires,selectedEdgeId));
-  const wireNetwork=$derived(!overview&&$canvasStyling.collapseParallelWires?buildDiagramWireTrunks(bundledRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius,!!dragged||!!groupPreview,selectedEdgeId):{bundles:bundledRoutes,trunks:[]});
+  const bundledRoutes=$derived(bundleDiagramRoutes([...routes.filter(route=>route.binding.id!==selectedEdgeId),...routes.filter(route=>route.binding.id===selectedEdgeId)],selectedEdgeId));
+  const wireNetwork=$derived(!overview?buildDiagramWireTrunks(bundledRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius,!!dragged||!!groupPreview,selectedEdgeId):{bundles:bundledRoutes,trunks:[]});
   const renderedRoutes=$derived(wireNetwork.bundles);
   const sharedTrunks=$derived(wireNetwork.trunks);
   const clickableBundles=$derived([...renderedRoutes,...sharedTrunks]);
@@ -123,7 +123,7 @@
   $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;layoutEpoch++;layoutBusy=false;selectionView=null;focusedSelectionId='';clearPendingMove();clearConnectionClick();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
   $effect(()=>{void focusSelectionId;void inspectorPanel;void drag;void wire;void segmentDrag;void connectionOpen;if(mounted)untrack(syncSelectionFocus);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
-  $effect(()=>{if(!$canvasStyling.collapseParallelWires||bundlePicker&&!bundleMembers.length)bundlePicker=null;});
+  $effect(()=>{if(bundlePicker&&!bundleMembers.length)bundlePicker=null;});
   $effect(()=>{void activeVehicleTabId;void document.id;bundlePicker=null;});
   $effect(() => {
     const resourceId = companionAuthoring&&selected?.resource?.kind==='companion'?undefined:observedId;
@@ -183,7 +183,7 @@
   function chooseConnection(id:string) {bundlePicker=null;stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView())void tick().then(()=>{if(!selectedId)selectConnection?.(id);});else selectConnection(id);}else editConnection?.(id);}
   function openBundle(event:MouseEvent|KeyboardEvent,bundle:DiagramWireBundle,insertion?:{component:ProfilePaletteComponent;position:CanvasPoint}){
     event.preventDefault();event.stopPropagation();clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId='';
-    const members=bundle.id.startsWith('trunk:')?bundle.members:bundleDiagramRoutes(routes,true).find(group=>group.members.some(route=>route.binding.id===bundle.route.binding.id))?.members??bundle.members;
+    const members=bundle.id.startsWith('trunk:')?bundle.members:bundleDiagramRoutes(routes).find(group=>group.members.some(route=>route.binding.id===bundle.route.binding.id))?.members??bundle.members;
     const rect=stage.getBoundingClientRect(),target=(event.currentTarget as Element).getBoundingClientRect();
     const clientX='clientX'in event&&(event.clientX||event.clientY)?event.clientX:target.left+target.width/2,clientY='clientY'in event&&(event.clientX||event.clientY)?event.clientY:target.top+target.height/2;
     const width=Math.min(360,rect.width-16),top=Math.max(8,8-rect.top),bottom=Math.min(rect.height,window.innerHeight-rect.top)-8,maxHeight=Math.max(120,Math.min(360,bottom-top));

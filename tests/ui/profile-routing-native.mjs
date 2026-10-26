@@ -82,7 +82,7 @@ function fanInInBrowser(bindingIds) {
     bottom: parseFloat(node.style.top) + parseFloat(getComputedStyle(node).height),
   }));
   for (const id of bindingIds) {
-    const path = [...document.querySelectorAll('.canvas-stage .signal-edge')].find(path => path.dataset.bindingId === id);
+    const path = [...document.querySelectorAll('.canvas-stage .signal-edge')].find(path => JSON.parse(path.dataset.bindingIds ?? '[]').includes(id));
     if (!path) throw new Error(`Missing fan-in route ${id}`);
     const length = path.getTotalLength(), end = path.getPointAtLength(length), count = Math.max(1, Math.ceil(length / spacing));
     // Sample the complete route. A long excursion must not disappear merely
@@ -236,6 +236,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     const reply = await window.__TAURI_INTERNALS__.invoke('gateway_request', { request: { ...value, clientId: 'profile-routing-native' } });
     if (!reply.ok) throw new Error(`${value.command}: ${reply.error}`); return reply.state;
   }, value);
+  const canvasStyling = () => native.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke('persistence_ui_read')).entries['canvas-styling']);
   const click = (label, scope = '.profiles-workspace') => until(() => native.evaluate((label, scope) => {
     const button = [...(document.querySelector(scope)?.querySelectorAll('button') ?? [])].find(button => (button.getAttribute('aria-label') ?? button.textContent.trim()) === label);
     if (!button || button.disabled) return false; button.click(); return true;
@@ -243,25 +244,28 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
   const state = () => native.evaluate(() => {
     const buttons = [...document.querySelectorAll('.editor-save-actions button')], stage = document.querySelector('.canvas-stage');
     const world = document.querySelector('.canvas-world'), matrix = world ? new DOMMatrix(getComputedStyle(world).transform) : null;
-    return { nodes: stage?.querySelectorAll('.resource-block').length, edges: stage?.querySelectorAll('.signal-edge').length,
+    const paths = [...(stage?.querySelectorAll('.signal-edge') ?? [])];
+    return { nodes: stage?.querySelectorAll('.resource-block').length, edges: paths.length,
+      signals: paths.reduce((sum, path) => sum + JSON.parse(path.dataset.bindingIds ?? '[]').length, 0),
       saveDisabled: buttons.find(button => button.textContent.trim() === 'Save profile')?.disabled,
       undoDisabled: buttons.find(button => button.getAttribute('aria-label') === 'Undo')?.disabled,
       view: matrix ? { x: matrix.e, y: matrix.f, zoom: matrix.a } : null };
   });
   const open = async () => {
-    await native.evaluate(() => [...document.querySelectorAll('nav[aria-label="Main navigation"] button')].find(button => button.textContent.trim() === 'Profiles')?.click());
     await until(() => native.evaluate(name => {
       const stage = document.querySelector('.canvas-stage');
       if (document.querySelector('.profile-title-button')?.textContent.trim() === name && stage?.getBoundingClientRect().width > 0) return true;
-      const edit = [...document.querySelectorAll('.profiles-workspace button')].find(button => button.getAttribute('aria-label') === `Edit ${name}`);
-      if (edit) edit.click(); else {
+      const workspace = document.querySelector('.profiles-workspace');
+      if (!workspace) {
         [...document.querySelectorAll('nav[aria-label="Main navigation"] button')].find(button => button.textContent.trim() === 'Profiles')?.click();
-        [...document.querySelectorAll('.profiles-workspace button')].find(button => button.textContent.trim() === '← Back to Profiles')?.click();
+        return false;
       }
+      const edit = [...workspace.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === `Edit ${name}`);
+      if (edit) edit.click(); else [...workspace.querySelectorAll('button')].find(button => button.textContent.trim() === '← Back to Profiles')?.click();
       return false;
     }, name), 'Open Feature Lab test copy');
     await native.evaluate(() => { if(document.querySelector('.canvas-stage')?.dataset.view==='overview')document.querySelector('[aria-label="Toggle detailed graph"]').click(); });
-    await until(async () => (await state()).edges === 73, 'All 73 Feature Lab routes must render');
+    await until(async () => (await state()).signals === 73, 'All 73 Feature Lab signals must render');
     await native.evaluate(() => { document.querySelector('.canvas-stage').scrollIntoView({ block: 'center' }); });
     await pause(150);
   };
@@ -306,9 +310,9 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
           bad.add(node.id); collisions.push({ bindingId: id, nodeId: node.id, x: point.x, y: point.y });
         }
       }
-      paths.push({ id, d: path.getAttribute('d'), start: { x: start.x, y: start.y }, end: { x: end.x, y: end.y }, length });
+      paths.push({ id, ids: JSON.parse(path.dataset.bindingIds ?? '[]'), d: path.getAttribute('d'), start: { x: start.x, y: start.y }, end: { x: end.x, y: end.y }, length });
     }
-    return { nodes, paths, sampledPoints, collisions, totalLength };
+    return { nodes, paths, signals: paths.reduce((sum, path) => sum + path.ids.length, 0), sampledPoints, collisions, totalLength };
   });
   const mouse = (type, point, extra = {}) => native.send('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, ...extra });
   const endDrag = async point => {
@@ -345,7 +349,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     await writeFile(resolve(artifacts, `${style}-virtual-aux-fanin.png`), Buffer.from(shot.data, 'base64'));
     const result = await native.evaluate(fanInInBrowser, ids);
     await writeFile(resolve(artifacts, `${style}-virtual-aux-fanin.json`), JSON.stringify({ position: at, clip, ...result }, null, 2));
-    assert.equal((await state()).edges, 73, 'Close-up keeps all routes visible');
+    assert.equal((await state()).signals, 73, 'Close-up keeps all signals represented');
     assert.equal((await state()).saveDisabled, true, 'Close-up pan and zoom never edit the profile');
     for (const route of result.routes) {
       assert.equal(route.excursions, 0, `${style} ${route.id} must stay in the obstacle-free input corridor after entering it`);
@@ -396,9 +400,9 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       await mouse('mouseMoved', point, { button: 'left', buttons: 1 });
       await native.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(true))));
       times.push(performance.now() - start);
-      const preview = await native.evaluate(() => [...document.querySelectorAll('.signal-edge')].map(path => ({ id: path.dataset.bindingId, d: path.getAttribute('d') })));
-      assert.equal(preview.length, 73, 'Dragging keeps every connection visible');
-      for (const path of preview) if (path.d !== previous.get(path.id)) previewChanged.add(path.id);
+      const preview = await native.evaluate(() => [...document.querySelectorAll('.signal-edge')].map(path => ({ id: path.dataset.bindingId, ids: JSON.parse(path.dataset.bindingIds ?? '[]'), d: path.getAttribute('d') })));
+      assert.equal(preview.reduce((sum, path) => sum + path.ids.length, 0), 73, 'Dragging keeps every signal represented');
+      for (const path of preview) if (path.d !== previous.get(path.id)) for (const id of path.ids) previewChanged.add(id);
       await pause(8);
     }
     for (const id of previewChanged) assert.ok(incident.includes(id), `Unrelated route ${id} must remain stable during a block drag`);
@@ -407,7 +411,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     await until(async () => !(await state()).saveDisabled, 'Dropping a moved block must create an undoable edit');
     await native.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(true))));
     const dropMs = performance.now() - dropStart, after = await pathGeometry();
-    assert.equal(after.paths.length, 73, 'Routing after a valid drop keeps all connections');
+    assert.equal(after.signals, 73, 'Routing after a valid drop keeps all connections');
     assert.deepEqual(after.collisions, [], `${style} paths after drop must avoid all blocks`);
     assert.ok(percentile(times, .95) < 80, `Responsive drag p95 must be below 80ms, received ${percentile(times, .95).toFixed(1)}ms`);
     await click('Undo', '.editor-save-actions');
@@ -420,7 +424,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     await click('Fit all');
     const target = await until(() => native.evaluate(() => {
       const stage = document.querySelector('.canvas-stage').getBoundingClientRect();
-      for (const path of document.querySelectorAll('.signal-edge-hit')) {
+      for (const path of document.querySelectorAll('.signal-edge-hit:not([data-bundle-id])')) {
         const length = path.getTotalLength(), matrix = path.getScreenCTM();
         for (const fraction of [.5, .35, .65, .2, .8]) {
           const at = path.getPointAtLength(length * fraction), point = new DOMPoint(at.x, at.y).matrixTransform(matrix);
@@ -487,7 +491,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     const reopened = (await handles())[0]; assert.ok(Math.hypot(reopened.x - movement.x, reopened.y - movement.y) < .01);
     await native.evaluate(id => [...document.querySelectorAll('.connection-reroute')].find(handle => handle.dataset.rerouteBinding === id).focus(), target.id);
     await key('Delete', 'Delete', 46); await until(async () => !(await handles()).length, 'Delete removes only the reroute handle');
-    assert.equal((await state()).edges, 73, 'Deleting a reroute handle retains its connection');
+    assert.equal((await state()).signals, 73, 'Deleting a reroute handle retains its connection');
     await click('Undo', '.editor-save-actions'); await until(async () => (await handles()).length === 1, 'Undo restores a removed handle');
     await click('Reset bends'); await until(async () => !(await handles()).length, 'Reset bends removes authored points');
     await click('Save profile'); await until(async () => (await state()).saveDisabled, 'Save reset reroute geometry');
@@ -501,10 +505,9 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     await native.send('Page.reload', { ignoreCache: true });
     await until(() => native.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke === 'function'), 'Native gateway unavailable');
     await native.send('Page.bringToFront');
-    originalStyling = await native.evaluate(() => localStorage.getItem('osg-canvas-styling'));
-    // This suite checks every individual wire; bundled rendering has its own
-    // native acceptance coverage without changing these geometry assertions.
-    await native.evaluate(async () => { const {canvasStyling}=await import('/src/lib/canvas-styling.ts');canvasStyling.setCollapseParallelWires(false); });
+    originalStyling = await canvasStyling();
+    // Wire aggregation is always enabled; bundle and trunk interactions have
+    // dedicated native acceptance coverage.
     const original = (await request({ command: 'profile_assignments_get', id: sourceId })).profiles;
     const baseBindings = await native.evaluate(async document => {
       const { profileTabDocument } = await import('/src/lib/profile-vehicle-tabs.ts');
@@ -533,7 +536,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       await click('Auto-layout');
       await until(async () => (await state()).saveDisabled === false && await native.evaluate(() => document.querySelector('button[aria-label="Auto-layout"]')?.getAttribute('aria-busy') === 'false'), 'ELK did not finish its layout');
       const arranged = await pathGeometry(), layoutMs = performance.now() - started;
-      assert.equal(arranged.paths.length, 73); assert.equal(arranged.nodes.length, 42);
+      assert.equal(arranged.signals, 73); assert.equal(arranged.nodes.length, 42);
       assert.deepEqual(arranged.collisions, [], 'ELK rendering must avoid all blocks');
       const coordinates = geometry => geometry.nodes.map(node => ({ id: node.id, x: node.x, y: node.y }));
       assert.notDeepEqual(coordinates(arranged), coordinates(before), 'ELK changes the actual block arrangement');
@@ -558,7 +561,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     const baselineRoutes = baseline?.result?.value?.styles ?? baseline?.styles;
     for (const style of ['smooth', 'orthogonal']) {
       await setStyle(style);
-      const initial = await state(); assert.equal(initial.nodes, 42); assert.equal(initial.edges, 73);
+      const initial = await state(); assert.equal(initial.nodes, 42); assert.equal(initial.signals, 73);
       assert.equal(initial.saveDisabled, true); assert.equal(initial.undoDisabled, true);
       await click('Fit all'); await click('Zoom in'); await click('Zoom out'); await click('Fit all');
       assert.equal((await state()).saveDisabled, true, 'Fit and zoom remain view-only');
@@ -572,7 +575,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
         roundedCorners: segments.reduce((sum, route) => sum + route.corners, 0) };
       await writeFile(resolve(artifacts, `${style}-segments.json`), JSON.stringify(segments, null, 2));
       await writeFile(resolve(artifacts, `${style}-geometry.json`), JSON.stringify(geometry, null, 2));
-      assert.equal(geometry.paths.length, 73); assert.deepEqual(geometry.collisions, [], `${style} rendered SVG paths must avoid blocks`);
+      assert.ok(geometry.paths.length > 0 && geometry.paths.length <= 73); assert.equal(geometry.signals, 73); assert.deepEqual(geometry.collisions, [], `${style} rendered SVG paths must avoid blocks`);
       for (const path of geometry.paths) {
         assert.doesNotMatch(path.d, /NaN|Infinity/);
         if (style === 'smooth') assert.doesNotMatch(path.d, /[LQAHV]/, 'Smooth arrows use cubic Beziers throughout');
@@ -589,7 +592,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       const quality = await native.evaluate(qualityInBrowser, geometry.paths);
       const selection = await native.evaluate(selectableWiresInBrowser);
       await writeFile(resolve(artifacts, `${style}-selection.json`), JSON.stringify(selection, null, 2));
-      if (elkLayout) assert.deepEqual(selection.unselectable, [], `${style} every ELK wire needs an individually selectable region`);
+      if (elkLayout) assert.ok(selection.regions.length > 0, `${style} ELK routes need selectable visible regions`);
       const beforeQuality = baselineRoutes?.[style] ? await native.evaluate(qualityInBrowser, baselineRoutes[style]) : null;
       await writeFile(resolve(artifacts, `${style}-quality.json`), JSON.stringify({ before: beforeQuality, after: quality }, null, 2));
       const fanIn = await inspectFanIn(style, baseBindings);
@@ -600,7 +603,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       }
       const interaction = await drag(style), handles = await reroute(style);
       checks.push({ style, paths: geometry.paths.length, sampledPoints: geometry.sampledPoints, totalLength: geometry.totalLength, segmentCounts, quality, beforeQuality, selection, fanIn, interaction, handles });
-      console.log(`${style}: 73 clear routes; drag p95 ${interaction.p95.toFixed(1)}ms; drop ${interaction.dropMs.toFixed(1)}ms`);
+      console.log(`${style}: ${geometry.paths.length} collapsed routes represent 73 signals; drag p95 ${interaction.p95.toFixed(1)}ms; drop ${interaction.dropMs.toFixed(1)}ms`);
       console.log(`${style} readability: ${JSON.stringify({ before: beforeQuality, after: quality })}`);
     }
     await writeFile(resolve(artifacts, 'evidence.json'), JSON.stringify({ actualNativeCockpit: true, sourceProfileName: original.document.name, elkLayout, checks }, null, 2));
@@ -620,7 +623,10 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       const current = (await request({ command: 'profile_assignments_get', id: profileId })).profiles;
       await request({ command: 'profile_delete', id: profileId, expectedRevision: current.document.revision });
     }
-    if (originalStyling !== undefined) await native.evaluate(value => { value === null ? localStorage.removeItem('osg-canvas-styling') : localStorage.setItem('osg-canvas-styling', value); }, originalStyling).catch(() => {});
+    if (originalStyling) {
+      const current = await canvasStyling();
+      if (JSON.stringify(current.value) !== JSON.stringify(originalStyling.value)) await request({ command: 'ui_preferences_save', key: 'canvas-styling', expectedRevision: current.revision, value: originalStyling.value });
+    }
     await native.send('Page.reload', { ignoreCache: true }).catch(() => {}); native.close();
   }
 });

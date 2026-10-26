@@ -37,9 +37,9 @@ fn inventory_contract_preserves_history_references_and_tombstones_without_import
 }
 #[test]
 fn each_preference_domain_rejects_invalid_values_and_roundtrips_without_schema_envelopes(){
-    let(_root,db,service)=setup();for (key,value) in [("theme",json!(true)),("devices-mode",json!("topology")),("canvas-navigation",json!({"wheelAction":"zoom"})),("canvas-styling",json!({"arrowStyle":"orthogonal","cornerRadius":100,"collapseParallelWires":false})),("tray",json!({"closeToTray":false,"minimizeToTray":false})),("progress",json!({"delivery":"window","position":"top-left"})),("windows",json!({"x":-1200,"y":10,"width":1000,"height":800,"scaleFactor":1.5,"maximized":true}))]{
+    let(_root,db,service)=setup();for (key,value) in [("theme",json!(true)),("devices-mode",json!("topology")),("canvas-navigation",json!({"wheelAction":"zoom"})),("canvas-styling",json!({"arrowStyle":"orthogonal","cornerRadius":100})),("tray",json!({"closeToTray":false,"minimizeToTray":false})),("progress",json!({"delivery":"window","position":"top-left"})),("windows",json!({"x":-1200,"y":10,"width":1000,"height":800,"scaleFactor":1.5,"maximized":true}))]{
         service.write(key,0,value.clone()).unwrap();assert_eq!(Preferences::from_database(Ok(db.clone())).read(key).unwrap().value,value);assert!(service.write(key,1,json!({"schemaVersion":1})).is_err());
     }
     for key in ["progress","canvas-navigation","canvas-styling","tray"]{assert!(service.write(key,1,json!(true)).is_err());}
-    assert!(service.write("canvas-styling",1,json!({"arrowStyle":"smooth","cornerRadius":101,"collapseParallelWires":true})).is_err());assert!(service.write("windows",1,json!({"x":0,"y":0,"width":0,"height":800,"scaleFactor":0.0,"maximized":false})).is_err());
+    assert!(service.write("canvas-styling",1,json!({"arrowStyle":"smooth","cornerRadius":101})).is_err());assert!(service.write("canvas-styling",1,json!({"arrowStyle":"smooth","cornerRadius":24,"collapseParallelWires":false})).is_err());assert!(service.write("windows",1,json!({"x":0,"y":0,"width":0,"height":800,"scaleFactor":0.0,"maximized":false})).is_err());
 }
