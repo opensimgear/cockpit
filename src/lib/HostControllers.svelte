@@ -3,8 +3,9 @@
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
   import DeviceVisibility from './DeviceVisibility.svelte';
+  import SystemControllerInputs from './SystemControllerInputs.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
-  import { controllerRoles, controlLabel, inputLabel, type ControllerResult, type HostController } from './controllers';
+  import { controllerRoles, type ControllerResult, type HostController } from './controllers';
   let { topology = false, initialSourceId = '', detailsOnly = false }: { topology?: boolean; initialSourceId?: string; detailsOnly?: boolean } = $props();
   let inventory = $state<ControllerResult>({ sources: [], offset: 0, total: 0, limit: 32 });
   let detail = $state<ControllerResult | null>(null);
@@ -16,7 +17,6 @@
   let actionError = $state('');
   let busy = $state(false);
   let page = $state(0);
-  let controlPage = $state(0);
   let disposed = false;
   let polling = false;
   let selectionEpoch = 0;
@@ -35,9 +35,20 @@
       if (disposed) return;
       inventory = next;
       if (selected) {
-        const nextDetail = await request({ command: 'controller_inspect', sourceId: selected, offset: controlPage });
+        const sourceId = selected;
+        const nextDetail = await request({ command: 'controller_inspect', sourceId, offset: 0 });
+        const controls = [...nextDetail.controls ?? []];
+        while (controls.length < nextDetail.total) {
+          if (disposed || epoch !== selectionEpoch) return;
+          const offset = controls.length;
+          const next = await request({ command: 'controller_inspect', sourceId, offset });
+          if (next.offset !== offset || !next.controls?.length || next.total !== nextDetail.total || next.source?.id !== sourceId || next.source.generation !== nextDetail.source?.generation) {
+            throw new Error('Controller inputs changed while loading. Waiting for the next report.');
+          }
+          controls.push(...next.controls);
+        }
         if (!disposed && epoch === selectionEpoch) {
-          detail = nextDetail;
+          detail = { ...nextDetail, controls };
           if (nextDetail.source && initializedSourceId !== nextDetail.source.id) {
             name = nextDetail.source.name;
             role = nextDetail.source.role;
@@ -50,7 +61,7 @@
     finally { polling = false; }
   }
   function select(source: HostController) {
-    selectionEpoch++; selected = source.id; detail = null; name = source.name; role = source.role; initializedSourceId = source.id; remembered = ''; controlPage = 0;
+    selectionEpoch++; selected = source.id; detail = null; name = source.name; role = source.role; initializedSourceId = source.id; remembered = '';
     void refresh();
   }
   async function mutate(command: GatewayRequest) {
@@ -58,7 +69,7 @@
     try {
       const next = await request(command);
       if (command.command === 'controller_forget') { selected = ''; initializedSourceId = ''; detail = null; selectionEpoch++; }
-      else { detail = next; selected = next.source?.id ?? selected; name = next.source?.name ?? name; role = next.source?.role ?? role; initializedSourceId = next.source?.id ?? initializedSourceId; }
+      else { detail = { ...next, controls: command.command === 'controller_update' ? detail?.controls ?? next.controls : next.controls }; selected = next.source?.id ?? selected; name = next.source?.name ?? name; role = next.source?.role ?? role; initializedSourceId = next.source?.id ?? initializedSourceId; }
       actionError = '';
     } catch (e) { actionError = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
@@ -107,17 +118,7 @@
       {/if}
       {#key source.id}<DeviceVisibility {source} />{/key}
       <div class="controls-heading"><h3>Live inputs</h3><span class="quiet-tag">{source.controlCount} controls</span></div>
-      <div class="control-grid">
-        {#each detail.controls ?? [] as control (control.capability.id)}
-          <div class="control" class:pressed={control.capability.kind === 'button' && control.value?.normalized === 1}>
-            <strong>{controlLabel(control)}</strong><span>{inputLabel(control)}</span>
-            {#if control.capability.kind === 'axis' && control.value?.normalized != null}<meter min={control.capability.min < 0 ? -32768 : 0} max="32767" value={control.value.normalized} aria-label={controlLabel(control)}></meter>{/if}
-            <small>Report {control.capability.reportId} · collection {control.capability.collection} · field {control.capability.dataIndex}</small>
-            <small>Native {control.value?.native ?? '—'} · range {control.capability.min}…{control.capability.max}</small>
-          </div>
-        {:else}<p class="controls-empty">{source.online ? 'No input controls reported by this controller.' : 'Live input values will appear when this controller reconnects.'}</p>{/each}
-      </div>
-      {#if detail.total > detail.limit}<div class="paging"><button class="secondary-button" disabled={controlPage === 0} onclick={() => { controlPage = Math.max(0, controlPage - 32); void refresh(); }}>Previous controls</button><span>{controlPage + 1}–{Math.min(controlPage + 32, detail.total)} / {detail.total}</span><button class="secondary-button" disabled={controlPage + 32 >= detail.total} onclick={() => { controlPage += 32; void refresh(); }}>Next controls</button></div>{/if}
+      <SystemControllerInputs controls={detail.controls ?? []} online={source.online} />
       <details class="controller-identity"><summary>Identity and capabilities</summary><dl><div><dt>Local source ID</dt><dd><code>{source.id}</code></dd></div><div><dt>Identity evidence</dt><dd>{source.identityConfidence === 'serial' ? 'Serial and collection; duplicate matches require reassignment' : 'Local path; a port change requires reassignment'}</dd></div><div><dt>Observed path</dt><dd><code>{detail.identity?.path ?? 'Not reported'}</code></dd></div><div><dt>Collection</dt><dd>{detail.identity?.collection ?? 'Not reported'}</dd></div><div><dt>Capability fingerprint</dt><dd><code>{detail.identity?.fingerprint ?? 'Not reported'}</code></dd></div></dl></details>
       {#if !source.online && !detailsOnly}<button class="secondary-button" disabled={busy} onclick={() => mutate({ command: 'controller_forget', sourceId: source.id })}>Forget offline controller</button>{/if}
       </div>
@@ -129,16 +130,15 @@
 <style>
   .host-controllers { margin-top: 24px; text-align: left; min-width: 0; }
   .host-controllers.embedded { margin-top: 0; }
-  .host-grid, .control-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; }
-  .host-card, .control { padding: 18px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; color: inherit; text-align: left; display: flex; flex-direction: column; gap: 8px; }
+  .host-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; }
+  .host-card { padding: 18px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; color: inherit; text-align: left; display: flex; flex-direction: column; gap: 8px; }
   .host-card { cursor: pointer; }
-  .host-card.selected, .control.pressed { border-color: var(--accent); background: var(--accent-bg); }
+  .host-card.selected { border-color: var(--accent); background: var(--accent-bg); }
   .offline { opacity: .55; }
-  .host-card strong, .control strong { font-size: 11px; font-weight: 570; }
-  .host-card span, .control span { font-size: 10px; color: var(--soft); line-height: 1.6; }
+  .host-card strong { font-size: 11px; font-weight: 570; }
+  .host-card span { font-size: 10px; color: var(--soft); line-height: 1.6; }
   small { font-size: 9px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
-  .control { min-width: 0; padding: 14px; gap: 6px; border-radius: 6px; background: var(--input-bg); }
-  .host-detail { margin-top: 20px; }
+  .host-detail { margin-top: 20px; overflow: visible; }
   .embedded .host-detail { margin-top: 0; }
   .host-detail-body { padding: 20px 21px; }
   .controller-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 10px; color: var(--muted); line-height: 1.6; }
@@ -150,9 +150,7 @@
   .controller-diagnostic { margin: 12px 0; padding: 12px; border: 1px solid var(--line); background: var(--subtle); border-radius: 5px; font-size: 10px; color: var(--muted); line-height: 1.7; }
   .controls-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
   .controls-heading h3 { font-size: 12px; font-weight: 570; }
-  .controls-empty, .controller-loading { padding: 20px; font-size: 10px; color: var(--muted); line-height: 1.7; }
-  .controls-empty { grid-column: 1 / -1; border: 1px dashed var(--line); border-radius: 6px; }
-  meter { width: 100%; }
+  .controller-loading { padding: 20px; font-size: 10px; color: var(--muted); line-height: 1.7; }
   .controller-identity { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
   summary { cursor: pointer; font-size: 10px; color: var(--soft); }
   dl { margin: 12px 0 0; }

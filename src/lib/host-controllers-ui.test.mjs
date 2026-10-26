@@ -107,3 +107,32 @@ test('embedded provider and Save failures reach notifications and keep the exist
   assert.equal(h.calls.filter(call => call.command === 'controller_update').length, 1);
   h.cleanup();
 });
+
+test('live inputs collect every control page without exposing pagination', async () => {
+  const h = harness(), controls = Array.from({ length: 70 }, (_, id) => ({ capability: { id: String(id), kind: 'button' }, value: null }));
+  h.custom.set('controller_inspect', request => ({ controllers: { ...result(controller()), offset: request.offset, total: controls.length,
+    controls: controls.slice(request.offset, request.offset + 32) } }));
+  await h.mount();
+  assert.deepEqual(h.calls.filter(call => call.command === 'controller_inspect').map(call => call.offset), [0, 32, 64]);
+  assert.equal(h.handlers.detail.controls.length, 70);
+  assert.equal(h.handlers.detail.controls.at(-1).capability.id, '69');
+  assert.doesNotMatch(h.html, /Previous controls|Next controls/);
+  await h.handlers.mutate({ command: 'controller_update', sourceId: controller().id, name: 'Updated', role: 'panel' });
+  assert.equal(h.handlers.detail.controls.length, 70);
+  h.cleanup();
+});
+
+test('a changed or incomplete control page cannot replace the complete displayed controls', async () => {
+  for (const change of [page => ({ ...page, controls: [] }), page => ({ ...page, source: { ...page.source, generation: '2' } })]) {
+    const h = harness(); await h.mount();
+    const previous = h.handlers.detail;
+    h.custom.set('controller_inspect', request => {
+      const page = { ...result(controller()), offset: request.offset, total: 2, controls: [{ capability: { id: String(request.offset) }, value: null }] };
+      return { controllers: request.offset ? change(page) : page };
+    });
+    await h.handlers.refresh();
+    assert.equal(h.handlers.detail, previous);
+    assert.match(h.handlers.error, /inputs changed while loading/);
+    h.cleanup();
+  }
+});
