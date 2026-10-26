@@ -68,9 +68,11 @@ test('output cards preserve native setup, enablement, error states and compact r
     await expect(setup.getByText('Driver installers', { exact: true })).toHaveCount(0);
     assert.equal(invocations.filter(call => call.command === 'optional_dependencies').length, 0, 'Installed drivers do not load installers.');
     await expect(hidingToggle).toBeEnabled(); await expect(desktopToggle).toBeEnabled();
+    await expect(hiding.locator('.setup-status')).toHaveCount(0);
+    await expect(keyboard.locator('.setup-status')).toHaveCount(0);
     assert.ok(requests.every(request => !request.command.endsWith('_save') && request.command !== 'controller_visibility_enable'));
-    await hidingToggle.check(); await expect(hiding.getByRole('status').first()).toHaveText('Enabled');
-    await desktopToggle.check(); await expect(keyboard.getByRole('status')).toHaveText('Enabled');
+    await hidingToggle.check(); await expect(hidingToggle).toBeChecked();
+    await desktopToggle.check(); await expect(desktopToggle).toBeChecked();
     await virtual.getByRole('button', { name: 'Configure', exact: true }).click();
     await hiding.getByRole('button', { name: 'Manage', exact: true }).click();
     assert.ok(invocations.some(call => call.command === 'open_vjoy')); assert.ok(invocations.some(call => call.command === 'open_hidhide'));
@@ -93,7 +95,6 @@ test('output cards preserve native setup, enablement, error states and compact r
     await desktopToggle.click();
     await expect(setup.getByRole('alert')).toContainText('revision conflict');
     await expect(desktopToggle).toBeChecked();
-    await expect(keyboard.getByRole('status')).toHaveText('Enabled');
     rejectWrite = false;
     visibility.qualified = false; visibility.reason = 'HidHide is unavailable on this computer.';
     desktop.qualified = false; desktop.reason = 'Desktop output is unavailable on this platform.';
