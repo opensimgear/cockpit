@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 import {loadModules} from './test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./profile-inventory','./profile-graph']);
+const modules=await loadModules(['./profiles','./profile-inventory','./profile-graph','./profile-signal-overview']);
 const graph=modules.get('./profile-graph');
+const {signalOverview}=modules.get('./profile-signal-overview');
 const {profileDocumentError}=modules.get('./profiles');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const bool={type:'boolean'},number=(min=0,max=100,unit=null)=>({type:'number',min,max,unit});
@@ -143,6 +144,33 @@ test('route insertion, bypass and compatible transformation reorder are atomic v
   assert.throws(()=>graph.graphInsertProcessing(initial,'missing',processing('other'),'in','out'),/existing route/);assert.throws(()=>graph.graphInsertProcessing(chain,chain.document.bindings[0].id,processing('one'),'in','out'),/new transformation/);assert.throws(()=>graph.graphBypassProcessing(initial,'missing'),/one connected input/);assert.throws(()=>graph.graphReorderProcessing(chain,['one','one']),/unique/);
   const branch=graph.graphSetProcessing(chain,processing('branch'));branch.document.bindings.push({id:'fanout',from:endpoint('one','out'),to:endpoint('branch','in')});assert.throws(()=>graph.graphReorderProcessing(branch,['one','two']),/linear route/);
   const incompatible=processing('incompatible');incompatible.inputs[0].contract=state(number());assert.throws(()=>graph.graphInsertProcessing(initial,'route-1',incompatible,'in','out'),/Types/);assert.equal(initial.document.bindings.length,1);
+});
+test('inserting a transform into one terminal row preserves downstream route identity and overview order',()=>{
+  const value=draft();value.document.resources.push(resource('target-two',[port('value','input')]));
+  let connected=graph.graphConnect(value,endpoint('source','button'),endpoint('target','value'));
+  connected=graph.graphConnect(connected,endpoint('source','button'),endpoint('target-two','value'));
+  const before=[...new Map(signalOverview(connected.document).flatMap(bundle=>bundle.lanes).map(lane=>[lane.id,lane])).values()];
+  assert.deepEqual(plain(before.map(lane=>lane.id)),['route-1','route-2']);
+  const next=graph.graphInsertProcessing(connected,'route-1',processing('inserted'),'in','out');
+  const after=[...new Map(signalOverview(next.document).flatMap(bundle=>bundle.lanes).map(lane=>[lane.id,lane])).values()];
+  assert.deepEqual(plain(after.map(lane=>lane.id)),plain(before.map(lane=>lane.id)));
+  assert.deepEqual(plain(after.map(lane=>lane.destination.nodeId)),plain(before.map(lane=>lane.destination.nodeId)));
+  assert.deepEqual(plain(next.document.bindings.map(binding=>binding.id)),['route-1','route-2','route-3']);
+  assert.deepEqual(plain(next.document.bindings[0]),{id:'route-1',from:endpoint('inserted','out'),to:endpoint('target','value')});
+});
+test('bypassing a transform keeps downstream route order and identities',()=>{
+  const value=draft();value.document.resources.push(resource('target-two',[port('value','input')]),resource('target-three',[port('value','input')]));
+  let next=graph.graphSetProcessing(value,processing('transform'));
+  next.document.bindings=[
+    {id:'enter',from:endpoint('source','button'),to:endpoint('transform','in')},
+    {id:'first-output',from:endpoint('transform','out'),to:endpoint('target','value')},
+    {id:'unrelated',from:endpoint('source','button'),to:endpoint('target-three','value')},
+    {id:'second-output',from:endpoint('transform','out'),to:endpoint('target-two','value')},
+  ];
+  const bypassed=graph.graphBypassProcessing(next,'transform');
+  assert.deepEqual(plain(bypassed.document.bindings.map(binding=>binding.id)),['first-output','unrelated','second-output']);
+  assert.deepEqual(plain(bypassed.document.bindings[0]),{id:'first-output',from:endpoint('source','button'),to:endpoint('target','value')});
+  assert.deepEqual(plain(bypassed.document.bindings[2]),{id:'second-output',from:endpoint('source','button'),to:endpoint('target-two','value')});
 });
 test('captured preflight inventory metadata invalidates on disconnect, contract/setup/route changes and unrelated refresh conservatively',async()=>{
   const original=inventory(),snapshot=graph.graphInventorySignature([original]);let complete;const pending=new Promise(resolve=>complete=resolve),captured=(async()=>({report:await pending,inventory:snapshot}))();

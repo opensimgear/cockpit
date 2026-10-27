@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url), module = process.env.OSG_PLAYWRI
 const { chromium } = require(module), { expect } = require(module + '/test');
 const artifacts = resolve('.research/connection-overview-native');
 
-test('dragging opens the shared overview and only a completed connection creates ports, pins and transforms', { timeout: 120_000 }, async () => {
+test('overview automatically commits valid rows, inserts blocks and isolates transform settings', { timeout: 180_000 }, async () => {
   const browser = await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP ?? 'http://127.0.0.1:9222');
   const page = browser.contexts().flatMap(context => context.pages()).find(page => /127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(page.url()));
   assert.ok(page, 'Start the native dev cockpit.');
@@ -26,7 +26,11 @@ test('dragging opens the shared overview and only a completed connection creates
   };
   try {
     const current = page.locator('.editor-save-actions').getByRole('button', { name: 'Save', exact: true });
-    if (await current.count()) assert.ok(await current.isDisabled(), 'Save or discard the current draft before acceptance.');
+    if (await current.count() && await current.isEnabled()) {
+      await page.getByRole('button', { name: 'Back to Profiles', exact: true }).click();
+      await page.getByRole('button', { name: 'Save and continue', exact: true }).click();
+      await expect(current).toHaveCount(0);
+    }
     const fixture = await page.evaluate(async name => {
       const { gatewayRequest } = await import('/src/lib/gateway.ts');
       const { blankProfile, addProfileResources } = await import('/src/lib/profile-editor.ts');
@@ -85,20 +89,8 @@ test('dragging opens the shared overview and only a completed connection creates
     await overview.getByRole('button', { name: 'Add', exact: true }).click();
     await choose('Find an output', fixture.axisId);
     await choose('Find an input', 'button-1');
-    await expect(pending.getByRole('button', { name: 'Connect', exact: true })).toBeDisabled();
-    await choose('Add transform', 'Compare');
-    await pending.locator('.transform-chip').click();
-    const settings = overview.locator('.lane-settings');
-    await expect(settings.locator('input[aria-label="Threshold"]')).toBeVisible();
-    await settings.locator('input[aria-label="Threshold"]').fill('1234');
-    await settings.locator('input[aria-label="Threshold"]').press('Tab');
+    await expect(pending.getByRole('button', { name: /^(Connect|Cancel)$/ })).toHaveCount(0);
     empty(await save());
-    await pending.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await expect(pending).toHaveCount(0);
-    empty(await save());
-    await overview.getByRole('button', { name: 'Add', exact: true }).click();
-    await choose('Find an output', fixture.axisId);
-    await choose('Find an input', 'button-1');
     await page.keyboard.press('Escape');
     await expect(overview).toHaveCount(0);
     empty(await save());
@@ -107,16 +99,14 @@ test('dragging opens the shared overview and only a completed connection creates
     await choose('Find an output', fixture.axisId);
     await choose('Find an input', 'button-1');
     await choose('Add transform', 'Compare');
-    await pending.locator('.transform-chip').hover();
-    await pending.getByRole('button', { name: 'Remove Compare', exact: true }).click();
-    await expect(pending.locator('.draft-transform')).toHaveCount(0);
-    await choose('Add transform', 'Compare');
-    await pending.locator('.transform-chip').click();
-    await settings.locator('input[aria-label="Threshold"]').fill('1234');
-    await settings.locator('input[aria-label="Threshold"]').press('Tab');
-    await page.screenshot({ path: resolve(artifacts, 'provisional-overview.png') });
-    await pending.getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(pending).toHaveCount(0);
+    const settings = overview.locator('.lane-settings');
+    const threshold = settings.locator('input[aria-label="Threshold"]');
+    await expect(settings).toHaveCount(1);
+    if (!await threshold.isVisible()) await overview.locator('.signal-lane:not(.pending-connection) .transform-chip').first().click();
+    await expect(threshold).toBeVisible();
+    await threshold.fill('1234');
+    await threshold.press('Tab');
     const complete = await save();
     assert.equal(complete.document.resources[0].ports.length, 1);
     assert.equal(complete.assignments[0].ports.length, 1);
@@ -128,20 +118,62 @@ test('dragging opens the shared overview and only a completed connection creates
     await expect(overview.locator('.signal-lane:not(.pending-connection)')).toHaveCount(1);
     await overview.getByRole('button', { name: 'Add', exact: true }).click();
     await choose('Find an output', fixture.axisId);
-    await choose('Find an input', 'button-1');
+    await choose('Find an input', 'button-2');
     await choose('Add transform', 'Compare');
-    await pending.locator('.transform-chip').click();
-    await settings.locator('input[aria-label="Threshold"]').fill('2345');
-    await settings.locator('input[aria-label="Threshold"]').press('Tab');
-    await pending.getByRole('button', { name: 'Replace', exact: true }).click();
-    await expect(page.locator('.editor-save-actions').getByRole('button', { name: 'Save', exact: true })).toBeEnabled();
-    const replaced = await save();
-    assert.equal(replaced.document.resources[0].ports.length, 1);
-    assert.equal(replaced.assignments[0].ports.length, 1);
-    assert.equal(replaced.document.processingNodes.length, 1);
-    assert.notEqual(replaced.document.processingNodes[0].id, complete.document.processingNodes[0].id);
-    assert.equal(replaced.document.processingNodes[0].operation.threshold, 2345);
-    assert.equal(replaced.document.bindings.length, 2);
+    await expect(pending).toHaveCount(0);
+    await expect(settings).toHaveCount(1);
+    if (!await threshold.isVisible()) await overview.locator('.signal-lane:not(.pending-connection) .transform-chip').last().click();
+    await threshold.fill('2345');
+    await threshold.press('Tab');
+    const independent = await save();
+    assert.equal(independent.document.resources[0].ports.length, 1);
+    assert.equal(independent.assignments[0].ports.length, 1);
+    assert.equal(independent.document.processingNodes.length, 2);
+    assert.deepEqual(independent.document.processingNodes.map(node => node.operation.threshold).sort(), [1234, 2345]);
+    assert.equal(independent.document.bindings.length, 4);
+
+    // Old profiles can contain a shared stage. Editing one row must first instance it.
+    await page.evaluate(async ({ profileId, firstId }) => {
+      const { gatewayRequest } = await import('/src/lib/gateway.ts');
+      const { graphRemoveNode, graphConnect } = await import('/src/lib/profile-graph.ts');
+      const state = (await gatewayRequest({ command: 'profile_assignments_get', id: profileId })).profiles;
+      const second = state.document.processingNodes.find(node => node.id !== firstId);
+      let next = graphRemoveNode({ document: state.document, assignments: state.assignments }, second.id);
+      next = graphConnect(next, { nodeId: firstId, portId: 'out' }, { nodeId: 'virtual-target', portId: 'button-2' });
+      await gatewayRequest({ command: 'profile_editor_save', ...next, expectedRevision: state.document.revision });
+    }, { profileId, firstId: complete.document.processingNodes[0].id });
+    await page.reload();
+    await expect(page.locator('.signal-edge')).toHaveCount(1);
+    const midpoint = await page.locator('.signal-edge-hit').evaluate(path => {
+      const point = path.getPointAtLength(path.getTotalLength() / 2), matrix = path.getScreenCTM();
+      return { x: matrix.a * point.x + matrix.c * point.y + matrix.e, y: matrix.b * point.x + matrix.d * point.y + matrix.f };
+    });
+    await page.mouse.click(midpoint.x, midpoint.y);
+    const rows = overview.locator('.signal-lane:not(.pending-connection)');
+    await expect(rows).toHaveCount(2);
+    await rows.nth(1).locator('.transform-chip').click();
+    await expect(settings).toHaveCount(1);
+    await threshold.fill('3456');
+    await threshold.press('Tab');
+    const isolated = await save();
+    assert.equal(isolated.document.processingNodes.length, 2);
+    assert.deepEqual(isolated.document.processingNodes.map(node => node.operation.threshold).sort(), [1234, 3456]);
+    const laneIds = await rows.evaluateAll(items => items.map(item => item.dataset.laneId));
+    await rows.first().locator('.insert-transform').click();
+    await expect(pending).toHaveCount(0);
+    await expect(rows).toHaveCount(2);
+    await expect(settings).toHaveCount(1);
+    assert.deepEqual(await rows.evaluateAll(items => items.map(item => item.dataset.laneId)), laneIds);
+    await expect(rows.first().locator('.transform-chip')).toHaveCount(2);
+    await expect(rows.nth(1).locator('.transform-chip')).toHaveCount(1);
+    assert.equal(await settings.evaluate(panel => panel.previousElementSibling.dataset.laneId), laneIds[0]);
+    await expect(settings.getByRole('combobox', { name: 'Transformation type', exact: true })).toBeVisible();
+    await settings.getByRole('combobox', { name: 'Transformation type', exact: true }).selectOption('not');
+    const extended = await save();
+    assert.equal(extended.document.processingNodes.length, 3);
+    assert.equal(extended.document.bindings.length, 5);
+    assert.equal(extended.document.processingNodes.filter(node => node.operation.kind === 'not').length, 1);
+    assert.deepEqual(extended.document.processingNodes.filter(node => node.operation.kind === 'compare').map(node => node.operation.threshold).sort(), [1234, 3456]);
     await expect(page.locator('.signal-edge')).toHaveCount(1);
     await page.screenshot({ path: resolve(artifacts, 'completed-overview.png') });
   } catch (error) {

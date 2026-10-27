@@ -60,6 +60,21 @@
           ]
         },
         {
+          "name": "profile-chain-edit-coverage",
+          "tests": [
+            "src/lib/profile-chain-edit.test.mjs"
+          ],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/profile-chain-edit.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/profile-chain-edit.test.mjs"
+          ]
+        },
+        {
           "name": "profile-overview-routing-coverage",
           "tests": [
             "src/lib/profile-overview-routing.test.mjs"

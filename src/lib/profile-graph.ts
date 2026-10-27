@@ -184,15 +184,22 @@ export function graphSetProcessing(value: DeepReadonly<ProfileGraphDraft>, node:
 export function graphInsertProcessing(value: DeepReadonly<ProfileGraphDraft>, bindingId: string, node: ProfileProcessingNode, inputPortId: string, outputPortId: string): ProfileGraphDraft {
   const binding=value.document.bindings.find(binding=>binding.id===bindingId);if(!binding)throw new Error('Choose an existing route for this visible transformation.');
   if(nodes(value.document).some(existing=>existing.id===node.id))throw new Error('Insert a new transformation identity.');
-  let next=graphSetProcessing(graphDisconnect(value,bindingId),node,nodeTab(value.document,binding.from.nodeId)||nodeTab(value.document,binding.to.nodeId));
-  next=graphConnect(next,clone(binding.from),{nodeId:node.id,portId:inputPortId});
-  return graphConnect(next,{nodeId:node.id,portId:outputPortId},clone(binding.to));
+  // Retarget the original downstream route in place so its terminal lane ID,
+  // ordering and editor route metadata remain stable. Add only the new input edge.
+  let next=graphSetProcessing(value,node,nodeTab(value.document,binding.from.nodeId)||nodeTab(value.document,binding.to.nodeId));
+  const downstream=next.document.bindings.find(item=>item.id===bindingId)!;
+  downstream.from={nodeId:node.id,portId:outputPortId};
+  return graphConnect(next,clone(binding.from),{nodeId:node.id,portId:inputPortId});
 }
 export function graphBypassProcessing(value: DeepReadonly<ProfileGraphDraft>, nodeId: string): ProfileGraphDraft {
   const node=value.document.processingNodes.find(node=>node.id===nodeId),incoming=value.document.bindings.filter(binding=>binding.to.nodeId===nodeId),outgoing=value.document.bindings.filter(binding=>binding.from.nodeId===nodeId);
   if(!node||node.inputs.length!==1||node.outputs.length!==1||incoming.length!==1||!outgoing.length)throw new Error('Joining a removed transformation requires one connected input and one output. Otherwise remove its routes explicitly.');
-  const next=graphRemoveNode(value,nodeId);
-  for(const binding of outgoing)next.document.bindings.push({id:binding.id,from:clone(incoming[0].from),to:clone(binding.to)});
+  const next=graphRemoveNode(value,nodeId),outgoingById=new Map(outgoing.map(binding=>[binding.id,binding])),incomingIds=new Set(incoming.map(binding=>binding.id)),remaining=new Map(next.document.bindings.map(binding=>[binding.id,binding]));
+  next.document.bindings=value.document.bindings.flatMap(binding=>{
+    if(incomingIds.has(binding.id))return[];
+    const edge=outgoingById.get(binding.id);
+    return[edge?{id:edge.id,from:clone(incoming[0].from),to:clone(edge.to)}:remaining.get(binding.id)!];
+  });
   return checked(next);
 }
 export function graphReorderProcessing(value: DeepReadonly<ProfileGraphDraft>, orderedNodeIds: readonly string[]): ProfileGraphDraft {

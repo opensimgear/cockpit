@@ -19,6 +19,7 @@ const iconCode=transpile(compile(iconSource,{filename:'Icon.svelte',generate:'se
 const context={require(name){
  if(name==='svelte/internal/server')return server;
  if(name==='svelte')return svelte;
+ if(name==='svelte/transition')return require('svelte/transition');
  if(name==='./Icon.svelte')return {default:Icon};
  if(name==='./profile-processing')return processing;
  throw new Error(`Unexpected dependency ${name}`);
@@ -51,7 +52,7 @@ test('transform chips retain the purple chip and expose a separate destructive k
  assert.doesNotMatch(body,/<button[^>]*class="transform-chip"[^>]*>[\s\S]*?<button[^>]*class="remove-transform"/);
 });
 
-test('pending draft row is three-column content and settings occupy a left pane beside the overview',()=>{
+test('settings slide below the selected row and preserve the full-width three-column overview',()=>{
  const wrapper=`<script>import Lanes from './ProfileSignalLanes.svelte';
  const c={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null};
  const p=(id,direction)=>({id,name:id,direction,contract:c});
@@ -67,8 +68,28 @@ test('pending draft row is three-column content and settings occupy a left pane 
  vm.runInNewContext(wrapperCode,{...wrappedContext,exports},{filename:'SignalLanesWrapper.svelte'});
  const body=render(exports.default,{}).body;
  assert.match(body,/class="signal-lane pending-connection[^\"]*"/);assert.match(body,/Source draft[\s\S]*Transform draft[\s\S]*Destination draft/);
- assert.match(body,/<aside class="lane-settings[^\"]*" data-transform-settings="stage">/);
- assert.ok(body.indexOf('class="lane-settings svelte-')<body.indexOf('class="lane-scroll svelte-'),'settings pane is the left sibling of overview content');
- assert.match(componentSource,/\.overview-content\.has-settings\{grid-template-columns:minmax\(220px,\.65fr\) minmax\(0,1\.6fr\)/);
- assert.match(componentSource,/@media\(max-width:850px\)\{\.overview-content\.has-settings\{grid-template-columns:minmax\(0,1fr\)/);
+ assert.match(body,/<div class="lane-settings[^\"]*" data-transform-settings="stage">/);
+ assert.ok(body.indexOf('class="signal-lane pending-connection')<body.indexOf('class="lane-settings'),'draft settings follow the draft row');
+ assert.match(componentSource,/transition:slide=\{\{duration:140\}\}/);
+ assert.match(componentSource,/lanes\.find\(lane=>lane\.id===selectedLaneId&&lane\.transforms\.includes\(activeTransform\)\)\?\?lanes\.find\(lane=>lane\.transforms\.includes\(activeTransform\)\)/,'programmatic selections resolve to a row, while a clicked row takes priority');
+ assert.match(componentSource,/selectTransform\(laneId,id\)/);
+ assert.doesNotMatch(componentSource,/<aside class="lane-settings/);
+ assert.doesNotMatch(componentSource,/overview-content\.has-settings/);
+ assert.match(componentSource,/@render removeButton\(node,lane\.id\)/,'row delete callback receives its lane id');
+ assert.doesNotMatch(componentSource,/settings-close|Close transformation settings/);
+});
+
+test('programmatically active shared transform opens beneath the first matching row',()=>{
+ const secondLane={...lane,id:'route-2'};
+ const body=render(Lanes,{props:{bundle:bundle([lane,secondLane]),nodes,activeTransform:'stage',close(){},transformSettings(){return 'Factor';}}}).body;
+ assert.equal((body.match(/data-transform-settings="stage"/g)??[]).length,1);
+ const firstRow=body.indexOf('data-lane-id="route"'),firstSettings=body.indexOf('data-transform-settings="stage"'),secondRow=body.indexOf('data-lane-id="route-2"');
+ assert.ok(firstRow<firstSettings&&firstSettings<secondRow,'settings follow the first row that contains the active transform');
+});
+
+test('standalone transform library keeps its settings available below the library',()=>{
+ const body=render(Lanes,{props:{nodes,bundle:undefined,activeTransform:'stage',close(){},transformSettings(node){return node.name;}}}).body;
+ assert.match(body,/Transform settings/);
+ assert.match(body,/<div class="lane-settings[^\"]*" data-transform-settings="stage">/);
+ assert.ok(body.indexOf('class="transform-library')<body.indexOf('class="lane-settings'),'library settings follow the transform library');
 });
