@@ -72,8 +72,8 @@ test('custom games, backgrounds and installed library imports use the actual nat
     evidence.checks.push('Invalid image keeps the previous background; reset works for built-in/custom games and preserves shared assets.');
     await nav.getByRole('button',{name:'Profiles',exact:true}).click();await page.getByRole('button',{name:'Add',exact:true}).click();
     await page.getByRole('button',{name:'Edit profile name',exact:true}).click();await page.getByLabel('Profile name',{exact:true}).fill(name);await page.getByLabel('Profile name',{exact:true}).press('Enter');
-    await page.getByLabel('Game context',{exact:true}).selectOption(gameId);await page.getByRole('button',{name:'Save profile',exact:true}).click();
-    await expect(page.getByRole('button',{name:'Save profile',exact:true})).toBeDisabled();
+    await page.getByLabel('Game context',{exact:true}).selectOption(gameId);await page.getByRole('button',{name:'Save',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Save',exact:true})).toBeDisabled();
     const saved=(await native({command:'profile_list'})).profiles.profiles.find(profile=>profile.name===name);assert.ok(saved);profileId=saved.id;
     const document=(await native({command:'profile_get',id:profileId})).profiles.document;
     assert.deepEqual(document.eligibility.gameIds,[gameId]);assert.equal(document.resources.filter(resource=>resource.kind==='game').length,0);

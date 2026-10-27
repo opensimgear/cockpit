@@ -29,7 +29,7 @@ test('recovered DCS demo persists intact and opens both aircraft tabs in native 
     if(!await heading.count())await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Profiles',exact:true}).click();
     await heading.or(edit).waitFor();
     if(await edit.count())await edit.click();
-    await page.getByRole('button',{name:'Save profile',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Save',exact:true}).waitFor();
     await page.getByText('VKB right - cyclic',{exact:true}).first().waitFor();
     await mkdir(resolve('.research/dcs-demo-native'),{recursive:true});
     await page.screenshot({path:resolve('.research/dcs-demo-native/base.png')});

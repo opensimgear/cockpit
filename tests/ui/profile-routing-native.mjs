@@ -247,7 +247,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     const paths = [...(stage?.querySelectorAll('.signal-edge') ?? [])];
     return { nodes: stage?.querySelectorAll('.resource-block').length, edges: paths.length,
       signals: paths.reduce((sum, path) => sum + JSON.parse(path.dataset.bindingIds ?? '[]').length, 0),
-      saveDisabled: buttons.find(button => button.textContent.trim() === 'Save profile')?.disabled,
+      saveDisabled: buttons.find(button => button.textContent.trim() === 'Save')?.disabled,
       undoDisabled: buttons.find(button => button.getAttribute('aria-label') === 'Undo')?.disabled,
       view: matrix ? { x: matrix.e, y: matrix.f, zoom: matrix.a } : null };
   });
@@ -477,7 +477,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     await until(async () => { const point = (await handles())[0]; return point && Math.hypot(point.x - inserted.x, point.y - inserted.y) < .01; }, 'Undo restores the previous reroute point');
     await click('Redo', '.editor-save-actions');
     await until(async () => { const point = (await handles())[0]; return point && Math.hypot(point.x - movement.x, point.y - movement.y) < .01; }, 'Redo restores the moved reroute point');
-    await click('Save profile'); await until(async () => (await state()).saveDisabled, 'Save reroute point');
+    await click('Save'); await until(async () => (await state()).saveDisabled, 'Save reroute point');
     const saved = (await request({ command: 'profile_assignments_get', id: profileId })).profiles;
     const savedRoute = saved.document.editor.wireRoutes?.find(route => route.bindingId === target.id);
     assert.equal(savedRoute?.handles?.length, 1, 'The native backend persists reroute metadata');
@@ -494,7 +494,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
     assert.equal((await state()).signals, 73, 'Deleting a reroute handle retains its connection');
     await click('Undo', '.editor-save-actions'); await until(async () => (await handles()).length === 1, 'Undo restores a removed handle');
     await click('Reset bends'); await until(async () => !(await handles()).length, 'Reset bends removes authored points');
-    await click('Save profile'); await until(async () => (await state()).saveDisabled, 'Save reset reroute geometry');
+    await click('Save'); await until(async () => (await state()).saveDisabled, 'Save reset reroute geometry');
     const reset = (await request({ command: 'profile_assignments_get', id: profileId })).profiles;
     assert.equal(reset.document.editor.wireRoutes?.some(route => route.bindingId === target.id) ?? false, false, 'Reset clears the complete authored route');
     await click('← Back to Profiles'); await open();
@@ -544,7 +544,7 @@ test('Feature Lab routes both styles around blocks and keeps real native draggin
       assert.deepEqual(coordinates(await pathGeometry()), coordinates(before), 'Undo restores every block in one step');
       await click('Redo', '.editor-save-actions'); await until(async () => !(await state()).saveDisabled, 'Redo must restore the ELK layout');
       assert.deepEqual(coordinates(await pathGeometry()), coordinates(arranged), 'Redo restores the complete ELK arrangement');
-      await click('Save profile'); await until(async () => (await state()).saveDisabled, 'Save ELK layout');
+      await click('Save'); await until(async () => (await state()).saveDisabled, 'Save ELK layout');
       const saved = (await request({ command: 'profile_assignments_get', id: profileId })).profiles.document;
       const generated = saved.editor.wireRoutes?.filter(route => route.automatic) ?? [];
       assert.equal(generated.length, 73, 'Native persistence retains every generated ELK corridor');

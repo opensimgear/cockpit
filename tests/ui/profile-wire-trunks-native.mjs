@@ -63,7 +63,7 @@ function canvasSnapshot() {
       style: path.dataset.arrowStyle, d: path.getAttribute('d'), start: { x: start.x, y: start.y }, end: { x: end.x, y: end.y }, selected: path.classList.contains('selected') };
   });
   return { nodes: stage?.querySelectorAll('.resource-block').length, edges,
-    saveDisabled: actions.find(button => button.textContent.trim() === 'Save profile')?.disabled,
+    saveDisabled: actions.find(button => button.textContent.trim() === 'Save')?.disabled,
     undoDisabled: actions.find(button => button.getAttribute('aria-label') === 'Undo')?.disabled,
     redoDisabled: actions.find(button => button.getAttribute('aria-label') === 'Redo')?.disabled,
     picker: document.querySelector('.canvas-wire-bundle-picker') ? [...document.querySelectorAll('.canvas-wire-bundle-picker [data-bundle-binding]')].map(button => button.dataset.bundleBinding) : null,

@@ -70,7 +70,7 @@ test('running native Cockpit authors and roundtrips a desktop endpoint without o
     assert.equal(captured.owner,null);
     assert.equal(captured.appliedSnapshot,null);
     await inspector.getByRole('button',{name:'Update desktop actions',exact:true}).click();
-    await page.getByRole('button',{name:'Save profile',exact:true}).click();
+    await page.getByRole('button',{name:'Save',exact:true}).click();
     await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByText(/^Profile saved\./).last()).toBeVisible();
     await page.getByRole('button',{name:/Back to Profiles/}).click();
     await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click();

@@ -60,7 +60,7 @@ test('native DCS overview hides transforms and counts, edits real signal lanes, 
   const native=await connectNative(),profileId=randomUUID(),name=`Signal overview ${profileId}`;
   const request=value=>native.evaluate(async value=>{const reply=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{...value,clientId:'signal-overview-test'}});if(!reply.ok)throw Error(reply.error);return reply.state;},value);
   const click=(label,scope='body')=>until(()=>native.evaluate((label,scope)=>{const button=[...document.querySelector(scope).querySelectorAll('button')].find(button=>(button.getAttribute('aria-label')??button.textContent.trim())===label);if(!button||button.disabled)return false;button.click();return true;},label,scope),`Click ${label}`);
-  const snapshot=()=>native.evaluate(()=>({view:document.querySelector('.canvas-stage')?.dataset.view,nodes:document.querySelectorAll('.resource-block').length,transforms:document.querySelectorAll('.resource-block.processing').length,badges:document.querySelectorAll('.connection-bundle-badge,.connection-trunk-badge').length,edges:[...document.querySelectorAll('.overview-edge')].map(path=>({id:path.dataset.bindingId,count:Number(path.dataset.routeCount),width:Number.parseFloat(getComputedStyle(path).strokeWidth),style:path.dataset.arrowStyle,d:path.getAttribute('d')})),lanes:[...document.querySelectorAll('.signal-lane')].map(lane=>lane.dataset.laneId),saveDisabled:[...document.querySelectorAll('.editor-save-actions button')].find(button=>button.textContent.trim()==='Save profile')?.disabled}));
+  const snapshot=()=>native.evaluate(()=>({view:document.querySelector('.canvas-stage')?.dataset.view,nodes:document.querySelectorAll('.resource-block').length,transforms:document.querySelectorAll('.resource-block.processing').length,badges:document.querySelectorAll('.connection-bundle-badge,.connection-trunk-badge').length,edges:[...document.querySelectorAll('.overview-edge')].map(path=>({id:path.dataset.bindingId,count:Number(path.dataset.routeCount),width:Number.parseFloat(getComputedStyle(path).strokeWidth),style:path.dataset.arrowStyle,d:path.getAttribute('d')})),lanes:[...document.querySelectorAll('.signal-lane')].map(lane=>lane.dataset.laneId),saveDisabled:[...document.querySelectorAll('.editor-save-actions button')].find(button=>button.textContent.trim()==='Save')?.disabled}));
   const capture=async label=>{const shot=await native.send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,label+'.png'),Buffer.from(shot.data,'base64'));};
   const open=async()=>{await click('Profiles','nav[aria-label="Main navigation"]');await until(()=>native.evaluate(name=>{const discard=[...document.querySelectorAll('dialog[open] button')].find(button=>button.textContent.trim()==='Discard and continue');if(discard){discard.click();return false;}if(document.querySelector('.profile-title-button')?.textContent.trim()===name&&document.querySelector('.canvas-stage'))return true;const edit=[...document.querySelectorAll('button')].find(button=>button.getAttribute('aria-label')===`Edit ${name}`);if(edit)edit.click();else [...document.querySelectorAll('button')].find(button=>button.textContent.trim()==='← Back to Profiles')?.click();return false;},name),'Open DCS clone');await click('Fit all');};
   let created=false;
@@ -85,7 +85,7 @@ test('native DCS overview hides transforms and counts, edits real signal lanes, 
       return {nodes,bindings,score:canvasOverviewLayoutScore(nodes,bindings,baseline.positions,288,188)};
     },expected.bundles);
     await click('Auto-layout');await until(()=>native.evaluate(()=>!document.querySelector('[aria-label="Auto-layout"]').disabled),'Overview ELK layout');await pause(250);
-    if(!(await snapshot()).saveDisabled)await click('Save profile');await until(async()=>(await snapshot()).saveDisabled,'Saved overview layout');
+    if(!(await snapshot()).saveDisabled)await click('Save');await until(async()=>(await snapshot()).saveDisabled,'Saved overview layout');
     const laidOut=(await request({command:'profile_assignments_get',id:profileId})).profiles.document;
     await writeFile(resolve(artifacts,'layout-baseline.json'),JSON.stringify(layoutBaseline));
     const layoutScore=await native.evaluate(async baseline=>{
@@ -122,7 +122,7 @@ test('native DCS overview hides transforms and counts, edits real signal lanes, 
     const factor=document.processingNodes.find(node=>node.id===transformId).operation.deadzonePercent;
     await until(()=>native.evaluate(value=>{const input=document.querySelector('.lane-settings input[aria-label="Deadzone (%)"]');if(!input)return false;input.value=String(value);input.dispatchEvent(new Event('change',{bubbles:true}));return true;},factor+1),'Edit deadzone inline');
     await until(async()=>!(await snapshot()).saveDisabled,'Editing dirties graph');assert.ok((await snapshot()).lanes.length,'Inspector stays open after edit');
-    await click('Save profile');await until(async()=>(await snapshot()).saveDisabled,'Save deadzone');
+    await click('Save');await until(async()=>(await snapshot()).saveDisabled,'Save deadzone');
     const edited=(await request({command:'profile_assignments_get',id:profileId})).profiles.document;
     assert.equal(edited.processingNodes.find(node=>node.id===transformId).operation.deadzonePercent,factor+1);assert.deepEqual(edited.bindings,laidOut.bindings);
     await click('Undo');await until(()=>native.evaluate(()=>Number(document.querySelector('.lane-settings input[aria-label="Deadzone (%)"]')?.value)===0||!!document.querySelector('.lane-settings')), 'Undo retains lane editor');
@@ -203,7 +203,7 @@ test('native route list edits source and destination through filtered dropdowns 
     await click(`${row} [data-endpoint-side="to"] input`);await until(()=>native.evaluate(()=>document.activeElement?.getAttribute('aria-expanded')==='true'),'Destination dropdown opens');
     assert.ok(!(await native.evaluate(()=>[...document.querySelectorAll('.signal-lanes [role="option"]')].map(node=>node.textContent))).some(text=>text.includes('Occupied input')));
     await input('Input Bravo');await click('.signal-lanes [role="option"]');await until(()=>native.evaluate(()=>!document.querySelector('.signal-lanes .port-dropdown')),'Destination selection commits');
-    await button('Save profile');await until(()=>native.evaluate(()=>[...document.querySelectorAll('.editor-save-actions button')].find(b=>b.textContent.trim()==='Save profile')?.disabled),'Endpoint edits saved');
+    await button('Save');await until(()=>native.evaluate(()=>[...document.querySelectorAll('.editor-save-actions button')].find(b=>b.textContent.trim()==='Save')?.disabled),'Endpoint edits saved');
     const saved=(await request({command:'profile_assignments_get',id})).profiles.document;
     assert.deepEqual(saved.bindings.find(b=>b.id==='editable'),{id:'editable',from:{nodeId:'source',portId:'Signal Bravo'},to:{nodeId:'target',portId:'Input Bravo'}});
     assert.deepEqual(saved.bindings.find(b=>b.id==='occupied'),document.bindings.find(b=>b.id==='occupied'));

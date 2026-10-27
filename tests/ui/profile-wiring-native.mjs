@@ -69,9 +69,9 @@ test('native canvas constructs graphs and applies global Bezier or rounded ortho
   const saved = async () => (await request({ command: 'profile_assignments_get', id: profileId })).profiles;
   const clickIfPresent = (label, scope = '.profiles-workspace') => native.evaluate(`(()=>{const root=document.querySelector(${JSON.stringify(scope)});const button=[...(root?.querySelectorAll('button')??[])].find(button=>(button.getAttribute('aria-label')??button.textContent.replace(/\\s+/g,' ').trim())===${JSON.stringify(label)});if(!button||button.disabled)return false;button.scrollIntoView({block:'nearest'});button.click();return true;})()`);
   const click = (label, scope) => until(() => clickIfPresent(label, scope), `UI action unavailable: ${label}`);
-  const saveDisabled = () => native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save profile');return button?.disabled;})()`);
+  const saveDisabled = () => native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save');return button?.disabled;})()`);
   const save = async () => {
-    await click('Save profile');
+    await click('Save');
     if (!profileId) profileId = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles.find(profile => profile.name === name)?.id, 'Temporary profile was not saved');
     await until(saveDisabled, 'Profile save did not settle'); return saved();
   };

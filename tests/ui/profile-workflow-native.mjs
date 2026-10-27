@@ -127,7 +127,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(page.locator('.canvas-inspector')).toHaveCount(0);
     await page.locator('.resource-block.desktop .block-heading').click();
     await page.getByLabel('Keyboard and mouse scope',{exact:true}).selectOption('desktop-wide');
-    await page.getByRole('button',{name:'Save profile',exact:true}).click();
+    await page.getByRole('button',{name:'Save',exact:true}).click();
     await saved();
     await noSelectedBadge();
     assert.equal((await status()).owner,null,'Saving a new inactive profile must not activate it.');
@@ -156,7 +156,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     const activated=await status(),desktopActive=(await native({command:'profile_desktop_status'})).desktop;
     assert.ok(desktopActive.runtime,'The native desktop output session must actually be acquired.');
     const updated=`${name} updated`;names.add(updated);await renameProfile(updated);
-    await page.getByRole('button',{name:'Save profile',exact:true}).click();
+    await page.getByRole('button',{name:'Save',exact:true}).click();
     await saved('Profile saved and active changes applied.');
     const changed=await status();assert.equal(changed.owner.profileId,first.id);assert.ok(changed.owner.generation>activated.owner.generation);
     assert.equal(changed.owner.gameId,activated.owner.gameId);
@@ -180,7 +180,7 @@ test('native cockpit saves with notifications and confirms exclusive profile act
     await expect(page.getByRole('heading',{name:updated,exact:true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Native graph preflight'})).toHaveCount(0);
     await list();await page.getByRole('button',{name:'Add',exact:true}).click();
-    const inactive=`${name} inactive`;names.add(inactive);await renameProfile(inactive);await page.getByRole('button',{name:'Save profile',exact:true}).click();
+    const inactive=`${name} inactive`;names.add(inactive);await renameProfile(inactive);await page.getByRole('button',{name:'Save',exact:true}).click();
     await saved();assert.deepEqual((await status()).owner,changed.owner,'Saving another profile must leave the active owner unchanged.');
     const second=(await native({command:'profile_list'})).profiles.profiles.find(profile=>profile.name===inactive);assert.ok(second);
     await page.screenshot({path:resolve(artifacts,'inactive-save.png'),fullPage:true});

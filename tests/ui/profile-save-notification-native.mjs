@@ -94,7 +94,7 @@ test('one real save shows one toast across inventory polling and navigation, whi
     await native.evaluate(observeToasts);
     await click('Add'); draftOpen = true;
     await click('Edit profile name'); assert.equal(await inputName(name), true);
-    await click('Save profile');
+    await click('Save');
     profileId = await until(async () => (await profiles()).find(profile => profile.name === name)?.id, 'The temporary profile was not saved'); draftOpen = false;
     const first = await saved();
     assert.equal(first.resources.length, 0); assert.equal(first.bindings.length, 0);
@@ -122,7 +122,7 @@ test('one real save shows one toast across inventory polling and navigation, whi
     assert.equal((await saved()).revision, first.revision, 'Navigation and frontend remount must not save the profile.');
 
     await click('Edit profile name'); assert.equal(await inputName(`${name} updated`), true);
-    await click('Save profile');
+    await click('Save');
     const second = await until(async () => { const value = await saved(); return value.name === `${name} updated` && value.revision > first.revision ? value : null; }, 'The second actual edit was not saved');
     await until(async () => (await visibleToasts()).length === 1, 'A second actual save must produce its own toast');
     await sleep(7200);

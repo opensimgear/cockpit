@@ -72,9 +72,9 @@ test('native HTML5 palette drags preview and persist exact canvas placement with
   const click = (label, scope) => until(() => clickIfPresent(label, scope), `UI action unavailable: ${label}`);
   const snapshot = () => native.evaluate(`(()=>{const stage=document.querySelector('.canvas-stage'),world=document.querySelector('.canvas-world'),preview=document.querySelector('[aria-label="Component drop preview"]');const rect=stage.getBoundingClientRect(),matrix=new DOMMatrix(getComputedStyle(world).transform);return{stage:{left:rect.left,top:rect.top,width:rect.width,height:rect.height},view:{x:matrix.e,y:matrix.f,zoom:matrix.a},nodes:[...document.querySelectorAll('.canvas-stage .resource-block[data-node-id]')].map(node=>({id:node.dataset.nodeId,x:parseFloat(node.style.left),y:parseFloat(node.style.top),width:parseFloat(node.style.width),height:parseFloat(node.style.height),selected:node.classList.contains('selected')})),inspector:document.querySelector('.canvas-inspector h3')?.textContent??null,preview:preview?{x:Number(preview.dataset.previewX),y:Number(preview.dataset.previewY),kind:preview.dataset.componentKind,width:parseFloat(preview.style.width),height:parseFloat(preview.style.height),text:preview.textContent}:null};})()`);
   const save = async () => {
-    await click('Save profile');
+    await click('Save');
     if (!profileId) profileId = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles.find(profile => profile.name === name)?.id, 'Temporary profile did not save');
-    await until(() => native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save profile');return button?.disabled;})()`), 'Profile save did not settle');
+    await until(() => native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save');return button?.disabled;})()`), 'Profile save did not settle');
     return saved();
   };
   const capture = async filename => { const result = await native.send('Page.captureScreenshot', { format: 'png' }); await writeFile(resolve(artifacts, filename), Buffer.from(result.data, 'base64')); };
@@ -175,7 +175,7 @@ test('native HTML5 palette drags preview and persist exact canvas placement with
     await native.send('Input.dispatchDragEvent', { type: 'dragOver', x: outside.x, y: outside.y, data });
     await finish(data, outside);
     assert.equal((await snapshot()).nodes.length, 1);
-    assert.equal(await native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save profile');return button.disabled;})()`), true, 'Cancellation/outside drop must not make the saved profile dirty');
+    assert.equal(await native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save');return button.disabled;})()`), true, 'Cancellation/outside drop must not make the saved profile dirty');
     checks.push('Cancelling a visible preview and dropping outside the canvas leave the graph and saved state unchanged');
 
     // Keep an existing inspector open while dropping a real inventory component.

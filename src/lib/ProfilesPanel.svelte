@@ -243,7 +243,7 @@
         </div>
         <button class="secondary-button" aria-label="Export saved profile" title="Export saved profile" disabled={workspace.busy||libraryBusy||!savedEditor} onclick={()=>savedEditor&&libraryTools?.askExport(savedEditor)}><Icon name="download" size={14}/>Export</button>
         {#if editor.baseRevision===null}<button class="text-button" disabled={workspace.busy} onclick={cancel}>Cancel creation</button>{/if}
-        <button class="primary-button" disabled={workspace.busy||workspace.readOnly||!dirty||!!error} onclick={()=>save()}><Icon name="save" size={14}/> {workspace.busy?'Saving…':'Save profile'}</button>
+        <button class="primary-button" disabled={workspace.busy||workspace.readOnly||!dirty||!!error} onclick={()=>save()}><Icon name="save" size={14}/> {workspace.busy?'Saving…':'Save'}</button>
         {#if savedEditor&&!savedEditor.isDefault}<button class="secondary-button destructive-button" aria-label="Delete saved profile" disabled={workspace.busy||libraryBusy||workspace.readOnly} onclick={()=>libraryTools?.askDelete(savedEditor!)}><Icon name="trash" size={14}/>Delete</button>{/if}
       </div>
     {/snippet}

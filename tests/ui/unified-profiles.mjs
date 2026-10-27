@@ -107,7 +107,7 @@ test('keyboard Add, Save, Cancel and Back preserve saved profiles and the exact 
     await expect(page.locator('.resource-block')).toHaveCount(0);
     await expect(page.getByRole('button',{name:'Add from inventory',exact:true})).toBeVisible();
     await page.getByLabel('Profile name',{exact:true}).fill('Browser rig');
-    const save = page.getByRole('button',{name:'Save profile',exact:true});
+    const save = page.getByRole('button',{name:'Save',exact:true});
     await activateByTab(save,'Save new profile','Enter');
     await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByText('Profile saved.',{exact:true}).last()).toBeVisible();
     await expect(page.locator('main').getByText(/All changes saved|Profile saved/)).toHaveCount(0);

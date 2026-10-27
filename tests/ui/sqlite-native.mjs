@@ -55,7 +55,7 @@ test('profile UI saves into SQLite and survives a complete native process restar
       await page.getByRole('button',{name:'Edit profile name',exact:true}).click();
       await page.getByLabel('Profile name',{exact:true}).fill(name);
       await page.getByLabel('Profile name',{exact:true}).press('Enter');
-      await page.getByRole('button',{name:'Save profile',exact:true}).click();
+      await page.getByRole('button',{name:'Save',exact:true}).click();
       await expect.poll(async()=>(await native({command:'profile_get',id:created.id})).profiles.document.name).toBe(name);
       const saved=(await native({command:'profile_get',id:created.id})).profiles.document;
       assert.equal(saved.revision,2);

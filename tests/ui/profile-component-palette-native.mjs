@@ -98,11 +98,11 @@ test('native palette authors an unassigned production companion and inserts conn
     await until(()=>native.evaluate(`(()=>{const panel=document.querySelector('.canvas-connection-panel'),r=panel?.getBoundingClientRect();return !!r&&r.width>0&&r.height>0&&r.top<innerHeight&&r.bottom>0;})()`),'A real connection drag did not open the exact port picker');
   };
   const save = async () => {
-    await click('Save profile');
+    await click('Save');
     if (!profileId) profileId = await until(async () => (await request({ command: 'profile_list' })).profiles.profiles.find(profile => profile.name === name)?.id, 'New temporary profile was not saved');
     await until(async () => {
       const state = await saved();
-      const disabled = await native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save profile');return button?.disabled;})()`);
+      const disabled = await native.evaluate(`(()=>{const button=[...document.querySelectorAll('.profiles-workspace button')].find(button=>button.textContent.trim()==='Save');return button?.disabled;})()`);
       return disabled ? state : null;
     }, 'Profile save did not settle');
     return saved();
