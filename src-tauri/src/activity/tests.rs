@@ -65,7 +65,7 @@ fn inventory_cache_success_is_silent_but_settings_and_storage_failures_remain_vi
     let request=json!({"command":"ui_preferences_save","key":"remembered","clientId":"inventory-poll-client"});
     for _ in 0..100 {assert!(audit::mutation(&request,&json!({"ok":true})).is_none());}
     let failed=audit::mutation(&request,&json!({"ok":false,"error":"SQLite disk full."})).unwrap();
-    assert_eq!(failed.level,"error");assert_eq!(failed.message,"Remembered devices could not be saved.");assert_eq!(failed.detail,"SQLite disk full.");
+    assert_eq!(failed.level,"error");assert_eq!(failed.message,"Remembered devices could not be saved. SQLite disk full.");assert_eq!(failed.detail,"SQLite disk full.");
     for (key,label) in [("theme","Appearance"),("devices-mode","Device view"),("canvas-navigation","Canvas navigation"),("canvas-styling","Canvas styling"),("tray","Tray settings"),("progress","Progress notifications"),("windows","Window layout"),("unknown","Preferences")] {
         let changed=audit::mutation(&json!({"command":"ui_preferences_save","key":key}),&json!({"ok":true})).unwrap();assert_eq!(changed.message,format!("{label} updated."));
     }
@@ -119,7 +119,7 @@ fn background_review_setup_reason_vehicle_and_system_events_are_useful_without_u
     let mut failed_game=game();failed_game["integrationSetup"]=json!({"state":"needs-attention","message":"Close Racing before restoring its integration files."});failed_game["currentVehicle"]=json!({"id":"GT3","name":"GT3 Car"});ready.games(&[failed_game]);*current.lock().unwrap()=ready;
     let complete=query("discovery_completed");assert_eq!(complete["total"],1);assert!(complete["events"][0]["detail"].as_str().unwrap().contains("2 proposed"));
     let integration=query("integration_changed");assert_eq!(integration["events"][0]["level"],"warning");assert!(integration["events"][0]["detail"].as_str().unwrap().contains("Close Racing"));
-    assert_eq!(query("game_vehicle_changed")["events"][0]["detail"],"Current vehicle: GT3 Car");
+    assert_eq!(query("game_vehicle_changed")["events"][0]["detail"],"Current vehicle: “None” → “GT3 Car”");
     current.lock().unwrap().discovery(&json!({"scanId":"scan-2","status":"failed","diagnostics":["Scan failed because the library is inaccessible."]}));assert_eq!(query("discovery_failed")["events"][0]["level"],"error");
     assert_eq!(query("discovery_failed")["total"],1);runtime.shutdown();
     // Receiver disconnection exits cleanly rather than spinning while idle.

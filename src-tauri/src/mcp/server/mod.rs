@@ -117,8 +117,24 @@ impl Server {
         json!({"settingsRevision":state.store.revision,"enabled":settings.enabled,"port":settings.port,"endpoint":format!("http://127.0.0.1:{}/mcp",settings.port),"running":state.listener.is_some(),"error":state.error,"credentials":settings.credentials.iter().map(Credential::metadata).collect::<Vec<_>>(),"protocolVersions":VERSIONS,"sdk":"rmcp 3.6.0","readOnly":state.store.error.is_some()})
     }
     pub fn configure(self: &Arc<Self>, update: SettingsUpdate) -> Result<Value, String> {
+        let _activity_guard = self.manager.activity_mutation();
+        let before = {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let _ = self.refresh_credentials(&mut state);
+            json!({"enabled":state.store.settings.enabled,"port":state.store.settings.port})
+        };
+        let after = json!({"enabled":update.enabled,"port":update.port});
         let result = self.configure_inner(update);
-        self.manager.record_external_activity("mcp_settings_update", result.is_ok());
+        let actual_after = if result.is_ok() { after } else { before.clone() };
+        self.manager.record_external_change(
+            "mcp_settings_update",
+            None,
+            None,
+            &before,
+            &actual_after,
+            result.as_ref().err().map(String::as_str),
+            "mcp",
+        );
         result
     }
     fn configure_inner(self: &Arc<Self>, update: SettingsUpdate) -> Result<Value, String> {

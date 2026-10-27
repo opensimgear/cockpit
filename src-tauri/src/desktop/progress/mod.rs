@@ -276,8 +276,17 @@ pub(crate) async fn profile_progress_settings_save(window:WebviewWindow,app:taur
     let service=app.state::<crate::NativeGateway>().0.ui_preferences.clone();let value=serde_json::to_value(settings).map_err(|_|"Invalid progress settings.")?;
     let activity=app.state::<crate::NativeGateway>().0.clone();
     let row=tauri::async_runtime::spawn_blocking(move||{
+        let _activity_guard=activity.activity_mutation();
+        let before=match service.read("progress") {
+            Ok(entry)=>entry.value,
+            Err(error)=>{
+                activity.record_external_change("profile_progress_settings_save",None,None,&serde_json::Value::Null,&serde_json::Value::Null,Some(&error),"cockpit");
+                return Err(error);
+            }
+        };
         let result=service.write("progress",expected_revision,value);
-        activity.record_external_activity("profile_progress_settings_save",result.is_ok());
+        let after=result.as_ref().map(|entry|entry.value.clone()).unwrap_or_else(|_|before.clone());
+        activity.record_external_change("profile_progress_settings_save",None,None,&before,&after,result.as_ref().err().map(String::as_str),"cockpit");
         result
     }).await.map_err(|_|"The progress settings worker failed.")??;
     let mut value=row.value;value["settingsRevision"]=serde_json::json!(row.revision);Ok(value)

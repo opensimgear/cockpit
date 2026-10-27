@@ -13,12 +13,19 @@ failures to save remembered devices remain visible.
 The native collector records game library changes, game process and integration
 context changes, saved profile edits, activation and runtime health transitions,
 device and companion availability, configuration operations, and failed
-operations. Profile degradation and failures include diagnostic details. Each
+operations. Edits show the saved before-and-after values, including profile
+nodes, settings, connections, required resources, assignments, game tags and
+installation paths. Degraded profiles and failed operations show the actual
+reason in the row and its details. A save that fails to apply is recorded as a
+warning with both the saved changes and the application error. Each
 event has a UTC timestamp, type, category, severity, source and related entity
 identity when available. Credentials and configuration bodies are excluded.
 
 The compact list shows the newest events first. Expand a row for its full
-message, diagnostic details, exact timestamp and entity ID. Search uses SQLite
+message, all change details, exact timestamp and entity ID. The compact row
+previews its first change; hovering shows the full text. Secret values and
+script contents are omitted while useful diagnostic explanations remain.
+Search uses SQLite
 full-text matching across messages, details, names, IDs, types and categories;
 multiple search terms must all match. Search text is treated literally rather
 than as SQL or full-text query syntax.

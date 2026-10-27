@@ -1,9 +1,16 @@
 //! Small cached activity projection, separate from UI artwork and vehicle pages.
 use super::*;
 impl GamesRuntime {
+    pub(crate) fn activity_game(&self,id:&str)->Value {
+        let settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());
+        let mut game=settings.catalogue.iter().find(|game|game["id"]==id).cloned().unwrap_or(Value::Null);
+        if game.is_object() {game["tagNames"]=json!(settings.saved.tags);}
+        game
+    }
     pub(crate) fn activity_snapshot(&self) -> Value {
-        let mut catalogue=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).catalogue.clone();
+        let (mut catalogue,tags)={let settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());(settings.catalogue.clone(),settings.saved.tags.clone())};
         for game in &mut catalogue {
+            game["tagNames"]=json!(tags);
             let id=game["id"].as_str().unwrap_or("").to_owned();
             let setup=crate::game_discovery::integration_binding(game).map(|key|self.inner.setup.activity_status(key)).unwrap_or(Value::Null);
             game["integrationSetup"]=setup;

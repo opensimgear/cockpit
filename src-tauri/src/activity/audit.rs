@@ -2,9 +2,13 @@ use super::event;
 use osg_persistence::NewActivityEvent;
 use serde_json::Value;
 
-/// Deliberate allowlist: requests, credentials, drafts, action values and errors
-/// are never copied into activity. Only safe identities and operation names remain.
+/// Deliberate allowlist: persist safe identities, canonical changes and redacted
+/// diagnostics. Raw requests, credentials, drafts and action values stay out.
+#[cfg(test)]
 pub(super) fn mutation(request: &Value, response: &Value) -> Option<NewActivityEvent> {
+    mutation_with_context(request, response, None)
+}
+pub(super) fn mutation_with_context(request: &Value, response: &Value, context: Option<&super::context::Context>) -> Option<NewActivityEvent> {
     let command = request["command"].as_str()?;
     // Inventory polls persist fresh observation timestamps. Successful cache
     // writes are bookkeeping; explicit Forget is recorded from tombstone changes.
@@ -26,10 +30,8 @@ pub(super) fn mutation(request: &Value, response: &Value) -> Option<NewActivityE
     // Only naming operations may carry a user supplied label. No value/settings
     // object is ever recorded, even when a mutation is rejected.
     let saved_name = response["state"]["games"]["catalogue"].as_array().into_iter().flatten().chain(response["state"]["profiles"]["profiles"].as_array().into_iter().flatten()).find(|row|row["id"].as_str()==id.as_deref()).and_then(|row|row["name"].as_str());
-    let name = request["name"].as_str().or_else(||request["companion"]["name"].as_str()).or_else(||request["document"]["name"].as_str()).or_else(||document["name"].as_str()).or(saved_name).map(|name| bounded(name, 128));
-    let label = name.as_deref().or(id.as_deref()).unwrap_or(category);
-    let operation = command.replace('_', " ");
-    let message = if failed { format!("{operation} failed for {label}.") } else { format!("{operation} completed for {label}.") };
+    let name = request["name"].as_str().or_else(||request["companion"]["name"].as_str()).or_else(||request["document"]["name"].as_str()).or_else(||document["name"].as_str()).or(saved_name).or_else(||context.and_then(|context|context.before["name"].as_str())).map(|name| bounded(name, 128));
+    let message = super::messages::operation(command, name.as_deref(), id.as_deref(), failed);
     let mut captured=event(category, &format!("{command}{}", if failed { "_failed" } else { "" }), if failed { "error" } else { "info" }, message, id, name);
     if command=="ui_preferences_save" {
         let label=match request["key"].as_str().unwrap_or("") {"theme"=>"Appearance","devices-mode"=>"Device view","canvas-navigation"=>"Canvas navigation","canvas-styling"=>"Canvas styling","tray"=>"Tray settings","progress"=>"Progress notifications","windows"=>"Window layout","remembered"=>"Remembered devices",_=>"Preferences"};
@@ -37,14 +39,31 @@ pub(super) fn mutation(request: &Value, response: &Value) -> Option<NewActivityE
         captured.entity_name=Some(label.into());
     }
     captured.source=if request["clientId"].as_str().is_some_and(|id|id.starts_with("cockpit-mcp-")){"mcp"}else{"cockpit"}.into();
+    if let Some(context)=context {captured.detail=context.details(request,response).join("\n");}
     if failed {
         let reason=response["error"].as_str().or_else(||response["error"]["message"].as_str()).unwrap_or("Native operation was rejected. Inspect the related setup or status for details.");
         captured.detail=safe_detail(reason);
+        // Keep the actionable reason in the compact row as well as the details.
+        captured.message=format!("{} {}",captured.message,captured.detail);
+        if let Some(name)=context.and_then(|context|context.before["name"].as_str()) {captured.entity_name=Some(bounded(name,128));}
+    } else {
+        let application=[&response["state"]["profiles"]["saveApplication"],&response["state"]["profiles"]["panelSaveApplication"],&response["state"]["companions"]["panelSaveApplication"]].into_iter().find(|application|application["state"]=="failed");
+        if let Some(application)=application {
+            let reason=safe_detail(application["error"].as_str().unwrap_or("The saved changes could not be applied to the active profile."));
+            captured.message=format!("{} {reason}",captured.message);
+            if !captured.detail.is_empty(){captured.detail.push('\n');}
+            captured.detail.push_str(&reason);
+            captured.event_type=format!("{command}_apply_failed");
+            captured.level="warning".into();
+        }
     }
     Some(captured)
 }
 pub(super) fn safe_detail(reason: &str) -> String {
-    let lower=reason.to_ascii_lowercase();
-    if ["password","passphrase","secret","bearer","authorization","token","ssid","api key","apikey","api_key","cookie","credential","private key"].iter().any(|word|lower.contains(word)){"Native operation needs attention. Inspect the related setup or status for details; sensitive diagnostic content was omitted.".into()}else{bounded(reason,1024)}
+    super::diagnostics::reason(reason)
 }
 fn bounded(value: &str, length: usize) -> String { value.chars().filter(|ch| !ch.is_control()).take(length).collect() }
+
+#[cfg(test)]
+#[path="audit_details_tests.rs"]
+mod detail_tests;

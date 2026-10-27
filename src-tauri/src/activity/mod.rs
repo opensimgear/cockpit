@@ -1,5 +1,9 @@
 //! Native activity collection. Only this background worker writes captured events.
 mod audit;
+pub(crate) mod changes;
+pub(crate) mod context;
+mod diagnostics;
+mod messages;
 mod capture;
 mod writer;
 mod session;
@@ -19,6 +23,7 @@ pub(crate) struct Runtime {
     worker: Mutex<Option<JoinHandle<()>>>,
     lifecycle: Arc<Mutex<session::Observer>>,
     started: std::sync::atomic::AtomicBool,
+    metadata: Mutex<()>,
 }
 pub(crate) fn event(category: &str, kind: &str, level: &str, message: String, id: Option<String>, name: Option<String>) -> NewActivityEvent {
     NewActivityEvent { occurred_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64,
@@ -34,16 +39,21 @@ impl Runtime {
         let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();
         let lifecycle=Arc::new(Mutex::new(session::Observer::new(lifecycle_sender)));
         let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver)).expect("start native activity worker");
-        Self { database, sender, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false) }
+        Self { database, sender, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()) }
     }
     pub(crate) fn observe(&self, source: impl Fn() -> Snapshot + Send + 'static) {
         if !self.started.swap(true,std::sync::atomic::Ordering::AcqRel) {let _=self.sender.send(Message::Event(event("system","cockpit_started","info","Cockpit native services started.".into(),None,Some("Cockpit".into()))));}
         let _ = self.sender.send(Message::Observe(Box::new(source)));
     }
+    #[cfg(test)]
     pub(crate) fn audit(&self, request: &Value, response: &Value) -> bool {
-        if let Some(event) = audit::mutation(request, response) { let _ = self.sender.send(Message::Event(event)); true } else { false }
+        self.audit_with_context(request, response, None)
+    }
+    pub(crate) fn audit_with_context(&self, request: &Value, response: &Value, context: Option<&context::Context>) -> bool {
+        if let Some(event) = audit::mutation_with_context(request, response, context) { let _ = self.sender.send(Message::Event(event)); true } else { false }
     }
     pub(crate) fn session_observer(&self) -> Arc<Mutex<session::Observer>> { self.lifecycle.clone() }
+    pub(crate) fn mutation_guard(&self)->std::sync::MutexGuard<'_,()> {self.metadata.lock().unwrap_or_else(|p|p.into_inner())}
     pub(crate) fn flush(&self) -> Result<(), String> {
         let (sender, receiver) = mpsc::channel();
         self.sender.send(Message::Flush(sender)).map_err(|_|"Activity writer has stopped.".to_owned())?;

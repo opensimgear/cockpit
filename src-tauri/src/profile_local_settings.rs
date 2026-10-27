@@ -18,7 +18,7 @@ fn game(request: &Value) -> Result<&str, String> {
 }
 
 impl GatewayManager {
-    fn local_settings_snapshot(&self, request: &Value) -> Result<Value, String> {
+    pub(super) fn local_settings_snapshot(&self, request: &Value) -> Result<Value, String> {
         let scope = request["scope"].as_str().ok_or("Choose a local settings scope.")?;
         let (settings, revision) = match scope {
             "game-provider" => self.games.local_provider_settings(game(request)?),

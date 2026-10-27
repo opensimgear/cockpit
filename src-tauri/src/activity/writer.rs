@@ -24,7 +24,10 @@ pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Mes
         let mut changed = vec![];
         for message in received.ok().into_iter().chain(receiver.try_iter().take(255)) {
             match message {
-                Message::Event(event) => { changed.push((event.category.clone(),event.entity_id.clone())); pending.push_back(event); },
+                Message::Event(event) => {
+                    if event.level!="error" && !event.detail.is_empty() {changed.push((event.category.clone(),event.entity_id.clone()));}
+                    pending.push_back(event);
+                },
                 Message::Observe(source) => {let snapshot=source();pending.extend(capture::initial(&snapshot));previous=Some(snapshot);observe=Some(source);},
                 Message::Flush(done) => acknowledgements.push(done),
                 Message::Stop => stop = true,

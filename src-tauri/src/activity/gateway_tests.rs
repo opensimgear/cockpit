@@ -35,7 +35,8 @@ fn background_collector_logs_discovery_cached_presence_and_profile_changes_witho
     assert_eq!(page(&manager,"gateway_offline")["total"],1);assert_eq!(page(&manager,"module_offline")["total"],1);
     *discovery.lock().unwrap()=Err("Transient serial discovery failure".into());manager.controllers.shutdown();manager.companion_host.shutdown();manager.activity.flush().unwrap();
     assert_eq!(page(&manager,"gateway_offline")["total"],1,"An observation error must preserve known gateway state");
-    manager.record_external_activity("set_autostart",true);manager.record_external_activity("mcp_settings_update",false);
+    manager.record_external_change("set_autostart",None,None,&json!({"enabled":false}),&json!({"enabled":true}),None,"cockpit");
+    manager.record_external_change("mcp_settings_update",None,None,&Value::Null,&Value::Null,Some("Port 3000 is already in use."),"mcp");
     assert_eq!(page(&manager,"set_autostart")["total"],1);assert_eq!(page(&manager,"mcp_settings_update_failed")["events"][0]["source"],"mcp");
     manager.shutdown();manager.shutdown();
     let database=osg_persistence::Database::for_namespace(&anchor).unwrap();
@@ -62,4 +63,60 @@ fn inventory_polls_do_not_flood_history_while_explicit_forget_and_profile_edits_
     mcp["expectedRevision"]=json!(0);assert_eq!(manager.request(mcp)["ok"],false);assert_eq!(page(&manager,"ui_preferences_save_failed")["total"],1);
     assert_eq!(manager.request(json!({"command":"profile_create","name":"Useful activity","clientId":"inventory-noise-regression"}))["ok"],true);
     assert_eq!(page(&manager,"profile_create")["total"],1);manager.shutdown();
+}
+
+#[test]
+fn native_edits_persist_exact_searchable_changes_and_actual_rejection_reasons() {
+    let manager=GatewayManager::mcp_test_manager();
+    let request=|mut value:Value|{value["clientId"]=json!("activity-readable-regression");manager.request(value)};
+    let created=request(json!({"command":"profile_create","name":"Original Race"}));
+    let document=&created["state"]["profiles"]["document"];
+    assert_eq!(created["ok"],true);
+    let renamed=request(json!({"command":"profile_rename","id":document["id"],"expectedRevision":document["revision"],"name":"Evening Race"}));
+    assert_eq!(renamed["ok"],true);
+    assert!(renamed["state"]["profiles"].get("activityChange").is_none());
+    let event=page(&manager,"profile_rename")["events"][0].clone();
+    assert_eq!(event["message"],"Profile renamed to “Evening Race”.");
+    assert_eq!(event["detail"],"Name: “Original Race” → “Evening Race”");
+    let rejected=request(json!({"command":"profile_rename","id":document["id"],"expectedRevision":document["revision"],"name":"Rejected name"}));
+    assert_eq!(rejected["ok"],false);
+    assert!(rejected.get("state").is_none(),"Auditing must preserve rejected response shapes.");
+    let failed=page(&manager,"profile_rename_failed")["events"][0].clone();
+    assert!(failed["message"].as_str().unwrap().contains("revision"));
+    assert!(!failed["detail"].as_str().unwrap().contains('→'));
+    let found=request(json!({"command":"activity_query","activityFilter":{"search":"Original Race Evening"}}));
+    assert_eq!(found["state"]["activity"]["total"],1);
+    let theme=request(json!({"command":"ui_preferences_get","key":"theme"}))["state"]["uiPreferences"].clone();
+    assert_eq!(request(json!({"command":"ui_preferences_save","key":"theme","expectedRevision":theme["revision"],"value":true}))["ok"],true);
+    assert_eq!(page(&manager,"ui_preferences_save")["events"][0]["detail"],"Dark theme: disabled → enabled");
+    assert_eq!(request(json!({"command":"activity_settings_save","retentionDays":14}))["ok"],true);
+    assert_eq!(page(&manager,"activity_settings_save")["events"][0]["detail"],"Retention (days): 7 → 14");
+    manager.shutdown();
+}
+
+#[test]
+fn concurrent_revisioned_edits_keep_their_own_before_and_after_values() {
+    let manager=Arc::new(GatewayManager::mcp_test_manager());
+    let request=|mut value:Value|{value["clientId"]=json!("activity-concurrent-regression");manager.request(value)};
+    let mut document=request(json!({"command":"profile_create","name":"Before concurrent edits"}))["state"]["profiles"]["document"].clone();
+    for iteration in 0..8 {
+        let first_name=format!("First edit {iteration}");let second_name=format!("Second edit {iteration}");
+        let barrier=std::sync::Barrier::new(2);
+        let (first,second)=std::thread::scope(|scope| {
+            let first=scope.spawn(||{barrier.wait();request(json!({"command":"profile_rename","id":document["id"],"expectedRevision":document["revision"],"name":first_name}))});
+            let second=scope.spawn(||{barrier.wait();request(json!({"command":"profile_rename","id":document["id"],"expectedRevision":document["revision"].as_u64().unwrap()+1,"name":second_name}))});
+            (first.join().unwrap(),second.join().unwrap())
+        });
+        assert_eq!(first["ok"],true);
+        let events=page(&manager,"profile_rename")["events"].as_array().unwrap().clone();
+        let first_event=events.iter().find(|event|event["entityName"]==first_name).unwrap();
+        assert_eq!(first_event["detail"],format!("Name: “{}” → “{first_name}”",document["name"].as_str().unwrap()));
+        document=first["state"]["profiles"]["document"].clone();
+        if second["ok"]==true {
+            let second_event=events.iter().find(|event|event["entityName"]==second_name).unwrap();
+            assert_eq!(second_event["detail"],format!("Name: “{first_name}” → “{second_name}”"));
+            document=second["state"]["profiles"]["document"].clone();
+        }
+    }
+    manager.shutdown();
 }

@@ -17,7 +17,7 @@ impl GatewayManager {
         if normalized["document"] != request["document"] {
             return Err("Companion panel references changed since this draft was prepared. Refresh the panel metadata and prepare this change again.".into());
         }
-        let mut response = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).request(request)?;
+        let mut response = Self::activity_profile_mutation(&mut self.profiles.lock().unwrap_or_else(|p|p.into_inner()),request)?;
         self.decorate_profile_session(&mut response);
         response["saveApplication"] = json!({"state":"saved","error":null});
         Ok(response)
@@ -36,7 +36,9 @@ impl GatewayManager {
                     && request["document"]["id"] == owner.profile_id
             });
             let mut profiles = self.profiles.lock().unwrap_or_else(|p|p.into_inner());
-            let response = profiles.request(request)?;
+            // Capture both revisions under the actual persistence lock, before
+            // slow preparation yields to newer saves and emergency controls.
+            let response = Self::activity_profile_mutation(&mut profiles,request)?;
             let candidate = owner.as_ref().map(|owner| {
                 let (document, assignments, read_only) = profiles.compile_source(&owner.profile_id)?;
                 let game_id=saved_game_context(&document);

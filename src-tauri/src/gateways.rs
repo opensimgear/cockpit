@@ -731,12 +731,11 @@ impl GatewayManager {
         self.request_checked(request, Some(expected), true)
     }
     fn request_checked(&self, request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>, passive_profile_reads: bool) -> Value {
-        let response = self.request_dispatch(request.clone(), expected_owner, passive_profile_reads);
-        if self.activity.audit(&request, &response) {
-            let observer = self.activity.session_observer();
-            { let profiles = self.profiles.lock().unwrap_or_else(|p|p.into_inner()); observer.lock().unwrap_or_else(|p|p.into_inner()).names(profiles.saved_documents()); }
-            let status = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
-            observer.lock().unwrap_or_else(|p|p.into_inner()).observe(&status);
+        let _activity_guard = Self::activity_context_command(&request).then(||self.activity_mutation());
+        let context = self.activity_before(&request);
+        let mut response = self.request_dispatch(request.clone(), expected_owner, passive_profile_reads);
+        if self.audit_activity_response(&request, &mut response, context) {
+            self.observe_activity_session();
         }
         response
     }
@@ -1175,11 +1174,7 @@ impl GatewayManager {
                     Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
                 };
             }
-            let result = self
-                .profiles
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .request(&request);
+            let result = Self::activity_profile_mutation(&mut self.profiles.lock().unwrap_or_else(|p|p.into_inner()),&request);
             return match result {
                 Ok(mut profiles) => {
                     if matches!(command.as_str(),"profile_import"|"profile_duplicate"|"profile_save") {

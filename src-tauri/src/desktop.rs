@@ -148,8 +148,17 @@ pub async fn set_tray_preferences(
     let value=serde_json::to_value(preferences).map_err(|_|"Invalid tray preferences.")?;
     let activity=gateway.0.clone();
     let entry=tauri::async_runtime::spawn_blocking(move||{
+        let _activity_guard=activity.activity_mutation();
+        let before=match service.read("tray") {
+            Ok(entry)=>entry.value,
+            Err(error)=>{
+                activity.record_external_change("set_tray_preferences",None,None,&Value::Null,&Value::Null,Some(&error),"cockpit");
+                return Err(error);
+            }
+        };
         let result=service.write("tray",expected_revision,value);
-        activity.record_external_activity("set_tray_preferences",result.is_ok());
+        let after=result.as_ref().map(|entry|entry.value.clone()).unwrap_or_else(|_|before.clone());
+        activity.record_external_change("set_tray_preferences",None,None,&before,&after,result.as_ref().err().map(String::as_str),"cockpit");
         result
     }).await.map_err(|_|"The tray settings worker failed.")??;
     state.minimized_handled.store(false,Ordering::Relaxed);
@@ -158,8 +167,15 @@ pub async fn set_tray_preferences(
 
 #[tauri::command]
 pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    let gateway=app.try_state::<crate::NativeGateway>();
+    let _activity_guard=gateway.as_ref().map(|gateway|gateway.0.activity_mutation());
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    let before={use tauri_plugin_autostart::ManagerExt;app.autolaunch().is_enabled().ok().map(|value|json!({"enabled":value})).unwrap_or(Value::Null)};
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let before=Value::Null;
     let result=set_autostart_inner(&app,enabled);
-    if let Some(gateway)=app.try_state::<crate::NativeGateway>() { gateway.0.record_external_activity("set_autostart",result.is_ok()); }
+    let after=result.as_ref().ok().map(|value|json!({"enabled":value})).unwrap_or_else(||before.clone());
+    if let Some(gateway)=gateway.as_ref() { gateway.0.record_external_change("set_autostart",None,None,&before,&after,result.as_ref().err().map(String::as_str),"cockpit"); }
     result
 }
 fn set_autostart_inner(app: &tauri::AppHandle, enabled: bool) -> Result<bool, String> {
