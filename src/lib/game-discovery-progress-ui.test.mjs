@@ -19,7 +19,7 @@ async function component(name){
   vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){
     if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;
     if(dependencies.has(name))return dependencies.get(name);if(modules.has(name))return modules.get(name);
-    if(name==='./gateway')return{pickGameExecutable(){throw Error('Passive render');}};
+    if(name==='./gateway')return{pickGameIntegrationFolder(){throw Error('Passive render');}};
     throw Error(name);
   }});
   components.set(name,exports.default);return exports.default;

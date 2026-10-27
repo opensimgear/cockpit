@@ -1,142 +1,49 @@
-//! Bounded discovery of standalone installations, including existing simulator recognizers.
+//! User-selected containers: only their immediate children become game folders.
 use super::*;
-use crate::game_discovery::Platform;
 
-fn roots(extra: &[PathBuf]) -> Vec<PathBuf> {
-    let mut roots = extra.to_vec();
-    #[cfg(windows)]
-    {
-        use windows::{
-            core::PCWSTR,
-            Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives},
-        };
-        let drives = unsafe { GetLogicalDrives() };
-        for index in 0..26 {
-            if drives & (1 << index) == 0 {
-                continue;
-            }
-            let drive = format!("{}:\\", (b'A' + index as u8) as char);
-            let wide = drive.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-            if unsafe { GetDriveTypeW(PCWSTR(wide.as_ptr())) } != 3 {
-                continue;
-            }
-            for folder in ["Games", "GOG Games", "EA Games", "Ubisoft Games"] {
-                let root = PathBuf::from(&drive).join(folder);
-                if regular(&root, true) {
-                    roots.push(root);
-                }
-            }
-        }
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            for folder in ["Games", "Saved Games"] {
-                let root = PathBuf::from(&home).join(folder);
-                if regular(&root, true) {
-                    roots.push(root);
-                }
-            }
-        }
-    }
-    roots.sort();
-    roots.dedup();
-    roots
+#[cfg(test)]
+#[path="disk_scan_tests.rs"]
+mod scan_tests;
+
+fn path_key(path: &Path) -> String {
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    game_discovery::normalized_path(&resolved.to_string_lossy()).trim_end_matches('\\').to_owned()
+}
+fn within(path: &str, root: &str) -> bool {
+    path == root || path.starts_with(&format!("{root}\\"))
+}
+fn overlaps(path: &Path, occupied: &[PathBuf]) -> bool {
+    let path = path_key(path);
+    occupied.iter().any(|root| {let root=path_key(root);within(&path,&root)||within(&root,&path)})
 }
 
-pub(super) fn scan(extra: &[PathBuf], scan: &mut Scan) {
+pub(super) fn scan(extra: &[PathBuf], occupied: &[PathBuf], scan: &mut Scan) {
+    let mut roots = extra.iter().map(|path|fs::canonicalize(path).unwrap_or_else(|_|path.clone())).collect::<Vec<_>>();
+    roots.sort();roots.dedup();
     let mut seen = BTreeSet::new();
-    // Recognizers discover real installations; absent integrations create no entries.
-    for game in crate::game_discovery::NativePlatform.catalogue(&Default::default()) {
-        if game["installed"] != true {
-            continue;
-        }
-        let Some(root) = game["installPath"].as_str().map(PathBuf::from) else {
-            continue;
-        };
-        let runtimes = game["processExecutables"]
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|value| value.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default();
-        add(&root, runtimes, scan, &mut seen);
-        if let Some(instances) = game["installations"].as_array() {
-            for instance in instances {
-                if let Some(root) = instance["installPath"].as_str().map(PathBuf::from) {
-                    add(&root, executable_candidates(&root, None), scan, &mut seen);
-                }
-            }
-        }
-    }
-    for root in roots(extra) {
-        if root.is_file() {
-            if let Some(parent) = root.parent() {
-                add(
-                    parent,
-                    executable_candidates(parent, Some(&root)),
-                    scan,
-                    &mut seen,
-                );
-            }
-            continue;
-        }
+    for root in roots {
         if !regular(&root, true) {
-            if !fs::metadata(&root).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-            {
-                scan.diagnostic(format!(
-                    "Local discovery location is inaccessible: {}",
-                    root.display()
-                ));
+            if !fs::metadata(&root).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+                scan.diagnostic(format!("Added discovery folder is inaccessible or is not a directory: {}",root.display()));
             }
             continue;
         }
-        let mut pending = vec![(root, 0)];
-        let mut inspected = 0;
-        while let Some((path, depth)) = pending.pop() {
-            if inspected >= 4096 || scan.candidates.len() >= MAX_CANDIDATES {
-                break;
-            }
-            inspected += 1;
-            let children = sorted_children(&path);
-            let direct = children
-                .iter()
-                .any(|file| regular(file, false) && runtime_filename(file));
-            let recognized = game_discovery::recognize_installation(&path, &[]).is_some();
-            if direct || recognized {
-                add(&path, executable_candidates(&path, None), scan, &mut seen);
-                continue;
-            }
-            if depth < 4 {
-                for child in children
-                    .into_iter()
-                    .rev()
-                    .filter(|path| regular(path, true))
-                {
-                    let name = child
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_lowercase();
-                    if !matches!(
-                        name.as_str(),
-                        "windows"
-                            | "$recycle.bin"
-                            | "system volume information"
-                            | "redist"
-                            | "_commonredist"
-                            | ".egstore"
-                            | "data"
-                    ) {
-                        pending.push((child, depth + 1));
-                    }
-                }
-            }
+        let root_key=path_key(&root);
+        if occupied.iter().any(|path|within(&root_key,&path_key(path)))
+            || scan.candidates.iter().any(|game|within(&root_key,&path_key(Path::new(&game.install_path)))) {continue;}
+        // Executable lookup may descend inside a game, but folder discovery never does.
+        for child in sorted_children(&root).into_iter().filter(|path|regular(path,true)).take(4096) {
+            if scan.candidates.len() >= MAX_CANDIDATES {return;}
+            let name=child.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+            if matches!(name.as_str(),"windows"|"$recycle.bin"|"system volume information"|"redist"|"_commonredist"|".egstore"|"steamapps"|"windowsapps")
+                || overlaps(&child,occupied) {continue;}
+            let runtimes=executable_candidates(&child,None);
+            add(&child,runtimes,scan,&mut seen);
         }
     }
 }
 
-fn add(root: &Path, runtimes: Vec<String>, scan: &mut Scan, seen: &mut BTreeSet<String>) {
+pub(super) fn add(root: &Path, runtimes: Vec<String>, scan: &mut Scan, seen: &mut BTreeSet<String>) {
     if scan.candidates.len() >= MAX_CANDIDATES || !regular(root, true) {
         return;
     }

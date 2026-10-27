@@ -28,6 +28,26 @@ const MAX_DIAGNOSTICS: usize = 64;
 
 pub(crate) use artwork_choices::{ArtworkChoice, artwork_choices};
 
+/// Refresh runtime suggestions inside exactly one registered installation.
+pub(crate) fn installation_executables(root:&Path)->Vec<String> {executable_candidates(root,None)}
+
+/// Read evidence from one explicitly chosen folder without scanning libraries.
+pub(crate) fn manual_candidate(root: &Path, executable: &Path, name: &str) -> Result<Candidate, String> {
+    let mut scan = Scan::default();
+    let selected = executable.to_str().ok_or("Invalid executable path.")?.to_owned();
+    let mut runtimes = executable_candidates(root, None);
+    if runtimes.is_empty() { runtimes.push(selected.clone()); }
+    disk::add(root, runtimes, &mut scan, &mut BTreeSet::new());
+    let mut candidate = scan.candidates.pop().ok_or("Choose a game folder containing a game executable.")?;
+    if !candidate.executable_candidates.contains(&selected) {
+        candidate.executable_candidates.truncate(31);
+        candidate.executable_candidates.push(selected.clone());
+    }
+    candidate.name = name.to_owned();
+    candidate.preferred_executable = Some(selected);
+    Ok(candidate)
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Candidate {
@@ -229,7 +249,7 @@ pub(crate) const CLIENTS: &[(&str, &str)] = &[
     ("ubisoft", "Ubisoft Connect"),
     ("gog", "GOG"),
     ("xbox", "Xbox"),
-    ("disk", "Local paths"),
+    ("disk", "Added paths"),
 ];
 pub(crate) fn scan_client(client: &str, paths: &[PathBuf]) -> Scan {
     let mut scan = Scan::default();
@@ -250,10 +270,14 @@ pub(crate) fn scan_client(client: &str, paths: &[PathBuf]) -> Scan {
         "battlenet" => battlenet::scan(&mut scan),
         "ea" | "ubisoft" | "gog" => registry::scan_client(client, &mut scan),
         "xbox" => xbox::scan(&mut scan),
-        "disk" => disk::scan(paths, &mut scan),
+        "disk" => return scan_user_paths(paths,&[]),
         _ => scan.diagnostic("Unknown discovery library.".into()),
     }
     finish(scan)
+}
+pub(crate) fn scan_user_paths(paths:&[PathBuf], occupied:&[PathBuf])->Scan {
+    let mut blocked=platforms::occupied_roots();blocked.extend_from_slice(occupied);
+    let mut scan=Scan::default();disk::scan(paths,&blocked,&mut scan);finish(scan)
 }
 pub(crate) fn scan() -> Scan {
     let mut result = Scan::default();

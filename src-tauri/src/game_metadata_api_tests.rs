@@ -2,6 +2,7 @@ use super::*;
 use crate::game_discovery::{Platform, ProcessIdentity};
 use crate::game_installations::{GameRecord, Installation, LibrarySource, Settings};
 use std::collections::BTreeMap;
+#[path="games/manual_registration_tests.rs"] mod manual_registration_tests;
 
 const GAME: &str = "game-fixture-123";
 

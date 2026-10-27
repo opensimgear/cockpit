@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./games','./game-discovery']);
-const {discoveryActions,discoverySelectAll,discoveryPathError,discoveryMatchOptions,discoveryImage}=modules.get('./game-discovery');
+const {discoveryActions,discoverySelectAll,discoveryOtherInstallations,discoveryPathError,discoveryMatchOptions,discoveryImage}=modules.get('./game-discovery');
 const plain=value=>JSON.parse(JSON.stringify(value));
 test('discovery defaults to add and update with removal opt in, preserving explicit decisions',()=>{
  const entries=[{id:'add',action:'add'},{id:'update',action:'update'},{id:'remove',action:'remove'}];
@@ -31,6 +31,25 @@ test('bulk selection affects only one library and preserves executable and match
  assert.deepEqual(plain(discoverySelectAll([],drafts,true)),drafts);
 });
 
+test('show all exposes local detections without repeating platform-owned installations or adding actions',()=>{
+ const entries=[{id:'steam-change',library:'steam',installPath:'C:/Games/Shared',name:'Shared title',action:'add',executableCandidates:['C:/Games/Shared/actual.exe'],executable:'C:/Games/Shared/actual.exe'},{id:'disk-change',library:'disk',installPath:'C:/Games/New',name:'New title',action:'add'}];
+ const catalogue=[{id:'known',name:'Saved title',installations:[{installPath:'C:/Games/Known',executable:'C:/Games/Known/game.exe',executableCandidates:['C:/Games/Known/game.exe']}]}];
+ const observations=[{id:'known',client:'disk',name:'Old name',installPath:String.raw`\\?\C:\Games\Known`,executableCandidates:[]},{id:'known-duplicate',client:'disk',name:'Duplicate',installPath:'c:/games/known',executableCandidates:[]},{id:'shared',client:'disk',name:'Shared',installPath:'C:/Games/Shared',executableCandidates:[]},{id:'new',client:'disk',name:'New',installPath:'C:/Games/New',executableCandidates:[]},{id:'steam',client:'steam',name:'Steam',installPath:'C:/Games/Steam',executableCandidates:[]},{id:'tool',client:'disk',kind:'tool',name:'Editor',installPath:'C:/Tools',executableCandidates:[]},{id:'other',client:'disk',name:'Other',installPath:'C:/Games/Other',executableCandidates:[]}];
+ const before=plain(discoveryActions(entries,{}));
+ const rows=plain(discoveryOtherInstallations(catalogue,entries,observations,'disk'));
+ assert.deepEqual(rows.map(row=>[row.id,row.name,row.status]),[['known','Saved title','Up to date'],['other','Other','Detected']]);
+ assert.equal(rows[0].executable,'C:/Games/Known/game.exe');
+ assert.deepEqual(plain(discoveryActions(entries,{})),before);
+ assert.ok(rows.every(row=>!Object.hasOwn(row,'selected')));
+ assert.deepEqual(plain(discoveryOtherInstallations([],[],[],'steam')),[]);
+});
+
+test('standalone copies remain local while the identical platform path appears only in its library',()=>{
+ const observations=[{id:'steam',client:'steam',gameId:'same-game',name:'Same game',installPath:'C:/Steam/Game',executableCandidates:[]},{id:'duplicate',client:'disk',gameId:'same-game',name:'Same game',installPath:String.raw`\\?\c:\steam\game`,executableCandidates:[]},{id:'standalone',client:'disk',gameId:'same-game',name:'Same game',installPath:'D:/Standalone/Game',executableCandidates:[]}];
+ assert.deepEqual(plain(discoveryOtherInstallations([],[],observations,'disk')).map(row=>row.id),['standalone']);
+ assert.deepEqual(plain(discoveryOtherInstallations([],[],observations,'steam')).map(row=>row.id),['steam']);
+});
+
 const image='data:image/jpeg;base64,/9j/AA==';
 test('discovery artwork accepts native raster previews and saved native backgrounds only',()=>{
  assert.equal(discoveryImage({image}),image);
@@ -48,7 +67,7 @@ async function component(name){
  const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){
   if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;
   if(dependencies.has(name))return dependencies.get(name);if(modules.has(name))return modules.get(name);
-  if(name==='./gateway')return{pickGameExecutable(){throw Error('Rendering must not open native dialogs.');}};throw Error(name);
+  if(name==='./gateway')return{pickGameIntegrationFolder(){throw Error('Rendering must not open native dialogs.');}};throw Error(name);
  }},{filename:file.pathname});components.set(name,exports.default);return exports.default;
 }
 test('review rows show artwork, name and executable choice, then the action checkbox',async()=>{
@@ -62,9 +81,11 @@ test('review rows show artwork, name and executable choice, then the action chec
  assert.ok(!rows[2][2].includes('<select'));assert.match(rows[2][2],/aria-label="Remove Gone title"/);assert.ok(!/<input[^>]*checked/.test(rows[2][2]));
  assert.ok(!html.includes('Match and installation'));assert.match(html,/<details[^>]*data-library="steam"[^>]*open/);
  assert.match(html,/<input[^>]*aria-label="Select all games in Steam"[^>]*>/);
- const source=await readFile(new URL('./GameDiscoveryView.svelte',import.meta.url),'utf8');assert.ok(source.includes('grid-template-columns:144px minmax(0,1fr) auto'));assert.ok(source.includes('align-items:center;gap:14px'));assert.ok(source.includes('font-size:var(--ui-heading-size)'));assert.ok(source.includes('.entry-details{min-width:0;align-self:stretch}'));assert.ok(source.includes('min-height:80px;max-height:112px'));assert.ok(source.includes('object-position:center'));assert.ok(!source.includes('padding-top:3px'));assert.ok(source.includes('failedImages={...failedImages,[image]:true}'));assert.ok(source.includes('openLibraries[library.id]??'));assert.ok(!source.includes('gameDisplayPath(entry.installPath)'));
+ assert.match(html,/<input[^>]*role="switch"[^>]*aria-label="Show all games in Steam"[^>]*>/);
+ assert.ok(html.indexOf('Show all games in Steam')<html.indexOf('Select all games in Steam'));
+ const source=await readFile(new URL('./GameDiscoveryView.svelte',import.meta.url),'utf8');assert.ok(source.includes('grid-template-columns:216px minmax(0,1fr) 144px'));assert.ok(source.includes('align-items:center;gap:14px'));assert.ok(source.includes('font-size:var(--ui-heading-size)'));assert.ok(source.includes('.entry-details{min-width:0;align-self:stretch}'));assert.ok(source.includes('min-height:120px;max-height:168px'));assert.ok(source.includes('object-position:center'));assert.ok(!source.includes('padding-top:3px'));assert.ok(source.includes('failedImages={...failedImages,[image]:true}'));assert.ok(source.includes('openLibraries[library.id]??'));assert.ok(!source.includes('gameDisplayPath(entry.installPath)'));
 });
-test('local discovery accepts absolute folders and executables and rejects unsafe paths',()=>{
+test('added discovery containers require absolute folder paths and reject unsafe paths',()=>{
  for(const path of ['C:/Games','/home/pilot/games',String.raw`\\server\games`])assert.equal(discoveryPathError(path),'');
  for(const path of ['', '  ', 'relative/game.exe','C:/Games\nBad'])assert.ok(discoveryPathError(path));
 });

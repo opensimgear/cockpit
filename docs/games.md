@@ -123,9 +123,23 @@ makes no claim that they have passed.
 
 ## Discovery and review
 
+**Rescan** in a game's details refreshes only that title's registered installation
+folders, available runtime suggestions, artwork and platform metadata. The page
+stays open while it refreshes. Existing tag assignments (including deliberately
+empty tags), custom images, game names and selected runtimes are preserved.
+Previously unassigned tags can receive metadata defaults. **Rescan** in the game
+list continues to scan installed libraries and user-added containers.
+
 Discovery scans local metadata from installed Steam, Epic Games, Battle.net, EA
-app/Origin, Ubisoft Connect, GOG and Xbox PC clients, plus known local
-installation paths such as DCS standalone. Launcher clients are exposed only
+app/Origin, Ubisoft Connect, GOG and Xbox PC clients. Standalone discovery scans
+only folders explicitly added by the user; there are no automatic drive, Games,
+Saved Games or integration-specific path scans. Each added path is a container:
+only its immediate child directories are treated as possible game folders.
+Executable lookup stays within that child folder, including its bin subfolders.
+Existing installations and platform library trees are skipped, so adding
+Program Files (x86) does not import Steam or its steamapps utilities as games.
+Added paths are retained after Apply and included on subsequent rescans.
+Launcher clients are exposed only
 when the launcher executable exists as a regular local `.exe`. Findings appear
 in two lists: new or changed installations, and installations Cockpit believes
 were removed. Add/Update entries are preselected; Remove entries require manual

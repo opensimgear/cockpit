@@ -12,8 +12,8 @@ from native_coverage_sources import measure_module, source_stamp
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = [f"games/library/{name}.rs" for name in ["mod", "steam", "epic", "battlenet", "battlenet_artwork", "registry", "xbox", "disk", "platforms", "executable_ranking", "artwork", "artwork_choices"]] + [
-    "games/artwork_options.rs", "games/artwork/mod.rs",
-    "games/review/mod.rs", "games/review/reconcile.rs", "games/review/worker.rs", "games/review/completion.rs", "games/review/tagging.rs",
+    "games/artwork_options.rs", "games/artwork/mod.rs", "games/artwork/steam_online/mod.rs", "games/artwork/steam_online/http.rs", "games/artwork/steam_online/targets.rs", "games/refresh.rs",
+    "games/manual_registration.rs", "games/review/mod.rs", "games/review/observations.rs", "games/review/reconcile.rs", "games/review/worker.rs", "games/review/completion.rs", "games/review/tagging.rs",
     "games/storage/installations.rs", "games/tags/mod.rs", "games/tags/platform.rs", "games/metadata_read.rs",
     "games/metadata/model.rs", "games/metadata/provider.rs", "games/metadata/cache.rs", "games/metadata/network.rs", "games/metadata/wikidata.rs",
     "game_metadata_api.rs", "game_discovery.rs", "games.rs",

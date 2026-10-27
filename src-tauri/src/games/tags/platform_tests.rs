@@ -12,6 +12,17 @@ fn fixture() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
+#[test]
+fn explicit_refresh_bypasses_only_requested_steam_genre_cache() {
+    let root=fixture();
+    load_with(root.path(),&[42],&||false,|_,_|Ok(response(42,42,true,json!([{"description":"Racing"}]))));
+    let calls=AtomicUsize::new(0);
+    let result=load_using(root.path(),&[42],&||false,|id,_|{
+        assert_eq!(id,42);calls.fetch_add(1,Ordering::Relaxed);Ok(response(42,42,true,json!([{"description":"Simulation"}])))
+    },true);
+    assert_eq!(calls.load(Ordering::Relaxed),1);assert_eq!(result[&42],["Simulation"]);
+}
+
 fn response(requested_id: u32, identity: u32, success: bool, genres: Value) -> Vec<u8> {
     let mut metadata = serde_json::Map::new();
     metadata.insert(

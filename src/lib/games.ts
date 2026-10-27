@@ -13,8 +13,8 @@ export function tagError(tags: GameTags): string {
 export function filterGamesByTag(games: readonly Game[], tag: string): Game[] {
   return games.filter(game => !tag || (tag === UNTAGGED_TAG_FILTER ? !game.tagIds?.length : game.tagIds?.includes(tag)));
 }
-export type GameListFilterState = {tags:string[];libraries:string[];integrations:('available'|'unavailable')[]};
-export function emptyGameListFilters():GameListFilterState { return {tags:[],libraries:[],integrations:[]}; }
+export type GameListFilterState = {name:string;tags:string[];libraries:string[];integrations:('available'|'unavailable')[];profiles:('yes'|'no')[]};
+export function emptyGameListFilters():GameListFilterState { return {name:'',tags:[],libraries:[],integrations:[],profiles:[]}; }
 function gameLibraries(game:Game):string[] {
   const installations=game.installations?.length?game.installations:[{source:game.source,sources:[]}];
   return [...new Set(installations.flatMap(installation=>{
@@ -26,10 +26,14 @@ function gameLibraries(game:Game):string[] {
 export function gameListLibraries(games:readonly Game[]):{value:string;label:string}[] {
   return [...new Set(games.flatMap(gameLibraries))].map(value=>({value,label:value==='disk'?'Local':gameLibraryClientName(value)})).sort((left,right)=>left.label.localeCompare(right.label));
 }
-export function filterGameList(games:readonly Game[], filters:GameListFilterState):Game[] {
-  return games.filter(game=>(!filters.tags.length||filters.tags.some(tag=>tag===UNTAGGED_TAG_FILTER?!game.tagIds?.length:game.tagIds?.includes(tag)))
+export function filterGameList(games:readonly Game[], filters:GameListFilterState, profiles:readonly {isDefault:boolean;gameIds?:readonly string[]}[]=[]):Game[] {
+  const name=filters.name.trim().toLowerCase();
+  const profiledGames=new Set(profiles.filter(profile=>!profile.isDefault).flatMap(profile=>profile.gameIds??[]));
+  return games.filter(game=>(!name||game.name.toLowerCase().includes(name))
+    &&(!filters.tags.length||filters.tags.some(tag=>tag===UNTAGGED_TAG_FILTER?!game.tagIds?.length:game.tagIds?.includes(tag)))
     &&(!filters.libraries.length||gameLibraries(game).some(library=>filters.libraries.includes(library)))
-    &&(!filters.integrations.length||filters.integrations.includes(gameHasIntegration(game)?'available':'unavailable')));
+    &&(!filters.integrations.length||filters.integrations.includes(gameHasIntegration(game)?'available':'unavailable'))
+    &&(!filters.profiles.length||filters.profiles.includes(profiledGames.has(game.id)?'yes':'no')));
 }
 export function gameLibraryClientName(client: string): string {
   return ({steam: 'Steam', epic: 'Epic Games', battlenet: 'Battle.net', ea: 'EA app', ubisoft: 'Ubisoft Connect', gog: 'GOG', xbox: 'Xbox'} as Record<string, string>)[client] ?? client;
@@ -59,12 +63,13 @@ export type GameLibrarySource = { client:string;appId:string;installPath:string;
 export type GameInstallation = { id: string; executable?: string; installPath: string; source: string; sources?: GameLibrarySource[]; available: boolean; executableCandidates: string[] };
 export type GameDiscoveryEntry = {
   image?: string | null; tagIds?: string[]; tagSource?: string; id: string; action: 'add' | 'update' | 'remove'; selected: boolean; gameId?: string; installationId?: string; name: string; library: string; installPath: string; previousPath?: string; executableCandidates: string[]; executable?: string; updateKind?: 'add-installation' | 'replace-path'; integration?: string; message?: string };
-export type GameDiscovery = { scanId: string; status: 'idle' | 'scanning' | 'ready' | 'applied' | 'failed'; libraries: { id: string; name: string; status: 'queued' | 'scanning' | 'preparing' | 'complete' | 'unavailable' | 'failed'; found: number; message?: string }[]; entries: GameDiscoveryEntry[]; diagnostics: string[]; firstStart: boolean };
+export type GameDiscoveryObservation = {id:string;client:string;name:string;installPath:string;executableCandidates:string[];gameId?:string;kind?:string};
+export type GameDiscovery = { scanId: string; status: 'idle' | 'scanning' | 'ready' | 'applied' | 'failed'; libraries: { id: string; name: string; status: 'queued' | 'scanning' | 'preparing' | 'complete' | 'unavailable' | 'failed'; found: number; message?: string }[]; entries: GameDiscoveryEntry[]; observations?:GameDiscoveryObservation[]; diagnostics: string[]; firstStart: boolean };
 export type GameDiscoveryAction = { id: string; selected: boolean; executable?: string | null; replaceInstallationId?: string | null; gameId?: string };
-export type GamesState = { backgroundPreview?: {image:string}; tags?: GameTags; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; discovery?: GameDiscovery; addedGameId?: GameId; error?: string | null };
-export type GameCommandName = 'game_metadata_get' | 'game_artwork_list' | 'game_artwork_preview' | 'game_background_preview' | 'game_tag_definitions_save' | 'game_tags_save' | 'game_save' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
+export type GamesState = { artworkPending?: boolean; backgroundPreview?: {image:string}; tags?: GameTags; detectedGames?: DetectedGame[]; detectionErrors?: string[]; catalogue: Game[]; discovery?: GameDiscovery; addedGameId?: GameId; error?: string | null };
+export type GameCommandName = 'game_metadata_get' | 'game_artwork_list' | 'game_artwork_preview' | 'game_background_preview' | 'game_tag_definitions_save' | 'game_tags_save' | 'game_add' | 'game_save' | 'game_rescan' | 'game_remove' | 'game_background_save' | 'game_discovery_start' | 'game_discovery_apply' | 'game_get_state' | 'game_installation_select' | 'game_integration_check' | 'game_integration_setup' | 'game_integration_cancel' | 'game_integration_recover' | 'game_integration_remove' | 'game_integration_settings_save';
 export type GameCommand = GameCommandName;
-export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; crop?:GameCrop; tags?: GameTags; expectedTags?: GameTags; expectedTagIds?: string[]; tagIds?: string[]; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
+export type GameRequest = { command: GameCommandName; url?:string; imageData?:string; imagePath?:string; installPath?:string; crop?:GameCrop; tags?: GameTags; expectedTags?: GameTags; expectedTagIds?: string[]; tagIds?: string[]; gameId?: GameId; installationId?: string; name?: string; path?: string | null; paths?: string[]; scanId?: string; actions?: GameDiscoveryAction[]; positionX?: number; positionY?: number; executable?: string | null; userFolder?: string; connection?: Record<string, unknown>; expectedSetupRevision?: string; aircraftModule?: string };
 
 export function isGameId(value: unknown): value is GameId {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,95}$/.test(value);
@@ -122,6 +127,19 @@ export function gameExecutableDisplayPath(path?: string | null, installationPath
   const prefix = root + (windows ? '\\' : '/');
   const matches = windows ? executable.toLowerCase().startsWith(prefix.toLowerCase()) : executable.startsWith(prefix);
   return matches ? executable.slice(prefix.length) : executable;
+}
+
+export function gameAddError(name:string,root:string,executable:string):string {
+  if (!root.trim() || gameMetadataError('Game',root.trim())) return 'Choose an absolute game folder.';
+  const path=resolveGameExecutablePath(executable.trim(),root.trim());
+  const invalid=gameMetadataError(name,path);if(invalid)return invalid;
+  if (!executable.trim() || !/\.exe$/i.test(path)) return 'Choose a game executable (.exe).';
+  return gameExecutableDisplayPath(path,root.trim())===gameDisplayPath(path)?'Choose an executable inside the selected game folder.':'';
+}
+
+export function gameAddRequest(name:string,root:string,executable:string,imagePath=''):GameRequest {
+  const invalid=gameAddError(name,root,executable);if(invalid)throw new Error(invalid);
+  return {command:'game_add',name:name.trim(),installPath:root.trim(),executable:resolveGameExecutablePath(executable.trim(),root.trim()),...(imagePath.trim()?{imagePath:imagePath.trim()}:{})};
 }
 
 export function resolveGameExecutablePath(path: string, installationPath?: string | null): string {

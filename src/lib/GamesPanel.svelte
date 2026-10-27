@@ -12,11 +12,13 @@
   import {gameExecutableDisplayPath,resolveGameExecutablePath} from './games';
   import {resolveGameArtwork} from './game-artwork';
   import GameDiscoveryView from './GameDiscoveryView.svelte';
+  import GameAddDialog from './GameAddDialog.svelte';
+  import GameInstallationSelect from './GameInstallationSelect.svelte';
   import GameBackgroundSettings from './GameBackgroundSettings.svelte';
   import GameTagsDialog from './GameTagsDialog.svelte';
   import GameTagInput from './GameTagInput.svelte';
   import GameListFilters from './GameListFilters.svelte';
-  import {emptyGameListFilters,filterGameList,gameMetadataError,UNTAGGED_TAG_FILTER} from './games';
+  import {emptyGameListFilters,filterGameList,gameLibraryClientName,gameMetadataError,UNTAGGED_TAG_FILTER} from './games';
   import {cropImageStyle} from './game-background-crop';
   import {gameHasIntegration,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,type Game,type GameId,type GameRequest,type GamesState} from './games';
   let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),discoveryView=$bindable(false),onNavigate}: {
@@ -29,17 +31,20 @@
   let initializedInstallationId=$state<string|undefined>();
   let pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
   let providerBusy=$state(false),removeDialog=$state(false);
+  let refreshing=$state(false),artworkRefresh=$state(0);
+  let addDialog=$state(false);
   let tagsDialog=$state(false),filtersOpen=$state(false),filters=$state(emptyGameListFilters());
   const filterPanelId=$props.id();
   let nameDraft=$state(''),nameBase=$state(''),openedFirstScan=$state('');
   const receivedStatus=$derived(status??response);
   const gameState:GamesState=$derived(receivedStatus??{catalogue:[]});
   const tags=$derived(gameState.tags??{});
-  const games=$derived(filterGameList(gameState.catalogue,filters));
-  const filterCount=$derived(filters.tags.length+filters.libraries.length+filters.integrations.length);
+  const games=$derived(filterGameList(gameState.catalogue,filters,profiles));
+  const filterCount=$derived(Number(!!filters.name.trim())+filters.tags.length+filters.libraries.length+filters.integrations.length+filters.profiles.length);
   $effect(()=>{const valid=filters.tags.filter(tag=>tag===UNTAGGED_TAG_FILTER||!!tags[tag]);if(valid.length!==filters.tags.length)filters.tags=valid;});
   const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
-  const selectedInstallationPath=$derived(selected?.installations?.find(installation=>installation.id===selected.selectedInstallationId)?.installPath??selected?.installPath);
+  const selectedInstallation=$derived(selected?.installations?.find(install=>install.id===selected.selectedInstallationId));
+  const selectedInstallationPath=$derived(selectedInstallation?.installPath??selected?.installPath);
   const selectedExecutablePath=$derived(gameExecutableDisplayPath(selected?.executable??selected?.manualPath,selectedInstallationPath));
   const selectedLiveLabel=$derived(selected?gameIntegrationLiveLabel(selected):'');
   const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up'));
@@ -50,14 +55,14 @@
   const setupDisabled=$derived(locked||!!setupBlocked||!!folderError);
   onMount(()=>{if(!status)void send({command:'game_get_state'});});
   $effect(()=>{if(gameState.discovery?.firstStart&&gameState.discovery.status==='ready'&&openedFirstScan!==gameState.discovery.scanId){openedFirstScan=gameState.discovery.scanId;discoveryView=true;}});
-  $effect(()=>{if(!status&&gameState.discovery?.status==='scanning'){const timer=window.setInterval(()=>void send({command:'game_get_state'}),750);return()=>window.clearInterval(timer);}});
+  $effect(()=>{if(!status&&(gameState.discovery?.status==='scanning'||gameState.artworkPending)){const timer=window.setInterval(()=>void send({command:'game_get_state'}),750);return()=>window.clearInterval(timer);}});
   $effect(()=>{if(selected&&(initializedGameId!==selected.id||initializedInstallationId!==selected.selectedInstallationId))initializeGame(selected);});
   $effect(()=>{if(selected&&selected.id===initializedGameId&&selected.name!==nameBase){if(nameDraft===nameBase)nameDraft=selected.name;nameBase=selected.name;}});
   async function send(command:GameRequest):Promise<GamesState|false>{
     const passive=command.command==='game_get_state';
     if(!passive){pending=true;notice='';}
     try{const result=await request(command);if(result){response=result;updateGameCatalogue(result.catalogue);if(!passive)notice=result.error??'';}else if(!passive)notice='The request did not complete. Check the connection and try again.';return result;}
-    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);if(['game_background_preview','game_tag_definitions_save','game_tags_save','game_save','game_background_save','game_discovery_start','game_discovery_apply'].includes(command.command))throw error;return false;}
+    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);if(['game_add','game_background_preview','game_tag_definitions_save','game_tags_save','game_save','game_background_save','game_discovery_start','game_discovery_apply'].includes(command.command))throw error;return false;}
     finally{if(!passive)pending=false;}
   }
   async function saveSettings(command:GameRequest):Promise<GamesState>{
@@ -75,6 +80,7 @@
   }
   async function commitExecutable(game:Game){if(locked)return;const root=game.installations?.find(installation=>installation.id===game.selectedInstallationId)?.installPath??game.installPath;const path=resolveGameExecutablePath(executablePath.trim(),root);if(gameDisplayPath(path)!==gameDisplayPath(game.executable??game.manualPath))await saveExecutable(game,path||null);}
   function chooseGame(game:Game){initializeGame(game);onNavigate?.(game.id);}
+  function gameAdded(result:GamesState){addDialog=false;response=result;updateGameCatalogue(result.catalogue);filters=emptyGameListFilters();const game=result.catalogue.find(game=>game.id===result.addedGameId);if(game)chooseGame(game);}
   function tagsSaved(result:GamesState){tagsDialog=false;response=result;updateGameCatalogue(result.catalogue);}
   async function saveTags(game:Game,tagIds:string[]){const result=await send({command:'game_tags_save',gameId:game.id,tagIds,expectedTagIds:game.tagIds??[]});if(!result||result.error)throw Error(result&&result.error||'The game tags were not saved.');}
   async function removeGame(){if(!selected||locked)return;const result=await send({command:'game_remove',gameId:selected.id});if(result&&!result.error){removeDialog=false;allGames();}}
@@ -91,6 +97,11 @@
     finally{pending=false;}
   }
   async function discoverInstallation(){discoveryView=true;try{await send({command:'game_discovery_start'});}catch{/* The actionable failure remains in the panel notice. */}}
+  async function rescanGame(game:Game){
+    if(locked||refreshing)return;refreshing=true;
+    try{const result=await send({command:'game_rescan',gameId:game.id});if(result&&!result.error)artworkRefresh++;}
+    finally{refreshing=false;}
+  }
   async function integrationCommand(command:'game_integration_check'|'game_integration_setup'|'game_integration_cancel'|'game_integration_recover'|'game_integration_remove'){
     if(!selected||command==='game_integration_setup'&&setupDisabled)return;await send(gameIntegrationSetupRequest(selected,command,integrationFolder));
   }
@@ -107,7 +118,7 @@
       {#snippet leading()}<div class="game-detail-mark"><Icon name="gamepad" size={32}/></div>{/snippet}
       {#snippet titleContent()}<input class="game-name-input" aria-label="Game name" title="Rename game" maxlength="80" value={initializedGameId===selected.id?nameDraft:selected.name} disabled={locked} oninput={event=>nameDraft=event.currentTarget.value} onblur={()=>void saveName(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){nameDraft=selected.name;nameBase=selected.name;notice='';event.currentTarget.value=selected.name;event.currentTarget.blur();}}}/>{/snippet}
       {#snippet actions()}{#if returnToEditor}<button class="text-button" onclick={returnToEditor}><Icon name="back" size={14}/>{returnLabel ?? 'Return to profile'}</button>{/if}<div class="detail-launch">{#key selected.id}<GameProfileLaunch game={selected} busy={locked}>
-        {#snippet actions()}<button class="secondary-button destructive-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/snippet}
+        {#snippet actions()}<button class="secondary-button" class:refreshing disabled={locked||refreshing} onclick={()=>rescanGame(selected)}><Icon name="refresh" size={14}/>{refreshing?'Rescanning…':'Rescan'}</button><button class="secondary-button destructive-button" disabled={locked} onclick={()=>{notice='';removeDialog=true;}}><Icon name="trash" size={14}/>Remove</button>{/snippet}
       </GameProfileLaunch>{/key}</div>
     {/snippet}
     </PageHeader>
@@ -115,13 +126,12 @@
     <div class="game-content">
       <section class="panel installation-panel" aria-label="Installation"><div class="sidebar-title"><Icon name="search" size={18} /><h3>Installation</h3></div>
       <div class="installation-layout">
-        {#key selected.id}<GameBackgroundSettings game={selected} busy={locked} request={send}/>{/key}
+        {#key `${selected.id}:${artworkRefresh}`}<GameBackgroundSettings game={selected} busy={locked} request={send}/>{/key}
         <div class="installation-fields">
-        <div class="installation-status-row"><span class={['installation-status', { found: selected.installed }]}><Icon name={selected.installed ? 'check' : 'info'} size={14} />{selected.installed ? 'Found on this computer' : 'Not found'}</span><button class="secondary-button" disabled={locked} onclick={discoverInstallation}><Icon name="search" size={14} />Rescan</button></div>
           {#if selected.installations?.length}
-            <label class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><select aria-label="Detected installations" value={selected.selectedInstallationId??''} onchange={event=>void send({command:'game_installation_select',gameId:selected.id,installationId:event.currentTarget.value})} disabled={locked}><option value="">Choose an installation</option>{#each selected.installations as install (install.id)}<option value={install.id}>{gameDisplayPath(install.installPath)} · {install.source}</option>{/each}</select></label>
+            <div class="editor-label"><span class="icon-text"><Icon name="search" size={14} />Detected installations</span><span class="installation-choice"><GameInstallationSelect installations={selected.installations} value={selected.selectedInstallationId??''} disabled={locked} onselect={installationId=>void send({command:'game_installation_select',gameId:selected.id,installationId})}/>{#if selectedInstallation?.source}<span class="installation-source-badge" data-platform={selectedInstallation.source} title={gameLibraryClientName(selectedInstallation.source)} aria-label={`Installation source: ${gameLibraryClientName(selectedInstallation.source)}`}><span class="platform-icon" aria-hidden="true"><Icon name={selectedInstallation.source==='local'?'disk':selectedInstallation.source} size={23}/></span></span>{/if}</span></div>
           {/if}
-          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameExecutableDisplayPath(executablePath,selectedInstallationPath):selectedExecutablePath} oninput={event=>executablePath=event.currentTarget.value} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){executablePath=selected.executable??selected.manualPath??'';notice='';event.currentTarget.value=gameExecutableDisplayPath(executablePath,selectedInstallationPath);event.currentTarget.blur();}}} disabled={locked} placeholder="Choose an executable…"/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button>{#if selected.source}<span class="installation-source-badge" title={selected.source} aria-label={`Installation source: ${selected.source}`}>{selected.source}</span>{/if}</div></div>
+          <div class="editor-label"><label for="game-executable" class="icon-text"><Icon name="play" size={14}/>Game executable</label><div class="executable-row"><input id="game-executable" aria-label="Game executable" class="executable-input" value={initializedGameId===selected.id?gameExecutableDisplayPath(executablePath,selectedInstallationPath):selectedExecutablePath} oninput={event=>executablePath=event.currentTarget.value} onblur={()=>void commitExecutable(selected)} onkeydown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}else if(event.key==='Escape'){executablePath=selected.executable??selected.manualPath??'';notice='';event.currentTarget.value=gameExecutableDisplayPath(executablePath,selectedInstallationPath);event.currentTarget.blur();}}} disabled={locked} placeholder="Choose an executable…"/><button class="secondary-button" aria-label={`Choose ${selected.name} executable`} disabled={locked} onclick={browseExecutable}><Icon name="folder" size={14}/>Browse</button></div></div>
           {#if !selected.installed&&selected.manualPath}<p class="field-help">The saved executable could not be found. Choose its new location.</p>{/if}
           {#if !selected.launchSupported}<p class="platform-note">{selected.launchReason ?? selected.launchUnavailableReason ?? 'Native game launch is unavailable on this platform.'}{#if selected.installed} You can still edit and apply unified profiles from Profiles.{/if}</p>{/if}
         <div class="tag-panel"><div class="tag-picker"><GameTagInput {tags} values={selected.tagIds??[]} disabled={locked} label="Game tags" placeholder="Add tags…" onchange={values=>saveTags(selected,values)}/></div><button class="secondary-button" aria-label="Manage tags" disabled={locked} onclick={()=>tagsDialog=true}><Icon name="settings" size={14}/>Manage</button></div>
@@ -180,12 +190,12 @@
         {:else}<section class="panel game-binding-context"><div class="sidebar-title"><Icon name="gamepad" size={18}/><h3>Bindings and profile activation</h3></div><p>Set this game as a profile’s game context. Context scoped keyboard and mouse bindings work while its verified process is in front. Automatic mode activates a matching saved profile when the game runs.</p><p>{selected.executable?'This game uses process detection. No telemetry integration is needed.':'Choose its executable to enable process detection and scoped bindings.'}</p></section>{/if}
     </div>
   {:else}
-    <PageHeader title="Games" eyebrow="YOUR GAMES" subtitle={`${gameState.catalogue.length} discovered · ${gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated`} onback={returnToEditor} backLabel={returnLabel ?? 'Return to profile'}>{#snippet actions()}<button class="secondary-button filter-button" class:active={filtersOpen||filterCount>0} aria-expanded={filtersOpen} aria-controls={filterPanelId} aria-label="Filter games" title={filterCount?`Filter games (${filterCount} selected)`:'Filter games'} onclick={()=>filtersOpen=!filtersOpen}><Icon name="sliders" size={17}/></button><button class="secondary-button" disabled={locked} onclick={discoverInstallation}><Icon name="refresh" size={14}/>Rescan</button>{/snippet}</PageHeader>
+    <PageHeader title="Games" eyebrow="YOUR GAMES" subtitle={`${gameState.catalogue.length} discovered · ${gameState.catalogue.filter(game=>gameHasIntegration(game)).length} integrated`} onback={returnToEditor} backLabel={returnLabel ?? 'Return to profile'}>{#snippet actions()}<button class="secondary-button filter-button" class:active={filtersOpen||filterCount>0} aria-expanded={filtersOpen} aria-controls={filterPanelId} aria-label="Filter games" title={filterCount?`Filter games (${filterCount} selected)`:'Filter games'} onclick={()=>filtersOpen=!filtersOpen}><Icon name="sliders" size={17}/></button><button class="secondary-button" disabled={locked} onclick={()=>addDialog=true}><Icon name="plus" size={14}/>Add</button><button class="secondary-button" disabled={locked} onclick={discoverInstallation}><Icon name="refresh" size={14}/>Rescan</button>{/snippet}</PageHeader>
     {#if gameState.discovery?.firstStart&&gameState.discovery.status!=='applied'}
       <section class:scanning={gameState.discovery.status==='scanning'} class="panel initial-discovery" role="status" aria-live="polite"><Icon name={gameState.discovery.status==='scanning'?'refresh':'info'} size={20}/><div><strong>{gameState.discovery.status==='scanning'?'Discovering your games…':'Review discovered games'}</strong><p>{gameState.discovery.libraries.filter(library=>library.status==='complete'||library.status==='preparing').length} of {gameState.discovery.libraries.length} libraries checked · {gameState.discovery.libraries.reduce((total,library)=>total+library.found,0)} installations found. {gameState.discovery.status==='scanning'?'Your game list will be ready after you review and apply the results.':'Open the scan results to select the changes to apply.'}</p></div><button class="secondary-button" onclick={()=>discoveryView=true}><Icon name="search" size={14}/>View results</button></section>
     {/if}
-    {#if filtersOpen}<div id={filterPanelId}><GameListFilters games={gameState.catalogue} {tags} busy={locked} bind:filters manageTags={()=>tagsDialog=true}/></div>{/if}
-    {#if receivedStatus&&!games.length&&!(gameState.discovery?.firstStart&&gameState.discovery.status!=='applied')}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31}/></div><h2>{filterCount?'No games match these filters':'No games found'}</h2><p>{filterCount?'Choose other filter options or clear them.':'Scan your libraries or add a local location to discover installed games.'}</p>{#if filterCount}<button class="secondary-button" onclick={()=>filters=emptyGameListFilters()}><Icon name="close" size={14}/>Clear</button>{:else}<button class="primary-button" disabled={locked} onclick={discoverInstallation}><Icon name="search" size={14}/>Discover games</button>{/if}</div>{/if}
+    {#if filtersOpen}<div id={filterPanelId}><GameListFilters games={gameState.catalogue} {tags} busy={locked} bind:filters manageTags={()=>tagsDialog=true} onclear={()=>filtersOpen=false}/></div>{/if}
+    {#if receivedStatus&&!games.length&&!(gameState.discovery?.firstStart&&gameState.discovery.status!=='applied')}<div class="games-empty"><div class="empty-icon"><Icon name="search" size={31}/></div><h2>{filterCount?'No games match these filters':'No games found'}</h2><p>{filterCount?'Choose other filter options or clear them.':'Scan your libraries or add a local location to discover installed games.'}</p>{#if filterCount}<button class="secondary-button" onclick={()=>{filters=emptyGameListFilters();filtersOpen=false;}}><Icon name="close" size={14}/>Clear</button>{:else}<button class="primary-button" disabled={locked} onclick={discoverInstallation}><Icon name="search" size={14}/>Discover games</button>{/if}</div>{/if}
     <div class="game-grid">
       {#each games as game (game.id)}
         {@const liveLabel=gameIntegrationLiveLabel(game)}
@@ -197,11 +207,7 @@
             <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{:else}<span class="game-art-placeholder"><Icon name="gamepad" size={42}/></span>{/if}<div class="art-shade"></div>{#if gameTags.length}<span class="art-tags">{#each gameTags.slice(0,3) as id}<span class="art-tag">{tags[id]}</span>{/each}{#if gameTags.length>3}<span class="art-tag" title={gameTags.map(id=>tags[id]).join(', ')}>+{gameTags.length-3}</span>{/if}</span>{/if}
             </div>
             <div class="tile-copy">
-              <div class="tile-title"><h2>{game.name}</h2><Icon name="chevron" size={16} /></div>
-              <div class="tile-footer">
-                <span class="tile-status"><span></span>{game.installed ? 'Installed' : 'Not found'}</span>
-                <span class={['tile-integration', { ready: gameIntegrationReady(game), attention: game.integrationSetup?.state === 'needs-attention' }]}><Icon name={gameIntegrationReady(game) ? 'check' : game.integrationSetup?.state === 'needs-attention' ? 'alert' : 'link'} size={12} /><span>{gameIntegrationLabel(game)}</span></span>
-              </div>
+              <div class="tile-title"><h2 title={game.name}>{game.name}</h2><Icon name="chevron" size={16} /></div>
               {#if game.installed&&liveLabel}<div class="tile-live"><span class={['live-dot', { receiving: game.integrationSetup?.live === 'receiving', stale: game.integrationSetup?.live === 'stale' }]}></span>{liveLabel}</div>{/if}
             </div>
           </button>
@@ -212,23 +218,24 @@
   {/if}
 </section>
 
-{#if tagsDialog}<GameTagsDialog {tags} request={send} close={()=>tagsDialog=false} saved={tagsSaved}/>{/if}
+{#if tagsDialog}<GameTagsDialog {tags} games={gameState.catalogue} request={send} close={()=>tagsDialog=false} saved={tagsSaved}/>{/if}
+{#if addDialog}<GameAddDialog busy={locked} request={send} close={()=>addDialog=false} added={gameAdded}/>{/if}
 {#if removeDialog&&selected}<dialog class="launch-review" aria-labelledby="remove-game-title" oncancel={event=>{event.preventDefault();if(!pending)removeDialog=false;}} {@attach showDialog}><h2 id="remove-game-title">Remove {selected.name}?</h2><p class="review-description">Remove this game and its custom background from Cockpit. Your saved profiles stay available; profiles using this game will show an unavailable context until you select another game.</p>{#if notice}<p role="alert">{notice}</p>{/if}<div class="review-actions"><button class="secondary-button" disabled={pending} onclick={()=>removeDialog=false}>Cancel</button><button class="secondary-button destructive-button" disabled={locked} onclick={removeGame}><Icon name="trash" size={14}/>Remove game</button></div></dialog>{/if}
 
 
 
 <style>
+  .refreshing :global(svg){animation:game-refresh-spin 1s linear infinite}@keyframes game-refresh-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.refreshing :global(svg){animation:none}}
   .initial-discovery{display:flex;align-items:center;gap:16px;padding:20px;margin-bottom:20px}.initial-discovery>div{flex:1}.initial-discovery p{color:var(--muted);font-size:var(--ui-text-size);line-height:var(--ui-line-height)}.initial-discovery.scanning>:global(svg){animation:scan-spin 1.3s linear infinite}@keyframes scan-spin{to{transform:rotate(360deg)}}
-  .installation-layout{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:24px;align-items:start;margin-top:20px}.installation-fields{display:grid;gap:16px;min-width:0;grid-template-columns:minmax(0,1fr)}.game-name-input{width:100%;min-width:0;padding:3px 5px;margin:-4px -6px;box-sizing:border-box;border:1px solid transparent;border-radius:4px;background:transparent;color:inherit;font:inherit;font-weight:inherit;letter-spacing:inherit}.game-name-input:hover:enabled{border-color:var(--line)}.game-name-input:focus{outline:1px solid var(--accent);border-color:var(--accent);background:var(--surface)}.executable-input{flex:1;min-width:0;padding:11px 12px;box-sizing:border-box;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--text);font-family:ui-monospace,monospace;font-size:var(--game-detail-text-size)}.executable-row>button{flex-shrink:0}@media(max-width:800px){.installation-layout{grid-template-columns:minmax(0,1fr)}.installation-layout>:first-child{max-width:400px}}
+  .installation-layout{display:grid;grid-template-columns:minmax(220px,340px) minmax(0,1fr);gap:24px;align-items:start;margin-top:20px}.installation-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;min-width:0}.game-name-input{width:100%;min-width:0;padding:3px 5px;margin:-4px -6px;box-sizing:border-box;border:1px solid transparent;border-radius:4px;background:transparent;color:inherit;font:inherit;font-weight:inherit;letter-spacing:inherit}.game-name-input:hover:enabled{border-color:var(--line)}.game-name-input:focus{outline:1px solid var(--accent);border-color:var(--accent);background:var(--surface)}.executable-input{flex:1;min-width:0;padding:11px 12px;box-sizing:border-box;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--text);font-family:ui-monospace,monospace;font-size:var(--game-detail-text-size)}.executable-row>button{flex-shrink:0}@media(max-width:800px){.installation-layout{grid-template-columns:minmax(0,1fr)}.installation-layout>:first-child{max-width:400px}}
   .destructive-button{background:#b32b38;border-color:#cd4552;color:#fff}.destructive-button:hover:enabled{background:#98232e;border-color:#e35d69;color:#fff}
   .tag-panel{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px}.tag-picker{flex:1;min-width:min(220px,100%)}.tag-panel>button{flex-shrink:0}.filter-button{padding:9px 11px}.filter-button.active{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
   .game-binding-context{padding:20px}.game-binding-context p{color:var(--muted);font-size:var(--ui-text-size);line-height:var(--ui-line-height)}
   .game-content {min-width:0;font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   .game-content .field-help {font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);overflow-wrap:anywhere;}
-  .game-content button{font-size:var(--ui-action-size);line-height:var(--game-detail-line-height);}.game-content select{font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
-  .game-content select {max-width:100%;min-width:0;}
+  .game-content button {font-size:var(--ui-action-size);line-height:var(--game-detail-line-height);}
   .icon-text {display:inline-flex;align-items:center;gap:7px;}
-  .icon-text :global(svg), .sidebar-title :global(svg), .provider-readiness :global(svg), .installation-status :global(svg), .setup-readiness :global(svg), .native-verification :global(svg) {flex-shrink:0;}
+  .icon-text :global(svg), .sidebar-title :global(svg), .provider-readiness :global(svg), .setup-readiness :global(svg), .native-verification :global(svg) {flex-shrink:0;}
   .game-content>.setup-panel {margin-top:0;margin-bottom:23px;}
   .provider-readiness {display:grid;gap:12px;margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:6px;}
   .provider-readiness>div {display:grid;gap:5px;}
@@ -257,30 +264,22 @@
   .art-tags{position:absolute;top:14px;left:16px;right:16px;display:flex;flex-wrap:wrap;gap:5px}.art-tag{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:5px 8px;border:1px solid #ffffff30;border-radius:4px;background:#071019c9;font-size:var(--ui-action-size);color:#f1f5f9;}
   .tile-copy { padding: 20px; }
   .tile-title { display:flex;justify-content:space-between;align-items:center;gap:12px; }
-  .tile-title h2 {font-size:var(--ui-heading-size);font-weight:600;letter-spacing:-.2px;line-height:1.45; }
+  .tile-title h2 { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-heading-size);font-weight:600;letter-spacing:-.2px;line-height:1.45; }
   .tile-title :global(svg) { color:var(--muted);flex-shrink:0; }
-  .tile-footer { border-top: 1px solid var(--faint-line); margin-top: 19px; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size:var(--ui-text-size); gap: 12px; }
-  .tile-status { display: flex; align-items: center; gap: 6px; color: var(--accent); flex-shrink: 0; white-space: nowrap; }
-  .tile-status span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-  .tile-integration, .tile-live { display: flex; align-items: center; gap: 6px; font-size:var(--ui-text-size); color: var(--muted); }
-  .tile-integration { min-width: 0; margin-left: auto; justify-content: flex-end; text-align: right; line-height: 1.5; }
-  .tile-integration :global(svg) { flex-shrink: 0; }
-  .tile-integration.ready { color: var(--accent); }
-  .tile-integration.attention { color: #c5a26e; }
-  .tile-live { margin-top: 8px; font-size:var(--ui-text-size)}
+  .tile-live { display: flex; align-items: center; gap: 6px; font-size:var(--ui-text-size); color: var(--muted); }
+  .tile-live { margin-top: 8px; }
   .live-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: var(--muted); }
   .live-dot.receiving { background: var(--accent); }
   .live-dot.stale { background: #c5a26e; }
-  .tile-launch {display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:12px;margin-top:auto;padding:0 20px 18px;}
+  .tile-launch {display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:12px;margin:auto 20px 18px;border-top:1px solid var(--faint-line);padding-top:14px;}
   .tile-profile-count {padding-top:11px;color:var(--muted);font-size:var(--ui-text-size);line-height:var(--ui-line-height);white-space:normal;}
 
   .unavailable .game-art-image { opacity:.78;filter:saturate(.55); }
-  .unavailable .tile-status { color: var(--muted); }
   .unavailable:hover, .unavailable:focus-within { border-color: var(--soft); }
   .games-empty { padding: 65px 25px; border: 1px dashed var(--line); border-radius: 9px; text-align: center; }
   .empty-icon { color: var(--accent); background: var(--accent-bg); width: 64px; height: 64px; margin: 0 auto 21px; border-radius: 15px; display: grid; place-items: center; }
-  .games-empty h2 {font-size:var(--ui-section-title-size); letter-spacing: -.3px; }
-  .games-empty p { color: var(--muted);font-size:var(--ui-text-size); margin: 12px auto 22px; max-width: 360px; line-height: 1.8; }
+  .games-empty h2 { font-size:var(--ui-section-title-size); letter-spacing: -.3px; }
+  .games-empty p { color: var(--muted); font-size:var(--ui-text-size); margin: 12px auto 22px; max-width: 360px; line-height: 1.8; }
   .games-empty > div:last-child { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
 
 
@@ -290,16 +289,16 @@
 
   .detail-launch { margin-left: auto; }
   h3 {font-size:var(--game-detail-heading-size);line-height:var(--game-detail-line-height);font-weight:600;}
-  .editor-label {display:flex;flex-direction:column;gap:8px;color:var(--soft);font-size:var(--game-detail-text-size);min-width:0}
+  .editor-label {min-width:0;display:flex;flex-direction:column;gap:8px;color:var(--soft);font-size:var(--game-detail-text-size);}
   .editor-label { margin-top: 16px; }
+  .installation-fields > .editor-label:first-child { margin-top: 0; }
   .executable-row {display:flex;align-items:center;gap:10px;min-width:0;}
-  .installation-source-badge {display:inline-block;flex-shrink:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface-raised);color:var(--soft);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
+  .installation-choice{display:flex;align-items:center;gap:12px;min-width:0;flex-wrap:wrap}
+  .installation-source-badge {display:inline-flex;align-items:center;flex-shrink:0;}
+  .platform-icon {display:flex;align-items:center;justify-content:center;width:36px;height:36px;flex-shrink:0;border:1px solid var(--line);border-radius:8px;background:var(--surface-raised);color:var(--soft);}
+  @media(max-width:600px){.platform-icon{width:30px;height:30px}}
   .installation-panel { padding: 21px; margin-bottom:20px; overflow:visible; }
   .sidebar-title { display: flex; gap: 9px; align-items: center; color: var(--soft); }
-  .installation-status-row {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-top:20px;}
-  .installation-status-row>button {flex-shrink:0;margin-left:auto;padding:8px 10px;}
-  .installation-status {display:flex;align-items:center;gap:7px;color:var(--muted);font-size:var(--game-detail-text-size);}
-  .installation-status.found { color: var(--accent); }
   .platform-note {color:#c5a26e;font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);margin-top:17px;}
   .setup-panel { margin-top: 20px; padding: 21px; }
   .integration-heading {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;}

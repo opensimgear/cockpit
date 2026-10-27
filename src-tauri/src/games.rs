@@ -57,6 +57,7 @@ struct Inner {
     activation: crate::game_activation::Observer,
     settings: Mutex<Settings>,
     discovery:Mutex<discovery_review::Review>,
+    online_artwork: bool,
     closed: AtomicBool,
 }
 pub(crate) struct GamesRuntime {
@@ -110,6 +111,7 @@ impl GamesRuntime {
         let catalogue = crate::game_discovery::merged_catalogue(platform.as_ref(), &saved);
         let runtime = Self {
             inner: Arc::new(Inner {
+                online_artwork: auto_discovery,
                 setup: crate::game_integration_setup::GameIntegrationSetup::new(
                     paths.provider_setup,
                     platform.integration_setup_supported(),
@@ -218,7 +220,12 @@ impl GamesRuntime {
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"tags":settings.saved.tags,"discovery":self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()).clone(),"addedGameId":settings.added_game_id,"error":settings.error})
+        let mut state=json!({"catalogue":catalogue,"detectedGames":detected,"detectionErrors":errors,"tags":settings.saved.tags,"discovery":self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()).clone(),"addedGameId":settings.added_game_id,"error":settings.error});
+        drop(settings);
+        if self.inner.online_artwork && !self.inner.closed.load(Ordering::Acquire) {
+            crate::game_artwork::steam_online::decorate(self.inner.installations.root(), &mut state);
+        }
+        state
     }
     pub(crate) fn recovery_pending(&self)->bool{self.inner.setup.pending()}
     pub(crate) fn active(&self)->bool{self.inner.setup.busy()}
@@ -230,7 +237,7 @@ impl GamesRuntime {
         let command=request["command"].as_str().ok_or("Choose a game operation.")?;
         if self.inner.closed.load(Ordering::Acquire){return Err("The game runtime has closed.".into());}
         if command=="game_discovery_start" {return discovery_review::start(self,request);}
-        if matches!(command,"game_discovery_apply"|"game_save"|"game_remove"|"game_installation_select"|"game_tag_definitions_save"|"game_tags_save"|"game_background_save") {return self.metadata_request(request);}
+        if matches!(command,"game_discovery_apply"|"game_save"|"game_rescan"|"game_remove"|"game_installation_select"|"game_tag_definitions_save"|"game_tags_save"|"game_background_save") {return self.metadata_request(request);}
         if command=="game_get_state" {
             if !known(request,&["command","clientId"]) {return Err("Unknown game status field.".into());}return Ok(());
         }

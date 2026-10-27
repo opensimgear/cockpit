@@ -148,7 +148,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
         | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_metadata_get" | "game_telemetry_inspect" | "game_integration_settings_save"
-        | "game_tag_definitions_save" | "game_tags_save" | "game_discovery_start" | "game_background_save" | "game_save" | "game_remove" | "game_discovery_apply"
+        | "game_tag_definitions_save" | "game_tags_save" | "game_discovery_start" | "game_background_save" | "game_add" | "game_save"|"game_rescan" | "game_remove" | "game_discovery_apply"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
     Some(command)
@@ -623,13 +623,13 @@ impl GatewayManager {
     }
     fn guard_game_registration(&self, request: &Value) -> Result<(), String> {
         let command = request["command"].as_str().unwrap_or("");
-        if matches!(command, "game_save" | "game_remove" | "game_discovery_apply" | "game_installation_select") {
+        if matches!(command, "game_add" | "game_save"|"game_rescan" | "game_remove" | "game_discovery_apply" | "game_installation_select") {
             if self.profile_pending.load(Ordering::Acquire) != 0 {
                 return Err("Wait for profile activation or launch to finish before changing game registrations.".into());
             }
             let session = self.profile_session.lock().unwrap_or_else(|poison| poison.into_inner());
             if let Some(active_game) = session.active_game_context() {
-                if request["gameId"] == active_game || command == "game_discovery_apply" {
+                if request["gameId"] == active_game || matches!(command,"game_add"|"game_discovery_apply") {
                     return Err("Deactivate the selected game profile before changing its registration or importing installations.".into());
                 }
             }
@@ -814,7 +814,7 @@ impl GatewayManager {
         if matches!(command, "game_get_state" | "game_discovery_start") {
             return self.request_inner_at(request, None, native_authorization.as_ref(), passive_profile_reads);
         }
-        if matches!(command, "game_tag_definitions_save" | "game_tags_save" | "game_save" | "game_remove" | "game_background_save" | "game_discovery_apply" | "game_installation_select") {
+        if matches!(command, "game_tag_definitions_save" | "game_tags_save" | "game_add" | "game_save"|"game_rescan" | "game_remove" | "game_background_save" | "game_discovery_apply" | "game_installation_select") {
             return self.game_metadata_request(&request, native_authorization.as_ref());
         }
         // Passive game inspection cannot delay profile takeover or emergency
@@ -1221,7 +1221,7 @@ impl GatewayManager {
                 Err(error) => self.error(&error, None),
             };
             response["state"]["games"] = self.games.status();
-            if response["ok"] == true && matches!(command.as_str(), "game_save" | "game_remove" | "game_discovery_apply" | "game_installation_select") {
+            if response["ok"] == true && matches!(command.as_str(), "game_add" | "game_save"|"game_rescan" | "game_remove" | "game_discovery_apply" | "game_installation_select") {
                 self.profile_wake.notify();
             }
             return response;

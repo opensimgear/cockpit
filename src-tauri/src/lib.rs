@@ -179,7 +179,7 @@ async fn pick_game_executable(
         if let Some(parent) = current_path
             .as_deref()
             .map(std::path::Path::new)
-            .and_then(|p| p.parent())
+            .and_then(|p| if p.is_dir() { Some(p) } else { p.parent() })
             .filter(|p| p.is_absolute() && p.is_dir())
         {
             picker = picker.set_directory(parent);
@@ -214,6 +214,7 @@ async fn pick_game_image(app: tauri::AppHandle) -> Result<Option<String>, String
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum GameIntegrationFolder {
+    Game,
     SavedGames,
     Catalogue,
 }
@@ -235,6 +236,7 @@ async fn pick_game_integration_folder(
             .unwrap_or(path)
     });
     let title = match kind {
+        GameIntegrationFolder::Game => "Choose game folder",
         GameIntegrationFolder::SavedGames => "DCS Saved Games folder",
         GameIntegrationFolder::Catalogue => "DCS-BIOS doc/json directory",
     };

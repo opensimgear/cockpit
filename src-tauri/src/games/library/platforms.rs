@@ -22,13 +22,29 @@ const CLIENT_EXES: &[(&str, &[&str])] = &[
 ];
 
 /// Returns only installed launcher libraries, in the same order as `CLIENTS`.
-/// Local-path discovery remains available on every platform.
+/// User-selected paths are added separately by discovery when configured.
 pub(crate) fn installed_clients() -> Vec<(&'static str, &'static str)> {
     CLIENTS
         .iter()
         .copied()
-        .filter(|(client, _)| *client == "disk" || launcher_present(client))
+        .filter(|(client, _)| *client != "disk" && launcher_present(client))
         .collect()
+}
+
+/// Launcher and Steam library containers must never become standalone games.
+pub(super) fn occupied_roots() -> Vec<PathBuf> {
+    let mut result=Vec::new();
+    for (client,_) in installed_clients() {
+        result.extend(default_roots(client));
+        result.extend(native::registered_roots(client));
+        if client=="steam" {
+            for root in crate::game_discovery::library_steam_roots() {
+                result.extend(crate::game_discovery::library_paths(&root));
+                result.push(root);
+            }
+        }
+    }
+    result.sort();result.dedup();result
 }
 
 fn launcher_present(client: &str) -> bool {

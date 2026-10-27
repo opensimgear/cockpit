@@ -56,7 +56,7 @@ fn platform_metadata_is_read_without_holding_progress_or_importing_before_apply(
     let steam=candidate(&directory.path().join("steam"),"steam","42");
     let (entered,waiting)=mpsc::channel();let (release,resume)=mpsc::channel();
     start_with_metadata(&runtime,&json!({"command":"game_discovery_start"}),vec![("steam","Steam")],
-        move|_,_|Scan{candidates:vec![steam.clone()],diagnostics:vec![]},
+        move|_,_,_|Scan{candidates:vec![steam.clone()],diagnostics:vec![]},
         move|_,_,_,cancelled|{entered.send(()).unwrap();resume.recv().unwrap();assert!(!cancelled());BTreeMap::from([("steam:42".into(),super::super::tagging::SourceMetadata{platform_genres:vec!["Racing".into()],..Default::default()})])}).unwrap();
     waiting.recv_timeout(Duration::from_secs(2)).unwrap();
     let progress=runtime.status()["discovery"].clone();
@@ -73,7 +73,7 @@ fn closing_during_metadata_prevents_completion() {
     let (runtime,directory)=runtime();let steam=candidate(&directory.path().join("steam"),"steam","42");
     let (entered,waiting)=mpsc::channel();let (release,resume)=mpsc::channel();
     start_with_metadata(&runtime,&json!({"command":"game_discovery_start"}),vec![("steam","Steam")],
-        move|_,_|Scan{candidates:vec![steam.clone()],diagnostics:vec![]},
+        move|_,_,_|Scan{candidates:vec![steam.clone()],diagnostics:vec![]},
         move|_,_,_,_|{entered.send(()).unwrap();resume.recv().unwrap();BTreeMap::new()}).unwrap();
     waiting.recv_timeout(Duration::from_secs(2)).unwrap();runtime.inner.closed.store(true,Ordering::Release);
     release.send(()).unwrap();runtime.shutdown();
@@ -166,4 +166,57 @@ fn public_start_rejects_invalid_requests_without_launching_a_worker() {
     assert_eq!(runtime.status()["discovery"]["status"], "idle");
     assert!(runtime.discovery_worker.lock().unwrap().is_none());
     runtime.shutdown();
+}
+
+#[test]
+fn only_added_paths_enable_standalone_scanning_after_platforms_with_occupied_roots() {
+    let (runtime,directory)=runtime();let parent=directory.path().join("Program Files");
+    let steam=candidate(&parent.join("Steam/steamapps/common/SteamVR"),"steam","42");
+    candidate(&parent.join("Steam"),"disk","launcher");
+    candidate(&parent.join("Standalone"),"disk","standalone");
+    let steam_root=steam.install_path.clone();let added=parent.clone();
+    start_with_metadata(&runtime,&json!({"command":"game_discovery_start","paths":[parent]}),vec![("steam","Steam")],
+        move|client,roots,occupied|{
+            assert_eq!(roots,&[added.clone()]);
+            if client=="steam" {Scan{candidates:vec![steam.clone()],diagnostics:vec![]}}
+            else {assert_eq!(client,"disk");assert!(occupied.iter().any(|path|path==Path::new(&steam_root)));
+                crate::game_library::scan_user_paths(roots,occupied)}
+        },|_,_,_,_|BTreeMap::new()).unwrap();
+    let ready=wait_for(&runtime,"ready");
+    assert_eq!(ready["libraries"].as_array().unwrap().len(),2);
+    assert_eq!(ready["libraries"][1]["name"],"Added paths");
+    let entries=ready["entries"].as_array().unwrap();assert_eq!(entries.len(),2);
+    assert_eq!(entries.iter().filter(|entry|entry["library"]=="disk").count(),1);
+    assert!(entries.iter().any(|entry|entry["installPath"].as_str().unwrap().ends_with("Standalone")));
+    runtime.shutdown();
+}
+
+#[test]
+fn saved_game_roots_are_reserved_but_never_automatically_scanned() {
+    let (runtime,directory)=runtime();let found=candidate(&directory.path().join("used"),"steam","42");
+    let saved=crate::game_installations::Settings::default();
+    let review=Review{scan_id:"fixture".into(),status:"ready".into(),revision:saved.revision,
+        entries:super::super::test_reconcile(&saved,vec![found]),..Default::default()};
+    let saved=super::super::apply(&saved,&review,&json!({"scanId":"fixture","actions":[]})).unwrap();
+    runtime.inner.settings.lock().unwrap().saved=saved;
+    start_with_metadata(&runtime,&json!({"command":"game_discovery_start"}),vec![],
+        |_,_,_|panic!("No added paths or platform clients means no scan"),|_,_,_,_|BTreeMap::new()).unwrap();
+    let ready=wait_for(&runtime,"ready");assert!(ready["libraries"].as_array().unwrap().is_empty());runtime.shutdown();
+}
+
+#[test]
+fn previously_added_containers_are_rescanned_without_new_path_arguments() {
+    let (runtime,directory)=runtime();let path=directory.path().to_path_buf();
+    runtime.inner.settings.lock().unwrap().saved.scan_roots.push(path.to_string_lossy().into_owned());
+    start_with(&runtime,&json!({"command":"game_discovery_start"}),vec![],move|client,roots|{
+        assert_eq!(client,"disk");assert_eq!(roots,&[path.clone()]);Scan::default()
+    }).unwrap();
+    let ready=wait_for(&runtime,"ready");assert_eq!(ready["libraries"][0]["name"],"Added paths");runtime.shutdown();
+}
+
+#[test]
+fn added_paths_require_containers_and_cannot_be_executable_files() {
+    let (runtime,directory)=runtime();let path=directory.path().join("Game.exe");std::fs::write(&path,b"fixture").unwrap();
+    let error=start(&runtime,&json!({"command":"game_discovery_start","paths":[path]})).unwrap_err();
+    assert!(error.contains("folders"));assert_eq!(runtime.status()["discovery"]["status"],"idle");runtime.shutdown();
 }

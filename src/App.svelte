@@ -96,6 +96,7 @@
     settingsVisit = null;
     if (!navigationHistory&&gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
     selectedGameId = '';
+    gamesDiscoveryOpen = false;
     selectedCompanionId = '';
     activeSettingsKey='';
     view = section;
@@ -376,7 +377,7 @@
     void sendGames({ command: 'game_get_state' }, true);
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
     const profileTimer = setInterval(() => { void refreshProfileStatus(); }, 1000);
-    const gamesTimer = setInterval(() => { if(view==='games'&&gamesDiscoveryOpen&&games?.discovery?.status!=='scanning')return;void sendGames({ command: 'game_get_state' }, true); }, 1000);
+    const gamesTimer = setInterval(() => { if(view==='games'&&gamesDiscoveryOpen&&games?.discovery?.status!=='scanning'&&!games?.artworkPending)return;void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     const openSettingsEvent = (event: Event) => {
       if (!(event instanceof CustomEvent)) return;

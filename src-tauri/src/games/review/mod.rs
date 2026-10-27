@@ -4,6 +4,7 @@ use crate::{game_installations::{GameRecord,Installation,LibrarySource},game_lib
 use serde::Serialize;
 use std::collections::{BTreeMap,BTreeSet};
 mod reconcile;
+mod observations;
 mod tagging;
 mod worker;
 pub(super) use worker::start;
@@ -42,13 +43,13 @@ pub(super) struct Entry {
 #[derive(Clone,Debug,Serialize)]
 #[serde(rename_all="camelCase")]
 pub(super) struct Review {
-    pub scan_id:String,pub status:String,pub libraries:Vec<Library>,pub entries:Vec<Entry>,
+    pub scan_id:String,pub status:String,pub libraries:Vec<Library>,pub entries:Vec<Entry>,pub observations:Vec<Candidate>,
     pub diagnostics:Vec<String>,pub first_start:bool,
     #[serde(skip)] pub revision:u64,
     #[serde(skip)] pub paths:Vec<String>,
 }
 impl Default for Review {
-    fn default()->Self {Self{scan_id:String::new(),status:"idle".into(),libraries:vec![],entries:vec![],diagnostics:vec![],first_start:false,revision:0,paths:vec![]}}
+    fn default()->Self {Self{scan_id:String::new(),status:"idle".into(),libraries:vec![],entries:vec![],observations:vec![],diagnostics:vec![],first_start:false,revision:0,paths:vec![]}}
 }
 pub(super) fn key(prefix:&str,value:&str)->String {
     use sha2::{Digest,Sha256};

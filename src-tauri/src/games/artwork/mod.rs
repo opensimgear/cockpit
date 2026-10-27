@@ -18,6 +18,7 @@ const MAX_ASSETS: usize = 1024;
 mod model;
 mod installation_cache;
 pub(crate) use installation_cache::{cache_installation_preview, installation_preview};
+pub(crate) mod steam_online;
 use model::*;
 pub(crate) use model::{Background,Crop};
 fn redirected(metadata: &fs::Metadata) -> bool {

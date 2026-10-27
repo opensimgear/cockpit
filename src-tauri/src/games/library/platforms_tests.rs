@@ -73,8 +73,8 @@ fn custom_install_root_is_detected_without_game_data() {
 }
 
 #[test]
-fn only_local_paths_are_unconditionally_included() {
-    assert_eq!(installed_clients().last(), Some(&("disk", "Local paths")));
+fn standalone_paths_are_never_automatically_included() {
+    assert!(installed_clients().iter().all(|(id,_)|*id!="disk"));
     assert!(CLIENTS
         .iter()
         .filter(|(id, _)| *id != "disk")

@@ -9,6 +9,14 @@ const games=modules.get('./games');
 const catalogueGames=discoveredGames;
 const {gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationVerificationLabel,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationUserFolder,gameIntegrationFolderError,gameIntegrationSetupBlockedReason}=games;
 const plain=value=>JSON.parse(JSON.stringify(value));
+test('manual Add validates a selected game folder and builds a direct registration with an optional image',()=>{
+  assert.deepEqual(plain(games.gameAddRequest(' Local game ','C:/Games/Local','bin/Game.exe',' C:/Images/cover.png ')),{command:'game_add',name:'Local game',installPath:'C:/Games/Local',executable:'C:\\Games\\Local\\bin\\Game.exe',imagePath:'C:/Images/cover.png'});
+  assert.equal(games.gameAddError('Game','C:/Games/Local','Game.exe'),'');
+  assert.equal(games.gameAddRequest('Game','C:/Games/Local','Game.exe').imagePath,undefined);
+  for(const [name,root,executable] of [['Game','','Game.exe'],['Game','relative','Game.exe'],['','C:/Games/Local','Game.exe'],['Game','C:/Games/Local',''],['Game','C:/Games/Local','notes.txt'],['Game','C:/Games/Local','C:/Games/LocalOther/Game.exe']]){
+    assert.ok(games.gameAddError(name,root,executable));assert.throws(()=>games.gameAddRequest(name,root,executable));
+  }
+});
 const dcs=()=>({...catalogueGames[0],installed:true,integrationSetup:{state:'setup-required',message:'Choose current game-owned settings.'}});
 
 test('native custom registry keeps selectable membership distinct from persistent IDs and survives missing executables',()=>{

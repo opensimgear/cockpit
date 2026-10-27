@@ -28,8 +28,8 @@ test('native discovery reviews libraries, installation copies, moves and explici
     assert.equal(reply.ok,true,request.command+': '+reply.error);return reply.state;
   };
   const games=async()=>(await native({command:'game_get_state'})).games;
-  const ready=async()=>{
-    await expect.poll(async()=>(await games()).discovery?.status,{timeout:90_000}).toBe('ready');
+  const ready=async previousScanId=>{
+    await expect.poll(async()=>{const discovery=(await games()).discovery;return discovery?.scanId!==previousScanId&&discovery?.status==='ready';},{timeout:90_000}).toBe(true);
     return games();
   };
   const scan=async paths=>{await native({command:'game_discovery_start',...(paths?{paths}:{})});return ready();};
@@ -39,9 +39,9 @@ test('native discovery reviews libraries, installation copies, moves and explici
     const back=page.getByRole('button',{name:'All games',exact:true});if(await back.isVisible().catch(()=>false))await back.click();
   };
   const openReview=async()=>{
-    await uiGames();await page.getByRole('button',{name:'Rescan',exact:true}).click();
+    await uiGames();const previousScanId=(await games()).discovery?.scanId;await page.getByRole('button',{name:'Rescan',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Discover games',exact:true})).toBeVisible();
-    return ready();
+    return ready(previousScanId);
   };
   const applyUi=async(state,selectedIds)=>{
     for(const entry of state.discovery.entries)await row(entry).getByRole('checkbox').setChecked(selectedIds.has(entry.id));
@@ -76,8 +76,9 @@ test('native discovery reviews libraries, installation copies, moves and explici
 
     await openReview();
     await page.getByRole('button',{name:'Add location',exact:true}).click();
-    const location=page.getByRole('textbox',{name:'Local discovery location',exact:true});await location.fill(fixtures);
-    await page.getByRole('region',{name:'Local locations',exact:true}).getByRole('button',{name:'Add',exact:true}).click();state=await ready();
+    const location=page.getByRole('textbox',{name:'Discovery folder',exact:true});await location.fill(fixtures);
+    const previousScanId=(await games()).discovery?.scanId;
+    await page.getByRole('region',{name:'Added paths',exact:true}).getByRole('button',{name:'Add',exact:true}).click();state=await ready(previousScanId);
     await expect(page.locator('.libraries > details.library')).toHaveCount(state.discovery.libraries.filter(library=>library.found||library.message||state.discovery.entries.some(entry=>entry.library===library.id)).length);
     const entries=state.discovery.entries.filter(fixtureEntry);
     const first=entries.find(entry=>normalize(entry.installPath)===normalize(dcsA)),second=entries.find(entry=>normalize(entry.installPath)===normalize(dcsB));

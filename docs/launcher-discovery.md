@@ -1,17 +1,19 @@
 # Local game discovery and review
 
 Cockpit builds its game catalogue from locally discovered installations. There
-are no built-in or custom game classes. On first startup it scans known local
-paths and installed launcher clients automatically. A launcher client is
+are no built-in or custom game classes. On first startup it scans installed
+launcher libraries automatically. Additional paths must be added by the user:
+only their immediate child directories become candidate game folders, and
+already used installations and platform library trees are excluded. A launcher client is
 included only when its own executable is present as a regular local `.exe`; the
-local-path scanner remains available without a launcher. Scanning reads local
-installation metadata only: it does not read account credentials, contact
-client services, change launcher files or enumerate owned games that are not
-installed.
+added-path scanner is shown only when user paths are configured. Installation
+discovery reads local records without account credentials or launcher changes.
+Optional platform metadata supplies editable tags; see [Tags](games.md#tags).
+Owned games that are not installed are not enumerated.
 
 The Games list reports first-scan progress and opens the review when the
 automatic first scan finishes. **Rescan** opens a details view showing progress
-by client and local path. Library accordions open for active scans and available
+by client and added path. Library accordions open for active scans and available
 changes; their open or closed state follows the user's choice while progress
 updates. The review separates new or changed installations from installations
 that appear removed. Add/Update results are selected by default; Remove results
@@ -48,7 +50,7 @@ has its own sources and override behavior, described in [Games](games.md#tile-ba
 | Battle.net | `%ProgramData%/Battle.net/Agent/product.db` | Reads the installed product records in the local protobuf database; excludes Agent/client entries and missing/uninstalled paths. Known products receive display names; other products use their install folder name. |
 | EA app / Origin | Windows `EA Games`, `Origin Games`, `Electronic Arts/EA Games` and `Electronic Arts/EA Core/Installed Games` registry branches | Reads existing install directories in both registry views and both machine/user hives. Empty and stale records are skipped; folder names supply missing display names. |
 | Ubisoft Connect | Windows `Ubisoft/Launcher/Installs/<appId>` registry records | Uses `InstallDir`, with uninstall-record display names when available and folder-name fallback. |
-| GOG | Windows `GOG.com/Games/<gameId>` registry records | Uses the game's `PATH` and local display name. This also covers standalone GOG installers without Galaxy. |
+| GOG | Windows `GOG.com/Games/<gameId>` registry records | Uses the game's `PATH` and local display name when Galaxy is installed. Other installations can be discovered through user-added folders. |
 | Xbox PC | `<drive>:/XboxGames/<game>/Content/MicrosoftGame.config` on fixed local drives | Reads identity, display name and PC executable from the GDK configuration. Custom install roots and protected WindowsApps packages may not be discoverable. |
 
 The Steam adapter does not read account-wide app metadata to guess a launch

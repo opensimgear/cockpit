@@ -34,6 +34,16 @@ test('empty game filters include all games and selections combine within and acr
   const first=emptyGameListFilters(),second=emptyGameListFilters();first.tags.push('simulation');assert.equal(second.tags.length,0);
 });
 
+test('name search ignores case and surrounding whitespace and combines with other filters',()=>{
+  assert.equal(ids({name:'  INTEGRATED  '}),'sim,other');
+  assert.equal(ids({name:'game'}),'racer,local,other');
+  assert.equal(ids({name:'integrated',tags:['flight'],libraries:['steam'],integrations:['available']}),'sim');
+  assert.equal(ids({name:'integrated',tags:['racing']}),'');
+  assert.equal(ids({name:'not installed here'}),'');
+  assert.equal(ids({name:'   '}),'sim,racer,local,other');
+  assert.equal(emptyGameListFilters().name,'');
+});
+
 test('library options cover every installation without treating a supplemental disk observation as a local copy',()=>{
   const list=[...games,{id:'missing',name:'No source'},{id:'shared',name:'Shared path',installations:[{source:'steam',sources:[librarySource('steam'),librarySource('epic'),librarySource('disk')]}]},{id:'manual',name:'Manual',source:'manual'},{id:'standalone',name:'Standalone',source:'standalone'}];
   assert.equal(gameListLibraries(list).map(option=>option.label).join(','),'Epic Games,Local,Steam');
@@ -50,13 +60,15 @@ async function component(name){
     if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(dependencies.has(name))return dependencies.get(name);if(modules.has(name))return modules.get(name);throw Error(name);
   }});return exports.default;
 }
-test('game filter panel uses three multiselect groups with accessible controls',async()=>{
+test('game filter panel uses name search and four multiselect groups with accessible controls',async()=>{
   const Panel=await component('./GameListFilters.svelte');
-  const html=render(Panel,{props:{games,tags:{simulation:'Simulation',racing:'Racing'},filters:{tags:['simulation'],libraries:['steam'],integrations:['available']},manageTags(){throw Error('Passive render');}}}).body;
+  const html=render(Panel,{props:{games,tags:{simulation:'Simulation',racing:'Racing'},filters:{name:'Simulator',tags:['simulation'],libraries:['steam'],integrations:['available'],profiles:['yes']},manageTags(){throw Error('Passive render');}}}).body;
+  assert.match(html,/<label[^>]*><span[^>]*>Name<\/span><input[^>]*type="search"/);
+  assert.match(html,/<input[^>]*value="Simulator"/);
   assert.match(html,new RegExp('<label[^>]*>Tags</label>'));assert.match(html,/role="combobox"/);assert.match(html,/aria-label="Remove Simulation"/);
-  for(const label of ['Library','Integration available'])assert.match(html,new RegExp('<legend[^>]*>'+label+'</legend>'));
-  assert.equal((html.match(/type="checkbox"/g)??[]).length,5);
-  assert.equal((html.match(/<input[^>]*checked/g)??[]).length,2);
+  for(const label of ['Library','Integration available','Has profile'])assert.match(html,new RegExp('<legend[^>]*>'+label+'</legend>'));
+  assert.equal((html.match(/type="checkbox"/g)??[]).length,7);
+  assert.equal((html.match(/<input[^>]*checked/g)??[]).length,3);
   assert.ok(html.includes('Manage tags'));assert.ok(html.includes('Clear'));
 });
 test('game list hides the filter panel initially and has an icon-only toggle in its actions',async()=>{
@@ -77,13 +89,14 @@ test('tag selector renders controlled removable badges inside its accessible sea
   assert.match(disabled,/<input[^>]*disabled/);assert.match(disabled,/<button[^>]*disabled/);
 });
 
-test('tag manager preserves IDs and captures the taxonomy for conflict detection',async()=>{
+test('tag manager uses the shared multiline badge field and preserves tag identities',async()=>{
   const Dialog=await component('./GameTagsDialog.svelte');
   const tags=Object.fromEntries(Array.from({length:47},(_,index)=>['tag-'+index,'Genre '+index]));
-  const html=render(Dialog,{props:{tags,request(){throw Error('Passive render');},close(){},saved(){}}}).body;
-  assert.equal((html.match(/class="tag-row/g)??[]).length,47);
-  assert.match(html,/data-tag-id="tag-0"/);assert.match(html,/aria-label="Search tags"/);
-  for(const label of ['Add','Delete','Cancel','Save'])assert.ok(html.includes(label));
+  const html=render(Dialog,{props:{tags,games:[],request(){throw Error('Passive render');},close(){},saved(){}}}).body;
+  assert.equal((html.match(/class="tag-chip/g)??[]).length,47);
+  assert.match(html,/data-tag-id="tag-0"/);assert.match(html,/<textarea[^>]*aria-label="Tags"/);
+  assert.match(html,/aria-label="Rename Genre 0"/);assert.match(html,/aria-label="Delete Genre 0"/);
+  for(const label of ['Cancel','Save'])assert.ok(html.includes(label));
 });
 
 

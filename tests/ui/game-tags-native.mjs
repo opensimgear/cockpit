@@ -50,16 +50,18 @@ test('game tags support multiple chips, editable taxonomy, filtering, persistenc
     evidence.checks.push('The game list filters by tag membership.');
 
     const renamed='Motorsport acceptance '+Date.now();let dialog=await manage();
-    await dialog.getByLabel('Search tags',{exact:true}).fill('Racing');
-    const racing=dialog.locator('[data-tag-id="racing"]');await racing.getByRole('textbox').fill(renamed);await expect(racing).toBeVisible();await saveDialog(dialog);
+    await dialog.getByRole('button',{name:'Rename Racing',exact:true}).click();
+    await dialog.getByRole('textbox',{name:'New name for Racing',exact:true}).fill(renamed);await dialog.getByRole('textbox').press('Enter');await expect(dialog.locator('[data-tag-id="racing"]')).toBeVisible();await saveDialog(dialog);
     let current=await state();assert.equal(current.tags.racing,renamed);assert.deepEqual(current.catalogue.find(item=>item.id===game.id).tagIds,['racing','simulation']);
     await page.reload();await expect(input).toBeVisible();await expect(page.getByRole('button',{name:'Remove '+renamed,exact:true})).toBeVisible();
-    dialog=await manage();await dialog.getByLabel('Search tags',{exact:true}).fill(renamed);await dialog.locator('[data-tag-id="racing"]').getByRole('button',{name:/Delete tag/}).click();
-    await dialog.getByRole('button',{name:'Add',exact:true}).click();const newRow=dialog.locator('.tag-row').last(),tagId=await newRow.getAttribute('data-tag-id');
-    await newRow.getByRole('textbox').fill('Simulation');await expect(dialog.getByRole('button',{name:'Save',exact:true})).toBeDisabled();
-    await newRow.getByRole('textbox').fill('Acceptance tag '+Date.now());await saveDialog(dialog);
+    dialog=await manage();await dialog.getByRole('button',{name:'Delete '+renamed,exact:true}).click();
+    const confirmation=page.getByRole('alertdialog'),affected=(await state()).catalogue.filter(item=>item.tagIds.includes('racing')).length;
+    await expect(confirmation).toContainText(`from ${affected} ${affected===1?'game':'games'}`);await confirmation.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog.locator('[data-tag-id="racing"]')).toBeVisible();
+    await dialog.getByRole('button',{name:'Delete '+renamed,exact:true}).click();await confirmation.getByRole('button',{name:'Delete',exact:true}).click();
+    const managerInput=dialog.getByRole('textbox',{name:'Tags',exact:true});await managerInput.fill('Simulation');await managerInput.press('Enter');await expect(dialog.getByRole('alert')).toContainText('distinct names');
+    const newName='Acceptance tag '+Date.now();await managerInput.fill(newName);await managerInput.press('Enter');const tagId=await dialog.getByRole('button',{name:'Rename '+newName,exact:true}).locator('..').getAttribute('data-tag-id');await saveDialog(dialog);
     current=await state();assert.ok(!Object.hasOwn(current.tags,'racing'));assert.deepEqual(current.catalogue.find(item=>item.id===game.id).tagIds,['simulation']);
-    evidence.checks.push('Searched tags can be renamed; IDs and assignments survive reload; duplicate labels are rejected; deleting one tag retains another.');
+    evidence.checks.push('Multiline badges can be added and renamed; deleting shows the affected game count and requires confirmation; IDs survive reload and other tags stay assigned.');
 
     settings=await invoke('mcp_settings_get');const credential=await setting('mcp_credential_create',{name:'Tag acceptance',scope:'write'});credentialId=credential.credential.id;
     const enabled=await setting('mcp_settings_update',{enabled:true,port:settings.port});client=new Client({name:'Tag acceptance',version:'1'},{capabilities:{}});

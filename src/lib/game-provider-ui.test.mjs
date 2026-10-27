@@ -39,11 +39,21 @@ const { defaultProviderConnection } = modules.get('./game-provider-settings');
 const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup:{state:'setup-required',message:'Configure this provider',providerSetupRevision:`sha256:${'1'.repeat(64)}`,userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}},integrationContext:{status:'waiting-profile',message:'An active matching profile is required',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
 const state = g => ({catalogue:[g],cleanup:{phase:'idle'}});
 
+test('detail rescan refreshes only its game in place while library rescan stays global',async()=>{
+  let handlers,release;const calls=[];
+  const Panel=await component('./GamesPanel.svelte',{source:source=>source.replace('</script>','captureGameRequests({rescanGame,discoverInstallation,get refreshing(){return refreshing;},get artworkRefresh(){return artworkRefresh;},get discoveryView(){return discoveryView;}});</script>'),receive:value=>handlers=value});
+  const g=game('dcs');render(Panel,{props:{status:state(g),selectedGameId:g.id,busy:false,request:request=>{calls.push(plain(request));return new Promise(resolve=>release=resolve);}}}).body;
+  const pending=handlers.rescanGame(g);assert.equal(handlers.refreshing,true);await handlers.rescanGame(g);assert.deepEqual(calls,[{command:'game_rescan',gameId:g.id}]);
+  release(state(g));await pending;assert.equal(handlers.refreshing,false);assert.equal(handlers.artworkRefresh,1);assert.equal(handlers.discoveryView,false);
+  const library=handlers.discoverInstallation();assert.deepEqual(calls.at(-1),{command:'game_discovery_start'});release(state(g));await library;assert.equal(handlers.discoveryView,true);
+});
+
 test('all games share presentation and only assigned tags add tile badges',()=>{
   const titles=[{id:'dcs',name:'Renamed flight title',provider:null,installed:true,launchSupported:false},{id:'assetto-corsa',name:'Renamed driving title',provider:'assetto-corsa',installed:true,launchSupported:false},{id:'game-any-title',name:'Another title',provider:null,installed:true,launchSupported:false},{id:'game-assigned',name:'Assigned title',provider:null,tagIds:['mine','racing'],installed:true,launchSupported:false}];
   const status={catalogue:titles,tags:{mine:'My tag',racing:'Racing'}};
   const html=render(GamesPanel,{props:{status,busy:false,request:noRequest}}).body;
   const badges=[...html.matchAll(/<span[^>]*class="art-tag(?:\s[^"]*)?"[^>]*>([^]*?)<\/span>/g)].map(match=>match[1]);assert.deepEqual(badges,['My tag','Racing']);
+  for(const badge of ['tile-status','tile-integration','integration-badge'])assert.ok(!html.includes(badge),badge);
   assert.ok(!html.includes('/game-art/'));assert.equal((html.match(/class="game-art-placeholder/g)??[]).length,titles.length);
   for(const title of titles){
     const detail=render(GamesPanel,{props:{status,selectedGameId:title.id,busy:false,request:noRequest}}).body;
@@ -51,6 +61,16 @@ test('all games share presentation and only assigned tags add tile badges',()=>{
     assert.ok(!detail.includes('Flight simulation'));assert.ok(!detail.includes('Racing simulation'));
     assert.ok(detail.includes('Game tags'));assert.ok(!detail.includes('class="header-eyebrow'));
   }
+});
+
+test('Add has a separate folder/executable/name/image form and sends no discovery request',async()=>{
+  let handlers,result;const calls=[];
+  const Dialog=await component('./GameAddDialog.svelte',{source:value=>value.replace('</script>','captureGameRequests({setRoot,setName(value){name=value;},setExecutable(value){executable=value;},add});</script>'),receive:value=>handlers=value});
+  const html=render(Dialog,{props:{request:async command=>{calls.push(command);return{catalogue:[{id:'game-added',name:command.name}],addedGameId:'game-added'};},close:noRequest,added:value=>result=value}}).body;
+  for(const label of ['Game root folder','New game executable','New game name','Upload image'])assert.ok(html.includes(label));
+  handlers.setRoot('C:/Games/Local');handlers.setName('My local game');handlers.setExecutable('bin/Game.exe');await handlers.add();
+  assert.deepEqual(plain(calls),[{command:'game_add',name:'My local game',installPath:'C:/Games/Local',executable:'C:\\Games\\Local\\bin\\Game.exe'}]);assert.equal(result.addedGameId,'game-added');
+  const list=render(GamesPanel,{props:{status:{catalogue:[]},busy:false,request:noRequest}}).body;assert.match(list,/>Add<\/button>/);assert.ok(list.includes('Rescan'));
 });
 
 test('game metadata dialogs receive the original actionable native failure while ordinary panel requests retain inline errors',async()=>{
@@ -86,7 +106,8 @@ test('custom games expose matching profiles, metadata and background editing wit
   assert.ok(!html.includes('Game executable path'));assert.ok(!/>Edit<\/button>/.test(html));assert.equal((html.match(/aria-label="Game executable"/g)??[]).length,1);
   for(const absent of ['Integration setup','Install integration','Native telemetry not verified','Current aircraft','Current car'])assert.ok(!html.includes(absent),absent);
   const list=render(GamesPanel,{props:{status:state(g),busy:false,request:noRequest}}).body;
-  for(const label of ['Rescan','Custom game','Not found'])assert.ok(list.includes(label),label);
+  for(const label of ['Rescan','Custom game'])assert.ok(list.includes(label),label);
+  assert.ok(!list.includes('Not found'));
 });
 
 test('executable fields show installation-relative paths and save relative edits as full paths',async()=>{

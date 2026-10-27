@@ -1,6 +1,8 @@
 //! Atomic edits to the discovered game registry. Discovery proposes; Apply publishes.
 use super::*;
 use std::fs;
+#[path="games/manual_registration.rs"] mod manual_registration;
+#[path="games/refresh.rs"] mod refresh;
 pub(crate) struct PreparedMetadata {
     runtime:Arc<Inner>,captured:crate::game_installations::Settings,next:crate::game_installations::Settings,
     catalogue:Vec<Value>,added_game_id:Option<String>,scan_id:Option<String>,staging:crate::game_artwork::Staging,
@@ -28,6 +30,22 @@ impl GamesRuntime {
         let (captured,catalogue)={let settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());(settings.saved.clone(),settings.catalogue.clone())};
         let mut next=captured.clone();let mut added=None;let mut scan_id=None;
         match request["command"].as_str().unwrap_or("") {
+            "game_rescan"=>{
+                fields(request,&["gameId"])?;
+                let id=request["gameId"].as_str().ok_or("Choose a discovered game to rescan.")?;
+                refresh::refresh(&mut next,id,self.inner.installations.root(),||self.inner.closed.load(Ordering::Acquire))?;
+                for installation in next.games[id].installations.values() {unique_executable(&catalogue,id,installation.executable.as_deref())?;}
+                added=Some(id.into());
+            }
+            "game_add"=>{
+                fields(request,&["name","installPath","executable","imagePath"])?;
+                let id=manual_registration::register(&mut next,&catalogue,request)?;
+                if let Some(path)=request.get("imagePath").filter(|value|!value.is_null()) {
+                    let image=crate::game_artwork::import(self.inner.installations.root(),path.as_str().ok_or("Choose an image file.")?,50.0,50.0)?;
+                    next.backgrounds.insert(id.clone(),image);
+                }
+                added=Some(id);
+            }
             "game_discovery_apply"=>{
                 fields(request,&["scanId","actions"])?;
                 let review=self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()).clone();

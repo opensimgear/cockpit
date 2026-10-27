@@ -17,6 +17,17 @@ fn runtime_keys(paths: &[String]) -> BTreeSet<String> {
         .collect()
 }
 
+pub(super) fn align_saved_root(saved: &crate::game_installations::Settings, candidate: &mut Candidate) {
+    if candidate.client != "disk" { return; }
+    if let Some(installation) = saved.games.values().flat_map(|game| game.installations.values()).find(|installation| {
+        path_key(&candidate.install_path).starts_with(&format!("{}\\", path_key(&installation.root)))
+            && installation.executable.as_ref().is_some_and(|selected|
+                candidate.executable_candidates.iter().any(|path| same_path(path, selected)))
+    }) {
+        candidate.install_path = installation.root.clone();
+    }
+}
+
 pub(super) fn reconcile(
     saved: &crate::game_installations::Settings,
     candidates: Vec<Candidate>,
@@ -32,10 +43,11 @@ pub(super) fn with_metadata(
     metadata: &super::tagging::Metadata,
 ) -> Vec<Entry> {
     let mut grouped: BTreeMap<String, Vec<Candidate>> = BTreeMap::new();
-    for candidate in candidates
+    for mut candidate in candidates
         .into_iter()
         .filter(|candidate| candidate.kind != "tool")
     {
+        align_saved_root(saved, &mut candidate);
         grouped
             .entry(path_key(
                 &candidate.install_path,
@@ -46,15 +58,12 @@ pub(super) fn with_metadata(
     let mut entries = vec![];
     let mut replaced = BTreeSet::new();
     for (_, mut observations) in grouped {
-        observations
-            .sort_by_key(|candidate| (candidate.game_id.is_none(), candidate.client == "disk"));
+        observations.sort_by_key(super::observations::priority);
         let candidate = &observations[0];
         let root = Path::new(&candidate.install_path);
         let recognition =
             crate::game_discovery::recognize_installation(root, &candidate.executable_candidates);
-        let recognized = candidate
-            .game_id
-            .clone()
+        let recognized = observations.iter().find_map(|candidate|candidate.game_id.clone())
             .or_else(|| recognition.as_ref().map(|(id, _, _)| id.clone()));
         let integration = recognized
             .as_ref()
@@ -113,7 +122,9 @@ pub(super) fn with_metadata(
                     .get(&game_id)
                     .and_then(|game| game.integration.as_ref())
                     == Some(key)
-            }) && sources.iter().all(|source| old.sources.iter().any(|previous| same_source(source, previous)))
+            }) && sources
+                .iter()
+                .all(|source| old.sources.iter().any(|previous| same_source(source, previous)))
                 && runtime_keys(&runtimes) == runtime_keys(&old.executables)
                 && old
                     .executable

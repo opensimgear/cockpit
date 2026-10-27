@@ -19,6 +19,8 @@ dist/
 output/
 .playwright-cli/
 target/
+*.profraw
+*.profdata
 .build/
 .env
 .env.*

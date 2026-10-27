@@ -2,6 +2,20 @@ use super::*;
 use std::sync::Mutex;
 
 #[test]
+fn single_game_rescan_routes_only_its_identity_with_bounded_replayable_receipts() {
+    let (tools,backend)=fixture(json!({"ok":true,"state":{"games":{"catalogue":[{"id":"fixture","name":"Fixture","tagIds":["racing"],"defaultBackground":{"image":"x".repeat(50000)}}]}}}));
+    assert!(is_mutation("game_rescan"));
+    let definition=catalogue().into_iter().find(|tool|tool["name"]=="game_rescan").unwrap();
+    assert_eq!(definition["annotations"]["readOnlyHint"],false);
+    let args=json!({"operationId":"1b4e28ba-2fa1-11d2-883f-0016d3cca427","gameId":"fixture"});
+    let result=tools.call("game_rescan",args.clone(),"writer");assert_eq!(result["ok"],true,"{result}");
+    assert_eq!(result["data"]["gameId"],"fixture");assert!(result.to_string().len()<3000);
+    assert_eq!(tools.call("game_rescan",args,"writer"),result);
+    let requests=backend.requests.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0]["command"],"game_rescan");assert_eq!(requests[0]["gameId"],"fixture");
+    assert!(requests[0].get("paths").is_none());
+}
+
+#[test]
 fn cached_game_metadata_is_a_passive_mcp_tool_with_provenance() {
     let response=json!({"gameId":"fixture","source":"wikidata","sourceName":"Wikidata","license":"CC0","status":"matched",
         "results":[{"platform":"gog","appId":"42","lookup":{"status":"matched","metadata":{"entityId":"Q123","genres":[{"id":"Q8607","label":"racing video game"}]}}}]});
@@ -95,6 +109,17 @@ fn game_tag_saves_validate_ids_bounds_duplicates_and_forward_expected_state() {
 }
 
 #[test]
+fn manual_game_add_is_replayable_and_returns_the_created_game_identity() {
+    let (tools,backend)=fixture(json!({"ok":true,"state":{"games":{"addedGameId":"game-manual","catalogue":[{"id":"game-manual","name":"Local game","selectedInstallationId":"copy"}]}}}));
+    let args=json!({"operationId":"394545e5-b5b1-4ca7-8e44-80609e47972b","name":"Local game","installPath":"C:/Games/Local","executable":"C:/Games/Local/Game.exe","imagePath":"C:/Images/cover.png"});
+    assert!(is_mutation("game_add"));let receipt=tools.call("game_add",args.clone(),"writer");
+    assert_eq!(receipt["ok"],true,"{receipt}");assert_eq!(receipt["data"]["gameId"],"game-manual");
+    assert_eq!(tools.call("game_add",args,"writer"),receipt);
+    let requests=backend.requests.lock().unwrap();assert_eq!(requests.len(),1);
+    assert_eq!(requests[0]["command"],"game_add");assert_eq!(requests[0]["imagePath"],"C:/Images/cover.png");
+}
+
+#[test]
 fn artwork_tools_forward_exact_ids_and_save_bounded_replayable_receipts() {
     let (tools, backend) = fixture(json!({"ok":true,"state":{"gameArtwork":{"gameId":"game-fixture","items":[{"id":"a".repeat(64),"label":"Cover","image":"thumbnail"}],"total":1,"nextOffset":null}}}));
     let list = tools.call("game_artwork_list", json!({"gameId":"game-fixture","limit":4}), "reader");
@@ -119,6 +144,26 @@ fn artwork_tools_forward_exact_ids_and_save_bounded_replayable_receipts() {
     assert!(backend.requests.lock().unwrap()[2].get("operationId").is_none());
 }
 
+#[test]
+fn show_all_pages_raw_detections_per_library_without_selecting_them() {
+    let (tools,backend)=fixture(json!({"ok":true,"state":{"games":{"discovery":{
+        "scanId":"scan-1","entries":[{"id":"add","library":"steam","selected":true}],
+        "observations":[{"id":"steam:1","client":"steam"},{"id":"disk:1","client":"disk"},{"id":"disk:2","client":"disk"}]
+    }}}}));
+    let result=tools.call("game_discovery_status",json!({"scanId":"scan-1","showAll":true,"library":"disk","limit":1}),"reader");
+    assert_eq!(result["ok"],true,"{result}");
+    assert_eq!(result["data"]["entries"],json!([]));
+    assert_eq!(result["data"]["observations"][0]["id"],"disk:1");
+    assert_eq!(result["data"]["detectedTotal"],2);
+    assert_eq!(result["data"]["detectedNextOffset"],1);
+    let page=tools.game_discovery_status(&json!({"scanId":"scan-1","showAll":true,"library":"disk","offset":1,"limit":1}),"reader").unwrap();
+    assert_eq!(page["observations"][0]["id"],"disk:2");
+    assert!(page["detectedNextOffset"].is_null());
+    let changes=tools.game_discovery_status(&json!({"scanId":"scan-1"}),"reader").unwrap();
+    assert!(changes.get("observations").is_none());
+    assert_eq!(changes["entries"][0]["selected"],true);
+    assert!(backend.requests.lock().unwrap().iter().all(|request|request["command"]=="game_get_state"));
+}
 
 #[derive(Default)]
 struct Fixture {

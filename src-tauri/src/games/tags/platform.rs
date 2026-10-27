@@ -47,6 +47,15 @@ where
     F: Fn(u32, Duration) -> Result<Vec<u8>, String> + Sync,
     C: Fn() -> bool + Sync,
 {
+    load_using(root,app_ids,cancelled,fetch_metadata,false)
+}
+
+pub(crate) fn refresh(root:&Path,app_ids:&[u32],cancelled:impl Fn()->bool+Sync)->BTreeMap<u32,Vec<String>> {
+    load_using(root,app_ids,&cancelled,fetch,true)
+}
+
+fn load_using<F,C>(root:&Path,app_ids:&[u32],cancelled:&C,fetch_metadata:F,refresh:bool)->BTreeMap<u32,Vec<String>>
+where F:Fn(u32,Duration)->Result<Vec<u8>,String>+Sync,C:Fn()->bool+Sync {
     let started = Instant::now();
     let directory = cache_directory(root, true);
     let ids = app_ids
@@ -66,6 +75,7 @@ where
             .and_then(|directory| read_cache(directory, app_id))
         {
             result.insert(app_id, genres);
+            if refresh {missing.push_back(app_id);}
         } else {
             missing.push_back(app_id);
         }

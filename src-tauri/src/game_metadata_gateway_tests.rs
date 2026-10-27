@@ -23,6 +23,20 @@ fn tag_taxonomy_commit_rechecks_authorization_and_preserves_empty_persisted_map(
 }
 
 #[test]
+fn manual_game_add_rechecks_authorization_and_leaves_discovery_untouched() {
+    let manager=GatewayManager::mcp_test_manager();
+    let client=crate::mcp_tools::native_client("manual-add-revocation");manager.mcp_authorize_client(&client,true);
+    let directory=crate::test_directory();let executable=directory.path().join("Game.exe");std::fs::write(&executable,b"fixture").unwrap();
+    let request=json!({"command":"game_add","clientId":client,"name":"Direct game","installPath":directory.path(),"executable":executable});
+    let before=manager.games.status()["discovery"].clone();let captured=manager.capture_mcp_authorization(&client).unwrap();
+    manager.mcp_authorize_client(&client,false);
+    assert_eq!(manager.game_metadata_request(&request,captured.as_ref())["ok"],false);
+    assert!(!manager.games.status()["catalogue"].as_array().unwrap().iter().any(|game|game["name"]=="Direct game"));
+    manager.mcp_authorize_client(&client,true);let reply=manager.mcp_request(request);assert_eq!(reply["ok"],true,"{reply}");
+    assert_eq!(manager.games.status()["discovery"],before);manager.shutdown();
+}
+
+#[test]
 fn discovery_apply_rechecks_captured_mcp_authorization_before_registry_commit() {
     let manager = GatewayManager::mcp_test_manager();
     let client = crate::mcp_tools::native_client("discovery-apply-revocation");

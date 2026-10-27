@@ -1,8 +1,8 @@
 use super::*;
 #[path="completion.rs"] mod completion;
 pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
-    start_with_metadata(runtime,request,crate::game_library::installed_clients(),|client,roots| {
-        crate::game_library::scan_client(client,roots)
+    start_with_metadata(runtime,request,crate::game_library::installed_clients(),|client,roots,occupied| {
+        if client=="disk" {crate::game_library::scan_user_paths(roots,occupied)}else{crate::game_library::scan_client(client,roots)}
     },|saved,candidates,root,cancelled|super::tagging::load(saved,candidates,root,cancelled))
 }
 #[cfg(test)]
@@ -12,13 +12,13 @@ fn start_with(
     clients:Vec<(&'static str,&'static str)>,
     scan_client:impl Fn(&str,&[PathBuf])->crate::game_library::Scan+Send+'static,
 )->Result<(),String> {
-    start_with_metadata(runtime,request,clients,scan_client,|_,_,_,_|BTreeMap::new())
+    start_with_metadata(runtime,request,clients,move|client,roots,_|scan_client(client,roots),|_,_,_,_|BTreeMap::new())
 }
 fn start_with_metadata(
     runtime:&GamesRuntime,
     request:&Value,
-    clients:Vec<(&'static str,&'static str)>,
-    scan_client:impl Fn(&str,&[PathBuf])->crate::game_library::Scan+Send+'static,
+    mut clients:Vec<(&'static str,&'static str)>,
+    scan_client:impl Fn(&str,&[PathBuf],&[PathBuf])->crate::game_library::Scan+Send+'static,
     metadata:impl Fn(&crate::game_installations::Settings,&[Candidate],&Path,&(dyn Fn()->bool+Sync))->super::tagging::Metadata+Send+'static,
 )->Result<(),String> {
     let _admission=runtime.admission.try_lock().map_err(|_|"Game metadata is busy. Retry discovery after the current update.")?;
@@ -27,19 +27,20 @@ fn start_with_metadata(
     let paths=match request.get("paths") {
         None=>vec![],Some(value)=>serde_json::from_value::<Vec<String>>(value.clone()).map_err(|_|"Choose discovery locations.".to_owned())?,
     };
-    if paths.len()>64 || paths.iter().any(|path|!crate::game_installations::executable(path)||!Path::new(path).exists()) {return Err("Choose up to 64 existing absolute discovery locations.".into());}
+    if paths.len()>64 || paths.iter().any(|path|!crate::game_installations::executable(path)||!Path::new(path).is_dir()) {return Err("Choose up to 64 existing absolute discovery folders.".into());}
     let saved=runtime.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).saved.clone();
+    let roots=saved.scan_roots.iter().chain(paths.iter()).map(PathBuf::from).collect::<Vec<_>>();
+    if !roots.is_empty()&&!clients.iter().any(|(id,_)|*id=="disk") {clients.push(("disk","Added paths"));}
     let mut review=runtime.inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
     if review.status=="scanning" {return Err("Game discovery is already running.".into());}
     let scan_id=uuid::Uuid::new_v4().to_string();
-    *review=Review{scan_id:scan_id.clone(),status:"scanning".into(),libraries:clients.iter().map(|(id,name)|Library{id:(*id).into(),name:(*name).into(),status:"queued".into(),found:0,message:None}).collect(),entries:vec![],diagnostics:vec![],first_start:!saved.discovery_initialized,revision:saved.revision,paths:paths.clone()};
+    *review=Review{scan_id:scan_id.clone(),status:"scanning".into(),libraries:clients.iter().map(|(id,name)|Library{id:(*id).into(),name:(*name).into(),status:"queued".into(),found:0,message:None}).collect(),entries:vec![],observations:vec![],diagnostics:vec![],first_start:!saved.discovery_initialized,revision:saved.revision,paths:paths.clone()};
     drop(review);
     let inner=runtime.inner.clone();
-    let mut roots=saved.scan_roots.iter().chain(paths.iter()).map(PathBuf::from).collect::<Vec<_>>();
-    roots.extend(saved.games.values().flat_map(|game|game.installations.values()).map(|installation|PathBuf::from(&installation.root)).filter(|path|path.exists()));
     let worker=thread::Builder::new().name("game-discovery".into()).spawn(move|| {
         let outcome=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut candidates=vec![];let mut successful=BTreeSet::new();
+            let mut occupied=saved.games.values().flat_map(|game|game.installations.values()).map(|installation|PathBuf::from(&installation.root)).collect::<Vec<_>>();
             for (client,_) in &clients {
                 if inner.closed.load(Ordering::Acquire) {return;}
                 {
@@ -47,7 +48,9 @@ fn start_with_metadata(
                     if review.scan_id!=scan_id {return;}
                     if let Some(library)=review.libraries.iter_mut().find(|library|library.id==*client) {library.status="scanning".into();}
                 }
-                let scan=scan_client(client,&roots);
+                let mut scan=scan_client(client,&roots,&occupied);
+                if *client!="disk" {occupied.extend(scan.candidates.iter().map(|candidate|PathBuf::from(&candidate.install_path)));}
+                for candidate in &mut scan.candidates {super::reconcile::align_saved_root(&saved,candidate);}
                 let failed=scan.diagnostics.iter().any(|message|message.contains("could not be read")||message.contains("inaccessible")||message.contains("malformed")||message.contains("not installed"));
                 let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
                 if let Some(library)=review.libraries.iter_mut().find(|library|library.id==*client) {
@@ -57,9 +60,7 @@ fn start_with_metadata(
                 if !failed {successful.insert((*client).to_owned());}
                 for diagnostic in scan.diagnostics {if review.diagnostics.len()<64 {review.diagnostics.push(diagnostic);}}
                 candidates.extend(scan.candidates);
-            }
-            if successful.contains("disk") {
-                for (client,_) in crate::game_library::CLIENTS {if !clients.iter().any(|(id,_)|id==client) {successful.insert((*client).into());}}
+                super::observations::publish(&mut review,&candidates);
             }
             let mut artwork=std::collections::BTreeMap::new();
             for candidate in &candidates {

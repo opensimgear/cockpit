@@ -116,7 +116,7 @@ export async function pickGameImage(currentPath?: string | null): Promise<string
   return invoke<string | null>('pick_game_image', { currentPath: currentPath ?? null });
 }
 
-export async function pickGameIntegrationFolder(kind: 'saved-games' | 'catalogue', currentPath?: string | null): Promise<string | null> {
+export async function pickGameIntegrationFolder(kind: 'game' | 'saved-games' | 'catalogue', currentPath?: string | null): Promise<string | null> {
   if (!isTauri()) throw new Error('The native folder picker is available in the Cockpit desktop app.');
   return invoke<string | null>('pick_game_integration_folder', { kind, currentPath: currentPath ?? null });
 }

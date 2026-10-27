@@ -83,15 +83,25 @@ impl Tools {
                 false,
             )
         })?;
+        let library = args["library"].as_str();
+        let entries = entries.iter().filter(|entry|library.is_none_or(|library|entry["library"]==library)).collect::<Vec<_>>();
         let offset = args["offset"].as_u64().unwrap_or(0) as usize;
         let limit = args["limit"].as_u64().unwrap_or(32) as usize;
         let total = entries.len();
         let mut page = discovery.clone();
+        if let Some(object)=page.as_object_mut() {object.remove("observations");}
+        if args["showAll"]==true {
+            let observations=discovery["observations"].as_array().into_iter().flatten().filter(|entry|library.is_none_or(|library|entry["client"]==library)).collect::<Vec<_>>();
+            page["observations"]=json!(observations.iter().skip(offset).take(limit).collect::<Vec<_>>());
+            page["detectedTotal"]=json!(observations.len());
+            let next=offset+page["observations"].as_array().map_or(0,Vec::len);
+            page["detectedNextOffset"]=if next<observations.len(){json!(next)}else{Value::Null};
+        }
         let mut page_entries = entries
             .iter()
             .skip(offset)
             .take(limit)
-            .cloned()
+            .map(|entry|(**entry).clone())
             .collect::<Vec<_>>();
         for entry in &mut page_entries {
             if let Some(object) = entry.as_object_mut() {
@@ -198,6 +208,19 @@ impl Tools {
             Some("games"),
         )?;
         metadata_receipt(&data, args["gameId"].as_str().unwrap_or(""), false)
+    }
+
+    pub(super) fn game_rescan(&self,args:&Value,client:&str)->Result<Value,Value> {
+        let data=self.native("game_rescan",select(args,&["gameId"]),client,Some("games"))?;
+        metadata_receipt(&data,args["gameId"].as_str().unwrap_or(""),false)
+    }
+
+    pub(super) fn game_add(&self, args: &Value, client: &str) -> Result<Value, Value> {
+        let data = self.native("game_add", select(args, &["name", "installPath", "executable", "imagePath"]), client, Some("games"))?;
+        let id = data["addedGameId"].as_str().filter(|id| !id.is_empty()).ok_or_else(|| {
+            failure("invalid_native_result", "The added game has no identity.", false)
+        })?;
+        metadata_receipt(&data, id, false)
     }
 
     pub(super) fn game_remove(&self, args: &Value, client: &str) -> Result<Value, Value> {
