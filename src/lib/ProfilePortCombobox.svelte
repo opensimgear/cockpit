@@ -12,6 +12,8 @@
     disabled = false,
     compact = false,
     iconTrigger = false,
+    allowEmpty = false,
+    showClearWhenEmpty = false,
     limit = 200,
     onselect,
     onclear,
@@ -25,6 +27,8 @@
     disabled?: boolean;
     compact?: boolean;
     iconTrigger?: boolean;
+    allowEmpty?: boolean;
+    showClearWhenEmpty?: boolean;
     limit?: number;
     onselect?: (value:string)=>void;
     onclear?:()=>void;
@@ -41,12 +45,18 @@
   let dropdownPosition=$state('');
   let scrollTop=$state(0);
   const rowHeight=76;
-  const selected = $derived(options.find(option => option.value === value));
+  const selected = $derived(allowEmpty && value === '' ? undefined : options.find(option => option.value === value));
   const pageLimit = $derived(Math.max(1, Math.min(200, Math.floor(limit) || 200)));
-  const indexed=$derived(options.map(option=>({option,text:`${option.label} ${option.description??''} ${option.searchText??''}`.toLowerCase()})));
+  const emptyOption: PortOption = { value: '', label: 'None' };
+  const searchableOptions = $derived(allowEmpty && !iconTrigger
+    ? [emptyOption, ...options.filter(option => option.value !== '')]
+    : options);
+  const indexed=$derived(searchableOptions.map(option=>({option,text:`${option.label} ${option.description??''} ${option.searchText??''}`.toLowerCase()})));
   const matches = $derived.by(() => {
     const search = query.trim().toLowerCase();
-    return search ? indexed.filter(item=>item.text.includes(search)).map(item=>item.option) : options;
+    if (!search) return searchableOptions;
+    const filtered = indexed.filter(item => (!(allowEmpty && !iconTrigger) || item.option.value !== '') && item.text.includes(search)).map(item => item.option);
+    return allowEmpty && !iconTrigger ? [emptyOption, ...filtered] : filtered;
   });
   const windowStart=$derived(Math.max(0,Math.floor(scrollTop/rowHeight)-3));
   const visibleOptions = $derived(matches.slice(windowStart, windowStart+Math.min(pageLimit,16)));
@@ -82,8 +92,8 @@
     query = '';
     open = true;
     scrollTop=0;
-    const selectedIndex = options.findIndex(option => option.value === value);
-    activeIndex = options.length ? selectedIndex >= 0 ? selectedIndex : 0 : -1;
+    const selectedIndex = matches.findIndex(option => option.value === value);
+    activeIndex = matches.length ? selectedIndex >= 0 ? selectedIndex : 0 : -1;
     if(iconTrigger)void tick().then(()=>inputElement?.focus());
   }
 
@@ -105,7 +115,9 @@
     query = (event.currentTarget as HTMLInputElement).value;
     value = '';
     open = true;
-    activeIndex = 0;
+    activeIndex = allowEmpty && !iconTrigger && matches.some(option => option.value !== '')
+      ? matches.findIndex(option => option.value !== '')
+      : 0;
     scrollTop=0;if(listbox)listbox.scrollTop=0;
   }
 
@@ -165,7 +177,7 @@
 <div class="port-combobox" class:compact class:icon-trigger={iconTrigger} onfocusout={focusout}>
   <label id={`${uid}-label`} for={iconTrigger?undefined:`${uid}-input`}>{label}</label>
   {#if iconTrigger}<button bind:this={triggerElement} class="add-trigger" type="button" aria-label={label} title={label} aria-expanded={open&&!disabled} aria-controls={`${uid}-listbox`} {disabled} onclick={()=>open?close():show()}><Icon name="plus" size={16}/></button>
-  {:else}<div class="input-wrap" class:has-clear={!!onclear&&!!value}>{@render searchInput()}{#if onclear&&value}<button class="clear-assignment" type="button" aria-label={clearLabel} title={clearLabel} {disabled} onpointerdown={event=>event.preventDefault()} onclick={()=>{value='';close();onclear?.();}}><Icon name="close" size={12}/></button>{/if}<span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span></div>{/if}
+  {:else}<div class="input-wrap" class:has-clear={!!onclear&&(!!value||showClearWhenEmpty)}>{@render searchInput()}{#if onclear&&(value||showClearWhenEmpty)}<button class="clear-assignment" type="button" aria-label={clearLabel} title={clearLabel} {disabled} onpointerdown={event=>event.preventDefault()} onclick={()=>{close();onclear?.();}}><Icon name="close" size={12}/></button>{/if}<span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span></div>{/if}
   {#if open && !disabled}
     <div class="port-dropdown" popover={compact?'manual':undefined} use:dropdownPopover class:above={dropdownAbove} style={compact?dropdownPosition:undefined}>
       {#if iconTrigger}<div class="dropdown-search">{@render searchInput()}</div>{/if}
