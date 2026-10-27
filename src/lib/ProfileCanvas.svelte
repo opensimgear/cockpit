@@ -521,7 +521,6 @@
                 </div>
               </div>
             {:else}
-            {#if overview}{#each Object.entries(routeNodes.find(routeNode=>routeNode.id===node.id)?.inputAnchors??{}) as [id,anchor] (id)}<span class="overview-input" class:muted={!!overviewBundleId&&overviewBundleId!==id} style:top={`${anchor.y-node.position.y}px`} title="Route input"></span>{/each}{/if}
             <button class="block-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">{node.category}</span><strong>{node.name}</strong>{#if !overview}<code>{node.id}</code>{/if}</button>
             <div class="block-body"><span class="block-state">{canvasStatus(node)}</span>{#if discovering}<p class="block-note" role="status">Discovering inputs and outputs…</p>{:else if discoveryErrors[node.id]}<p class="block-note block-discovery-error" title={discoveryErrors[node.id]} role="status">Port discovery failed · {discoveryErrors[node.id]}</p>{:else if node.resource?.kind==='game'}<p class="block-note">Waits for its matching verified game and active profile.</p>{:else if node.resource?.kind==='companion'&&!document.companionAssignments.some(item=>item.resourceId===node.id)}<p class="block-note">Choose a panel to discover its inputs and outputs.</p>{:else}<div class="transport-badges">{#each canvasTransports(node) as transport (transport)}<span>{transport}</span>{/each}{#if !overview&&node.kind==='desktop'}<span>{node.desktop?.actions.length} desktop actions</span>{:else if !overview&&node.kind==='virtual'}<span>{node.virtual?.layout.buttons.length} buttons · {node.virtual?.layout.axes.length} axes</span>{/if}</div>{/if}{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
             <div class="block-port-groups">
@@ -579,7 +578,7 @@
 </section>
 
 <style>
-  .canvas-world.route-focused .signal-edge:not(.selected):not(.drop-target){opacity:.12}.canvas-world.route-focused .resource-block:not(.route-related),.canvas-world.route-focused .editor-group-frame{opacity:.2;filter:saturate(.2)}.overview-input{position:absolute;left:0;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;border:1px solid var(--accent);background:var(--surface);pointer-events:none;z-index:4}.overview-input.muted{opacity:.15}
+  .canvas-world.route-focused .signal-edge:not(.selected):not(.drop-target){opacity:.12}.canvas-world.route-focused .resource-block:not(.route-related),.canvas-world.route-focused .editor-group-frame{opacity:.2;filter:saturate(.2)}
 
   /* Zero-blur shadows outline the whole arrow, including its marker, at crossings. */
   .signal-edge{--arrow-outline:drop-shadow(1px 0 0 var(--bg)) drop-shadow(-1px 0 0 var(--bg)) drop-shadow(0 1px 0 var(--bg)) drop-shadow(0 -1px 0 var(--bg));filter:var(--arrow-outline);}
