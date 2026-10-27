@@ -41,7 +41,7 @@
   type SettingsOrigin = { view: View; selectedGameId: GameId | ''; hash: string; returnState?: unknown };
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
-    { id: 'overview', label: 'Overview', icon: 'activity' },
+    { id: 'overview', label: 'Overview', icon: 'grid' },
     { id: 'devices', label: 'Devices', icon: 'devices' },
     { id: 'profiles', label: 'Profiles', icon: 'network' },
     { id: 'companions', label: 'Companions', icon: 'devices' },
