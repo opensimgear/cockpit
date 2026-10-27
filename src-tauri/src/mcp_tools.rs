@@ -253,6 +253,10 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "activity_list" => self.native("activity_query",json!({"activityFilter":selected(&["search","categories","levels","eventTypes","entityId","since","until","throughId","offset","limit"])}),client,Some("activity")),
+            "activity_clear" => forward("activity_clear",&[],Some("activityDeleted")),
+            "activity_settings_get" => forward("activity_settings_get",&[],Some("activitySettings")),
+            "activity_settings_save" => forward("activity_settings_save",&["retentionDays"],Some("activitySettings")),
             "storage_status" | "storage_create" | "storage_remove" | "storage_restore" | "storage_restart"=>forward(name,&["id","expectedRevision","confirmed"],Some("storage")),
             "ui_preferences_get"=>forward("ui_preferences_get",&["key"],Some("uiPreferences")),
             "ui_preferences_save"=>forward("ui_preferences_save",&["key","expectedRevision","value"],Some("uiPreferences")),

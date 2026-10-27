@@ -149,11 +149,22 @@ pub fn catalogue() -> Vec<Value> {
         tool("local_settings_save","Save typed machine-local preferences with the exact settings revision and observed active owner. Scope-specific native validation rejects unknown fields; provider paths are preferences, never arbitrary file access. Read the workflow resource for scope settings.",vec![("scope",scope()),("gameId",game_id()),("expectedSettingsRevision",string(128)),("expectedActiveOwner",owner()),("settings",object())],&["scope","expectedSettingsRevision","expectedActiveOwner","settings"]),
     ];
     tools.extend(companion::catalogue());
+    tools.extend(activity_catalogue());
     tools
 }
 
+fn activity_catalogue() -> Vec<Value> {
+    let strings = || json!({"type":"array","maxItems":64,"uniqueItems":true,"items":string(96)});
+    vec![
+        tool("activity_list","Search and page the retained native activity log. Filters combine search, category, level, event type, entity and UTC millisecond range; newest events come first. Reuse returned throughId for stable paging while capture continues. Reads do not capture input samples or trigger operations.",vec![("search",json!({"type":"string","maxLength":500})),("categories",strings()),("levels",strings()),("eventTypes",strings()),("entityId",string(256)),("since",integer(0,9007199254740991)),("until",integer(0,9007199254740991)),("throughId",integer(1,9007199254740991)),("offset",integer(0,1000000)),("limit",integer(1,200))],&[]),
+        tool("activity_clear","Delete all retained native activity events. Collection continues for subsequent changes.",vec![],&[]),
+        tool("activity_settings_get","Read native activity retention settings.",vec![],&[]),
+        tool("activity_settings_save","Save native activity retention in days and prune expired events.",vec![("retentionDays",integer(1,3650))],&["retentionDays"]),
+    ]
+}
+
 pub fn is_mutation(name: &str) -> bool {
-    super::companion_controls::mutation(name)
+    matches!(name,"activity_clear"|"activity_settings_save") || super::companion_controls::mutation(name)
         || matches!(
             name,
             "storage_create"

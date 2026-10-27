@@ -45,6 +45,8 @@ mod inspection;
 mod provider_settings;
 mod provision;
 mod requests;
+#[path="../../activity/integration.rs"]
+mod activity_capture;
 /// Resolve a title's explicit binding before entering the adapter's dialect.
 fn bound_game(game: &Value) -> Result<Value, String> {
     let key = crate::game_discovery::integration_binding(game)

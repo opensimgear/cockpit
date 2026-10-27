@@ -3,6 +3,7 @@
   import DesktopPreferences from './DesktopPreferences.svelte';
   import BackupSettings from './persistence/BackupSettings.svelte';
   import ProgressNotificationSettings from './ProgressNotificationSettings.svelte';
+  import ActivitySettings from './activity/ActivitySettings.svelte';
   import OutputSettings from './OutputSettings.svelte';
   import CompanionListenerSettings from './CompanionListenerSettings.svelte';
   import McpSettings from './McpSettings.svelte';
@@ -54,6 +55,7 @@
     {#if $canvasNavigation.storageError}<div class="preference-row"><p class="storage-error" role="alert">{$canvasNavigation.storageError}</p></div>{/if}
   </section>
   <ProgressNotificationSettings />
+  <ActivitySettings />
   <BackupSettings />
 </div>
 

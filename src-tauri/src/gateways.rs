@@ -46,6 +46,8 @@ mod profile_local_settings;
 mod profile_panel_save;
 #[path = "profile_activation_progress.rs"]
 mod profile_activation_progress;
+#[path="activity/gateway.rs"]
+mod activity_controls;
 
 trait Adapter: Send + Sync {
     fn publication(&self,_request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{Err("This transport does not support native controller publication overrides.".into())}
@@ -201,9 +203,10 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 #[path="persistence/backup/gateway.rs"]
 mod storage_controls;
 pub struct GatewayManager {
+    activity: crate::activity::Runtime,
     storage:crate::persistence::backup::Runtime,
     widget_library: crate::widget_library::Runtime,
-    profiles: Mutex<osg_profiles::service::Service>,
+    profiles: Arc<Mutex<osg_profiles::service::Service>>,
     profile_resources: Arc<crate::profile_resources::Runtime>,
     profile_compilation: crate::profile_compilation::Runtime,
     profile_session: Arc<Mutex<crate::profile_session::Coordinator<crate::profile_session_host::NativeProfileHost>>>,
@@ -364,10 +367,14 @@ impl GatewayManager {
             crate::profile_session_host::NativeProfileHost::stage_with_output_handoff(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate, outgoing)
         });
         let profile_closed = Arc::new(AtomicBool::new(false));
+        let activity = crate::activity::Runtime::new(&anchor);
+        let activity_session = activity.session_observer();
+        activity_session.lock().unwrap_or_else(|p|p.into_inner()).observe(profile_session.lock().unwrap_or_else(|p|p.into_inner()).status());
         let profile_worker = native.then(|| {
             let runtime = profile_session.clone();
             let closed = profile_closed.clone();
             let wake = profile_wake.clone();
+            let activity_session = activity_session.clone();
             let worker = std::thread::spawn(move || {
                 while !closed.load(Ordering::Acquire) {
                     let observed = wake.observed();
@@ -375,6 +382,7 @@ impl GatewayManager {
                     let active = {
                         let mut runtime = runtime.lock().unwrap_or_else(|p| p.into_inner());
                         let _ = runtime.poll();
+                        activity_session.lock().unwrap_or_else(|p|p.into_inner()).observe(runtime.status());
                         runtime.status().owner.is_some()
                     };
                     wake.wait(observed, std::time::Duration::from_millis(if active { 5 } else { 100 }));
@@ -384,6 +392,7 @@ impl GatewayManager {
             worker
         });
         let manager = Self {
+            activity,
             #[cfg(test)]
             test_namespace:None,
             module_usb,
@@ -406,9 +415,9 @@ impl GatewayManager {
             profile_automatic: automatic::Runtime::new(native.then(||crate::config_paths::config_path().with_file_name("profiles-activation-v1.json"))),
             profile_automatic_worker: Mutex::new(None),
             storage:crate::persistence::backup::Runtime::new(native),
-            profiles: Mutex::new(osg_profiles::service::Service::new(native.then(|| {
+            profiles: Arc::new(Mutex::new(osg_profiles::service::Service::new(native.then(|| {
                 crate::config_paths::config_path().with_file_name("profiles-v2")
-            }))),
+            })))),
             provider,
             sessions,
             inventory: Mutex::new(Vec::new()),
@@ -424,6 +433,7 @@ impl GatewayManager {
             companion_host,
         };
         manager.restore_automatic_selection();
+        if native { manager.start_activity(); }
         manager
     }
     fn decorate_profile_session(&self, response: &mut Value) {
@@ -720,7 +730,17 @@ impl GatewayManager {
         };
         self.request_checked(request, Some(expected), true)
     }
-    fn request_checked(&self, mut request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>, passive_profile_reads: bool) -> Value {
+    fn request_checked(&self, request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>, passive_profile_reads: bool) -> Value {
+        let response = self.request_dispatch(request.clone(), expected_owner, passive_profile_reads);
+        if self.activity.audit(&request, &response) {
+            let observer = self.activity.session_observer();
+            { let profiles = self.profiles.lock().unwrap_or_else(|p|p.into_inner()); observer.lock().unwrap_or_else(|p|p.into_inner()).names(profiles.saved_documents()); }
+            let status = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
+            observer.lock().unwrap_or_else(|p|p.into_inner()).observe(&status);
+        }
+        response
+    }
+    fn request_dispatch(&self, mut request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>, passive_profile_reads: bool) -> Value {
         let command = request["command"].as_str().unwrap_or("");
         // A registry snapshot never waits for profile admission, so Stop/cancel
         // retain their fast path while native takeover owns that lock. Normal
@@ -729,6 +749,7 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
+        if matches!(command,"activity_query"|"activity_clear"|"activity_settings_get"|"activity_settings_save") { return self.activity_request(&request,native_authorization.as_ref()); }
         if matches!(command,"storage_status"|"storage_create"|"storage_remove"|"storage_restore"|"storage_restart"){return self.storage_request(&request,native_authorization.as_ref());}
         if matches!(command,"ui_preferences_get"|"ui_preferences_save") {
             if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid UI settings client or closed cockpit.",None);}
@@ -1381,6 +1402,8 @@ impl GatewayManager {
         self.profile_closed.store(true, Ordering::Release);
         if let Some(worker) = self.profile_worker.lock().unwrap_or_else(|p| p.into_inner()).take() { let _ = worker.join(); }
         let _ = self.profile_session.lock().unwrap_or_else(|p| p.into_inner()).stop();
+        self.activity.session_observer().lock().unwrap_or_else(|p|p.into_inner()).observe(self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status());
+        self.activity.shutdown();
         self.profile_panels.close();
         self.profile_resources.shutdown();
         self.module_usb.shutdown();

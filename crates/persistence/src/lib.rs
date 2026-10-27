@@ -7,7 +7,11 @@ use std::{
     time::Duration,
 };
 
+mod activity;
 mod connection;
+pub use activity::{
+    ActivityEvent, ActivityPage, ActivityQuery, ActivitySettings, NewActivityEvent,
+};
 mod epoch;
 mod restore;
 pub use restore::{snapshot_hash, NamespaceLease};
@@ -117,8 +121,11 @@ impl Database {
             path,
             epoch: String::new(),
         };
-        let connection = database.connect(create)?;
+        let mut connection = database.connect(create)?;
         database.epoch = epoch::read(&connection)?;
+        if create {
+            activity::initialize(&mut connection, &database.epoch)?;
+        }
         Ok(database)
     }
     fn connection(&self) -> Result<Connection, String> {

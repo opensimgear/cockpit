@@ -142,16 +142,27 @@ pub async fn desktop_preferences(
 pub async fn set_tray_preferences(
     preferences: TrayPreferences, expected_revision:u64,
     state: tauri::State<'_, DesktopState>,
+    gateway: tauri::State<'_, crate::NativeGateway>,
 ) -> Result<Value, String> {
     let service=state.preferences.clone();
     let value=serde_json::to_value(preferences).map_err(|_|"Invalid tray preferences.")?;
-    let entry=tauri::async_runtime::spawn_blocking(move||service.write("tray",expected_revision,value)).await.map_err(|_|"The tray settings worker failed.")??;
+    let activity=gateway.0.clone();
+    let entry=tauri::async_runtime::spawn_blocking(move||{
+        let result=service.write("tray",expected_revision,value);
+        activity.record_external_activity("set_tray_preferences",result.is_ok());
+        result
+    }).await.map_err(|_|"The tray settings worker failed.")??;
     state.minimized_handled.store(false,Ordering::Relaxed);
     serde_json::to_value(entry).map_err(|_|"Cannot encode tray settings.".into())
 }
 
 #[tauri::command]
 pub fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    let result=set_autostart_inner(&app,enabled);
+    if let Some(gateway)=app.try_state::<crate::NativeGateway>() { gateway.0.record_external_activity("set_autostart",result.is_ok()); }
+    result
+}
+fn set_autostart_inner(app: &tauri::AppHandle, enabled: bool) -> Result<bool, String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
         use tauri_plugin_autostart::ManagerExt;

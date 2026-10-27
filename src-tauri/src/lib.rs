@@ -48,6 +48,7 @@ mod game_telemetry_inspection;
 #[path="games/vehicles/mod.rs"]
 mod game_vehicles;
 mod games;
+mod activity;
 pub mod gateways;
 
 /// Initialize shared native persistence before constructing source workers.

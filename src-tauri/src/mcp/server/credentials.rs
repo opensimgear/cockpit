@@ -11,6 +11,11 @@ fn issue(name:String,scope:String)->Result<(Credential,String),String>{
 }
 impl Server {
     pub fn create_credential(&self,name:String,scope:String,expected_revision:u64)->Result<Value,String>{
+        let result=self.create_credential_inner(name,scope,expected_revision);
+        self.manager.record_external_activity("mcp_credential_create",result.is_ok());
+        result
+    }
+    fn create_credential_inner(&self,name:String,scope:String,expected_revision:u64)->Result<Value,String>{
         let _control=self.controls.lock().unwrap_or_else(|p|p.into_inner());
         let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
         if state.closed{return Err("Cockpit is shutting down.".into());}
@@ -23,6 +28,11 @@ impl Server {
         Ok(json!({"credential":metadata,"token":token,"status":self.status()}))
     }
     pub fn revoke_credential(&self,id:&str,expected_revision:u64)->Result<Value,String>{
+        let result=self.revoke_credential_inner(id,expected_revision);
+        self.manager.record_external_activity("mcp_credential_revoke",result.is_ok());
+        result
+    }
+    fn revoke_credential_inner(&self,id:&str,expected_revision:u64)->Result<Value,String>{
         let _control=self.controls.lock().unwrap_or_else(|p|p.into_inner());
         let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
         if state.closed{return Err("Cockpit is shutting down.".into());}
@@ -32,6 +42,11 @@ impl Server {
         state.store.save(next)?;drop(state);self.native_authorization(id,false);Ok(self.status())
     }
     pub fn rotate_credential(&self,id:&str,expected_revision:u64)->Result<Value,String>{
+        let result=self.rotate_credential_inner(id,expected_revision);
+        self.manager.record_external_activity("mcp_credential_rotate",result.is_ok());
+        result
+    }
+    fn rotate_credential_inner(&self,id:&str,expected_revision:u64)->Result<Value,String>{
         let _control=self.controls.lock().unwrap_or_else(|p|p.into_inner());
         let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
         if state.closed{return Err("Cockpit is shutting down.".into());}

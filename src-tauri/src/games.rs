@@ -78,6 +78,8 @@ pub(crate) mod launch;
 mod metadata_api;
 #[path = "games/artwork_options.rs"]
 mod artwork_options;
+#[path="activity/games.rs"]
+mod activity_capture;
 #[path="games/review/mod.rs"]
 mod discovery_review;
 pub(crate) use metadata_api::PreparedMetadata;

@@ -1,0 +1,77 @@
+//! Native activity collection. Only this background worker writes captured events.
+mod audit;
+mod capture;
+mod writer;
+mod session;
+#[cfg(test)]
+mod tests;
+pub(crate) use capture::Snapshot;
+use osg_persistence::{Database, NewActivityEvent};
+use serde_json::{json, Value};
+use std::{path::Path, sync::{mpsc, Arc, Mutex}, thread::JoinHandle, time::{Duration, SystemTime, UNIX_EPOCH}};
+
+type Observe = Box<dyn Fn() -> Snapshot + Send>;
+enum Message { Event(NewActivityEvent), Observe(Observe), Flush(mpsc::Sender<Result<(),String>>), Stop }
+pub(crate) struct Runtime {
+    database: Result<Database, String>,
+    sender: mpsc::SyncSender<Message>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+    lifecycle: Arc<Mutex<session::Observer>>,
+    started: std::sync::atomic::AtomicBool,
+}
+pub(crate) fn event(category: &str, kind: &str, level: &str, message: String, id: Option<String>, name: Option<String>) -> NewActivityEvent {
+    NewActivityEvent { occurred_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64,
+        category: category.into(), event_type: kind.into(), level: level.into(), message, detail: String::new(), entity_id: id, entity_name: name, source: "native".into() }
+}
+impl Runtime {
+    pub(crate) fn new(anchor: &Path) -> Self {
+        let database = Database::for_namespace(anchor);
+        let storage = database.clone();
+        let (sender, receiver) = mpsc::sync_channel(2048);
+        // Lifecycle transitions cannot wait behind metadata collection while the
+        // coordinator is locked. This channel receives changes only, never ticks.
+        let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();
+        let lifecycle=Arc::new(Mutex::new(session::Observer::new(lifecycle_sender)));
+        let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver)).expect("start native activity worker");
+        Self { database, sender, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false) }
+    }
+    pub(crate) fn observe(&self, source: impl Fn() -> Snapshot + Send + 'static) {
+        if !self.started.swap(true,std::sync::atomic::Ordering::AcqRel) {let _=self.sender.send(Message::Event(event("system","cockpit_started","info","Cockpit native services started.".into(),None,Some("Cockpit".into()))));}
+        let _ = self.sender.send(Message::Observe(Box::new(source)));
+    }
+    pub(crate) fn audit(&self, request: &Value, response: &Value) -> bool {
+        if let Some(event) = audit::mutation(request, response) { let _ = self.sender.send(Message::Event(event)); true } else { false }
+    }
+    pub(crate) fn session_observer(&self) -> Arc<Mutex<session::Observer>> { self.lifecycle.clone() }
+    pub(crate) fn flush(&self) -> Result<(), String> {
+        let (sender, receiver) = mpsc::channel();
+        self.sender.send(Message::Flush(sender)).map_err(|_|"Activity writer has stopped.".to_owned())?;
+        receiver.recv_timeout(Duration::from_secs(15)).map_err(|_|"Activity writer did not finish saving pending events.".to_owned())?
+    }
+    pub(crate) fn request(&self, request: &Value) -> Result<Value, String> {
+        let database = self.database.as_ref().map_err(Clone::clone)?;
+        match request["command"].as_str().unwrap_or("") {
+            "activity_query" => {
+                let filter = request.get("activityFilter").cloned().unwrap_or_else(|| json!({}));
+                let query = serde_json::from_value::<osg_persistence::ActivityQuery>(filter).map_err(|_| "Invalid activity filters.".to_owned())?;
+                self.flush()?;
+                Ok(json!({"activity": database.activity_query(&query)?}))
+            }
+            "activity_clear" => { self.flush()?; Ok(json!({"activityDeleted": database.activity_clear()?})) }
+            "activity_settings_get" => Ok(json!({"activitySettings":database.activity_settings()?})),
+            "activity_settings_save" => {
+                let days = request["retentionDays"].as_u64().and_then(|value| u32::try_from(value).ok()).ok_or("Choose a retention period from 1 to 3650 days.")?;
+                Ok(json!({"activitySettings":database.activity_settings_save(days)?}))
+            }
+            _ => Err("Unknown activity command.".into()),
+        }
+    }
+    pub(crate) fn shutdown(&self) {
+        let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(worker) = worker.take() {
+            if self.started.swap(false,std::sync::atomic::Ordering::AcqRel) {let _=self.sender.send(Message::Event(event("system","cockpit_stopped","info","Cockpit native services stopped.".into(),None,Some("Cockpit".into()))));}
+            let _ = self.sender.send(Message::Stop); let _ = worker.join();
+        }
+    }
+}
+impl Drop for Runtime { fn drop(&mut self) { self.shutdown(); } }

@@ -217,6 +217,7 @@
       ],
       "sourcePatterns": [
         "src/lib/activation-progress-presenter.*",
+        "src/lib/activity/**",
         "src/lib/canvas-navigation.*",
         "src/lib/canvas-styling.*",
         "src/lib/cockpit-history.*",
@@ -238,6 +239,7 @@
       ],
       "coverageScripts": [
         "debug:coverage",
+        "activity:coverage",
         "ui-preferences:coverage"
       ],
       "coverageTasks": [

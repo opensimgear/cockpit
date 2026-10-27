@@ -48,22 +48,24 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
-    sources = [root / f'crates/persistence/src/{module}.rs' for module in ['lib', 'repository', 'path', 'namespace', 'profile_index', 'observation', 'evidence', 'connection', 'epoch', 'restore']]
+    source_root = root / 'crates/persistence/src'
+    sources = [source_root / f'{module}.rs' for module in ['lib', 'repository', 'path', 'namespace', 'profile_index', 'observation', 'evidence', 'connection', 'epoch', 'restore', 'activity/mod', 'activity/query']]
     summary = {}
     for source in sources:
+        module = source.relative_to(source_root).as_posix()
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', source], root)
-        (output / f'{source.stem}-lines.txt').write_text(annotated, encoding='utf-8')
+        (output / f'{module.removesuffix(".rs").replace("/", "-")}-lines.txt').write_text(annotated, encoding='utf-8')
         lines = source.read_text(encoding='utf-8').splitlines()
         end = next((i + 1 for i, line in enumerate(lines) if line.strip() == '#[cfg(test)]'), len(lines) + 1)
         counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotated.splitlines()
                   if (match := re.match(r'^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\|', line)) and int(match[1]) < end}
         if not counts:
-            raise RuntimeError(f'No instrumented production lines for {source.name}.')
+            raise RuntimeError(f'No instrumented production lines for {module}.')
         covered = sum(counts.values())
         percent = 100 * covered / len(counts)
-        summary[source.name] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
-        print(f'{source.name}: {covered}/{len(counts)} production lines ({percent:.2f}%)', flush=True)
+        summary[module] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
+        print(f'{module}: {covered}/{len(counts)} production lines ({percent:.2f}%)', flush=True)
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] < 71 for item in summary.values()):
         raise SystemExit('Each persistence module must meet 71% production line coverage.')

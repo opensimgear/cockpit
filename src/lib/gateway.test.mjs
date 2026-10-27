@@ -42,6 +42,23 @@ test('passive telemetry bypasses game setup and keeps profile Stop responsive',a
  pending.resolve();await scan;
 });
 
+test('activity search and writes have an independent ordered lane while inventory is blocked',async()=>{
+  const inventory=deferred(),clearing=deferred();
+  const api=transport({invokeResults:async(_command,request)=>{
+    if(request.command==='ports')await inventory.promise;
+    if(request.command==='activity_clear')await clearing.promise;
+    return{ok:true,state};
+  }});
+  const blocked=api.gatewayRequest({command:'ports'});await tick();
+  await api.gatewayRequest({command:'activity_query',activityFilter:{search:'Wheel',limit:100}});
+  const clear=api.gatewayRequest({command:'activity_clear'});await tick();
+  const read=api.gatewayRequest({command:'activity_query'});await tick();
+  await api.gatewayRequest({command:'profile_stop'});
+  assert.deepEqual(api.calls.map(call=>call.args.request.command),['ports','activity_query','activity_clear','profile_stop']);
+  clearing.resolve();await clear;await read;inventory.resolve();await blocked;
+  assert.equal(api.calls.at(-1).args.request.command,'activity_query');
+});
+
 function transport({ desktop = true, result = { ok: true, state }, invokeResults, invokeError, responseOK = true, contentType = 'application/json' } = {}) {
   const calls = [];
   const exported = {};

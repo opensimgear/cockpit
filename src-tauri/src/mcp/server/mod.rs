@@ -117,6 +117,11 @@ impl Server {
         json!({"settingsRevision":state.store.revision,"enabled":settings.enabled,"port":settings.port,"endpoint":format!("http://127.0.0.1:{}/mcp",settings.port),"running":state.listener.is_some(),"error":state.error,"credentials":settings.credentials.iter().map(Credential::metadata).collect::<Vec<_>>(),"protocolVersions":VERSIONS,"sdk":"rmcp 3.6.0","readOnly":state.store.error.is_some()})
     }
     pub fn configure(self: &Arc<Self>, update: SettingsUpdate) -> Result<Value, String> {
+        let result = self.configure_inner(update);
+        self.manager.record_external_activity("mcp_settings_update", result.is_ok());
+        result
+    }
+    fn configure_inner(self: &Arc<Self>, update: SettingsUpdate) -> Result<Value, String> {
         let _control = self.controls.lock().unwrap_or_else(|p| p.into_inner());
         if update.port < 1024 {
             return Err("Choose a TCP port between 1024 and 65535.".into());

@@ -14,6 +14,7 @@
   import SettingsPanel from './lib/SettingsPanel.svelte';
   import ProfilesPanel from './lib/ProfilesPanel.svelte';
   import DebugPanel from './lib/DebugPanel.svelte';
+  import ActivityPanel from './lib/activity/ActivityPanel.svelte';
   import HeaderStatus from './lib/HeaderStatus.svelte';
   import CompanionDesigner from './lib/CompiledCompanionDesigner.svelte';
   import Icon from './lib/Icon.svelte';
@@ -212,7 +213,6 @@
   let controllerTarget = $state({ key: '', id: '', label: '', gatewayId: '', action: 'disable' as ControllerAction });
   let disposed = false;
   let workspace: GatewayWorkspace | undefined;
-  let events = $state([{ time: 'Just now', message: 'Workspace opened', detail: 'All compatible gateways connect independently and discover their devices.' }]);
   const devices = $derived(entries.flatMap(entry => orderedModules(entry.state).map((module): WorkspaceDevice => ({
     key: deviceKey(entry.id, module.id), gatewayId: entry.id, id: module.id,
     name: module.name, kind: module.kind, settings: module.settings,
@@ -359,7 +359,6 @@
     if (!await sendGateway(device.gatewayId, { command: action, moduleId: device.id })) return;
     modal = null;
     const result = action === 'enable' ? 'Device enabled' : action === 'disable' ? 'Device disabled' : action === 'forget' ? 'Offline device removed' : 'Controller profile updated';
-    log(result, `${device.settings.label} · ${device.gatewayId}.`);
     notify(action === 'disable' ? 'Device disabled. It stays remembered until explicitly removed.' : action === 'forget' ? 'Remembered device removed.' : action === 'enable' ? 'Device enabled at the end of the controller order.' : 'USB controller profile updated. Check your game bindings.');
   }
   async function confirmControllerChange() {
@@ -397,7 +396,6 @@
     if (opening) void opening.catch(error => notify(error instanceof Error ? error.message : 'This link could not be opened.'));
   }
   function notify(message: string) { if (!disposed) showNotification(message); }
-  function log(message: string, detail: string) { events = [{ time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), message, detail }, ...events]; }
   function toggleTheme() {
     void theme.save(!light).catch(reason => notify(String(reason)));
   }
@@ -417,13 +415,11 @@
         const device = sessionDevice;
         if (!await sendGateway(device.gatewayId, { command: 'release', moduleId: device.id })) return;
         sessionId = null;
-        log('Setup session released', `${device.name} · ${device.gatewayId}. HID controls remain available.`);
         notify('Setup session ended. HID controls remain available.');
       } else if (selected) {
         const device = selected;
         if (!await sendGateway(device.gatewayId, { command: 'claim', moduleId: device.id })) return;
         sessionId = device.key;
-        log('Setup session started', `${device.name} · ${device.gatewayId}.`);
         notify('Setup session started. Settings are now editable.');
       }
     } finally { sessionTransition = false; }
@@ -434,7 +430,6 @@
     const settings = { ...draft, label: draft.label.trim() };
     if (!await sendGateway(device.gatewayId, { command: 'configure', moduleId: device.id, settings })) return;
     drafts[device.key] = { ...settings };
-    log('Configuration saved', `${device.name} · ${device.gatewayId}. Settings are held in Pico RAM until reset.`);
     notify('Configuration applied to the gateway.');
   }
   function discard() { if (selected) drafts[selected.key] = { ...selected.settings }; notify('Draft discarded. Saved settings restored.'); }
@@ -445,16 +440,14 @@
     const state = entries.find(entry => entry.id === device.gatewayId)?.state;
     const snapshot = state?.moduleConfigs?.[device.id];
     if (snapshot) runtimeDrafts[device.key] = cloneConfig(snapshot.config);
-    log('Module configuration updated', `${device.name} · ${device.gatewayId} · ${command === 'config_apply' ? 'Applied on the module.' : command === 'config_apply_save' || command === 'config_save' ? 'Saved on the module.' : 'Draft restored.'}`);
     if (automaticControllers(state) && state?.modules.find(module => module.id === device.id)?.enabled && state.modules.find(module => module.id === device.id)?.profileMatch === false) notify('Module settings updated. End setup and update the controller profile to publish changed controls.');
     else if (state?.needsReconnect) notify('Module updated. End setup and apply this older gateway’s layout to publish the changed controls.');
     return true;
   }
-  async function rescan() { await workspace?.refresh(); log('Discovery refreshed', `${devices.filter(device => device.online).length} devices across ${connectedGateways.length} gateways.`); }
+  async function rescan() { await workspace?.refresh(); }
   async function registerDevice(key: string) {
     const device = devices.find(item => item.key === key);
     if (device && await sendGateway(device.gatewayId, { command: 'register', moduleId: device.id })) {
-      log('Controller registration staged', `${device.id} · ${device.gatewayId}.`);
       notify('Controller added to the pending layout. Apply layout when ready.');
     }
   }
@@ -463,13 +456,11 @@
     const target = { ...removeTarget };
     if (await sendGateway(target.gatewayId, { command: 'unregister', moduleId: target.id })) {
       modal = null;
-      log('Controller registration removed', `${target.id} · ${target.gatewayId}.`);
       notify('Registration removed. Apply this gateway’s layout to update USB controllers.');
     }
   }
   async function reconnectGateway(gatewayId: string) {
     if (!await sendGateway(gatewayId, { command: 'reconnect' })) return;
-    log('Gateway reconnected', `${gatewayId} · HID controllers rebuilt with the registered layout.`);
     notify('USB layout updated.');
     void workspace?.refresh();
   }
@@ -507,8 +498,7 @@
         {:else if view === 'overview'}
           <OverviewPanel {games} {profileState} profiles={profileSummaries} openProfiles={() => navigate('profiles')} gateways={connectedGateways.length} onlineDevices={devices.filter(device => device.online).length} totalDevices={devices.length} {inventoryError} openGames={() => navigate('games')} openDevices={() => navigate('devices')} />
         {:else if view === 'activity'}
-          <PageHeader title="Activity" eyebrow="THE RECORD OF YOUR RIG" subtitle="Setup sessions, saved changes, and connection events.">{#snippet actions()}<span class="quiet-tag">{events.length} events</span>{/snippet}</PageHeader>
-          <section class="panel activity-panel"><div class="panel-heading"><h2>Recent activity</h2><span class="quiet-tag">This session</span></div>{#each events as event, i (i)}<div class="event-row"><span class="event-icon"><Icon name="check" size={18} /></span><div><strong>{event.message}</strong><p>{event.detail}</p></div><time>{event.time}</time></div>{/each}</section>
+          <ActivityPanel />
         {:else if view === 'preferences'}
           <SettingsPanel {light} onToggleTheme={toggleTheme} themeBusy={$theme.busy || !$theme.ready} />
         {:else if view === 'profiles'}
