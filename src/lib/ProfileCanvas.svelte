@@ -12,7 +12,7 @@
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH } from './profile-editor';
   import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
   import { createDiagramRouter, diagramPendingPath, diagramRoutes, diagramSegmentLine } from './profile-diagram';
-  import {canvasRouteNodes,canvasOverviewRouteNodes,canvasPreviewRoutes,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
+  import {canvasRouteNodes,canvasOverviewRouteNodes,canvasPreviewRoutes,createOverviewMerger,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
   import {profileReshapeWireSegment,profileSetWireRoute,profileInsertWireHandle,profileMoveWireHandle,profileRemoveWireHandle,profileWireHandleOnRoute}from'./profile-wire-layout';
   import {canvasStyling}from'./canvas-styling';
   import {canvasNavigation,canvasWheelNavigation}from'./canvas-navigation';
@@ -73,6 +73,7 @@
   const browser = new ProfilePortBrowser(untrack(() => inventoryClient));
   const router=createDiagramRouter();
   const overviewRouter=createOverviewRouter();
+  const overviewMerger=createOverviewMerger();
   const committedDocument=$derived(profileTabDocument(document,activeVehicleTabId));
   const visibleDocument=$derived(segmentPreview||groupPreview?profileTabDocument((segmentPreview??groupPreview)!,activeVehicleTabId):committedDocument);
   const allNodes=$derived(canvasNodes(visibleDocument,assignments,inventory));
@@ -107,7 +108,7 @@
   const destinationById=$derived(new Map(destinationBundles.map(bundle=>[bundle.id,bundle])));
   const overviewBundle=$derived(destinationById.get(overviewPair?destinationOverviewId(overviewPair.to):overviewBundleId)??(overviewPair?{id:destinationOverviewId(overviewPair.to),binding:{id:destinationOverviewId(overviewPair.to),from:{nodeId:overviewPair.from,portId:''},to:{nodeId:overviewPair.to,portId:''}},lanes:[]}:undefined));
   const routingBindings=$derived(overview?overviewBundles.map(bundle=>({...bundle.binding,to:{...bundle.binding.to,portId:bundle.id}})):committedDocument.bindings);
-  const maximumRoutes=$derived(Math.max(1,...overviewBundles.map(bundle=>bundle.lanes.length)));
+  const maximumRoutes=$derived(Math.max(1,...destinationBundles.map(bundle=>bundle.lanes.length)));
   const nodes = $derived(visibleDocument===committedDocument?committedNodes:allNodes.filter(node=>!overview||!node.processing));
   const nodesById=$derived(new Map(nodes.map(node=>[node.id,node])));
   const portGroups=$derived(new Map(nodes.map(node=>{const ports=node.resource?discoveredPorts[node.id]??node.resource.ports:null;const inputs=ports?ports.filter(port=>port.direction==='input'):node.processing?.inputs??node.virtual?.ports??node.desktop?.ports??[],outputs=ports?ports.filter(port=>port.direction==='output'):node.processing?.outputs??[];return[node.id,{inputs,outputs,names:new Map([...inputs,...outputs].map(port=>[`${port.direction}/${port.id}`,port.name]))}];})));
@@ -123,7 +124,9 @@
     if(segmentPreview&&segmentDrag){const preview=diagramRoutes(routeNodes,visibleDocument.bindings.filter(binding=>binding.id===segmentDrag!.bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:visibleDocument.editor.wireRoutes})[0];return preview?committedRoutes.map(route=>route.binding.id===preview.binding.id?preview:route):committedRoutes;}
     return dragged||groupPreview?canvasPreviewRoutes(committedRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius):committedRoutes;
   });
-  const bundledRoutes=$derived(bundleDiagramRoutes([...routes.filter(route=>route.binding.id!==selectedEdgeId),...routes.filter(route=>route.binding.id===selectedEdgeId)],selectedEdgeId));
+  const overviewNetwork=$derived(overview?overviewMerger(routes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius,!!dragged||!!groupPreview):{routes,merges:[]});
+  const mergeByBinding=$derived(new Map(overviewNetwork.merges.flatMap(merge=>merge.members.map(route=>[route.binding.id,merge] as const))));
+  const bundledRoutes=$derived(bundleDiagramRoutes([...overviewNetwork.routes.filter(route=>route.binding.id!==selectedEdgeId),...overviewNetwork.routes.filter(route=>route.binding.id===selectedEdgeId)],selectedEdgeId));
   const wireNetwork=$derived(!overview?buildDiagramWireTrunks(bundledRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius,!!dragged||!!groupPreview,selectedEdgeId):{bundles:bundledRoutes,trunks:[]});
   const renderedRoutes=$derived(wireNetwork.bundles);
   const sharedTrunks=$derived(wireNetwork.trunks);
@@ -476,10 +479,11 @@
             {#if overview}
               {@const projected=overviewById.get(binding.id)!}
               {@const width=signalBundleWidth(projected.lanes.length,maximumRoutes)}
-              {@const head=Math.max(10,width*2.4)}
+              {@const merge=mergeByBinding.get(binding.id)}
+              {@const head=merge?0:Math.max(10,width*2.4)}
               {@const markerId=`${inspectorContentId}-arrow-${overviewBundles.indexOf(projected)}`}
-              <defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth={head} markerHeight={head} viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path class:selected={overviewBundle?.binding.to.nodeId===binding.to.nodeId} d="M0,0 L10,5 L0,10 Z"/></marker></defs>
-              <path class="signal-edge overview-edge" data-binding-id={binding.id} data-route-count={projected.lanes.length} data-arrow-style={wireStyle} class:selected={overviewBundle?.binding.to.nodeId===binding.to.nodeId} class:drop-target={paletteConnectionId===binding.id} style={`stroke-width:${width}px`} use:trimArrowShaft={{path:route.path,head}} marker-end={`url(#${markerId})`} d={route.path}><title>{nodesById.get(binding.from.nodeId)?.name} → {nodesById.get(binding.to.nodeId)?.name}</title></path>
+              {#if !merge}<defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth={head} markerHeight={head} viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path class:selected={overviewBundle?.binding.to.nodeId===binding.to.nodeId} d="M0,0 L10,5 L0,10 Z"/></marker></defs>{/if}
+              <path class="signal-edge overview-edge" data-binding-id={binding.id} data-route-count={projected.lanes.length} data-merge-id={merge?.id} data-junction={merge?JSON.stringify(merge.junction):undefined} data-arrow-style={wireStyle} class:selected={overviewBundle?.binding.to.nodeId===binding.to.nodeId} class:drop-target={paletteConnectionId===binding.id} style={`stroke-width:${width}px`} use:trimArrowShaft={{path:route.path,head}} marker-end={merge?undefined:`url(#${markerId})`} d={route.path}><title>{nodesById.get(binding.from.nodeId)?.name} → {nodesById.get(binding.to.nodeId)?.name}</title></path>
               <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Inspect signals from ${nodesById.get(binding.from.nodeId)?.name} to ${nodesById.get(binding.to.nodeId)?.name}`} aria-pressed={overviewBundle?.binding.to.nodeId===binding.to.nodeId} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={()=>openOverview(binding.id)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openOverview(binding.id);}}}/>
             {:else}
             <path class="signal-edge" class:bundled={grouped} class:orthogonal={wireStyle==='orthogonal'} data-binding-id={binding.id} data-binding-ids={JSON.stringify(bundle.members.map(route=>route.binding.id))} data-bundle-count={bundle.members.length} data-bundle-id={grouped?bundle.id:undefined} data-arrow-style={wireStyle} class:selected={selectedEdgeId===binding.id} class:drop-target={paletteConnectionId===binding.id} class:highlighted={bundle.members.some(route=>highlightedEdges.includes(route.binding.id))} class:problem={bundle.members.some(route=>route.customBlocked||diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(route.binding.id)))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{grouped?`${bundle.members.length} connections: ${nodesById.get(binding.from.nodeId)?.name??binding.from.nodeId} → ${nodesById.get(binding.to.nodeId)?.name??binding.to.nodeId}`:`${portName(binding.from.nodeId,binding.from.portId,'output')} → ${portName(binding.to.nodeId,binding.to.portId,'input')}`}</title></path>
@@ -512,7 +516,18 @@
             {/if}
             {/if}
           {/snippet}
-          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id!==(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each renderedRoutes.filter(bundle=>(!overview||!mergeByBinding.has(bundle.route.binding.id))&&bundle.route.binding.id!==(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each overviewNetwork.merges as merge,index (merge.id)}
+            {@const count=new Set(merge.members.flatMap(route=>overviewById.get(route.binding.id)?.lanes.map(lane=>lane.id)??[])).size}
+            {@const width=signalBundleWidth(count,maximumRoutes)}{@const head=Math.max(10,width*2.4)}{@const markerId=`${inspectorContentId}-merge-${index}`}
+            {@const selected=overviewBundle?.binding.to.nodeId===merge.targetNodeId}
+            <g class="overview-merge-network" class:selected>
+            {#each renderedRoutes.filter(bundle=>mergeByBinding.get(bundle.route.binding.id)?.id===merge.id) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+            <defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth={head} markerHeight={head} viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path class:selected d="M0,0 L10,5 L0,10 Z"/></marker></defs>
+            <path class="signal-edge overview-merge" data-merge-id={merge.id} data-target-node={merge.targetNodeId} data-route-count={count} data-junction={JSON.stringify(merge.junction)} data-arrow-style={wireStyle} class:selected style={`stroke-width:${width}px`} use:trimArrowShaft={{path:merge.path,head}} marker-end={`url(#${markerId})`} d={merge.path}><title>Signals to {nodesById.get(merge.targetNodeId)?.name}</title></path>
+            <path class="signal-edge-hit overview-merge-hit" data-merge-id={merge.id} data-connection-id={merge.members[0].binding.id} d={merge.path} role="button" tabindex="0" aria-label={`Inspect signals to ${nodesById.get(merge.targetNodeId)?.name}`} aria-pressed={selected} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={()=>openOverview(merge.members[0].binding.id)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openOverview(merge.members[0].binding.id);}}}/>
+            </g>
+          {/each}
           {#each sharedTrunks as trunk (trunk.id)}
             <path class="signal-trunk" data-trunk-id={trunk.id} data-trunk-direction={trunk.direction} data-trunk-endpoint={JSON.stringify(trunk.endpoint)} data-binding-ids={JSON.stringify(trunk.members.map(route=>route.binding.id))} data-arrow-style={wireStyle} class:highlighted={trunk.members.some(route=>highlightedEdges.includes(route.binding.id))} class:drop-target={paletteConnectionId===trunk.route.binding.id} d={trunk.route.path}><title>{trunk.members.length} connections share this {trunk.direction==='output'?'output':'input'} trunk</title></path>
             <path class="signal-trunk-hit" data-trunk-id={trunk.id} data-bundle-id={trunk.id} data-connection-id={trunk.route.binding.id} d={trunk.route.path} role="button" tabindex="0" aria-label={`Choose from ${trunk.members.length} connections sharing this ${trunk.direction==='output'?'output':'input'}`} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={event=>openBundle(event,trunk)} ondblclick={event=>openBundle(event,trunk)} onkeydown={event=>bundleKey(event,trunk)}><title>Choose a signal on this shared trunk</title></path>
@@ -527,7 +542,7 @@
               <title>{trunk.members.length} connections · Click to choose a signal</title><rect x="-17" y="-10" width="34" height="20" rx="10"/><text text-anchor="middle" dominant-baseline="central">×{trunk.members.length}</text>
             </g>
           {/each}
-          {#each renderedRoutes.filter(bundle=>bundle.route.binding.id===(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
+          {#each renderedRoutes.filter(bundle=>(!overview||!mergeByBinding.has(bundle.route.binding.id))&&bundle.route.binding.id===(overview?overviewBundleId:selectedEdgeId)) as bundle (bundle.route.binding.id)}{@render renderWireBundle(bundle)}{/each}
           {#if wire}{@const pending=wire}{@const from=renderedNodes.find(node=>node.id===pending.nodeId)}{#if from}<path class="pending-wire" d={diagramPendingPath(canvasNodeAnchor(from,pending.direction,pending.portId),pending.end,pending.direction,wireStyle,cornerRadius)}><title>Choose the other block, then select compatible ports</title></path>{#if wireRejectedReason}<text class="wire-drop-error" x={pending.end.x+12} y={pending.end.y-12}>{wireRejectedReason}</text>{/if}{/if}{/if}
         </svg>
         {#each renderedNodes as node (node.id)}
@@ -535,7 +550,7 @@
           {@const blockOutputs=blockPorts(node,'output')}
           {@const discovering=discoveryBusy.includes(node.id)}
           {@const size=canvasNodeSize(node)}
-          <article class:route-related={overviewBundle?node.id===overviewBundle.binding.from.nodeId||node.id===overviewBundle.binding.to.nodeId:routes.some(route=>route.binding.id===selectedEdgeId&&(node.id===route.binding.from.nodeId||node.id===route.binding.to.nodeId))} data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${size.width}px;height:${size.height}px`} aria-label={`${node.name} · ${node.category}`}>
+          <article class:route-related={overviewBundle?node.id===overviewBundle.binding.to.nodeId||node.id===overviewBundle.binding.from.nodeId||overviewBundle.lanes.some(lane=>lane.sources.some(source=>source.nodeId===node.id)):routes.some(route=>route.binding.id===selectedEdgeId&&(node.id===route.binding.from.nodeId||node.id===route.binding.to.nodeId))} data-node-id={node.id} class={['resource-block',node.kind,{selected:node.id===selectedId,dimmed:!!search&&!matches.some(match=>match.id===node.id)}]} style={`left:${node.position.x}px;top:${node.position.y}px;width:${size.width}px;height:${size.height}px`} aria-label={`${node.name} · ${node.category}`}>
             {#if node.processing}
               <button class="block-heading transform-heading" aria-pressed={node.id===selectedId} onclick={event=>{if(event.detail===0)choose(node.id);}} onkeydown={event=>moveBlock(event,node.id)}><span class="block-category">Transform</span><strong title={node.name}>{node.name}</strong></button>
               <div class="transform-summary" title={node.processing.draft?'Needs input · '+processingSummary(node.processing):processingSummary(node.processing)}><span class:pending={!!node.processing.draft}>{node.processing.draft?'Needs input · ':''}{processingSummary(node.processing)}</span>{#if nodeControls&&node.id===selectedId}{@render nodeControls(node)}{/if}</div>
@@ -608,8 +623,9 @@
   .canvas-world.route-focused .signal-edge:not(.selected):not(.drop-target){opacity:.12}.canvas-world.route-focused .resource-block:not(.route-related),.canvas-world.route-focused .editor-group-frame{opacity:.2;filter:saturate(.2)}
 
   /* Zero-blur shadows outline the whole arrow, including its marker, at crossings. */
-  .signal-edge{--arrow-outline:drop-shadow(1px 0 0 var(--bg)) drop-shadow(-1px 0 0 var(--bg)) drop-shadow(0 1px 0 var(--bg)) drop-shadow(0 -1px 0 var(--bg));filter:var(--arrow-outline);}
-  .signal-edge.overview-edge.selected{stroke:var(--text);filter:var(--arrow-outline) drop-shadow(0 0 4px var(--accent));}.signal-edges marker path.selected{fill:var(--text);}
+  .signal-edge,.overview-merge-network{--arrow-outline:drop-shadow(1px 0 0 var(--bg)) drop-shadow(-1px 0 0 var(--bg)) drop-shadow(0 1px 0 var(--bg)) drop-shadow(0 -1px 0 var(--bg));filter:var(--arrow-outline);}
+  .signal-edge.overview-edge.selected,.signal-edge.overview-merge.selected{stroke:var(--text);filter:var(--arrow-outline) drop-shadow(0 0 4px var(--accent));}.signal-edges marker path.selected{fill:var(--text);}
+  .overview-merge-network .signal-edge,.overview-merge-network .signal-edge.selected{filter:none}.overview-merge-network.selected{filter:var(--arrow-outline) drop-shadow(0 0 4px var(--accent))}
   .canvas-lanes-panel{position:absolute;inset:auto 0 0;z-index:6;max-height:65%;overflow:auto;overscroll-behavior:contain;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -10px 24px #0002;}
   .signal-trunk{pointer-events:none;fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.signal-trunk.highlighted{stroke:#e0bd7e;stroke-width:4}.signal-trunk.drop-target{stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent))}.signal-trunk-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer;outline:none!important}.signal-trunk-hit:hover,.signal-trunk-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none!important}
   .connection-trunk-badge{pointer-events:all;cursor:pointer;outline:none}.connection-trunk-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-trunk-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-trunk-badge:hover rect,.connection-trunk-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}

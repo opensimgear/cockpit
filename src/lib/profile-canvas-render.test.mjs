@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./profile-canvas-render']);
+const modules=await loadModules(['./profile-canvas-render','./profile-overview-routing']);
 const {canvasRouteNodes,canvasPreviewRoutes}=modules.get('./profile-canvas-render');
 const {diagramSmoothPath,diagramOrthogonalPath}=modules.get('./profile-diagram');
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -112,11 +112,24 @@ test('temporarily absent endpoints retain their existing paths without mutating 
   const {nodes,routes}=setup();assert.equal(canvasPreviewRoutes(frozen(routes),nodes.filter(row=>row.id!=='a'),100,100,'smooth'),routes);
 });
 
-test('overview routes have distinct input anchors on the device border through drag previews',async()=>{
-  const {canvasOverviewRouteNodes}=(await loadModules(['./profile-canvas-render'])).get('./profile-canvas-render');
-  const nodes=[{id:'a',position:{x:0,y:0},height:184,width:288},{id:'b',position:{x:0,y:300},height:184,width:288},{id:'target',position:{x:600,y:100},height:184,width:288}];
-  const bindings=[{id:'a-target',from:{nodeId:'a'},to:{nodeId:'target'}},{id:'b-target',from:{nodeId:'b'},to:{nodeId:'target'}}];
-  const result=canvasOverviewRouteNodes(nodes,bindings),anchors=result[2].inputAnchors;
-  assert.equal(anchors['a-target'].x,600);assert.equal(anchors['b-target'].x,600);assert.equal(anchors['b-target'].y-anchors['a-target'].y,24);
-  assert.ok(Object.values(anchors).every(p=>p.y>100&&p.y<284));assert.equal(nodes[2].inputAnchors,undefined);
+test('all incoming overview arrows reach the visible input circle before and during a target drag',()=>{
+  const {canvasOverviewRouteNodes}=modules.get('./profile-canvas-render'),{routeOverview}=modules.get('./profile-overview-routing');
+  const nodes=[{id:'a',position:{x:0,y:0},height:188,width:288},{id:'b',position:{x:0,y:300},height:188,width:288},{id:'target',position:{x:600,y:100},height:188,width:288,inputAnchors:{saved:{x:600,y:130}}}];
+  const bindings=['a','b'].map(id=>({id:id+'-target',from:{nodeId:id,portId:''},to:{nodeId:'target',portId:id+'-target'}})),before=plain(nodes);
+  const result=canvasOverviewRouteNodes(nodes,bindings),expected={x:600,y:268};
+  for(const binding of bindings)assert.deepEqual(plain(result[2].inputAnchors[binding.id]),expected);
+  assert.deepEqual(plain(result[2].inputAnchors.saved),{x:600,y:130});assert.deepEqual(nodes,before);
+  const moved=nodes.map(node=>node.id==='target'?{...node,position:{x:640,y:160}}:node),previewNodes=canvasOverviewRouteNodes(moved,bindings);
+  for(const style of ['smooth','orthogonal']){
+    const routes=routeOverview(result,bindings,288,188,{style,clearance:36});assert.equal(routes.length,2,style);
+    for(const route of routes)assert.deepEqual(plain(route.points.at(-1)),expected,style);
+    const previews=canvasPreviewRoutes(routes,previewNodes,288,188,style);
+    for(const route of previews)assert.deepEqual(plain(route.points.at(-1)),{x:640,y:328},style);
+  }
+});
+
+test('overview input anchors use the same default card dimensions as visible footer handles',()=>{
+  const {canvasOverviewRouteNodes}=modules.get('./profile-canvas-render'),nodes=[{id:'target',position:{x:20,y:30}}];
+  const result=canvasOverviewRouteNodes(nodes,[{id:'route',from:{nodeId:'source'},to:{nodeId:'target'}}]);
+  assert.deepEqual(plain(result[0].inputAnchors.route),{x:20,y:198});assert.equal(nodes[0].inputAnchors,undefined);
 });

@@ -22,11 +22,74 @@ test('native destination overview shares source lanes across arrows and keeps AN
   };
   const rows = page.locator('.signal-lane:not(.pending-connection)');
   const overview = page.getByRole('region', { name: 'Signal lanes', exact: true });
+  const assertSharedInputEndpoints = async () => {
+    const geometry = await page.locator('.overview-edge').evaluateAll(paths => {
+      const target = document.querySelector('.resource-block[data-node-id="virtual-target"] [data-connection-target] .port-dot');
+      if (!target) throw Error('The shared destination Inputs/actions port dot is missing.');
+      const rect = target.getBoundingClientRect(), center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const branches = paths.map(path => {
+        const length = path.getTotalLength(), point = path.getPointAtLength(length), matrix = path.getScreenCTM();
+        if (!matrix) throw Error('An overview arrow has no screen transform.');
+        const junction = JSON.parse(path.dataset.junction ?? 'null');
+        return {
+          binding: path.dataset.bindingId,
+          mergeId: path.dataset.mergeId,
+          junction,
+          end: { x: point.x, y: point.y },
+          hasMarker: !!path.getAttribute('marker-end') && path.getAttribute('marker-end') !== 'none',
+        };
+      });
+      const trunks = [...document.querySelectorAll('.overview-merge')].map(path => {
+        const length = path.getTotalLength(), end = path.getPointAtLength(length), before = path.getPointAtLength(Math.max(0, length - 80)), start = path.getPointAtLength(0), matrix = path.getScreenCTM();
+        if (!matrix) throw Error('The overview merge stem has no screen transform.');
+        return {
+          id: path.dataset.mergeId,
+          targetNode: path.dataset.targetNode,
+          routeCount: Number(path.dataset.routeCount),
+          hasMarker: !!path.getAttribute('marker-end') && path.getAttribute('marker-end') !== 'none',
+          start: { x: start.x, y: start.y },
+          beforeEnd: { x: before.x, y: before.y },
+          worldEnd: { x: end.x, y: end.y },
+          end: { x: matrix.a * end.x + matrix.c * end.y + matrix.e, y: matrix.b * end.x + matrix.d * end.y + matrix.f },
+        };
+      });
+      return { branches, trunks, target: center };
+    });
+    assert.equal(geometry.branches.length, 2, 'Both source branches enter the merge.');
+    assert.equal(geometry.trunks.length, 1, 'The shared destination has one final arrow stem.');
+    const [trunk] = geometry.trunks;
+    assert.ok(trunk.id, 'The final stem exposes its merge id.');
+    assert.equal(trunk.targetNode, 'virtual-target');
+    assert.ok(trunk.routeCount >= 2, 'The final stem represents both incoming routes.');
+    assert.ok(trunk.hasMarker, 'The shared final stem carries the arrowhead.');
+    assert.ok(Math.abs(trunk.worldEnd.x - trunk.beforeEnd.x) >= 79 && Math.abs(trunk.worldEnd.y - trunk.beforeEnd.y) <= 1.5,
+      'The roomy fixture has at least 80 canvas units of horizontal final stem.');
+    assert.ok(Math.hypot(trunk.end.x - geometry.target.x, trunk.end.y - geometry.target.y) <= 1.5,
+      `Merge stem ends at (${trunk.end.x.toFixed(1)}, ${trunk.end.y.toFixed(1)}), away from the shared input dot (${geometry.target.x.toFixed(1)}, ${geometry.target.y.toFixed(1)}).`);
+    for (const branch of geometry.branches) {
+      assert.ok(branch.mergeId, `Branch ${branch.binding} exposes its merge id.`);
+      assert.equal(branch.mergeId, trunk.id, `Branch ${branch.binding} joins the shared stem.`);
+      assert.equal(branch.hasMarker, false, `Branch ${branch.binding} has no arrowhead.`);
+      assert.ok(branch.junction && Number.isFinite(branch.junction.x) && Number.isFinite(branch.junction.y),
+        `Branch ${branch.binding} exposes its junction coordinates.`);
+      assert.ok(Math.hypot(branch.end.x - branch.junction.x, branch.end.y - branch.junction.y) <= 1.5,
+        `Branch ${branch.binding} does not end at its declared merge junction.`);
+      assert.ok(Math.hypot(trunk.start.x - branch.junction.x, trunk.start.y - branch.junction.y) <= 1.5,
+        `Stem ${trunk.id} does not start at branch ${branch.binding}'s junction.`);
+    }
+  };
   const openArrow = async index => {
     const arrow = page.locator('.signal-edge-hit').nth(index);
     await expect(arrow).toBeVisible();
     await arrow.focus();
     await arrow.press('Enter');
+    await expect(overview).toBeVisible();
+  };
+  const openMerge = async () => {
+    const merge = page.locator('.overview-merge-hit');
+    await expect(merge).toHaveCount(1);
+    await merge.focus();
+    await merge.press('Enter');
     await expect(overview).toBeVisible();
   };
   const choose = async (label, value) => {
@@ -83,6 +146,8 @@ test('native destination overview shares source lanes across arrows and keeps AN
     await expect.poll(async () => await back.isVisible() || await edit.isVisible()).toBe(true);
     if (await back.isVisible()) await back.click();
     await edit.click();
+    await expect(page.locator('.overview-edge')).toHaveCount(2);
+    await assertSharedInputEndpoints();
 
     for (const arrowIndex of [0, 1]) {
       await openArrow(arrowIndex);
@@ -93,6 +158,11 @@ test('native destination overview shares source lanes across arrows and keeps AN
       await page.keyboard.press('Escape');
       await expect(overview).toHaveCount(0);
     }
+    await openMerge();
+    await expect(rows).toHaveCount(2);
+    await expect(overview.locator('header .source-device')).toContainText(fixture.sources[0]);
+    await expect(overview.locator('header .source-device')).toContainText(fixture.sources[1]);
+    await page.keyboard.press('Escape');
 
     // Add a Boolean AND to the first existing destination route and select
     // the other controller as its second source. The existing second route
@@ -112,6 +182,8 @@ test('native destination overview shares source lanes across arrows and keeps AN
     await expect(rows).toHaveCount(2);
     assert.deepEqual(await rows.evaluateAll(items => items.map(item => item.dataset.laneId)), laneIds, 'AND fan-in stays within the existing destination lane.');
 
+    await expect.poll(() => page.locator('.overview-edge').evaluateAll(paths => paths.map(path => Number(path.dataset.routeCount)).sort())).toEqual([1, 2]);
+    await assertSharedInputEndpoints();
     const withAnd = await save();
     const andNode = withAnd.document.processingNodes.find(node => node.operation.kind === 'all');
     assert.ok(andNode, 'The route persists a Boolean AND node.');
@@ -136,6 +208,7 @@ test('native destination overview shares source lanes across arrows and keeps AN
       await expect(header).toContainText(fixture.sources[1]);
       await page.keyboard.press('Escape');
     }
+    await assertSharedInputEndpoints();
     const reloaded = await saved();
     assert.deepEqual(reloaded.document.processingNodes, withAnd.document.processingNodes);
     assert.deepEqual(reloaded.document.bindings, withAnd.document.bindings);

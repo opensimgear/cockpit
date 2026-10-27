@@ -14,14 +14,13 @@ export function canvasRouteNodes(nodes:readonly CanvasNode[]):DiagramNode[] {
   }:{})}));
 }
 
-/** Overview bundles enter a device independently instead of merging at its footer. */
+/** Every incoming overview arrow ends at the device's visible input circle. */
 export function canvasOverviewRouteNodes(nodes:DiagramNode[],bindings:readonly {id:string;from:{nodeId:string};to:{nodeId:string}}[]):DiagramNode[]{
-  const byId=new Map(nodes.map(node=>[node.id,node]));
   return nodes.map(node=>{
-    const incoming=bindings.filter(binding=>binding.to.nodeId===node.id).sort((a,b)=>(byId.get(a.from.nodeId)?.position.y??0)-(byId.get(b.from.nodeId)?.position.y??0)||a.id.localeCompare(b.id));
+    const incoming=bindings.filter(binding=>binding.to.nodeId===node.id);
     if(!incoming.length)return node;
-    const height=node.height??184,gap=Math.min(24,(height-40)/Math.max(1,incoming.length-1));
-    return {...node,inputAnchors:{...node.inputAnchors,...Object.fromEntries(incoming.map((binding,index)=>[binding.id,{x:node.position.x,y:node.position.y+height-20-(incoming.length-index-1)*gap}]))}};
+    const anchor=canvasNodeAnchor(node,'input');
+    return {...node,inputAnchors:{...node.inputAnchors,...Object.fromEntries(incoming.map(binding=>[binding.id,{...anchor}]))}};
   });
 }
 
@@ -84,3 +83,4 @@ export function canvasPreviewRoutes(routes:CanvasRoutes,nodes:readonly DiagramNo
 }
 export {bundleDiagramRoutes,type DiagramWireBundle} from './profile-wire-bundles';
 export {buildDiagramWireTrunks,type DiagramWireTrunk} from './profile-wire-trunks';
+export {mergeOverviewRoutes,createOverviewMerger,type OverviewMerge} from './profile-overview-merges';
