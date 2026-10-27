@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import PageHeader from './PageHeader.svelte';
   import DesktopPreferences from './DesktopPreferences.svelte';
   import BackupSettings from './persistence/BackupSettings.svelte';
@@ -13,11 +14,11 @@
 
   let { light, onToggleTheme, themeBusy = false }: { light: boolean; onToggleTheme: () => void; themeBusy?: boolean } = $props();
   const tabs = [
-    { id: 'general', label: 'General' },
-    { id: 'styling', label: 'Styling' },
-    { id: 'outputs', label: 'Devices' },
-    { id: 'companions', label: 'Companions' },
-    { id: 'ai', label: 'AI integration' },
+    { id: 'general', label: 'General', icon: 'settings' },
+    { id: 'styling', label: 'Styling', icon: 'sliders' },
+    { id: 'outputs', label: 'Devices', icon: 'devices' },
+    { id: 'companions', label: 'Companions', icon: 'mobile' },
+    { id: 'ai', label: 'AI integration', icon: 'command' },
   ] as const;
   let selected = $state<(typeof tabs)[number]['id']>('general');
   const preview = $derived(diagramPendingPath({ x: 24, y: 30 }, { x: 260, y: 130 }, 'output', $canvasStyling.arrowStyle, $canvasStyling.cornerRadius));
@@ -40,7 +41,7 @@
 
 <div class="settings-tabs" role="tablist" aria-label="Settings sections">
   {#each tabs as tab, index (tab.id)}
-    <button id={`settings-tab-${tab.id}`} role="tab" aria-selected={selected === tab.id} aria-controls={`settings-panel-${tab.id}`} tabindex={selected === tab.id ? 0 : -1} onclick={() => { selected = tab.id; }} onkeydown={event => tabKeydown(event, index)}>{tab.label}</button>
+    <button id={`settings-tab-${tab.id}`} role="tab" aria-selected={selected === tab.id} aria-controls={`settings-panel-${tab.id}`} tabindex={selected === tab.id ? 0 : -1} onclick={() => { selected = tab.id; }} onkeydown={event => tabKeydown(event, index)}><Icon name={tab.icon} size={14} />{tab.label}</button>
   {/each}
 </div>
 
@@ -104,23 +105,23 @@
 </div>
 
 <style>
-  .settings-tabs{display:flex;gap:6px;max-width:900px;border-bottom:1px solid var(--line);margin-bottom:24px;overflow-x:auto}
-  .settings-tabs button{padding:12px 18px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:11px;white-space:nowrap;cursor:pointer}
+  .settings-tabs{display:flex;gap:6px;max-width:900px;border-bottom:1px solid var(--line);margin-bottom:var(--ui-section-gap);overflow-x:auto}
+  .settings-tabs button{display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:var(--ui-action-size);white-space:nowrap;cursor:pointer}
   .settings-tabs button:hover{color:var(--text);background:var(--surface-raised)}
   .settings-tabs button[aria-selected="true"]{border-bottom-color:var(--accent);color:var(--text)}
   .settings-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-4px;border-radius:4px}
   .settings-content{max-width:900px}
   .settings-content > :global(section:first-child){margin-top:0}
   .settings-content:focus{outline:none}
-  .arrows-settings,.canvas-settings{margin-top:24px}
-  .preference-row p{max-width:560px;line-height:1.6}
+  .arrows-settings,.canvas-settings{margin-top:var(--ui-section-gap)}
+  .preference-row p{max-width:560px;line-height: var(--ui-line-height)}
   .style-field,.radius-field{display:grid;gap:8px;flex-shrink:0}
   .style-field{min-width:200px}
   .radius-field{width:124px}
-  select{width:100%;background:var(--input-bg)}
+  select{min-height:var(--ui-control-height);width:100%;background:var(--input-bg)}
   .radius-input{display:flex;align-items:center;gap:8px}
   .radius-input input{width:100%;min-width:0;padding-right:10px}
-  .radius-input>span{font-size:10px;color:var(--muted)}
+  .radius-input>span{font-size: var(--ui-text-size);color:var(--muted)}
   .arrow-preview{padding:12px 24px;color:var(--accent);background:var(--input-bg)}
   .arrow-preview svg{display:block;width:284px;max-width:100%;height:120px;margin:0 auto;overflow:visible}
   .preview-line,.preview-head{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}

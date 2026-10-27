@@ -89,7 +89,7 @@
 </section>
 
 <style>
-  .desktop-preferences { margin-top: 24px; }
-  .preference-row p { line-height: 1.6; max-width: 620px; }
+  .desktop-preferences { margin-top: var(--ui-section-gap); }
+  .preference-row p { line-height: var(--ui-line-height); max-width: 620px; }
   .toggle:disabled { opacity: .45; cursor: not-allowed; }
 </style>

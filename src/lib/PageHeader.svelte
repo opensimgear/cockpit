@@ -37,17 +37,18 @@
 </header>
 
 <style>
-  .page-header{min-width:0;margin-bottom:24px;color:var(--text)}
+  .page-header{min-width:0;margin-bottom:var(--ui-section-gap);color:var(--text)}
   .header-row{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
   .header-title{display:flex;align-items:center;gap:16px;min-width:0;flex:1 1 240px}
   .header-copy{min-width:0;flex:1}
   .header-leading{display:flex;align-items:center;flex-shrink:0}
   .header-eyebrow{color:var(--muted);font-weight:600;font-size:8px;letter-spacing:1.7px;text-transform:uppercase;margin-bottom:8px}
-  .header-heading{font-size:26px;font-weight:600;letter-spacing:-.5px;line-height:1.25;margin:0;overflow-wrap:anywhere}
-  .section-header .header-heading{font-size:20px}
-  .header-subtitle{font-size:12px;line-height:1.6;color:var(--muted);margin:8px 0 0}
+  .header-heading{font-size:var(--ui-title-size);font-weight:600;letter-spacing:-.5px;line-height:1.25;margin:0;overflow-wrap:anywhere}
+  .section-header .header-heading{font-size:var(--ui-section-title-size)}
+  .header-subtitle{font-size:var(--ui-text-size);line-height:var(--ui-line-height);color:var(--muted);margin:8px 0 0}
   .header-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;max-width:100%;min-width:0;margin-left:auto}
-  .header-back{display:inline-flex;align-items:center;gap:6px;padding:6px 0;margin:0 0 16px;border:0;border-radius:4px;background:transparent;color:var(--accent);font:inherit;font-size:11px;cursor:pointer}
+  .header-actions :global(button:not(.icon-button):not(.text-button)){min-height:var(--ui-control-height)}
+  .header-back{display:inline-flex;align-items:center;gap:6px;padding:6px 0;margin:0 0 16px;border:0;border-radius:4px;background:transparent;color:var(--accent);font:inherit;font-size:var(--ui-action-size);cursor:pointer}
   .header-back:hover:enabled{text-decoration:underline}
   .header-back:disabled{opacity:.45;cursor:default}
   .header-back:focus-visible{outline:2px solid var(--accent);outline-offset:3px}

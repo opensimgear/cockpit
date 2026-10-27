@@ -63,7 +63,7 @@
   .companion-message.error{color:var(--danger,#e67979)}
   button{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;cursor:help}
   button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
-  .companion-tooltip{position:fixed;z-index:1000;display:block;box-sizing:border-box;width:max-content;max-width:min(320px,80vw);padding:10px 12px;border:1px solid var(--line,#344452);border-radius:6px;background:var(--surface-raised,#14212c);box-shadow:0 8px 24px #0005;color:var(--text,#e1eaf0);font-size:12px;font-weight:400;line-height:1.6;text-align:left;white-space:normal;overflow-wrap:anywhere;cursor:text}
+  .companion-tooltip{position:fixed;z-index:1000;display:block;box-sizing:border-box;width:max-content;max-width:min(320px,80vw);padding:10px 12px;border:1px solid var(--line,#344452);border-radius:6px;background:var(--surface-raised,#14212c);box-shadow:0 8px 24px #0005;color:var(--text,#e1eaf0);font-size:var(--ui-text-size);font-weight:400;line-height:var(--ui-line-height);text-align:left;white-space:normal;overflow-wrap:anywhere;cursor:text}
   .companion-tooltip[hidden]{display:none}
   .tooltip-copy{display:block;max-height:calc(100dvh - 38px);overflow:auto}
   .companion-tooltip::before{content:'';position:absolute;left:0;right:0;top:-8px;height:8px}

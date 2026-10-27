@@ -1,0 +1,11 @@
+:root {
+  --ui-text-size: 12px;
+  --ui-action-size: 11px;
+  --ui-heading-size: 14px;
+  --ui-title-size: 26px;
+  --ui-section-title-size: 20px;
+  --ui-line-height: 1.6;
+  --ui-section-gap: 24px;
+  --ui-panel-padding: 20px;
+  --ui-control-height: 40px;
+}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import Notification from './Notification.svelte';
   import { mappingFields, mappingLimits, configurationError, configEqual, resizeMappings, type RuntimeConfig, type RuntimeSnapshot, type MappingKind } from './runtime-config';
   import type { GatewayCommand } from './gateway';
@@ -42,19 +43,19 @@
   {#if error}<Notification message={String(error)} kind="error" />{/if}
   <div class="configuration-status"><span class="status-dot" class:draft-dot={dirty||unsaved}></span>{dirty?'Draft changes':unsaved?'Applied · not saved':'Saved on module'}<span>Generation {snapshot.generation}</span></div>
   <div class="save-actions">
-    <button class="text-button" disabled={!editing||busy} onclick={()=>request('config_discard')}>Discard</button>
-    <button class="secondary-button" disabled={!editing||busy||!!error||!dirty} onclick={()=>request('config_apply',config)}>Apply</button>
-    <button class="primary-button" disabled={!editing||busy||!!error||(!dirty&&!unsaved)} onclick={()=>dirty?request('config_apply_save',config):request('config_save')}>Apply &amp; save</button>
+    <button class="text-button" disabled={!editing||busy} onclick={()=>request('config_discard')}><Icon name="close" size={14} />Discard</button>
+    <button class="secondary-button" disabled={!editing||busy||!!error||!dirty} onclick={()=>request('config_apply',config)}><Icon name="check" size={14} />Apply</button>
+    <button class="primary-button" disabled={!editing||busy||!!error||(!dirty&&!unsaved)} onclick={()=>dirty?request('config_apply_save',config):request('config_save')}><Icon name="save" size={14} />Apply &amp; save</button>
   </div>
-  <details><summary>Restore build defaults</summary><p class="field-help">Load the module's original mappings into a draft, then review and apply them.</p><button class="secondary-button" disabled={!editing||busy} onclick={()=>request('config_reset')}>Load defaults</button></details>
+  <details><summary>Restore build defaults</summary><p class="field-help">Load the module's original mappings into a draft, then review and apply them.</p><button class="secondary-button" disabled={!editing||busy} onclick={()=>request('config_reset')}><Icon name="refresh" size={14} />Load defaults</button></details>
   <p class="field-help">{#if automatic}{#if controllerEnabled}The existing USB profile stays fixed until you explicitly update it. Changed counts, axis usages or neutral values keep its inputs neutral until then.{:else}Module settings remain editable while this device is online. Enable appends its controller to the current USB order.{/if}{:else}Gateway controller registrations keep their active profile until Apply layout reconnects USB. Changed counts, axis usages or neutral values stay neutral on the gateway until that layout is applied.{/if}</p>
   <details><summary>Generated HID descriptor</summary>{#if snapshot.layout}<p class="field-help">{snapshot.layout.buttons} buttons · {snapshot.layout.axes} axes · {snapshot.layout.hats} hats · {snapshot.layout.reportBytes} report bytes</p>{:else}<p class="field-help">Complete the input mappings before generating a valid descriptor.</p>{/if}<textarea class="text-input" aria-label="Generated HID descriptor" readonly rows="4" value={snapshot.descriptorHex}></textarea></details>
 </section>
 
 <style>
   details { margin: 14px 0; padding-top: 12px; border-top: 1px solid var(--line); }
-  summary { color: var(--soft); font-size: 11px; font-weight: 600; cursor: pointer; }
+  summary { color: var(--soft); font-size: var(--ui-heading-size); font-weight: 600; cursor: pointer; }
   summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-  fieldset { min-width: 0; margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--input-bg); }
-  legend { padding: 0 6px; color: var(--soft); font-size: 10px; }
+  fieldset { min-width: 0; margin: 12px 0; padding: var(--ui-panel-padding); border: 1px solid var(--line); border-radius: 5px; background: var(--input-bg); }
+  legend { padding: 0 6px; color: var(--soft); font-size: var(--ui-heading-size); }
 </style>

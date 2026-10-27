@@ -86,5 +86,5 @@
 <ProfileDebugView profiles={savedProfiles} {inventory} {inventoryRevision} {compiler} {runtimeState} {runtime} {inspection} {activity} {profileName} loadProfile={id => profiles.getAssignments(id)}/>
 
 <style>
-  .debug-context-error { color: var(--muted); font-size: 11px; line-height: 1.8; margin-bottom: 18px; }
+  .debug-context-error { color: var(--muted); font-size: var(--ui-text-size); line-height: var(--ui-line-height); margin-bottom: var(--ui-section-gap); }
 </style>

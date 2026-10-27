@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
@@ -64,16 +65,16 @@
       <label>Saved policy<select bind:value={mode} disabled={busy || status.job?.active}>{#each status.modes as option}<option value={option.mode} disabled={!option.supported}>{option.label}{option.supported ? '' : ' · unavailable'}</option>{/each}</select></label>
       {#if mode === 'hide-from-process'}
         <label>Executable path<input bind:value={executable} maxlength="4096" placeholder="C:\Games\Game.exe" disabled={busy || status.job?.active} /></label>
-        <button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_processes', offset: 0 })}>Choose a running application</button>
+        <button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_processes', offset: 0 })}><Icon name="search" size={14} />Choose a running application</button>
         {#if processes.length}<label>Running executables<select value={executable} onchange={event => executable = event.currentTarget.value}><option value="">Choose an executable path</option>{#each processes as process}<option value={process.path}>{process.path} (PID {process.pid})</option>{/each}</select></label>{/if}
-        {#if nextProcess != null}<button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_processes', offset: nextProcess ?? 0 })}>More applications</button>{/if}
+        {#if nextProcess != null}<button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_processes', offset: nextProcess ?? 0 })}><Icon name="plus" size={14} />More applications</button>{/if}
       {/if}
     </div>
     <p class="hint">{status.modes.find(option => option.mode === mode)?.reason}</p>
     <div class="actions">
-      <button class="secondary-button" disabled={busy || status.job?.active || (mode === 'hide-from-process' && !executable.trim())} onclick={() => action({ command: 'controller_visibility_save', intent: mode === 'hide-from-process' ? { mode, executable: executable.trim() } : { mode } })}>Save visibility selection</button>
-      <button class="secondary-button" disabled={busy || status.job?.active} onclick={() => action({ command: 'controller_visibility_inspect' })}>{status.platform === 'windows' ? 'Inspect HidHide' : 'Inspect visibility capabilities'}</button>
-      <button class="secondary-button" disabled={busy || (!status.job?.active && (!status.qualified || !status.recovery.required || !status.recovery.id))} onclick={() => action({ command: 'controller_visibility_restore', jobId: status?.job?.jobId, sessionId: status?.recovery.id })}>Restore visibility</button>
+      <button class="secondary-button" disabled={busy || status.job?.active || (mode === 'hide-from-process' && !executable.trim())} onclick={() => action({ command: 'controller_visibility_save', intent: mode === 'hide-from-process' ? { mode, executable: executable.trim() } : { mode } })}><Icon name="save" size={14} />Save visibility selection</button>
+      <button class="secondary-button" disabled={busy || status.job?.active} onclick={() => action({ command: 'controller_visibility_inspect' })}><Icon name="search" size={14} />{status.platform === 'windows' ? 'Inspect HidHide' : 'Inspect visibility capabilities'}</button>
+      <button class="secondary-button" disabled={busy || (!status.job?.active && (!status.qualified || !status.recovery.required || !status.recovery.id))} onclick={() => action({ command: 'controller_visibility_restore', jobId: status?.job?.jobId, sessionId: status?.recovery.id })}><Icon name="refresh" size={14} />Restore visibility</button>
     </div>
     {#if status.global.error}<p class="notice">Visibility setup: {status.global.error}</p>{/if}
     {#if status.global.inspected && !status.global.error}<p>Last inspected policy: cloaking {status.global.active ? 'on' : 'off'}, {status.global.inverse ? 'selected applications blocked' : 'listed applications exempt'}. {status.global.hiddenCount} configured hidden devices.</p>{/if}
@@ -83,30 +84,30 @@
     {#if status.launch?.job?.active}
       <h4>Previous isolated application</h4>
       <p role="status">{status.launch.job.phase}: {status.launch.job.message}</p>
-      <button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_restore', jobId: status?.launch?.job?.jobId })}>Stop retained isolated application</button>
+      <button class="secondary-button" disabled={busy} onclick={() => action({ command: 'controller_visibility_restore', jobId: status?.launch?.job?.jobId })}><Icon name="close" size={14} />Stop retained isolated application</button>
     {/if}
     {#if status.recovery.required && !status.job?.active}<p class="notice">An interrupted visibility operation needs explicit recovery. {status.recovery.error ?? 'No hiding is reapplied automatically.'}</p>{/if}
   {/if}
 </section>
 <style>
-  .visibility { margin: 22px 0; padding: 18px; border: 1px solid var(--line); border-radius: 7px; background: var(--subtle); min-width: 0; }
-  h3 { font-size: 12px; font-weight: 570; margin: 0 0 10px; }
-  h4 { font-size: 11px; font-weight: 570; margin: 14px 0 8px; }
-  p { font-size: 10px; line-height: 1.7; color: var(--muted); margin: 8px 0; overflow-wrap: anywhere; }
+  .visibility { margin: var(--ui-section-gap) 0; padding: var(--ui-panel-padding); border: 1px solid var(--line); border-radius: 7px; background: var(--subtle); min-width: 0; }
+  h3 { font-size: var(--ui-heading-size); font-weight: 570; margin: 0 0 10px; }
+  h4 { font-size: var(--ui-heading-size); font-weight: 570; margin: 14px 0 8px; }
+  p { font-size: var(--ui-text-size); line-height: var(--ui-line-height); color: var(--muted); margin: 8px 0; overflow-wrap: anywhere; }
   .fields, .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 14px 0; }
-  label { display: flex; flex-direction: column; gap: 8px; min-width: min(100%, 200px); flex: 1; font-size: 10px; color: var(--soft); }
-  select, input { width: 100%; min-width: 0; padding: 10px 11px; font-size: 10px; color: var(--text); background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
-  .hint { font-size: 9px; }
-  .notice { display: block; font-size: 10px; line-height: 1.7; margin: 12px 0; background: var(--surface); }
+  label { display: flex; flex-direction: column; gap: 8px; min-width: min(100%, 200px); flex: 1; font-size: var(--ui-text-size); color: var(--soft); }
+  select, input { min-height: var(--ui-control-height); width: 100%; min-width: 0; padding: 10px 11px; font-size: var(--ui-text-size); color: var(--text); background: var(--input-bg); border: 1px solid var(--line); border-radius: 5px; }
+  .hint { font-size: var(--ui-text-size); }
+  .notice { display: block; font-size: var(--ui-text-size); line-height: var(--ui-line-height); margin: 12px 0; background: var(--surface); }
   .startup-access { margin: 16px 0; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
   .startup-access.attention { border-left: 3px solid var(--muted); }
   .startup-access p { margin: 6px 0; }
   .startup-access code { overflow-wrap: anywhere; }
   .startup-access strong { color: var(--soft); font-weight: 500; }
-  details { margin: 14px 0; font-size: 10px; color: var(--soft); line-height: 1.7; }
+  details { margin: 14px 0; font-size: var(--ui-text-size); color: var(--soft); line-height: var(--ui-line-height); }
   summary { cursor: pointer; }
   ul { padding-left: 18px; }
   li { overflow-wrap: anywhere; color: var(--muted); }
-  code { font-size: 9px; }
+  code { font-size: var(--ui-text-size); }
   @media (max-width: 600px) { .visibility { padding: 14px; } .fields > button { width: 100%; } .actions > button { white-space: normal; } }
 </style>

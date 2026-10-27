@@ -24,5 +24,5 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
 <style>
- .desktop-controls{padding:17px;margin:0 0 22px}.heading,.settings,.actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.heading strong{font-size:12px}.heading span{font-size:10px;color:var(--accent)}.heading button{margin-left:auto}.settings{align-items:end}.settings label{display:grid;gap:6px;font-size:10px}.settings label.check{display:flex;align-items:center;gap:7px}p{font-size:10px;line-height:1.8;color:var(--muted);margin:12px 0}button{font-size:10px}.error{color:#d3a078}
+ .desktop-controls{padding:var(--ui-panel-padding);margin:0 0 var(--ui-section-gap)}.heading,.settings,.actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.heading strong{font-size:var(--ui-heading-size)}.heading span{font-size:var(--ui-text-size);color:var(--accent)}.heading button{margin-left:auto}.settings{align-items:end}.settings label{display:grid;gap:6px;font-size:var(--ui-text-size)}.settings label.check{display:flex;align-items:center;gap:7px}p{font-size:var(--ui-text-size);line-height:var(--ui-line-height);color:var(--muted);margin:12px 0}button{font-size:var(--ui-action-size)}.error{color:#d3a078}
 </style>

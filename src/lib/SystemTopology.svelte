@@ -138,9 +138,9 @@
 
 <style>
   .system-topology { border: 1px solid var(--line); border-radius: 7px; background: var(--surface); overflow: hidden; }
-  .topology-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-  .topology-heading strong { display: block; font-size: 12px; font-weight: 550; }
-  .topology-heading div > span { display: block; font-size: 10px; color: var(--muted); margin-top: 6px; }
+  .topology-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: var(--ui-panel-padding); border-bottom: 1px solid var(--line); }
+  .topology-heading strong { display: block; font-size: var(--ui-heading-size); font-weight: 550; }
+  .topology-heading div > span { display: block; font-size: var(--ui-text-size); color: var(--muted); margin-top: 6px; }
   .topology-tools { display: flex; align-items: center; gap: 8px; }
   .topology-fit { display:grid;place-items:center;flex-shrink:0;width:32px;height:32px;padding:0;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--soft);cursor:pointer; }
   .topology-fit:hover { background:var(--surface-raised);color:var(--text); }
@@ -148,7 +148,7 @@
   .topology-zoom { display:flex;align-items:center;border:1px solid var(--line);border-radius:6px; }
   .topology-zoom button { width:30px;height:30px;padding:0;border:0;background:transparent;color:var(--soft);font-size:16px;cursor:pointer; }
   .topology-zoom output { min-width:44px;text-align:center;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums; }
-  .topology-legend { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px 18px; color: var(--muted); font-size: 9px; border-bottom: 1px solid var(--faint-line); }
+  .topology-legend { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 12px var(--ui-panel-padding); color: var(--muted); font-size: var(--ui-text-size); border-bottom: 1px solid var(--faint-line); }
   .topology-legend span { display: flex; align-items: center; gap: 6px; }
   .topology-legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid var(--accent); }
   .topology-legend .software { border-color: #8fb6e9; border-top-style: dotted; }
@@ -178,7 +178,7 @@
   .node-status { display: flex; align-items: start; gap: 5px; font-size: 9px; line-height: 1.25; color: var(--muted); margin-top: 7px; }
   .node-status > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
   .node-role { flex-basis: 100%; font-size: 9px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid var(--faint-line); padding-top: 9px; }
-  .topology-help { padding: 12px 18px; font-size: 9px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--line); }
-  .topology-empty { position: absolute; left: 20px; right: 20px; top: 35px; text-align: center; font-size: 12px; color: var(--muted); pointer-events: none; }
+  .topology-help { padding: 12px var(--ui-panel-padding); font-size: var(--ui-text-size); line-height: var(--ui-line-height); color: var(--muted); border-top: 1px solid var(--line); }
+  .topology-empty { position: absolute; left: 20px; right: 20px; top: 35px; text-align: center; font-size: var(--ui-text-size); color: var(--muted); pointer-events: none; }
   @media (max-width: 680px) { .topology-heading { align-items: start; flex-direction: column; } .topology-viewport { min-height: 360px; height: 55vh; } }
 </style>

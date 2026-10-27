@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import { onMount } from 'svelte';
   import Notification from './Notification.svelte';
   import RuntimeEditor from './RuntimeEditor.svelte';
@@ -65,18 +66,18 @@
   <div class="usb-body">
   {#if error}<Notification message={error} kind="error" />{/if}
   <div class="usb-actions">
-    <button class="secondary-button" disabled={busy} onclick={() => run(() => client.status(endpointKey), !editing)}>Refresh USB state</button>
-    {#if !module?.snapshot.connected}<button class="secondary-button" disabled={busy} onclick={connect}>Connect USB endpoint</button>
-    {:else}<button class="secondary-button" disabled={busy || editing} onclick={() => run(() => client.disconnect(endpointKey))}>Disconnect USB endpoint</button>{/if}
+    <button class="secondary-button" disabled={busy} onclick={() => run(() => client.status(endpointKey), !editing)}><Icon name="refresh" size={14} />Refresh USB state</button>
+    {#if !module?.snapshot.connected}<button class="secondary-button" disabled={busy} onclick={connect}><Icon name="usb" size={14} />Connect USB endpoint</button>
+    {:else}<button class="secondary-button" disabled={busy || editing} onclick={() => run(() => client.disconnect(endpointKey))}><Icon name="close" size={14} />Disconnect USB endpoint</button>{/if}
     {#if module?.snapshot.connected}
-      {#if editing}<button class="secondary-button" disabled={busy} onclick={release}>End USB setup</button>
-      {:else}<button class="secondary-button" disabled={busy} onclick={claim}>Begin USB setup</button>{/if}
+      {#if editing}<button class="secondary-button" disabled={busy} onclick={release}><Icon name="close" size={14} />End USB setup</button>
+      {:else}<button class="secondary-button" disabled={busy} onclick={claim}><Icon name="settings" size={14} />Begin USB setup</button>{/if}
     {/if}
   </div>
   {#if snapshot && draft}<div class="usb-configuration"><RuntimeEditor bind:config={draft} snapshot={snapshot as import('./runtime-config').RuntimeSnapshot} {editing} {busy} request={configure} automatic controllerEnabled={false} /></div>{/if}
   {#if module?.snapshot.connected}
     <section class="usb-device-actions" aria-label="USB device actions">
-    <div class="actions-heading"><h3>Device actions</h3><button class="secondary-button" disabled={busy} onclick={() => run(() => client.describeActions(module!), false)}>Discover USB actions</button></div>
+    <div class="actions-heading"><h3>Device actions</h3><button class="secondary-button" disabled={busy} onclick={() => run(() => client.describeActions(module!), false)}><Icon name="search" size={14} />Discover USB actions</button></div>
     {#each actions?.actions ?? [] as action (action.id)}<ActionControl action={action as DeviceAction} snapshot={actions!} ready={!busy} {busy} {invoke} />{/each}
     {#if module.snapshot.events && !('status' in module.snapshot.events)}<p class="usb-input-status">Live inputs: {module.snapshot.events.held.filter(Boolean).length} pressed · {module.snapshot.events.axes?.join(', ') ?? 'No axes'}</p>{/if}
     </section>
@@ -86,12 +87,12 @@
 </section>
 <style>
   .usb-details { min-width: 0; }
-  .usb-body { padding: 20px 21px; }
+  .usb-body { padding: var(--ui-panel-padding); }
   .usb-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
-  .usb-configuration, .usb-device-actions { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .usb-configuration, .usb-device-actions { margin-top: var(--ui-section-gap); padding-top: var(--ui-section-gap); border-top: 1px solid var(--line); }
   .actions-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
-  h3 { font-size: 12px; font-weight: 550; }
-  .usb-input-status { color: var(--soft); font-size: 10px; line-height: 1.7; margin-top: 14px; overflow-wrap: anywhere; }
-  .field-help { font-size: 9px; line-height: 1.7; }
+  h3 { font-size: var(--ui-heading-size); font-weight: 550; }
+  .usb-input-status { color: var(--soft); font-size: var(--ui-text-size); line-height: var(--ui-line-height); margin-top: 14px; overflow-wrap: anywhere; }
+  .field-help { font-size: var(--ui-text-size); line-height: var(--ui-line-height); }
   @media(max-width:520px) { .usb-body { padding: 17px 15px; } }
 </style>

@@ -26,11 +26,11 @@
 </div>
 
 <style>
-  .device-filters { margin-bottom: 20px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-  .filters-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-  h2 { font-size: 12px; font-weight: 570; margin: 0 0 7px; }
-  p { font-size: 10px; color: var(--muted); line-height: 1.7; }
+  .device-filters { margin-bottom: var(--ui-section-gap); padding: var(--ui-panel-padding); border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  .filters-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: var(--ui-section-gap); }
+  h2 { font-size: var(--ui-heading-size); font-weight: 570; margin: 0 0 7px; }
+  p { font-size: var(--ui-text-size); color: var(--muted); line-height: var(--ui-line-height); }
   .filters-heading button { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
-  .filter-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
+  .filter-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ui-section-gap); }
   @media(max-width:700px) { .filter-groups { grid-template-columns: minmax(0, 1fr); } .device-filters { padding: 16px; } }
 </style>

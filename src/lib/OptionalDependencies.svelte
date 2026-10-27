@@ -52,8 +52,8 @@
   .dependency-setup { width: 100%; min-width: 0; }
   .setup-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   .setup-row > div { flex: 1; min-width: min(100%, 240px); }
-  strong { font-size: 10px; font-weight: 570; color: var(--soft); }
-  p { margin-top: 6px; font-size: 9px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+  strong { font-size: var(--ui-heading-size); font-weight: 570; color: var(--soft); }
+  p { margin-top: 6px; font-size: var(--ui-text-size); line-height: var(--ui-line-height); color: var(--muted); overflow-wrap: anywhere; }
   .setup-row button { flex-shrink: 0; margin-left: auto; }
   .setup-error { color: #d3a078; }
 </style>

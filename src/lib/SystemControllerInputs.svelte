@@ -62,7 +62,7 @@
 {/if}
 
 <style>
-  .live-input-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 24px; }
+  .live-input-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: var(--ui-section-gap); }
   .live-input-layout.buttons-only, .live-input-layout.analog-only { grid-template-columns: minmax(0, 1fr); }
   .analog-inputs, .button-inputs { min-width: 0; }
   .analog-inputs { display: grid; gap: 8px; }
@@ -85,6 +85,6 @@
   .button-control:is(:hover, :focus):not(.dismissed) .button-number { display: none; }
   .button-control:is(:hover, :focus):not(.dismissed) .button-information { display: flex; }
   .button-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .controls-empty { padding: 16px; border: 1px dashed var(--line); border-radius: 6px; font-size: 10px; color: var(--muted); line-height: 1.7; }
+  .controls-empty { padding: 16px; border: 1px dashed var(--line); border-radius: 6px; font-size: var(--ui-text-size); color: var(--muted); line-height: var(--ui-line-height); }
   @media (max-width: 700px) { .live-input-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 </style>

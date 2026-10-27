@@ -125,29 +125,29 @@
 </section>
 
 <style>
-  .output-settings { display: grid; gap: 20px; margin-bottom: 24px; }
-  .output-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-  h2 { font-size: 14px; font-weight: 570; margin: 0 0 8px; }
-  .output-header p, .card-body p { color: var(--muted); font-size: 10px; line-height: 1.8; }
+  .output-settings { display: grid; gap: var(--ui-section-gap); margin-bottom: var(--ui-section-gap); }
+  .output-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ui-section-gap); }
+  h2 { font-size: var(--ui-heading-size); font-weight: 570; margin: 0 0 8px; }
+  .output-header p, .card-body p { color: var(--muted); font-size: var(--ui-text-size); line-height: var(--ui-line-height); }
   .output-header button { flex-shrink: 0; }
-  .card-heading { display: flex; align-items: center; gap: 12px; padding: 20px 22px 14px; }
+  .card-heading { display: flex; align-items: center; gap: 12px; padding: var(--ui-panel-padding) var(--ui-panel-padding) 14px; }
   .output-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border: 1px solid var(--line); border-radius: 8px; color: var(--accent); background: var(--input-bg); }
   .card-title { flex: 1; min-width: 0; }
-  h3 { font-size: 12px; font-weight: 550; margin: 0 0 5px; }
-  .card-title > span { color: var(--muted); font-size: 9px; }
+  h3 { font-size: var(--ui-heading-size); font-weight: 550; margin: 0 0 5px; }
+  .card-title > span { color: var(--muted); font-size: var(--ui-text-size); }
   .driver-version { color: var(--soft); }
   .setup-status { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); background: var(--input-bg); font-size: 9px; white-space: nowrap; }
   .setup-status.enabled { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
   .setup-status.attention { color: #d3a078; }
-  .card-body { padding: 0 22px 20px; }
+  .card-body { padding: 0 var(--ui-panel-padding) var(--ui-panel-padding); }
   .card-body .status-note { margin-top: 12px; color: var(--soft); }
   .virtual-slots { list-style: none; margin: 16px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--input-bg); }
-  .virtual-slots li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+  .virtual-slots li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: var(--ui-text-size); line-height: var(--ui-line-height); overflow-wrap: anywhere; }
   .virtual-slots li + li { border-top: 1px solid var(--line); }
   .virtual-slots strong { font-weight: 500; color: var(--soft); }
   .virtual-slots li > span { color: var(--muted); text-align: right; }
-  .card-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 22px; border-top: 1px solid var(--line); }
-  .card-footer > span { color: var(--muted); font-size: 9px; line-height: 1.7; }
+  .card-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px var(--ui-panel-padding); border-top: 1px solid var(--line); }
+  .card-footer > span { color: var(--muted); font-size: var(--ui-text-size); line-height: var(--ui-line-height); }
   .card-footer button { flex-shrink: 0; }
   .output-toggle { display: grid; position: relative; place-items: center; width: 32px; height: 32px; flex-shrink: 0; cursor: pointer; }
   .output-toggle input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
@@ -156,7 +156,7 @@
   .output-toggle input:disabled { cursor: not-allowed; }
   .output-toggle:has(input:disabled) .toggle { opacity: .45; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .setup-error, .browser-note { display: flex; align-items: flex-start; gap: 9px; font-size: 10px; line-height: 1.8; overflow-wrap: anywhere; }
+  .setup-error, .browser-note { display: flex; align-items: flex-start; gap: 9px; font-size: var(--ui-text-size); line-height: var(--ui-line-height); overflow-wrap: anywhere; }
   .setup-error { color: #d3a078; }
   .card-body .setup-error { margin-top: 12px; }
   .setup-error :global(svg), .browser-note :global(svg) { margin-top: 2px; flex-shrink: 0; }

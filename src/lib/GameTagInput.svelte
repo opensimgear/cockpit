@@ -47,12 +47,12 @@
 </div>
 
 <style>
-  .tag-input{min-width:0}label{display:block;font-size:11px;font-weight:570;color:var(--soft);margin-bottom:10px}
+  .tag-input{min-width:0}label{display:block;font-size:var(--ui-text-size);font-weight:570;color:var(--soft);margin-bottom:10px}
   .tag-field{position:relative;display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:40px;padding:7px;border:1px solid var(--line);border-radius:5px;background:var(--input-bg)}
   .tag-field:focus-within{border-color:var(--accent);outline:1px solid var(--accent)}.disabled{opacity:.65}
-  .tag-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:4px 6px;border-radius:4px;background:var(--accent-bg);color:var(--text);font-size:11px}.tag-chip>span{overflow-wrap:anywhere}
+  .tag-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:4px 6px;border-radius:4px;background:var(--accent-bg);color:var(--text);font-size:var(--ui-text-size)}.tag-chip>span{overflow-wrap:anywhere}
   button{display:flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;background:transparent;color:var(--soft);cursor:pointer}button:hover{color:var(--text)}button:focus-visible{outline:2px solid var(--accent)}
-  input{flex:1;min-width:100px;width:100px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:11px;padding:4px}
+  input{flex:1;min-width:100px;width:100px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:var(--ui-text-size);padding:4px}
   .suggestions{position:absolute;z-index:20;top:calc(100% + 5px);left:0;right:0;max-height:230px;overflow-y:auto;padding:5px;background:var(--surface);border:1px solid var(--line);border-radius:5px;box-shadow:0 8px 24px #0004}
-  [role=option]{display:block;width:100%;height:auto;text-align:left;padding:9px;border-radius:3px;font-size:11px;cursor:pointer}[role=option]:hover,[role=option].active{background:var(--accent-bg);color:var(--text)}p{margin:7px;color:var(--muted);font-size:11px}.error{color:#e5b19b}
+  [role=option]{display:block;width:100%;height:auto;text-align:left;padding:9px;border-radius:3px;font-size:var(--ui-text-size);cursor:pointer}[role=option]:hover,[role=option].active{background:var(--accent-bg);color:var(--text)}p{margin:7px;color:var(--muted);font-size:var(--ui-text-size)}.error{color:#e5b19b}
 </style>

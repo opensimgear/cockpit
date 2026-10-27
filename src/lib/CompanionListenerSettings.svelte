@@ -87,12 +87,12 @@
   {#if hostState.listener?.lastError || error}<Notification message={String(error || hostState.listener?.lastError)} kind="error" />{/if}
 </section>
 <style>
-  .listener-settings { margin-top: 24px; }
+  .listener-settings { margin-top: var(--ui-section-gap); }
   .listener-heading { flex-wrap: wrap; gap: 12px; }
   .listener-state { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .listener-state .quiet-tag { flex-shrink: 0; }
-  .listener-endpoint { min-width: 0; color: var(--soft); line-height: 1.7; }
-  .preference-row p { line-height: 1.6; max-width: 620px; overflow-wrap: anywhere; }
+  .listener-endpoint { min-width: 0; color: var(--soft); line-height: var(--ui-line-height); }
+  .preference-row p { line-height: var(--ui-line-height); max-width: 620px; overflow-wrap: anywhere; }
   .toggle:disabled { opacity: .45; cursor: not-allowed; }
   .connection-row, .browser-trust { align-items: flex-start; flex-wrap: wrap; }
   .connection-copy { flex: 1 1 260px; }
@@ -100,12 +100,12 @@
   .connection-fields label { min-width: 0; }
   select { width: 100%; background: var(--input-bg); }
   select:disabled { cursor: not-allowed; opacity: .65; }
-  .preference-row .field-error { color: var(--text); font-size: 9px; }
+  .preference-row .field-error { color: var(--text); font-size: var(--ui-text-size); }
   .trust-copy { flex: 1 1 400px; min-width: 0; }
   .browser-trust .secondary-button { flex-shrink: 0; }
   .fingerprint { display: grid; gap: 7px; margin-top: 14px; }
-  .fingerprint > span { color: var(--muted); font-size: 9px; }
-  code { font-size: 9px; overflow-wrap: anywhere; }
-  .fingerprint code { display: block; padding: 10px 11px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--soft); line-height: 1.7; }
+  .fingerprint > span { color: var(--muted); font-size: var(--ui-text-size); }
+  code { font-size: var(--ui-text-size); overflow-wrap: anywhere; }
+  .fingerprint code { display: block; padding: 10px 11px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--soft); line-height: var(--ui-line-height); }
   @media (max-width: 520px) { .connection-copy, .connection-fields, .trust-copy { flex-basis: auto; width: 100%; } }
 </style>

@@ -67,7 +67,7 @@
     {#if preferences.secret}
       <div class="preference-row secret-row">
         <div class="secret-copy"><strong>New token for {preferences.secret.credential.name}</strong><p id="mcp-secret-help">Save this token in your client now. Copying it or its client configuration hides it. Leaving this section also hides it.</p><textarea class="text-input secret-value" aria-label="New MCP token" aria-describedby="mcp-secret-help" readonly autocomplete="off" spellcheck="false" value={preferences.secret.token}></textarea></div>
-        <div class="secret-actions"><button class="secondary-button" disabled={unavailable} onclick={() => { void copy('token'); }}><Icon name="copy" size={14} />Copy token</button><button class="secondary-button" disabled={unavailable} onclick={() => { void copy('config'); }}><Icon name="copy" size={14} />Copy client configuration</button><button class="secondary-button" disabled={unavailable} onclick={() => settings.hideSecret()}>Hide token</button></div>
+        <div class="secret-actions"><button class="secondary-button" disabled={unavailable} onclick={() => { void copy('token'); }}><Icon name="copy" size={14} />Copy token</button><button class="secondary-button" disabled={unavailable} onclick={() => { void copy('config'); }}><Icon name="copy" size={14} />Copy client configuration</button><button class="secondary-button" disabled={unavailable} onclick={() => settings.hideSecret()}><Icon name="close" size={14} />Hide token</button></div>
       </div>
     {/if}
     {#if preferences.status?.credentials.length}
@@ -80,14 +80,14 @@
     {#if preferences.status}
       <div class="preference-row client-config-row"><div class="client-config"><strong>Client configuration</strong><p id="mcp-config-help">Use these HTTP connection settings in a compatible MCP client. Replace YOUR_COCKPIT_TOKEN with your saved token. Replacing a token immediately revokes the original when successful.</p><textarea class="text-input config-value" aria-label="MCP client configuration" aria-describedby="mcp-config-help" readonly spellcheck="false" value={config}></textarea>{#if preferences.status.protocolVersions.length}<p class="protocols">Protocol versions: {preferences.status.protocolVersions.join(', ')}</p>{/if}</div><button class="secondary-button" disabled={unavailable} onclick={() => { void copy('config'); }}><Icon name="copy" size={14} />Copy configuration</button></div>
     {/if}
-    {#if error}<div class="settings-result"><Notification message={error} kind="error" /><button class="secondary-button" disabled={!!preferences.busy} onclick={() => { void settings.load(); }}>Refresh status</button></div>
+    {#if error}<div class="settings-result"><Notification message={error} kind="error" /><button class="secondary-button" disabled={!!preferences.busy} onclick={() => { void settings.load(); }}><Icon name="refresh" size={14} />Refresh status</button></div>
     {/if}
   {/if}
 </section>
 
 <style>
-  .mcp-settings { margin-top: 24px; }
-  .preference-row p { line-height: 1.6; max-width: 620px; overflow-wrap: anywhere; }
+  .mcp-settings { margin-top: var(--ui-section-gap); }
+  .preference-row p { line-height: var(--ui-line-height); max-width: 620px; overflow-wrap: anywhere; }
   .toggle:disabled { opacity: .45; cursor: not-allowed; }
   .connection-row,.credential-form,.secret-row,.client-config-row { align-items: flex-start; flex-wrap: wrap; }
   .connection-copy { flex: 1 1 280px; }
@@ -98,10 +98,10 @@
   .credential-form form button { justify-self: start; grid-column: 1 / -1; }
   select { width: 100%; background: var(--input-bg); }
   select:disabled { cursor: not-allowed; opacity: .65; }
-  .field-error { font-size: 9px; }
-  code,.credential-id,.protocols { font-size: 9px; overflow-wrap: anywhere; }
+  .field-error { font-size: var(--ui-text-size); }
+  code,.credential-id,.protocols { font-size: var(--ui-text-size); overflow-wrap: anywhere; }
   .secret-copy,.client-config { flex: 1 1 440px; min-width: 0; }
-  textarea { display: block; width: 100%; resize: vertical; margin-top: 14px; font-family: var(--font-mono,monospace); line-height: 1.7; font-size: 10px; padding: 10px 11px; }
+  textarea { display: block; width: 100%; resize: vertical; margin-top: 14px; font-family: var(--font-mono,monospace); line-height: var(--ui-line-height); font-size: var(--ui-text-size); padding: 10px 11px; }
   .secret-value { min-height: 72px; }
   .config-value { min-height: 250px; }
   .secret-actions,.credential-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -109,6 +109,6 @@
   .credential-row { gap: 12px; flex-wrap: wrap; }
   .credential-row > div:first-child { min-width: 0; flex: 1 1 200px; }
   .client-config-row > button { flex-shrink: 0; }
-  .settings-result { padding: 0 24px 20px; }
+  .settings-result { padding: 0 var(--ui-panel-padding) var(--ui-panel-padding); }
   @media(max-width:520px) { .connection-copy,.connection-controls,.credential-form form,.secret-copy,.client-config { flex-basis: 100%; } .credential-form form { grid-template-columns: 1fr; } .credential-form form button { grid-column: auto; } }
 </style>

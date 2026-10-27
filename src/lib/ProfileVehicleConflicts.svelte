@@ -27,5 +27,5 @@
 {/if}
 
 <style>
-  .vehicle-conflicts{margin:0 0 12px;padding:12px 14px;border:1px solid #ad875440;border-radius:6px;background:var(--surface);font-size:10px;color:var(--muted)}.conflict-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.conflict-heading strong{font-weight:500;color:var(--soft)}.conflict-heading span{color:#d3a078}.vehicle-conflicts ul{margin:12px 0 0;padding-left:18px;display:grid;gap:9px}.vehicle-conflicts p{margin:0;line-height:1.7}.vehicle-conflicts small{font-size:9px;color:var(--soft)}
+  .vehicle-conflicts{margin:0 0 12px;padding:12px 14px;border:1px solid #ad875440;border-radius:6px;background:var(--surface);font-size:var(--ui-text-size);color:var(--muted)}.conflict-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.conflict-heading strong{font-weight:500;color:var(--soft)}.conflict-heading span{color:#d3a078}.vehicle-conflicts ul{margin:12px 0 0;padding-left:18px;display:grid;gap:9px}.vehicle-conflicts p{margin:0;line-height:var(--ui-line-height)}.vehicle-conflicts small{font-size:var(--ui-text-size);color:var(--soft)}
 </style>

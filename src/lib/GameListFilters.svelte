@@ -22,7 +22,7 @@
 <style>
   .game-filters{margin-bottom:24px;padding:20px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
   .filters-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}
-  h2{font-size:12px;font-weight:570;margin:0 0 7px}p{font-size:10px;color:var(--muted);line-height:1.7;margin:0}
+  h2{font-size:var(--ui-text-size);font-weight:570;margin:0 0 7px}p{font-size:var(--ui-text-size);color:var(--muted);line-height:var(--ui-line-height);margin:0}
   .filter-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.filter-actions button{display:inline-flex;align-items:center;gap:5px}
   .filter-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px 28px}
   @media(max-width:800px){.filter-groups{grid-template-columns:1fr}.filters-heading{flex-wrap:wrap}.game-filters{padding:16px}}

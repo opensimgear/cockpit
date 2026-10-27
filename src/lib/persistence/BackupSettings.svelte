@@ -40,6 +40,6 @@
   <div class="actions"><button class="secondary-button" disabled={busy} onclick={()=>selected=null}><Icon name="close" size={14}/>Cancel</button><button class="primary-button" disabled={busy} onclick={confirm}><Icon name={action==='restore'?'refresh':'trash'} size={14}/>{busy?'Working…':action==='restore'?'Restore':'Remove'}</button></div>
 </dialog>{/if}
 <style>
-  .backup-settings { margin-top: 24px; }
-  .actions{display:flex;gap:8px;align-items:center}.backup-row p{overflow-wrap:anywhere}dialog{position:fixed;inset:0;margin:auto;width:min(520px,calc(100% - 32px));box-sizing:border-box;padding:24px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005}dialog::backdrop{background:#0009}dialog h2{font-size:18px;margin:0}dialog p{color:var(--muted);font-size:12px;line-height:1.6;margin:16px 0}dialog .actions{justify-content:flex-end}.storage-error{color:var(--danger,#e5b19b)}
+  .backup-settings { margin-top: var(--ui-section-gap); }
+  .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.backup-row p{overflow-wrap:anywhere}dialog{position:fixed;inset:0;margin:auto;width:min(520px,calc(100% - 32px));box-sizing:border-box;padding:var(--ui-panel-padding);background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 80px #0005}dialog::backdrop{background:#0009}dialog h2{font-size:var(--ui-section-title-size);margin:0}dialog p{color:var(--muted);font-size: var(--ui-text-size);line-height: var(--ui-line-height);margin:16px 0}dialog .actions{justify-content:flex-end}.storage-error{color:var(--danger,#e5b19b)}
 </style>

@@ -35,8 +35,8 @@
 </section>
 
 <style>
-  .progress-notification-settings { margin-top: 24px; }
-  .preference-row p { line-height: 1.6; max-width: 620px; }
+  .progress-notification-settings { margin-top: var(--ui-section-gap); }
+  .preference-row p { line-height: var(--ui-line-height); max-width: 620px; }
   .position-field { display: grid; gap: 8px; flex-shrink: 0; min-width: 160px; }
   select { width: 100%; background: var(--input-bg); }
   select:disabled { cursor: not-allowed; opacity: .65; }

@@ -96,7 +96,7 @@
       </button>
     {:else}<p>{inventory.backendStatus === 'ready' ? 'Connect a joystick, gamepad, wheel or other HID controller.' : 'Capture requires a supported native platform service.'}</p>{/each}
   </div>
-  {#if inventory.total > inventory.limit}<div class="paging"><button class="secondary-button" disabled={page === 0} onclick={() => { page = Math.max(0, page - 32); void refresh(); }}>Previous controllers</button><span>{page + 1}–{Math.min(page + 32, inventory.total)} / {inventory.total}</span><button class="secondary-button" disabled={page + 32 >= inventory.total} onclick={() => { page += 32; void refresh(); }}>Next controllers</button></div>{/if}
+  {#if inventory.total > inventory.limit}<div class="paging"><button class="secondary-button" disabled={page === 0} onclick={() => { page = Math.max(0, page - 32); void refresh(); }}><Icon name="chevron" size={14} class="previous-icon" />Previous controllers</button><span>{page + 1}–{Math.min(page + 32, inventory.total)} / {inventory.total}</span><button class="secondary-button" disabled={page + 32 >= inventory.total} onclick={() => { page += 32; void refresh(); }}><Icon name="chevron" size={14} />Next controllers</button></div>{/if}
   {/if}
   {#if inventory.diagnostic}<Notification message={String(inventory.diagnostic)} kind="error" />{/if}
   {#if error}<Notification message={String(error)} kind="error" />{/if}
@@ -104,23 +104,23 @@
   {#if detail?.source}
     {@const source = detail.source}
     <section class="panel host-detail" aria-label="Selected host controller">
-      <div class="panel-heading"><div><h2>{detailsOnly ? 'Controller settings' : source.name.trim()}</h2><p>Local identity, visibility preferences, and live input.</p></div>{#if !detailsOnly}<button class="text-button" onclick={() => { selectionEpoch++; selected = ''; detail = null; }}>Close</button>{/if}</div>
+      <div class="panel-heading"><div><h2>{detailsOnly ? 'Controller settings' : source.name.trim()}</h2><p>Local identity, visibility preferences, and live input.</p></div>{#if !detailsOnly}<button class="text-button" onclick={() => { selectionEpoch++; selected = ''; detail = null; }}><Icon name="close" size={14} />Close</button>{/if}</div>
       <div class="host-detail-body">
       <div class="controller-status"><span class="status-dot" class:offline={!source.online}></span><strong>{source.online ? source.baselineReady ? 'Live input' : 'Waiting for a complete baseline' : 'Offline · input values cleared'}</strong><span>Connection {source.generation} · report {source.sequence}</span></div>
       <div class="metadata">
         <label>Local name<input class="text-input" bind:value={name} maxlength="80" /></label>
         <label>Role<select bind:value={role}>{#each controllerRoles as option}<option value={option}>{option}</option>{/each}</select></label>
-        <button class="secondary-button" disabled={busy || !name.trim()} onclick={() => mutate({ command: 'controller_update', sourceId: source.id, name, role })}>Save local details</button>
+        <button class="secondary-button" disabled={busy || !name.trim()} onclick={() => mutate({ command: 'controller_update', sourceId: source.id, name, role })}><Icon name="save" size={14} />Save local details</button>
       </div>
       {#each detail.diagnostics ?? [] as message}<p class="controller-diagnostic">{message}</p>{/each}
       {#if source.online && (inventory.sources ?? []).some(s => !s.online)}
-        <div class="metadata"><label>Moved to another USB port?<select bind:value={remembered}><option value="">Choose a remembered offline controller</option>{#each (inventory.sources ?? []).filter(s => !s.online) as previous}<option value={previous.id}>{previous.name}</option>{/each}</select></label><button class="secondary-button" disabled={busy || !remembered} onclick={() => mutate({ command: 'controller_reassign', sourceId: remembered, observedId: source.id })}>Reassign this connection</button></div>
+        <div class="metadata"><label>Moved to another USB port?<select bind:value={remembered}><option value="">Choose a remembered offline controller</option>{#each (inventory.sources ?? []).filter(s => !s.online) as previous}<option value={previous.id}>{previous.name}</option>{/each}</select></label><button class="secondary-button" disabled={busy || !remembered} onclick={() => mutate({ command: 'controller_reassign', sourceId: remembered, observedId: source.id })}><Icon name="swap" size={14} />Reassign this connection</button></div>
       {/if}
       {#key source.id}<DeviceVisibility {source} />{/key}
       <div class="controls-heading"><h3>Live inputs</h3><span class="quiet-tag">{source.controlCount} controls</span></div>
       <SystemControllerInputs controls={detail.controls ?? []} online={source.online} />
       <details class="controller-identity"><summary>Identity and capabilities</summary><dl><div><dt>Local source ID</dt><dd><code>{source.id}</code></dd></div><div><dt>Identity evidence</dt><dd>{source.identityConfidence === 'serial' ? 'Serial and collection; duplicate matches require reassignment' : 'Local path; a port change requires reassignment'}</dd></div><div><dt>Observed path</dt><dd><code>{detail.identity?.path ?? 'Not reported'}</code></dd></div><div><dt>Collection</dt><dd>{detail.identity?.collection ?? 'Not reported'}</dd></div><div><dt>Capability fingerprint</dt><dd><code>{detail.identity?.fingerprint ?? 'Not reported'}</code></dd></div></dl></details>
-      {#if !source.online && !detailsOnly}<button class="secondary-button" disabled={busy} onclick={() => mutate({ command: 'controller_forget', sourceId: source.id })}>Forget offline controller</button>{/if}
+      {#if !source.online && !detailsOnly}<button class="secondary-button" disabled={busy} onclick={() => mutate({ command: 'controller_forget', sourceId: source.id })}><Icon name="trash" size={14} />Forget offline controller</button>{/if}
       </div>
     </section>
   {:else if selected && !error}
@@ -131,32 +131,33 @@
   .host-controllers { margin-top: 24px; text-align: left; min-width: 0; }
   .host-controllers.embedded { margin-top: 0; }
   .host-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; }
-  .host-card { padding: 18px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; color: inherit; text-align: left; display: flex; flex-direction: column; gap: 8px; }
+  .host-card { padding: var(--ui-panel-padding); border: 1px solid var(--line); background: var(--surface); border-radius: 10px; color: inherit; text-align: left; display: flex; flex-direction: column; gap: 8px; }
   .host-card { cursor: pointer; }
   .host-card.selected { border-color: var(--accent); background: var(--accent-bg); }
   .offline { opacity: .55; }
-  .host-card strong { font-size: 11px; font-weight: 570; }
-  .host-card span { font-size: 10px; color: var(--soft); line-height: 1.6; }
-  small { font-size: 9px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+  .host-card strong { font-size: var(--ui-heading-size); font-weight: 570; }
+  .host-card span { font-size: var(--ui-text-size); color: var(--soft); line-height: var(--ui-line-height); }
+  small { font-size: var(--ui-text-size); color: var(--muted); line-height: var(--ui-line-height); overflow-wrap: anywhere; }
   .host-detail { margin-top: 20px; overflow: visible; }
   .embedded .host-detail { margin-top: 0; }
-  .host-detail-body { padding: 20px 21px; }
-  .controller-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 10px; color: var(--muted); line-height: 1.6; }
+  .host-detail-body { padding: var(--ui-panel-padding); }
+  .controller-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: var(--ui-text-size); color: var(--muted); line-height: var(--ui-line-height); }
   .controller-status strong { font-weight: 500; color: var(--soft); }
-  .controller-status > span:last-child { margin-left: auto; font-size: 9px; }
-  .metadata, .paging { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 20px 0; font-size: 10px; color: var(--muted); }
-  label { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: min(100%, 180px); font-size: 10px; color: var(--soft); }
-  input, select { width: 100%; min-width: 0; background: var(--input-bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 10px 11px; font-size: 10px; }
-  .controller-diagnostic { margin: 12px 0; padding: 12px; border: 1px solid var(--line); background: var(--subtle); border-radius: 5px; font-size: 10px; color: var(--muted); line-height: 1.7; }
+  .controller-status > span:last-child { margin-left: auto; font-size: var(--ui-text-size); }
+  .paging :global(.previous-icon) { transform: rotate(180deg); }
+  .metadata, .paging { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 20px 0; font-size: var(--ui-text-size); color: var(--muted); }
+  label { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: min(100%, 180px); font-size: var(--ui-text-size); color: var(--soft); }
+  input, select { min-height: var(--ui-control-height); width: 100%; min-width: 0; background: var(--input-bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 10px 11px; font-size: var(--ui-text-size); }
+  .controller-diagnostic { margin: 12px 0; padding: 12px; border: 1px solid var(--line); background: var(--subtle); border-radius: 5px; font-size: var(--ui-text-size); color: var(--muted); line-height: var(--ui-line-height); }
   .controls-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-  .controls-heading h3 { font-size: 12px; font-weight: 570; }
-  .controller-loading { padding: 20px; font-size: 10px; color: var(--muted); line-height: 1.7; }
+  .controls-heading h3 { font-size: var(--ui-heading-size); font-weight: 570; }
+  .controller-loading { padding: var(--ui-panel-padding); font-size: var(--ui-text-size); color: var(--muted); line-height: var(--ui-line-height); }
   .controller-identity { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
-  summary { cursor: pointer; font-size: 10px; color: var(--soft); }
+  summary { cursor: pointer; font-size: var(--ui-text-size); color: var(--soft); }
   dl { margin: 12px 0 0; }
-  dl > div { display: grid; grid-template-columns: minmax(100px, 150px) minmax(0, 1fr); gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--faint-line); font-size: 10px; line-height: 1.6; }
+  dl > div { display: grid; grid-template-columns: minmax(100px, 150px) minmax(0, 1fr); gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--faint-line); font-size: var(--ui-text-size); line-height: var(--ui-line-height); }
   dt { color: var(--muted); }
   dd { margin: 0; color: var(--soft); overflow-wrap: anywhere; }
-  code { font-size: 9px; }
+  code { font-size: var(--ui-text-size); }
   @media (max-width: 600px) { .host-detail-body { padding: 16px; } .controller-status > span:last-child { margin-left: 0; width: 100%; } .metadata > button { width: 100%; } dl > div { grid-template-columns: 1fr; gap: 4px; } }
 </style>

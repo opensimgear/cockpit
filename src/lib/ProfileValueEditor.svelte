@@ -14,5 +14,5 @@
   {/if}
 </div>
 <style>
-  .typed-value label{display:grid;gap:6px;font-size:10px;color:var(--muted);margin:9px 0}.typed-value label:has(input[type="checkbox"]){display:flex;align-items:center;gap:8px}.typed-value input:not([type="checkbox"]),select{width:100%;min-width:0;box-sizing:border-box;background:var(--input-bg);border:1px solid var(--line);border-radius:5px;padding:7px;color:var(--text);font-size:11px}small{font-size:9px;line-height:1.5;color:var(--muted)}
+  .typed-value label{display:grid;gap:6px;font-size:var(--ui-text-size);color:var(--muted);margin:9px 0}.typed-value label:has(input[type="checkbox"]){display:flex;align-items:center;gap:8px}.typed-value input:not([type="checkbox"]),select{width:100%;min-width:0;box-sizing:border-box;background:var(--input-bg);border:1px solid var(--line);border-radius:5px;padding:7px;color:var(--text);font-size:var(--ui-text-size);min-height:var(--ui-control-height)}small{font-size:var(--ui-text-size);line-height:var(--ui-line-height);color:var(--muted)}
 </style>
