@@ -151,6 +151,42 @@ test('variadic input IDs avoid collisions and unsupported nodes or the eight-inp
  assert.throws(()=>chain.addChainInput(full),/maximum of 8 inputs/);
 });
 
+test('removing a variadic input reduces OR, AND, and priority nodes to two without mutating the source',()=>{
+ const booleanContract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null};
+ for(const preset of ['any','all','priority']){
+  let node=processing.processingTemplate(preset,`logic-${preset}`,booleanContract,booleanContract);
+  node=chain.addChainInput(node);
+  const before=plain(node),removedId=node.inputs[2].id;
+  const next=chain.removeChainInput(node,removedId);
+  assert.equal(next.inputs.length,2);assert.deepEqual(plain(next.inputs.map(({id,name})=>({id,name}))),before.inputs.slice(0,2).map(({id,name})=>({id,name})));
+  assert.equal(processing.processingNodeError(next),'');
+  if(preset==='priority')assert.deepEqual(plain(next.operation.order),before.operation.order.filter(id=>id!==removedId));
+  assert.deepEqual(plain(node),before);
+ }
+});
+
+test('removal preserves later input identities and names and filters only the removed priority key',()=>{
+ const booleanContract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null};
+ let node=processing.processingTemplate('priority','priority-four',booleanContract,booleanContract);
+ node=chain.addChainInput(chain.addChainInput(node));
+ node.inputs.forEach((input,index)=>input.name=['Pilot','Copilot','Ground crew','Autopilot'][index]);
+ node.operation.order=['input-4','second','input-3','first'];
+ const before=plain(node),next=chain.removeChainInput(node,'second');
+ assert.deepEqual(plain(next.inputs.map(({id,name})=>({id,name}))),before.inputs.filter(input=>input.id!=='second').map(({id,name})=>({id,name})));
+ assert.deepEqual(plain(next.operation.order),['input-4','input-3','first']);
+ assert.equal(processing.processingNodeError(next),'');assert.deepEqual(plain(node),before);
+});
+
+test('removal rejects two-input nodes, fixed-arity nodes, and missing input ports',()=>{
+ const booleanContract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null};
+ const minimum=processing.processingTemplate('any','minimum',booleanContract,booleanContract);
+ assert.throws(()=>chain.removeChainInput(minimum,minimum.inputs[0].id),/at least 2 inputs/);
+ const variadic=chain.addChainInput(minimum);
+ assert.throws(()=>chain.removeChainInput(variadic,'missing'),/does not exist/);
+ const gate=processing.processingTemplate('gate','gate',booleanContract,booleanContract);
+ assert.throws(()=>chain.removeChainInput(gate,gate.inputs[0].id),/only supported for Boolean OR, Boolean AND, and Explicit input priority/);
+});
+
 test('editing one row instances a shared transform and leaves the other row on its original node',()=>{
  const sourceContract={delivery:'state',schema:{type:'number',min:0,max:100,unit:null},freshnessMs:1000,fallback:null};
  const document={schemaVersion:2,id:'22222222-2222-4222-8222-222222222222',name:'Shared rows',revision:1,eligibility:{gameIds:[]},resources:[

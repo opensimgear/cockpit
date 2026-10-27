@@ -14,6 +14,8 @@
     iconTrigger = false,
     limit = 200,
     onselect,
+    onclear,
+    clearLabel = 'Clear assignment',
   }: {
     label: string;
     placeholder?: string;
@@ -25,6 +27,8 @@
     iconTrigger?: boolean;
     limit?: number;
     onselect?: (value:string)=>void;
+    onclear?:()=>void;
+    clearLabel?:string;
   } = $props();
 
   const uid = $props.id();
@@ -161,7 +165,7 @@
 <div class="port-combobox" class:compact class:icon-trigger={iconTrigger} onfocusout={focusout}>
   <label id={`${uid}-label`} for={iconTrigger?undefined:`${uid}-input`}>{label}</label>
   {#if iconTrigger}<button bind:this={triggerElement} class="add-trigger" type="button" aria-label={label} title={label} aria-expanded={open&&!disabled} aria-controls={`${uid}-listbox`} {disabled} onclick={()=>open?close():show()}><Icon name="plus" size={16}/></button>
-  {:else}<div class="input-wrap">{@render searchInput()}<span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span></div>{/if}
+  {:else}<div class="input-wrap" class:has-clear={!!onclear&&!!value}>{@render searchInput()}{#if onclear&&value}<button class="clear-assignment" type="button" aria-label={clearLabel} title={clearLabel} {disabled} onpointerdown={event=>event.preventDefault()} onclick={()=>{value='';close();onclear?.();}}><Icon name="close" size={12}/></button>{/if}<span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span></div>{/if}
   {#if open && !disabled}
     <div class="port-dropdown" popover={compact?'manual':undefined} use:dropdownPopover class:above={dropdownAbove} style={compact?dropdownPosition:undefined}>
       {#if iconTrigger}<div class="dropdown-search">{@render searchInput()}</div>{/if}
@@ -205,6 +209,7 @@
   .port-combobox.compact{gap:0}.port-combobox.compact input{height:28px;padding:4px 24px 4px 6px;font-size:11px}
   label { color: var(--muted); font-size: 10px; }
   .input-wrap { position: relative; min-width: 0; }
+  .has-clear input,.compact .has-clear input{padding-right:46px}.clear-assignment{position:absolute;right:23px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;background:transparent;color:var(--muted);cursor:pointer}.clear-assignment:hover:enabled{color:var(--text)}.clear-assignment:disabled{opacity:.4;cursor:default}
   input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 29px 9px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--text); font: inherit; font-size: 11px; text-overflow: ellipsis; }
   input:focus, input:focus-visible { outline: none; outline-offset: 0; border-color: var(--accent); }
   input:disabled { opacity: .55; cursor: not-allowed; }

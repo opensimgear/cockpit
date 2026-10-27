@@ -6,9 +6,9 @@
   import type {SignalBundle,SignalLane} from './profile-signal-overview';
   import {processingSummary,PROCESSING_PRESETS} from './profile-processing';
   import {slide} from 'svelte/transition';
-  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,routeEndpoint,draftConnection,activeIncompleteRowId='',addConnection,addTransformInput,removeTransform,selectTransform,routeIssue,readOnly=false}:
+  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,routeEndpoint,sourceInputs,draftConnection,activeIncompleteRowId='',addConnection,addTransformInput,removeTransform,selectTransform,routeIssue,readOnly=false}:
     {bundle?:SignalBundle;nodes:CanvasNode[];activeTransform?:string;close:()=>void;
-      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;draftConnection?:Snippet;activeIncompleteRowId?:string;addConnection?:()=>void;addTransformInput?:(laneId:string,nodeId:string)=>void;removeTransform?:(id:string,laneId?:string)=>void;selectTransform?:(laneId:string,id:string)=>string|undefined;routeIssue?:(laneId:string)=>string;readOnly?:boolean}=$props();
+      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;sourceInputs?:Snippet<[SignalLane]>;draftConnection?:Snippet;activeIncompleteRowId?:string;addConnection?:()=>void;addTransformInput?:(laneId:string,nodeId:string)=>void;removeTransform?:(id:string,laneId?:string)=>void;selectTransform?:(laneId:string,id:string)=>string|undefined;routeIssue?:(laneId:string)=>string;readOnly?:boolean}=$props();
   const dragType='application/x-osg-chain-transform';
   let dragged=$state<{laneId:string;nodeId:string}|null>(null),dropTarget=$state(''),dragError=$state(''),dragErrorLane=$state(''),selectedLaneId=$state('');
   function movable(node:CanvasNode){return !!transfer&&!readOnly&&node.processing?.inputs.length===1&&node.processing.outputs.length===1;}
@@ -67,13 +67,13 @@
           <span class="connection-warning-slot">{#if issue}<span class="route-error-icon" role="img" title={issue} aria-label={`Connection error: ${issue}`}><Icon name="alert" size={16}/></span>{/if}</span>{@render draftConnection()}
           {:else}
           <span class="connection-warning-slot">{#if issue}<span class="route-error-icon" role="img" title={issue} aria-label={`Connection error: ${issue}`}><Icon name="alert" size={16}/></span>{:else}<span class="route-valid-icon" role="img" title="Valid connection" aria-label="Valid connection"><Icon name="check" size={16}/></span>{/if}</span>
-          <div class="lane-endpoint">{#each lane.sources as source (`${source.nodeId}/${source.portId}`)}<div data-endpoint-side="from">{#if routeEndpoint}{@render routeEndpoint(lane.id,'from',source)}{:else}<strong>{port(source.nodeId,source.portId)}</strong>{/if}</div>{/each}
+          <div class="lane-endpoint">{#if sourceInputs}{@render sourceInputs(lane)}{:else}{#each lane.sources as source (`${source.nodeId}/${source.portId}`)}<div data-endpoint-side="from">{#if routeEndpoint}{@render routeEndpoint(lane.id,'from',source)}{:else}<strong>{port(source.nodeId,source.portId)}</strong>{/if}</div>{/each}
             {#if addTransformInput}{#each lane.transforms as id (id)}{@const node=byId.get(id)}{@const kind=node?.processing?.operation.kind}
               {#if node?.processing&&(kind==='any'||kind==='all'||kind==='priority')}
                 <button class="add-transform-input" type="button" aria-label={`Add input to ${node.name}`} disabled={readOnly||node.processing.inputs.length>=8} onclick={()=>addTransformInput?.(lane.id,node.id)}><Icon name="plus" size={14}/>Add</button>
               {/if}
             {/each}{/if}
-          </div>
+          {/if}</div>
           <div class="lane-chain" role="group" aria-label={`Transform chain for ${port(lane.destination.nodeId,lane.destination.portId)}`}>
             <div class="chain-track">
             {#each lane.transforms as id,index (id)}{@const node=byId.get(id)}

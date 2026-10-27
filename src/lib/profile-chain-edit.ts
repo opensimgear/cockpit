@@ -94,6 +94,23 @@ export function addChainInput(value: DeepReadonly<ProfileProcessingNode>): Profi
   return node;
 }
 
+/** Remove one typed input from a variadic Boolean OR, AND, or priority node. */
+export function removeChainInput(value: DeepReadonly<ProfileProcessingNode>, portId: string): ProfileProcessingNode {
+  const node = clone<ProfileProcessingNode>(value);
+  if (!['any', 'all', 'priority'].includes(node.operation.kind)) {
+    throw new Error('Remove inputs is only supported for Boolean OR, Boolean AND, and Explicit input priority.');
+  }
+  if (node.inputs.length <= 2) throw new Error('A transformation must have at least 2 inputs.');
+  if (!node.inputs.some(input => input.id === portId)) throw new Error(`Input port ${portId} does not exist.`);
+
+  node.inputs = node.inputs.filter(input => input.id !== portId);
+  if (node.operation.kind === 'priority') node.operation.order = node.operation.order.filter(id => id !== portId);
+
+  const error = processingNodeError(node);
+  if (error) throw new Error(error);
+  return node;
+}
+
 /** Replace an existing linear transform while preserving its node and port identities. */
 export function replaceChainTransform(value: DeepReadonly<ProfileGraphDraft>, nodeId: string, preset: ProcessingPreset): ProfileGraphDraft {
   const boundary = chainBoundary(value, nodeId);
