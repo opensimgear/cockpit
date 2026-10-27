@@ -755,7 +755,11 @@ impl GatewayManager {
             if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid UI settings client or closed cockpit.",None);}
             let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());
             if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()){return self.error(&error,None);}
-            return match self.ui_preferences.request(&request){Ok(settings)=>json!({"ok":true,"state":{"uiPreferences":settings}}),Err(error)=>self.error(&error,None)};
+            let remembered=(command=="ui_preferences_save"&&request["key"]=="remembered").then(||self.ui_preferences.cached("remembered"));
+            return match self.ui_preferences.request(&request){Ok(settings)=>{
+                if let Some(before)=remembered {self.activity.remembered_changes(&before,&settings["value"],&request);}
+                json!({"ok":true,"state":{"uiPreferences":settings}})
+            },Err(error)=>self.error(&error,None)};
         }
         // Widget sources are shared metadata; saving never enters output ownership.
         if matches!(command,"designer_workspace_read"|"designer_workspace_write"|"widget_library_get"|"widget_library_merge"|"widgets_list"|"widget_get"|"widget_save") {

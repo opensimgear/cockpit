@@ -1,11 +1,11 @@
 use super::*;
 
-fn setup() -> (tempfile::TempDir, Database) {
+pub(super) fn setup() -> (tempfile::TempDir, Database) {
     let dir = crate::test_directory();
     let db = Database::open(dir.path().join("activity.sqlite3")).unwrap();
     (dir, db)
 }
-fn event(message: &str) -> NewActivityEvent {
+pub(super) fn event(message: &str) -> NewActivityEvent {
     NewActivityEvent {
         occurred_at: now(),
         category: "device".into(),

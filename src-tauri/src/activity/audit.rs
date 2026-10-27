@@ -6,6 +6,9 @@ use serde_json::Value;
 /// are never copied into activity. Only safe identities and operation names remain.
 pub(super) fn mutation(request: &Value, response: &Value) -> Option<NewActivityEvent> {
     let command = request["command"].as_str()?;
+    // Inventory polls persist fresh observation timestamps. Successful cache
+    // writes are bookkeeping; explicit Forget is recorded from tombstone changes.
+    if command=="ui_preferences_save" && request["key"]=="remembered" && response["ok"]==true { return None; }
     let category = match command {
         "profile_create" | "profile_duplicate" | "profile_import" | "profile_rename" | "profile_delete" | "profile_save" | "profile_editor_save" | "profile_draft_save" | "profile_assignments_save" | "profile_select" | "profile_selection_mode" | "profile_game_rule_save" | "profile_game_rule_remove" | "profile_game_preference_save" | "profile_game_preference_remove" | "profile_apply" | "profile_stop" | "profile_recover" | "profile_game_launch" | "profile_reset" | "profile_input_learn_start" | "profile_input_learn_cancel" | "profile_activation_cancel" | "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" | "profile_retired_recovery_provision_cancel" => "profiles",
         "game_add" | "game_save" | "game_remove" | "game_installation_select" | "game_discovery_start" | "game_discovery_apply" | "game_background_save" | "game_tags_save" | "game_tag_definitions_save" => "games",
@@ -28,6 +31,11 @@ pub(super) fn mutation(request: &Value, response: &Value) -> Option<NewActivityE
     let operation = command.replace('_', " ");
     let message = if failed { format!("{operation} failed for {label}.") } else { format!("{operation} completed for {label}.") };
     let mut captured=event(category, &format!("{command}{}", if failed { "_failed" } else { "" }), if failed { "error" } else { "info" }, message, id, name);
+    if command=="ui_preferences_save" {
+        let label=match request["key"].as_str().unwrap_or("") {"theme"=>"Appearance","devices-mode"=>"Device view","canvas-navigation"=>"Canvas navigation","canvas-styling"=>"Canvas styling","tray"=>"Tray settings","progress"=>"Progress notifications","windows"=>"Window layout","remembered"=>"Remembered devices",_=>"Preferences"};
+        captured.message=format!("{label} {}.",if failed {"could not be saved"} else {"updated"});
+        captured.entity_name=Some(label.into());
+    }
     captured.source=if request["clientId"].as_str().is_some_and(|id|id.starts_with("cockpit-mcp-")){"mcp"}else{"cockpit"}.into();
     if failed {
         let reason=response["error"].as_str().or_else(||response["error"]["message"].as_str()).unwrap_or("Native operation was rejected. Inspect the related setup or status for details.");

@@ -5,6 +5,11 @@ collected while other pages are open and includes operations made through MCP.
 Repeated status reads, control input samples and telemetry values do not create
 events.
 
+Automatic remembered-device cache saves are bookkeeping and do not appear in
+Activity. Existing cache-save rows are also excluded from search, counts and
+filters without deleting stored history. Explicit device Forget actions and
+failures to save remembered devices remain visible.
+
 The native collector records game library changes, game process and integration
 context changes, saved profile edits, activation and runtime health transitions,
 device and companion availability, configuration operations, and failed

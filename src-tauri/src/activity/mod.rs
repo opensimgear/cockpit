@@ -3,6 +3,7 @@ mod audit;
 mod capture;
 mod writer;
 mod session;
+mod inventory;
 #[cfg(test)]
 mod tests;
 pub(crate) use capture::Snapshot;

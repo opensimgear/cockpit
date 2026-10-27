@@ -1,6 +1,10 @@
 use super::*;
 use rusqlite::{params_from_iter, types::Value};
 
+// Observation-cache writes are internal bookkeeping, even when an older writer
+// stored them. Keep the records intact but exclude them from activity and facets.
+const VISIBLE: &str = "NOT (event_type='ui_preferences_save' AND coalesce(entity_id,'')='remembered' AND level='info')";
+
 fn conditions(query: &ActivityQuery) -> Result<(String, Vec<Value>), String> {
     if query.limit == 0
         || query.limit > 500
@@ -15,7 +19,7 @@ fn conditions(query: &ActivityQuery) -> Result<(String, Vec<Value>), String> {
     {
         return Err("Invalid activity query dates, search, or pagination.".into());
     }
-    let mut clauses = Vec::new();
+    let mut clauses = vec![VISIBLE.to_owned()];
     let mut values = Vec::new();
     for (column, filters) in [
         ("category", &query.categories),
@@ -79,7 +83,7 @@ fn conditions(query: &ActivityQuery) -> Result<(String, Vec<Value>), String> {
 fn facet(connection: &Connection, column: &str) -> Result<Vec<String>, String> {
     let mut statement = connection
         .prepare(&format!(
-            "SELECT DISTINCT {column} FROM activity_events ORDER BY {column}"
+            "SELECT DISTINCT {column} FROM activity_events WHERE {VISIBLE} ORDER BY {column}"
         ))
         .map_err(failure)?;
     let values = statement

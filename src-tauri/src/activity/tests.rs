@@ -61,6 +61,16 @@ fn audit_uses_safe_native_identities_errors_and_source_without_request_bodies() 
     for command in ["game_integration_setup","game_integration_remove","game_integration_recover","companion_approve","companion_usb_flash","controller_update","config_apply_save","claim","release","start","stop","save","apply","update-profile"] { assert!(audit::mutation(&json!({"command":command}),&json!({"ok":true})).is_some(),"{command}"); }
 }
 #[test]
+fn inventory_cache_success_is_silent_but_settings_and_storage_failures_remain_visible() {
+    let request=json!({"command":"ui_preferences_save","key":"remembered","clientId":"inventory-poll-client"});
+    for _ in 0..100 {assert!(audit::mutation(&request,&json!({"ok":true})).is_none());}
+    let failed=audit::mutation(&request,&json!({"ok":false,"error":"SQLite disk full."})).unwrap();
+    assert_eq!(failed.level,"error");assert_eq!(failed.message,"Remembered devices could not be saved.");assert_eq!(failed.detail,"SQLite disk full.");
+    for (key,label) in [("theme","Appearance"),("devices-mode","Device view"),("canvas-navigation","Canvas navigation"),("canvas-styling","Canvas styling"),("tray","Tray settings"),("progress","Progress notifications"),("windows","Window layout"),("unknown","Preferences")] {
+        let changed=audit::mutation(&json!({"command":"ui_preferences_save","key":key}),&json!({"ok":true})).unwrap();assert_eq!(changed.message,format!("{label} updated."));
+    }
+}
+#[test]
 fn writer_batches_more_than_database_append_budget_and_retains_failed_events() {
     let directory=crate::test_directory();let database=Database::for_namespace(&directory.path().join("config.json")).unwrap();
     let mut pending=(0..1500).map(|i|event("system","test","info",format!("Event {i}"),None,None)).collect::<VecDeque<_>>();
