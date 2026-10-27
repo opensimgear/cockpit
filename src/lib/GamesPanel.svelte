@@ -245,7 +245,7 @@
   .game-status-loading {margin-bottom:20px;color:var(--muted);font-size:var(--game-detail-text-size);line-height:var(--game-detail-line-height);}
   button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 
-  .game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; max-width: 980px; }
+  .game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 20px; }
   .game-tile { display: flex; flex-direction: column; position: relative; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); overflow: hidden; transition: border-color .2s, transform .2s; }
   .game-tile:hover, .game-tile:focus-within { border-color: var(--accent); }
   .tile-details { display: block; width: 100%; padding: 0; text-align: left; color: var(--text); background: transparent; }
