@@ -18,6 +18,7 @@ fn entry(id: &str) -> Entry {
         update_kind: None,
         integration: None,
         image: None,
+        tag_ids: vec![],
         message: None,
         sources: vec![],
         artwork: Some(format!("C:/Art/{id}.jpg").into()),

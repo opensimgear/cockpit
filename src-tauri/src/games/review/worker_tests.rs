@@ -51,6 +51,36 @@ fn wait_for(runtime: &GamesRuntime, expected: &str) -> Value {
 }
 
 #[test]
+fn platform_metadata_is_read_without_holding_progress_or_importing_before_apply() {
+    let (runtime,directory)=runtime();
+    let steam=candidate(&directory.path().join("steam"),"steam","42");
+    let (entered,waiting)=mpsc::channel();let (release,resume)=mpsc::channel();
+    start_with_metadata(&runtime,&json!({"command":"game_discovery_start"}),vec![("steam","Steam")],
+        move|_,_|Scan{candidates:vec![steam.clone()],diagnostics:vec![]},
+        move|_,_,_,cancelled|{entered.send(()).unwrap();resume.recv().unwrap();assert!(!cancelled());BTreeMap::from([(42,vec!["Racing".into()])])}).unwrap();
+    waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+    let progress=runtime.status()["discovery"].clone();
+    assert_eq!(progress["status"],"scanning");assert_eq!(progress["libraries"][0]["status"],"preparing");
+    assert_eq!(progress["entries"].as_array().unwrap().len(),1);
+    assert!(runtime.inner.settings.lock().unwrap().saved.game_tags.is_empty());
+    release.send(()).unwrap();let ready=wait_for(&runtime,"ready");
+    assert_eq!(ready["entries"][0]["tagIds"],json!(["racing"]));
+    assert!(runtime.inner.settings.lock().unwrap().saved.game_tags.is_empty());runtime.shutdown();
+}
+
+#[test]
+fn closing_during_metadata_prevents_completion() {
+    let (runtime,directory)=runtime();let steam=candidate(&directory.path().join("steam"),"steam","42");
+    let (entered,waiting)=mpsc::channel();let (release,resume)=mpsc::channel();
+    start_with_metadata(&runtime,&json!({"command":"game_discovery_start"}),vec![("steam","Steam")],
+        move|_,_|Scan{candidates:vec![steam.clone()],diagnostics:vec![]},
+        move|_,_,_,_|{entered.send(()).unwrap();resume.recv().unwrap();BTreeMap::new()}).unwrap();
+    waiting.recv_timeout(Duration::from_secs(2)).unwrap();runtime.inner.closed.store(true,Ordering::Release);
+    release.send(()).unwrap();runtime.shutdown();
+    assert_eq!(runtime.inner.discovery.lock().unwrap().status,"scanning");
+}
+
+#[test]
 fn injected_scans_publish_rows_retain_failures_and_reject_a_parallel_scan() {
     let (runtime, directory) = runtime();
     let mut steam = candidate(&directory.path().join("steam"), "steam", "123");

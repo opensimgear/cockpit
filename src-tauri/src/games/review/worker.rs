@@ -1,15 +1,25 @@
 use super::*;
 #[path="completion.rs"] mod completion;
 pub(crate) fn start(runtime:&GamesRuntime,request:&Value)->Result<(),String> {
-    start_with(runtime,request,crate::game_library::installed_clients(),|client,roots| {
+    start_with_metadata(runtime,request,crate::game_library::installed_clients(),|client,roots| {
         crate::game_library::scan_client(client,roots)
-    })
+    },|saved,candidates,root,cancelled|super::tagging::load(saved,candidates,root,cancelled))
 }
+#[cfg(test)]
 fn start_with(
     runtime:&GamesRuntime,
     request:&Value,
     clients:Vec<(&'static str,&'static str)>,
     scan_client:impl Fn(&str,&[PathBuf])->crate::game_library::Scan+Send+'static,
+)->Result<(),String> {
+    start_with_metadata(runtime,request,clients,scan_client,|_,_,_,_|BTreeMap::new())
+}
+fn start_with_metadata(
+    runtime:&GamesRuntime,
+    request:&Value,
+    clients:Vec<(&'static str,&'static str)>,
+    scan_client:impl Fn(&str,&[PathBuf])->crate::game_library::Scan+Send+'static,
+    metadata:impl Fn(&crate::game_installations::Settings,&[Candidate],&Path,&(dyn Fn()->bool+Sync))->BTreeMap<u32,Vec<String>>+Send+'static,
 )->Result<(),String> {
     let _admission=runtime.admission.try_lock().map_err(|_|"Game metadata is busy. Retry discovery after the current update.")?;
     if !known(request,&["command","clientId","paths"]) {return Err("Unknown discovery start field.".into());}
@@ -58,7 +68,15 @@ fn start_with(
                 }
             }
             let extra_sources=artwork.values().map(|(_,path)|path.clone()).collect::<Vec<_>>();
-            let mut entries=super::reconcile::reconcile(&saved,candidates,&successful);
+            let mut entries=super::reconcile::reconcile(&saved,candidates.clone(),&successful);
+            for entry in &mut entries {
+                if !clients.iter().any(|(id,_)|*id==entry.library) {entry.library="disk".into();}
+            }
+            if !completion::publish_entries(&inner.discovery,&scan_id,entries) {return;}
+            let cancelled=||inner.closed.load(Ordering::Acquire);
+            let tags=metadata(&saved,&candidates,inner.installations.root(),&cancelled);
+            if cancelled() {return;}
+            let mut entries=super::reconcile::with_metadata(&saved,candidates,&successful,&tags);
             for entry in &mut entries {
                 if !clients.iter().any(|(id,_)|*id==entry.library) {entry.library="disk".into();}
             }

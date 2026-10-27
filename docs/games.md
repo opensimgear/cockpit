@@ -30,15 +30,27 @@ identity for launch, automatic selection or scoped output.
 
 Games can have multiple tags. The initial, editable taxonomy contains 47 major
 genres and styles, including Racing, Flight, Simulation, FPS, RPG, RTS, Strategy,
-Survival, Sports and VR. Games are not tagged automatically. Editing or emptying
-the taxonomy is permanent; restarting does not restore removed tags.
+Survival, Sports and VR. Discovery uses Steam Store genres as editable defaults
+when a game's tags have never been assigned. It maps exact genre labels to the
+current taxonomy, including renamed starter tags, and shows proposed tags in
+the discovery review before Apply. Existing untagged imports can receive these
+defaults on rescan. Editing or clearing a game's tags prevents future discovery
+from replacing that choice, even for another installation of the same game.
+Deleting taxonomy entries never recreates them from platform metadata.
+
+Steam metadata is cached locally and fetched with bounded requests while the
+library shows preparation progress. Offline or unavailable metadata does not
+prevent importing games; a later rescan can fill missing defaults. Other current
+installer manifests do not provide genre metadata, so their games keep manually
+editable tags. Game names, integrations and executable names never imply tags.
 
 The **Game tags** field contains selected badges. Type to search, select a
 suggestion or press Enter to add it, and use a badge's remove button or Backspace
-in an empty field to remove a tag. **Manage** opens the taxonomy editor, where
-tags can be added, renamed or deleted. Renaming preserves assignments; deletion
-removes only that tag, preserving a game's remaining tags. Cancelling leaves
-the taxonomy unchanged.
+in an empty field to remove a tag. **Manage** opens a multiline badge field:
+type a name and press Enter to add it, or select a badge to rename it. Deleting
+a badge shows how many games use that tag and asks for confirmation. Changes
+apply when you save. Renaming preserves assignments; deletion preserves each
+game's remaining tags. Cancelling leaves the taxonomy unchanged.
 
 The game list can filter by any selected tag, including **Untagged**, alongside
 library and integration filters. Tag names and assignments are saved locally.

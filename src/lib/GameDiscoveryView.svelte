@@ -38,7 +38,7 @@
   </section>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if scanning}<p class="scan-status" role="status">{preparing?(entries.length?'Preparing artwork… Discovered games are shown below.':'Matching discovered installations…'):'Scanning libraries…'}</p>{/if}
+  {#if scanning}<p class="scan-status" role="status">{preparing?(entries.length?'Reading platform metadata and preparing artwork… Discovered games are shown below.':'Matching discovered installations…'):'Scanning libraries…'}</p>{/if}
   <div class="libraries" aria-label="Library scan progress">
     {#each discovery?.libraries??[] as library (library.id)}
       {@const libraryEntries=entries.filter(entry=>[library.id.toLowerCase(),library.name.toLowerCase()].includes(entry.library.toLowerCase()))}

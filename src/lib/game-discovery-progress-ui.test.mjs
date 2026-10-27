@@ -44,7 +44,7 @@ test('matching and artwork preparation have honest progress labels with rows vis
   const matching=html('scanning',libraries);
   assert.ok(matching.includes('Matching discovered installations…'));
   const preparing=html('scanning',libraries,[entry]);
-  assert.ok(preparing.includes('Preparing artwork… Discovered games are shown below.'));
+  assert.ok(preparing.includes('Reading platform metadata and preparing artwork… Discovered games are shown below.'));
   assert.match(preparing,/<article[^>]*data-entry-id="example"/);
   const checkbox=preparing.match(/<input[^>]*aria-label="Add Example"[^>]*>/)?.[0];
   assert.ok(checkbox?.includes('disabled'),'Apply selections stay locked until the review is ready');

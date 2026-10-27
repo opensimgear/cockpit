@@ -25,7 +25,7 @@ fn tag_sets_replace_clear_and_compare_without_order() {
     }
     assert_eq!(saved(&runtime), before);
     save(json!([]), json!(["flight"])).unwrap();
-    assert!(!saved(&runtime).game_tags.contains_key(GAME));
+    assert_eq!(saved(&runtime).game_tags.get(GAME), Some(&vec![]));
     assert_eq!(runtime.status()["catalogue"][0]["tagIds"], json!([]));
     assert!(runtime.status().get("categories").is_none());
     assert!(runtime.status()["catalogue"][0].get("categoryId").is_none());
@@ -48,7 +48,7 @@ fn taxonomy_edits_preserve_assignments_and_delete_only_removed_tag_ids() {
     assert_eq!(saved(&runtime), before);
     runtime.metadata_request(&json!({"command":"game_tag_definitions_save","tags":{},"expectedTags":tags})).unwrap();
     assert!(saved(&runtime).tags.is_empty());
-    assert!(saved(&runtime).game_tags.is_empty());
+    assert_eq!(saved(&runtime).game_tags.get(GAME), Some(&vec![]));
     assert!(runtime.status()["tags"].as_object().unwrap().is_empty());
     runtime.shutdown();
 }

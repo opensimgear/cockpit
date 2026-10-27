@@ -105,6 +105,7 @@
     "profiles:dcs:aircraft:native": "node --test tests/ui/dcs-aircraft-catalogues-native.mjs",
     "games:background:native": "node --test tests/ui/game-background-native.mjs",
     "games:tags:native": "node --test tests/ui/game-tags-native.mjs",
+    "games:platform-tags:native": "node --test tests/ui/game-platform-tags-native.mjs",
     "games:discovery:native": "node --test tests/ui/game-discovery-native.mjs",
     "games:discovery:mcp:native": "node --test tests/ui/game-discovery-mcp-native.mjs",
     "games:native:coverage": "python scripts/game-library-coverage.py",

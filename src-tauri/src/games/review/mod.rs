@@ -4,6 +4,7 @@ use crate::{game_installations::{GameRecord,Installation,LibrarySource},game_lib
 use serde::Serialize;
 use std::collections::{BTreeMap,BTreeSet};
 mod reconcile;
+mod tagging;
 mod worker;
 pub(super) use worker::start;
 
@@ -33,6 +34,7 @@ pub(super) struct Entry {
     pub executable_candidates:Vec<String>,pub executable:Option<String>,pub update_kind:Option<String>,
     pub integration:Option<String>,pub message:Option<String>,
     pub image:Option<String>,
+    #[serde(skip_serializing_if="Vec::is_empty")] pub tag_ids:Vec<String>,
     #[serde(skip)] pub sources:Vec<LibrarySource>,
     #[serde(skip)] pub artwork:Option<PathBuf>,
 }
@@ -91,6 +93,7 @@ pub(super) fn apply(saved:&crate::game_installations::Settings,review:&Review,re
     for id in aliases.keys() {resolve(id)?;}
     let mut next=saved.clone();
     let mut claimed=BTreeSet::new();
+    let mut automatic_tags=BTreeMap::<String,BTreeSet<String>>::new();
     for entry in &review.entries {
         let action=selections.get(entry.id.as_str()).copied();
         let selected=action.map_or(entry.selected,|value|value["selected"]==true);
@@ -107,6 +110,9 @@ pub(super) fn apply(saved:&crate::game_installations::Settings,review:&Review,re
         let root=std::fs::canonicalize(&entry.install_path).map_err(|error|format!("Installation disappeared since discovery: {error}"))?;
         if !root.is_dir() {return Err("Choose an existing installation directory.".into());}
         let game_id=resolve(&entry.game_id)?;
+        if !saved.game_tags.contains_key(&game_id) {
+            automatic_tags.entry(game_id.clone()).or_default().extend(entry.tag_ids.iter().cloned());
+        }
         let executable=match action.and_then(|value|value.get("executable")) {
             Some(Value::Null)=>None,
             Some(Value::String(path))=>Some(path.clone()),
@@ -140,6 +146,10 @@ pub(super) fn apply(saved:&crate::game_installations::Settings,review:&Review,re
         if game.selected_installation.is_none() {game.selected_installation=Some(installation_id);}
     }
     next.games.retain(|_,game|!game.installations.is_empty());
+    for (id,ids) in automatic_tags {
+        let ids=ids.into_iter().filter(|id|next.tags.contains_key(id)).take(32).collect::<Vec<_>>();
+        if next.games.contains_key(&id)&&!ids.is_empty() {next.game_tags.insert(id,ids);}
+    }
     next.game_tags.retain(|id,_|next.games.contains_key(id));
     next.backgrounds.retain(|id,_|next.games.contains_key(id));
     next.default_backgrounds.retain(|id,_|next.games.contains_key(id));

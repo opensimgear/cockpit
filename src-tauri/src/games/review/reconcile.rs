@@ -22,6 +22,15 @@ pub(super) fn reconcile(
     candidates: Vec<Candidate>,
     successful: &BTreeSet<String>,
 ) -> Vec<Entry> {
+    with_metadata(saved,candidates,successful,&BTreeMap::new())
+}
+
+pub(super) fn with_metadata(
+    saved: &crate::game_installations::Settings,
+    candidates: Vec<Candidate>,
+    successful: &BTreeSet<String>,
+    metadata: &BTreeMap<u32,Vec<String>>,
+) -> Vec<Entry> {
     let mut grouped: BTreeMap<String, Vec<Candidate>> = BTreeMap::new();
     for candidate in candidates
         .into_iter()
@@ -84,6 +93,7 @@ pub(super) fn reconcile(
             .iter()
             .map(Candidate::source)
             .collect::<Vec<_>>();
+        let tag_ids=super::tagging::proposed(saved,&game_id,&sources,metadata);
         let mut runtimes = vec![];
         for observation in &observations {
             for path in &observation.executable_candidates {
@@ -108,7 +118,7 @@ pub(super) fn reconcile(
                     .executable
                     .as_ref()
                     .is_none_or(|path| Path::new(path).is_file());
-            if unchanged {
+            if unchanged && tag_ids.is_empty() {
                 continue;
             }
             (id.clone(), Some(old.root.clone()), "refresh")
@@ -174,7 +184,8 @@ pub(super) fn reconcile(
             update_kind: Some(kind.into()),
             integration,
             image: None,
-            message: None,
+            message: (!tag_ids.is_empty()).then(||format!("Platform tags: {}",tag_ids.iter().filter_map(|id|saved.tags.get(id)).cloned().collect::<Vec<_>>().join(", "))),
+            tag_ids,
             sources,
             artwork: observations
                 .iter()
@@ -211,6 +222,7 @@ pub(super) fn reconcile(
                 update_kind: None,
                 integration: game.integration.clone(),
                 image: None,
+                tag_ids: vec![],
                 message: Some("This installation is no longer present on disk.".into()),
                 sources: vec![],
                 artwork: None,
