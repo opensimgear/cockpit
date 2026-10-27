@@ -570,7 +570,9 @@
 <style>
   .canvas-world.route-focused .signal-edge:not(.selected):not(.drop-target){opacity:.12}.canvas-world.route-focused .resource-block:not(.route-related),.canvas-world.route-focused .editor-group-frame{opacity:.2;filter:saturate(.2)}.overview-input{position:absolute;left:0;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;border:1px solid var(--accent);background:var(--surface);pointer-events:none;z-index:4}.overview-input.muted{opacity:.15}
 
-  .signal-edge.overview-edge.selected{stroke:var(--text);filter:drop-shadow(0 0 4px var(--accent));}.signal-edges marker path.selected{fill:var(--text);}
+  /* Zero-blur shadows outline the whole arrow, including its marker, at crossings. */
+  .signal-edge{--arrow-outline:drop-shadow(1px 0 0 var(--bg)) drop-shadow(-1px 0 0 var(--bg)) drop-shadow(0 1px 0 var(--bg)) drop-shadow(0 -1px 0 var(--bg));filter:var(--arrow-outline);}
+  .signal-edge.overview-edge.selected{stroke:var(--text);filter:var(--arrow-outline) drop-shadow(0 0 4px var(--accent));}.signal-edges marker path.selected{fill:var(--text);}
   .canvas-lanes-panel{position:absolute;inset:auto 0 0;z-index:6;max-height:65%;overflow:auto;overscroll-behavior:contain;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -10px 24px #0002;}
   .signal-trunk{pointer-events:none;fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.signal-trunk.highlighted{stroke:#e0bd7e;stroke-width:4}.signal-trunk.drop-target{stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent))}.signal-trunk-hit{pointer-events:stroke;fill:none;stroke:transparent;stroke-width:18;cursor:pointer;outline:none!important}.signal-trunk-hit:hover,.signal-trunk-hit:focus-visible{stroke:var(--accent);stroke-opacity:.22;outline:none!important}
   .connection-trunk-badge{pointer-events:all;cursor:pointer;outline:none}.connection-trunk-badge rect{fill:var(--surface);stroke:var(--accent);stroke-width:1}.connection-trunk-badge text{fill:var(--accent);font-size:11px;font-weight:600;pointer-events:none}.connection-trunk-badge:hover rect,.connection-trunk-badge:focus-visible rect{stroke-width:2;fill:var(--surface-raised)}
@@ -593,7 +595,7 @@
   .inspector-close{position:absolute;top:9px;right:9px;z-index:2;display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:5px;background:var(--surface-raised);color:var(--soft);cursor:pointer;}
   .inspector-close:hover{color:var(--text);background:var(--line);}
   .inspector-content{height:100%;box-sizing:border-box;padding:24px;overflow:auto;}
-  .signal-edges{z-index:2;}.signal-edge.selected,.signal-edge.drop-target{stroke:var(--accent);stroke-width:4;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent));}
+  .signal-edges{z-index:2;}.signal-edge.selected,.signal-edge.drop-target{stroke:var(--accent);stroke-width:4;filter:var(--arrow-outline) drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent));}
   .connection-endpoint{fill:var(--surface);stroke:var(--accent);stroke-width:2;pointer-events:all;cursor:crosshair;}.connection-endpoint:hover,.connection-endpoint:focus-visible{fill:var(--accent);stroke:var(--text);outline:none;}
   .connection-port-label{font-size:10px;fill:var(--text);paint-order:stroke;stroke:var(--bg);stroke-width:5px;stroke-linejoin:round;pointer-events:none;}
   .block-port-groups button{position:relative;transition:background .12s,box-shadow .12s;}.block-port-groups button.connection-active{background:color-mix(in srgb,var(--accent) 18%,var(--surface));box-shadow:inset 0 0 0 1px var(--accent);}.block-port-groups button.connection-hover{background:color-mix(in srgb,var(--accent) 32%,var(--surface));box-shadow:inset 0 0 0 2px var(--accent);}
