@@ -1,5 +1,5 @@
 import { graphConnectionError, graphDraft, graphFreshId, type ProfileGraphDraft } from './profile-graph';
-import { PROCESSING_PRESETS, processingTemplate, type ProcessingPreset } from './profile-processing';
+import { PROCESSING_PRESETS, processingNodeError, processingTemplate, type ProcessingPreset } from './profile-processing';
 import type { DeepReadonly, ProfileDocument, ProfileProcessingNode } from './profiles';
 import { signalOverview } from './profile-signal-overview';
 
@@ -12,10 +12,12 @@ function chainNode(value: DeepReadonly<ProfileGraphDraft>, nodeId: string): Deep
 
 function chainBoundary(value: DeepReadonly<ProfileGraphDraft>, nodeId: string) {
   const node = chainNode(value, nodeId);
-  if (!node || node.inputs.length !== 1 || node.outputs.length !== 1) return null;
+  if (!node || node.inputs.length < 1 || node.outputs.length !== 1) return null;
   const incoming = value.document.bindings.filter(binding => binding.to.nodeId === nodeId);
   const outgoing = value.document.bindings.filter(binding => binding.from.nodeId === nodeId);
-  if (incoming.length !== 1 || outgoing.length !== 1) return null;
+  const inputIds = new Set(node.inputs.map(port => port.id));
+  const connectedInputs = new Set(incoming.map(binding => binding.to.portId));
+  if (incoming.length !== node.inputs.length || connectedInputs.size !== node.inputs.length || [...connectedInputs].some(id => !inputIds.has(id)) || outgoing.length !== 1) return null;
   return { node, incoming, outgoing };
 }
 
@@ -24,15 +26,25 @@ function replacement(value: DeepReadonly<ProfileGraphDraft>, nodeId: string, pre
   if (!boundary) return null;
   const { node, incoming, outgoing } = boundary;
   try {
-    const next = processingTemplate(preset, nodeId, node.inputs[0].contract, node.outputs[0].contract);
-    if (next.inputs.length !== 1 || next.outputs.length !== 1) return null;
+    let next = processingTemplate(preset, nodeId, node.inputs[0].contract, node.outputs[0].contract);
+    if (['any', 'all', 'priority'].includes(preset)) {
+      while (next.inputs.length < node.inputs.length) next = addChainInput(next);
+    }
+    if (next.inputs.length !== node.inputs.length || next.outputs.length !== 1) return null;
     // A replacement keeps the logical ports, and therefore every wire endpoint,
-    // while requiring the same contracts at both sides of the block.
-    if (!same(next.inputs[0].contract, node.inputs[0].contract) || !same(next.outputs[0].contract, node.outputs[0].contract)) return null;
-    next.inputs[0].id = node.inputs[0].id;
+    // while requiring the same contracts at every input and output boundary.
+    if (next.inputs.some((port, index) => !same(port.contract, node.inputs[index].contract)) || !same(next.outputs[0].contract, node.outputs[0].contract)) return null;
+    for (const [index, input] of next.inputs.entries()) {
+      input.id = node.inputs[index].id;
+      input.name = node.inputs[index].name;
+    }
     next.outputs[0].id = node.outputs[0].id;
-    next.inputs[0].name = node.inputs[0].name;
     next.outputs[0].name = node.outputs[0].name;
+    if (next.operation.kind === 'priority') {
+      next.operation.order = node.operation.kind === 'priority'
+        ? [...node.operation.order]
+        : next.inputs.map(input => input.id);
+    }
     next.name = isCustomName(node) ? node.name : next.name;
     const document = clone<ProfileDocument>(value.document);
     document.processingNodes = document.processingNodes.map(existing => existing.id === nodeId ? next : existing);
@@ -56,16 +68,36 @@ function isCustomName(node: DeepReadonly<ProfileProcessingNode>): boolean {
   return !!label && node.name !== label;
 }
 
-/** Choices that can replace one linear transform without changing either wire contract. */
+/** Every preset can be selected; incompatible choices become provisional drafts in the editor. */
 export function chainTransformOptions(value: DeepReadonly<ProfileGraphDraft>, nodeId: string): { value: ProcessingPreset; label: string }[] {
-  if (!chainBoundary(value, nodeId)) return [];
-  return PROCESSING_PRESETS.flatMap(([preset, label]) => replacement(value, nodeId, preset) ? [{ value: preset, label }] : []);
+  if (!chainNode(value, nodeId)) return [];
+  return PROCESSING_PRESETS.map(([preset, label]) => ({ value: preset, label }));
 }
 
-/** Replace an existing single-route transform while preserving its node and port identities. */
+/** Append one typed input to a variadic Boolean OR, AND, or priority node. */
+export function addChainInput(value: DeepReadonly<ProfileProcessingNode>): ProfileProcessingNode {
+  const node = clone<ProfileProcessingNode>(value);
+  if (!['any', 'all', 'priority'].includes(node.operation.kind)) {
+    throw new Error('Add inputs is only supported for Boolean OR, Boolean AND, and Explicit input priority.');
+  }
+  if (node.inputs.length >= 8) throw new Error('This transformation already has the maximum of 8 inputs.');
+
+  const used = new Set([...node.inputs, ...node.outputs].map(port => port.id));
+  let index = node.inputs.length + 1;
+  while (used.has(`input-${index}`)) index++;
+  const id = `input-${index}`;
+  node.inputs.push({ id, name: `Input ${index}`, direction: 'input', contract: clone(node.inputs[0].contract) });
+  if (node.operation.kind === 'priority') node.operation.order.push(id);
+
+  const error = processingNodeError(node);
+  if (error) throw new Error(error);
+  return node;
+}
+
+/** Replace an existing linear transform while preserving its node and port identities. */
 export function replaceChainTransform(value: DeepReadonly<ProfileGraphDraft>, nodeId: string, preset: ProcessingPreset): ProfileGraphDraft {
   const boundary = chainBoundary(value, nodeId);
-  if (!boundary) throw new Error('Replace a transform in a linear chain with exactly one input and one output route. Branched or multi-input transforms need their routes edited individually.');
+  if (!boundary) throw new Error('Replace a transform in a linear chain with every input and exactly one output route. Branched or incomplete transforms need their routes edited individually.');
   const nextNode = replacement(value, nodeId, preset);
   if (!nextNode) throw new Error('This transformation cannot preserve the existing input and output route contracts. Choose a compatible single-input/output transform.');
   const next = clone<ProfileGraphDraft>(value);

@@ -4,7 +4,7 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./profiles','./profile-graph','./profile-discovery','./profile-processing','./profile-connection-draft']);
 const graph=modules.get('./profile-graph');
-const {connectionDraftPlan,commitConnectionDraft,discardCommittedConnection,createConnectionTransform}=modules.get('./profile-connection-draft');
+const {connectionDraftPlan,commitConnectionDraft,discardCommittedConnection,createConnectionTransform,createRouteTransform}=modules.get('./profile-connection-draft');
 const {processingTemplate}=modules.get('./profile-processing');
 const bool={type:'boolean'},number={type:'number',min:0,max:100,unit:null},state=(schema=bool)=>({delivery:'state',schema,freshnessMs:1000,fallback:null});
 const port=(id,direction,contract=state())=>({id,name:id,direction,contract});
@@ -146,4 +146,73 @@ test('new transforms use unused graph identities and favor a compatible value in
  const value=fresh(),existing=[{...identity('transform-1'),inputs:[port('value','input')]}];
  const node=createConnectionTransform(value,state(),state(),'gate',existing);assert.equal(node.id,'transform-2');assert.equal(node.inputs.some(input=>input.id==='value'),true);
  assert.match(connectionDraftPlan(value,from(),to(),Array.from({length:33},(_,i)=>identity(`s${i}`))).error,/32 transforms/);
+});
+
+test('a requested Boolean OR remains selected for a numeric source and its invalid route stays isolated',()=>{
+ const value=fresh(),before=plain(value),node=createRouteTransform(value,state(number),state(number),'any');
+ assert.equal(node.operation.kind,'any');assert.equal(node.draft,undefined);
+ assert.equal(node.inputs.length,2);assert.equal(node.inputs[0].contract.schema.type,'boolean');
+ const descriptor={...sourcePort.descriptor,id:'native:axis',name:'Axis',contract:state(number)};
+ const numericFrom={nodeId:'source',port:{...descriptor,id:'@observed:axis',key:'@observed:axis',profilePortId:null,sourceId:'native',observed:{...sourcePort,descriptor},current:true}};
+ const plan=connectionDraftPlan(value,numericFrom,to(),[node]);
+ assert.match(plan.error,/compatible|Types|contract/i);assert.deepEqual(plain(plan.nodes),[]);
+ assert.deepEqual(plain(value),before);assert.equal(plan.draft.document.resources[0].ports.length,0);assert.deepEqual(plain(plan.draft.assignments[0].ports),[]);
+});
+
+test('a multi-input OR route names its missing second input and does not save its provider pin',()=>{
+ const value=fresh(),before=plain(value),node=createRouteTransform(value,state(),state(),'any');
+ assert.equal(node.operation.kind,'any');
+ const plan=connectionDraftPlan(value,from(),to(),[node]);
+ assert.match(plan.error,/"second" input/);assert.deepEqual(plain(plan.nodes),[]);
+ assert.deepEqual(plain(value),before);assert.equal(plan.draft.document.resources[0].ports.length,0);assert.deepEqual(plain(plan.draft.assignments[0].ports),[]);
+});
+
+test('a two-button OR route previews and commits both provider pins and input wires atomically',()=>{
+ const value=fresh(),before=plain(value),node=createRouteTransform(value,state(),state(),'any');
+ const button=(id,contract=state())=>{
+  const descriptor={id,name:id,direction:'output',contract};
+  const observed={descriptor,contractHash:`sha256:${id==='native:left'?'5':'6'.repeat(1)}${'a'.repeat(63)}`,routeIds:['usb'],current:true};
+  return{nodeId:'source',port:{...descriptor,id:`@observed:${id}`,key:`@observed:${id}`,profilePortId:null,sourceId:'native',observed,current:true}};
+ };
+ const left=button('native:left'),right=button('native:right'),extraInputs={[`${node.id}/second`]:right};
+ const plan=connectionDraftPlan(value,left,to(),[node],undefined,'',extraInputs);
+ assert.equal(plan.error,'');assert.equal(plan.nodes.length,1);assert.equal(plan.draft.assignments[0].ports.length,2);assert.equal(plan.draft.document.bindings.length,3);
+ const committed=commitConnectionDraft(value,left,to(),[node],undefined,false,'',extraInputs);
+ assert.equal(committed.assignments[0].ports.length,2);assert.equal(committed.document.bindings.length,3);
+ assert.deepEqual(plain(committed.document.bindings.map(binding=>binding.to.portId)),['first','second','input']);
+ for(const binding of committed.document.bindings)assert.equal(graph.graphConnectionError(committed.document,binding.from,binding.to,binding.id),'');
+ assert.deepEqual(plain(value),before);
+});
+
+test('a direct route into Gate.value does not require wiring Gate.gate in the same path',()=>{
+ let value=fresh();
+ const gate=processingTemplate('gate','gate',state());value=graph.graphSetProcessing(value,gate);
+ const valueInput=endpoint('gate',gate.inputs.find(input=>input.id==='value'));
+ const plan=connectionDraftPlan(value,from(),valueInput,[]);
+ assert.equal(plan.error,'');assert.equal(plan.draft.document.bindings.length,1);
+ assert.equal(plan.draft.document.bindings[0].to.portId,'value');
+ assert.deepEqual(plain(value.document.bindings),[]);
+});
+
+test('a missing or type-invalid extra input leaves every provider pin unmaterialized',()=>{
+ const value=fresh(),before=plain(value),node=createRouteTransform(value,state(),state(),'any');
+ const descriptor={...sourcePort.descriptor,id:'native:axis',name:'Axis',contract:state(number)};
+ const observed={...sourcePort,descriptor,contractHash:`sha256:${'7'.repeat(64)}`};
+ const numeric={nodeId:'source',port:{...descriptor,id:'@observed:axis',key:'@observed:axis',profilePortId:null,sourceId:'native',observed,current:true}};
+ const missing=connectionDraftPlan(value,from(),to(),[node]);
+ const wrong=connectionDraftPlan(value,from(),to(),[node],undefined,'',{[`${node.id}/second`]:numeric});
+ assert.match(missing.error,/"second" input/);assert.match(wrong.error,/Types|range|contract|conversion/i);
+ for(const plan of [missing,wrong]){
+  assert.deepEqual(plain(plan.nodes),[]);assert.equal(plan.draft.document.resources[0].ports.length,0);assert.deepEqual(plain(plan.draft.assignments[0].ports),[]);
+ }
+ assert.deepEqual(plain(value),before);
+});
+
+test('an output contract mismatch rejects the route without changing provider pins or edges',()=>{
+ const value=fresh(),node=createRouteTransform(value,state(),state(number),'identity');
+ value.document.resources.find(resource=>resource.id==='target').ports[0].contract=state(number);
+ const before=plain(value),numericTarget=endpoint('target',value.document.resources.find(resource=>resource.id==='target').ports[0]);
+ const plan=connectionDraftPlan(value,from(),numericTarget,[node]);
+ assert.match(plan.error,/Types|range|contract|conversion/i);assert.deepEqual(plain(plan.nodes),[]);
+ assert.deepEqual(plain(value),before);assert.equal(plan.draft.document.resources[0].ports.length,0);assert.deepEqual(plain(plan.draft.assignments[0].ports),[]);
 });

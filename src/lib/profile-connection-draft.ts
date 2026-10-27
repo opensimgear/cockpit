@@ -2,6 +2,7 @@ import { canvasConnectionPlan } from './profile-canvas-construction';
 import { graphConnect, graphDisconnect, graphFreshId, graphRemoveNode, graphRemovePort, graphSetProcessing, type ProfileGraphDraft } from './profile-graph';
 import type { ProfileDiscoveredEndpoint } from './profile-discovery';
 import { processingNodeError, processingTemplate, type ProcessingPreset } from './profile-processing';
+import { createProcessingDraft } from './profile-transform-drafts';
 import { graphContractError } from './profile-graph';
 import type { DeepReadonly, ProfileBinding, ProfilePortContract, ProfileProcessingNode } from './profiles';
 
@@ -57,7 +58,7 @@ function pruneReplacedSources(
   return next;
 }
 
-function transformInput(node: DeepReadonly<ProfileProcessingNode>, source: DeepReadonly<ProfilePortContract>) {
+export function connectionTransformInput(node: DeepReadonly<ProfileProcessingNode>, source: DeepReadonly<ProfilePortContract>) {
   const compatible = node.inputs.filter(port => !graphContractError(source, port.contract));
   return compatible.find(port => port.id === 'value') ?? compatible[0];
 }
@@ -70,6 +71,7 @@ export function connectionDraftPlan(
   transforms: readonly DeepReadonly<ProfileProcessingNode>[],
   replacingId?: string,
   activeVehicleTabId = '',
+  extraInputs: Readonly<Record<string, DeepReadonly<ProfileDiscoveredEndpoint>>> = {},
 ): ConnectionPlan {
   try {
     if (transforms.length > 32) throw new Error('A connection can contain at most 32 transforms.');
@@ -84,7 +86,7 @@ export function connectionDraftPlan(
       if (issue) throw new Error(issue);
       if (node.outputs.length !== 1) throw new Error('A connection transformation needs one declared output.');
       if (working.document.processingNodes.some(existing => existing.id === node.id) || nodes.some(existing => existing.id === node.id)) throw new Error('Choose a unique transformation identity.');
-      const input = transformInput(node, tail.port.contract);
+      const input = connectionTransformInput(node, tail.port.contract);
       if (!input) throw new Error('This transformation has no input compatible with the current signal.');
       working = graphSetProcessing(working, node, activeVehicleTabId);
       const endpoint = (port: DeepReadonly<ProfileProcessingNode['inputs'][number]>): ProfileDiscoveredEndpoint => ({
@@ -94,6 +96,15 @@ export function connectionDraftPlan(
       const inputEndpoint = endpoint(input);
       const incoming = canvasConnectionPlan(working, tail, inputEndpoint);
       working = commitPrepared(incoming);
+      for (const extra of node.inputs.filter(port => port.id !== input.id)) {
+        const source = extraInputs[`${node.id}/${extra.id}`];
+        if (!source) continue;
+        const extraEndpoint = endpoint(extra);
+        const plan = canvasConnectionPlan(working, source, extraEndpoint);
+        working = commitPrepared(plan);
+      }
+      const missing = node.inputs.filter(port => !working.document.bindings.some(binding => binding.to.nodeId === node.id && binding.to.portId === port.id));
+      if (missing.length) throw new Error(`Connect the ${missing.map(port => `"${port.name}" input`).join(' and ')} before adding this transformation to a connection.`);
       const output = node.outputs[0];
       if (!output) throw new Error('A connection transformation needs one declared output.');
       tail = endpoint(output as ProfileProcessingNode['inputs'][number]);
@@ -117,8 +128,9 @@ export function commitConnectionDraft(
   replacingId?: string,
   replaceOccupied = false,
   activeVehicleTabId = '',
+  extraInputs: Readonly<Record<string, DeepReadonly<ProfileDiscoveredEndpoint>>> = {},
 ): ProfileGraphDraft {
-  const plan = connectionDraftPlan(value, from, to, transforms, replacingId, activeVehicleTabId);
+  const plan = connectionDraftPlan(value, from, to, transforms, replacingId, activeVehicleTabId, extraInputs);
   if (plan.error) throw new Error(plan.error);
   if (plan.writer && !replaceOccupied) throw new Error('This input is already connected. Choose Replace connection to change its writer.');
   const formerBindings = [
@@ -144,8 +156,8 @@ export function discardCommittedConnection(value: DeepReadonly<ProfileGraphDraft
   return next;
 }
 
-/** Make one compatible, single-output stage with an identity not used by the graph or open draft. */
-export function createConnectionTransform(
+/** Make the requested single-output stage with an identity not used by the graph or open draft. */
+export function createRouteTransform(
   value: DeepReadonly<ProfileGraphDraft>,
   inputContract: DeepReadonly<ProfilePortContract>,
   targetContract: DeepReadonly<ProfilePortContract>,
@@ -167,7 +179,16 @@ export function createConnectionTransform(
   ]);
   let id = graphFreshId(value.document, 'transform');
   for (let suffix = 1; used.has(id); suffix++) id = `transform-${suffix + 1}`;
-  const node = processingTemplate(preset, id, inputContract, targetContract);
-  if (!transformInput(node, inputContract) || node.outputs.length !== 1) throw new Error('Choose a transformation with a compatible input and one output.');
+  let node: ProfileProcessingNode;
+  try {
+    node = processingTemplate(preset, id, inputContract, targetContract);
+  } catch {
+    node = createProcessingDraft(preset, id);
+    delete node.draft;
+  }
+  if (node.outputs.length !== 1) throw new Error('Choose a transformation with one output.');
   return node;
 }
+
+/** @deprecated Use createRouteTransform; retained for existing callers. */
+export const createConnectionTransform = createRouteTransform;

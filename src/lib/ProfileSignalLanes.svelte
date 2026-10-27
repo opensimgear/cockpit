@@ -6,9 +6,9 @@
   import type {SignalBundle,SignalLane} from './profile-signal-overview';
   import {processingSummary,PROCESSING_PRESETS} from './profile-processing';
   import {slide} from 'svelte/transition';
-  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,routeEndpoint,draftConnection,activeIncompleteRowId='',addConnection,removeTransform,selectTransform,routeIssue,readOnly=false}:
+  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,routeEndpoint,draftConnection,activeIncompleteRowId='',addConnection,addTransformInput,removeTransform,selectTransform,routeIssue,readOnly=false}:
     {bundle?:SignalBundle;nodes:CanvasNode[];activeTransform?:string;close:()=>void;
-      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;draftConnection?:Snippet;activeIncompleteRowId?:string;addConnection?:()=>void;removeTransform?:(id:string,laneId?:string)=>void;selectTransform?:(laneId:string,id:string)=>string|undefined;routeIssue?:(laneId:string)=>string;readOnly?:boolean}=$props();
+      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;draftConnection?:Snippet;activeIncompleteRowId?:string;addConnection?:()=>void;addTransformInput?:(laneId:string,nodeId:string)=>void;removeTransform?:(id:string,laneId?:string)=>void;selectTransform?:(laneId:string,id:string)=>string|undefined;routeIssue?:(laneId:string)=>string;readOnly?:boolean}=$props();
   const dragType='application/x-osg-chain-transform';
   let dragged=$state<{laneId:string;nodeId:string}|null>(null),dropTarget=$state(''),dragError=$state(''),dragErrorLane=$state(''),selectedLaneId=$state('');
   function movable(node:CanvasNode){return !!transfer&&!readOnly&&node.processing?.inputs.length===1&&node.processing.outputs.length===1;}
@@ -67,7 +67,13 @@
           <span class="connection-warning-slot">{#if issue}<span class="route-error-icon" role="img" title={issue} aria-label={`Connection error: ${issue}`}><Icon name="alert" size={16}/></span>{/if}</span>{@render draftConnection()}
           {:else}
           <span class="connection-warning-slot">{#if issue}<span class="route-error-icon" role="img" title={issue} aria-label={`Connection error: ${issue}`}><Icon name="alert" size={16}/></span>{:else}<span class="route-valid-icon" role="img" title="Valid connection" aria-label="Valid connection"><Icon name="check" size={16}/></span>{/if}</span>
-          <div class="lane-endpoint">{#each lane.sources as source (`${source.nodeId}/${source.portId}`)}<div data-endpoint-side="from">{#if routeEndpoint}{@render routeEndpoint(lane.id,'from',source)}{:else}<strong>{port(source.nodeId,source.portId)}</strong>{/if}</div>{/each}</div>
+          <div class="lane-endpoint">{#each lane.sources as source (`${source.nodeId}/${source.portId}`)}<div data-endpoint-side="from">{#if routeEndpoint}{@render routeEndpoint(lane.id,'from',source)}{:else}<strong>{port(source.nodeId,source.portId)}</strong>{/if}</div>{/each}
+            {#if addTransformInput}{#each lane.transforms as id (id)}{@const node=byId.get(id)}{@const kind=node?.processing?.operation.kind}
+              {#if node?.processing&&(kind==='any'||kind==='all'||kind==='priority')}
+                <button class="add-transform-input" type="button" aria-label={`Add input to ${node.name}`} disabled={readOnly||node.processing.inputs.length>=8} onclick={()=>addTransformInput?.(lane.id,node.id)}><Icon name="plus" size={14}/>Add</button>
+              {/if}
+            {/each}{/if}
+          </div>
           <div class="lane-chain" role="group" aria-label={`Transform chain for ${port(lane.destination.nodeId,lane.destination.portId)}`}>
             <div class="chain-track">
             {#each lane.transforms as id,index (id)}{@const node=byId.get(id)}
@@ -97,7 +103,7 @@
   .connection-direction{display:grid;place-items:center;color:var(--accent)}.destination-device{text-align:right}h3{margin:3px 0;font-size:15px}
   .overview-content{display:grid;grid-template-columns:minmax(0,1fr)}.lane-scroll{max-height:340px;overflow:auto;min-width:0}.lane-head,.signal-lane{display:grid;grid-template-columns:44px minmax(110px,.8fr) minmax(280px,2.5fr) minmax(130px,.9fr) 48px;gap:16px;padding:5px 16px;box-sizing:border-box}
   .lane-head{align-items:center;font-size:var(--ui-text-size);font-weight:700;color:var(--muted);border-bottom:1px solid var(--line)}.actions-heading{text-align:right}
-  .signal-lane{align-items:center;height:44px;min-height:44px;border-bottom:1px solid var(--line)}.lane-endpoint{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .signal-lane{align-items:center;min-height:44px;border-bottom:1px solid var(--line)}.lane-endpoint{display:flex;flex-direction:column;gap:3px;min-width:0}
   .lane-chain,.transform-library{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0}.transform-chip-wrap{position:relative;display:inline-flex;flex:0 0 auto;min-width:0;max-width:100%}
   .transform-chip{box-sizing:border-box;background:color-mix(in srgb,#9b80d8 14%,var(--surface));border:1px solid color-mix(in srgb,#9b80d8 40%,var(--line));color:var(--text);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:2px;max-width:220px;min-width:0;text-align:left;cursor:pointer}
   .transform-chip strong{font-size:12px;line-height:14px}.transform-chip small{font-size:10px;line-height:12px;color:var(--soft);overflow-wrap:anywhere}
@@ -114,4 +120,5 @@
   .remove-transform{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:20px;height:20px;padding:0;border:1px solid #bc3441;border-radius:4px;background:#9b2430;color:#fff;cursor:pointer;opacity:0;pointer-events:none;z-index:1}.transform-chip-wrap:hover .remove-transform,.transform-chip-wrap:focus-within .remove-transform{opacity:1;pointer-events:auto}.remove-transform:focus-visible{outline:2px solid #ff8993;outline-offset:2px}.remove-transform:disabled{opacity:.4;cursor:default}.transform-chip-wrap:has(.remove-transform) .transform-chip{padding-right:25px}
 .route-valid-icon{color:var(--accent)}
 @media(hover:none){.remove-transform{opacity:1;pointer-events:auto}}
+  .add-transform-input{display:inline-flex;align-items:center;align-self:flex-start;gap:5px;min-height:24px;padding:2px 7px;border:1px solid var(--line);border-radius:4px;background:var(--surface-raised);color:var(--soft);font:inherit;font-size:var(--ui-text-size);cursor:pointer}.add-transform-input:hover:enabled{border-color:var(--accent);color:var(--text)}.add-transform-input:disabled{opacity:.45;cursor:default}
 </style>
