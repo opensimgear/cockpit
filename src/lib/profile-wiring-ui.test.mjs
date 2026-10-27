@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview']);
+const modules = await loadModules(['./profile-overview-routing','./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview']);
 const plain = value => JSON.parse(JSON.stringify(value));
 const port = (id, direction, name = id) => ({ id, direction, name, contract: { delivery: 'state', schema: { type: 'boolean' }, freshnessMs: 1000, fallback: null } });
 const resource = (id, ports = []) => ({ id, name: id, kind: 'device', required: false, ports });

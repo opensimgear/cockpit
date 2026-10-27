@@ -42,6 +42,38 @@
         "profile-retired-recovery:coverage",
         "profile-library:coverage",
         "desktop:coverage"
+      ],
+      "coverageTasks": [
+        {
+          "name": "profile-connection-draft-coverage",
+          "tests": [
+            "src/lib/profile-connection-draft.test.mjs"
+          ],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/profile-connection-draft.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/profile-connection-draft.test.mjs"
+          ]
+        },
+        {
+          "name": "profile-overview-routing-coverage",
+          "tests": [
+            "src/lib/profile-overview-routing.test.mjs"
+          ],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/profile-overview-routing.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/profile-overview-routing.test.mjs"
+          ]
+        }
       ]
     },
     {

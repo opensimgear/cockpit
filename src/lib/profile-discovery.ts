@@ -15,6 +15,22 @@ export type ProfileDiscoveredPort = Omit<DeepReadonly<ProfilePort>, 'id'> & {
 };
 export type ProfileDiscoveredEndpoint = { nodeId: string; port: DeepReadonly<ProfileDiscoveredPort> };
 export type ProfilePreparedConnection = { draft: ProfileGraphDraft; from: ProfileEndpoint; to: ProfileEndpoint };
+
+/** Physical HID identity stays exact; selectors display the control and its declared range. */
+export function profilePhysicalPortPresentation(port: Pick<ProfileDiscoveredPort, 'id' | 'name' | 'observed' | 'contract'>): { label: string; description: string } | null {
+  const identity = port.observed?.descriptor.id ?? (/^hid:/i.test(port.name) ? port.name : port.id);
+  const hid = /^hid:([0-9a-f]{4}):([0-9a-f]{4}):\d+:\d+:\d+$/i.exec(identity);
+  if (!hid || (port.contract.delivery !== 'state' && port.contract.delivery !== 'event')) return null;
+  const page = parseInt(hid[1], 16), usage = parseInt(hid[2], 16), schema = port.contract.schema;
+  const axes: Record<number, string> = { 0x30: 'X axis', 0x31: 'Y axis', 0x32: 'Z axis', 0x33: 'X rotation', 0x34: 'Y rotation', 0x35: 'Z rotation', 0x36: 'Slider', 0x37: 'Dial', 0x38: 'Wheel', 0x39: 'Hat switch' };
+  const simulation: Record<number, string> = { 0xba: 'Rudder', 0xbb: 'Throttle', 0xc4: 'Accelerator', 0xc5: 'Brake', 0xc6: 'Clutch', 0xc8: 'Steering' };
+  const friendly = page === 9 ? `Button ${usage}` : page === 1 ? axes[usage] : page === 2 ? simulation[usage] : undefined;
+  if (!friendly) return null;
+  const label = port.name && !/^hid:/i.test(port.name) ? port.name : friendly;
+  if (schema.type === 'boolean') return { label, description: 'Boolean · 0–1' };
+  if (schema.type === 'integer' || schema.type === 'number') return { label, description: `${schema.type === 'integer' ? 'Integer' : 'Number'} · ${schema.min}–${schema.max}${schema.unit ? ` ${schema.unit}` : ''}` };
+  return null;
+}
 type DiscoveryDetails = DeepReadonly<ResourceDetails | ProfileCompanionPage> | null | undefined;
 
 const variantKey = (port: DeepReadonly<ObservedResourcePort>) => JSON.stringify([port.descriptor.id, port.contractHash]);

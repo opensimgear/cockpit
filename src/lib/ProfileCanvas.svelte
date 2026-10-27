@@ -5,7 +5,8 @@
   import {canvasOverviewLayoutScore} from './profile-overview-layout';
   import ProfileSignalLanes from './ProfileSignalLanes.svelte';
   import {signalOverview,signalBundleWidth} from './profile-signal-overview';
-  import type { DeepReadonly, ProfileDocument, ProfileEndpoint, ProfileLocalAssignment, ProfilePort, ProfilePortGroup } from './profiles';
+  import {createOverviewRouter} from './profile-overview-routing';
+  import type { DeepReadonly, ProfileDocument, ProfileEndpoint, ProfileLocalAssignment, ProfilePort, ProfilePortGroup, ProfileProcessingNode } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH } from './profile-editor';
@@ -21,7 +22,7 @@
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, simpleControllerInspector = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform, routeEndpoint }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, simpleControllerInspector = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform, routeEndpoint, connectionDraft, draftTransforms = [], addOverviewConnection, removeOverviewTransform }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; simpleControllerInspector?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
@@ -36,6 +37,7 @@
     paletteDrag?:ProfilePaletteDrag|null;canDropComponent?:(component:ProfilePaletteComponent)=>boolean;
     dropComponent?:(component:ProfilePaletteComponent,position:CanvasPoint)=>void;endPaletteDrag?:()=>void;
     discoveredPorts?:Record<string,readonly DeepReadonly<ProfilePort>[]>;discoveryBusy?:readonly string[];discoveryErrors?:Record<string,string>;
+    connectionDraft?:Snippet;draftTransforms?:readonly ProfileProcessingNode[];addOverviewConnection?:(from:string,to:string)=>void;removeOverviewTransform?:(id:string)=>void;
     connectionPanel?:Snippet;connectionOpen?:boolean;closeConnectionPanel?:()=>void;
     transformSettings?:Snippet<[CanvasNode]>;insertTransform?:(bindingId:string)=>void;transferTransform?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;
   } = $props();
@@ -48,6 +50,7 @@
   let pendingOverviewDrop=$state<{component:ProfilePaletteComponent;position:CanvasPoint}|null>(null);
   const overview=true;
   let overviewBundleId=$state(''),showTransforms=$state(false),activeTransform=$state('');
+  let overviewPair=$state<{from:string;to:string}|null>(null);
   let searchInput: HTMLInputElement;
   let view = $state<CanvasViewport>({ ...untrack(() => document.editor.viewport) });
   let dragged = $state<{id:string;position:CanvasPoint}|null>(null);
@@ -69,13 +72,15 @@
   let moveFrame=0,pendingMove:PointerEvent|null=null;
   const browser = new ProfilePortBrowser(untrack(() => inventoryClient));
   const router=createDiagramRouter();
+  const overviewRouter=createOverviewRouter();
   const committedDocument=$derived(profileTabDocument(document,activeVehicleTabId));
   const visibleDocument=$derived(segmentPreview||groupPreview?profileTabDocument((segmentPreview??groupPreview)!,activeVehicleTabId):committedDocument);
   const allNodes=$derived(canvasNodes(visibleDocument,assignments,inventory));
+  const laneNodes=$derived([...allNodes,...draftTransforms.map(node=>({id:node.id,name:node.name,kind:'processing' as const,category:'Transform',position:{x:0,y:0},processing:node}))]);
   const committedNodes=$derived(canvasNodes(committedDocument,assignments,inventory).filter(node=>!overview||!node.processing));
   const overviewBundles=$derived(signalOverview(committedDocument));
   const overviewById=$derived(new Map(overviewBundles.map(bundle=>[bundle.id,bundle])));
-  const overviewBundle=$derived(overviewById.get(overviewBundleId));
+  const overviewBundle=$derived(overviewById.get(overviewBundleId)??(overviewPair?{id:overviewBundleId,binding:{id:overviewBundleId,from:{nodeId:overviewPair.from,portId:''},to:{nodeId:overviewPair.to,portId:''}},lanes:[]}:undefined));
   const routingBindings=$derived(overview?overviewBundles.map(bundle=>({...bundle.binding,to:{...bundle.binding.to,portId:bundle.id}})):committedDocument.bindings);
   const maximumRoutes=$derived(Math.max(1,...overviewBundles.map(bundle=>bundle.lanes.length)));
   const nodes = $derived(visibleDocument===committedDocument?committedNodes:allNodes.filter(node=>!overview||!node.processing));
@@ -88,7 +93,7 @@
   const cornerRadius=$derived($canvasStyling.cornerRadius);
   const committedRouteNodes=$derived(overview?canvasOverviewRouteNodes(canvasRouteNodes(committedNodes),routingBindings):canvasRouteNodes(committedNodes));
   const routeNodes=$derived(overview?canvasOverviewRouteNodes(canvasRouteNodes(renderedNodes),routingBindings):canvasRouteNodes(renderedNodes));
-  const committedRoutes=$derived(router(committedRouteNodes,routingBindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:overview?undefined:committedDocument.editor.wireRoutes,clearance:overview?36:undefined}));
+  const committedRoutes=$derived((overview?overviewRouter:router)(committedRouteNodes,routingBindings,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:overview?undefined:committedDocument.editor.wireRoutes,clearance:overview?36:undefined}));
   const routes=$derived.by(()=>{
     if(segmentPreview&&segmentDrag){const preview=diagramRoutes(routeNodes,visibleDocument.bindings.filter(binding=>binding.id===segmentDrag!.bindingId),PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,{style:wireStyle,cornerRadius,wireRoutes:visibleDocument.editor.wireRoutes})[0];return preview?committedRoutes.map(route=>route.binding.id===preview.binding.id?preview:route):committedRoutes;}
     return dragged||groupPreview?canvasPreviewRoutes(committedRoutes,routeNodes,PROFILE_BLOCK_WIDTH,PROFILE_BLOCK_HEIGHT,wireStyle,cornerRadius):committedRoutes;
@@ -135,11 +140,14 @@
   onDestroy(() => { portEpoch++;layoutEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
   function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
   function fit() { bundlePicker=null;fitView(); }
-  function closeLanes(){pendingOverviewDrop=null;overviewBundleId='';showTransforms=false;activeTransform='';}
+  function closeLanes(notify=false){pendingOverviewDrop=null;overviewBundleId='';overviewPair=null;showTransforms=false;activeTransform='';if(notify)closeConnectionPanel?.();}
+  export function closeConnectionOverview(){closeLanes(false);}
+  export function openConnectionOverview(from:string,to:string){pendingOverviewDrop=null;selectedId='';showTransforms=false;activeTransform='';overviewPair={from,to};overviewBundleId=`overview:${JSON.stringify([from,to])}`;}
+  export function focusConnectionTransform(id:string){activeTransform=activeTransform===id?'':id;}
   function openOverview(id:string){
-    if(overviewBundleId===id){closeLanes();return;}
+    if(overviewBundleId===id){closeLanes(true);return;}
     pendingOverviewDrop=null;clearConnectionClick();selectionView=null;focusedSelectionId='';
-    closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';overviewBundleId=id;
+    closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';overviewPair=null;overviewBundleId=id;
   }
   function slideLanes(_node:HTMLElement){return {duration:window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:180,css:(t:number)=>`transform:translateY(${(1-t)*100}%)`};}
   function trimArrowShaft(element:SVGPathElement,settings:{path:string;head:number}){
@@ -552,7 +560,7 @@
         {#if selectedDiagnostics.length}<ul class="block-diagnostics" aria-label="Native preflight diagnostics">{#each selectedDiagnostics as diagnostic,index (index)}<li><strong>{diagnostic.code}</strong>: {diagnostic.message}</li>{/each}</ul>{/if}{#if selected.observation?.diagnostics.length}<ul class="block-diagnostics">{#each selected.observation.diagnostics as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}
         <details open><summary>Selected graph ports · {inputs.length+outputs.length}</summary><p class="inspector-note">Only these exact contracts are saved in the portable graph.</p>{#each portCategories as category (category)}{@const categoryPorts=category==='outputs'?outputs:inputs.filter(port=>(port.contract.delivery==='action')===(category==='actions'))}{@const collapsed=canvasPortCollapsed(document,selected.id,category)}<section class="selected-port-category"><button class="port-category-toggle" aria-label={`${category==='outputs'?'Source outputs':category==='inputs'?'Destination inputs':'Destination actions'} for ${selected.name}`} aria-expanded={!collapsed} disabled={readOnly} onclick={()=>togglePorts(category)}>{collapsed?'▸':'▾'} {category==='outputs'?'Source outputs':category==='inputs'?'Destination inputs':'Destination actions'} ({categoryPorts.length})</button>{#if !collapsed}{#each categoryPorts as port (port.id)}<div class="port-row"><strong>{port.name}</strong><code>{port.id}</code><p>{portContractLabel(port.contract)}</p>{#if selected.resource&&removeProviderPort}<button class="text-button" disabled={readOnly} onclick={()=>removeProviderPort?.(selected!.id,port.id)}>Remove port and its routes</button>{/if}</div>{:else}<p class="inspector-note">No {category} selected. Browse the provider catalogue below.</p>{/each}{/if}</section>{/each}</details>
         {#if selected.observation&&selected.assignment}
-          {#if !companionAuthoring||selected.resource?.kind!=='companion'}<details open><summary>Provider catalogue · {selected.observation.portCount} advertised</summary><p class="inspector-note">Browse without changing routes or graph ports. Large catalogues stay paged.</p><button class="text-button" disabled={portsBusy} onclick={()=>loadPorts('open',selected!.assignment!.sourceId)}>Refresh ports</button>{#if portError}<p class="port-error" role="status">{portError}</p>{/if}{#if portsBusy}<p class="inspector-note" role="status">Loading port page…</p>{/if}{#if page}<p class="port-page-count">{page.total?`${page.offset+1}–${page.offset+page.ports.length}`:'0'} of {page.total} cached port contracts</p>{#each ['output','input'] as direction (direction)}<details open><summary>{direction==='output'?'Source outputs / telemetry':'Destination inputs / actions'} on this page ({page.ports.filter(port=>port.descriptor.direction===direction).length})</summary>{#each page.ports.filter(port=>port.descriptor.direction===direction) as port (`${port.descriptor.id}/${port.contractHash}`)}<div class="port-row"><strong>{port.descriptor.name}</strong><code>{port.descriptor.id}</code><p>{portContractLabel(port.descriptor.contract)}</p><small>{port.current?'Current capability':'Cached / unavailable capability'}</small>{#if selectProviderPort}<button class="secondary-button" disabled={readOnly||selected.assignment.ports.some(pin=>pin.observedPortId===port.descriptor.id&&pin.expectedContractHash===port.contractHash)} onclick={()=>selectProviderPort?.(selected!.id,port)}>{selected.assignment.ports.some(pin=>pin.observedPortId===port.descriptor.id&&pin.expectedContractHash===port.contractHash)?'Selected in graph':'Use this exact port'}</button>{/if}</div>{:else}<p class="inspector-note">None on this page.</p>{/each}</details>{/each}<div class="port-pagination"><button class="secondary-button" disabled={portsBusy||!browser.hasPrevious} onclick={()=>loadPorts('previous')}>Previous</button><button class="secondary-button" disabled={portsBusy||!browser.hasNext} onclick={()=>loadPorts('next')}>Next page</button></div>{/if}</details>
+          {#if !companionAuthoring||selected.resource?.kind!=='companion'}<details open><summary>Provider catalogue · {selected.observation.portCount} advertised</summary><p class="inspector-note">Browse without changing routes or graph ports. Large catalogues stay paged.</p><button class="text-button" disabled={portsBusy} onclick={()=>loadPorts('open',selected!.assignment!.sourceId)}>Refresh ports</button>{#if portError}<p class="port-error" role="status">{portError}</p>{/if}{#if portsBusy}<p class="inspector-note" role="status">Loading port page…</p>{/if}{#if page}<p class="port-page-count">{page.total?`${page.offset+1}–${page.offset+page.ports.length}`:'0'} of {page.total} cached port contracts</p>{#each ['output','input'] as direction (direction)}<details open><summary>{direction==='output'?'Source outputs / telemetry':'Destination inputs / actions'} on this page ({page.ports.filter(port=>port.descriptor.direction===direction).length})</summary>{#each page.ports.filter(port=>port.descriptor.direction===direction) as port (`${port.descriptor.id}/${port.contractHash}`)}<div class="port-row"><strong>{port.descriptor.name}</strong><code>{port.descriptor.id}</code><p>{portContractLabel(port.descriptor.contract)}</p><small>{port.current?'Current capability':'Cached / unavailable capability'}</small>{#if selectProviderPort}<button class="secondary-button" disabled={readOnly} onclick={()=>selectProviderPort?.(selected!.id,port)}><Icon name="link" size={14}/>Connect</button>{/if}</div>{:else}<p class="inspector-note">None on this page.</p>{/each}</details>{/each}<div class="port-pagination"><button class="secondary-button" disabled={portsBusy||!browser.hasPrevious} onclick={()=>loadPorts('previous')}>Previous</button><button class="secondary-button" disabled={portsBusy||!browser.hasNext} onclick={()=>loadPorts('next')}>Next page</button></div>{/if}</details>
           {/if}<details><summary>Connection metadata ({selected.observation.connections.length})</summary><p class="inspector-note">Transport information describes the resource; it is never a canvas wire.</p>{#each selected.observation.connections as connection (`${connection.scope}/${connection.key}/${connection.route.id}`)}<div class="connection-row"><strong>{connection.route.transport.toUpperCase()}</strong><p>{connection.route.baselineReady?'Fresh baseline available':'Waiting for a fresh baseline'} · {connection.route.writable?'Write capability advertised':'No write capability advertised'}</p><dl>{#each Object.entries(connection.route.attributes) as [key,value] (key)}<div><dt>{key}</dt><dd>{value}</dd></div>{/each}</dl></div>{/each}<dl>{#each Object.entries(selected.observation.attributes) as [key,value] (key)}<div><dt>{key}</dt><dd>{value}</dd></div>{/each}</dl></details>
         {:else if selected.resource}<p class="inspector-note">{selected.assignment?'This saved resource is currently absent from inventory. Its block, exact ports and routes remain intact.':'Select a matching resource from inventory before using this copied block.'}</p>{/if}
         {/if}
@@ -562,7 +570,7 @@
     {/if}
   {#if overview&&(overviewBundle||showTransforms)}
     <div class="canvas-lanes-panel" transition:slideLanes>
-    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {routeEndpoint} bundle={overviewBundle} nodes={allNodes} bind:activeTransform close={closeLanes} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {routeEndpoint} bundle={overviewBundle} nodes={laneNodes} draftConnection={connectionDraft} addConnection={overviewBundle&&addOverviewConnection?()=>addOverviewConnection?.(overviewBundle!.binding.from.nodeId,overviewBundle!.binding.to.nodeId):undefined} removeTransform={removeOverviewTransform} bind:activeTransform close={()=>closeLanes(true)} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target);}} disconnect={disconnectConnection} {readOnly}/>{/key}
     </div>
   {/if}
   </div>

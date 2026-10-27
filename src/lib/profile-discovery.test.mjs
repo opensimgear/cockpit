@@ -18,6 +18,29 @@ function draft() {
   return { document, assignments: ['source', 'target'].map(id => ({ resourceId: id, sourceId: `native:${id}`, ports: [] })) };
 }
 const endpoint = (nodeId, port) => ({ nodeId, port });
+
+test('physical port selectors show control names with type and range while keeping exact identities', () => {
+  const present = modules.get('./profile-discovery').profilePhysicalPortPresentation;
+  const physical = (id, contract = state(), name = id) => ({ id: 'saved-port', name, contract, observed: observed(id, 'output', contract) });
+  for (const [id, contract, label, description] of [
+    ['hid:0009:0001:1:0:0', state(), 'Button 1', 'Boolean · 0–1'],
+    ['hid:0009:0080:1:0:127', state(), 'Button 128', 'Boolean · 0–1'],
+    ['hid:0001:0030:1:0:0', { ...state(), schema: { type: 'integer', min: -32768, max: 32767, unit: null } }, 'X axis', 'Integer · -32768–32767'],
+    ['hid:0001:0035:2:1:4', { ...state(), schema: { type: 'integer', min: 0, max: 4095, unit: null } }, 'Z rotation', 'Integer · 0–4095'],
+    ['hid:0001:0039:1:0:8', { ...state(), schema: { type: 'integer', min: -1, max: 7, unit: null } }, 'Hat switch', 'Integer · -1–7'],
+    ['hid:0002:00c5:1:0:1', { ...state(), schema: { type: 'number', min: 0, max: 100, unit: '%' } }, 'Brake', 'Number · 0–100 %'],
+  ]) {
+    const port = physical(id, contract), before = plain(port), result = present(port);
+    assert.deepEqual(plain(result), { label, description });
+    assert.deepEqual(plain(port), before);
+  }
+  assert.equal(present(physical('hid:0009:0001:1:0:0', state(), 'Trigger')).label, 'Trigger');
+  assert.equal(present({ ...physical('hid:0009:0002:1:0:1'), observed: null }).label, 'Button 2');
+  assert.equal(present(physical('dcs:telemetry:altitude')), null);
+  assert.equal(present(physical('hid:0000:0000:1:0:1')), null);
+  assert.equal(present({ ...physical('hid:0009:0001:1:0:0'), contract: { delivery: 'action', parameters: [], semantics: 'one-shot' } }), null);
+});
+
 const companionPage = (ports, offset = 0, limit = ports.length, publicationHash = hash('b')) => ({ schemaVersion: 1, resourceId: 'native:target', publicationHash, capabilityFingerprint: hash('c'), identityFingerprint: hash('d'), offset, total: ports.length, ports: ports.slice(offset, offset + limit), diagnostics: [] });
 const prospective = (id, direction = 'input') => observed(id, direction, state(), false, hash('e'));
 function companionDraft() {

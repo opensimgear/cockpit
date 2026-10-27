@@ -15,6 +15,20 @@ test('direct signals and transformed signals share a resource-pair arrow without
   assert.deepEqual(plain(stick.lanes[1].bindingIds),['pitch-out','pitch-in']);
   assert.equal(JSON.stringify(source),before);
 });
+test('an unfinished fan-out branch is surfaced without suppressing a completed resource-to-virtual route',()=>{
+  const source={id:'resource-1'},virtual={id:'virtual-1'};
+  const document={resources:[source],virtualOutputs:[virtual],desktopOutputs:[],processingNodes:[{id:'transform-1'},{id:'transform-2'}],bindings:[
+    edge('route-1','resource-1','transform-1','port-1','in'),
+    edge('route-3','resource-1','transform-2','port-1','in'),
+    edge('route-2','transform-2','virtual-1','out','button-1'),
+  ]};
+  const [bundle]=signalOverview(document);
+  assert.equal(signalOverview(document).length,1);
+  assert.deepEqual(plain([bundle.binding.from.nodeId,bundle.binding.to.nodeId]),['resource-1','virtual-1']);
+  assert.deepEqual(plain(bundle.lanes[0].transforms),['transform-2']);
+  assert.deepEqual(plain(bundle.lanes[0].bindingIds),['route-2','route-3']);
+  assert.equal(document.bindings.find(binding=>binding.id==='route-1').to.nodeId,'transform-1');
+});
 test('shared transforms retain identity on each consumer and multi-input lanes preserve every source',()=>{
   const bundles=signalOverview(doc([edge('a','stick','mix'),edge('b','pedals','mix'),edge('c','mix','scale'),edge('d','scale','flight'),edge('e','scale','keyboard')],['mix','scale']));
   assert.equal(bundles.length,4);

@@ -5,9 +5,9 @@
   import type {CanvasNode} from './profile-canvas';
   import type {SignalBundle,SignalLane} from './profile-signal-overview';
   import {processingSummary,PROCESSING_PRESETS} from './profile-processing';
-  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,routeEndpoint,readOnly=false}:
+  let {bundle,nodes,activeTransform=$bindable(''),close,transformSettings,insert,transfer,disconnect,routeEndpoint,draftConnection,addConnection,removeTransform,readOnly=false}:
     {bundle?:SignalBundle;nodes:CanvasNode[];activeTransform?:string;close:()=>void;
-      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;readOnly?:boolean}=$props();
+      transformSettings?:Snippet<[CanvasNode]>;insert?:(id:string,before?:string)=>void;transfer?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;disconnect?:(id:string)=>void;routeEndpoint?:Snippet<[string,'from'|'to',DeepReadonly<ProfileEndpoint>]>;draftConnection?:Snippet;addConnection?:()=>void;removeTransform?:(id:string)=>void;readOnly?:boolean}=$props();
   const dragType='application/x-osg-chain-transform';
   let dragged=$state<{laneId:string;nodeId:string}|null>(null),dropTarget=$state(''),dragError=$state('');
   function movable(node:CanvasNode){return !!transfer&&!readOnly&&node.processing?.inputs.length===1&&node.processing.outputs.length===1;}
@@ -43,12 +43,15 @@
 </script>
 
 {#snippet addButton(lane:SignalLane,before?:string)}{#if insert}<button class="insert-transform" title="Add transformation" aria-label={`Add transformation to ${port(lane.destination.nodeId,lane.destination.portId)}`} disabled={readOnly} onclick={()=>insert?.(lane.id,before)}><Icon name="plus" size={16}/></button>{/if}{/snippet}
+{#snippet removeButton(node:CanvasNode)}{#if removeTransform}<button type="button" class="remove-transform" aria-label={`Delete ${node.name}`} title={`Delete ${node.name}`} disabled={readOnly} onclick={event=>{event.stopPropagation();removeTransform?.(node.id);}}><Icon name="trash" size={13}/></button>{/if}{/snippet}
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape dismisses this region from its child controls.) -->
 <section class="signal-lanes" aria-label="Signal lanes" onkeydown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}}}>
   <header>{#if bundle}<h3 class="source-device">{byId.get(bundle.binding.from.nodeId)?.name}</h3><span class="connection-direction"><Icon name="arrow" size={24}/></span><h3 class="destination-device">{byId.get(bundle.binding.to.nodeId)?.name}</h3>{:else}<h3>Transform settings</h3>{/if}</header>
-  <div class="lane-scroll">
-    {#if bundle}
+  <div class="overview-content" class:has-settings={selected?.processing&&transformSettings}>
+    {#if selected?.processing&&transformSettings}<aside class="lane-settings" data-transform-settings={selected.id}><div><h4>{selected.name}</h4></div><fieldset disabled={readOnly}>{@render transformSettings(selected)}</fieldset></aside>{/if}
+    <div class="lane-scroll">
+      {#if bundle}
       <div class="lane-head"><span>Source</span><span>Transform chain</span><span>Destination</span></div>
       {#each lanes as lane (lane.id)}
         <div class="signal-lane" data-lane-id={lane.id}>
@@ -58,37 +61,41 @@
             {#each lane.transforms as id,index (id)}{@const node=byId.get(id)}
               {#if node?.processing}
                 {#if index>0}<button class="chain-router" class:drop-target={dropTarget===`${lane.id}:${id}`} aria-label={`Drop transformation before ${node.name}`} title="Insert here, or drop to move within this row or copy from another row" disabled={readOnly} onclick={()=>insert?.(lane.id,id)} ondragover={event=>over(event,lane.id,id)} ondrop={event=>drop(event,lane.id,id)}><Icon name="arrow" size={16}/></button>{/if}
-                <button class="transform-chip" class:active={activeTransform===id} class:dragging={dragged?.nodeId===id&&dragged.laneId===lane.id} class:drop-target={dropTarget===`${lane.id}:${id}`} draggable={movable(node)} aria-pressed={activeTransform===id} data-transform-id={id} title={`${node.name} · ${processingSummary(node.processing)}${movable(node)?' · Drag to move; drop in another row to copy. Alt + arrows moves within this chain.':''}`} onclick={()=>edit(id)} onkeydown={event=>moveKey(event,lane,id)} ondragstart={event=>startDrag(event,lane.id,node)} ondragend={()=>{dragged=null;dropTarget='';}} ondragover={event=>over(event,lane.id,id)} ondrop={event=>drop(event,lane.id,id)}><strong>{label(node)}</strong><small>{processingSummary(node.processing)}</small></button>
+                <span class="transform-chip-wrap"><button class="transform-chip" class:active={activeTransform===id} class:dragging={dragged?.nodeId===id&&dragged.laneId===lane.id} class:drop-target={dropTarget===`${lane.id}:${id}`} draggable={movable(node)} aria-pressed={activeTransform===id} data-transform-id={id} title={`${node.name} · ${processingSummary(node.processing)}${movable(node)?' · Drag to move; drop in another row to copy. Alt + arrows moves within this chain.':''}`} onclick={()=>edit(id)} onkeydown={event=>moveKey(event,lane,id)} ondragstart={event=>startDrag(event,lane.id,node)} ondragend={()=>{dragged=null;dropTarget='';}} ondragover={event=>over(event,lane.id,id)} ondrop={event=>drop(event,lane.id,id)}><strong>{label(node)}</strong><small>{processingSummary(node.processing)}</small></button>{@render removeButton(node)}</span>
               {/if}
             {:else}<span class="direct">Direct</span>{/each}
             {#if dragged}<button class="chain-router chain-end" class:drop-target={dropTarget===`${lane.id}:`} aria-label="Drop transformation at end of chain" title="Drop at end of chain" disabled={readOnly} ondragover={event=>over(event,lane.id,null)} ondrop={event=>drop(event,lane.id,null)}><Icon name="arrow" size={16}/></button>{/if}
           </div>{@render addButton(lane)}</div>
           <div class="lane-endpoint"><div data-endpoint-side="to">{#if routeEndpoint}{@render routeEndpoint(lane.id,'to',lane.destination)}{:else}<strong>{port(lane.destination.nodeId,lane.destination.portId)}</strong>{/if}</div><div class="lane-actions">{#if disconnect}<button class="disconnect-route danger" aria-label={`Disconnect ${port(lane.destination.nodeId,lane.destination.portId)}`} title="Disconnect route" disabled={readOnly} onclick={()=>disconnect?.(lane.id)}><Icon name="unlink" size={16}/></button>{/if}</div></div>
         </div>
-      {:else}<p class="empty">No signals.</p>{/each}
-    {:else}<div class="transform-library">{#each transforms as node (node.id)}<button class="transform-chip" class:active={activeTransform===node.id} aria-pressed={activeTransform===node.id} data-transform-id={node.id} onclick={()=>edit(node.id)}><strong>{node.name}</strong><small>{node.processing?.draft?'Needs input · ':''}{processingSummary(node.processing!)}</small></button>{:else}<p>No transforms. Drop one from the component palette to start a chain.</p>{/each}</div>{/if}
+      {/each}
+      {#if draftConnection}<div class="signal-lane pending-connection" aria-label="New connection draft">{@render draftConnection()}</div>{:else if addConnection}<div class="connection-footer">{#if !lanes.length}<p class="empty">No connections yet.</p>{/if}<button class="add-connection" type="button" disabled={readOnly} onclick={addConnection}><Icon name="plus" size={15}/>Add</button></div>{:else if !lanes.length}<p class="empty">No connections yet.</p>{/if}
+      {:else}<div class="transform-library">{#each transforms as node (node.id)}<span class="transform-chip-wrap"><button class="transform-chip" class:active={activeTransform===node.id} aria-pressed={activeTransform===node.id} data-transform-id={node.id} onclick={()=>edit(node.id)}><strong>{node.name}</strong><small>{node.processing?.draft?'Needs input · ':''}{processingSummary(node.processing!)}</small></button>{@render removeButton(node)}</span>{:else}<p>No transforms. Drop one from the component palette to start a chain.</p>{/each}</div>{/if}
+    </div>
   </div>
   {#if dragError}<p class="chain-error" role="alert">{dragError}</p>{/if}
-  {#if selected?.processing&&transformSettings}<div class="lane-settings" data-transform-settings={selected.id}><div><h4>{selected.name}</h4></div><fieldset disabled={readOnly}>{@render transformSettings(selected)}</fieldset></div>{/if}
 </section>
 
 <style>
   .signal-lanes{background:var(--surface)}
   .signal-lanes header{position:sticky;top:0;z-index:2;background:var(--surface);display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1fr);align-items:center;gap:16px;padding:10px 16px;border-bottom:1px solid var(--line)}
   .connection-direction{display:grid;place-items:center;color:var(--accent)}.destination-device{text-align:right}h3,h4{margin:3px 0;font-size:15px}
-  .lane-scroll{max-height:340px;overflow:auto}.lane-head,.signal-lane{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(280px,2.5fr) minmax(130px,.9fr);gap:16px;padding:5px 16px;box-sizing:border-box}
+  .overview-content{display:grid;grid-template-columns:minmax(0,1fr)}.overview-content.has-settings{grid-template-columns:minmax(220px,.65fr) minmax(0,1.6fr);align-items:start}.lane-scroll{max-height:340px;overflow:auto;min-width:0}.lane-head,.signal-lane{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(280px,2.5fr) minmax(130px,.9fr);gap:16px;padding:5px 16px;box-sizing:border-box}
   .lane-head{align-items:center;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);border-bottom:1px solid var(--line)}
+  .overview-content.has-settings .lane-head,.overview-content.has-settings .signal-lane{grid-template-columns:minmax(92px,.9fr) minmax(150px,1.6fr) minmax(112px,1fr);gap:12px;padding-left:12px;padding-right:12px}
   .signal-lane{align-items:center;min-height:38px;border-bottom:1px solid var(--line)}.lane-endpoint{display:flex;flex-direction:column;gap:3px;min-width:0}
-  .lane-chain,.transform-library{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0}
+  .lane-chain,.transform-library{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0}.transform-chip-wrap{position:relative;display:inline-flex;flex:0 0 auto;min-width:0;max-width:100%}
   .transform-chip{box-sizing:border-box;background:color-mix(in srgb,#9b80d8 14%,var(--surface));border:1px solid color-mix(in srgb,#9b80d8 40%,var(--line));color:var(--text);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:2px;max-width:220px;min-width:0;text-align:left;cursor:pointer}
   .transform-chip strong{font-size:12px;line-height:14px}.transform-chip small{font-size:10px;line-height:12px;color:var(--soft);overflow-wrap:anywhere}
-  .lane-chain .transform-chip{flex:0 0 112px;width:112px;max-width:100%;height:30px;padding:2px 6px}.lane-chain .transform-chip strong{font-size:11px;line-height:12px}.lane-chain .transform-chip small{font-size:9px;line-height:11px}.lane-chain .transform-chip strong,.lane-chain .transform-chip small{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lane-chain .transform-chip{flex:0 0 112px;width:112px;max-width:100%;height:30px;padding:2px 25px 2px 6px}.lane-chain .transform-chip strong{font-size:11px;line-height:12px}.lane-chain .transform-chip small{font-size:9px;line-height:11px}.lane-chain .transform-chip strong,.lane-chain .transform-chip small{display:block;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .transform-chip.active,.transform-chip:hover{border-color:#bfa1ff;background:color-mix(in srgb,#9b80d8 24%,var(--surface))}
+  .remove-transform{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:20px;height:20px;padding:0;border:1px solid #bc3441;border-radius:4px;background:#9b2430;color:#fff;cursor:pointer;opacity:0;pointer-events:none;z-index:1}.transform-chip-wrap:hover .remove-transform,.transform-chip-wrap:focus-within .remove-transform{opacity:1;pointer-events:auto}.remove-transform:focus-visible{outline:2px solid #ff8993;outline-offset:2px}.remove-transform:disabled{opacity:.4;cursor:default}.transform-chip-wrap:has(.remove-transform) .transform-chip{padding-right:25px}
   .insert-transform{display:grid;place-items:center;flex:0 0 24px;width:24px;height:24px;padding:0;background:transparent;border:1px solid var(--line);color:var(--accent);border-radius:4px;cursor:pointer}.insert-transform:disabled{opacity:.4;cursor:default}
   .lane-chain{flex-wrap:nowrap}.chain-track{display:flex;align-items:center;gap:6px;flex:0 1 auto;min-width:0;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px}.chain-router{display:grid;place-items:center;flex:0 0 20px;width:20px;height:28px;padding:0;border:0;background:transparent;color:var(--muted)}.chain-router:enabled{cursor:copy}.chain-router:disabled{opacity:.5}.transform-chip[draggable=true]{cursor:grab}.transform-chip.dragging{opacity:.35}.drop-target{outline:2px solid var(--accent);outline-offset:-2px}.chain-error{margin:8px 16px;color:#ff8993;font-size:12px}
 
   .direct{color:var(--muted);font-size:12px;font-style:italic}.lane-endpoint:has(.lane-actions){display:grid;grid-template-columns:minmax(0,1fr) 26px;align-items:center}.lane-actions{display:flex}
   .disconnect-route{display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid #bc3441;border-radius:4px;background:#9b2430;color:#fff;cursor:pointer}.disconnect-route:hover:enabled{background:#b32b38;border-color:#e35d69}.disconnect-route:focus-visible{outline:2px solid #ff8993;outline-offset:2px}.disconnect-route:disabled{opacity:.4;cursor:default}
-  .transform-library{padding:12px 16px}.lane-settings{padding:14px 16px;display:grid;grid-template-columns:minmax(160px,1fr) minmax(260px,3fr);gap:20px;background:var(--surface-raised);border-top:1px solid var(--line)}fieldset{border:0;padding:0;min-width:0;margin:0}.empty{padding:16px;color:var(--muted)}
-  @media(max-width:850px){.lane-head,.signal-lane{grid-template-columns:110px minmax(260px,1fr) 130px;min-width:580px}.lane-settings{grid-template-columns:1fr}}
+  .transform-library{padding:12px 16px}.lane-settings{padding:14px 16px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;background:var(--surface-raised);border-right:1px solid var(--line);min-width:0}fieldset{border:0;padding:0;min-width:0;margin:0}.empty{padding:16px;color:var(--muted)}.connection-footer{display:flex;align-items:center;justify-content:space-between;padding:4px 16px}.add-connection{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:5px;background:var(--surface-raised);color:var(--text);cursor:pointer}.add-connection:disabled{opacity:.45;cursor:default}.pending-connection{min-height:52px;align-items:center}.pending-connection :global(> *){min-width:0}
+  @media(hover:none){.remove-transform{opacity:1;pointer-events:auto}}
+  @media(max-width:850px){.overview-content.has-settings{grid-template-columns:minmax(0,1fr)}.lane-head,.signal-lane{grid-template-columns:110px minmax(260px,1fr) 130px;min-width:580px}.lane-settings{border-right:0;border-bottom:1px solid var(--line)}}
 </style>

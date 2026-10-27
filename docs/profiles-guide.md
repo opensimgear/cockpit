@@ -58,8 +58,8 @@ Changing context replaces the integration and its routes in one Undo edit.
 There is no separate integration palette section.
 
 Blocks automatically discover and show their available inputs and outputs.
-Drag between their input and output groups to choose the exact ports in a side
-panel, connect the route, and choose **Save profile**. Saving commits the graph and local resource assignments
+Drag between their input and output groups to open their connection overview,
+connect a route, and choose **Save**. Saving commits the graph and local resource assignments
 together and shows a notification. Saving an inactive profile leaves the active
 profile alone. Choose **Activate** on its tile when ready; it uses the saved game
 context. A game can be closed while hardware remains active and game routes wait.
@@ -108,16 +108,20 @@ gateway attachment appear as resource metadata. A device observed over USB and
 CAN can retain both connections while Cockpit chooses its current input source.
 
 Drag **Outputs** onto **Inputs / actions**, or start from an input and drag to
-an output. The side panel selects both blocks and lets you search their discovered
-ports by name or ID. Choose the output and input, then create the route. Ports
-are saved automatically with that connection. Cancel or Escape leaves the graph
-unchanged. You can also click a port group or use **Connect exact ports**. The bindings table provides
-a keyboard alternative and lets you edit ports or remove routes. Click a
-connection line to insert a compatible transformation; transformations are not
-palette components. Different types, units, numeric ranges or state/event delivery
-need an explicit transformation. For those ports, choose **Connect with transformation**
-in the exact connection editor to create both routes together. Reverse feedback
-is another directed route.
+an output. This opens the same connection overview as clicking an arrow. The
+overview starts empty when these blocks have no connections.
+
+Choose **Add**, search for an output and input, and add any transformations
+needed between them. Click a transformation block to edit its settings in the
+pane on the left; its destructive delete button appears on hover or keyboard
+focus. Different types, units, numeric ranges or state/event delivery need an
+explicit transformation.
+
+Choose **Connect** to complete the row. Only a successful connection adds its
+ports, device mappings, transformations and routes to the profile. The complete
+connection is one undoable edit. **Cancel**, Escape or clicking the canvas
+discards an unfinished row without creating ports. Reverse feedback is another
+directed route.
 
 Transformations include range/unit conversion, scaling, deadzones, curves,
 comparisons and hysteresis, gates, boolean logic, input priority, state/event
