@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadModules} from './test-module-loader.mjs';
-const {signalOverview,signalBundleWidth}= (await loadModules(['./profile-signal-overview'])).get('./profile-signal-overview');
+const {signalOverview,destinationOverview,destinationOverviewId,signalBundleWidth}= (await loadModules(['./profile-signal-overview'])).get('./profile-signal-overview');
 const edge=(id,from,to,output=id,input=id)=>({id,from:{nodeId:from,portId:output},to:{nodeId:to,portId:input}});
 const doc=(bindings,transforms=[])=>({resources:[{id:'stick'},{id:'pedals'}],virtualOutputs:[{id:'flight'}],desktopOutputs:[{id:'keyboard'}],processingNodes:transforms.map(id=>({id})),bindings});
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -37,6 +37,34 @@ test('shared transforms retain identity on each consumer and multi-input lanes p
 test('multiple source ports feeding the same terminal are one route, not an inflated weight',()=>{
   const bundles=signalOverview(doc([edge('a','stick','combine','x'),edge('b','stick','combine','y'),edge('c','combine','flight')],['combine']));
   assert.equal(bundles.length,1);assert.equal(bundles[0].lanes.length,1);assert.equal(bundles[0].lanes[0].sources.length,2);
+});
+test('destination overview combines different source bundles and preserves real lane identities',()=>{
+  const bundles=signalOverview(doc([edge('roll','stick','flight'),edge('rudder','pedals','flight')]));
+  const [overview]=destinationOverview(bundles);
+  assert.equal(destinationOverviewId('flight'),'destination:"flight"');
+  assert.equal(overview.id,'destination:"flight"');
+  assert.deepEqual(plain(overview.binding),{id:'destination:"flight"',from:{nodeId:'stick',portId:''},to:{nodeId:'flight',portId:''}});
+  assert.deepEqual(plain(overview.lanes.map(lane=>lane.id)),['roll','rudder']);
+  assert.deepEqual(plain(overview.lanes.map(lane=>lane.bindingIds)),[['roll'],['rudder']]);
+});
+test('a multi-input route duplicated across source arrows appears once per destination',()=>{
+  const bundles=signalOverview(doc([edge('a','stick','mix'),edge('b','pedals','mix'),edge('route','mix','flight')],['mix']));
+  assert.equal(bundles.length,2);
+  const [overview]=destinationOverview(bundles);
+  assert.equal(overview.lanes.length,1);
+  assert.equal(overview.lanes[0].id,'route');
+  assert.deepEqual(plain(overview.lanes[0].sources.map(source=>source.nodeId)),['stick','pedals']);
+  assert.deepEqual(plain(overview.lanes[0].bindingIds),['route','a','b']);
+});
+test('destination overview keeps separate destinations, retains empty bundles, and leaves input unchanged',()=>{
+  const source=[
+    ...signalOverview(doc([edge('one','stick','flight'),edge('two','stick','keyboard')])).map(bundle=>({...bundle,lanes:[...bundle.lanes]})),
+    {id:'empty-source',binding:{id:'empty-source',from:{nodeId:'pedals',portId:''},to:{nodeId:'empty-destination',portId:''}},lanes:[]},
+  ];
+  const before=JSON.stringify(source),overview=destinationOverview(source);
+  assert.equal(JSON.stringify(source),before);
+  assert.deepEqual(plain(overview.map(bundle=>bundle.binding.to.nodeId)),['flight','keyboard','empty-destination']);
+  assert.deepEqual(plain(overview.map(bundle=>bundle.lanes.map(lane=>lane.id))),[['one'],['two'],[]]);
 });
 test('external resources stop traversal; drafts and constants do not invent resource-to-resource wires',()=>{
   const source=doc([edge('a','stick','flight'),edge('b','flight','keyboard'),edge('c','constant','keyboard'),edge('draft','pedals','unfinished')],['constant','unfinished']);

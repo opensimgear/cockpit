@@ -38,6 +38,7 @@
   const byId=$derived(new Map(nodes.map(node=>[node.id,node])));
   const selected=$derived(byId.get(activeTransform));
   const lanes=$derived(bundle?.lanes??[]);
+  const sourceTitle=$derived([...new Set(lanes.length?lanes.flatMap(lane=>lane.sources.map(source=>source.nodeId)):bundle?[bundle.binding.from.nodeId]:[])].map(id=>byId.get(id)?.name??id).join(' + '));
   const selectedLane=$derived(lanes.find(lane=>lane.id===selectedLaneId&&lane.transforms.includes(activeTransform))??lanes.find(lane=>lane.transforms.includes(activeTransform)));
   const transforms=$derived(nodes.filter(node=>node.processing));
   function port(id:string,portId:string){const node=byId.get(id);return [...(node?.resource?.ports??[]),...(node?.virtual?.ports??[]),...(node?.desktop?.ports??[])].find(port=>port.id===portId)?.name??portId;}
@@ -55,7 +56,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape dismisses this region from its child controls.) -->
 <section class="signal-lanes" aria-label="Signal lanes" onkeydown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}}}>
-  <header>{#if bundle}<h3 class="source-device">{byId.get(bundle.binding.from.nodeId)?.name}</h3><span class="connection-direction"><Icon name="arrow" size={24}/></span><h3 class="destination-device">{byId.get(bundle.binding.to.nodeId)?.name}</h3>{:else}<h3>Transform settings</h3>{/if}</header>
+  <header>{#if bundle}<h3 class="source-device">{sourceTitle}</h3><span class="connection-direction"><Icon name="arrow" size={24}/></span><h3 class="destination-device">{byId.get(bundle.binding.to.nodeId)?.name}</h3>{:else}<h3>Transform settings</h3>{/if}</header>
   <div class="overview-content">
     <div class="lane-scroll">
       {#if bundle}

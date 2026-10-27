@@ -41,6 +41,33 @@ export function signalOverview(document:DeepReadonly<ProfileDocument>):SignalBun
   return [...bundles.values()];
 }
 
+/** Stable identity for the presentation-only overview of one destination. */
+export function destinationOverviewId(to:string):string {
+  return `destination:${JSON.stringify(to)}`;
+}
+
+/** Groups source-pair arrows into destination arrows while keeping their real
+ * lane data intact. Lanes shared by multiple source arrows appear only once. */
+export function destinationOverview(bundles:readonly SignalBundle[]):SignalBundle[] {
+  const destinations=new Map<string,SignalBundle>();
+  for(const bundle of bundles){
+    const to=bundle.binding.to.nodeId;
+    let overview=destinations.get(to);
+    if(!overview){
+      const id=destinationOverviewId(to);
+      overview={id,binding:{id,from:bundle.binding.from,to:bundle.binding.to},lanes:[]};
+      destinations.set(to,overview);
+    }
+    const laneIds=new Set(overview.lanes.map(lane=>lane.id));
+    for(const lane of bundle.lanes){
+      if(laneIds.has(lane.id))continue;
+      overview.lanes.push(lane);
+      laneIds.add(lane.id);
+    }
+  }
+  return [...destinations.values()];
+}
+
 /** Relative weights remain proportional even on very dense profiles. */
 export function signalBundleWidth(count:number,maximum:number):number {
   return count*Math.min(3,14/Math.max(1,maximum));

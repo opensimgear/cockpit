@@ -4,7 +4,7 @@
   import Icon from './Icon.svelte';
   import {canvasOverviewLayoutScore} from './profile-overview-layout';
   import ProfileSignalLanes from './ProfileSignalLanes.svelte';
-  import {signalOverview,signalBundleWidth,type SignalLane} from './profile-signal-overview';
+  import {signalOverview,destinationOverview,destinationOverviewId,signalBundleWidth,type SignalLane} from './profile-signal-overview';
   import {createOverviewRouter} from './profile-overview-routing';
   import type { DeepReadonly, ProfileDocument, ProfileEndpoint, ProfileLocalAssignment, ProfilePort, ProfilePortGroup, ProfileProcessingNode } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
@@ -93,7 +93,19 @@
     return bundles;
   });
   const overviewById=$derived(new Map(overviewBundles.map(bundle=>[bundle.id,bundle])));
-  const overviewBundle=$derived(overviewById.get(overviewBundleId)??(overviewPair?{id:overviewBundleId,binding:{id:overviewBundleId,from:{nodeId:overviewPair.from,portId:''},to:{nodeId:overviewPair.to,portId:''}},lanes:[]}:undefined));
+  const destinationBundles=$derived.by(()=>{
+    const bundles=destinationOverview(overviewBundles);
+    for(const row of [...incompleteRows].sort((a,b)=>a.index-b.index)){
+      const lanes=bundles.find(bundle=>bundle.binding.to.nodeId===row.targetNodeId)?.lanes;
+      if(!lanes)continue;
+      const index=lanes.findIndex(lane=>lane.id===row.lane.id);
+      if(index>=0)lanes.splice(index,1);
+      lanes.splice(Math.max(0,Math.min(row.index,lanes.length)),0,row.lane);
+    }
+    return bundles;
+  });
+  const destinationById=$derived(new Map(destinationBundles.map(bundle=>[bundle.id,bundle])));
+  const overviewBundle=$derived(destinationById.get(overviewPair?destinationOverviewId(overviewPair.to):overviewBundleId)??(overviewPair?{id:destinationOverviewId(overviewPair.to),binding:{id:destinationOverviewId(overviewPair.to),from:{nodeId:overviewPair.from,portId:''},to:{nodeId:overviewPair.to,portId:''}},lanes:[]}:undefined));
   const routingBindings=$derived(overview?overviewBundles.map(bundle=>({...bundle.binding,to:{...bundle.binding.to,portId:bundle.id}})):committedDocument.bindings);
   const maximumRoutes=$derived(Math.max(1,...overviewBundles.map(bundle=>bundle.lanes.length)));
   const nodes = $derived(visibleDocument===committedDocument?committedNodes:allNodes.filter(node=>!overview||!node.processing));
@@ -155,12 +167,14 @@
   function fit() { bundlePicker=null;fitView(); }
   function closeLanes(notify=false){pendingOverviewDrop=null;overviewBundleId='';overviewPair=null;showTransforms=false;activeTransform='';if(notify)closeConnectionPanel?.();}
   export function closeConnectionOverview(){closeLanes(false);}
-  export function openConnectionOverview(from:string,to:string){pendingOverviewDrop=null;selectedId='';showTransforms=false;activeTransform='';overviewPair={from,to};overviewBundleId=`overview:${JSON.stringify([from,to])}`;}
+  export function openConnectionOverview(from:string,to:string){pendingOverviewDrop=null;selectedId='';showTransforms=false;activeTransform='';overviewPair={from,to};overviewBundleId=destinationOverviewId(to);}
   export function focusConnectionTransform(id:string){activeTransform=activeTransform===id?'':id;}
   function openOverview(id:string){
-    if(overviewBundleId===id){closeLanes(true);return;}
+    const bundle=overviewById.get(id);if(!bundle)return;
+    const destinationId=destinationOverviewId(bundle.binding.to.nodeId),pair={from:bundle.binding.from.nodeId,to:bundle.binding.to.nodeId};
+    if(overviewBundleId===destinationId){overviewPair=pair;return;}
     pendingOverviewDrop=null;clearConnectionClick();selectionView=null;focusedSelectionId='';
-    closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';overviewPair=null;overviewBundleId=id;
+    closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';overviewPair=pair;overviewBundleId=destinationId;
   }
   function slideLanes(_node:HTMLElement){return {duration:window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:180,css:(t:number)=>`transform:translateY(${(1-t)*100}%)`};}
   function trimArrowShaft(element:SVGPathElement,settings:{path:string;head:number}){
@@ -263,7 +277,7 @@
     if(!acceptsPaletteDrop(event)){clearPalettePreview();return;}
     event.preventDefault();event.stopPropagation();
     const component=paletteDrag!.component,position=palettePosition(event),hit=(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]'),bindingId=component.kind==='transformation'?hit?.dataset.connectionId:undefined,bundle=hit?.dataset.bundleId?clickableBundles.find(bundle=>bundle.id===hit.dataset.bundleId&&bundle.members.length>1):undefined;clearPalettePreview();
-    try{if(overview&&bindingId&&overviewById.has(bindingId)&&component.kind==='transformation'){const projected=overviewById.get(bindingId)!;if(projected.lanes.length===1)dropOnConnection?.(component,projected.lanes[0].id,position);else{openOverview(bindingId);pendingOverviewDrop={component,position};}}else if(bundle&&component.kind==='transformation'&&dropOnConnection)openBundle(event,bundle,{component,position});else if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
+    try{if(overview&&bindingId&&overviewById.has(bindingId)&&component.kind==='transformation'){const projected=destinationById.get(destinationOverviewId(overviewById.get(bindingId)!.binding.to.nodeId))!;if(projected.lanes.length===1)dropOnConnection?.(component,projected.lanes[0].id,position);else{openOverview(bindingId);pendingOverviewDrop={component,position};}}else if(bundle&&component.kind==='transformation'&&dropOnConnection)openBundle(event,bundle,{component,position});else if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
   }
   function restoreSelectionView(){const previous=selectionView;selectionView=null;focusedSelectionId='';if(previous)view={...previous};return !!previous;}
   function syncSelectionFocus(){
@@ -464,9 +478,9 @@
               {@const width=signalBundleWidth(projected.lanes.length,maximumRoutes)}
               {@const head=Math.max(10,width*2.4)}
               {@const markerId=`${inspectorContentId}-arrow-${overviewBundles.indexOf(projected)}`}
-              <defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth={head} markerHeight={head} viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path class:selected={overviewBundleId===binding.id} d="M0,0 L10,5 L0,10 Z"/></marker></defs>
-              <path class="signal-edge overview-edge" data-binding-id={binding.id} data-route-count={projected.lanes.length} data-arrow-style={wireStyle} class:selected={overviewBundleId===binding.id} class:drop-target={paletteConnectionId===binding.id} style={`stroke-width:${width}px`} use:trimArrowShaft={{path:route.path,head}} marker-end={`url(#${markerId})`} d={route.path}><title>{nodesById.get(binding.from.nodeId)?.name} → {nodesById.get(binding.to.nodeId)?.name}</title></path>
-              <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Inspect signals from ${nodesById.get(binding.from.nodeId)?.name} to ${nodesById.get(binding.to.nodeId)?.name}`} aria-pressed={overviewBundleId===binding.id} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={()=>openOverview(binding.id)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openOverview(binding.id);}}}/>
+              <defs><marker id={markerId} markerUnits="userSpaceOnUse" markerWidth={head} markerHeight={head} viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path class:selected={overviewBundle?.binding.to.nodeId===binding.to.nodeId} d="M0,0 L10,5 L0,10 Z"/></marker></defs>
+              <path class="signal-edge overview-edge" data-binding-id={binding.id} data-route-count={projected.lanes.length} data-arrow-style={wireStyle} class:selected={overviewBundle?.binding.to.nodeId===binding.to.nodeId} class:drop-target={paletteConnectionId===binding.id} style={`stroke-width:${width}px`} use:trimArrowShaft={{path:route.path,head}} marker-end={`url(#${markerId})`} d={route.path}><title>{nodesById.get(binding.from.nodeId)?.name} → {nodesById.get(binding.to.nodeId)?.name}</title></path>
+              <path class="signal-edge-hit" data-connection-id={binding.id} d={route.path} role="button" tabindex="0" aria-label={`Inspect signals from ${nodesById.get(binding.from.nodeId)?.name} to ${nodesById.get(binding.to.nodeId)?.name}`} aria-pressed={overviewBundle?.binding.to.nodeId===binding.to.nodeId} onpointerdown={event=>{event.preventDefault();event.stopPropagation();}} onclick={()=>openOverview(binding.id)} onkeydown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();openOverview(binding.id);}}}/>
             {:else}
             <path class="signal-edge" class:bundled={grouped} class:orthogonal={wireStyle==='orthogonal'} data-binding-id={binding.id} data-binding-ids={JSON.stringify(bundle.members.map(route=>route.binding.id))} data-bundle-count={bundle.members.length} data-bundle-id={grouped?bundle.id:undefined} data-arrow-style={wireStyle} class:selected={selectedEdgeId===binding.id} class:drop-target={paletteConnectionId===binding.id} class:highlighted={bundle.members.some(route=>highlightedEdges.includes(route.binding.id))} class:problem={bundle.members.some(route=>route.customBlocked||diagnostics.some(diagnostic=>diagnostic.location.edgeIds.includes(route.binding.id)))} marker-end="url(#profile-signal-arrow)" d={route.path}><title>{grouped?`${bundle.members.length} connections: ${nodesById.get(binding.from.nodeId)?.name??binding.from.nodeId} → ${nodesById.get(binding.to.nodeId)?.name??binding.to.nodeId}`:`${portName(binding.from.nodeId,binding.from.portId,'output')} → ${portName(binding.to.nodeId,binding.to.portId,'input')}`}</title></path>
             {#if selectConnection||editConnection||dropOnConnection}
@@ -582,7 +596,7 @@
     {/if}
   {#if overview&&(overviewBundle||showTransforms)}
     <div class="canvas-lanes-panel" transition:slideLanes>
-    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {addTransformInput} {routeIssue} {routeEndpoint} {sourceInputs} bundle={overviewBundle} nodes={laneNodes} draftConnection={connectionDraft} {activeIncompleteRowId} addConnection={overviewBundle&&addOverviewConnection?()=>addOverviewConnection?.(overviewBundle!.binding.from.nodeId,overviewBundle!.binding.to.nodeId):undefined} removeTransform={removeOverviewTransform} selectTransform={selectOverviewTransform} bind:activeTransform close={()=>closeLanes(true)} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target,id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {addTransformInput} {routeIssue} {routeEndpoint} {sourceInputs} bundle={overviewBundle} nodes={laneNodes} draftConnection={connectionDraft} {activeIncompleteRowId} addConnection={overviewBundle&&addOverviewConnection?()=>addOverviewConnection?.(overviewPair?.from??overviewBundle!.binding.from.nodeId,overviewBundle!.binding.to.nodeId):undefined} removeTransform={removeOverviewTransform} selectTransform={selectOverviewTransform} bind:activeTransform close={()=>closeLanes(true)} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target,id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
     </div>
   {/if}
   </div>
