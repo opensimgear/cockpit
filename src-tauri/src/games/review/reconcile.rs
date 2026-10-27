@@ -29,7 +29,7 @@ pub(super) fn with_metadata(
     saved: &crate::game_installations::Settings,
     candidates: Vec<Candidate>,
     successful: &BTreeSet<String>,
-    metadata: &BTreeMap<u32,Vec<String>>,
+    metadata: &super::tagging::Metadata,
 ) -> Vec<Entry> {
     let mut grouped: BTreeMap<String, Vec<Candidate>> = BTreeMap::new();
     for candidate in candidates
@@ -93,7 +93,8 @@ pub(super) fn with_metadata(
             .iter()
             .map(Candidate::source)
             .collect::<Vec<_>>();
-        let tag_ids=super::tagging::proposed(saved,&game_id,&sources,metadata);
+        let proposal=super::tagging::proposed(saved,&game_id,&sources,metadata);
+        let tag_ids=proposal.ids;
         let mut runtimes = vec![];
         for observation in &observations {
             for path in &observation.executable_candidates {
@@ -184,7 +185,8 @@ pub(super) fn with_metadata(
             update_kind: Some(kind.into()),
             integration,
             image: None,
-            message: (!tag_ids.is_empty()).then(||format!("Platform tags: {}",tag_ids.iter().filter_map(|id|saved.tags.get(id)).cloned().collect::<Vec<_>>().join(", "))),
+            message: (!tag_ids.is_empty()).then(||format!("{} tags: {}",if proposal.source.as_deref()==Some("wikidata"){"Wikidata"}else{"Platform"},tag_ids.iter().filter_map(|id|saved.tags.get(id)).cloned().collect::<Vec<_>>().join(", "))),
+            tag_source:proposal.source,
             tag_ids,
             sources,
             artwork: observations
@@ -223,6 +225,7 @@ pub(super) fn with_metadata(
                 integration: game.integration.clone(),
                 image: None,
                 tag_ids: vec![],
+                tag_source: None,
                 message: Some("This installation is no longer present on disk.".into()),
                 sources: vec![],
                 artwork: None,

@@ -147,7 +147,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
         "companion_status" | "companion_inventory" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
-        | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_telemetry_inspect" | "game_integration_settings_save"
+        | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_metadata_get" | "game_telemetry_inspect" | "game_integration_settings_save"
         | "game_tag_definitions_save" | "game_tags_save" | "game_discovery_start" | "game_background_save" | "game_save" | "game_remove" | "game_discovery_apply"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
@@ -164,7 +164,7 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_telemetry_inspect"|"game_discovery_start"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_metadata_get"|"game_telemetry_inspect"|"game_discovery_start"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
             |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
@@ -775,6 +775,20 @@ impl GatewayManager {
         }
         // Passive state and client-library discovery retain request validation
         // without holding profile/game admission during metadata reads.
+        if command=="game_metadata_get" {
+            if self.closed.load(Ordering::Acquire) {return self.error("Cockpit gateway manager has closed.",None);}
+            if request.to_string().len()>8192||!request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
+                return self.error("Invalid game metadata request.",None);
+            }
+            return match self.games.metadata_details(&request) {
+                Ok(metadata)=>{
+                    if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()) {return self.error(&error,None);}
+                    if self.closed.load(Ordering::Acquire) {return self.error("Cockpit gateway manager has closed.",None);}
+                    json!({"ok":true,"state":{"gameMetadata":metadata}})
+                },
+                Err(error)=>self.error(&error,None),
+            };
+        }
         if matches!(command, "game_artwork_list" | "game_artwork_preview") {
             if request.to_string().len() > 8192 || !request["clientId"].as_str().is_some_and(|id| crate::protocol::identifier(id, 16, 80)) {
                 return self.error("Invalid game artwork request.", None);
@@ -943,7 +957,7 @@ impl GatewayManager {
         // Coordinator callbacks address adapters directly after admission.
         if request["command"]
             .as_str()
-            .is_some_and(|c| c == "profile_local_settings_save" || c.starts_with("game_") && !matches!(c,"game_get_state"|"game_telemetry_inspect"))
+            .is_some_and(|c| c == "profile_local_settings_save" || c.starts_with("game_") && !matches!(c,"game_get_state"|"game_metadata_get"|"game_telemetry_inspect"))
         {
             let _admission = self
                 .game_admission
@@ -1772,6 +1786,7 @@ mod tests {
     include!("profile_activation_tests.rs");
     include!("profile_activation_gateway_tests.rs");
     include!("game_metadata_gateway_tests.rs");
+    include!("wikidata_gateway_tests.rs");
     fn request(manager: &GatewayManager, command: &str, id: Option<&str>, fields: Value) -> Value {
         let mut request = json!({"command":command,"clientId":CLIENT});
         if let Some(id) = id {

@@ -35,6 +35,7 @@ pub(super) struct Entry {
     pub integration:Option<String>,pub message:Option<String>,
     pub image:Option<String>,
     #[serde(skip_serializing_if="Vec::is_empty")] pub tag_ids:Vec<String>,
+    #[serde(skip_serializing_if="Option::is_none")] pub tag_source:Option<String>,
     #[serde(skip)] pub sources:Vec<LibrarySource>,
     #[serde(skip)] pub artwork:Option<PathBuf>,
 }

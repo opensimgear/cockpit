@@ -40,9 +40,13 @@ Deleting taxonomy entries never recreates them from platform metadata.
 
 Steam metadata is cached locally and fetched with bounded requests while the
 library shows preparation progress. Offline or unavailable metadata does not
-prevent importing games; a later rescan can fill missing defaults. Other current
-installer manifests do not provide genre metadata, so their games keep manually
-editable tags. Game names, integrations and executable names never imply tags.
+prevent importing games; a later rescan can fill missing defaults. When platform
+genres do not map to the current taxonomy, Wikidata supplies fallback genre
+facts for Steam, Epic, Battle.net, EA, Ubisoft, GOG, Xbox and local discoveries.
+Only uniquely identified video games qualify: exact supported store identifiers
+take priority, followed by exact English or language-neutral labels and aliases. Ambiguous titles
+and unavailable records stay untagged. Integrations and executable names do not
+imply tags. Suggested Wikidata tags identify their source in the review.
 
 The **Game tags** field contains selected badges. Type to search, select a
 suggestion or press Enter to add it, and use a badge's remove button or Backspace
@@ -58,6 +62,29 @@ MCP exposes `game_tags_list`, `game_tag_definitions_save` and `game_tags_save`;
 both saves require the expected current values and an operation ID. Run
 `OSG_GAME_TAGS_NATIVE=1 pnpm games:tags:native` against the native dev cockpit for
 the tag UI, persistence and MCP acceptance check.
+
+## Shared game metadata
+
+The reusable `games/metadata` provider retains Wikidata entity IDs, titles,
+descriptions, aliases, genres and their parent genres, platforms, developers,
+publishers, release dates, external identifiers and source provenance. These
+facts remain separate from editable library names, paths, images and tags.
+Wikidata structured facts are CC0; linked artwork is not imported or licensed
+by this feature.
+
+MCP and the native gateway expose the passive `game_metadata_get {gameId}` read.
+It returns cached rich records and match/staleness information, performs no
+network request, and never changes tag assignments. Discovery populates the
+cache even when a game already has manually edited or explicitly cleared tags.
+
+Positive records expire after 30 days; negative/ambiguous matches after one day.
+Offline refreshes may use an explicitly marked stale positive record. Cache
+files, responses, batches and discovery work are bounded. Wikidata requests
+include Cockpit's name and contact URL, run one at a time at most once per second,
+and reserve at most 28 seconds of request time per rolling minute. HTTP 429/503
+`Retry-After` delays (including dates) persist across restarts; other failures
+use exponential backoff. Long cooldowns never hold discovery open. Future
+consumers reuse this provider instead of querying Wikidata from tag controls.
 
 ## Tile backgrounds
 

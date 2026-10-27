@@ -76,6 +76,7 @@ export type GatewayState = {
   moduleEvents?: Record<string, PanelInputState>;
   debug?: DebugGateway;
   games?: GamesState;
+  gameMetadata?: import('./game-metadata').GameMetadataResponse;
   gameArtwork?: {gameId:string;items?:import('./games').GameArtworkOption[];image?:string;total?:number;nextOffset?:number|null};
   gameTelemetry?: GameTelemetryReport;
   controllers?: ControllerResult;

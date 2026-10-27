@@ -338,6 +338,7 @@ impl Tools {
             "game_discovery_start" => self.game_discovery_start(args, client),
             "game_discovery_status" => self.game_discovery_status(args, client),
             "game_discovery_apply" => self.game_discovery_apply(args, client),
+            "game_metadata_get" => forward("game_metadata_get", &["gameId"], Some("gameMetadata")),
             "game_artwork_list" => forward("game_artwork_list", &["gameId", "offset", "limit"], Some("gameArtwork")),
             "game_artwork_preview" => forward("game_artwork_preview", &["gameId", "artworkId"], Some("gameArtwork")),
             "game_background_save" => self.game_background_save(args, client),

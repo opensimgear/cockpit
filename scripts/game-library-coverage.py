@@ -14,13 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULES = [f"games/library/{name}.rs" for name in ["mod", "steam", "epic", "battlenet", "battlenet_artwork", "registry", "xbox", "disk", "platforms", "executable_ranking", "artwork", "artwork_choices"]] + [
     "games/artwork_options.rs", "games/artwork/mod.rs",
     "games/review/mod.rs", "games/review/reconcile.rs", "games/review/worker.rs", "games/review/completion.rs", "games/review/tagging.rs",
-    "games/storage/installations.rs", "games/tags/mod.rs", "games/tags/platform.rs", "game_metadata_api.rs", "game_discovery.rs", "games.rs",
+    "games/storage/installations.rs", "games/tags/mod.rs", "games/tags/platform.rs", "games/metadata_read.rs",
+    "games/metadata/model.rs", "games/metadata/provider.rs", "games/metadata/cache.rs", "games/metadata/network.rs", "games/metadata/wikidata.rs",
+    "game_metadata_api.rs", "game_discovery.rs", "games.rs",
     "game_context_runtime.rs", "games/integration/mod.rs", "games/integration/requests.rs",
     "games/integration/inspection.rs", "games/integration/provider_settings.rs",
     "mcp_tools/game_library.rs", "profile_local_settings.rs"]
 TEST_FILTERS = ["game_library", "game_artwork", "game_discovery", "games::discovery_review", "games::metadata_api",
                 "game_installations", "local_settings", "games::tests", "game_context", "games::context_runtime",
-                "game_integration_setup", "discovery_apply", "game_get_state", "mcp_tools::game_library::tests"]
+                "game_integration_setup", "discovery_apply", "game_get_state", "mcp_tools::game_library::tests", "game_metadata", "games::metadata_read"]
 
 
 def run(args, env=None):

@@ -19,7 +19,7 @@ fn start_with_metadata(
     request:&Value,
     clients:Vec<(&'static str,&'static str)>,
     scan_client:impl Fn(&str,&[PathBuf])->crate::game_library::Scan+Send+'static,
-    metadata:impl Fn(&crate::game_installations::Settings,&[Candidate],&Path,&(dyn Fn()->bool+Sync))->BTreeMap<u32,Vec<String>>+Send+'static,
+    metadata:impl Fn(&crate::game_installations::Settings,&[Candidate],&Path,&(dyn Fn()->bool+Sync))->super::tagging::Metadata+Send+'static,
 )->Result<(),String> {
     let _admission=runtime.admission.try_lock().map_err(|_|"Game metadata is busy. Retry discovery after the current update.")?;
     if !known(request,&["command","clientId","paths"]) {return Err("Unknown discovery start field.".into());}

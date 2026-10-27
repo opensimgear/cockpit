@@ -57,7 +57,7 @@ fn platform_metadata_is_read_without_holding_progress_or_importing_before_apply(
     let (entered,waiting)=mpsc::channel();let (release,resume)=mpsc::channel();
     start_with_metadata(&runtime,&json!({"command":"game_discovery_start"}),vec![("steam","Steam")],
         move|_,_|Scan{candidates:vec![steam.clone()],diagnostics:vec![]},
-        move|_,_,_,cancelled|{entered.send(()).unwrap();resume.recv().unwrap();assert!(!cancelled());BTreeMap::from([(42,vec!["Racing".into()])])}).unwrap();
+        move|_,_,_,cancelled|{entered.send(()).unwrap();resume.recv().unwrap();assert!(!cancelled());BTreeMap::from([("steam:42".into(),super::super::tagging::SourceMetadata{platform_genres:vec!["Racing".into()],..Default::default()})])}).unwrap();
     waiting.recv_timeout(Duration::from_secs(2)).unwrap();
     let progress=runtime.status()["discovery"].clone();
     assert_eq!(progress["status"],"scanning");assert_eq!(progress["libraries"][0]["status"],"preparing");

@@ -4,6 +4,8 @@ mod game_installations;
 mod game_artwork;
 #[path="games/library/mod.rs"]
 mod game_library;
+#[path="games/metadata/mod.rs"]
+mod game_metadata;
 mod retained_game_companions;
 #[path="persistence/paths.rs"]
 mod config_paths;

@@ -57,6 +57,18 @@ pub(crate) fn from_metadata(tags: &BTreeMap<String, String>, labels: &[String]) 
         ("multiplayer online battle arena", "moba"), ("virtual reality", "vr"),
         ("flight simulator", "flight"), ("flight simulation", "flight"),
         ("simulator", "simulation"), ("sports game", "sports"),
+        ("racing video game", "racing"), ("racing game", "racing"),
+        ("flight simulation video game", "flight"), ("simulation video game", "simulation"),
+        ("action game", "action"), ("action video game", "action"),
+        ("adventure game", "adventure"), ("adventure video game", "adventure"),
+        ("role playing video game", "rpg"), ("action role playing video game", "action-rpg"),
+        ("strategy video game", "strategy"), ("sports video game", "sports"),
+        ("platform game", "platformer"), ("platform video game", "platformer"),
+        ("puzzle video game", "puzzle"), ("fighting game", "fighting"),
+        ("survival game", "survival"), ("survival video game", "survival"),
+        ("stealth game", "stealth"), ("stealth video game", "stealth"),
+        ("city building game", "city-builder"), ("card video game", "card-game"),
+        ("tactical video game", "tactics"), ("rhythm game", "rhythm"),
     ] {
         if tags.contains_key(id) { names.entry(label.into()).or_default().insert(id.into()); }
     }

@@ -2,6 +2,23 @@ use super::*;
 use std::sync::Mutex;
 
 #[test]
+fn cached_game_metadata_is_a_passive_mcp_tool_with_provenance() {
+    let response=json!({"gameId":"fixture","source":"wikidata","sourceName":"Wikidata","license":"CC0","status":"matched",
+        "results":[{"platform":"gog","appId":"42","lookup":{"status":"matched","metadata":{"entityId":"Q123","genres":[{"id":"Q8607","label":"racing video game"}]}}}]});
+    let (tools,backend)=fixture(json!({"ok":true,"state":{"gameMetadata":response}}));
+    assert!(!is_mutation("game_metadata_get"));
+    let definition=catalogue().into_iter().find(|tool|tool["name"]=="game_metadata_get").unwrap();
+    assert_eq!(definition["annotations"]["readOnlyHint"],true);
+    let read=tools.call("game_metadata_get",json!({"gameId":"fixture"}),"reader");
+    assert_eq!(read["ok"],true,"{read}");assert_eq!(read["data"]["sourceName"],"Wikidata");
+    assert_eq!(read["data"]["results"][0]["lookup"]["metadata"]["genres"][0]["label"],"racing video game");
+    assert_eq!(backend.requests.lock().unwrap()[0]["command"],"game_metadata_get");
+    for invalid in [json!({}),json!({"gameId":"fixture","refresh":true}),json!({"gameId":"BAD"})] {
+        assert_eq!(tools.call("game_metadata_get",invalid,"reader")["error"]["code"],"invalid_arguments");
+    }
+}
+
+#[test]
 fn games_list_keeps_multiple_and_empty_tag_ids() {
     let (tools, _) = fixture(json!({"ok":true,"state":{"games":{"tags":{"racing":"Racing"},"catalogue":[
         {"id":"game-a","tagIds":["racing","simulation"]},{"id":"game-b","tagIds":[]}

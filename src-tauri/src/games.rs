@@ -76,6 +76,8 @@ mod dcs_catalogues;
 pub(crate) mod launch;
 #[path = "game_metadata_api.rs"]
 mod metadata_api;
+#[path="games/metadata_read.rs"]
+mod metadata_read;
 #[path = "games/artwork_options.rs"]
 mod artwork_options;
 #[path="activity/games.rs"]
