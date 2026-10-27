@@ -42,10 +42,10 @@
   type WorkspaceDevice = Device & { key: string; gatewayId: string; ghost: boolean; disabled: boolean; disablePending: boolean };
   const navigation: { id: View; label: string; icon: string }[] = [
     { id: 'overview', label: 'Overview', icon: 'grid' },
-    { id: 'devices', label: 'Devices', icon: 'devices' },
-    { id: 'profiles', label: 'Profiles', icon: 'network' },
-    { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'games', label: 'Games', icon: 'play' },
+    { id: 'profiles', label: 'Profiles', icon: 'network' },
+    { id: 'devices', label: 'Devices', icon: 'devices' },
+    { id: 'companions', label: 'Companions', icon: 'devices' },
     { id: 'activity', label: 'Activity', icon: 'activity' },
     { id: 'debug', label: 'Debug', icon: 'bug' },
   ];
