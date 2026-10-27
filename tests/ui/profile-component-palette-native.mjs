@@ -229,7 +229,7 @@ test('native palette authors an unassigned production companion and inserts conn
 
     // Exercise activation without acquiring a controller output or sending a key.
     // Keep the real companion-to-identity route so native baseline acquisition remains necessary.
-    for (const nodeId of [virtualId, desktopId, ...(basicResource ? [state.assignments.find(assignment => assignment.sourceId === basicResource.id).resourceId] : [])]) { await selectNode(nodeId); await click('Remove block and its routes', '.canvas-inspector'); }
+    for (const nodeId of [virtualId, desktopId, ...(basicResource ? [state.assignments.find(assignment => assignment.sourceId === basicResource.id).resourceId] : [])]) { await selectNode(nodeId); await click(basicResource?.resourceType === 'host-controller' && nodeId !== virtualId && nodeId !== desktopId ? 'Remove' : 'Remove block and its routes', '.canvas-inspector'); }
     state = await save(); assert.equal(state.document.resources.length, 1); assert.equal(state.document.virtualOutputs.length, 0); assert.equal(state.document.desktopOutputs?.length ?? 0, 0); assert.equal(state.document.processingNodes.length, 1); assert.equal(state.document.bindings.length, 1);
     const savedGraph = state.document; await click('← Back to Profiles'); await click(`Edit ${name}`); state = await saved(); assert.deepEqual(state.document, savedGraph);
     assert.equal(await unassigned(), true);

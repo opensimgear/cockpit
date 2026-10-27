@@ -52,6 +52,7 @@
         "src/lib/host-controllers-ui.test.mjs",
         "src/lib/controller-lifecycle.test.mjs",
         "src/lib/controllers.test.mjs",
+        "src/lib/controller-inputs.test.mjs",
         "src/lib/module-usb.test.mjs",
         "src/lib/persistence/inventory-storage.test.mjs"
       ],
@@ -80,6 +81,23 @@
         "controllers:coverage",
         "actions:coverage",
         "module-usb:coverage"
+      ],
+      "coverageTasks": [
+        {
+          "name": "controller-inputs-coverage",
+          "tests": [
+            "src/lib/controller-inputs.test.mjs"
+          ],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/controller-inputs.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/controller-inputs.test.mjs"
+          ]
+        }
       ]
     },
     {

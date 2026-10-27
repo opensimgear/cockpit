@@ -20,7 +20,7 @@ vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.M
     throw Error('Unexpected input component import ' + name);
   },
 }, { filename: file.pathname });
-const html = (controls, online = true) => render(exports.default, { props: { controls, online } }).body;
+const html = (controls, online = true, simple = false) => render(exports.default, { props: { controls, online, simple } }).body;
 const control = (id, kind, value, usage = 1) => ({ capability: { id, kind, usage, usagePage: 1,
   reportId: 2, collection: 3, dataIndex: 4, min: -100, max: 100 }, value });
 
@@ -41,6 +41,25 @@ test('axes, hats and diagnostics remain available even without buttons', () => {
   assert.match(rendered, /aria-label="X"/);
   assert.match(rendered, /6553/); assert.match(rendered, /Neutral/); assert.match(rendered, /Raw 7/);
   assert.doesNotMatch(rendered, /aria-label="Buttons"/);
+});
+
+test('simple profile readout keeps live values and accessible square buttons without detail metadata', () => {
+  const rendered = html([
+    control('x', 'axis', { native: 20, normalized: 6553 }, 48),
+    control('hat', 'hat', { native: 8, normalized: null }, 57),
+    control('raw', 'diagnostic', { native: 7, normalized: null }, 99),
+    control('pressed', 'button', { native: 1, normalized: 1 }, 1),
+    control('waiting', 'button', null, 2),
+  ], true, true);
+  assert.match(rendered, /aria-label="Axes, hats and other inputs"/);
+  assert.match(rendered, /aria-label="X"/);
+  assert.match(rendered, />6553</);
+  assert.match(rendered, />Neutral</);
+  assert.match(rendered, />Raw 7</);
+  assert.match(rendered, /class="button-indicator[^"]*pressed"[^>]*role="img" aria-label="Button 1: Pressed"/);
+  assert.match(rendered, /class="button-indicator[^"]*waiting"[^>]*role="img" aria-label="Button 2: Waiting for report"/);
+  assert.doesNotMatch(rendered, /<button\b|aria-describedby=/);
+  assert.doesNotMatch(rendered, /Report 2|Native 1|range -100/);
 });
 
 test('empty devices retain the appropriate online and offline guidance', () => {

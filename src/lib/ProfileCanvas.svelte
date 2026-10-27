@@ -21,9 +21,9 @@
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform, routeEndpoint }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, simpleControllerInspector = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform, routeEndpoint }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
-    inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; readOnly?: boolean; fitOnMount?: boolean;
+    inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; simpleControllerInspector?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
     inspector?:Snippet<[CanvasNode]>;nodeControls?:Snippet<[CanvasNode]>; selectProviderPort?:(nodeId:string,port:DeepReadonly<ObservedResourcePort>)=>void; removeProviderPort?:(nodeId:string,portId:string)=>void;
     connectBlocks?:(fromNodeId:string,toNodeId:string,position?:CanvasPoint,fromPortId?:string,toPortId?:string)=>void;connectionFrom?:(nodeId:string,position?:CanvasPoint,portId?:string)=>void;connectionTo?:(nodeId:string,position?:CanvasPoint,portId?:string)=>void;highlightedEdges?:readonly string[];undo?:()=>void;redo?:()=>void;
@@ -116,6 +116,7 @@
   const outputs = $derived(selected?.resource?.ports.filter(port=>port.direction==='output') ?? selected?.processing?.outputs ?? []);
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
+  const simpleInspector = $derived(simpleControllerInspector && selected?.resource?.kind === 'device' && selected.observation?.resourceType === 'host-controller');
   let portEpoch = 0;
   let laneScope=untrack(()=>`${document.id}/${activeVehicleTabId}`);
   $effect(()=>{const scope=`${document.id}/${activeVehicleTabId}`;if(scope!==laneScope){laneScope=scope;closeLanes();}});
@@ -126,7 +127,7 @@
   $effect(()=>{if(bundlePicker&&!bundleMembers.length)bundlePicker=null;});
   $effect(()=>{void activeVehicleTabId;void document.id;bundlePicker=null;});
   $effect(() => {
-    const resourceId = companionAuthoring&&selected?.resource?.kind==='companion'?undefined:observedId;
+    const resourceId = simpleInspector||companionAuthoring&&selected?.resource?.kind==='companion'?undefined:observedId;
     portEpoch++; browser.clear(); page = null; portError = ''; portsBusy = false;
     if (resourceId) void loadPorts('open',resourceId);
   });
@@ -542,8 +543,9 @@
       <aside class="canvas-connection-panel" aria-label="Exact connection editor" transition:slideDetails>{@render connectionPanel()}</aside>
     {:else if selected}
     <aside class="canvas-inspector" aria-label="Selected block inspector" data-expanded="true" bind:this={inspectorPanel} transition:slideDetails>
-        <button class="inspector-close" aria-label="Close component settings" onclick={()=>selectedId=''}><Icon name="close" size={16}/></button>
-        <div class="inspector-content" id={inspectorContentId} data-inspector-content>
+        {#if !simpleInspector}<button class="inspector-close" aria-label="Close component settings" onclick={()=>selectedId=''}><Icon name="close" size={16}/></button>{/if}
+        <div class="inspector-content" class:controller-inspector={simpleInspector&&selected.resource?.kind==='device'} id={inspectorContentId} data-inspector-content>
+        {#if !simpleInspector}
         <p class="inspector-category">{selected.category}</p><h3>{selected.name}</h3><p class="inspector-state">{canvasStatus(selected)}</p>
         {#if selected.resource}<p class="inspector-note">{selected.resource.required?'Required':'Optional'} resource. Its saved identity and routes remain when disconnected.</p>{/if}
         {#if gameId&&openGameSettings}<button class="text-button game-settings-link" onclick={()=>openGameSettings?.(gameId!,{profileId:document.id,resourceId:selected.id})}>Open game settings <Icon name="arrow" size={12}/></button>{/if}
@@ -553,6 +555,7 @@
           {#if !companionAuthoring||selected.resource?.kind!=='companion'}<details open><summary>Provider catalogue · {selected.observation.portCount} advertised</summary><p class="inspector-note">Browse without changing routes or graph ports. Large catalogues stay paged.</p><button class="text-button" disabled={portsBusy} onclick={()=>loadPorts('open',selected!.assignment!.sourceId)}>Refresh ports</button>{#if portError}<p class="port-error" role="status">{portError}</p>{/if}{#if portsBusy}<p class="inspector-note" role="status">Loading port page…</p>{/if}{#if page}<p class="port-page-count">{page.total?`${page.offset+1}–${page.offset+page.ports.length}`:'0'} of {page.total} cached port contracts</p>{#each ['output','input'] as direction (direction)}<details open><summary>{direction==='output'?'Source outputs / telemetry':'Destination inputs / actions'} on this page ({page.ports.filter(port=>port.descriptor.direction===direction).length})</summary>{#each page.ports.filter(port=>port.descriptor.direction===direction) as port (`${port.descriptor.id}/${port.contractHash}`)}<div class="port-row"><strong>{port.descriptor.name}</strong><code>{port.descriptor.id}</code><p>{portContractLabel(port.descriptor.contract)}</p><small>{port.current?'Current capability':'Cached / unavailable capability'}</small>{#if selectProviderPort}<button class="secondary-button" disabled={readOnly||selected.assignment.ports.some(pin=>pin.observedPortId===port.descriptor.id&&pin.expectedContractHash===port.contractHash)} onclick={()=>selectProviderPort?.(selected!.id,port)}>{selected.assignment.ports.some(pin=>pin.observedPortId===port.descriptor.id&&pin.expectedContractHash===port.contractHash)?'Selected in graph':'Use this exact port'}</button>{/if}</div>{:else}<p class="inspector-note">None on this page.</p>{/each}</details>{/each}<div class="port-pagination"><button class="secondary-button" disabled={portsBusy||!browser.hasPrevious} onclick={()=>loadPorts('previous')}>Previous</button><button class="secondary-button" disabled={portsBusy||!browser.hasNext} onclick={()=>loadPorts('next')}>Next page</button></div>{/if}</details>
           {/if}<details><summary>Connection metadata ({selected.observation.connections.length})</summary><p class="inspector-note">Transport information describes the resource; it is never a canvas wire.</p>{#each selected.observation.connections as connection (`${connection.scope}/${connection.key}/${connection.route.id}`)}<div class="connection-row"><strong>{connection.route.transport.toUpperCase()}</strong><p>{connection.route.baselineReady?'Fresh baseline available':'Waiting for a fresh baseline'} · {connection.route.writable?'Write capability advertised':'No write capability advertised'}</p><dl>{#each Object.entries(connection.route.attributes) as [key,value] (key)}<div><dt>{key}</dt><dd>{value}</dd></div>{/each}</dl></div>{/each}<dl>{#each Object.entries(selected.observation.attributes) as [key,value] (key)}<div><dt>{key}</dt><dd>{value}</dd></div>{/each}</dl></details>
         {:else if selected.resource}<p class="inspector-note">{selected.assignment?'This saved resource is currently absent from inventory. Its block, exact ports and routes remain intact.':'Select a matching resource from inventory before using this copied block.'}</p>{/if}
+        {/if}
         {#if inspector}{@render inspector(selected)}{/if}
         </div>
     </aside>
@@ -595,6 +598,8 @@
   .inspector-close{position:absolute;top:9px;right:9px;z-index:2;display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:5px;background:var(--surface-raised);color:var(--soft);cursor:pointer;}
   .inspector-close:hover{color:var(--text);background:var(--line);}
   .inspector-content{height:100%;box-sizing:border-box;padding:24px;overflow:auto;}
+  .inspector-content.controller-inspector{display:flex;flex-direction:column;gap:16px;overflow:hidden}
+  .controller-inspector :global(.authoring-inspector){flex-shrink:0}
   .signal-edges{z-index:2;}.signal-edge.selected,.signal-edge.drop-target{stroke:var(--accent);stroke-width:4;filter:var(--arrow-outline) drop-shadow(0 0 4px color-mix(in srgb,var(--accent) 45%,transparent));}
   .connection-endpoint{fill:var(--surface);stroke:var(--accent);stroke-width:2;pointer-events:all;cursor:crosshair;}.connection-endpoint:hover,.connection-endpoint:focus-visible{fill:var(--accent);stroke:var(--text);outline:none;}
   .connection-port-label{font-size:10px;fill:var(--text);paint-order:stroke;stroke:var(--bg);stroke-width:5px;stroke-linejoin:round;pointer-events:none;}

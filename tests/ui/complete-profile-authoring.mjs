@@ -8,6 +8,7 @@ import {readFile,mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {loadModules} from '../../src/lib/test-module-loader.mjs';
+import {discoveredGames} from '../../src/lib/game-test-fixtures.mjs';
 
 const require=createRequire(import.meta.url),playwrightModule=process.env.OSG_PLAYWRIGHT_MODULE??'playwright';
 const {chromium}=require(playwrightModule),{expect}=require(playwrightModule+'/test');
@@ -121,14 +122,14 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
    return{ok:true,state:{profileInspection:{...header(),offset,total:ports.length,ports:copy(ports.slice(offset,offset+limit))}}};
   }
   if(request.command==='profile_retired_recovery_status')return{ok:true,state:{retiredRecovery:{required:false,outputs:[],provisioning:[],job:null,diagnostics:[],outputQualified:false,provisioningQualified:false}}};
-  if(['ports','companion_status','game_get_state'].includes(request.command))return{ok:true,state:{running:false,needsReconnect:false,modules:[],ports:[],games:{catalogue:[],cleanup:{phase:'idle',error:null}},companions:{host:{instances:[],publications:[],clients:[]}}}};
+  if(['ports','companion_status','game_get_state'].includes(request.command))return{ok:true,state:{running:false,needsReconnect:false,modules:[],ports:[],games:{catalogue:copy(discoveredGames),cleanup:{phase:'idle',error:null}},companions:{host:{instances:[],publications:[],clients:[]}}}};
   unexpected.push(request.command);throw Error('Unexpected complete-rig effect '+request.command);
  });
  await page.addInitScript(()=>{window.isTauri=true;window.__TAURI_INTERNALS__={invoke:(command,args)=>window.__osgCompleteRigFixture(command,args)};});
 
  const inspector=page.getByRole('complementary',{name:'Selected block inspector'}),composer=page.getByRole('dialog',{name:'Choose connection ports'}),bindings=page.locator('details[aria-label="Exact bindings table"]');
- async function chooseBlock(name){await page.getByLabel('Search profile blocks').fill(name);await page.getByLabel('Search profile blocks').press('Enter');await inspector.hover();await expect(inspector.getByRole('heading',{name,exact:true})).toBeVisible();}
- async function selectProvider(name,ports){await chooseBlock(name);for(const name of ports){const row=inspector.locator('.port-row').filter({has:page.getByText(name,{exact:true})}).filter({has:page.getByRole('button',{name:'Use this exact port',exact:true})});await row.getByRole('button',{name:'Use this exact port',exact:true}).click();}}
+ async function chooseBlock(name){await page.getByLabel('Search profile blocks').fill(name);await page.getByLabel('Search profile blocks').press('Enter');await inspector.hover();await expect.poll(async()=>await inspector.getByLabel('Label',{exact:true}).isVisible()?await inspector.getByLabel('Label',{exact:true}).inputValue():await inspector.getByRole('heading',{name,exact:true}).first().isVisible()?name:'').toBe(name);}
+ async function selectProvider(name,ports){await chooseBlock(name);if(await inspector.getByRole('region',{name:'Live inputs',exact:true}).count())return;for(const name of ports){const row=inspector.locator('.port-row').filter({has:page.getByText(name,{exact:true})}).filter({has:page.getByRole('button',{name:'Use this exact port',exact:true})});await row.getByRole('button',{name:'Use this exact port',exact:true}).click();}}
  async function option(select,label){const candidates=await select.locator('option').evaluateAll(options=>options.map(option=>({label:option.textContent,value:option.value})));const choice=candidates.find(option=>option.label===label||option.value===label)??candidates.find(option=>option.label.startsWith(label+' ·'));assert.ok(choice,'Missing select option '+label+' in '+JSON.stringify(candidates));await select.selectOption(choice.value);}
  async function portOption(label,value){
   const input=composer.getByRole('combobox',{name:label,exact:true});if(await input.getAttribute('data-value')===value||await input.inputValue()===value)return;await input.click();await input.fill(value);
@@ -141,7 +142,7 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
  }
  async function route(from,fromPort,to,toPort,commit=true){
   if(await composer.isVisible())await composer.getByRole('button',{name:'Close connection editor',exact:true}).click();
-  await page.getByLabel('Search profile blocks').fill('');if(await inspector.isVisible())await inspector.getByRole('button',{name:'Close component settings',exact:true}).click();await page.getByRole('button',{name:'Fit all',exact:true}).click();
+  await page.getByLabel('Search profile blocks').fill('');if(await inspector.isVisible())await page.getByRole('application',{name:'Profile canvas'}).click({position:{x:10,y:10}});await page.getByRole('button',{name:'Fit all',exact:true}).click();
   await page.getByRole('application',{name:'Profile canvas'}).scrollIntoViewIfNeeded();
   const block=name=>page.locator('.resource-block').filter({has:page.locator('.block-heading').getByText(name,{exact:true})}),output=block(from).locator('[data-connection-source]'),input=block(to).locator('[data-connection-target]'),before=await page.locator('.signal-edge').count();
   const sourceId=await block(from).getAttribute('data-node-id'),targetId=await block(to).getAttribute('data-node-id');await expect(output).toBeEnabled();await expect(input).toBeEnabled();
@@ -168,7 +169,7 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
   const palette=page.getByRole('complementary',{name:'Component palette',exact:true});await palette.getByRole('button',{name:'Refresh components',exact:true}).click();
   for(const category of ['Controllers','OSG devices','Companions']){const group=palette.getByLabel(category,{exact:true});if(await group.count()&&await group.getAttribute('open')===null)await group.locator('summary').click();}
   for(const resource of resources.filter(resource=>resource.resourceType!=='game-integration'))await palette.getByRole('button',{name:`Add ${resource.name}`,exact:true}).click();
-  await page.getByLabel('Game context',{exact:true}).selectOption('dcs');await chooseBlock('DCS World');const policy=inspector.getByText('Resource assignment and policy',{exact:true});if(!await inspector.getByLabel('Block label',{exact:true}).isVisible())await policy.click();await inspector.getByLabel('Block label',{exact:true}).fill('DCS game data and commands');await inspector.getByLabel('Block label',{exact:true}).press('Tab');await inspector.getByRole('button',{name:'Close component settings',exact:true}).click();
+  await page.getByLabel('Game context',{exact:true}).selectOption('dcs');await chooseBlock('DCS World');const policy=inspector.getByText('Resource assignment and policy',{exact:true});if(!await inspector.getByLabel('Block label',{exact:true}).isVisible())await policy.click();await inspector.getByLabel('Block label',{exact:true}).fill('DCS game data and commands');await inspector.getByLabel('Block label',{exact:true}).press('Tab');await page.getByRole('application',{name:'Profile canvas'}).click({position:{x:10,y:10}});
   await expect(page.locator('.resource-block')).toHaveCount(9);await expect(page.locator('path.signal-edge')).toHaveCount(0);
   await page.setViewportSize({width:2400,height:1100});
   const scrollArea=page.locator('main');
@@ -202,24 +203,24 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
   const clickBox=await firstBlock.locator('.block-body').boundingBox();
   await page.mouse.move(clickBox.x+clickBox.width/2,clickBox.y+clickBox.height/2);await page.mouse.down();
   await expect(inspector).toHaveCount(0);await page.mouse.up();await expect(inspector).toBeVisible();
-  await inspector.getByRole('button',{name:'Close component settings',exact:true}).click();await expect(inspector).toHaveCount(0);
+  await page.getByRole('application',{name:'Profile canvas'}).click({position:{x:10,y:10}});await expect(inspector).toHaveCount(0);
   await firstBlock.locator('.block-heading').focus();await page.keyboard.press('Enter');await expect(inspector).toBeVisible();
-  await inspector.getByRole('button',{name:'Close component settings',exact:true}).click();await expect(inspector).toHaveCount(0);
+  await page.getByRole('application',{name:'Profile canvas'}).click({position:{x:10,y:10}});await expect(inspector).toHaveCount(0);
   const canvas=page.getByRole('application',{name:'Profile canvas'});
   const fullCanvasWidth=await canvas.evaluate(node=>node.clientWidth);
   await chooseBlock('OSG direct USB device');
-  await expect.poll(async()=>inspector.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(fullCanvasWidth*.75));
+  await expect.poll(async()=>inspector.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round(Math.min(430,fullCanvasWidth*.46)));
   assert.equal(await canvas.evaluate(node=>node.clientWidth),fullCanvasWidth,'Opening details overlays the canvas without resizing it.');
   await page.locator('.canvas-layout').screenshot({path:resolve(artifacts,'node-details-overlay.png'),animations:'disabled'});
   await page.setViewportSize({width:700,height:900});
-  await expect.poll(async()=>inspector.evaluate(node=>Math.round(node.getBoundingClientRect().width))).toBe(Math.round((await canvas.evaluate(node=>node.clientWidth))*.75));
+  await expect.poll(async()=>{const panel=await inspector.boundingBox(),stage=await canvas.boundingBox();return panel.width>0&&panel.width<=stage.width&&Math.abs(panel.x+panel.width-stage.x-stage.width)<2;}).toBe(true);
   await page.setViewportSize({width:1600,height:1100});
   await canvas.scrollIntoViewIfNeeded();
   const emptyPoint=await canvas.evaluate(node=>{
    const box=node.getBoundingClientRect();
-   for(let y=12;y<Math.min(box.height,window.innerHeight-box.top)-12;y+=24)for(let x=12;x<box.width*.24;x+=24){
+   for(let y=12;y<Math.min(box.height,window.innerHeight-box.top)-12;y+=24)for(let x=12;x<box.width-12;x+=24){
     const target=document.elementFromPoint(box.left+x,box.top+y);
-    if(target&&node.contains(target)&&!target.closest('.resource-block,button'))return{x:box.left+x,y:box.top+y};
+    if(target&&node.contains(target)&&!target.closest('.resource-block,button,.canvas-inspector'))return{x:box.left+x,y:box.top+y};
    }
    throw Error('No exposed empty canvas point found.');
   });
@@ -237,7 +238,7 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
   await expect(inspector).toHaveCount(0);
   await chooseBlock('OSG direct USB device');await inspector.getByText('Connection metadata (2)',{exact:true}).click();await expect(inspector.locator('.connection-row').getByText('USB',{exact:true})).toBeVisible();await expect(inspector.locator('.connection-row').getByText('CAN',{exact:true})).toBeVisible();await expect(inspector.getByText('COM-fixture',{exact:true})).toBeVisible();await expect(inspector.getByText('OSG gateway',{exact:true})).toBeVisible();await expect(page.locator('path.signal-edge')).toHaveCount(0);
   for(const resource of blueprint.resources.filter(resource=>resource.kind!=='companion'&&resource.ports.length))await selectProvider(resource.name,resource.ports.map(port=>port.name));
-  await chooseBlock('Hidden third party C');await inspector.getByText('Resource assignment and policy',{exact:true}).click();await inspector.getByLabel('Game visibility intent').selectOption('hidden-while-active');
+  await chooseBlock('Hidden third party C');await inspector.getByLabel('Visibility',{exact:true}).selectOption('hidden-while-active');
   await chooseBlock('Companion panel');const panel=page.getByRole('region',{name:'Profile companion panel selection'});await expect(panel.getByLabel('Panel',{exact:true})).toBeVisible();await panel.getByLabel('Panel',{exact:true}).selectOption(publication);await panel.getByRole('button',{name:'Use panel in profile',exact:true}).click();await panel.getByRole('button',{name:'Inspect exact panel ports',exact:true}).click();for(const name of ['Altitude warning widget','Conditional altitude text widget'])await panel.locator('.panel-ports li').filter({has:page.getByText(name,{exact:true})}).getByRole('button',{name:'Add feedback input',exact:true}).click();await panel.getByLabel('Port group').selectOption('output');await panel.getByRole('button',{name:'Add control output',exact:true}).click();
   await virtual('Combined third party controller',1,2);await virtual('Combined OSG controller',0,3);
   for(const [from,port,to,target]of [['Third party A','Steering','Combined third party controller','axis-1'],['Third party B','Throttle','Combined third party controller','axis-2'],['OSG CAN device A','CAN axis A','Combined OSG controller','axis-1'],['OSG CAN device B','CAN axis B','Combined OSG controller','axis-2'],['OSG direct USB device','Direct USB axis','Combined OSG controller','axis-3'],['Companion panel','Panel switch','Combined third party controller','button-1']])await route(from,port,to,target);
@@ -263,7 +264,7 @@ test('author complete rig through exact-port UI, Save/reopen/Undo, activate and 
   });
   assert.equal(routed.edges,18);assert.deepEqual(routed.collisions,[],'Rendered routes must clear every block, including rounded corners');
   assert.ok(routed.anchors.every(anchor=>anchor.outputs<=1&&anchor.inputs<=1),'Every block shares one output anchor and a separate input anchor.');
-  await page.getByRole('button',{name:'Close component settings',exact:true}).click();
+  await page.getByRole('application',{name:'Profile canvas'}).click({position:{x:10,y:10}});
   await expect(page.getByLabel('Selected block inspector')).toHaveCount(0);
   const firstRoute=page.locator('.signal-edge').first();
   const hoverPoint=await firstRoute.evaluate(path=>{const p=path.getPointAtLength(Math.min(20,path.getTotalLength()/2));const screen=new DOMPoint(p.x,p.y).matrixTransform(path.getScreenCTM());return{x:screen.x,y:screen.y};});

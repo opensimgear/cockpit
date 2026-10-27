@@ -155,8 +155,11 @@ panel in the block settings, then select feedback inputs or interactive
 control outputs. Replacing a panel or assigning a copied companion requires
 explicit port reconciliation. Browsing panels leaves its current runtime alone.
 
-For physical devices, **Game visibility intent** can hide the device while the
-profile is active. **Controller publication policy** separately keeps its
+Physical controller settings contain **Label**, **Required**, **Visibility** and
+**Remove**. The **Inputs** section shows live axes, hat directions and a compact
+grid of buttons. **Visibility** can hide the controller while the profile is active.
+
+For OSG peripherals, **Controller publication policy** separately keeps the
 configured setting or enables/disables USB controller publication while active.
 Temporary publication changes require an advertised gateway CAN capability.
 They leave saved flash settings alone, but can reconnect USB collections and

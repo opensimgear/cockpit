@@ -1,6 +1,6 @@
 <script lang="ts">
   import { controlLabel, inputLabel, type ControllerControl } from './controllers';
-  let { controls, online }: { controls: ControllerControl[]; online: boolean } = $props();
+  let { controls, online, simple = false }: { controls: ControllerControl[]; online: boolean; simple?: boolean } = $props();
   const descriptionId = $props.id();
   let dismissedId = $state('');
   const buttons = $derived(controls.filter(control => control.capability.kind === 'button'));
@@ -28,14 +28,14 @@
 {/snippet}
 
 {#if controls.length}
-  <div class="live-input-layout" class:buttons-only={!otherControls.length} class:analog-only={!buttons.length}>
+  <div class="live-input-layout" class:simple class:buttons-only={!otherControls.length} class:analog-only={!buttons.length}>
     {#if otherControls.length}
       <section class="analog-inputs" aria-label="Axes, hats and other inputs">
-        {#each otherControls as control (control.capability.id)}
+        {#each otherControls as control, index (control.capability.id)}
           <div class="analog-control" data-control-id={control.capability.id}>
-            <strong>{controlLabel(control)}</strong>
+            <strong title={simple ? controlLabel(control) : undefined}>{simple && control.capability.kind === 'diagnostic' ? `Input ${index + 1}` : controlLabel(control)}</strong>
             {#if control.capability.kind === 'axis' && control.value?.normalized != null}<meter min={control.capability.min < 0 ? -32768 : 0} max="32767" value={control.value.normalized} aria-label={controlLabel(control)}></meter>{/if}
-            {@render information(control)}
+            {#if simple}<span class="input-value">{inputLabel(control)}</span>{:else}{@render information(control)}{/if}
           </div>
         {/each}
       </section>
@@ -44,14 +44,17 @@
       <section class="button-inputs" aria-label="Buttons">
         <div class="button-matrix">
           {#each buttons as control (control.capability.id)}
-            <div class="button-slot">
+            {#if simple}
+              <span class="button-indicator" class:pressed={control.value?.normalized === 1} class:waiting={!control.value} data-control-id={control.capability.id}
+                role="img" aria-label={`${controlLabel(control)}: ${inputLabel(control)}`} title={`${controlLabel(control)}: ${inputLabel(control)}`}>{control.capability.usage}</span>
+            {:else}<div class="button-slot">
               <button type="button" class="button-control" class:pressed={control.value?.normalized === 1} class:waiting={!control.value} class:dismissed={dismissedId === control.capability.id}
                 data-control-id={control.capability.id} aria-label={`${controlLabel(control)}: ${inputLabel(control)}`} aria-describedby={`${descriptionId}-${control.capability.id}`}
                 onmouseenter={expand} onfocus={expand} onkeydown={event => { if (event.key === 'Escape') { dismissedId = control.capability.id; event.currentTarget.blur(); } }}>
                 <span class="button-number">{control.capability.usage}</span>
                 <span class="button-information" id={`${descriptionId}-${control.capability.id}`}><strong>{controlLabel(control)}</strong>{@render information(control)}</span>
               </button>
-            </div>
+            </div>{/if}
           {/each}
         </div>
       </section>
@@ -86,5 +89,13 @@
   .button-control:is(:hover, :focus):not(.dismissed) .button-information { display: flex; }
   .button-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .controls-empty { padding: 16px; border: 1px dashed var(--line); border-radius: 6px; font-size: var(--ui-text-size); color: var(--muted); line-height: var(--ui-line-height); }
+  .simple { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .simple .analog-control { padding: 6px 0; border: 0; background: transparent; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 8px; }
+  .simple .analog-control strong, .simple .input-value { font-size: var(--ui-text-size); }
+  .simple .analog-control > .input-value { grid-column: 3; grid-row: 1; text-align: right; font-variant-numeric: tabular-nums; }
+  .simple .button-matrix { grid-template-columns: repeat(auto-fill, 28px); gap: 5px; }
+  .button-indicator { display: grid; place-items: center; width: 28px; height: 28px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--soft); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .button-indicator.pressed { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+  .button-indicator.waiting { border-style: dashed; color: var(--muted); }
   @media (max-width: 700px) { .live-input-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 </style>

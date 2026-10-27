@@ -9,9 +9,8 @@
   import ProfileDesktopEditor from './ProfileDesktopEditor.svelte';
   import type {ProfileDesktopOutput}from'./profile-desktop';
   import {graphSetDesktop}from'./profile-graph';
-  import ProfileInputLearning from './ProfileInputLearning.svelte';
+  import ProfileControllerInputs from './ProfileControllerInputs.svelte';
   import ProfileCompanionEditor from './ProfileCompanionEditor.svelte';
-  import {ProfileLearningController}from'./profile-learning-controller';
   import type{ProfileLearningClient}from'./profile-learning';
   import {canvasNodes,portContractLabel,type CanvasNode,type CanvasPoint} from './profile-canvas';
   import {profilePaletteCanAdd,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag} from './profile-palette';
@@ -55,7 +54,6 @@
   let discoveries=$state.raw<Record<string,{signature:string;details:DeepReadonly<ResourceDetails|ProfileCompanionPage>|null;busy:boolean;error:string}>>({});
   let discoveryDisposed=false;
   const discoveryChoices=new ProfileDiscoveredPortCache();
-  const learning=untrack(()=>learningClient)?new ProfileLearningController(untrack(()=>learningClient)!):null;
   const visibleDocument=$derived(profileTabDocument(document,activeVehicleTabId)),visibleIds=$derived(profileTabNodeIds(document,activeVehicleTabId));
   const nodes=$derived(canvasNodes(visibleDocument,assignments,inventory)),selected=$derived(nodes.find(node=>node.id===selectedId));
   const graph=$derived({document,assignments});
@@ -93,7 +91,7 @@
     untrack(()=>refreshDiscoveries(sources,revision));
   });
   $effect(()=>{if(!routeOpen||!autoCommitArmed)return;void sourcePorts;void targetPorts;void fromPort;void toPort;untrack(autoConnect);});
-  onDestroy(()=>{discoveryDisposed=true;assignmentEpoch++;assignmentBrowser.clear();learning?.dispose();});
+  onDestroy(()=>{discoveryDisposed=true;assignmentEpoch++;assignmentBrowser.clear();});
   function refreshDiscoveries(sources:readonly {sourceId:string;resource?:DeepReadonly<ResourceSummary>;companion:boolean;publication?:string}[],revision:number){
     const wanted=new Set(sources.filter(source=>!source.companion||source.publication).map(source=>source.sourceId));
     if(Object.keys(discoveries).some(id=>!wanted.has(id)))discoveries=Object.fromEntries(Object.entries(discoveries).filter(([id])=>wanted.has(id)));
@@ -197,7 +195,7 @@
     {#if message}<p class="routing-error" role="alert">{message}</p>{/if}
     <button class="secondary-button" disabled={readOnly} onclick={()=>{const id=connectionBinding!.id;closeConnection();if(id)editRoute(id);}}>Edit exact ports</button>
   </dialog>{/if}
-  <ProfileCanvas bind:this={canvas} companionAuthoring {document} {activeVehicleTabId} {assignments} {inventory} {inventoryClient} {readOnly} bind:selectedId {openGameSettings} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} change={(next,label)=>change({document:next,assignments:copy(assignments) as ProfileLocalAssignment[]},label??'Edit canvas layout')} {connectBlocks} connectionFrom={source} connectionTo={destination} {selectedEdgeId} {selectConnection} {reconnectConnection} {disconnectConnection} {dropOnConnection} connectionSourceId={routeOpen?fromNode:''} connectionTargetId={routeOpen?toNode:''} connectionSourcePort={routeOpen?fromPort:''} connectionTargetPort={routeOpen?toPort:''} reconnectingBindingId={routeOpen?editingRoute:''} selectProviderPort={selectPort} removeProviderPort={(nodeId,portId)=>apply(()=>graphRemovePort(graph,nodeId,portId),'Remove selected port and routes')} highlightedEdges={highlighted} diagnostics={[]} {undo} {redo} {discoveredPorts} {discoveryBusy} {discoveryErrors} connectionOpen={routeOpen} closeConnectionPanel={closeRoute} insertTransform={openConnection} transferTransform={(sourceLane,nodeId,targetLane,before)=>apply(()=>graphTransferProcessing(graph,sourceLane,nodeId,targetLane,before),sourceLane===targetLane?'Move transformation in chain':'Copy transformation to chain')}>
+  <ProfileCanvas bind:this={canvas} companionAuthoring simpleControllerInspector {document} {activeVehicleTabId} {assignments} {inventory} {inventoryClient} {readOnly} bind:selectedId {openGameSettings} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} change={(next,label)=>change({document:next,assignments:copy(assignments) as ProfileLocalAssignment[]},label??'Edit canvas layout')} {connectBlocks} connectionFrom={source} connectionTo={destination} {selectedEdgeId} {selectConnection} {reconnectConnection} {disconnectConnection} {dropOnConnection} connectionSourceId={routeOpen?fromNode:''} connectionTargetId={routeOpen?toNode:''} connectionSourcePort={routeOpen?fromPort:''} connectionTargetPort={routeOpen?toPort:''} reconnectingBindingId={routeOpen?editingRoute:''} selectProviderPort={selectPort} removeProviderPort={(nodeId,portId)=>apply(()=>graphRemovePort(graph,nodeId,portId),'Remove selected port and routes')} highlightedEdges={highlighted} diagnostics={[]} {undo} {redo} {discoveredPorts} {discoveryBusy} {discoveryErrors} connectionOpen={routeOpen} closeConnectionPanel={closeRoute} insertTransform={openConnection} transferTransform={(sourceLane,nodeId,targetLane,before)=>apply(()=>graphTransferProcessing(graph,sourceLane,nodeId,targetLane,before),sourceLane===targetLane?'Move transformation in chain':'Copy transformation to chain')}>
     {#snippet routeEndpoint(laneId,side,endpoint)}
       {@const edit={laneId,side,endpoint}}
       {@const choices=routeEndpointChoices(graph,edit,discoveredChoices[endpoint.nodeId]??[])}
@@ -211,7 +209,13 @@
       {#if node.processing?.operation.kind==='scale'}<label class="quick-factor">× <input aria-label="Quick multiply factor" type="number" step="any" value={node.processing.operation.factor} disabled={readOnly} onchange={event=>quickFactor(node.processing!,event.currentTarget)}/></label>{/if}
     {/snippet}
     {#snippet inspector(node)}
+      {@const physicalController=node.resource?.kind==='device'&&node.observation?.resourceType==='host-controller'}
       <fieldset class="authoring-inspector" disabled={readOnly}>
+        {#if physicalController&&node.resource}
+          <label>Label<input value={node.resource.name} maxlength="80" onchange={event=>resourcePolicy(node,'name',event.currentTarget.value)}/></label>
+          <label class="check"><input type="checkbox" checked={node.resource.required} onchange={event=>resourcePolicy(node,'required',event.currentTarget.checked)}/> Required</label>
+          <label>Visibility<select aria-label="Visibility" value={document.visibility.find(intent=>intent.resourceId===node.id)?.mode??'visible'} onchange={event=>apply(()=>graphSetVisibility(graph,node.id,event.currentTarget.value==='hidden-while-active'?'hidden-while-active':'visible'),'Edit visibility intent')}><option value="visible">Visible</option><option value="hidden-while-active">Hidden while profile is active</option></select></label>
+        {:else}
         {#if node.resource}<details bind:open={policyInspectorOpen}><summary>Resource assignment and policy</summary><label>Block label<input value={node.resource.name} maxlength="80" onchange={event=>resourcePolicy(node,'name',event.currentTarget.value)}/></label><label class="check"><input type="checkbox" checked={node.resource.required} onchange={event=>resourcePolicy(node,'required',event.currentTarget.checked)}/> Required resource</label>
           {#if node.resource.kind==='device'}<label>Game visibility intent<select value={document.visibility.find(intent=>intent.resourceId===node.id)?.mode??'visible'} onchange={event=>apply(()=>graphSetVisibility(graph,node.id,event.currentTarget.value==='hidden-while-active'?'hidden-while-active':'visible'),'Edit visibility intent')}><option value="visible">Visible</option><option value="hidden-while-active">Hidden while profile is active</option></select></label>{/if}
           {#if node.resource.kind==='device'}{@const publication=graphPublicationCapability(node.observation)}<label>Controller publication policy<select value={document.overrides.some(policy=>policy.resourceId===node.id)?document.overrides.find(policy=>policy.resourceId===node.id)!.enabled?'enabled':'disabled':'configured'} onchange={event=>publicationPolicy(node,event.currentTarget.value)}><option value="configured">Keep configured</option><option value="enabled" disabled={publication.status==='unsupported'}>Enable while active</option><option value="disabled" disabled={publication.status==='unsupported'}>Disable while active</option></select></label><p class="publication-status" role="status">{publication.message}{#if publication.configuredEnabled!==null} Configured controller publication: {publication.configuredEnabled?'enabled':'disabled'}.{/if}</p><p class="publication-warning">Enabling or disabling publication can change USB controller collections, require a USB reconnect and require game rebinding. This policy does not save device flash. Controller publication and game hiding are separate.</p>{/if}
@@ -224,9 +228,13 @@
         {#if node.virtual}<ProfileVirtualEditor output={node.virtual} change={updateVirtual}/>{/if}
         {#if node.desktop}<ProfileDesktopEditor output={node.desktop} change={updateDesktop}/>{/if}
         <p class="remove-help">Removing this block also removes {document.bindings.filter(binding=>binding.from.nodeId===node.id||binding.to.nodeId===node.id).length} exact routes.</p><button class="text-button" onclick={()=>removeNode(node.id)}>Remove block and its routes</button>
+        {/if}
       </fieldset>
       {#if node.resource?.kind==='companion'}<ProfileCompanionEditor {graph} {inventory} resourceId={node.id} {readOnly} {active} client={companionDiscovery} {change}/>{/if}
-      {#if learning&&node.resource&&node.assignment&&node.observation?.resourceType==='host-controller'}<ProfileInputLearning controller={learning} resource={node.observation} context={`${editorContext}/${node.id}/${node.assignment.sourceId}`} {active} disabled={readOnly} {runtimeIdle} choose={port=>selectPort(node.id,port)}/>{/if}
+      {#if physicalController}
+        <ProfileControllerInputs resource={node.observation} {active}/>
+        <footer class="controller-actions"><button class="secondary-button destructive-button" disabled={readOnly} onclick={()=>removeNode(node.id)}><Icon name="trash" size={14}/>Remove</button></footer>
+      {/if}
     {/snippet}
   </ProfileCanvas>
   {#if routeOpen}
@@ -259,6 +267,9 @@
 
 </section>
 <style>
+  .controller-actions{display:flex;justify-content:flex-end;flex-shrink:0;padding-top:12px;border-top:1px solid var(--line)}
+  .controller-actions .destructive-button{background:#b32b38;border-color:#cd4552;color:#fff}
+  .controller-actions .destructive-button:hover:enabled{background:#98232e;border-color:#e35d69}
   .canvas-port-picker,.wire-actions{position:fixed;z-index:35;width:350px;max-width:calc(100vw - 24px);box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:16px;box-shadow:0 12px 36px #0006}.canvas-port-picker{max-height:calc(100dvh - 24px);overflow:visible}.canvas-port-picker h3,.wire-actions h3{margin:0}.canvas-port-picker .connection-fields{gap:8px;margin:12px 0}.connection-fields strong{font-size:var(--ui-text-size);font-weight:500;color:var(--soft)}.flow-direction{font-size:16px;color:var(--muted);text-align:center}.wire-actions .small-actions{gap:10px}.wire-actions p{overflow-wrap:anywhere}.quick-factor{display:flex;align-items:center;gap:6px;margin:0;color:var(--accent);font-size:var(--ui-text-size)}.quick-factor input{width:70px!important;padding:3px 5px!important}
   .connection-dialog{position:fixed;inset:0;margin:auto;width:min(520px,calc(100vw - 40px));max-height:80dvh;overflow:auto;box-sizing:border-box;padding:24px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 20px 80px #0005}.connection-dialog::backdrop{background:#0009}.connection-dialog .route-heading h3{margin:0}.connection-dialog>button{margin:12px 8px 0 0}.connection-dialog label{margin:16px 0}.connection-dialog select{font:inherit;width:100%;padding:8px;border:1px solid var(--line);border-radius:5px;background:var(--input-bg);color:var(--text)}
   .routing-workspace button{font-size:var(--ui-action-size)}.routing-workspace select,.routing-workspace input:not([type="checkbox"]){background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:8px;font-size:var(--ui-text-size);min-width:0;width:100%;box-sizing:border-box;min-height:var(--ui-control-height)}.connection-actions{display:flex;gap:8px;justify-content:flex-end;margin:16px 0}.route-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}h3{font-size:var(--ui-heading-size);color:var(--soft)}p{font-size:var(--ui-text-size);color:var(--muted);line-height:var(--ui-line-height);margin:10px 0}.connection-fields{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;margin:15px 0}label{font-size:var(--ui-text-size);color:var(--muted);display:grid;gap:7px}.connection-problem,.routing-error{color:#d3a078}.routing-error{padding:12px;border:1px solid #ad875440;border-radius:6px;font-size:var(--ui-text-size);line-height:var(--ui-line-height)}.authoring-inspector{border:0;margin:0;padding:0;min-width:0}.authoring-inspector label{margin:12px 0}.authoring-inspector details{margin:16px 0;border-top:1px solid var(--line);padding-top:14px}.authoring-inspector summary{font-size:var(--ui-text-size);color:var(--soft);cursor:pointer}.authoring-inspector small{font-size:var(--ui-text-size);line-height:var(--ui-line-height)}.check{display:flex;align-items:center;gap:8px}.small-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}@media(max-width:700px){.connection-fields{grid-template-columns:1fr}.route-heading{align-items:start;flex-direction:column}}
