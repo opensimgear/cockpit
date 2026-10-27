@@ -4,7 +4,7 @@
   import Icon from './Icon.svelte';
   import {canvasOverviewLayoutScore} from './profile-overview-layout';
   import ProfileSignalLanes from './ProfileSignalLanes.svelte';
-  import {signalOverview,signalBundleWidth} from './profile-signal-overview';
+  import {signalOverview,signalBundleWidth,type SignalLane} from './profile-signal-overview';
   import {createOverviewRouter} from './profile-overview-routing';
   import type { DeepReadonly, ProfileDocument, ProfileEndpoint, ProfileLocalAssignment, ProfilePort, ProfilePortGroup, ProfileProcessingNode } from './profiles';
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
@@ -22,7 +22,7 @@
   import { ProfilePortBrowser } from './profile-port-browser';
   import type { ProfilePaletteComponent, ProfilePaletteDrag } from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, simpleControllerInspector = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform, routeEndpoint, connectionDraft, draftTransforms = [], addOverviewConnection, removeOverviewTransform, selectOverviewTransform }: {
+  let { document, assignments, inventory, inventoryClient, activeVehicleTabId = '', selectedId = $bindable(''), companionAuthoring = false, simpleControllerInspector = false, readOnly = false, fitOnMount = true, change, openGameSettings, inspector, nodeControls, selectProviderPort, removeProviderPort, connectBlocks, connectionFrom, connectionTo, editConnection, selectedEdgeId = '', selectConnection, reconnectConnection, disconnectConnection, connectionSourceId = '', connectionTargetId = '', connectionSourcePort = '', connectionTargetPort = '', reconnectingBindingId = '', dropOnConnection, highlightedEdges = [], diagnostics = [], undo, redo, paletteDrag = null, canDropComponent, dropComponent, endPaletteDrag, discoveredPorts = {}, discoveryBusy = [], discoveryErrors = {}, connectionPanel, connectionOpen = false, closeConnectionPanel, transformSettings, insertTransform, transferTransform, routeEndpoint, connectionDraft, draftTransforms = [], incompleteRows = [], activeIncompleteRowId = '', addOverviewConnection, removeOverviewTransform, selectOverviewTransform, routeIssue }: {
     document: DeepReadonly<ProfileDocument>; assignments: readonly DeepReadonly<ProfileLocalAssignment>[]; inventory: readonly DeepReadonly<ResourceSummary>[];
     inventoryClient: Pick<ProfileInventoryClient, 'inspect'>; activeVehicleTabId?:string; selectedId?: string; companionAuthoring?:boolean; simpleControllerInspector?:boolean; readOnly?: boolean; fitOnMount?: boolean;
     change: (document: ProfileDocument, label?:string) => void; openGameSettings?: (gameId: GameId, returnState?: unknown) => void;
@@ -37,9 +37,9 @@
     paletteDrag?:ProfilePaletteDrag|null;canDropComponent?:(component:ProfilePaletteComponent)=>boolean;
     dropComponent?:(component:ProfilePaletteComponent,position:CanvasPoint)=>void;endPaletteDrag?:()=>void;
     discoveredPorts?:Record<string,readonly DeepReadonly<ProfilePort>[]>;discoveryBusy?:readonly string[];discoveryErrors?:Record<string,string>;
-    connectionDraft?:Snippet;draftTransforms?:readonly ProfileProcessingNode[];addOverviewConnection?:(from:string,to:string)=>void;removeOverviewTransform?:(id:string,laneId?:string)=>void;selectOverviewTransform?:(laneId:string,id:string)=>string|undefined;
+    connectionDraft?:Snippet;draftTransforms?:readonly ProfileProcessingNode[];incompleteRows?:readonly {lane:SignalLane;index:number;sourceNodeId:string;targetNodeId:string}[];activeIncompleteRowId?:string;addOverviewConnection?:(from:string,to:string)=>void;removeOverviewTransform?:(id:string,laneId?:string)=>void;selectOverviewTransform?:(laneId:string,id:string)=>string|undefined;
     connectionPanel?:Snippet;connectionOpen?:boolean;closeConnectionPanel?:()=>void;
-    transformSettings?:Snippet<[CanvasNode]>;insertTransform?:(bindingId:string,laneId?:string)=>void;transferTransform?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;
+    routeIssue?:(laneId:string)=>string;transformSettings?:Snippet<[CanvasNode]>;insertTransform?:(bindingId:string,laneId?:string)=>void;transferTransform?:(sourceLane:string,nodeId:string,targetLane:string,before:string|null)=>boolean|void;
   } = $props();
   let stage: HTMLDivElement;
   let inspectorPanel=$state.raw<HTMLElement|undefined>();
@@ -78,7 +78,20 @@
   const allNodes=$derived(canvasNodes(visibleDocument,assignments,inventory));
   const laneNodes=$derived([...allNodes,...draftTransforms.map(node=>({id:node.id,name:node.name,kind:'processing' as const,category:'Transform',position:{x:0,y:0},processing:node}))]);
   const committedNodes=$derived(canvasNodes(committedDocument,assignments,inventory).filter(node=>!overview||!node.processing));
-  const overviewBundles=$derived(signalOverview(committedDocument));
+  const overviewBundles=$derived.by(()=>{
+    const bundles=signalOverview(committedDocument).map(bundle=>({...bundle,lanes:[...bundle.lanes]}));
+    for(const row of [...incompleteRows].sort((a,b)=>a.index-b.index)){
+      const id=`overview:${JSON.stringify([row.sourceNodeId,row.targetNodeId])}`;
+      let bundle=bundles.find(item=>item.id===id);
+      if(!bundle){
+        bundle={id,binding:{id,from:{nodeId:row.sourceNodeId,portId:''},to:{nodeId:row.targetNodeId,portId:''}},lanes:[]};
+        bundles.push(bundle);
+      }
+      if(bundle.lanes.some(lane=>lane.id===row.lane.id))continue;
+      bundle.lanes.splice(Math.max(0,Math.min(row.index,bundle.lanes.length)),0,row.lane);
+    }
+    return bundles;
+  });
   const overviewById=$derived(new Map(overviewBundles.map(bundle=>[bundle.id,bundle])));
   const overviewBundle=$derived(overviewById.get(overviewBundleId)??(overviewPair?{id:overviewBundleId,binding:{id:overviewBundleId,from:{nodeId:overviewPair.from,portId:''},to:{nodeId:overviewPair.to,portId:''}},lanes:[]}:undefined));
   const routingBindings=$derived(overview?overviewBundles.map(bundle=>({...bundle.binding,to:{...bundle.binding.to,portId:bundle.id}})):committedDocument.bindings);
@@ -569,7 +582,7 @@
     {/if}
   {#if overview&&(overviewBundle||showTransforms)}
     <div class="canvas-lanes-panel" transition:slideLanes>
-    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {routeEndpoint} bundle={overviewBundle} nodes={laneNodes} draftConnection={connectionDraft} addConnection={overviewBundle&&addOverviewConnection?()=>addOverviewConnection?.(overviewBundle!.binding.from.nodeId,overviewBundle!.binding.to.nodeId):undefined} removeTransform={removeOverviewTransform} selectTransform={selectOverviewTransform} bind:activeTransform close={()=>closeLanes(true)} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target,id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
+    {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {routeIssue} {routeEndpoint} bundle={overviewBundle} nodes={laneNodes} draftConnection={connectionDraft} {activeIncompleteRowId} addConnection={overviewBundle&&addOverviewConnection?()=>addOverviewConnection?.(overviewBundle!.binding.from.nodeId,overviewBundle!.binding.to.nodeId):undefined} removeTransform={removeOverviewTransform} selectTransform={selectOverviewTransform} bind:activeTransform close={()=>closeLanes(true)} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target,id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
     </div>
   {/if}
   </div>

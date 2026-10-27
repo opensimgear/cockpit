@@ -4,8 +4,9 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./profiles','./profile-graph','./profile-discovery','./profile-processing','./profile-connection-draft']);
 const graph=modules.get('./profile-graph');
-const {connectionDraftPlan,commitConnectionDraft,createConnectionTransform}=modules.get('./profile-connection-draft');
-const bool={type:'boolean'},state=(schema=bool)=>({delivery:'state',schema,freshnessMs:1000,fallback:null});
+const {connectionDraftPlan,commitConnectionDraft,discardCommittedConnection,createConnectionTransform}=modules.get('./profile-connection-draft');
+const {processingTemplate}=modules.get('./profile-processing');
+const bool={type:'boolean'},number={type:'number',min:0,max:100,unit:null},state=(schema=bool)=>({delivery:'state',schema,freshnessMs:1000,fallback:null});
 const port=(id,direction,contract=state())=>({id,name:id,direction,contract});
 const endpoint=(nodeId,p)=>({nodeId,port:{...p,key:p.id,profilePortId:p.id,sourceId:null,observed:null,current:true}});
 const sourcePort={descriptor:{id:'native:button',name:'Button',direction:'output',contract:state()},contractHash:`sha256:${'1'.repeat(64)}`,routeIds:['usb'],current:true};
@@ -88,6 +89,57 @@ test('unconfirmed or invalid replacements do not prune any former source nodes o
  const incompatible={...identity('invalid'),inputs:[port('in','input',state({type:'rgb'}))],outputs:[port('out','output',state({type:'rgb'}))]};
  assert.throws(()=>commitConnectionDraft(value,newSource,to(),[incompatible],writerId,true),/compatible|Types|range|contract|conversion/i);assert.deepEqual(plain(value),before);
  assert.ok(value.document.processingNodes.some(node=>node.id==='prior'));assert.ok(value.document.resources[0].ports.some(port=>port.id===sourceId));
+});
+
+function compareFixture(shared=false){
+ let value=fresh();
+ value.document.resources.find(resource=>resource.id==='source').ports=[port('axis','output',state(number))];
+ value.assignments[0].ports=[{profilePortId:'axis',observedPortId:'native:axis',expectedContractHash:`sha256:${'3'.repeat(64)}`}];
+ if(shared)value.document.resources.push({id:'other-target',name:'Other target',kind:'device',required:false,ports:[port('input','input')]});
+ value=graph.graphSetProcessing(value,processingTemplate('compare','compare',state(number)));
+ value=graph.graphConnect(value,{nodeId:'source',portId:'axis'},{nodeId:'compare',portId:'in'});
+ value=graph.graphConnect(value,{nodeId:'compare',portId:'out'},{nodeId:'target',portId:'input'});
+ if(shared)value=graph.graphConnect(value,{nodeId:'compare',portId:'out'},{nodeId:'other-target',portId:'input'});
+ return value;
+}
+
+test('discarding a sole committed Compare row removes its stages and unused provider pin atomically',()=>{
+ const value=compareFixture(),before=plain(value),terminal=value.document.bindings.find(binding=>binding.to.nodeId==='target').id;
+ const discarded=discardCommittedConnection(value,terminal);
+ assert.deepEqual(plain(value),before);
+ assert.equal(discarded.document.bindings.length,0);
+ assert.equal(discarded.document.processingNodes.length,0);
+ assert.deepEqual(plain(discarded.document.resources.find(resource=>resource.id==='source').ports),[]);
+ assert.deepEqual(plain(discarded.assignments[0].ports),[]);
+ assert.equal(discarded.document.resources.find(resource=>resource.id==='target').ports.length,1);
+ assert.throws(()=>discardCommittedConnection(discarded,terminal),/existing terminal route/);
+});
+
+test('discarding a route removes an unused assigned target port and local pin',()=>{
+ const value=compareFixture();value.assignments.push({resourceId:'target',sourceId:'native-target',ports:[{profilePortId:'input',observedPortId:'native:input',expectedContractHash:`sha256:${'4'.repeat(64)}`}]});
+ const before=plain(value),terminal=value.document.bindings.find(binding=>binding.to.nodeId==='target').id,discarded=discardCommittedConnection(value,terminal);
+ assert.deepEqual(plain(value),before);
+ assert.deepEqual(plain(discarded.document.resources.find(resource=>resource.id==='target').ports),[]);
+ assert.deepEqual(plain(discarded.assignments.find(assignment=>assignment.resourceId==='target').ports),[]);
+ assert.equal(discarded.document.processingNodes.length,0);
+});
+
+test('discarding one of two rows sharing Compare retains the other route, stage and source pin',()=>{
+ const value=compareFixture(true),terminal=value.document.bindings.find(binding=>binding.to.nodeId==='target').id,before=plain(value);
+ const discarded=discardCommittedConnection(value,terminal);
+ assert.deepEqual(plain(value),before);
+ assert.equal(discarded.document.bindings.length,2);
+ assert.ok(discarded.document.bindings.some(binding=>binding.from.nodeId==='source'&&binding.from.portId==='axis'&&binding.to.nodeId==='compare'));
+ assert.ok(discarded.document.bindings.some(binding=>binding.from.nodeId==='compare'&&binding.to.nodeId==='other-target'));
+ assert.ok(discarded.document.processingNodes.some(node=>node.id==='compare'));
+ assert.deepEqual(plain(discarded.document.resources.find(resource=>resource.id==='source').ports.map(port=>port.id)),['axis']);
+ assert.deepEqual(plain(discarded.assignments[0].ports.map(pin=>pin.profilePortId)),['axis']);
+});
+
+test('discarding a nonterminal transform route is rejected without changing the graph',()=>{
+ const value=compareFixture(),before=plain(value),internal=value.document.bindings.find(binding=>binding.to.nodeId==='compare').id;
+ assert.throws(()=>discardCommittedConnection(value,internal),/terminal route into a resource or output/);
+ assert.deepEqual(plain(value),before);
 });
 
 test('new transforms use unused graph identities and favor a compatible value input',()=>{

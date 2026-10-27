@@ -93,3 +93,8 @@ test('standalone transform library keeps its settings available below the librar
  assert.match(body,/<div class="lane-settings[^\"]*" data-transform-settings="stage">/);
  assert.ok(body.indexOf('class="transform-library')<body.indexOf('class="lane-settings'),'library settings follow the transform library');
 });
+
+test('incomplete connection stays in the original row with its error and Add footer',()=>{
+ const row={...lane,transforms:[]};const body=render(Lanes,{props:{bundle:bundle([row]),nodes,close(){},activeIncompleteRowId:row.id,draftConnection(){},routeIssue(){return 'Choose a matching transform.';},addConnection(){}}}).body;
+ assert.match(body,/data-lane-id="route"/);assert.match(body,/aria-label="Incomplete connection"/);assert.match(body,/Connection error: Choose a matching transform/);assert.match(body,/>Add<\/button>/);assert.doesNotMatch(body,/New connection draft|pending-connection/);
+});

@@ -11,6 +11,7 @@
     query = $bindable(''),
     disabled = false,
     compact = false,
+    iconTrigger = false,
     limit = 200,
     onselect,
   }: {
@@ -21,6 +22,7 @@
     query?: string;
     disabled?: boolean;
     compact?: boolean;
+    iconTrigger?: boolean;
     limit?: number;
     onselect?: (value:string)=>void;
   } = $props();
@@ -30,6 +32,7 @@
   let activeIndex = $state(-1);
   let listbox = $state<HTMLDivElement>();
   let inputElement=$state<HTMLInputElement>();
+  let triggerElement=$state<HTMLButtonElement>();
   let dropdownAbove=$state(false),dropdownHeight=$state(280);
   let dropdownPosition=$state('');
   let scrollTop=$state(0);
@@ -65,7 +68,8 @@
   }
 
   function positionDropdown(){
-    if(inputElement&&typeof window!=='undefined'){const rect=inputElement.getBoundingClientRect(),below=window.innerHeight-rect.bottom-60,above=rect.top-60;dropdownAbove=below<200&&above>below;dropdownHeight=Math.max(76,Math.min(280,dropdownAbove?above:below));if(compact){const width=Math.min(Math.max(rect.width,280),window.innerWidth-24),left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12));dropdownPosition=`position:fixed;left:${left}px;right:auto;width:${width}px;z-index:60;${dropdownAbove?`top:auto;bottom:${window.innerHeight-rect.top}px`:`top:${rect.bottom}px;bottom:auto`}`;}}
+    const anchor=triggerElement??inputElement;
+    if(anchor&&typeof window!=='undefined'){const rect=anchor.getBoundingClientRect(),below=window.innerHeight-rect.bottom-60,above=rect.top-60;dropdownAbove=below<200&&above>below;dropdownHeight=Math.max(76,Math.min(280,dropdownAbove?above:below));if(compact){const width=Math.min(Math.max(rect.width,280),window.innerWidth-24),left=Math.max(12,Math.min(rect.left,window.innerWidth-width-12));dropdownPosition=`position:fixed;left:${left}px;right:auto;width:${width}px;z-index:60;${dropdownAbove?`top:auto;bottom:${window.innerHeight-rect.top}px`:`top:${rect.bottom}px;bottom:auto`}`;}}
   }
 
   function show() {
@@ -76,6 +80,7 @@
     scrollTop=0;
     const selectedIndex = options.findIndex(option => option.value === value);
     activeIndex = options.length ? selectedIndex >= 0 ? selectedIndex : 0 : -1;
+    if(iconTrigger)void tick().then(()=>inputElement?.focus());
   }
 
   function close() {
@@ -130,9 +135,7 @@
 
 <svelte:window onresize={()=>{if(compact&&open)positionDropdown();}}/>
 <svelte:document onscrollcapture={event=>{if(compact&&open&&!(event.target instanceof Element&&event.target.closest('.port-options')))positionDropdown();}}/>
-<div class="port-combobox" class:compact onfocusout={focusout}>
-  <label id={`${uid}-label`} for={`${uid}-input`}>{label}</label>
-  <div class="input-wrap">
+{#snippet searchInput()}
     <input
       id={`${uid}-input`}
       bind:this={inputElement}
@@ -154,10 +157,14 @@
       oninput={input}
       onkeydown={keydown}
     />
-    <span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span>
-  </div>
+{/snippet}
+<div class="port-combobox" class:compact class:icon-trigger={iconTrigger} onfocusout={focusout}>
+  <label id={`${uid}-label`} for={iconTrigger?undefined:`${uid}-input`}>{label}</label>
+  {#if iconTrigger}<button bind:this={triggerElement} class="add-trigger" type="button" aria-label={label} title={label} aria-expanded={open&&!disabled} aria-controls={`${uid}-listbox`} {disabled} onclick={()=>open?close():show()}><Icon name="plus" size={16}/></button>
+  {:else}<div class="input-wrap">{@render searchInput()}<span class="chevron" aria-hidden="true"><Icon name="chevron" size={12}/></span></div>{/if}
   {#if open && !disabled}
     <div class="port-dropdown" popover={compact?'manual':undefined} use:dropdownPopover class:above={dropdownAbove} style={compact?dropdownPosition:undefined}>
+      {#if iconTrigger}<div class="dropdown-search">{@render searchInput()}</div>{/if}
       <div id={`${uid}-listbox`} class="port-options" role="listbox" aria-labelledby={`${uid}-label`} style={`max-height:${dropdownHeight}px`} bind:this={listbox} onscroll={event=>scrollTop=event.currentTarget.scrollTop}>
         <div class="virtual-spacer" aria-hidden="true" style={`height:${windowStart*rowHeight}px`}></div>
         {#each visibleOptions as option, offset (option.value)}
@@ -193,6 +200,7 @@
 
 <style>
   .port-combobox { position: relative; display: grid; gap: 6px; min-width: 0; }
+  .icon-trigger{flex:0 0 24px}.add-trigger{display:grid;place-items:center;width:24px;height:24px;padding:0;background:transparent;border:1px solid var(--line);color:var(--accent);border-radius:4px;cursor:pointer}.add-trigger:disabled{opacity:.4;cursor:default}.dropdown-search{padding:8px;border-bottom:1px solid var(--line)}
   .compact label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
   .port-combobox.compact{gap:0}.port-combobox.compact input{height:28px;padding:4px 24px 4px 6px;font-size:11px}
   label { color: var(--muted); font-size: 10px; }

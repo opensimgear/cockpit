@@ -128,6 +128,22 @@ export function commitConnectionDraft(
   return pruneReplacedSources(plan.draft, formerBindings);
 }
 
+/** Discard one committed terminal row and prune only its now-unused upstream graph. */
+export function discardCommittedConnection(value: DeepReadonly<ProfileGraphDraft>, terminalBindingId: string): ProfileGraphDraft {
+  const terminal = value.document.bindings.find(binding => binding.id === terminalBindingId);
+  if (!terminal) throw new Error('Choose an existing terminal route to discard.');
+  if (value.document.processingNodes.some(node => node.id === terminal.to.nodeId)) throw new Error('Choose the terminal route into a resource or output, not an internal transformation route.');
+  let next = pruneReplacedSources(graphDisconnect(value, terminalBindingId), [terminal]);
+  const target = next.document.resources.find(resource => resource.id === terminal.to.nodeId);
+  const pinned = next.assignments.some(assignment => assignment.resourceId === terminal.to.nodeId && assignment.ports.some(pin => pin.profilePortId === terminal.to.portId));
+  const referenced = next.document.bindings.some(binding =>
+    binding.from.nodeId === terminal.to.nodeId && binding.from.portId === terminal.to.portId ||
+    binding.to.nodeId === terminal.to.nodeId && binding.to.portId === terminal.to.portId,
+  );
+  if (target?.ports.some(port => port.id === terminal.to.portId) && pinned && !referenced) next = graphRemovePort(next, target.id, terminal.to.portId);
+  return next;
+}
+
 /** Make one compatible, single-output stage with an identity not used by the graph or open draft. */
 export function createConnectionTransform(
   value: DeepReadonly<ProfileGraphDraft>,
