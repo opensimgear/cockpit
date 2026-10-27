@@ -49,6 +49,14 @@ without resetting other settings. Native event writes run on a dedicated worker,
 in bounded batches; failed writes stay pending for retry and log reads surface
 the persistence error instead of claiming the history is complete.
 
+An action has one persisted event. Its acknowledged changes consume matching
+background observations, including observations captured before the command
+finishes. Independent health changes and deliberate repeated actions remain
+separate. Each queued event has a stable identity; replaying a database write
+cannot add another history or search row. Provider-backed Forget commands own
+their event, while local-only inventory Forget remains logged. These rules
+apply to newly captured activity; earlier history is preserved.
+
 MCP exposes `activity_list`, `activity_settings_get`, `activity_settings_save`
 and `activity_clear`. The two mutations require write access and an
 `operationId`, following the same replay rules as other Cockpit mutations.

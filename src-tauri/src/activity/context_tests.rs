@@ -114,3 +114,13 @@ fn injected_preferences_retention_and_tag_names_preserve_exact_values() {
         &json!({"ok":true,"state":{"activityChangeAfter":{"tagIds":["race"]}}})),["Tags added: Racing"]);
     assert!(context("unknown",Value::Null).details(&json!({}),&json!({"ok":true})).is_empty());
 }
+
+#[test]
+fn a_bulk_action_retains_each_targeted_games_changes_in_its_single_event() {
+    let before=serde_json::json!([
+        super::changes::game_snapshot(&serde_json::json!({"id":"one","name":"One","tagIds":[],"tagNames":{"sim":"Simulation"}})),
+        super::changes::game_snapshot(&serde_json::json!({"id":"two","name":"Two","tagIds":[]}))
+    ]);
+    let details=super::Context{kind:"game_batch",before}.details(&serde_json::json!({"command":"game_tag_definitions_save"}),&serde_json::json!({"ok":true,"state":{"games":{"catalogue":[{"id":"one","name":"One","tagIds":["sim"]},{"id":"two","name":"Two renamed","tagIds":[]}],"tags":{"sim":"Simulation"}}}})).join("\n");
+    assert!(details.contains("One: Tags added: Simulation"));assert!(details.contains("Two renamed: Name: “Two” → “Two renamed”"));
+}

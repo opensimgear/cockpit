@@ -387,16 +387,17 @@ export class SystemInventoryController {
     signal?.throwIfAborted();
     if (!c?.forget.allowed || c.presence === 'connected' || c.owner || c.hidden) throw Error(c?.forget.reason || 'The selected component is no longer eligible.');
     const t = c.targets.find(t => t.kind === 'controller' || t.kind === 'module' || t.kind === 'companion');
+    let activityRecorded = false;
     this.epoch++;
     if (t?.kind === 'controller') {
       // The browser inventory outlives native capture IDs. Only forget a source
       // the fresh provider actually returned; absent IDs are local history.
       const captured = this.captures.get('controllers')?.observations.some(observation => observation.targets.some(target => target.kind === 'controller' && target.id === t.id));
-      if (captured) await this.send({ command: 'controller_forget', sourceId: t.id });
+      if (captured) { await this.send({ command: 'controller_forget', sourceId: t.id }); activityRecorded = true; }
     }
-    else if (t?.kind === 'module' && this.gateways().some(e => e.id === t.gatewayId && e.state?.connected)) await this.send({ command: 'forget', gatewayId: t.gatewayId, moduleId: t.id });
-    else if (t?.kind === 'companion') await this.send({ command: 'companion_revoke', companion: { companionId: t.id } });
-    await this.registry.forget(id); this.onChange(this.snapshot);
+    else if (t?.kind === 'module' && this.gateways().some(e => e.id === t.gatewayId && e.state?.connected)) { await this.send({ command: 'forget', gatewayId: t.gatewayId, moduleId: t.id }); activityRecorded = true; }
+    else if (t?.kind === 'companion') { await this.send({ command: 'companion_revoke', companion: { companionId: t.id } }); activityRecorded = true; }
+    await this.registry.forget(id, { activityRecorded }); this.onChange(this.snapshot);
   }
   dispose() { this.disposed = true; this.epoch++; }
 }

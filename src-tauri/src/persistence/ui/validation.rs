@@ -50,6 +50,6 @@ fn inventory(value:&Value)->Result<(),String>{
         exact(&component["forget"],&["allowed","reason","effect"],&[])?;ensure(component["forget"]["allowed"].is_boolean()&&component["forget"]["reason"].as_str().is_some_and(|s|s.len()<=4096)&&component["forget"]["effect"].as_str().is_some_and(|s|s.len()<=4096))?;
     }
     let forgotten=value["forgotten"].as_object().filter(|rows|rows.len()<=4096).ok_or("Invalid inventory tombstone budget.")?;
-    for(id,tombstone)in forgotten {ensure(!id.is_empty()&&id.len()<=512&&!id.chars().any(char::is_control))?;exact(tombstone,&["signature","sawAbsent"],&["type","provider"])?;ensure(tombstone["signature"].as_str().is_some_and(|s|s.len()<=8192)&&tombstone["sawAbsent"].is_boolean()&&tombstone.get("provider").is_none_or(|v|text(v,64))&&tombstone.get("type").is_none_or(|v|matches!(v.as_str(),Some("host"|"controller"|"osg"|"gateway"|"virtual"|"integration"|"companion"))))?;}
+    for(id,tombstone)in forgotten {ensure(!id.is_empty()&&id.len()<=512&&!id.chars().any(char::is_control))?;exact(tombstone,&["signature","sawAbsent"],&["type","provider","activityRecorded"])?;ensure(tombstone["signature"].as_str().is_some_and(|s|s.len()<=8192)&&tombstone["sawAbsent"].is_boolean()&&tombstone.get("provider").is_none_or(|v|text(v,64))&&tombstone.get("type").is_none_or(|v|matches!(v.as_str(),Some("host"|"controller"|"osg"|"gateway"|"virtual"|"integration"|"companion")))&&tombstone.get("activityRecorded").is_none_or(Value::is_boolean))?;}
     Ok(())
 }

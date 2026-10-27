@@ -3,18 +3,37 @@ use osg_persistence::NewActivityEvent;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct Entity {
     category: &'static str,
     kind: &'static str,
     id: String,
     name: String,
     value: Value,
+    observed_at:std::time::Instant,
 }
+impl PartialEq for Entity {fn eq(&self,other:&Self)->bool {self.category==other.category&&self.kind==other.kind&&self.id==other.id&&self.name==other.name&&self.value==other.value}}
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Snapshot(pub(super) BTreeMap<String, Entity>, std::collections::BTreeSet<&'static str>);
+pub(crate) struct Snapshot(pub(super) BTreeMap<String, Entity>, std::collections::BTreeSet<&'static str>,BTreeMap<&'static str,std::time::Instant>);
 impl Snapshot {
+    pub(crate) fn mark_kind(&mut self,kind:&'static str) {self.2.insert(kind,std::time::Instant::now());}
+    pub(super) fn observed_at(&self,subject:&str)->Option<std::time::Instant> {
+        self.0.get(subject).map(|entity|entity.observed_at).or_else(||self.2.get(subject.split(':').next().unwrap_or("")).copied())
+    }
+    pub(super) fn available(&self,kind:&str)->bool {!self.1.contains(kind)}
+    pub(super) fn identity(&self,subject:&str)->Option<(String,String)> {
+        let entity=self.0.get(subject)?;
+        Some((entity.value["profileId"].as_str().unwrap_or(&entity.id).to_owned(),entity.name.clone()))
+    }
+    pub(super) fn profile_value(&mut self,id:&str,value:&Value) {
+        self.mark_kind("profile");
+        let mut value=value.clone();
+        if let Some(fields)=value.as_object_mut(){fields.remove("assignments");fields.remove("localAssignments");}
+        let name=value["name"].as_str().unwrap_or(id).to_owned();
+        self.insert("profiles","profile",id,&name,value);
+    }
     pub(crate) fn insert(&mut self, category: &'static str, kind: &'static str, id: &str, name: &str, value: Value) {
+        let observed_at=*self.2.entry(kind).or_insert_with(std::time::Instant::now);
         self.0.insert(
             format!("{kind}:{id}"),
             Entity {
@@ -23,10 +42,12 @@ impl Snapshot {
                 id: id.into(),
                 name: name.chars().take(128).collect(),
                 value,
+                observed_at,
             },
         );
     }
     pub(crate) fn games(&mut self, games: &[Value]) {
+        for kind in ["game","integration","game_process","game_session","game_vehicle"]{self.mark_kind(kind);}
         for game in games {
             let Some(id) = game["id"].as_str() else { continue };
             let name = game["name"].as_str().unwrap_or(id);
@@ -35,26 +56,7 @@ impl Snapshot {
                 "game",
                 id,
                 name,
-                select(
-                    game,
-                    &[
-                        "name",
-                        "installPath",
-                        "executable",
-                        "installations",
-                        "installed",
-                        "selectedInstallationId",
-                        "tagNames",
-                        "tags",
-                        "background",
-                        "defaultBackground",
-                        "tagIds",
-                        "integrationKey",
-                        "provider",
-                        "integrationCompatible",
-                        "metadata",
-                    ],
-                ),
+                super::changes::game_snapshot(game),
             );
             let mut setup = select(&game["integrationSetup"], &["state", "installed", "verified", "version"]);
             if let Some(reason) = game["integrationSetup"]["message"].as_str() {
@@ -79,17 +81,20 @@ impl Snapshot {
         }
     }
     pub(crate) fn discovery(&mut self, review: &Value) {
+        self.mark_kind("discovery");
         let mut value = select(review, &["scanId", "status", "proposed", "libraries", "artworkReady", "tagged"]);
         value["diagnostics"] = json!(review["diagnostics"].as_array().into_iter().flatten().filter_map(Value::as_str).take(8).map(super::diagnostics::reason).collect::<Vec<_>>());
         self.insert("games", "discovery", "current", "Game discovery", value);
     }
     pub(crate) fn profiles(&mut self, profiles: &[osg_profiles::ProfileDocument]) {
+        self.mark_kind("profile");
         for profile in profiles {
             let document = serde_json::to_value(profile).unwrap_or(Value::Null);
             self.insert("profiles", "profile", &profile.id, &profile.name, super::changes::profile_snapshot(&document));
         }
     }
     pub(crate) fn profile_session(&mut self, status: Value, names: &BTreeMap<String, String>) {
+        self.mark_kind("profile_session");
         let id = status["owner"]["profileId"].as_str().or_else(|| status["appliedSnapshot"]["profileId"].as_str()).unwrap_or("profile-session");
         let name = names.get(id).map(String::as_str).unwrap_or("Profile session");
         let reasons = status["degradation"].as_array().into_iter().flatten().filter_map(Value::as_str).map(super::diagnostics::reason).collect::<Vec<_>>();
@@ -97,6 +102,7 @@ impl Snapshot {
         self.insert("profiles", "profile_session", "current", name, json!({"profileId":id,"state":status["state"],"degradation":reasons,"fault":fault}));
     }
     pub(crate) fn devices(&mut self, kind: &'static str, rows: &[Value]) {
+        self.mark_kind(kind);
         for device in rows {
             let Some(id) = device["id"].as_str().or_else(|| device["key"].as_str()) else { continue };
             let name = device["name"].as_str().unwrap_or(id);
@@ -143,6 +149,20 @@ impl Snapshot {
             }
         }
     }
+}
+pub(super) fn states(snapshot:&Snapshot)->BTreeMap<String,String> {
+    snapshot.0.iter().filter(|(_,entity)|snapshot.available(entity.kind)).map(|(subject,entity)|(subject.clone(),entity_state(entity))).collect()
+}
+pub(super) fn state(snapshot:&Snapshot,subject:&str)->Option<String>{snapshot.0.get(subject).map(entity_state)}
+fn entity_state(entity:&Entity)->String {
+        use sha2::{Digest,Sha256};
+        let mut value=entity.value.clone();
+        if let Some(fields)=value.as_object_mut(){
+            fields.remove("tagNames");fields.remove("tags");fields.remove("assignments");fields.remove("localAssignments");
+            if entity.kind=="profile_session"&&fields.get("state").is_some_and(|state|state=="stopped"){fields.remove("profileId");}
+            if entity.kind=="discovery" {fields.retain(|key,_|matches!(key.as_str(),"scanId"|"status"));}
+        }
+        format!("{:x}",Sha256::digest(value.to_string().as_bytes()))
 }
 pub(super) fn initial(snapshot: &Snapshot) -> Vec<NewActivityEvent> {
     let mut active = Snapshot::default();
@@ -326,6 +346,11 @@ pub(super) fn diff(before: &Snapshot, after: &Snapshot) -> Vec<NewActivityEvent>
         if old.is_some_and(|old| old == entity) {
             continue;
         }
+        if matches!(entity.kind,"integration"|"game_process"|"game_session"|"game_vehicle"|"profile_session")&&old.is_some_and(|old|old.value==entity.value){continue;}
+        // Initial setup/waiting projections belong to the newly added game.
+        // Actual readiness and health failures remain independent transitions.
+        if old.is_none()&&entity.kind=="integration"&&matches!(entity.value["state"].as_str(),None|Some("setup-required"|"unsupported"|"not-installed")){continue;}
+        if old.is_none()&&entity.kind=="game_session"&&!matches!(entity.value["status"].as_str(),Some("ready"|"failed"|"degraded")){continue;}
         let Some(transition) = transition_for(entity, old) else {
             continue;
         };

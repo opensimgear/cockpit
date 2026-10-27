@@ -17,14 +17,14 @@ impl GatewayManager {
     fn activity_profile_document_command(command:&str)->bool {
         matches!(command,"profile_create"|"profile_duplicate"|"profile_import"|"profile_save"|"profile_editor_save"|"profile_draft_save"|"profile_assignments_save"|"profile_rename"|"profile_delete")
     }
-    pub(super) fn audit_activity_response(&self,request:&Value,response:&mut Value,context:Option<crate::activity::context::Context>)->bool {
+    pub(super) fn audit_activity_response(&self,request:&Value,response:&mut Value,context:Option<crate::activity::context::Context>,action:Option<&crate::activity::Action>)->bool {
         let change=response.get_mut("state").and_then(|state|state.get_mut("profiles")).and_then(Value::as_object_mut).and_then(|profiles|profiles.remove("activityChange"));
         if let Some(change)=change {
             let context=crate::activity::context::Context{kind:"profile",before:change["before"].clone()};
             let mut audit=response.clone();audit["state"]["activityChangeAfter"]=change["after"].clone();
-            return self.audit_activity(request,&audit,Some(&context));
+            return self.audit_activity(request,&audit,Some(&context),action);
         }
-        self.audit_activity(request,response,context.as_ref())
+        self.audit_activity(request,response,context.as_ref(),action)
     }
     pub(super) fn observe_activity_session(&self) {
         let observer=self.activity.session_observer();
@@ -54,6 +54,7 @@ impl GatewayManager {
         if Self::activity_profile_document_command(command) {return None;}
         let id=request["id"].as_str().or_else(||request["profileId"].as_str()).or_else(||request["document"]["id"].as_str());
         let (kind,before)=match command {
+            "game_discovery_apply"|"game_tag_definitions_save"=>("game_batch",json!(self.games.activity_snapshot()["catalogue"].as_array().into_iter().flatten().map(crate::activity::changes::game_snapshot).collect::<Vec<_>>())),
             "profile_save"|"profile_editor_save"|"profile_draft_save"|"profile_assignments_save"|"profile_rename"|"profile_delete" => {
                 let profiles=self.profiles.lock().unwrap_or_else(|p|p.into_inner());
                 let (document,assignments,_)=profiles.compile_source(id?).ok()?;
@@ -75,9 +76,13 @@ impl GatewayManager {
         };
         Some(Context{kind,before})
     }
-    pub(super) fn audit_activity(&self,request:&Value,response:&Value,context:Option<&crate::activity::context::Context>)->bool {
-        if context.is_none_or(|context|!matches!(context.kind,"configuration"|"integration")) {return self.activity.audit_with_context(request,response,context);}
+    pub(super) fn audit_activity(&self,request:&Value,response:&Value,context:Option<&crate::activity::context::Context>,action:Option<&crate::activity::Action>)->bool {
+        let session=matches!(request["command"].as_str(),Some("profile_apply"|"profile_stop"|"profile_recover"|"profile_game_launch"));
+        if !session&&context.is_none_or(|context|!matches!(context.kind,"configuration"|"integration")) {return self.activity.audit_action(request,response,context,action);}
         let mut captured=response.clone();
+        if session&&captured["state"]["profiles"]["profileSession"].is_null() {
+            if let Ok(coordinator)=self.profile_session.try_lock(){captured["state"]["profiles"]["profileSession"]=serde_json::to_value(coordinator.status()).unwrap_or(Value::Null);}
+        }
         if response["ok"]==true {if let Some(context)=context {
             let after=match context.kind {
                 "configuration" if request["command"]=="profile_local_settings_save" => response["state"]["localSettings"].get("settings").cloned(),
@@ -87,7 +92,7 @@ impl GatewayManager {
             };
             if let Some(after)=after {captured["state"]["activityChangeAfter"]=after;}
         }}
-        self.activity.audit_with_context(request,&captured,context)
+        self.activity.audit_action(request,&captured,context,action)
     }
     pub(crate) fn record_external_change(&self,command:&str,id:Option<&str>,name:Option<&str>,before:&Value,after:&Value,error:Option<&str>,source:&str) {
         let client=if source=="mcp" {"cockpit-mcp-native"} else {"cockpit-native-settings"};
@@ -115,12 +120,13 @@ impl GatewayManager {
             drop(profiles);
             let mut present=std::collections::BTreeSet::new();
             match provider.ports() {
-                Ok(ports)=>for port in ports {if let Some((_,id))=candidate(&port) {let name=port.friendly_name.as_deref().unwrap_or(&id);snapshot.insert("devices","gateway",&id,name,json!({"present":true,"connected":false}));present.insert(id);}},
+                Ok(ports)=>{snapshot.mark_kind("gateway");for port in ports {if let Some((_,id))=candidate(&port) {let name=port.friendly_name.as_deref().unwrap_or(&id);snapshot.insert("devices","gateway",&id,name,json!({"present":true,"connected":false}));present.insert(id);}}},
                 Err(_)=>snapshot.unavailable("gateway"),
             }
             let adapters = gateways.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.clone())).collect::<Vec<_>>();
             for (id, adapter) in adapters {
                 let state = adapter.cached_state();
+                snapshot.mark_kind("gateway");snapshot.mark_kind("module");
                 snapshot.insert("devices", "gateway", &id, &id, json!({"present":present.contains(&id),"connected":state["connected"],"running":state["running"]}));
                 for module in state["modules"].as_array().into_iter().flatten() {
                     let module_id = module["id"].as_str().or_else(|| module["moduleId"].as_str()).unwrap_or("module");
@@ -135,11 +141,12 @@ impl GatewayManager {
                 snapshot.devices("controller", rows);
                 if offset+rows.len()>=state["total"].as_u64().unwrap_or(0) as usize || rows.is_empty() {break;}
             }
-            for module in modules.snapshots() {
+            let modules=modules.snapshots();snapshot.mark_kind("module");
+            for module in modules {
                 snapshot.insert("devices", "module", &module.key, &module.key, json!({"connected":module.snapshot.connected,"present":module.present,"identity":module.snapshot.identity,"route":module.snapshot.route}));
             }
             match companions.resource_companions() {
-                Ok(companions)=>for companion in companions { snapshot.insert("companions", "companion", &companion.companion_id, &companion.name, json!({"connected":companion.connected,"instanceId":companion.instance_id,"name":companion.name})); },
+                Ok(companions)=>{snapshot.mark_kind("companion");for companion in companions { snapshot.insert("companions", "companion", &companion.companion_id, &companion.name, json!({"connected":companion.connected,"instanceId":companion.instance_id,"name":companion.name})); }},
                 Err(_)=>snapshot.unavailable("companion"),
             }
             snapshot
@@ -157,3 +164,6 @@ impl GatewayManager {
 #[cfg(test)]
 #[path="gateway_tests.rs"]
 mod activity_tests;
+#[cfg(test)]
+#[path="gateway_once_tests.rs"]
+mod activity_once_tests;

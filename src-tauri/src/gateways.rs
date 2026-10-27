@@ -732,9 +732,10 @@ impl GatewayManager {
     }
     fn request_checked(&self, request: Value, expected_owner: Option<Option<crate::profile_session::RunOwner>>, passive_profile_reads: bool) -> Value {
         let _activity_guard = Self::activity_context_command(&request).then(||self.activity_mutation());
+        let activity_action = self.activity.begin(&request);
         let context = self.activity_before(&request);
         let mut response = self.request_dispatch(request.clone(), expected_owner, passive_profile_reads);
-        if self.audit_activity_response(&request, &mut response, context) {
+        if self.audit_activity_response(&request, &mut response, context,activity_action.as_ref()) {
             self.observe_activity_session();
         }
         response

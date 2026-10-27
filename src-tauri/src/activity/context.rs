@@ -10,6 +10,7 @@ pub(crate) struct Context {
 impl Context {
     pub(crate) fn details(&self, request: &Value, response: &Value) -> Vec<String> {
         if response["ok"] != true { return vec![]; }
+        if self.kind=="game_batch" {return self.game_batch(request,response);}
         let command = request["command"].as_str().unwrap_or("");
         // Gateway may attach an already-safe canonical snapshot solely to its
         // private audit response. In particular, profiles are already projected.
@@ -49,6 +50,24 @@ impl Context {
             }
             _ => vec![],
         }
+    }
+
+    fn game_batch(&self,request:&Value,response:&Value)->Vec<String> {
+        let mut lines=vec![];
+        for subject in super::effects::expected(request,response,Some(self)).keys() {
+            let Some(id)=subject.strip_prefix("game:") else{continue};
+            let before=self.before.as_array().into_iter().flatten().find(|game|game["id"].as_str()==Some(id));
+            let after=response["state"]["games"]["catalogue"].as_array().into_iter().flatten().find(|game|game["id"].as_str()==Some(id));
+            let name=after.or(before).and_then(|game|game["name"].as_str()).unwrap_or(id);
+            if let Some(after)=after {
+                let mut after=changes::game_snapshot(after);
+                let mut tags=before.and_then(|game|game["tagNames"].as_object()).cloned().unwrap_or_default();
+                if let Some(saved)=response["state"]["games"]["tags"].as_object(){tags.extend(saved.clone());}
+                after["tagNames"]=Value::Object(tags);
+                lines.extend(changes::describe("game",before,&after).into_iter().map(|line|format!("{name}: {line}")));
+            }else{lines.push(format!("Game “{name}” removed."));}
+        }
+        lines
     }
 
     fn profile_details(&self, request: &Value, response: &Value) -> Vec<String> {

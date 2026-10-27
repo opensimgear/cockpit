@@ -37,7 +37,7 @@ fn controller_input_sequences_do_not_log_but_presence_changes_do() {
 }
 #[test]
 fn profile_native_lifecycle_observer_keeps_brief_transitions_and_deduplicates_ticks() {
-    let (sender,receiver)=mpsc::channel();let mut observer=session::Observer::new(sender);
+    let (sender,receiver)=mpsc::channel();let mut observer=session::Observer::new(sender,Arc::new(Mutex::new(reconcile::Reconciler::default())));
     let document=osg_profiles::default_document();let id=document.id.clone();observer.names(&[document]);
     let mut status=Status{state:State::Stopped,owner:None,applied_snapshot:None,degradation:vec![],fault:None};
     observer.observe(&status);
@@ -46,7 +46,7 @@ fn profile_native_lifecycle_observer_keeps_brief_transitions_and_deduplicates_ti
     status.state=State::Running;status.degradation.clear();observer.observe(&status);
     status.state=State::Faulted;status.fault=Some("Output could not be restored".into());observer.observe(&status);
     status.state=State::Stopped;status.owner=None;status.fault=None;observer.observe(&status);
-    let events=receiver.try_iter().collect::<Vec<_>>();assert_eq!(kinds(&events),["profile_session_activated","profile_session_degraded","profile_session_recovered","profile_session_failed","profile_session_stopped"]);
+    let events=receiver.try_iter().flat_map(|batch|batch.events.into_iter().map(|observation|observation.event)).collect::<Vec<_>>();assert_eq!(kinds(&events),["profile_session_activated","profile_session_degraded","profile_session_recovered","profile_session_failed","profile_session_stopped"]);
     assert!(events.iter().all(|event|event.entity_id.as_deref()==Some(&id)));assert!(events.iter().all(|event|event.entity_name.as_deref()!=Some("Profile session")));
 }
 #[test]
@@ -123,5 +123,5 @@ fn background_review_setup_reason_vehicle_and_system_events_are_useful_without_u
     current.lock().unwrap().discovery(&json!({"scanId":"scan-2","status":"failed","diagnostics":["Scan failed because the library is inaccessible."]}));assert_eq!(query("discovery_failed")["events"][0]["level"],"error");
     assert_eq!(query("discovery_failed")["total"],1);runtime.shutdown();
     // Receiver disconnection exits cleanly rather than spinning while idle.
-    let (sender,receiver)=mpsc::sync_channel(1);let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();drop(sender);drop(lifecycle_sender);writer::run(Err("Unavailable".into()),receiver,lifecycle_receiver);
+    let (sender,receiver)=mpsc::sync_channel(1);let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();drop(sender);drop(lifecycle_sender);writer::run(Err("Unavailable".into()),receiver,lifecycle_receiver,Arc::new(Mutex::new(reconcile::Reconciler::default())));
 }

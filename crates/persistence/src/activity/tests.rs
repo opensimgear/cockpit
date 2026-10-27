@@ -1,4 +1,7 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_EVENT_KEY: AtomicU64 = AtomicU64::new(1);
 
 pub(super) fn setup() -> (tempfile::TempDir, Database) {
     let dir = crate::test_directory();
@@ -7,6 +10,7 @@ pub(super) fn setup() -> (tempfile::TempDir, Database) {
 }
 pub(super) fn event(message: &str) -> NewActivityEvent {
     NewActivityEvent {
+        event_key: format!("test-{}", NEXT_EVENT_KEY.fetch_add(1, Ordering::Relaxed)),
         occurred_at: now(),
         category: "device".into(),
         event_type: "device.connected".into(),
@@ -145,9 +149,11 @@ fn filters_inclusive_dates_and_stable_pagination() {
     let mut first = event("First");
     first.occurred_at = time;
     let mut second = first.clone();
+    second.event_key = event("Second").event_key;
     second.message = "Second".into();
     second.level = "warning".into();
     let mut third = first.clone();
+    third.event_key = event("Third").event_key;
     third.message = "Third".into();
     third.occurred_at = time - 100;
     third.category = "profile".into();
@@ -391,7 +397,7 @@ fn initializes_activity_on_existing_current_database_without_losing_records() {
     db.connection()
         .unwrap()
         .execute_batch(
-            "DROP TABLE activity_fts; DROP TABLE activity_events; DROP TABLE activity_settings;",
+            "DROP TABLE activity_fts; DROP TABLE activity_identity; DROP TABLE activity_events; DROP TABLE activity_settings;",
         )
         .unwrap();
     let reopened = Database::open(db.path()).unwrap();
@@ -421,7 +427,7 @@ fn passive_existing_open_preserves_core_database_bytes_until_boot_initialization
     db.connection()
         .unwrap()
         .execute_batch(
-            "DROP TABLE activity_fts; DROP TABLE activity_events; DROP TABLE activity_settings;",
+            "DROP TABLE activity_fts; DROP TABLE activity_identity; DROP TABLE activity_events; DROP TABLE activity_settings;",
         )
         .unwrap();
     let path = db.path().to_owned();

@@ -121,3 +121,10 @@ fn game_session_revisions_are_silent_and_session_changes_hide_internal_ids() {
     assert!(detail.contains("Integration availability"));assert!(detail.contains("session ended"));
     assert!(!detail.contains("sha256"));assert!(!detail.contains("session-1"));
 }
+
+#[test]
+fn adding_a_game_does_not_create_empty_setup_and_waiting_session_events() {
+    let mut after=Snapshot::default();after.games(&[json!({"id":"new","name":"New","integrationSetup":{"state":"setup-required"},"integrationContext":{"status":"waiting-game"}})]);
+    let events=diff(&Snapshot::default(),&after);
+    assert_eq!(events.len(),1,"{events:?}");assert_eq!(events[0].event_type,"game_created");
+}

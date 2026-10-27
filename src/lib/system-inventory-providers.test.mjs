@@ -547,21 +547,28 @@ test('eligible forget dispatches only its provider action and durable tombstones
     await h.controller.forget(id);
     assert.equal(h.component(id), undefined);
     assert.equal(h.requests.filter(request => request.command === command).length, 1);
+    const tombstone = JSON.parse(h.state.storage.getItem('osg-system-inventory-v1')).forgotten[id];
+    assert.equal(tombstone.activityRecorded, true, `${command} already records this explicit Forget`);
     await h.controller.refresh();
     assert.equal(h.component(id), undefined, 'unchanged offline provider record must remain forgotten');
+    assert.equal(JSON.parse(h.state.storage.getItem('osg-system-inventory-v1')).forgotten[id].activityRecorded, true, 'polling must preserve the one-action marker');
   }
 });
 
 test('local-only forget leaves unavailable providers untouched and failed native forget retains the visible record', async () => {
-  const h = harness({ usb: [usb('old-usb', { present: false, snapshot: { connected: false, identity: null, claimedBy: null, error: 'Removed' } })] });
+  const localDisk = storage();
+  const h = harness({ storage: localDisk, usb: [usb('old-usb', { present: false, snapshot: { connected: false, identity: null, claimedBy: null, error: 'Removed' } })] });
   await h.controller.refresh();
   await h.controller.forget('usb:old-usb');
   assert.equal(h.component('usb:old-usb'), undefined);
   assert.equal(h.requests.some(request => /forget|revoke/.test(request.command)), false);
-  const failure = harness({ controllers: [source('wheel', { online: false })] });
+  assert.equal(JSON.parse(localDisk.getItem('osg-system-inventory-v1')).forgotten['usb:old-usb'].activityRecorded, undefined, 'local-only cleanup remains eligible for its tombstone audit');
+  const failedDisk = storage();
+  const failure = harness({ storage: failedDisk, controllers: [source('wheel', { online: false })] });
   failure.failures.set('controller_forget', Error('Native removal refused'));
   await assert.rejects(failure.controller.forget('controller:wheel'), /Native removal refused/);
   assert.ok(failure.component('controller:wheel'));
+  assert.equal(Object.hasOwn(JSON.parse(failedDisk.getItem('osg-system-inventory-v1')).forgotten, 'controller:wheel'), false, 'failed native removal must not persist a tombstone or suppress its audit');
 });
 
 test('remembered capture IDs absent from native inventory clean up locally without touching same-name online controllers', async () => {

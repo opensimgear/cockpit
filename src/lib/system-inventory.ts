@@ -25,7 +25,7 @@ export type SystemComponent = {
 };
 export type SystemSnapshot = { components: SystemComponent[]; diagnostics: string[]; observedAt: number };
 export type SystemObservation = Omit<SystemComponent, 'firstSeen' | 'lastSeen'>;
-type InventoryTombstone = { signature: string; sawAbsent: boolean; type?: SystemType; provider?: string };
+type InventoryTombstone = { signature: string; sawAbsent: boolean; type?: SystemType; provider?: string; activityRecorded?: boolean };
 export type InventoryMemory = { components: SystemComponent[]; forgotten: Record<string, InventoryTombstone> };
 export type InventoryStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void | Promise<void>; refresh?(): Promise<void> };
 export const INVENTORY_STORAGE_KEY = 'osg-system-inventory-v1';
@@ -68,15 +68,16 @@ function isComponent(value: unknown): value is SystemComponent {
     && typeof c.firstSeen === 'number' && typeof c.lastSeen === 'number' && typeof c.observedAt === 'number' && typeof c.provider === 'string' && !!c.forget;
 }
 const cloneMemory = (memory: InventoryMemory): InventoryMemory => JSON.parse(JSON.stringify(memory));
-const tombstoneFor = (component: SystemComponent): InventoryTombstone => ({ signature: signature(component), sawAbsent: false, type: component.type, provider: component.provider });
+const tombstoneFor = (component: SystemComponent, activityRecorded = false): InventoryTombstone => ({ signature: signature(component), sawAbsent: false, type: component.type, provider: component.provider, ...(activityRecorded ? { activityRecorded: true } : {}) });
 const hasTombstone = (memory: InventoryMemory, id: string) => Object.hasOwn(memory.forgotten, id);
-function rememberTombstone(memory: InventoryMemory, id: string, component: SystemComponent) {
-  Object.defineProperty(memory.forgotten, id, { value: tombstoneFor(component), enumerable: true, writable: true, configurable: true });
+function rememberTombstone(memory: InventoryMemory, id: string, component: SystemComponent, activityRecorded = false) {
+  Object.defineProperty(memory.forgotten, id, { value: tombstoneFor(component, activityRecorded), enumerable: true, writable: true, configurable: true });
 }
 function validTombstones(value: unknown): value is InventoryMemory['forgotten'] {
   return !!value && typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(tombstone => tombstone && typeof tombstone === 'object'
     && typeof tombstone.signature === 'string' && typeof tombstone.sawAbsent === 'boolean'
-    && (tombstone.type === undefined || Object.hasOwn(systemTypeLabels, tombstone.type)) && (tombstone.provider === undefined || typeof tombstone.provider === 'string'));
+    && (tombstone.type === undefined || Object.hasOwn(systemTypeLabels, tombstone.type)) && (tombstone.provider === undefined || typeof tombstone.provider === 'string')
+    && (tombstone.activityRecorded === undefined || typeof tombstone.activityRecorded === 'boolean'));
 }
 function forgottenGateways(memory: InventoryMemory): Set<string> {
   return new Set(Object.entries(memory.forgotten).filter(([id, tombstone]) => tombstone.type === 'gateway' || id.startsWith('gateway:')).map(([id]) => id));
@@ -200,19 +201,19 @@ export class SystemInventoryRegistry {
     this.snapshot = { components: candidate.components, diagnostics: [...diagnostics, ...(this.storageError ? [this.storageError] : [])], observedAt: now };
     return this.snapshot;
   }
-  forget(id: string): Promise<void> { return this.serialize(() => this.forgetNow(id)); }
-  private async forgetNow(id: string): Promise<void> {
+  forget(id: string, options: { activityRecorded?: boolean } = {}): Promise<void> { return this.serialize(() => this.forgetNow(id, options)); }
+  private async forgetNow(id: string, options: { activityRecorded?: boolean }): Promise<void> {
     await this.storage?.refresh?.();
     this.reloadMemory();
     const c = this.snapshot.components.find(x => x.id === id);
     if (!c?.forget.allowed || c.presence === 'connected' || c.owner || c.hidden === true) throw new Error(c?.forget.reason || 'This component is currently present or owned. Refresh before forgetting it.');
     const candidate = cloneMemory(this.memory);
-    rememberTombstone(candidate, id, c);
+    rememberTombstone(candidate, id, c, options.activityRecorded);
     const original = new Map(candidate.components.map(component => [component.id, component]));
     const pruned = c.type === 'gateway' ? pruneGatewayRoutes(candidate.components, forgottenGateways(candidate)) : { components: candidate.components.filter(component => component.id !== id), removed: [] };
     for (const child of pruned.removed) if (child.id !== id) {
       if (child.presence === 'connected' || child.owner || child.hidden === true) throw new Error('A connected, hidden or owned child still depends on this gateway. Refresh and release it before forgetting the gateway.');
-      rememberTombstone(candidate, child.id, original.get(child.id)!);
+      rememberTombstone(candidate, child.id, original.get(child.id)!, options.activityRecorded);
     }
     candidate.components = pruned.components;
     const error = await this.persist(candidate);
