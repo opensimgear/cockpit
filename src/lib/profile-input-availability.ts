@@ -25,3 +25,18 @@ export function inputAvailability(
   const full=total>0&&available===0;
   return {full,total,available,reason:full?'All inputs are connected.':''};
 }
+
+/** Count distinct catalogue ports on a node that participate in the profile graph. */
+export function portBindingCounts(
+  document:Pick<DeepReadonly<ProfileDocument>,'bindings'>,
+  nodeId:string,
+  ports:readonly InputChoice[],
+  direction:'input'|'output',
+):{bound:number;total:number} {
+  const known=new Set(ports.filter(port=>port.direction===direction).map(port=>port.id));
+  const bound=new Set(document.bindings.flatMap(binding=>{
+    const endpoint=direction==='input'?binding.to:binding.from;
+    return endpoint.nodeId===nodeId&&known.has(endpoint.portId)?[endpoint.portId]:[];
+  }));
+  return {bound:bound.size,total:known.size};
+}

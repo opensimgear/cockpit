@@ -145,7 +145,16 @@ test('native destination overview shares source lanes across arrows and keeps AN
       for (const source of sources) {
         const detail = (await gatewayRequest({ command: 'profile_resources_inspect', resourceId: source.id, offset: 0, limit: 64 })).profileResources;
         const button = detail.ports.find(port => port.descriptor.direction === 'output' && port.descriptor.contract.delivery === 'state' && port.descriptor.contract.schema.type === 'boolean');
-        if (button) selected.push({ source, button });
+        if (button) {
+          const ports = [...detail.ports];
+          while (ports.length < detail.total) {
+            const next = (await gatewayRequest({ command: 'profile_resources_inspect', resourceId: source.id, offset: ports.length, limit: 64 })).profileResources;
+            if (!next.ports.length) throw Error('The controller catalogue ended before its total.');
+            ports.push(...next.ports);
+          }
+          const total = direction => new Set(ports.filter(port => port.current && port.descriptor.direction === direction).map(port => JSON.stringify([port.descriptor.id, port.contractHash]))).size;
+          selected.push({ source, button, totals: { input: total('input'), output: total('output') } });
+        }
         if (selected.length === 2) break;
       }
       if (selected.length < 2 || selected[0].source.id === selected[1].source.id) throw Error('Two distinct online physical controllers with Boolean outputs are required.');
@@ -166,7 +175,7 @@ test('native destination overview shares source lanes across arrows and keeps AN
       draft = graphConnect(draft, { nodeId: sourceNodes[0].id, portId: draft.document.resources.find(row => row.id === sourceNodes[0].id).ports[0].id }, { nodeId: 'virtual-target', portId: 'button-1' });
       draft = graphConnect(draft, { nodeId: sourceNodes[1].id, portId: draft.document.resources.find(row => row.id === sourceNodes[1].id).ports[0].id }, { nodeId: 'virtual-target', portId: 'button-2' });
       await gatewayRequest({ command: 'profile_editor_save', ...draft, expectedRevision: null });
-      return { id: draft.document.id, sources: selected.map(item => item.source.name), sourceIds: sourceNodes.map(node => node.id), signals: selected.map(item => item.button.descriptor.id) };
+      return { id: draft.document.id, sources: selected.map(item => item.source.name), sourceIds: sourceNodes.map(node => node.id), signals: selected.map(item => item.button.descriptor.id), totals: selected.map(item => item.totals) };
     }, name);
     profileId = fixture.id;
     await page.reload();
@@ -176,6 +185,27 @@ test('native destination overview shares source lanes across arrows and keeps AN
     await expect.poll(async () => await back.isVisible() || await edit.isVisible()).toBe(true);
     if (await back.isVisible()) await back.click();
     await edit.click();
+    const assertPortCounts = async (boundInputs = 2) => {
+      const expected = fixture.sourceIds.flatMap((nodeId, index) => [
+        { nodeId, direction: 'target', label: 'Inputs', count: '0 / ' + fixture.totals[index].input },
+        { nodeId, direction: 'source', label: 'Outputs', count: '1 / ' + fixture.totals[index].output },
+      ]).concat([
+        { nodeId: 'virtual-target', direction: 'target', label: 'Inputs', count: boundInputs + ' / 2' },
+        { nodeId: 'virtual-target', direction: 'source', label: 'Outputs', count: '0 / 0' },
+      ]);
+      for (const row of expected) {
+        const group = page.locator(`[data-node-id="${row.nodeId}"] .block-port-groups [data-connection-${row.direction}] .port-group-heading`);
+        await expect(group.locator('.port-count')).toHaveText(row.count);
+        assert.ok((await group.textContent()).startsWith(row.label));
+        assert.ok(!(await group.textContent()).includes('/ actions'));
+        const aligned = await group.evaluate(element => {
+          const count = element.querySelector('.port-count').getBoundingClientRect(), heading = element.getBoundingClientRect();
+          return Math.abs(count.right - heading.right) < 1;
+        });
+        assert.ok(aligned, row.nodeId + ' ' + row.label + ' count must align right.');
+      }
+    };
+    await assertPortCounts();
     await expect(page.locator('.overview-edge')).toHaveCount(2);
     await assertSharedInputEndpoints();
     await checkDragPreview(fixture.sourceIds[0]);
@@ -184,7 +214,7 @@ test('native destination overview shares source lanes across arrows and keeps AN
     for (const arrowIndex of [0, 1]) {
       await openArrow(arrowIndex);
       await expect(rows).toHaveCount(2);
-      const header = overview.locator('header .source-device');
+      const header = overview.locator('header');
       await expect(header).toContainText(fixture.sources[0]);
       await expect(header).toContainText(fixture.sources[1]);
       await page.keyboard.press('Escape');
@@ -192,8 +222,8 @@ test('native destination overview shares source lanes across arrows and keeps AN
     }
     await openMerge();
     await expect(rows).toHaveCount(2);
-    await expect(overview.locator('header .source-device')).toContainText(fixture.sources[0]);
-    await expect(overview.locator('header .source-device')).toContainText(fixture.sources[1]);
+    await expect(overview.locator('header')).toContainText(fixture.sources[0]);
+    await expect(overview.locator('header')).toContainText(fixture.sources[1]);
     await page.keyboard.press('Escape');
 
     // Add a Boolean AND to the first existing destination route and select
@@ -216,6 +246,7 @@ test('native destination overview shares source lanes across arrows and keeps AN
 
     await expect.poll(() => page.locator('.overview-edge').evaluateAll(paths => paths.map(path => Number(path.dataset.routeCount)).sort())).toEqual([1, 2]);
     await assertSharedInputEndpoints();
+    await assertPortCounts();
     const withAnd = await save();
     const andNode = withAnd.document.processingNodes.find(node => node.operation.kind === 'all');
     assert.ok(andNode, 'The route persists a Boolean AND node.');
@@ -235,7 +266,7 @@ test('native destination overview shares source lanes across arrows and keeps AN
       await openArrow(arrowIndex);
       await expect(rows).toHaveCount(2);
       assert.deepEqual(await rows.evaluateAll(items => items.map(item => item.dataset.laneId)), laneIds);
-      const header = overview.locator('header .source-device');
+      const header = overview.locator('header');
       await expect(header).toContainText(fixture.sources[0]);
       await expect(header).toContainText(fixture.sources[1]);
       await page.keyboard.press('Escape');
@@ -244,6 +275,10 @@ test('native destination overview shares source lanes across arrows and keeps AN
     const reloaded = await saved();
     assert.deepEqual(reloaded.document.processingNodes, withAnd.document.processingNodes);
     assert.deepEqual(reloaded.document.bindings, withAnd.document.bindings);
+    await openArrow(0);
+    await rows.last().locator('.disconnect-route').click();
+    await assertPortCounts(1);
+    await save();
   } finally {
     if (profileId) {
       const state = (await request({ command: 'profile_get', id: profileId })).profiles.document;

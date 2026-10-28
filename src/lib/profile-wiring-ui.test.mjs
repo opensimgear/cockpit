@@ -245,13 +245,13 @@ test('handle clicks retain keyboard access while empty-canvas clicks and moved w
 test('blocks show discovered input and output counts while loading/error handles and read-only state remain clear', () => {
   const discoveredPorts = { source: [port('fire', 'output', 'Fire trigger'), port('axis', 'output', 'Brake axis'), port('switch', 'output', 'Third output'), port('led', 'input', 'Backlight')], target: [] };
   const h = harness({ discoveredPorts });
-  assert.match(button(h.body, 'data-connection-source', 'source'), /Outputs for source \(3\)/);
-  assert.match(button(h.body, 'data-connection-target', 'source'), /Inputs \/ actions for source \(1\)/);
+  assert.match(button(h.body, 'data-connection-source', 'source'), /Outputs for source \(0 \/ 3\)/);
+  assert.match(button(h.body, 'data-connection-target', 'source'), /Inputs for source \(0 \/ 1\)/);
   for (const name of ['Fire trigger', 'Brake axis', 'Third output', 'Backlight', '+1 more']) assert.ok(!h.body.includes(name));
   assert.ok(!h.body.includes('saved-fire'));assert.ok(!h.body.includes('saved-led'), 'A completed empty discovery replaces the saved preview.');
   assert.match(button(h.body, 'data-connection-target', 'target'), /\sdisabled(?:\s|>|=)/);assert.match(button(h.body, 'data-connection-source', 'empty'), /\sdisabled(?:\s|>|=)/);
-  assert.match(button(h.body, 'data-connection-target', 'target'), /Inputs \/ actions for target \(0\)/);
-  assert.match(button(h.body, 'data-connection-source', 'empty'), /Outputs for empty \(0\)/);assert.deepEqual(h.document, h.before);
+  assert.match(button(h.body, 'data-connection-target', 'target'), /Inputs for target \(0 \/ 0\)/);
+  assert.match(button(h.body, 'data-connection-source', 'empty'), /Outputs for empty \(0 \/ 0\)/);assert.deepEqual(h.document, h.before);
   const waiting = harness({ discoveryBusy: ['empty'] });
   assert.ok(waiting.body.includes('Discovering inputs and outputs'));assert.doesNotMatch(button(waiting.body, 'data-connection-target', 'empty'), /\sdisabled(?:\s|>|=)/);
   const failed = harness({ discoveryErrors: { empty: 'Provider unavailable' } });
