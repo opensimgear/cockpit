@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {loadModules} from './test-module-loader.mjs';
 const {signalOverview,destinationOverview,destinationOverviewId,signalBundleWidth}= (await loadModules(['./profile-signal-overview'])).get('./profile-signal-overview');
 const edge=(id,from,to,output=id,input=id)=>({id,from:{nodeId:from,portId:output},to:{nodeId:to,portId:input}});
@@ -33,6 +34,47 @@ test('shared transforms retain identity on each consumer and multi-input lanes p
   const bundles=signalOverview(doc([edge('a','stick','mix'),edge('b','pedals','mix'),edge('c','mix','scale'),edge('d','scale','flight'),edge('e','scale','keyboard')],['mix','scale']));
   assert.equal(bundles.length,4);
   for(const bundle of bundles){assert.equal(bundle.lanes.length,1);assert.deepEqual(plain(bundle.lanes[0].transforms),['mix','scale']);assert.deepEqual(plain(bundle.lanes[0].sources.map(source=>source.nodeId)),['stick','pedals']);}
+});
+test('shared Common stages retain separate rows for each vehicle terminal',()=>{
+  const document=doc([edge('input','stick','common'),edge('a-input','common','a-stage'),edge('a-output','a-stage','a'),edge('b-input','common','b-stage'),edge('b-output','b-stage','b'),edge('base-output','common','flight')],['common','a-stage','b-stage']);
+  document.resources.push({id:'a'},{id:'b'});
+  document.vehicleTabs=[{id:'vehicle-a',nodeIds:['a','a-stage']},{id:'vehicle-b',nodeIds:['b','b-stage']}];
+  const before=plain(document),bundles=signalOverview(document),lanes=destinationOverview(bundles).flatMap(bundle=>bundle.lanes);
+  assert.deepEqual(plain(bundles.map(bundle=>[bundle.binding.from.nodeId,bundle.binding.to.nodeId])),[['stick','a'],['stick','b'],['stick','flight']]);
+  assert.deepEqual(plain(lanes.map(lane=>[lane.id,lane.transforms,lane.bindingIds])),[
+    ['a-output',['common','a-stage'],['a-output','a-input','input']],
+    ['b-output',['common','b-stage'],['b-output','b-input','input']],
+    ['base-output',['common'],['base-output','input']],
+  ]);
+  assert.deepEqual(plain(document),before);
+});
+test('exclusive direct and transformed alternatives keep their own terminal into a shared input',()=>{
+  const document=doc([edge('a-route','a','flight','out','axis'),edge('b-input','b','b-stage','out','in'),edge('b-route','b-stage','flight','out','axis'),edge('base-route','stick','flight','out','button')],['b-stage']);
+  document.resources.push({id:'a'},{id:'b'});
+  document.vehicleTabs=[{id:'vehicle-a',nodeIds:['a']},{id:'vehicle-b',nodeIds:['b','b-stage']}];
+  const bundles=signalOverview(document),[overview]=destinationOverview(bundles);
+  assert.deepEqual(plain(bundles.map(bundle=>bundle.binding.from.nodeId)),['a','b','stick']);
+  assert.deepEqual(plain(overview.lanes.map(lane=>({id:lane.id,sources:lane.sources.map(source=>source.nodeId),transforms:lane.transforms,bindingIds:lane.bindingIds}))),[
+    {id:'a-route',sources:['a'],transforms:[],bindingIds:['a-route']},
+    {id:'b-route',sources:['b'],transforms:['b-stage'],bindingIds:['b-route','b-input']},
+    {id:'base-route',sources:['stick'],transforms:[],bindingIds:['base-route']},
+  ]);
+  assert.deepEqual(plain(overview.lanes.slice(0,2).map(lane=>lane.destination)),[{nodeId:'flight',portId:'axis'},{nodeId:'flight',portId:'axis'}]);
+});
+test('the complete Feature Lab graph preserves both aircraft and Common signals together',async()=>{
+  const document=JSON.parse(await readFile(new URL('../../examples/dcs-bios/feature-lab.profile.json',import.meta.url),'utf8')),before=plain(document);
+  const bundles=signalOverview(document),lanes=destinationOverview(bundles).flatMap(bundle=>bundle.lanes);
+  assert.equal(bundles.length,13);assert.equal(lanes.length,41);
+  const expected=[['route-87','aux-panel','ah6-dcs'],['route-94','aux-panel','hornet-dcs'],['route-53','ah6-dcs','aux-panel'],['route-56','hornet-dcs','aux-panel']];
+  for(const [id,from,to] of expected){
+    const bundle=bundles.find(bundle=>bundle.binding.from.nodeId===from&&bundle.binding.to.nodeId===to),lane=bundle?.lanes.find(lane=>lane.id===id);
+    assert.ok(lane,`Missing aircraft row ${id}`);
+    assert.deepEqual(plain(lane.sources.map(source=>source.nodeId)),[from]);assert.equal(lane.destination.nodeId,to);
+    const scopes=document.vehicleTabs.filter(tab=>[lane.destination.nodeId,...lane.sources.map(source=>source.nodeId),...lane.transforms].some(node=>tab.nodeIds.includes(node)));
+    assert.equal(scopes.length,1,`${id} must keep mutually exclusive aircraft separate`);
+  }
+  assert.ok(lanes.some(lane=>lane.id==='route-4'&&lane.sources[0].nodeId==='right-stick'&&lane.destination.nodeId==='virtual-flight'));
+  assert.deepEqual(document,before);
 });
 test('multiple source ports feeding the same terminal are one route, not an inflated weight',()=>{
   const bundles=signalOverview(doc([edge('a','stick','combine','x'),edge('b','stick','combine','y'),edge('c','combine','flight')],['combine']));

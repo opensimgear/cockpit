@@ -99,3 +99,15 @@ test('port counts do not mutate frozen graph inputs or catalogue',()=>{
   assert.deepEqual(plain(portBindingCounts(document,'target',ports,'input')),{bound:1,total:1});
   assert.equal(JSON.stringify({document,ports}),before);
 });
+
+test('a proposed vehicle route ignores mutually exclusive writers but Base conflicts with all',()=>{
+  const hornet=wire('hornet-route','target','in');hornet.from.nodeId='hornet-game';
+  const document={bindings:[hornet],vehicleTabs:[{id:'hornet',nodeIds:['hornet-game']},{id:'viper',nodeIds:['viper-game']}],processingNodes:[]},ports=[choice('in')];
+  assert.equal(inputAvailability(document,'target',ports,'in').full,true);
+  assert.equal(inputAvailability(document,'target',ports,'in',undefined,'viper').full,false);
+  assert.equal(inputAvailability(document,'target',ports,'in',undefined,'hornet').full,true);
+  assert.equal(inputAvailability(document,'target',ports,'in',undefined,'').full,true);
+  assert.equal(inputAvailability(document,'target',ports,'in','hornet-route','hornet').full,false);
+  document.bindings.push(wire('common-route','target','in'));
+  assert.equal(inputAvailability(document,'target',ports,'in',undefined,'viper').full,true);
+});

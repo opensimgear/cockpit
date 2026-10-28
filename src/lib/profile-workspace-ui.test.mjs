@@ -1,7 +1,7 @@
 import {discoveredGames} from './game-test-fixtures.mjs';
 import {webcrypto} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules,libModuleName}from'./test-module-loader.mjs';
-const modules=await loadModules(['./profile-game-source','./profile-virtual-slots','./profile-chain-edit','./profile-connection-draft','./profile-overview-routing','./controllers','./controller-inputs','./persistence/ui-preferences','./ui-settings-guard','./profile-discovery','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview','./profile-game-context','./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-telemetry','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-debug-graph','./profile-graph-history','./profile-processing','./profile-transform-drafts','./profile-canvas-construction','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser','./profile-vehicle-conflicts']);
+const modules=await loadModules(['./profile-block-status','./profile-integration-scope','./profile-game-source','./profile-virtual-slots','./profile-chain-edit','./profile-connection-draft','./profile-overview-routing','./controllers','./controller-inputs','./persistence/ui-preferences','./ui-settings-guard','./profile-discovery','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview','./profile-game-context','./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-telemetry','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-debug-graph','./profile-graph-history','./profile-processing','./profile-transform-drafts','./profile-canvas-construction','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser','./profile-vehicle-conflicts']);
 modules.get('./games').updateGameCatalogue(discoveredGames);
 modules.set('./notifications',{notify:()=>{throw new Error('Rendering must not replay save notifications.');}});
 modules.set('./profile-palette',(await loadModules(['./profile-palette'])).get('./profile-palette'));
@@ -29,13 +29,13 @@ async function vehicleWorkspaceHtml(h,{activeId='',adding=false}={}){
 }
 const physicalVehicleTabs=body=>[...body.matchAll(/<div\b([^>]*\bclass="(?:[^" ]*\s+)*vehicle-tab(?:\s+[^" ]*)*"[^>]*)>([^]*?)<\/div>/g)].map(([,attributes,content])=>({attributes,content}));
 
-test('actual aircraft tab acquisition assigns its own catalogue and ignores a late reply after changing profiles',async()=>{
- const filename=new URL('./ProfilesPanel.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace("activeVehicleTabId=$state('')","activeVehicleTabId=$state('aircraft')").replace('</script>','captureDcs({loadDcsVehicleCatalogue,get state(){return {dcsCatalogueBusy,dcsCatalogueError,routingInventory};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
+test('all configured aircraft integrations acquire their catalogues and ignore a late reply after changing profiles',async()=>{
+ const filename=new URL('./ProfilesPanel.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureDcs({loadDcsVehicleCatalogue,get state(){return {dcsCatalogueBusy,dcsCatalogueError,routingInventory};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,captureDcs(value){handlers=value;},require(name){name=libModuleName(name,filename);if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name.endsWith('.svelte'))return{default:()=>{}};if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error(`Unexpected DCS dependency ${name}`);}},{filename:filename.pathname});
- const prepare=async()=>{const h=harness();await h.store.refresh();h.store.beginBlank([]);let value=modules.get('./profile-game-context').profileSetGameContext(h.store.state.editor,'dcs',[]);value.document.vehicleTabs=[{id:'aircraft',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'Viper',nodeIds:[]}];value=modules.get('./profile-game-context').profileAddVehicleIntegration(value,'aircraft',[]);h.store.update(value.document,value.assignments);return h;};
+ const prepare=async()=>{const h=harness();await h.store.refresh();h.store.beginBlank([]);let value=modules.get('./profile-game-context').profileSetGameContext(h.store.state.editor,'dcs',[]);value.document.vehicleTabs=[{id:'aircraft',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'Viper',nodeIds:[]}];value=modules.get('./profile-game-context').profileAddVehicleIntegration(value,'aircraft',[]);value.document.vehicleTabs.push({id:'hornet',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'Hornet',nodeIds:[]});value=modules.get('./profile-game-context').profileAddVehicleIntegration(value,'hornet',[]);h.store.update(value.document,value.assignments);return h;};
  const viper={...resource('game-integration',3),id:'native:dcs:F-16C',attributes:{gameId:'dcs',aircraftModule:'F-16C',vehicleAliases:'["F-16C_50"]'}};
- const h=await prepare(),calls=[];h.client.dcsVehicle=async vehicleId=>{calls.push(vehicleId);return viper;};render(exports.default,{props:{editorStore:h.store,resourceClient:h.client}}).body;
- await handlers.loadDcsVehicleCatalogue();const tab=h.store.state.editor.document.vehicleTabs[0];assert.equal(h.store.state.editor.assignments.find(row=>row.resourceId===tab.nodeIds[0]).sourceId,viper.id);assert.deepEqual(calls,['F-16C_50']);assert.equal(handlers.state.dcsCatalogueError,'');assert.deepEqual(h.calls,[]);
+ const h=await prepare(),calls=[];h.client.dcsVehicle=async vehicleId=>{calls.push(vehicleId);return vehicleId==='F-16C_50'?viper:{...viper,id:'native:dcs:Hornet',attributes:{gameId:'dcs',aircraftModule:'FA-18C_hornet'}};};render(exports.default,{props:{editorStore:h.store,resourceClient:h.client}}).body;
+ await handlers.loadDcsVehicleCatalogue();const tab=h.store.state.editor.document.vehicleTabs[0];assert.equal(h.store.state.editor.assignments.find(row=>row.resourceId===tab.nodeIds[0]).sourceId,viper.id);assert.deepEqual(calls,['F-16C_50','FA-18C_hornet']);const hornet=h.store.state.editor.document.vehicleTabs[1];assert.equal(h.store.state.editor.assignments.find(row=>row.resourceId===hornet.nodeIds[0]).sourceId,'native:dcs:Hornet');assert.equal(handlers.state.dcsCatalogueError,'');assert.deepEqual(h.calls,[]);
  const stale=await prepare();let finish;stale.client.dcsVehicle=()=>new Promise(resolve=>finish=resolve);render(exports.default,{props:{editorStore:stale.store,resourceClient:stale.client}}).body;const pending=handlers.loadDcsVehicleCatalogue();stale.store.beginBlank([]);const other=plain(stale.store.state.editor);finish(viper);await pending;assert.deepEqual(plain(stale.store.state.editor),other);assert.deepEqual(stale.calls,[]);
 });
 
@@ -324,43 +324,18 @@ test('custom games without an integration never appear as game sources, while sa
  }finally{games.updateGameCatalogue(discoveredGames);}
 });
 
-test('vehicle tab buttons keep removal inside the tab and the selected vehicle picker starts the content',async()=>{
- const h=await vehicleWorkspace(),before=plain(h.store.state.editor),calls=plain(h.calls);
- for(const activeId of ['', 'cup']){
-  const body=await vehicleWorkspaceHtml(h,{activeId}),group=body.match(/<div\b[^>]*aria-label="Profile vehicle tabs"[^>]*>/)?.[0];assert.ok(group);assert.match(group,/role="group"/);assert.doesNotMatch(body,/role="(?:tablist|tab|tabpanel)"/);
-  const base=body.match(/<button\b[^>]*data-tab-index="0"[^>]*>\s*Base<\/button>/)?.[0];assert.ok(base);assert.match(base,new RegExp(`aria-pressed="${!activeId}"`));assert.doesNotMatch(base,/tabindex="-1"/);
-  const tabs=physicalVehicleTabs(body);assert.equal(tabs.length,2);
-  for(const [index,tab]of h.store.state.editor.document.vehicleTabs.entries()){
-   const physical=tabs.find(item=>item.content.includes(`data-vehicle-tab-id="${tab.id}"`));assert.ok(physical,tab.id);
-   const button=physical.content.match(/<button\b([^>]*\bdata-vehicle-tab-id[^>]*)>([^]*?)<\/button>/);assert.ok(button);assert.ok(button[1].includes(`aria-label="${tab.vehicleName}"`));assert.match(button[1],new RegExp(`data-tab-index="${index+1}"`));assert.match(button[1],new RegExp(`aria-pressed="${activeId===tab.id}"`));assert.doesNotMatch(button[1],/\brole=|tabindex="-1"|\bdisabled(?:[\s=>]|$)/);assert.equal(button[2],tab.vehicleName);assert.doesNotMatch(physical.content,/<select\b/);
-   const remove=physical.content.match(/<button\b[^>]*class="[^"]*\bremove-vehicle-tab\b[^"]*"[^>]*>/)?.[0];assert.ok(remove);assert.ok(remove.includes(`aria-label="Remove ${tab.vehicleName} tab"`));assert.ok(physical.content.indexOf('</button>')<physical.content.indexOf(remove));
-  }
-  const region=body.match(/<div\b[^>]*id="profile-vehicle-canvas"[^>]*>/)?.[0];assert.ok(region);assert.match(region,/role="region"/);assert.ok(region.includes(`aria-label="${activeId?'Cup car':'Base'}"`));assert.ok(body.indexOf('aria-label="Profile vehicle tabs"')<body.indexOf(region));
-  assert.match(body,/<button\b[^>]*aria-label="Add vehicle tab"[^>]*>[^]*?<\/button>\s*<\/div>\s*<div\b[^>]*id="profile-vehicle-canvas"/);
-  assert.match(body.slice(body.indexOf(region)+region.length),/^\s*<div\b[^>]*class="vehicle-settings[^>]*>\s*<div\b[^>]*class="vehicle-context/);
-  const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';
-  if(activeId){assert.match(context,/<select\b[^>]*aria-label="Tab vehicle"[^>]*data-vehicle-tab-id="cup"/);assert.match(context,/<option\b[^>]*value="cup_model"[^>]*selected/);assert.doesNotMatch(context,/value="roadster_model"/);}else{assert.doesNotMatch(context,/<select\b/);assert.ok(context.includes('Base applies to every vehicle.'));}
- }
+test('profile workspace keeps every integration in one canvas without tabs or a vehicle picker',async()=>{
+ const h=await vehicleWorkspace(),before=plain(h.store.state.editor),calls=plain(h.calls),body=html(h.store,h.client);
+ assert.doesNotMatch(body,/Profile vehicle tabs|Add vehicle tab|Tab vehicle|profile-vehicle-canvas|Remove [^"]+ tab|Choose a vehicle to start/);
+ assert.match(body,/Integrations/);assert.match(body,/data-integration-vehicle-id="roadster_model"/);assert.match(body,/data-integration-vehicle-id="cup_model"/);
  assert.deepEqual(plain(h.store.state.editor),before);assert.deepEqual(h.calls,calls);
 });
 
-test('a new vehicle tab puts its picker in the first content row above the empty canvas',async()=>{
- const h=await vehicleWorkspace(),body=await vehicleWorkspaceHtml(h,{activeId:'cup',adding:true}),tabs=physicalVehicleTabs(body),newTab=tabs.find(tab=>tab.content.includes('New vehicle'));
- assert.ok(newTab);assert.equal(tabs.length,3);assert.doesNotMatch(newTab.content,/<select\b/);assert.match(newTab.content,/<button\b[^>]*aria-label="Cancel new vehicle tab"/);assert.doesNotMatch(newTab.content,/<button\b[^>]*aria-label="Remove /);
- assert.ok(body.indexOf('aria-label="Tab vehicle"')>body.indexOf('id="profile-vehicle-canvas"'));assert.match(body,/<div\b[^>]*id="profile-vehicle-canvas"[^>]*role="region"[^>]*aria-label="New vehicle"/);assert.ok(body.includes('Choose a vehicle to start configuring its canvas.'));
- const context=body.match(/<div\b[^>]*class="[^"]*\bvehicle-context\b[^"]*"[^>]*>([^]*?)<\/div>/)?.[1]??'';assert.match(context,/<select\b[^>]*aria-label="Tab vehicle"/);assert.doesNotMatch(context,/value="(?:roadster_model|cup_model)"/);assert.deepEqual(h.calls,[['get',uid(20)]]);
-});
-
-test('read-only vehicle tabs allow browsing while the content selector and removal are disabled',async()=>{
- const h=await vehicleWorkspace({readOnly:true}),before=plain(h.store.state.editor),body=await vehicleWorkspaceHtml(h,{activeId:'roadster'});
- const tabs=physicalVehicleTabs(body);assert.equal(tabs.length,2);
- for(const tab of tabs){
-  const button=tab.content.match(/<button\b([^>]*\bdata-vehicle-tab-id[^>]*)>/);assert.ok(button);assert.doesNotMatch(button[1],/\bdisabled(?:[\s=>]|$)|tabindex="-1"|\brole=/);
-  assert.doesNotMatch(tab.content,/<select\b/);assert.match(tab.content,/<button\b[^>]*aria-label="Remove [^"]+ tab"[^>]*disabled/);
- }
- assert.match(body,/<select\b[^>]*aria-label="Tab vehicle"[^>]*disabled/);
- assert.match(body,/<button\b[^>]*aria-label="Add vehicle tab"[^>]*disabled/);
- const adding=await vehicleWorkspaceHtml(h,{adding:true});assert.match(adding,/<select\b[^>]*aria-label="Tab vehicle"[^>]*disabled/);assert.deepEqual(plain(h.store.state.editor),before);assert.deepEqual(h.calls,[['get',uid(20)]]);
+test('read-only workspace keeps the unified canvas visible and disables integration additions',async()=>{
+ const h=await vehicleWorkspace({readOnly:true}),before=plain(h.store.state.editor),body=html(h.store,h.client);
+ assert.match(body,/aria-label="Profile canvas"/);assert.doesNotMatch(body,/Profile vehicle tabs|Tab vehicle/);
+ for(const id of ['roadster_model','cup_model'])assert.match(body,new RegExp('<button[^>]*data-integration-vehicle-id="'+id+'"[^>]*disabled'));
+ assert.deepEqual(plain(h.store.state.editor),before);assert.deepEqual(h.calls,[['get',uid(20)]]);
 });
 
 test('fresh active ownership puts its tile first and stale or absent ownership restores ordinary ordering and tile appearance',async()=>{
@@ -382,4 +357,14 @@ test('fresh active ownership puts its tile first and stale or absent ownership r
  failStatus=false;status={...stopped,appliedSnapshot};await runtime.refresh();rows=tiles();assert.deepEqual(rows.map(row=>row.name),['Default','Alpha rig','Zulu rig']);for(const row of rows){assert.ok(!row.classes.includes('profile-active')&&!row.classes.includes('profile-muted'));assert.ok(!row.body.includes('<span>Active</span>'));}
  status={...status,state:'degraded',degradation:['Optional resource unavailable'],owner:{session:uid(82),generation:2,profileId:activeId,profileRevision:3,gameId:null}};await runtime.refresh();rows=tiles();assert.equal(rows[0].name,'Zulu rig');assert.ok(rows[0].classes.includes('profile-active'));assert.ok(rows[1].classes.includes('profile-muted'));
  assert.deepEqual(plain(h.store.state.profiles),before,'Active-first presentation must not reorder saved profile metadata.');assert.deepEqual(h.calls,[]);runtime.dispose();
+});
+
+test('dropping an integration acquires its source, scope and position in one undoable edit',async()=>{
+ const filename=new URL('./ProfilesPanel.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureIntegration({addIntegration,history,get state(){return {notice,integrationDropBusy};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
+ vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,captureIntegration(value){handlers=value;},require(name){name=libModuleName(name,filename);if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(name.endsWith('.svelte'))return{default:()=>{}};if(modules.has(name))return modules.get(name);if(name==='./gateway')return{gatewayRequest:noRequest};throw new Error('Unexpected integration dependency '+name);}},{filename:filename.pathname});
+ const h=harness();await h.store.refresh();h.store.beginBlank([]);const initial=modules.get('./profile-game-context').profileSetGameContext(h.store.state.editor,'dcs',[]);h.store.update(initial.document,initial.assignments);const before=plain(h.store.state.editor),calls=[];
+ const observed={...resource('game-integration',3),id:'native:dcs:AH6',attributes:{gameId:'dcs',aircraftModule:'AH-6J',vehicleAliases:'["AH-6J"]'}};h.client.dcsVehicle=async id=>{calls.push(id);return observed;};h.client.listAll=async()=>({resources:[observed]});await h.store.refreshInventory();
+ render(exports.default,{props:{editorStore:h.store,resourceClient:h.client}}).body;await handlers.addIntegration({id:'AH-6J',name:'AH-6J'},{x:420,y:235});
+ const current=h.store.state.editor,scope=current.document.vehicleTabs[0],block=current.document.resources.find(node=>scope.nodeIds.includes(node.id));assert.ok(block);assert.equal(block.name,'AH-6J');assert.equal(scope.vehicleId,'AH-6J');assert.deepEqual(plain(current.document.editor.positions.find(point=>point.nodeId===block.id)),{nodeId:block.id,x:420,y:235});assert.equal(current.assignments.find(assignment=>assignment.resourceId===block.id).sourceId,observed.id);assert.deepEqual(calls,['AH-6J']);assert.equal(handlers.state.notice,'');assert.equal(handlers.state.integrationDropBusy,false);assert.deepEqual(h.calls,[]);
+ const added=plain(current);assert.equal(handlers.history.status.undoLabel,'Add integration');assert.equal(handlers.history.step('undo'),true);assert.deepEqual(plain(h.store.state.editor.document),before.document);assert.deepEqual(plain(h.store.state.editor.assignments),before.assignments);assert.equal(handlers.history.status.canUndo,false);assert.equal(handlers.history.step('redo'),true);assert.deepEqual(plain(h.store.state.editor.document),added.document);assert.deepEqual(plain(h.store.state.editor.assignments),added.assignments);
 });

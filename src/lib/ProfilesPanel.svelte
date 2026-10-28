@@ -20,8 +20,8 @@
   import {ProfileCompanionAuthoringClient,graphCaptureCompanionPanel,latestCompanionPanels,type ProfileCompanionCatalogue}from'./profile-companion-authoring';
   import {type DesktopBlockKind} from './profile-desktop-blocks';
   import type {CanvasPoint}from'./profile-canvas';
-  import {profileGameContext,profileGameContextNeedsSync,profileGameName,profileSetGameContext,profileAddVehicleIntegration,profileChangeVehicleIntegration,profileGameTabInventory,profileReconcileDcsVehicleCatalogue}from'./profile-game-context';
-  import {profileAddVehicleTab,profileRemoveVehicleTab,profileStampVehicleNodes,profileTabDocument,profileTabNodeIds}from'./profile-vehicle-tabs';
+  import {profileGameContext,profileGameContextNeedsSync,profileSyncGameContext,profileGameName,profileSetGameContext,profileAddVehicleIntegration,profileReconcileDcsVehicleCatalogue}from'./profile-game-context';
+  import {profileAddVehicleTab,profileTabNodeIds}from'./profile-vehicle-tabs';
   import {ProfileCompilerClient}from'./profile-compilation';
   import {ProfileRuntimeClient,nativeProfileStatus}from'./profile-runtime';
   import {ProfileRuntimeController,type RuntimeControlState}from'./profile-runtime-controller';
@@ -50,9 +50,7 @@
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let companionCatalogue=$state.raw<DeepReadonly<ProfileCompanionCatalogue>|null>(null),companionPanelsBusy=$state(false),companionPanelsError=$state(''),companionDropBusy=$state(false),companionCatalogueEpoch=0,companionDropEpoch=0;
   let editingName = $state(false), nameDraft = $state('');
-  let gameCatalogue=$state.raw<Game[]>([]),vehicleError=$state(''),activeVehicleTabId=$state(''),addingVehicleTab=$state(false),customVehicle=$state(false),vehicleIdDraft=$state(''),vehicleNameDraft=$state('');
-  let vehicleTabsElement=$state.raw<HTMLDivElement|undefined>();
-  let vehicleSelect=$state.raw<HTMLSelectElement|undefined>();
+  let gameCatalogue=$state.raw<Game[]>([]),integrationDropBusy=$state(false);
   let dcsCatalogues=$state.raw<Record<string,DeepReadonly<ResourceSummary>>>({}),dcsCatalogueBusy=$state(false),dcsCatalogueError=$state(''),dcsCatalogueRevision=$state(0);
   let requestedDcsCatalogue='',dcsCatalogueEpoch=0;
   const editor = $derived(workspace.editor);
@@ -61,14 +59,10 @@
   const gameSourceChoices=$derived(gameIntegrationSourceChoices($registeredGames,workspace.inventory));
   const contextGame=$derived($registeredGames.find(game=>game.id===selectedGame)??gameCatalogue.find(game=>game.id===selectedGame));
   const vehicleTabs=$derived(editor?.document.vehicleTabs??[]);
-  const vehicleTabsEnabled=$derived(!!selectedGame&&gameHasIntegration(contextGame)&&(contextGame?.vehicleSupport?.supported??true));
-  const activeVehicleTab=$derived(vehicleTabs.find(tab=>tab.id===activeVehicleTabId));
-  const dcsCatalogueKey=$derived(active&&selectedGame==='dcs'&&activeVehicleTab&&!addingVehicleTab?`${editor?.document.id}/${activeVehicleTab.id}/${activeVehicleTab.vehicleId}`:'');
-  const routingInventory=$derived(editor?profileGameTabInventory(editor.document,editorInventory,activeVehicleTabId):editorInventory);
-  const tabDcsModule=$derived(routingInventory.find(source=>source.attributes.gameId==='dcs')?.attributes.aircraftModule);
+  const integrationsEnabled=$derived(!!selectedGame&&gameHasIntegration(contextGame)&&(contextGame?.vehicleSupport?.supported??true));
+  const dcsCatalogueKey=$derived(active&&selectedGame==='dcs'?`${editor?.document.id}/${vehicleTabs.map(scope=>scope.vehicleId).join('/')}`:'');
+  const routingInventory=$derived(editorInventory);
   const inventoryRevision=$derived.by(()=>{void workspace;return store.inventoryRevision+dcsCatalogueRevision;});
-  const tabDocument=$derived(editor?profileTabDocument(editor.document,activeVehicleTabId):null);
-  const tabNodeIds=$derived(editor?profileTabNodeIds(editor.document,activeVehicleTabId):new Set<string>());
   const vehicleChoices=$derived.by(()=>{const choices=new Map<string,{id:string;name:string}>();for(const vehicle of contextGame?.vehicleSupport?.vehicles??[])choices.set(vehicle.id,vehicle);for(const tab of vehicleTabs)choices.set(tab.vehicleId,{id:tab.vehicleId,name:tab.vehicleName});if(contextGame?.currentVehicle)choices.set(contextGame.currentVehicle.id,contextGame.currentVehicle);return [...choices.values()].sort((a,b)=>a.name.localeCompare(b.name));});
   const editorIdentity=$derived(editor?.document.id??'');
   const canRename = $derived(!!editor && editor.document.id!==DEFAULT_PROFILE_ID && !workspace.readOnly && !workspace.busy && !libraryBusy);
@@ -77,7 +71,7 @@
   const error = $derived(editor ? profileDocumentError(editingName?{...editor.document,name:nameDraft.trim()}:editor.document) : '');
   const activeProfileId=$derived(runtimeState.stale?undefined:runtimeState.status?.owner?.profileId);
   const rows = $derived([...workspace.profiles].sort((a,b)=>Number(b.id===activeProfileId)-Number(a.id===activeProfileId)||Number(b.isDefault)-Number(a.isDefault)||a.name.localeCompare(b.name)));
-  const assignedIds = $derived(new Set(editor?.assignments.filter(assignment=>tabNodeIds.has(assignment.resourceId)).map(assignment=>assignment.sourceId)??[]));
+  const assignedIds = $derived(new Set(editor?.assignments.map(assignment=>assignment.sourceId)??[]));
   const capturedCompanionIds=$derived.by(()=>{const selected=new Set(editor?.document.companionAssignments.map(panel=>editor.assignments.find(assignment=>assignment.resourceId===panel.resourceId)?.sourceId).filter((id):id is string=>!!id)??[]),identities=new Set(workspace.inventory.filter(source=>selected.has(source.id)).map(source=>source.attributes.companionId).filter(Boolean));return new Set([...selected,...workspace.inventory.filter(source=>!!source.attributes.companionId&&identities.has(source.attributes.companionId)).map(source=>source.id)]);});
   const appliedSnapshot=$derived(runtimeState.status?.owner&&!runtimeState.stale?runtimeState.status.appliedSnapshot:null);
   const learningIdle=$derived(!!runtimeState.status&&!runtimeState.stale&&runtimeState.status.owner===null&&!['transitioning','recovery-needed'].includes(runtimeState.status.state));
@@ -86,13 +80,10 @@
   onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));if(workspace.view==='list')void store.refresh();return()=>{stop();stopSaved();}; });
   onDestroy(() => { dcsCatalogueEpoch++;companionCatalogueEpoch++;companionDropEpoch++;navigationCancelled?.();runtime.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
-  $effect(()=>{void editorIdentity;activeVehicleTabId='';addingVehicleTab=false;});
-  $effect(()=>{if(activeVehicleTabId&&!vehicleTabs.some(tab=>tab.id===activeVehicleTabId))activeVehicleTabId='';});
-  $effect(()=>{void selectedGame;addingVehicleTab=false;customVehicle=false;vehicleError='';});
   $effect(()=>{void editorContext;editingName=false;});
   $effect(()=>{void editorContext;paletteDrag=null;});
-  $effect(()=>{void editorContext;void activeVehicleTabId;companionDropEpoch++;companionDropBusy=false;});
-  $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,editorInventory))untrack(()=>setGameContext(selectedGame));});
+  $effect(()=>{void editorContext;companionDropEpoch++;companionDropBusy=false;});
+  $effect(()=>{if(editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&profileGameContextNeedsSync(editor,editorInventory))untrack(()=>{const next=profileSyncGameContext(editor,editorInventory);change(next.document,next.assignments,'Select integration catalogue');});});
   $effect(()=>{const key=dcsCatalogueKey;if(requestedDcsCatalogue===key)return;requestedDcsCatalogue=key;dcsCatalogueEpoch++;dcsCatalogueBusy=false;dcsCatalogueError='';if(key)untrack(()=>void loadDcsVehicleCatalogue());});
   $effect(()=>{if(paletteDrag&&(!active||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
@@ -114,40 +105,50 @@
   async function openProfile(profileId:string) { await store.open(profileId);workspace=store.state;if(getNavigation()===profileId)onNavigate?.(profileId); }
   function add() { notice='';report(()=>store.beginBlank([])); }
   function showConfirmation(node:HTMLDialogElement) { node.showModal();return()=>node.close(); }
-  function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph',scope=true) { if(scope&&editor)profileStampVehicleNodes(editor.document,document,activeVehicleTabId);report(()=>history.edit(document,assignments,label)); }
+  function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph') { report(()=>history.edit(document,assignments,label)); }
   let vehicleCatalogueBusy=false;
   async function refreshVehicleCatalogue(){if(vehicleCatalogueBusy)return;vehicleCatalogueBusy=true;try{const state=await gatewayRequest({command:'game_get_state'});if(state.games?.catalogue)gameCatalogue=state.games.catalogue;}catch{/* Keep saved vehicle choices available when disconnected. */}finally{vehicleCatalogueBusy=false;}}
   async function loadDcsVehicleCatalogue(){
-    const tab=activeVehicleTab,profileId=editor?.document.id;if(!tab||selectedGame!=='dcs')return;
-    const epoch=++dcsCatalogueEpoch;dcsCatalogueBusy=true;dcsCatalogueError='';
-    try{
-      const source=await resources.dcsVehicle(tab.vehicleId);if(epoch!==dcsCatalogueEpoch)return;
+    const current=store.state.editor,profileId=current?.document.id;if(!current||selectedGame!=='dcs')return;
+    const scopes=[...(current.document.vehicleTabs??[])],epoch=++dcsCatalogueEpoch,failures:string[]=[];dcsCatalogueBusy=true;dcsCatalogueError='';
+    try{for(const scope of scopes){try{
+      const source=await resources.dcsVehicle(scope.vehicleId);if(epoch!==dcsCatalogueEpoch)return;
       dcsCatalogues={...dcsCatalogues,[source.id]:source};dcsCatalogueRevision++;
-      const current=store.state.editor;if(!current||current.document.id!==profileId||!current.document.vehicleTabs?.some(current=>current.id===tab.id&&current.vehicleId===tab.vehicleId))return;
+      let latest=store.state.editor;if(!latest||latest.document.id!==profileId)return;
       if(!workspace.readOnly&&!workspace.busy&&!libraryBusy){
-        const configured=current.document.resources.some(resource=>resource.kind==='game'&&tab.nodeIds.includes(resource.id)&&resource.ports.length&&current.assignments.find(assignment=>assignment.resourceId===resource.id)?.sourceId!==source.id);
+        const configured=latest.document.resources.some(node=>node.kind==='game'&&scope.nodeIds.includes(node.id)&&node.ports.length&&latest!.assignments.find(pin=>pin.resourceId===node.id)?.sourceId!==source.id);
         const ports=configured?(await resources.inspectAll(source.id)).ports:[];if(epoch!==dcsCatalogueEpoch)return;
-        const latest=store.state.editor;if(latest&&latest.document.id===profileId&&latest.document.vehicleTabs?.some(current=>current.id===tab.id&&current.vehicleId===tab.vehicleId)){
-          const next=profileReconcileDcsVehicleCatalogue(latest,tab.id,source,ports,editorInventory);
-          if(JSON.stringify(next.assignments)!==JSON.stringify(latest.assignments))change(next.document,next.assignments,'Select aircraft catalogue',false);
-        }
+        latest=store.state.editor;if(!latest||latest.document.id!==profileId)return;
+        const next=profileReconcileDcsVehicleCatalogue(latest,scope.id,source,ports,editorInventory);if(JSON.stringify(next.assignments)!==JSON.stringify(latest.assignments))change(next.document,next.assignments,'Select integration catalogue');
       }
-      await store.refreshInventory();
-    }catch(error){if(epoch===dcsCatalogueEpoch)dcsCatalogueError=error instanceof Error?error.message:String(error);}
-    finally{if(epoch===dcsCatalogueEpoch)dcsCatalogueBusy=false;}
+    }catch(error){failures.push(`${scope.vehicleName}: ${error instanceof Error?error.message:String(error)}`);}}}
+    finally{if(epoch===dcsCatalogueEpoch){dcsCatalogueBusy=false;dcsCatalogueError=failures.join(' ');}}
   }
-  function selectTab(id:string){activeVehicleTabId=id;addingVehicleTab=false;customVehicle=false;vehicleError='';routingSelection='';}
-  function beginVehicleTab(){addingVehicleTab=true;customVehicle=false;vehicleError='';routingSelection='';vehicleIdDraft='';vehicleNameDraft='';void tick().then(()=>vehicleSelect?.focus());}
-  function chooseVehicle(id:string){if(id==='__custom'){customVehicle=true;vehicleIdDraft=activeVehicleTab?.vehicleId??'';vehicleNameDraft=activeVehicleTab?.vehicleName??'';return;}const vehicle=vehicleChoices.find(vehicle=>vehicle.id===id);if(vehicle)saveVehicleChoice(vehicle);}
-  function saveVehicleChoice(vehicle:{id:string;name:string}){if(!editor||!selectedGame)return;vehicleError='';try{if(addingVehicleTab){const next=profileAddVehicleTab(editor.document,selectedGame,vehicle),integrated=profileAddVehicleIntegration({document:next.document,assignments:editor.assignments},next.tabId,editorInventory);change(integrated.document,integrated.assignments,'Add vehicle tab',false);activeVehicleTabId=next.tabId;addingVehicleTab=false;}else if(activeVehicleTab){const next=profileChangeVehicleIntegration(editor,activeVehicleTab.id,vehicle,editorInventory);change(next.document,next.assignments,'Change tab vehicle',false);}customVehicle=false;}catch(error){vehicleError=error instanceof Error?error.message:String(error);}}
-  function saveCustomVehicle(event:SubmitEvent){event.preventDefault();saveVehicleChoice({id:vehicleIdDraft.trim(),name:vehicleNameDraft.trim()||vehicleIdDraft.trim()});}
-  function removeVehicleTab(id:string){if(!editor)return;const next=profileRemoveVehicleTab(editor.document,editor.assignments,id);change(next.document,next.assignments,'Remove vehicle tab',false);if(activeVehicleTabId===id){selectTab('');void tick().then(()=>vehicleTabsElement?.querySelector<HTMLButtonElement>('[data-tab-index="0"]')?.focus());}}
+  async function addIntegration(vehicle:{id:string;name:string},position?:CanvasPoint){
+    const current=store.state.editor,gameId=selectedGame;if(!current||!gameId||!canDropComponent({kind:'integration',gameId,vehicleId:vehicle.id,vehicleName:vehicle.name}))return;
+    const context=editorContext,epoch=store.editorEpoch;integrationDropBusy=true;notice='';
+    try{
+      let source:DeepReadonly<ResourceSummary>|undefined;
+      if(gameId==='dcs'&&vehicle.id)source=await resources.dcsVehicle(vehicle.id);
+      if(context!==editorContext||epoch!==store.editorEpoch||!active)return;
+      if(source){dcsCatalogues={...dcsCatalogues,[source.id]:source};dcsCatalogueRevision++;}
+      const latest=store.state.editor;if(!latest||selectedGame!==gameId||workspace.readOnly||workspace.busy||libraryBusy)return;
+      const before=latest.document,existing=new Set(before.resources.map(node=>node.id));let next;
+      if(!vehicle.id)next=profileSetGameContext(latest,gameId,editorInventory);
+      else{const scope=before.vehicleTabs?.find(scope=>scope.vehicleId===vehicle.id);const created=scope?{document:JSON.parse(JSON.stringify(before)) as ProfileDocument,tabId:scope.id}:profileAddVehicleTab(before,gameId,vehicle);next=profileAddVehicleIntegration({document:created.document,assignments:JSON.parse(JSON.stringify(latest.assignments))},created.tabId,editorInventory);}
+      const node=next.document.resources.find(node=>!existing.has(node.id));if(!node)return;
+      if(vehicle.id)node.name=vehicle.name;
+      const bottom=Math.max(0,...before.editor.positions.map(point=>point.y+280));
+      next.document=profilePlaceComponent(before,next.document,node.id,position??{x:48,y:bottom+48});change(next.document,next.assignments,'Add integration');
+    }catch(error){if(context===editorContext)notice=error instanceof Error?error.message:String(error);}
+    finally{integrationDropBusy=false;}
+  }
   function name(value:string) { if(!editor)return;const next=JSON.parse(JSON.stringify(editor.document)) as ProfileDocument;next.name=value;change(next,undefined,'Rename profile'); }
   function editName() { if(!canRename||!editor)return;nameDraft=editor.document.name;editingName=true; }
   function focusName(node:HTMLInputElement) { node.focus();node.select(); }
   function finishName() { if(!editingName)return;editingName=false;const title=nameDraft.trim();if(canRename&&title!==editor?.document.name)name(title); }
   function historyStep(direction:'undo'|'redo'){report(()=>{history.step(direction);});}
-  function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,editorInventory);change(next.document,next.assignments,'Change game context',false);if(gameId!==selectedGame)selectTab('');}); }
+  function setGameContext(gameId:GameId|'') { if(!editor||workspace.busy||workspace.readOnly||libraryBusy)return;report(()=>{const next=profileSetGameContext(editor,gameId,editorInventory);change(next.document,next.assignments,'Change game context');}); }
   export function requestNavigation(continueNavigation:()=>void,cancelNavigation?:()=>void,preserveCleanEditor=false):void {
     finishName();
     notice='';
@@ -168,7 +169,7 @@
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
   async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank([]));else{const previous=getNavigation();await store.beginCopy(id);workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());} }
   function canDropComponent(component:ProfilePaletteComponent):boolean {
-    return !!editor&&!addingVehicleTab&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&!companionDropBusy&&profilePaletteCanAdd(component,editor.document,editor.assignments,workspace.inventory,activeVehicleTabId)&&(component.kind!=='companion-panel'||!!companionCatalogue?.panels.some(panel=>panel.publicationHash===component.publicationHash&&!profilePalettePanelReason(panel,workspace.inventory.find(source=>source.id===component.sourceId)!)));
+    return !!editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&!companionDropBusy&&!integrationDropBusy&&profilePaletteCanAdd(component,editor.document,editor.assignments,workspace.inventory)&&(component.kind!=='companion-panel'||!!companionCatalogue?.panels.some(panel=>panel.publicationHash===component.publicationHash&&!profilePalettePanelReason(panel,workspace.inventory.find(source=>source.id===component.sourceId)!)));
   }
   async function refreshCompanionPanels(){
     if(!active||companionPanelsBusy)return;const epoch=++companionCatalogueEpoch;companionPanelsBusy=true;companionPanelsError='';
@@ -178,29 +179,30 @@
   }
   async function addCompanionPanel(sourceId:string,publicationHash:string,position?:CanvasPoint){
     const component:ProfilePaletteComponent={kind:'companion-panel',sourceId,publicationHash};if(!editor||!canDropComponent(component))return;
-    const epoch=++companionDropEpoch,context=editorContext,editorEpoch=store.editorEpoch,profileId=editor.document.id,tabId=activeVehicleTabId,originalSource=workspace.inventory.find(source=>source.id===sourceId)!;companionDropBusy=true;notice='';
+    const epoch=++companionDropEpoch,context=editorContext,editorEpoch=store.editorEpoch,profileId=editor.document.id,originalSource=workspace.inventory.find(source=>source.id===sourceId)!;companionDropBusy=true;notice='';
     try{
       const catalogue=await companionAuthoring.catalogue(),panel=latestCompanionPanels(catalogue.panels).find(panel=>panel.publicationHash===publicationHash);
       if(!panel)throw new Error('This saved panel changed while dragging. Refresh panels and drop its current version.');
       const reason=profilePalettePanelReason(panel,originalSource);if(reason)throw new Error(reason);
       const page=await companionAuthoring.inspect(sourceId,publicationHash,0,32);
       if(page.capabilityFingerprint!==panel.capabilityFingerprint)throw new Error('This panel’s declared ports changed. Refresh saved panels before dropping it.');
-      if(epoch!==companionDropEpoch||context!==editorContext||editorEpoch!==store.editorEpoch||profileId!==store.state.editor?.document.id||tabId!==activeVehicleTabId||!active)return;
+      if(epoch!==companionDropEpoch||context!==editorContext||editorEpoch!==store.editorEpoch||profileId!==store.state.editor?.document.id||!active)return;
       const current=store.state.editor,source=store.state.inventory.find(source=>source.id===sourceId);
-      if(!current||!source||source.generation!==originalSource.generation||source.capabilityRevision!==originalSource.capabilityRevision||JSON.stringify(source.attributes)!==JSON.stringify(originalSource.attributes)||workspace.readOnly||workspace.busy||libraryBusy||!profilePaletteCanAdd(component,current.document,current.assignments,store.state.inventory,tabId))throw new Error('The profile or paired companion changed. Drop the panel again after refreshing.');
-      const previous=new Set(current.document.resources.map(resource=>resource.id)),added=addProfileResources(JSON.parse(JSON.stringify(current.document)),JSON.parse(JSON.stringify(current.assignments)),[source],tabId),node=added.document.resources.find(resource=>!previous.has(resource.id))!;
+      if(!current||!source||source.generation!==originalSource.generation||source.capabilityRevision!==originalSource.capabilityRevision||JSON.stringify(source.attributes)!==JSON.stringify(originalSource.attributes)||workspace.readOnly||workspace.busy||libraryBusy||!profilePaletteCanAdd(component,current.document,current.assignments,store.state.inventory))throw new Error('The profile or paired companion changed. Drop the panel again after refreshing.');
+      const previous=new Set(current.document.resources.map(resource=>resource.id)),added=addProfileResources(JSON.parse(JSON.stringify(current.document)),JSON.parse(JSON.stringify(current.assignments)),[source]),node=added.document.resources.find(resource=>!previous.has(resource.id))!;
       node.name=[...panel.title].slice(0,80).join('');const captured=graphCaptureCompanionPanel(added,node.id,panel);
-      captured.document=profilePlaceComponent(current.document,captured.document,node.id,position,tabId);companionCatalogue=catalogue;change(captured.document,captured.assignments,'Add companion panel');
+      captured.document=profilePlaceComponent(current.document,captured.document,node.id,position);companionCatalogue=catalogue;change(captured.document,captured.assignments,'Add companion panel');
     }catch(error){if(epoch===companionDropEpoch)notice=error instanceof Error?error.message:String(error);}
     finally{if(epoch===companionDropEpoch)companionDropBusy=false;}
   }
   function addResource(resource:DeepReadonly<ResourceSummary>,position?:CanvasPoint) {
     if(!editor||!canDropComponent({kind:'resource',sourceId:resource.id}))return;
-    report(()=>{const before=editor!.document,previous=new Set(before.resources.map(resource=>resource.id));const next=addProfileResources(JSON.parse(JSON.stringify(before)),JSON.parse(JSON.stringify(editor!.assignments)),[resource],activeVehicleTabId);const nodeId=next.document.resources.find(resource=>!previous.has(resource.id))!.id;change(profilePlaceComponent(before,next.document,nodeId,position,activeVehicleTabId),next.assignments,'Add component');});
+    report(()=>{const before=editor!.document,previous=new Set(before.resources.map(resource=>resource.id));const next=addProfileResources(JSON.parse(JSON.stringify(before)),JSON.parse(JSON.stringify(editor!.assignments)),[resource]);const nodeId=next.document.resources.find(resource=>!previous.has(resource.id))!.id;change(profilePlaceComponent(before,next.document,nodeId,position),next.assignments,'Add component');});
   }
   function dropComponent(component:ProfilePaletteComponent,position:CanvasPoint){
     if(!canDropComponent(component))return;
-    if(component.kind==='virtual')routingEditor?.addVirtual(position);
+    if(component.kind==='integration')void addIntegration({id:component.vehicleId,name:component.vehicleName},position);
+    else if(component.kind==='virtual')routingEditor?.addVirtual(position);
     else if(component.kind==='debug-controller')routingEditor?.addDebug(position);
     else if(component.kind==='desktop')routingEditor?.addDesktop(position,component.device);
     else if(component.kind==='companion-panel')void addCompanionPanel(component.sourceId,component.publicationHash,position);
@@ -264,54 +266,15 @@
     <div class="profile-authoring">
       <div class="profile-components-column">
         <label class="game-context" title="Saved with the profile. Selecting a context makes this profile available for that game. Integrated games also add their telemetry block.">Game context<select aria-label="Game context" value={gameSourceChoices.some(choice=>choice.game.id===selectedGame)?selectedGame:''} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#each gameSourceChoices as choice (choice.game.id)}<option value={choice.game.id}>{choice.game.name} · {choice.status}</option>{/each}</select></label>
-      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} editorGroups={tabDocument?.editor.groups??[]} canAddGroup={!activeVehicleTabId} addGroup={()=>{if(!activeVehicleTabId)routingEditor?.addGroup();}} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.filter(node=>profileTabNodeIds(editor.document).has(node.id)||tabNodeIds.has(node.id)).length} keyboardAdded={!canDropComponent({kind:'desktop',device:'keyboard'})} mouseAdded={!canDropComponent({kind:'desktop',device:'mouse'})}
+      <ProfileComponentPalette integrationGameId={integrationsEnabled?selectedGame:undefined} integrationGameName={contextGame?.name} integrationVehicles={vehicleChoices} addedIntegrationVehicles={new Set(editor.document.resources.filter(node=>node.kind==='game').map(node=>vehicleTabs.find(scope=>scope.nodeIds.includes(node.id))?.vehicleId??''))} addIntegration={vehicle=>void addIntegration(vehicle)} inventory={workspace.inventory} {assignedIds} editorGroups={editor.document.editor.groups??[]} addGroup={()=>routingEditor?.addGroup()} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.length} keyboardAdded={!canDropComponent({kind:'desktop',device:'keyboard'})} mouseAdded={!canDropComponent({kind:'desktop',device:'mouse'})}
         processingCount={editor.document.processingNodes.length+(editor.document.desktopOutputs??[]).reduce((count,node)=>count+node.actions.length,0)}
-        {capturedCompanionIds} companionPanelCount={editor.document.companionAssignments.length} companionPanels={companionCatalogue?.panels??[]} companionPanelsLoaded={!!companionCatalogue} companionPanelsBusy={companionPanelsBusy||companionDropBusy} {companionPanelsError} refreshPanels={()=>void refreshCompanionPanels()} addCompanionPanel={(sourceId,publicationHash)=>void addCompanionPanel(sourceId,publicationHash)}
-        disabled={workspace.readOnly||workspace.busy||libraryBusy||addingVehicleTab||companionDropBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>{void store.refreshInventory();if(companionCatalogue)void refreshCompanionPanels();}} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDebug={()=>{if(canDropComponent({kind:'debug-controller'}))routingEditor?.addDebug();}} addDesktop={kind=>{if(canDropComponent({kind:'desktop',device:kind}))routingEditor?.addDesktop(undefined,kind);}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
+        {capturedCompanionIds} companionPanelCount={editor.document.companionAssignments.length} companionPanels={companionCatalogue?.panels??[]} companionPanelsLoaded={!!companionCatalogue} companionPanelsBusy={companionPanelsBusy||companionDropBusy||integrationDropBusy} {companionPanelsError} refreshPanels={()=>void refreshCompanionPanels()} addCompanionPanel={(sourceId,publicationHash)=>void addCompanionPanel(sourceId,publicationHash)}
+        disabled={workspace.readOnly||workspace.busy||libraryBusy||companionDropBusy||integrationDropBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>{void store.refreshInventory();if(companionCatalogue)void refreshCompanionPanels();}} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDebug={()=>{if(canDropComponent({kind:'debug-controller'}))routingEditor?.addDebug();}} addDesktop={kind=>{if(canDropComponent({kind:'desktop',device:kind}))routingEditor?.addDesktop(undefined,kind);}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
       </div>
       <div class="profile-canvas-workspace">
-        {#if vehicleTabsEnabled&&!addingVehicleTab}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {activeVehicleTabId} {compiler} {inventoryRevision} {active}/>{/if}
-        {#if vehicleTabsEnabled}
-          <div class="vehicle-tab-bar">
-            <div class="vehicle-tabs" role="group" aria-label="Profile vehicle tabs" bind:this={vehicleTabsElement}>
-              <button type="button" class="vehicle-tab vehicle-base" class:active={!activeVehicleTabId&&!addingVehicleTab} data-tab-index="0" aria-pressed={!activeVehicleTabId&&!addingVehicleTab} aria-controls="profile-vehicle-canvas" onclick={()=>selectTab('')}>Base</button>
-              {#each vehicleTabs as tab,index (tab.id)}
-                <div class="vehicle-tab" class:active={activeVehicleTabId===tab.id&&!addingVehicleTab}>
-                  <button type="button" class="vehicle-tab-label" aria-label={tab.vehicleName} aria-controls="profile-vehicle-canvas" data-vehicle-tab-id={tab.id} data-tab-index={index+1} aria-pressed={activeVehicleTabId===tab.id&&!addingVehicleTab} onclick={()=>selectTab(tab.id)}>{tab.vehicleName}</button>
-                  <button type="button" class="remove-vehicle-tab" aria-label={`Remove ${tab.vehicleName} tab`} title="Remove tab and all its nodes" disabled={workspace.readOnly||workspace.busy||libraryBusy} onclick={()=>removeVehicleTab(tab.id)}><Icon name="close" size={12}/></button>
-                </div>
-              {/each}
-              {#if addingVehicleTab}
-                <div class="vehicle-tab active">
-                  <span class="vehicle-tab-label">New vehicle</span>
-                  <button type="button" class="remove-vehicle-tab" aria-label="Cancel new vehicle tab" title="Cancel new vehicle tab" onclick={()=>selectTab(activeVehicleTabId)}><Icon name="close" size={12}/></button>
-                </div>
-              {/if}
-            </div>
-            <button type="button" class="add-vehicle-tab" aria-label="Add vehicle tab" title="Add vehicle tab" disabled={workspace.readOnly||workspace.busy||libraryBusy||vehicleTabs.length>=32} onclick={beginVehicleTab}><Icon name="plus" size={15}/></button>
-          </div>
-        {/if}
-        <div id="profile-vehicle-canvas" class:vehicle-content={vehicleTabsEnabled} role={vehicleTabsEnabled?'region':undefined} aria-label={vehicleTabsEnabled?(addingVehicleTab?'New vehicle':activeVehicleTab?.vehicleName??'Base'):undefined}>
-          {#if vehicleTabsEnabled}
-            <div class="vehicle-settings">
-              <div class="vehicle-context">
-                {#if addingVehicleTab||activeVehicleTab}<label>Vehicle<select aria-label="Tab vehicle" data-vehicle-tab-id={addingVehicleTab?undefined:activeVehicleTab?.id} value={addingVehicleTab?'':activeVehicleTab?.vehicleId??''} disabled={workspace.readOnly||workspace.busy||libraryBusy} bind:this={vehicleSelect} onchange={event=>chooseVehicle(event.currentTarget.value)}>
-                  {#if addingVehicleTab}<option value="" disabled>Choose a vehicle…</option>{/if}
-                  {#each vehicleChoices.filter(vehicle=>!vehicleTabs.some(tab=>(addingVehicleTab||tab.id!==activeVehicleTabId)&&tab.vehicleId===vehicle.id)) as vehicle (vehicle.id)}<option value={vehicle.id}>{vehicle.name}</option>{/each}
-                  <option value="__custom">Enter exact vehicle ID…</option>
-                </select></label><p>Applies with Base while this vehicle is loaded. Conflicts are checked against Base.</p>{:else}<p>Base applies to every vehicle.</p>{/if}
-                {#if selectedGame==='dcs'&&!addingVehicleTab}<span class="vehicle-hint">DCS-BIOS catalogue: {activeVehicleTab?tabDcsModule??'Waiting for aircraft catalogue':'CommonData (shared flight telemetry)'}</span>{/if}
-                {#if contextGame?.currentVehicle}<span class="current-vehicle">Loaded: {contextGame.currentVehicle.name}</span>{/if}
-              </div>
-              {#if (addingVehicleTab||activeVehicleTab)&&customVehicle}<form class="vehicle-custom" onsubmit={saveCustomVehicle}><label>Exact vehicle ID<input aria-label="Exact vehicle ID" required maxlength="256" disabled={workspace.readOnly||workspace.busy||libraryBusy} bind:value={vehicleIdDraft}/></label><label>Vehicle name<input aria-label="Vehicle name" maxlength="80" disabled={workspace.readOnly||workspace.busy||libraryBusy} bind:value={vehicleNameDraft} placeholder="Same as ID"/></label><button class="secondary-button" type="submit" disabled={workspace.readOnly||workspace.busy||libraryBusy}>Use vehicle</button></form>{/if}
-              {#if addingVehicleTab&&contextGame?.vehicleSupport?.message}<p class="vehicle-hint">{contextGame.vehicleSupport.message}</p>{/if}
-              {#if vehicleError}<p class="workspace-error" role="alert">{vehicleError}</p>{/if}
-              {#if dcsCatalogueBusy}<p class="vehicle-hint" role="status">Loading this aircraft’s controls and telemetry…</p>{/if}
-              {#if dcsCatalogueError}<p class="workspace-error" role="alert">{dcsCatalogueError}</p><button class="secondary-button" disabled={dcsCatalogueBusy} onclick={()=>void loadDcsVehicleCatalogue()}>Retry aircraft catalogue</button>{/if}
-            </div>
-          {/if}
-          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={routingInventory} games={$registeredGames} inventoryClient={resources} companionClient={companionAuthoring} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} {active} runtimeIdle={learningIdle} {inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy||companionDropBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')}/>{/key}{/if}
-        </div>
+        {#if integrationsEnabled}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {compiler} {inventoryRevision} {active}/>{/if}
+        {#if dcsCatalogueError}<p class="workspace-error" role="status">{dcsCatalogueError}<button type="button" class="text-button" onclick={()=>void loadDcsVehicleCatalogue()}><Icon name="refresh" size={14}/>Retry</button></p>{/if}
+        <ProfileRoutingEditor bind:this={routingEditor} document={editor.document} assignments={editor.assignments} inventory={routingInventory} activeVehicleId={contextGame?.currentVehicle?.id??''} games={$registeredGames} inventoryClient={resources} companionClient={companionAuthoring} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} {active} runtimeIdle={learningIdle} {inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy||companionDropBusy||integrationDropBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')}/>
       </div>
     </div>
   {/if}
@@ -324,7 +287,6 @@
 
 <style>
   .history-tools{display:flex;align-items:center;gap:4px;padding-right:12px;border-right:1px solid var(--line)}.history-tools button{display:grid;place-items:center;width:34px;height:34px;padding:0;background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:5px}.history-tools button:hover:enabled{color:var(--text);background:var(--surface-raised)}.history-tools button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .vehicle-tab-bar{display:flex;align-items:stretch;gap:5px;border-bottom:1px solid var(--line);margin-bottom:0}.vehicle-tabs{display:flex;align-items:stretch;gap:4px;overflow-x:auto;min-width:0}.vehicle-tab{display:flex;align-items:stretch;flex-shrink:0;overflow:hidden;box-sizing:border-box;height:30px;line-height:14px;border:1px solid var(--line);border-bottom:2px solid transparent;border-radius:7px 7px 0 0;background:var(--surface);color:var(--muted);font-size:11px}.vehicle-tab.active{border-bottom-color:var(--accent);color:var(--accent);background:var(--surface-raised)}.vehicle-base{padding:6px 13px;white-space:nowrap}.vehicle-tab-label{min-width:100px;max-width:280px;box-sizing:border-box;border:0;border-radius:0;padding:6px 10px;background:transparent;color:inherit;font:inherit;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}button.vehicle-tab-label{cursor:pointer}.remove-vehicle-tab,.add-vehicle-tab{display:grid;place-items:center;background:transparent;color:var(--muted);padding:4px}.remove-vehicle-tab{width:26px;flex-shrink:0;border:0;border-radius:0}.remove-vehicle-tab:hover:enabled{color:var(--danger,#e67979);background:var(--surface)}.add-vehicle-tab{flex-shrink:0;min-width:30px;height:30px;box-sizing:border-box}.vehicle-settings{padding:14px;border:1px solid var(--line);border-top:0;border-bottom:0;background:var(--surface)}.vehicle-content :global(.profile-graph){border-top-left-radius:0;border-top-right-radius:0}.vehicle-context{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.vehicle-context label{display:grid;gap:5px;font-size:var(--ui-text-size);color:var(--muted)}.vehicle-context select{min-width:min(180px,100%);max-width:100%;padding:8px 12px;background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px;font:inherit}.vehicle-context p{margin:0}.vehicle-custom label{display:grid;gap:5px;font-size:var(--ui-text-size);color:var(--muted)}.vehicle-custom input{background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:8px;width:100%;min-width:0;max-width:260px;font-size:var(--ui-text-size);min-height:var(--ui-control-height);box-sizing:border-box}.vehicle-context p,.vehicle-hint{font-size:var(--ui-text-size);color:var(--muted);line-height:var(--ui-line-height)}.current-vehicle{margin-left:auto;font-size:var(--ui-text-size);color:var(--accent)}.vehicle-custom{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-top:14px}.vehicle-custom button{font-size:var(--ui-action-size)}.vehicle-empty{display:grid;justify-items:center;align-content:center;min-height:430px;border:1px solid var(--line);border-top:0;border-radius:0 0 7px 7px;color:var(--muted);font-size:var(--ui-text-size)}.vehicle-tabs button:focus-visible,.add-vehicle-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
   .profile-game-badge{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;overflow:hidden}.profile-game-badge :global(svg){flex-shrink:0}
   .profile-components-column{position:sticky;top:12px;align-self:start;display:flex;flex-direction:column;gap:12px;min-width:0}.profile-components-column :global(.component-palette){position:static;max-height:calc(100dvh - 230px)}.game-context{display:grid;gap:8px;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:var(--ui-text-size);color:var(--muted)}.game-context select{width:100%;min-width:0;padding:9px 12px;font-size:var(--ui-text-size);background:var(--input-bg);color:var(--text);border:1px solid var(--line);border-radius:5px;min-height:var(--ui-control-height);box-sizing:border-box}
   .profile-authoring{display:grid;grid-template-columns:236px minmax(0,1fr);align-items:start;gap:var(--ui-section-gap)}.profile-canvas-workspace{min-width:0}@media(max-width:1050px){.profile-authoring{grid-template-columns:minmax(0,1fr)}}

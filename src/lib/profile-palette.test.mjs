@@ -27,12 +27,56 @@ test('legacy transformation payloads are rejected by palette admission',()=>{
  const value=document();assert.equal(profilePaletteCanAdd({kind:'transformation',preset:'scale'},value,[],[],'a'),false);
 });
 
-test('palette duplicate admission belongs to the current tab and preserves physical identity across exclusive vehicles',()=>{
+test('palette duplicate admission preserves physical identity across the shared canvas',()=>{
  const value=document(),assignments=[{resourceId:'a-stick',sourceId:'native-stick',ports:[]}],component={kind:'resource',sourceId:'native-stick'};
  assert.equal(profilePaletteCanAdd(component,value,assignments,[source],'a'),false);
- assert.equal(profilePaletteCanAdd(component,value,assignments,[source],'b'),true);
- assert.equal(profilePaletteCanAdd(component,value,assignments,[source]),true);
+ assert.equal(profilePaletteCanAdd(component,value,assignments,[source],'b'),false);
+ assert.equal(profilePaletteCanAdd(component,value,assignments,[source]),false);
  assignments.push({resourceId:'b-stick',sourceId:'native-stick',ports:[]});assert.equal(profilePaletteCanAdd(component,value,assignments,[source],'b'),false);
+});
+
+test('integration identities and admission enforce the selected context, unique scopes and graph limits',()=>{
+ const value=document(),component={kind:'integration',gameId:'dcs',vehicleId:'A-10C',vehicleName:'A-10C'};
+ for(const vehicleId of ['',component.vehicleId])assert.equal(profilePaletteComponentValid({...component,vehicleId}),true);
+ for(const invalid of [{...component,extra:true},{...component,gameId:'bad game'},{...component,vehicleId:' bad'},{...component,vehicleId:'a'.repeat(257)},{...component,vehicleName:''},{...component,vehicleName:'bad\nname'}])assert.equal(profilePaletteComponentValid(invalid),false);
+ assert.equal(profilePaletteCanAdd(component,value,[],[]),true);
+ assert.equal(profilePaletteCanAdd({...component,gameId:'other'},value,[],[]),false);
+ assert.equal(profilePaletteCanAdd({...component,vehicleId:'F-16C_50'},value,[],[]),true);
+ assert.equal(profilePaletteCanAdd({...component,vehicleId:''},value,[],[]),true);
+ value.resources.push({id:'common',kind:'game'});
+ assert.equal(profilePaletteCanAdd({...component,vehicleId:''},value,[],[]),false);
+ value.vehicleTabs=Array.from({length:32},(_,index)=>({id:`scope-${index}`,gameId:'dcs',vehicleId:`vehicle-${index}`,nodeIds:[]}));
+ assert.equal(profilePaletteCanAdd(component,value,[],[]),false);
+ value.vehicleTabs=[];value.resources=Array.from({length:64},(_,index)=>({id:`resource-${index}`,kind:'device'}));
+ assert.equal(profilePaletteCanAdd(component,value,[],[]),false);
+ value.resources=[];value.eligibility.gameIds=[];assert.equal(profilePaletteCanAdd(component,value,[],[]),false);
+});
+
+test('a removed vehicle integration can reuse its scope even at the scope limit',()=>{
+ const value=document(),component={kind:'integration',gameId:'dcs',vehicleId:'F-16C_50',vehicleName:'Viper'};
+ value.vehicleTabs.push(...Array.from({length:30},(_,index)=>({id:`scope-${index}`,gameId:'dcs',vehicleId:`vehicle-${index}`,vehicleName:`Vehicle ${index}`,nodeIds:[]})));
+ const before=JSON.stringify(value.vehicleTabs);
+ assert.equal(profilePaletteCanAdd(component,value,[],[]),true);
+ value.resources.push({id:'viper-game',kind:'game'});value.vehicleTabs[0].nodeIds.push('viper-game');
+ assert.equal(profilePaletteCanAdd(component,value,[],[]),false);
+ value.resources=value.resources.filter(resource=>resource.id!=='viper-game');value.vehicleTabs[0].nodeIds=value.vehicleTabs[0].nodeIds.filter(id=>id!=='viper-game');
+ assert.equal(profilePaletteCanAdd(component,value,[],[]),true);
+ assert.equal(JSON.stringify(value.vehicleTabs),before,'Admission and removal preserve the existing scope identity.');
+ assert.equal(profilePaletteCanAdd({...component,vehicleId:'new-vehicle'},value,[],[]),false);
+ value.resources=Array.from({length:64},(_,index)=>({id:`resource-${index}`,kind:'device'}));
+ assert.equal(profilePaletteCanAdd(component,value,[],[]),false,'Reusing a scope still respects the resource limit.');
+});
+
+test('local output admission preserves controller and desktop budgets',()=>{
+ const value=document();
+ assert.equal(profilePaletteCanAdd({kind:'virtual'},value,[],[]),true);
+ value.virtualOutputs=Array.from({length:8},(_,index)=>({id:`virtual-${index}`}));
+ assert.equal(profilePaletteCanAdd({kind:'virtual'},value,[],[]),false);
+ assert.equal(profilePaletteCanAdd({kind:'desktop',device:'mouse'},value,[],[]),true);
+ value.desktopOutputs=[{id:'mouse',actions:[{portId:'left',action:{kind:'mouse-button',button:'left'}}]}];
+ assert.equal(profilePaletteCanAdd({kind:'desktop',device:'mouse'},value,[],[]),false);
+ value.processingNodes=Array.from({length:256},(_,index)=>({id:`process-${index}`}));
+ assert.equal(profilePaletteCanAdd({kind:'desktop'},value,[],[]),false);
 });
 
 test('vehicle placement preserves other tab positions and Base group membership at identical coordinates',()=>{

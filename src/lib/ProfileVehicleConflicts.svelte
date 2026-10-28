@@ -10,7 +10,7 @@
   const controller=new ProfileVehicleConflictController(untrack(()=>compiler));
   let previewState=$state.raw(controller.state);
   const unsubscribe=controller.subscribe(value=>previewState=value);
-  const scope=$derived(activeVehicleTabId?`Base + ${document.vehicleTabs?.find(tab=>tab.id===activeVehicleTabId)?.vehicleName??'vehicle'}`:'Base');
+  const scope=$derived(activeVehicleTabId?`Base + ${document.vehicleTabs?.find(tab=>tab.id===activeVehicleTabId)?.vehicleName??'vehicle'}`:'Integration');
   $effect(()=>{controller.update(document,assignments,activeVehicleTabId,inventoryRevision,active);});
   onDestroy(()=>{unsubscribe();controller.dispose();});
   function location(nodeId:string|null,resourceId:string|null,portId:string|null):string{

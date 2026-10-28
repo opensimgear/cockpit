@@ -1,3 +1,4 @@
+import {profileRouteVehicleScope, profileVehicleScopesOverlap} from './profile-integration-scope';
 import {graphConnect, graphConnectionError, graphContractError, graphDisconnect, graphPort, type ProfileGraphDraft} from './profile-graph';
 import {profilePrepareDiscoveredPorts, type ProfileDiscoveredEndpoint, type ProfileDiscoveredPort} from './profile-discovery';
 import {isProcessingDraft, resolveProcessingDraft, resolveProcessingNode} from './profile-transform-drafts';
@@ -37,7 +38,8 @@ export function canvasConnectionPlan(value:DeepReadonly<ProfileGraphDraft>,from:
   if(isProcessingDraft(value.document,from.nodeId))throw Error('Connect this transformation’s input first to establish its output type.');
   const pending=isProcessingDraft(value.document,to.nodeId),resolved=pending?resolveProcessingDraft(value,to.nodeId,from.port.contract,to.port.profilePortId??to.port.key):value;
   const prepared=profilePrepareDiscoveredPorts(resolved,from,currentProcessingPort(resolved.document,to,pending?to.nodeId:undefined));
-  const writer=prepared.draft.document.bindings.find(binding=>binding.id!==replacingId&&binding.to.nodeId===prepared.to.nodeId&&binding.to.portId===prepared.to.portId);
+  const scope=profileRouteVehicleScope(prepared.draft.document,prepared.from.nodeId,prepared.to.nodeId);
+  const writer=prepared.draft.document.bindings.find(binding=>binding.id!==replacingId&&binding.to.nodeId===prepared.to.nodeId&&binding.to.portId===prepared.to.portId&&profileVehicleScopesOverlap(scope,profileRouteVehicleScope(prepared.draft.document,binding.from.nodeId,binding.to.nodeId)));
   const check={...prepared.draft.document,bindings:prepared.draft.document.bindings.filter(binding=>binding.id!==replacingId&&binding.id!==writer?.id)};
   const error=graphConnectionError(check,prepared.from,prepared.to);
   return {...prepared,writer,error};
@@ -53,6 +55,6 @@ export function canvasConnect(value:DeepReadonly<ProfileGraphDraft>,from:Profile
   return graphConnect(next,plan.from,plan.to,replacingId??plan.writer?.id);
 }
 
-export function canvasPortWriter(document:DeepReadonly<ProfileDocument>,nodeId:string,port:DeepReadonly<ProfileDiscoveredPort>,replacingId?:string):DeepReadonly<ProfileBinding>|undefined {
-  return port.profilePortId?document.bindings.find(binding=>binding.id!==replacingId&&binding.to.nodeId===nodeId&&binding.to.portId===port.profilePortId):undefined;
+export function canvasPortWriter(document:DeepReadonly<ProfileDocument>,nodeId:string,port:DeepReadonly<ProfileDiscoveredPort>,replacingId?:string,routeScope?:string):DeepReadonly<ProfileBinding>|undefined {
+  return port.profilePortId?document.bindings.find(binding=>binding.id!==replacingId&&binding.to.nodeId===nodeId&&binding.to.portId===port.profilePortId&&(routeScope===undefined||profileVehicleScopesOverlap(routeScope,profileRouteVehicleScope(document,binding.from.nodeId,binding.to.nodeId)))):undefined;
 }

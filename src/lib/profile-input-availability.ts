@@ -1,4 +1,5 @@
 import type {DeepReadonly, ProfileDocument} from './profiles';
+import {profileRouteVehicleScope, profileVehicleScopesOverlap, type ProfileIntegrationScopeDocument} from './profile-integration-scope';
 
 export type ProfileInputAvailability = {full:boolean;total:number;available:number;reason:string};
 type InputChoice = {readonly id:string;readonly direction:'input'|'output'};
@@ -6,15 +7,16 @@ type InputChoice = {readonly id:string;readonly direction:'input'|'output'};
 /** Count exact input identities from the active canvas catalogue. A discovered
  * @observed choice has no writer until it is saved as a logical profile port. */
 export function inputAvailability(
-  document:Pick<DeepReadonly<ProfileDocument>,'bindings'>,
+  document:ProfileIntegrationScopeDocument,
   nodeId:string,
   ports:readonly InputChoice[],
   portId?:string,
   replacingId?:string,
+  routeScope?:string,
 ):ProfileInputAvailability {
   const inputs=new Set(ports.filter(port=>port.direction==='input').map(port=>port.id));
   const occupied=new Set(document.bindings
-    .filter(binding=>binding.id!==replacingId&&binding.to.nodeId===nodeId&&inputs.has(binding.to.portId))
+    .filter(binding=>binding.id!==replacingId&&binding.to.nodeId===nodeId&&inputs.has(binding.to.portId)&&(routeScope===undefined||profileVehicleScopesOverlap(routeScope,profileRouteVehicleScope(document,binding.from.nodeId,binding.to.nodeId))))
     .map(binding=>binding.to.portId));
   const total=inputs.size,available=total-occupied.size;
   if(portId!==undefined){

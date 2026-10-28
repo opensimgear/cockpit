@@ -4,6 +4,7 @@ import type { ProfileDiscoveredEndpoint } from './profile-discovery';
 import { processingNodeError, processingTemplate, type ProcessingPreset } from './profile-processing';
 import { createProcessingDraft } from './profile-transform-drafts';
 import { graphContractError } from './profile-graph';
+import { profileRouteVehicleScope } from './profile-integration-scope';
 import type { DeepReadonly, ProfileBinding, ProfilePortContract, ProfileProcessingNode } from './profiles';
 
 const clone = <T>(value: DeepReadonly<T>): T => JSON.parse(JSON.stringify(value));
@@ -18,6 +19,23 @@ type ConnectionPlan = {
 
 function failed(value: DeepReadonly<ProfileGraphDraft>, error: string): ConnectionPlan {
   return { draft: clone<ProfileGraphDraft>(value), nodes: [], error };
+}
+
+function connectionVehicleScope(
+  value: DeepReadonly<ProfileGraphDraft>, from: ProfileDiscoveredEndpoint, to: ProfileDiscoveredEndpoint,
+  transforms: readonly DeepReadonly<ProfileProcessingNode>[], activeVehicleTabId: string,
+  extraInputs: Readonly<Record<string, DeepReadonly<ProfileDiscoveredEndpoint>>>,
+): string {
+  const scopes = new Set([activeVehicleTabId, profileRouteVehicleScope(value.document, from.nodeId, to.nodeId)].filter(Boolean));
+  for (const node of transforms) for (const input of node.inputs) {
+    const extra = extraInputs[`${node.id}/${input.id}`];
+    if (extra) {
+      const scope = profileRouteVehicleScope(value.document, extra.nodeId, to.nodeId);
+      if (scope) scopes.add(scope);
+    }
+  }
+  if (scopes.size > 1) throw Error('Connect inputs from one vehicle integration or Common. Different vehicles are never active together.');
+  return scopes.values().next().value ?? '';
 }
 
 function commitPrepared(plan: ReturnType<typeof canvasConnectionPlan>, replacingId?: string, replaceOccupied = false): ProfileGraphDraft {
@@ -76,6 +94,7 @@ export function connectionDraftPlan(
   try {
     if (transforms.length > 32) throw new Error('A connection can contain at most 32 transforms.');
     if (replacingId && !value.document.bindings.some(binding => binding.id === replacingId)) throw new Error('This connection was removed. Choose an existing wire to edit.');
+    const vehicleScope = connectionVehicleScope(value, from, to, transforms, activeVehicleTabId, extraInputs);
     let working = clone<ProfileGraphDraft>(value);
     let tail = from;
     const nodes: ProfileProcessingNode[] = [];
@@ -88,7 +107,7 @@ export function connectionDraftPlan(
       if (working.document.processingNodes.some(existing => existing.id === node.id) || nodes.some(existing => existing.id === node.id)) throw new Error('Choose a unique transformation identity.');
       const input = connectionTransformInput(node, tail.port.contract);
       if (!input) throw new Error('This transformation has no input compatible with the current signal.');
-      working = graphSetProcessing(working, node, activeVehicleTabId);
+      working = graphSetProcessing(working, node, vehicleScope);
       const endpoint = (port: DeepReadonly<ProfileProcessingNode['inputs'][number]>): ProfileDiscoveredEndpoint => ({
         nodeId: node.id,
         port: { ...port, key: port.id, profilePortId: port.id, sourceId: null, observed: null, current: true },

@@ -109,3 +109,22 @@ test('insertion placement finds open space around a packed group without moving 
   assert.ok(nodes.every(node=>!(next.x<node.position.x+width+32&&next.x+width+32>node.position.x&&next.y<node.position.y+height+32&&next.y+height+32>node.position.y)));
   assert.deepEqual(plain(nodes),before);assert.deepEqual(point,{x:320,y:220});
 });
+
+test('mutually exclusive vehicle writers share a destination without replacement or identity loss',()=>{
+  let value=graph();value.document.eligibility.gameIds=['dcs'];
+  value.document.resources.push({...plain(value.document.resources[0]),id:'viper-source'});
+  value.document.vehicleTabs=[{id:'hornet',gameId:'dcs',vehicleId:'hornet',vehicleName:'Hornet',nodeIds:['source']},{id:'viper',gameId:'dcs',vehicleId:'viper',vehicleName:'Viper',nodeIds:['viper-source']}];
+  value=connect(value,endpoint(value,'source','rpm'),endpoint(value,'target','in'));
+  const hornet=plain(value.document.bindings[0]),before=plain(value),from=endpoint(value,'viper-source','rpm'),to=endpoint(value,'target','in');
+  assert.equal(plan(value,from,to).writer,undefined);
+  assert.equal(writer(value.document,'target',to.port,undefined,'viper'),undefined);
+  assert.equal(writer(value.document,'target',to.port,undefined,'hornet').id,hornet.id);
+  value=connect(value,from,to);
+  assert.equal(value.document.bindings.length,2);assert.deepEqual(plain(value.document.bindings.find(binding=>binding.id===hornet.id)),hornet);
+  const viper=value.document.bindings.find(binding=>binding.id!==hornet.id);
+  const replaced=connect(value,endpoint(value,'viper-source','other'),to,undefined,true);
+  assert.equal(replaced.document.bindings.length,2);
+  assert.deepEqual(plain(replaced.document.bindings.find(binding=>binding.id===hornet.id)),hornet);
+  assert.equal(replaced.document.bindings.find(binding=>binding.id===viper.id).from.portId,'other');
+  assert.equal(before.document.bindings.length,1);
+});

@@ -19,7 +19,9 @@ export class ProfileVehicleConflictController{
     if(this.disposed)return;
     if(!active){this.clear();return;}
     try{
-      const variant=profileVehicleDocument(document,tabId),resources=new Set(variant.resources.map(resource=>resource.id));
+      // The unified canvas checks every execution in one native compilation.
+      // Explicit scope previews remain useful to callers inspecting one vehicle.
+      const variant=tabId?profileVehicleDocument(document,tabId):JSON.parse(JSON.stringify(document)) as ProfileDocument,resources=new Set(variant.resources.map(resource=>resource.id));
       // An unnamed new profile is still a valid graph to inspect while typing.
       if(!variant.name.trim())variant.name='Profile draft';
       const pins=JSON.parse(JSON.stringify(assignments.filter(assignment=>resources.has(assignment.resourceId)))) as ProfileLocalAssignment[];

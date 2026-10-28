@@ -4,7 +4,7 @@ import test from 'node:test';
 import {loadModules} from './test-module-loader.mjs';
 const modules=await loadModules(['./games','./profile-game-context','./profile-editor','./profile-graph-history','./profiles']);
 modules.get('./games').updateGameCatalogue(discoveredGames);
-const {profileSetGameContext,profileGameContext,profileGameContextNeedsSync,profileAddVehicleIntegration,profileGameTabInventory,profileDcsResourceMatchesVehicle,profileReconcileDcsVehicleCatalogue,profileChangeVehicleIntegration}=modules.get('./profile-game-context');
+const {profileSetGameContext,profileSyncGameContext,profileGameContext,profileGameContextNeedsSync,profileAddVehicleIntegration,profileGameTabInventory,profileDcsResourceMatchesVehicle,profileReconcileDcsVehicleCatalogue,profileChangeVehicleIntegration}=modules.get('./profile-game-context');
 const {blankProfile,ProfileEditorStore}=modules.get('./profile-editor'),{ProfileGraphHistory}=modules.get('./profile-graph-history');
 const id='11111111-1111-4111-8111-111111111111',plain=value=>JSON.parse(JSON.stringify(value));
 const source=gameId=>({id:`native:${gameId}`,name:gameId,resourceType:'game-integration',availability:'offline',attributes:{gameId,...(gameId==='dcs'?{aircraftModule:'CommonData'}:{})}});
@@ -74,9 +74,30 @@ test('changing or removing context replaces only its integration and routes and 
 test('context persists without inventory and acquires only an empty integration when inventory becomes available',()=>{
  const next=profileSetGameContext(draft(),'dcs',[]);assert.equal(next.document.resources[0].name,'DCS World');assert.deepEqual(plain(next.assignments),[]);assert.equal(profileGameContextNeedsSync(next,[]),false);assert.equal(profileGameContextNeedsSync(next,inventory),true);
  const assigned=profileSetGameContext(next,'dcs',inventory);assert.equal(assigned.document.resources[0].id,next.document.resources[0].id);assert.equal(assigned.assignments[0].sourceId,'native:dcs');assert.equal(profileGameContextNeedsSync(assigned,inventory),false);
- assert.equal(profileGameContextNeedsSync({document:{...blankProfile(id),eligibility:{gameIds:['dcs']}},assignments:[]},[]),true);
+ assert.equal(profileGameContextNeedsSync({document:{...blankProfile(id),eligibility:{gameIds:['dcs']}},assignments:[]},[]),false);
  assert.throws(()=>profileSetGameContext(draft(),'unknown',inventory),/discovered game/);
  const full=draft();full.document.resources=Array.from({length:64},(_,index)=>({id:`resource-${index}`,name:'Device',kind:'device',required:false,ports:[]}));assert.throws(()=>profileSetGameContext(full,'dcs',inventory),/64 resources/);assert.equal(full.document.eligibility.gameIds.length,0);
+});
+
+test('passive sync preserves removed Common while binding only existing empty vehicle blocks',()=>{
+ let value=profileSetGameContext(draft(),'dcs',inventory);
+ value.document.vehicleTabs=[{id:'hornet',gameId:'dcs',vehicleId:'FA-18C_hornet',vehicleName:'Hornet',nodeIds:[]}];
+ value=profileAddVehicleIntegration(value,'hornet',[]);
+ const common=value.document.resources.find(resource=>!value.document.vehicleTabs[0].nodeIds.includes(resource.id));
+ value=modules.get('./profile-graph').graphRemoveNode(value,common.id);
+ const before=plain(value),available=[...inventory,hornet];
+ assert.equal(profileGameContextNeedsSync(value,available),true);
+ const synced=profileSyncGameContext(value,available);
+ assert.equal(synced.document.resources.length,1);assert.deepEqual(plain(synced.document),before.document);
+ assert.equal(synced.assignments.length,1);assert.equal(synced.assignments[0].sourceId,hornet.id);
+ assert.equal(profileGameContextNeedsSync(synced,available),false);assert.deepEqual(plain(value),before);
+ const missing=plain(synced);missing.assignments[0].sourceId='old-source';
+ assert.equal(profileSyncGameContext(missing,available).assignments[0].sourceId,hornet.id);
+ const explicit=profileSetGameContext(synced,'dcs',available);
+ assert.equal(explicit.document.resources.length,2,'Explicit context selection still adds Common.');
+ value=modules.get('./profile-graph').graphRemoveNode(synced,synced.document.resources[0].id);
+ assert.equal(profileGameContextNeedsSync(value,available),false);
+ assert.equal(profileSyncGameContext(value,available).document.resources.length,0);
 });
 
 test('saved context survives profile editor save, reopen, portable export and copy',async()=>{

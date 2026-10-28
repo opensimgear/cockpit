@@ -40,33 +40,31 @@ async function components(capture){
 }
 async function harness({selectedId='',run=()=>{}}={}){
  const changes=[],document=plain(fixture),before=plain(document),Canvas=await components(handlers=>run(handlers,changes));
- const body=render(Canvas,{props:{document,assignments:[],inventory:[],inventoryClient:{inspect:noRequest},activeVehicleTabId:'vehicle-1',selectedId,fitOnMount:false,change:next=>changes.push(next),removeNode:()=>{throw Error('Reference removal must be unavailable.');}}}).body;
+ const body=render(Canvas,{props:{document,assignments:[],inventory:[],inventoryClient:{inspect:noRequest},selectedId,fitOnMount:false,change:next=>changes.push(next),removeNode:()=>{throw Error('Rendering must not remove components.');}}}).body;
  assert.deepEqual(document,before,'Rendering and reference interaction must preserve the source graph');
  return {body,changes,before};
 }
 
-test('actual aircraft overview renders its Base endpoint and both complete signal arrows',async()=>{
+test('the example renders Common, both aircraft and shared hardware once on the same canvas',async()=>{
  const {body}=await harness();
- assert.match(body,/data-node-id="ah6-dcs"/);assert.match(body,/data-node-id="aux-panel"/);
- const reference=body.match(/<article\b[^>]*data-node-id="aux-panel"[^>]*>/)?.[0];assert.ok(reference);assert.match(reference,/data-base-reference="true"/);
- assert.match(body.replace(/<!--[\s\S]*?-->/g,''),/· Base/);assert.doesNotMatch(body,/data-node-id="(?:hornet-dcs|right-stick|game-context-dcs-1)"/);
- assert.equal((body.match(/class="signal-edge-hit(?:\s|\")/g)??[]).length,2);
- assert.match(body,/overview:\[&quot;aux-panel&quot;,&quot;ah6-dcs&quot;\]/);assert.match(body,/overview:\[&quot;ah6-dcs&quot;,&quot;aux-panel&quot;\]/);
+ for(const id of ['ah6-dcs','hornet-dcs','game-context-dcs-1','aux-panel','right-stick'])assert.equal((body.match(new RegExp('data-node-id="'+id+'"','g'))??[]).length,1,id);
+ assert.doesNotMatch(body,/data-base-reference|Defined in Base|Edit in Base|· Base/);
+ for(const icon of ['link','monitor','gamepad'])assert.ok(body.includes('data-block-icon="'+icon+'"'),icon);
+ assert.ok((body.match(/class="signal-edge-hit(?:\s|\")/g)??[]).length>=2);
 });
 
-test('selecting a Base reference explains its scope and offers no Remove action',async()=>{
+test('shared companion settings remain directly editable from the unified canvas',async()=>{
  const {body}=await harness({selectedId:'aux-panel'}),inspector=body.slice(body.indexOf('aria-label="Selected block inspector"'));
- assert.match(inspector,/Defined in Base\. Edit this component from the Base tab\./);assert.doesNotMatch(inspector,/>Remove<\/button>/);
+ assert.match(inspector,/Block settings/);assert.doesNotMatch(inspector,/Defined in Base|Edit in Base/);
+ assert.match(inspector,/Remove/);
 });
 
-test('keyboard movement cannot change a Base reference',async()=>{
- const {changes}=await harness({run({moveBlock}){moveBlock({altKey:true,key:'ArrowRight',shiftKey:false,preventDefault(){},stopPropagation(){}},'aux-panel');}});assert.equal(changes.length,0);
-});
-
-test('moving an aircraft block preserves every Base node position',async()=>{
- const {changes,before}=await harness({run({moveBlock}){moveBlock({altKey:true,key:'ArrowRight',shiftKey:false,preventDefault(){},stopPropagation(){}},'ah6-dcs');}});
- assert.equal(changes.length,1);const after=changes[0],scoped=new Set(before.vehicleTabs.flatMap(tab=>tab.nodeIds));
- for(const position of before.editor.positions.filter(position=>!scoped.has(position.nodeId)))assert.deepEqual(plain(after.editor.positions.find(row=>row.nodeId===position.nodeId)),position);
- const original=before.editor.positions.find(position=>position.nodeId==='ah6-dcs');assert.equal(after.editor.positions.find(position=>position.nodeId==='ah6-dcs').x,original.x+16);
- assert.deepEqual(plain(after.bindings),before.bindings);
+test('moving shared hardware and either aircraft edits one graph and preserves other positions',async()=>{
+ for(const id of ['aux-panel','ah6-dcs','hornet-dcs']){
+  const {changes,before}=await harness({run({moveBlock}){moveBlock({altKey:true,key:'ArrowRight',shiftKey:false,preventDefault(){},stopPropagation(){}},id);}});
+  assert.equal(changes.length,1);const after=plain(changes[0]),original=before.editor.positions.find(position=>position.nodeId===id);
+  assert.equal(after.editor.positions.find(position=>position.nodeId===id).x,original.x+16);
+  for(const position of before.editor.positions.filter(position=>position.nodeId!==id))assert.deepEqual(after.editor.positions.find(row=>row.nodeId===position.nodeId),position);
+  assert.deepEqual(after.bindings,before.bindings);assert.deepEqual(after.vehicleTabs,before.vehicleTabs);
+ }
 });

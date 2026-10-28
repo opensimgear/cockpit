@@ -1,6 +1,7 @@
 import {graphContractError,graphPort,graphIsolateSignalLane,type ProfileGraphDraft} from './profile-graph';
 import {profileDiscoveredPorts,type ProfileDiscoveredPort} from './profile-discovery';
-import {canvasConnect} from './profile-canvas-construction';
+import {canvasConnect,canvasPortWriter} from './profile-canvas-construction';
+import {profileRouteVehicleScope} from './profile-integration-scope';
 import {signalOverview,type SignalLane} from './profile-signal-overview';
 import type {DeepReadonly,ProfileEndpoint} from './profiles';
 
@@ -15,10 +16,11 @@ function laneFor(value:DeepReadonly<ProfileGraphDraft>,edit:RouteEndpointEdit):S
 export function routeEndpointChoices(value:DeepReadonly<ProfileGraphDraft>,edit:RouteEndpointEdit,ports:readonly ProfileDiscoveredPort[]):ProfileDiscoveredPort[] {
   let lane:SignalLane;try{lane=laneFor(value,edit);}catch{return [];}
   const boundaries=value.document.bindings.filter(binding=>edit.side==='to'?binding.id===lane.id:lane.bindingIds.includes(binding.id)&&same(binding.from,edit.endpoint));
+  let scope:string;try{const terminal=value.document.bindings.find(binding=>binding.id===lane.id);scope=terminal?profileRouteVehicleScope(value.document,terminal.from.nodeId,terminal.to.nodeId):'';}catch{return [];}
   return ports.filter(port=>port.direction===(edit.side==='from'?'output':'input')&&boundaries.every(binding=>{
     const opposite=graphPort(value.document,edit.side==='from'?binding.to:binding.from);
     return opposite&&!graphContractError(edit.side==='from'?port.contract:opposite.contract,edit.side==='from'?opposite.contract:port.contract);
-  })&&(edit.side==='from'||!port.profilePortId||!value.document.bindings.some(binding=>binding.id!==lane.id&&binding.to.nodeId===edit.endpoint.nodeId&&binding.to.portId===port.profilePortId)));
+  })&&(edit.side==='from'||!canvasPortWriter(value.document,edit.endpoint.nodeId,port,lane.id,scope)));
 }
 /** Exact discovered port pins and source branch isolation commit in one edit. */
 export function reconnectRouteEndpoint(value:DeepReadonly<ProfileGraphDraft>,edit:RouteEndpointEdit,port:ProfileDiscoveredPort):ProfileGraphDraft {

@@ -216,3 +216,48 @@ test('an output contract mismatch rejects the route without changing provider pi
  assert.match(plan.error,/Types|range|contract|conversion/i);assert.deepEqual(plain(plan.nodes),[]);
  assert.deepEqual(plain(value),before);assert.equal(plan.draft.document.resources[0].ports.length,0);assert.deepEqual(plain(plan.draft.assignments[0].ports),[]);
 });
+
+test('vehicle route drafts preserve another aircraft writer and scope every added stage',()=>{
+ let value=fresh();value.document.eligibility.gameIds=['dcs'];
+ value.document.resources.push({id:'viper',name:'Viper',kind:'game',required:false,ports:[port('out','output')]});
+ value.document.vehicleTabs=[{id:'hornet',gameId:'dcs',vehicleId:'hornet',vehicleName:'Hornet',nodeIds:['source']},{id:'viper-tab',gameId:'dcs',vehicleId:'viper',vehicleName:'Viper',nodeIds:['viper']}];
+ value=commitConnectionDraft(value,from(),to(),[identity('hornet-stage')],undefined,false,'hornet');
+ const prior=plain(value.document.bindings),viper=endpoint('viper',port('out','output'));
+ const plan=connectionDraftPlan(value,viper,to(),[identity('viper-stage')],undefined,'viper-tab');
+ assert.equal(plan.error,'');assert.equal(plan.writer,undefined);
+ value=commitConnectionDraft(value,viper,to(),[identity('viper-stage')],undefined,false,'viper-tab');
+ assert.equal(value.document.bindings.length,4);
+ for(const binding of prior)assert.deepEqual(plain(value.document.bindings.find(row=>row.id===binding.id)),binding);
+ assert.deepEqual(plain(value.document.vehicleTabs.find(tab=>tab.id==='viper-tab').nodeIds),['viper','viper-stage']);
+ const existing=value.document.bindings.find(binding=>binding.from.nodeId==='viper-stage').id;
+ const changed=commitConnectionDraft(value,viper,to(),[identity('new-viper-stage')],existing,false,'viper-tab');
+ assert.equal(changed.document.processingNodes.some(node=>node.id==='viper-stage'),false);
+ assert.equal(changed.document.processingNodes.some(node=>node.id==='hornet-stage'),true);
+ for(const binding of prior)assert.deepEqual(plain(changed.document.bindings.find(row=>row.id===binding.id)),binding);
+});
+
+test('an auxiliary integration input scopes the entire shared endpoint chain to its vehicle',()=>{
+ const value=fresh();value.document.eligibility.gameIds=['dcs'];
+ value.document.resources.push({id:'hornet',name:'Hornet',kind:'game',required:false,ports:[port('out','output')]});
+ value.document.vehicleTabs=[{id:'hornet-tab',gameId:'dcs',vehicleId:'hornet',vehicleName:'Hornet',nodeIds:['hornet']}];
+ const first=identity('first'),merge=createRouteTransform(value,state(),state(),'any',[first]),last=identity('last');
+ const extraInputs={[`${merge.id}/second`]:endpoint('hornet',port('out','output'))};
+ const plan=connectionDraftPlan(value,from(),to(),[first,merge,last],undefined,'',extraInputs);
+ assert.equal(plan.error,'');
+ assert.deepEqual(plain(plan.draft.document.vehicleTabs[0].nodeIds),['hornet','first',merge.id,'last']);
+ assert.equal(value.document.processingNodes.length,0);
+ const committed=commitConnectionDraft(value,from(),to(),[first,merge,last],undefined,false,'',extraInputs);
+ assert.deepEqual(plain(committed.document.vehicleTabs[0].nodeIds),['hornet','first',merge.id,'last']);
+});
+
+test('mutually exclusive auxiliary inputs or explicit scopes fail as an isolated draft error',()=>{
+ const value=fresh();value.document.eligibility.gameIds=['dcs'];
+ value.document.resources.push(...['hornet','viper'].map(id=>({id,name:id,kind:'game',required:false,ports:[port('out','output')]})));
+ value.document.vehicleTabs=['hornet','viper'].map(id=>({id:`${id}-tab`,gameId:'dcs',vehicleId:id,vehicleName:id,nodeIds:[id]}));
+ const merge=createRouteTransform(value,state(),state(),'any');
+ const extras={[`${merge.id}/second`]:endpoint('viper',port('out','output'))},before=plain(value);
+ const plan=connectionDraftPlan(value,endpoint('hornet',port('out','output')),to(),[merge],undefined,'',extras);
+ assert.match(plan.error,/Different vehicles/);assert.deepEqual(plain(plan.draft),before);assert.deepEqual(plain(plan.nodes),[]);
+ const explicit=connectionDraftPlan(value,from(),to(),[merge],undefined,'hornet-tab',extras);
+ assert.match(explicit.error,/Different vehicles/);assert.deepEqual(plain(value),before);
+});

@@ -54,3 +54,16 @@ test('discovered source selection captures its exact provider contract in the sa
  assert.ok(pin);assert.equal(pin.expectedContractHash,hash);assert.equal(next.document.bindings[0].from.portId,pin.profilePortId);
  assert.equal(value.assignments[0].ports.length,3);
 });
+
+test('vehicle endpoint choices and reconnect ignore only mutually exclusive destination writers',()=>{
+ let value=fixture();value.document.eligibility.gameIds=['dcs'];
+ value.document.resources.push({...plain(value.document.resources[0]),id:'viper'});
+ value.document.vehicleTabs=[{id:'hornet',gameId:'dcs',vehicleId:'hornet',vehicleName:'Hornet',nodeIds:['source']},{id:'viper-tab',gameId:'dcs',vehicleId:'viper',vehicleName:'Viper',nodeIds:['viper']}];
+ value=graphConnect(value,ep('viper','one'),ep('target','free'));
+ const prior=plain(value.document.bindings.find(binding=>binding.from.nodeId==='viper'));
+ assert.deepEqual(plain(options(value,edit('to'),ports(value,'target')).map(port=>port.key)),['in','free']);
+ const next=reconnect(value,edit('to'),ports(value,'target').find(port=>port.key==='free'));
+ assert.equal(next.document.bindings.length,2);
+ assert.deepEqual(plain(next.document.bindings.find(binding=>binding.id===prior.id)),prior);
+ assert.deepEqual(plain(next.document.bindings.find(binding=>binding.id==='route-1').to),ep('target','free'));
+});

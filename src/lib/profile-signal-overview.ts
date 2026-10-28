@@ -10,7 +10,9 @@ export type SignalLane = {
 export type SignalBundle = {id:string; binding:ProfileBinding; lanes:SignalLane[]};
 
 /** A presentation-only projection. A lane is one terminal input, not every
- * possible path through the DAG. Shared stages retain their real identities. */
+ * possible path through the DAG. Shared stages retain their real identities.
+ * Exclusive vehicle alternatives need distinct terminal bindings; authoring
+ * instances their stages per row instead of merging alternatives upstream. */
 export function signalOverview(document:DeepReadonly<ProfileDocument>):SignalBundle[] {
   const processing=new Set(document.processingNodes.map(node=>node.id));
   const resources=new Set([...document.resources,...document.virtualOutputs,...(document.desktopOutputs??[])].map(node=>node.id));

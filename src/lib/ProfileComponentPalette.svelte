@@ -8,7 +8,8 @@
   import {PROFILE_PALETTE_MIME,profilePalettePanelReason,type ProfilePaletteDrag} from './profile-palette';
   import {latestCompanionPanels,type ProfileCompanionPanel} from './profile-companion-authoring';
 
-  let {inventory, assignedIds, resourceCount, virtualCount, keyboardAdded=false, mouseAdded=false, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDebug=()=>{}, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+  let {integrationGameId='', integrationGameName='', integrationVehicles=[], addedIntegrationVehicles=new Set<string>(), addIntegration=()=>{}, inventory, assignedIds, resourceCount, virtualCount, keyboardAdded=false, mouseAdded=false, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDebug=()=>{}, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+    integrationGameId?:string;integrationGameName?:string;integrationVehicles?:readonly {id:string;name:string}[];addedIntegrationVehicles?:ReadonlySet<string>;addIntegration?:(vehicle:{id:string;name:string})=>void;
     inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; keyboardAdded?:boolean; mouseAdded?:boolean;
     editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];canAddGroup?:boolean;
     disabled?:boolean; refreshing?:boolean; error?:string; refresh:()=>void;
@@ -39,6 +40,7 @@
   const components=$derived(inventory.filter(resource=>resource.resourceType!=='game-integration').filter(resource=>resource.resourceType!=='companion'||resource.attributes.componentKind==='paired-companion')
     .filter(resource=>!query||`${resource.name} ${categories.find(category=>category.type===resource.resourceType)?.label}`.toLocaleLowerCase().includes(query))
     .slice().sort((a,b)=>a.name.localeCompare(b.name)));
+  const integrationComponents=$derived(integrationGameId?[{id:'',name:integrationGameId==='dcs'?'Common':integrationGameName||integrationGameId},...integrationVehicles].filter((vehicle,index,all)=>all.findIndex(other=>other.id===vehicle.id)===index).filter(vehicle=>!query||`${vehicle.name} ${integrationGameName} integrations`.toLocaleLowerCase().includes(query)):[]);
   const visibleGroups=$derived(editorGroups.filter(group=>!query||`${group.name} groups`.toLocaleLowerCase().includes(query)));
   const showVirtual=$derived(!query||'virtual controller outputs'.includes(query));
   const showDebug=$derived(!query||'debug controller axes buttons hats input'.includes(query));
@@ -82,6 +84,13 @@
         </div>
       </details>
     {/if}
+    {#if integrationComponents.length}<details class="editor-accordion" aria-label="Integration components" open={isOpen('integrations')} ontoggle={event=>rememberOpen(event,'integrations')}><summary>Integrations<span class="category-count">{integrationComponents.length}</span></summary><div class="accordion-content">
+      {#each integrationComponents as vehicle (vehicle.id)}
+        {@const inProfile=addedIntegrationVehicles.has(vehicle.id)}
+        {@const full=resourceCount>=64||!!vehicle.id&&addedIntegrationVehicles.size-Number(addedIntegrationVehicles.has(''))>=32}
+        <button class="component" data-integration-vehicle-id={vehicle.id} title={`${integrationGameName} · ${vehicle.name}`} aria-label={`Add ${vehicle.name} integration`} disabled={disabled||inProfile||full} draggable={!disabled&&!inProfile&&!full} ondragstart={event=>beginDrag(event,{component:{kind:'integration',gameId:integrationGameId,vehicleId:vehicle.id,vehicleName:vehicle.name},name:vehicle.name,category:`Integration · ${integrationGameName}`})} ondragend={endDrag} onclick={()=>addIntegration(vehicle)}><span class="component-icon"><Icon name="link" size={17}/></span><span class="component-copy"><strong>{vehicle.name}</strong><small>{inProfile?'Added to profile':integrationGameName}</small></span><Icon name={inProfile?'check':'plus'} size={14}/></button>
+      {/each}
+    </div></details>{/if}
     {#if pairedCompanions.length&&(!query||panelComponents.length||'companion panels'.includes(query))}<details class="editor-accordion" aria-label="Companion panel components" open={isOpen('panels')} ontoggle={event=>rememberOpen(event,'panels')}><summary>Companion panels<span class="category-count">{panelComponents.length}</span></summary><div class="accordion-content">
       <button class="refresh-panels" disabled={companionPanelsBusy} onclick={refreshPanels}><Icon name="refresh" size={13}/>{companionPanelsBusy?'Reading saved panels…':companionPanelsError?'Retry saved panels':'Refresh saved panels'}</button>
       {#if companionPanelsError}<p class="group-hint palette-error" role="status">{companionPanelsError}</p>{/if}
@@ -110,7 +119,7 @@
       </div></details>{/if}
 
     {/each}
-    {#if !components.length&&!showVirtual&&!showDebug&&!showDesktop&&!visibleGroups.length&&!panelComponents.length}<p class="palette-empty">No matching components.</p>{/if}
+    {#if !integrationComponents.length&&!components.length&&!showVirtual&&!showDebug&&!showDesktop&&!visibleGroups.length&&!panelComponents.length}<p class="palette-empty">No matching components.</p>{/if}
     {#if !inventory.length&&!refreshing&&!query&&!showDebug}<p class="palette-empty">No devices or companions found.</p>{/if}
   </div>
   <footer>{resourceCount} / 64 resources <span>Drag components onto the canvas.</span></footer>

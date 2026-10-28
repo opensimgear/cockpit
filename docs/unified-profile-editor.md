@@ -17,8 +17,22 @@ paired resources and closed-game integrations remain available, with up to 64
 resource blocks. Sections collapse independently, with **Groups** first. The
 header's **Game context** is saved with the profile and automatically places
 that game's integration. **None** removes it. Changing context replaces the
-integration and its routes, with Undo available. Integrations are managed by the
-context rather than offered in the palette.
+integration and its routes, with Undo available.
+
+The collapsed **Integrations** palette group contains Common and one component
+per vehicle supported by the selected game. Drop or click a vehicle to add its
+integration and activation condition together in one undoable edit. Every block
+and its settings share one canvas; there are no vehicle tabs. The header icon
+matches the component palette. Common is green while its configured game
+integration runs; vehicle integrations remain muted until their vehicle is
+active and the integration is online.
+
+Each vehicle route keeps its own transforms and source assignment. Different
+vehicles can feed the same shared destination input because they are mutually
+exclusive. Common runs alongside the active vehicle, so simultaneous writers
+still need an explicit OR or priority transform. Vehicle conditions continue to
+use the existing profile document and MCP vehicle-scope operations; browsing and
+dropping components never activates a profile.
 Existing blocks and bindings remain when resources disconnect.
 
 The new editor also offers **Copy saved profile**. A copy retains its graph and

@@ -57,11 +57,23 @@ export function profileSetGameContext(value:DeepReadonly<ProfileGraphDraft>,game
       next.document.editor.positions.push({nodeId:resource.id,x:oldPosition?.x??48,y:oldPosition?.y??bottom+48});
       if(oldGroup)next.document.editor.groups?.find(group=>group.id===oldGroup)?.members.push(resource.id);
     }
-    for(const block of next.document.resources.filter(resource=>resource.kind==='game')){
-      const source=profileGameIntegrationSource(next.document,block.id,inventory),assignment=next.assignments.find(assignment=>assignment.resourceId===block.id);
-      if(source&&!block.ports.length&&!assignment?.ports.length){if(assignment)assignment.sourceId=source.id;else next.assignments.push({resourceId:block.id,sourceId:source.id,ports:[]});}
-    }
+    assignEmptyGameBlocks(next,inventory);
   }
+  const error=profileDocumentError(next.document)||profileDocumentAssignmentsError(next.document,next.assignments);if(error)throw Error(error);
+  return next;
+}
+
+function assignEmptyGameBlocks(value:ProfileGraphDraft,inventory:readonly DeepReadonly<ResourceSummary>[]):void {
+  for(const block of value.document.resources.filter(resource=>resource.kind==='game')){
+    const source=profileGameIntegrationSource(value.document,block.id,inventory),assignment=value.assignments.find(assignment=>assignment.resourceId===block.id);
+    if(source&&!block.ports.length&&!assignment?.ports.length){if(assignment)assignment.sourceId=source.id;else value.assignments.push({resourceId:block.id,sourceId:source.id,ports:[]});}
+  }
+}
+
+/** Passive inventory refresh binds existing empty integrations without adding blocks. */
+export function profileSyncGameContext(value:DeepReadonly<ProfileGraphDraft>,inventory:readonly DeepReadonly<ResourceSummary>[]):ProfileGraphDraft {
+  const next=JSON.parse(JSON.stringify(value)) as ProfileGraphDraft;
+  assignEmptyGameBlocks(next,inventory);
   const error=profileDocumentError(next.document)||profileDocumentAssignmentsError(next.document,next.assignments);if(error)throw Error(error);
   return next;
 }
@@ -86,8 +98,6 @@ export function profileAddVehicleIntegration(value:DeepReadonly<ProfileGraphDraf
 /** Empty context blocks can acquire their exact native integration when inventory arrives. */
 export function profileGameContextNeedsSync(value:DeepReadonly<ProfileGraphDraft>,inventory:readonly DeepReadonly<ResourceSummary>[]):boolean {
   const id=profileGameContext(value.document);if(!id||!gameHasIntegration(getGameCatalogue().find(game=>game.id===id)))return false;
-  const base=profileTabNodeIds(value.document);
-  if(!value.document.resources.some(resource=>resource.kind==='game'&&base.has(resource.id)))return true;
   return value.document.resources.some(resource=>{if(resource.kind!=='game'||resource.ports.length)return false;const source=profileGameIntegrationSource(value.document,resource.id,inventory),assignment=value.assignments.find(assignment=>assignment.resourceId===resource.id);return !!source&&!assignment?.ports.length&&assignment?.sourceId!==source.id;});
 }
 

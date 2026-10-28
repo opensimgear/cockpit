@@ -186,4 +186,7 @@ export function canvasGameId(node:CanvasNode,document?:Pick<DeepReadonly<Profile
 export {integrationPortPage,integrationPortTypeLabel} from './profile-inspector/integration-ports.ts';
 export {integrationCataloguePorts} from './profile-inspector/integration-catalogue.ts';
 
-export {profileCanvasView} from './profile-canvas-view.ts';
+
+export {canvasBlockStatus} from './profile-block-status';
+
+export {profileRouteVehicleScope} from './profile-integration-scope';

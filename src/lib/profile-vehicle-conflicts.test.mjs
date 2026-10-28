@@ -34,7 +34,19 @@ test('debounced conflict checking captures Base with one vehicle and exact pins 
  assert.deepEqual(h.calls[0].document.resources.map(resource=>resource.id),['base','viper']);assert.equal(h.calls[0].document.vehicleTabs,undefined);assert.deepEqual(h.calls[0].assignments.map(pin=>pin.resourceId),['base','viper']);assert.deepEqual(plain(value),before);assert.equal(h.controller.state.status,'ready');
  value.document.editor.viewport.x=300;h.controller.update(value.document,value.assignments,'b',1);assert.equal(h.scheduled.size,0,'Layout-only edits do not repeat a conflict capture.');
  h.controller.update(value.document,value.assignments,'b',2);await h.flush();assert.equal(h.calls.length,2,'Inventory changes refresh physical conflicts.');
- h.controller.update(value.document,value.assignments,'',2);await h.flush();assert.deepEqual(h.calls[2].document.resources.map(resource=>resource.id),['base']);
+ h.controller.update(value.document,value.assignments,'',2);await h.flush();assert.deepEqual(h.calls[2].document.resources.map(resource=>resource.id),['base','hornet','viper']);assert.equal(h.calls[2].document.vehicleTabs.length,2);
+});
+
+test('the unified canvas checks all vehicle variants with one immutable native capture',async()=>{
+ const h=harness(),value=fixture(),before=plain(value);
+ value.document.name='';
+ h.compiler.compile=async(document,assignments)=>{h.calls.push({document:plain(document),assignments:plain(assignments)});return summary([diagnostic('conflictingEndpointWriters','F-16C: Two writers')]);};
+ h.controller.update(value.document,value.assignments);await h.flush();
+ assert.equal(h.calls.length,1);assert.equal(h.calls[0].document.name,'Profile draft');
+ assert.deepEqual(h.calls[0].document.vehicleTabs,before.document.vehicleTabs);
+ assert.deepEqual(h.calls[0].assignments,before.assignments);
+ assert.equal(value.document.name,'');assert.deepEqual(plain(value.document.vehicleTabs),before.document.vehicleTabs);
+ assert.equal(h.controller.state.diagnostics[0].message,'F-16C: Two writers');
 });
 
 test('conflicts after the first page are shown while offline, backend and readiness noise is omitted',async()=>{
