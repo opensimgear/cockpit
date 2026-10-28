@@ -21,6 +21,14 @@ pub struct Identity {
     pub path: String,
 }
 impl Identity {
+    fn same_interface(&self, other: &Self) -> bool {
+        self.backend == other.backend
+            && self.vendor_id == other.vendor_id
+            && self.product_id == other.product_id
+            && self.serial == other.serial
+            && self.collection == other.collection
+            && self.path == other.path
+    }
     fn compatible(&self, other: &Self) -> bool {
         self.backend == other.backend
             && self.vendor_id == other.vendor_id
@@ -151,9 +159,11 @@ pub struct Definition {
     pub diagnostics: Vec<String>,
 }
 pub fn fingerprint(controls: &[Control]) -> String {
+    let mut controls = controls.iter().collect::<Vec<_>>();
+    controls.sort_by(|a, b| a.id.cmp(&b.id));
     format!(
         "{:x}",
-        Sha256::digest(serde_json::to_vec(controls).expect("serializable controls"))
+        Sha256::digest(serde_json::to_vec(&controls).expect("serializable controls"))
     )
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -349,11 +359,9 @@ impl Registry {
         let same_path = self
             .sources
             .iter()
-            .find(|(_, s)| {
-                s.saved.identity.compatible(&device.identity)
-                    && s.saved.identity.serial == device.identity.serial
-                    && s.saved.identity.path == device.identity.path
-            })
+            .filter(|(_, s)| s.saved.identity.same_interface(&device.identity))
+            // Prefer the current capture over an obsolete remembered layout.
+            .min_by_key(|(_, s)| !s.online)
             .map(|(id, _)| id.clone());
         let serials: Vec<_> = self
             .sources
@@ -404,10 +412,15 @@ impl Registry {
             id
         };
         let source = self.sources.get_mut(&id).unwrap();
-        if !source.online {
-            source.generation += 1;
+        let layout_changed = source.saved.identity.fingerprint != device.identity.fingerprint;
+        if !source.online || layout_changed {
+            source.generation = source.generation.checked_add(1)
+                .ok_or("Controller generation exhausted.")?;
             source.sequence = 0;
             source.values.clear();
+            if source.online {
+                self.journal.publish(source.event(Reason::Gap));
+            }
         }
         source.online = true;
         source.saved.identity = device.identity;
@@ -654,3 +667,7 @@ fn valid_role(value: &str) -> bool {
     ]
     .contains(&value)
 }
+
+#[cfg(test)]
+#[path = "registry/identity_tests.rs"]
+mod identity_tests;
