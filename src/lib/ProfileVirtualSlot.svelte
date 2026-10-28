@@ -7,15 +7,17 @@
   let {output,profileId='',revision=0,disabled=false,changeLayout}:{output:DeepReadonly<ProfileVirtualOutput>;profileId?:string;revision?:number;disabled?:boolean;changeLayout:(layout:ProfileControllerLayout)=>void|boolean}=$props();
   let slots=$state.raw<VirtualBackendSlot[]>([]),selected=$state<number|null>(null),busy=$state(false),loaded=$state(false),readOnly=$state(false),saved=$state(false),error=$state(''),mounted=$state(false);
   let epoch=0,disposed=false;
+  // Equal output snapshots must not restart loading during inventory polling.
+  const context=$derived(`${profileId}/${revision}/${output.id}`);
   const slotId=$props.id();
   const slot=$derived(slots.find(slot=>slot.slot===selected));
   const issue=$derived(slot?virtualSlotLayoutIssue(slot,output.layout):selected!==null?'The selected slot is unavailable. Refresh or choose another slot.':'');
   const canUseLayout=$derived.by(()=>{if(!slot||!issue)return false;try{virtualLayoutForSlot(slot,output.layout);return true;}catch{return false;}});
   async function refresh(){
-    const requestEpoch=++epoch,id=profileId,nodeId=output.id;
+    const requestEpoch=++epoch,id=profileId,nodeId=output.id,requestContext=context;
     busy=true;loaded=false;error='';
     const results=await Promise.allSettled([gatewayRequest({command:'profile_virtual_slots_get',id}),gatewayRequest({command:'system_inventory'})]);
-    if(disposed||requestEpoch!==epoch)return;
+    if(disposed||requestEpoch!==epoch||requestContext!==context)return;
     try{
       if(results[1].status==='fulfilled')slots=virtualBackendSlots(results[1].value.systemInventory);
       else throw results[1].reason;
@@ -27,15 +29,15 @@
     finally{busy=false;}
   }
   async function select(value:string){
-    const previous=selected,desired=value===''?null:Number(value),requestEpoch=++epoch,id=profileId,nodeId=output.id;
+    const previous=selected,desired=value===''?null:Number(value),requestEpoch=++epoch,id=profileId,nodeId=output.id,requestContext=context;
     selected=desired;busy=true;error='';
     try{
       const response=await gatewayRequest({command:'profile_virtual_slot_set',id,expectedRevision:revision,nodeId,slot:desired});
-      if(disposed||requestEpoch!==epoch)return;
+      if(disposed||requestEpoch!==epoch||requestContext!==context)return;
       const settings=virtualSlotAssignments(response.profiles,id);
       selected=settings.virtualSlots.find(pin=>pin.nodeId===nodeId)?.slot??null;
-    }catch(reason){if(!disposed&&requestEpoch===epoch){selected=previous;error=reason instanceof Error?reason.message:String(reason);}}
-    finally{if(!disposed&&requestEpoch===epoch)busy=false;}
+    }catch(reason){if(!disposed&&requestEpoch===epoch&&requestContext===context){selected=previous;error=reason instanceof Error?reason.message:String(reason);}}
+    finally{if(!disposed&&requestEpoch===epoch&&requestContext===context)busy=false;}
   }
   function useLayout(){
     if(!slot)return;
@@ -43,7 +45,7 @@
     catch(reason){error=reason instanceof Error?reason.message:String(reason);}
   }
   onMount(()=>{mounted=true;});onDestroy(()=>{disposed=true;epoch++;});
-  $effect(()=>{const key=`${profileId}/${revision}/${output.id}`;if(mounted&&key)untrack(()=>void refresh());});
+  $effect(()=>{const key=context;if(mounted&&key)untrack(()=>void refresh());});
 </script>
 
 <section class="virtual-slot" aria-label="Virtual controller slot">

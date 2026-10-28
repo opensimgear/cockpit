@@ -11,7 +11,8 @@ const frontend=process.env.OSG_SLOT_FRONTEND_ROOT??'';
 test('a saved virtual block selects a local slot, adopts its layout and activates that exact slot',{timeout:120000},async()=>{
  const native=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP??'http://127.0.0.1:9222');
  const nativePage=native.contexts().flatMap(context=>context.pages()).find(page=>page.url().startsWith(origin));assert.ok(nativePage);
- const invoke=(command,args)=>nativePage.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
+ let slotReads=0;
+ const invoke=(command,args)=>{if(command==='gateway_request'&&args.request.command==='profile_virtual_slots_get')slotReads++;return nativePage.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});};
  const request=async value=>{const response=await invoke('gateway_request',{request:{...value,clientId:'virtual-slot-native-check'}});assert.equal(response.ok,true,response.error);return response.state;};
  const before=(await request({command:'profile_status'})).profiles.profileSession;
  assert.equal(before.owner,null,'Run this check while no user profile is active.');
@@ -41,11 +42,28 @@ test('a saved virtual block selects a local slot, adopts its layout and activate
   await expect(picker).toHaveValue('');await picker.selectOption(String(target.slot));
   await expect.poll(async()=>((await request({command:'profile_virtual_slots_get',id:saved.id})).profiles.virtualSlots[0].slot)).toBe(target.slot);
   await expect(save).toBeDisabled();
+  const readsBeforeEdit=slotReads;
+  await picker.focus();
+  await page.waitForTimeout(6500); // Cover two normal inventory refresh intervals.
+  assert.equal(slotReads,readsBeforeEdit,'Background inventory polling must not reload the slot setting.');
+  await expect(picker).toBeFocused();
   await page.getByRole('button',{name:'Use layout',exact:true}).click();
   await expect(page.getByRole('spinbutton',{name:/^buttons$/i})).toHaveValue(String(target.buttons));
   await expect(page.getByRole('spinbutton',{name:/^axes$/i})).toHaveValue(String(target.axes.length));
   await expect(page.getByRole('spinbutton',{name:/^hats$/i})).toHaveValue(String(target.continuousHats));
+  // Adopting the layout replaces this output without changing its saved identity.
+  // It must not disable or reload the local slot setting.
+  await page.waitForTimeout(200);
+  assert.equal(slotReads,readsBeforeEdit,'Unrelated block edits must not refresh slot settings.');
+  await expect(picker).toBeEnabled();await expect(picker).toHaveValue(String(target.slot));
+  const readsBeforeSave=slotReads;
   await save.click();await expect(save).toBeDisabled();
+  await expect.poll(()=>slotReads).toBe(readsBeforeSave+1);
+  await expect(picker).toBeEnabled();
+  const readsBeforeRefresh=slotReads;
+  await page.getByRole('button',{name:'Refresh slots',exact:true}).click();
+  await expect(picker).toBeEnabled();
+  assert.equal(slotReads,readsBeforeRefresh+1,'Explicit Refresh must still fetch current slot settings.');
   saved=(await request({command:'profile_assignments_get',id:saved.id})).profiles.document;
   assert.equal(saved.virtualOutputs[0].layout.buttons[0],'button-1');
   const exported=(await request({command:'profile_export',id:saved.id})).profiles.document;
