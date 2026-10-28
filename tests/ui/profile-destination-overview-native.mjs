@@ -40,7 +40,7 @@ test('native destination overview shares source lanes across arrows and keeps AN
         };
       });
       const trunks = [...document.querySelectorAll('.overview-merge')].map(path => {
-        const length = path.getTotalLength(), end = path.getPointAtLength(length), before = path.getPointAtLength(Math.max(0, length - 80)), start = path.getPointAtLength(0), matrix = path.getScreenCTM();
+        const length = path.getTotalLength(), end = path.getPointAtLength(length), start = path.getPointAtLength(0), matrix = path.getScreenCTM();
         if (!matrix) throw Error('The overview merge stem has no screen transform.');
         return {
           id: path.dataset.mergeId,
@@ -48,7 +48,6 @@ test('native destination overview shares source lanes across arrows and keeps AN
           routeCount: Number(path.dataset.routeCount),
           hasMarker: !!path.getAttribute('marker-end') && path.getAttribute('marker-end') !== 'none',
           start: { x: start.x, y: start.y },
-          beforeEnd: { x: before.x, y: before.y },
           worldEnd: { x: end.x, y: end.y },
           end: { x: matrix.a * end.x + matrix.c * end.y + matrix.e, y: matrix.b * end.x + matrix.d * end.y + matrix.f },
         };
@@ -62,8 +61,8 @@ test('native destination overview shares source lanes across arrows and keeps AN
     assert.equal(trunk.targetNode, 'virtual-target');
     assert.ok(trunk.routeCount >= 2, 'The final stem represents both incoming routes.');
     assert.ok(trunk.hasMarker, 'The shared final stem carries the arrowhead.');
-    assert.ok(Math.abs(trunk.worldEnd.x - trunk.beforeEnd.x) >= 79 && Math.abs(trunk.worldEnd.y - trunk.beforeEnd.y) <= 1.5,
-      'The roomy fixture has at least 80 canvas units of horizontal final stem.');
+    assert.ok(Math.abs(trunk.worldEnd.x - trunk.start.x - 60) <= 1 && Math.abs(trunk.worldEnd.y - trunk.start.y) <= 1.5,
+      'The roomy fixture has 60 canvas units of horizontal final stem.');
     assert.ok(Math.hypot(trunk.end.x - geometry.target.x, trunk.end.y - geometry.target.y) <= 1.5,
       `Merge stem ends at (${trunk.end.x.toFixed(1)}, ${trunk.end.y.toFixed(1)}), away from the shared input dot (${geometry.target.x.toFixed(1)}, ${geometry.target.y.toFixed(1)}).`);
     for (const branch of geometry.branches) {
@@ -77,6 +76,37 @@ test('native destination overview shares source lanes across arrows and keeps AN
       assert.ok(Math.hypot(trunk.start.x - branch.junction.x, trunk.start.y - branch.junction.y) <= 1.5,
         `Stem ${trunk.id} does not start at branch ${branch.binding}'s junction.`);
     }
+  };
+  const checkDragPreview = async nodeId => {
+    const heading = page.locator(`.resource-block[data-node-id="${nodeId}"] .block-heading`);
+    const rect = await heading.boundingBox();
+    assert.ok(rect, 'A draggable block heading must be visible.');
+    const start = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    const paths = () => page.locator('.overview-edge, .overview-merge').evaluateAll(items => items.map(item => item.getAttribute('d')));
+    const original = await paths();
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    try {
+      for (const [dx, dy] of [[32, 20], [48, -16], [0, 0]]) {
+        await page.mouse.move(start.x + dx, start.y + dy, { steps: 6 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await expect(page.locator('.canvas-stage')).toHaveClass(/node-dragging/);
+        await assertSharedInputEndpoints();
+        const tangents = await page.locator('.overview-edge').evaluateAll(items => items.map(path => {
+          const length = path.getTotalLength(), end = path.getPointAtLength(length), before = path.getPointAtLength(Math.max(0, length - 1));
+          return { dx: end.x - before.x, dy: end.y - before.y, path: path.getAttribute('d') };
+        }));
+        for (const tangent of tangents) {
+          assert.ok(tangent.dx > 0 && Math.abs(tangent.dy) < .1, 'A preview branch joins the stem horizontally without reversing.');
+          assert.doesNotMatch(tangent.path, /NaN|Infinity/);
+        }
+      }
+      assert.deepEqual(await paths(), original, 'Returning the block to its origin during drag preserves the committed curves exactly.');
+    } finally {
+      await page.mouse.up();
+    }
+    await expect(page.locator('.canvas-stage')).not.toHaveClass(/node-dragging/);
+    await assertSharedInputEndpoints();
   };
   const openArrow = async index => {
     const arrow = page.locator('.signal-edge-hit').nth(index);
@@ -148,6 +178,8 @@ test('native destination overview shares source lanes across arrows and keeps AN
     await edit.click();
     await expect(page.locator('.overview-edge')).toHaveCount(2);
     await assertSharedInputEndpoints();
+    await checkDragPreview(fixture.sourceIds[0]);
+    await checkDragPreview('virtual-target');
 
     for (const arrowIndex of [0, 1]) {
       await openArrow(arrowIndex);

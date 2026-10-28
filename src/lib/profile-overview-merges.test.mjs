@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {loadModules} from './test-module-loader.mjs';
-const modules=await loadModules(['./profile-overview-merges','./profile-overview-routing']);
+const modules=await loadModules(['./profile-overview-merges','./profile-overview-routing','./profile-route-preview']);
 const {mergeOverviewRoutes,createOverviewMerger}=modules.get('./profile-overview-merges');
+const {canvasPreviewRoutes}=modules.get('./profile-route-preview');
 const {routeOverview}=modules.get('./profile-overview-routing');
 const plain=value=>JSON.parse(JSON.stringify(value));
 const node=(id,x,y)=>({id,position:{x,y},width:100,height:80});
@@ -45,7 +46,7 @@ for(const style of ['smooth','orthogonal'])for(const count of [2,3])for(const ba
     const result=merge(nodes,bindings,style);
     assert.equal(result.merges.length,1);
     const trunk=result.merges[0];
-    assert.ok(trunk.endpoint.x-trunk.junction.x>=80);
+    assert.ok(trunk.endpoint.x-trunk.junction.x===60);
     assert.equal(trunk.members.length,count);
     result.routes.forEach((route,index)=>{
       assert.strictEqual(route.binding,result.original[index].binding);
@@ -71,10 +72,10 @@ test('different visible input anchors and destination nodes remain separate',()=
   assert.equal(merge(nodes,bindings).merges.length,0);
 });
 test('an intervening card routes branches around it and shortens only a constrained stem',()=>{
-  const {nodes,bindings}=setup(3);nodes.push(node('obstacle',430,180));
+  const {nodes,bindings}=setup(3);nodes.push(node('obstacle',440,180));
   const result=merge(nodes,bindings,'orthogonal');
   assert.equal(result.merges.length,1);
-  assert.ok(result.merges[0].endpoint.x-result.merges[0].junction.x<80);
+  assert.ok(result.merges[0].endpoint.x-result.merges[0].junction.x<60);
   for(const route of result.routes)missesCards(route.points,nodes);
   missesCards(result.merges[0].points,nodes);
 });
@@ -97,7 +98,7 @@ test('per-canvas merger reuses committed geometry and invalidates changed geomet
   assert.strictEqual(merger(routes,nodes,100,80,'smooth',24),first);
   assert.strictEqual(merger(routes,plain(nodes),100,80,'smooth',24),first,'equal replacement nodes reuse geometry');
   const preview=merger(routes,nodes,100,80,'smooth',24,true);
-  assert.notStrictEqual(preview,first);
+  assert.strictEqual(preview,first);
   assert.strictEqual(merger(routes,nodes,100,80,'smooth',24),first,'preview cannot evict committed geometry');
   for(const args of [
     [routes,nodes,100,80,'orthogonal',24],
@@ -121,4 +122,50 @@ test('equal replacement routes reuse path objects but refresh all binding and me
   const single=createOverviewMerger(),one=single(routes.slice(0,1),nodes,100,80,'smooth',24);
   const refreshed=single(replacement.slice(0,1),nodes,100,80,'smooth',24);
   assert.strictEqual(refreshed.routes[0],replacement[0]);assert.notStrictEqual(one,refreshed);
+});
+
+for(const style of ['smooth','orthogonal'])for(const backward of [false,true])for(const movedId of ['source0','target']){
+  test(style+': repeated '+(backward?'backward ':'forward ')+movedId+' drag retains committed merge membership and tangents',()=>{
+    const {nodes,bindings}=setup(3,backward),routes=routeOverview(nodes,bindings,100,80,{style}),merger=createOverviewMerger();
+    const first=merger(routes,nodes,100,80,style,24),snapshot=plain(first);
+    assert.equal(first.merges.length,1);
+    for(const [dx,dy] of [[5,10],[20,35],[-10,-20],[50,60],[0,0]]){
+      const moved=nodes.map(n=>n.id===movedId?{...n,position:{x:n.position.x+dx,y:n.position.y+dy}}:n);
+      const input=canvasPreviewRoutes(routes,moved,100,80,style);
+      const next=merger(input,moved,100,80,style,24,true),stem=next.merges[0];
+      assert.equal(next.merges.length,1);
+      assert.equal(stem.id,first.merges[0].id);
+      assert.deepEqual(stem.members.map(r=>r.binding.id),first.merges[0].members.map(r=>r.binding.id));
+      assert.equal(stem.endpoint.x-stem.junction.x,60);
+      assert.deepEqual(plain(stem.endpoint),plain(input[0].points.at(-1)));
+      for(let index=0;index<next.routes.length;index++){
+        const route=next.routes[index];
+        assert.deepEqual(plain(route.points[0]),plain(input[index].points[0]));
+        assert.deepEqual(plain(route.points.at(-1)),plain(stem.junction));
+        assert.doesNotMatch(route.path,/NaN|Infinity/);
+        for(let i=1;i<route.points.length;i++)assert.ok((route.points[i].x===route.points[i-1].x)!==(route.points[i].y===route.points[i-1].y));
+        if(style==='smooth'){
+          const values=route.path.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi).map(Number);
+          assert.equal(values.at(-3),values.at(-1),'Horizontal arrival tangent');
+          assert.ok(values.at(-4)<values.at(-2),'Arrival proceeds toward the junction');
+          assert.equal((route.path.match(/C/g)||[]).length,(first.routes[index].path.match(/C/g)||[]).length,'Retain committed cubic topology');
+        }
+      }
+      if(!dx&&!dy)assert.strictEqual(next,first,'No motion reuses committed geometry');
+    }
+    assert.deepEqual(plain(first),snapshot,'Preview must leave committed cache intact');
+    assert.strictEqual(merger(routes,nodes,100,80,style,24),first);
+  });
+}
+for(const style of ['smooth','orthogonal'])test(style+': group drag translates merged shape exactly',()=>{
+  const {nodes,bindings}=setup(3),routes=routeOverview(nodes,bindings,100,80,{style}),merger=createOverviewMerger();
+  const first=merger(routes,nodes,100,80,style,24),dx=35,dy=-20;
+  const moved=nodes.map(n=>({...n,position:{x:n.position.x+dx,y:n.position.y+dy}}));
+  const next=merger(canvasPreviewRoutes(routes,moved,100,80,style),moved,100,80,style,24,true);
+  next.routes.forEach((route,index)=>{
+    assert.deepEqual(plain(route.points),plain(first.routes[index].points).map(p=>({x:p.x+dx,y:p.y+dy})));
+    const coordinates=path=>path.match(/-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/gi).map(Number);
+    if(style==='smooth')assert.deepEqual(coordinates(route.path),coordinates(first.routes[index].path).map((n,i)=>n+(i%2?dy:dx)));
+  });
+  assert.deepEqual(plain(next.merges[0].points),plain(first.merges[0].points).map(p=>({x:p.x+dx,y:p.y+dy})));
 });

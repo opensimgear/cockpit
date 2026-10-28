@@ -2,6 +2,7 @@ import type {CanvasRoute} from './profile-canvas-render';
 import {diagramOrthogonalPath,diagramSmoothPath,type DiagramNode,type DiagramPoint} from './profile-diagram';
 import {routeOverview} from './profile-overview-routing';
 import {profileAnchorWireRoute} from './profile-wire-layout';
+import {previewRouteEndpoints} from './profile-route-preview';
 import type {ProfileWireStyle} from './profiles';
 
 export type OverviewMerge={
@@ -46,7 +47,7 @@ export function mergeOverviewRoutes(routes:readonly CanvasRoute[],nodes:readonly
     const endpoint={...members[0].points.at(-1)!};
     // Prefer a conspicuous final stem. Only a constrained card arrangement
     // justifies moving the confluence closer to its input circle.
-    for(const length of [120,96,80,64,48,32,16,8]){
+    for(const length of [60,48,40,32,24,16,8,4]){
       const junction={x:endpoint.x-length,y:endpoint.y};
       if(boxes.some(box=>inside(junction,box)||crosses(junction,endpoint,box)))continue;
       let branches:CanvasRoute[];
@@ -77,12 +78,38 @@ export function mergeOverviewRoutes(routes:readonly CanvasRoute[],nodes:readonly
   return {routes:routes.map(route=>replacements.get(route)??route),merges};
 }
 
+/** Reattach committed branches without reconsidering membership or fitting curves.
+ * Unmerged input routes provide only the live source and target endpoints. */
+function previewMergedRoutes(committed:ReturnType<typeof mergeOverviewRoutes>,routes:readonly CanvasRoute[],style:ProfileWireStyle,cornerRadius:number):ReturnType<typeof mergeOverviewRoutes> {
+  const current=new Map(routes.map(route=>[route.binding.id,route]));
+  const junctions=new Map<string,DiagramPoint>();
+  let changed=false;
+  const merges=committed.merges.map(merge=>{
+    const endpoint=current.get(merge.members[0].binding.id)?.points.at(-1)??merge.endpoint;
+    const dx=endpoint.x-merge.endpoint.x,dy=endpoint.y-merge.endpoint.y;
+    const junction=dx||dy?{x:merge.junction.x+dx,y:merge.junction.y+dy}:merge.junction;
+    for(const member of merge.members)junctions.set(member.binding.id,junction);
+    if(!dx&&!dy)return merge;
+    changed=true;
+    const points=[junction,endpoint];
+    return {...merge,endpoint,junction,points,path:diagramOrthogonalPath(points,cornerRadius)};
+  });
+  const preview=committed.routes.map(route=>{
+    const input=current.get(route.binding.id);
+    if(!input?.points.length)return route;
+    const next=previewRouteEndpoints(route,input.points[0],junctions.get(route.binding.id)??input.points.at(-1)!,style,cornerRadius);
+    changed ||=next!==route;
+    return next;
+  });
+  return changed?{routes:preview,merges}:committed;
+}
+
 /** One committed geometry snapshot per canvas. Inventory refreshes can replace
  * bindings without paying for another collision search or retaining old data. */
 export function createOverviewMerger():typeof mergeOverviewRoutes {
   let previous:{key:string;inputs:readonly CanvasRoute[];result:ReturnType<typeof mergeOverviewRoutes>}|undefined;
   return (routes,nodes,width,height,style,cornerRadius,preview=false)=>{
-    if(preview)return mergeOverviewRoutes(routes,nodes,width,height,style,cornerRadius,true);
+    if(preview)return previous?previewMergedRoutes(previous.result,routes,style,cornerRadius):mergeOverviewRoutes(routes,nodes,width,height,style,cornerRadius,true);
     const key=JSON.stringify([
       width,height,style,cornerRadius,
       nodes.map(node=>[node.id,node.position.x,node.position.y,node.width??width,node.height??height,node.inputAnchors,node.outputAnchors]),
