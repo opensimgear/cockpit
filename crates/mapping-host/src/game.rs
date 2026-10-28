@@ -654,13 +654,19 @@ mod tests {
         assert!(Capture::parse(&hiding).is_err());
         hiding["visibility"] = json!({"mode":"linux-grab","sourceIds":["physical"]});
         let visibility_error = s.game_preflight(&hiding).unwrap_err();
-        // Windows exposes the qualified adapter but still requires local opt-in.
+        // Windows requires verified HidHide self-access before game activation.
         // Other hosts must reject the unavailable adapter before any inspection.
-        assert!(visibility_error.contains(if cfg!(windows) {
-            "Enable optional visibility explicitly"
+        if cfg!(windows) {
+            assert_eq!(
+                visibility_error,
+                "HidHide setup is not ready for game activation: Automatic HidHide self-access was not requested for this capture service."
+            );
         } else {
-            "visibility is not qualified"
-        }), "{visibility_error}");
+            assert_eq!(
+                visibility_error,
+                "Captured device visibility is not qualified on this platform; no hiding policy was changed."
+            );
+        }
         hiding["visibility"]["mode"] = json!("global");
         assert!(Capture::parse(&hiding).is_err());
         assert!(s.game_lease.lock().unwrap().is_none());

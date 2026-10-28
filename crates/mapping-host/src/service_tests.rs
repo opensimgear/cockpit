@@ -61,7 +61,10 @@ fn native_windows_readiness_matches_visibility_without_inspection_or_output() {
     assert_eq!(service.request(&json!({"command":"mapping_status"})).unwrap()["running"], false);
     assert_eq!(calls.load(Ordering::Relaxed), 0);
     if LIVE_OUTPUT_QUALIFIED {
-        assert!(QUALIFICATION.starts_with("Windows vJoy output and HidHide are available."));
+        assert_eq!(
+            QUALIFICATION,
+            osg_controller_input::visibility::capabilities::WINDOWS_REASON
+        );
     }
     service.shutdown();
 }
