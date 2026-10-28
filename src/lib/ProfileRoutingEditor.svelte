@@ -21,9 +21,9 @@
   import {profileGameIntegrationSource} from './profile-game-context';
   import ProfileCompanionEditor from './ProfileCompanionEditor.svelte';
   import type{ProfileLearningClient}from'./profile-learning';
-  import {canvasNodes,portContractLabel,integrationCataloguePorts,type CanvasNode,type CanvasPoint} from './profile-canvas';
+  import {profileCanvasView,canvasNodes,portContractLabel,integrationCataloguePorts,type CanvasNode,type CanvasPoint} from './profile-canvas';
   import {profilePaletteCanAdd,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag} from './profile-palette';
-  import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
+  import {profileTabNodeIds} from './profile-vehicle-tabs';
   import {graphTransferProcessing,graphAssignResource,graphBypassProcessing,graphConnect,graphConnectionError,graphContractError,graphDisconnect,graphFreshId,graphInsertProcessing,graphInventorySignature,graphPort,graphPorts,graphPublicationCapability,graphRemoveNode,graphRemovePort,graphSelectProviderPort,graphSetProcessing,graphSetRuntimeOverride,graphSetVirtual,graphSetVisibility,type ProfileGraphDraft}from'./profile-graph';
   import {PROCESSING_PRESETS,processingActionPack,processingNodeError,processingTemplate,type ProcessingPreset}from'./profile-processing';
   import {ProfilePortBrowser}from'./profile-port-browser';
@@ -69,7 +69,7 @@
   let discoveries=$state.raw<Record<string,{signature:string;details:DeepReadonly<ResourceDetails|ProfileCompanionPage>|null;busy:boolean;error:string}>>({});
   let discoveryDisposed=false;
   const discoveryChoices=new ProfileDiscoveredPortCache();
-  const visibleDocument=$derived(profileTabDocument(document,activeVehicleTabId)),visibleIds=$derived(profileTabNodeIds(document,activeVehicleTabId));
+  const canvasView=$derived(profileCanvasView(document,activeVehicleTabId)),visibleDocument=$derived(canvasView.document),visibleIds=$derived(profileTabNodeIds(document,activeVehicleTabId));
   const nodes=$derived(canvasNodes(visibleDocument,assignments,inventory)),selected=$derived(nodes.find(node=>node.id===selectedId));
   const graph=$derived({document,assignments});
   const connectionBinding=$derived(pendingConnection?{id:'',from:{nodeId:fromNode,portId:fromPort},to:{nodeId:toNode,portId:toPort}}:visibleDocument.bindings.find(binding=>binding.id===connectionRoute));
@@ -275,7 +275,7 @@
   function configureDraft(id:string,kind:ProcessingPreset,parameters:Record<string,unknown>={}){return apply(()=>updateProcessingDraft(graph,id,kind,parameters),'Configure transformation');}
   function updateVirtual(output:Omit<ProfileVirtualOutput,'ports'>){apply(()=>graphSetVirtual(graph,output),'Edit virtual controller layout');}
   function updateDebug(resource:ProfileResource){apply(()=>graphSetDebugController(graph,resource),'Edit debug controller');}
-  function removeNode(id:string){apply(()=>{const next=graphRemoveNode(graph,id);if(document.resources.some(resource=>resource.id===id&&resource.kind==='game')&&!next.document.resources.some(resource=>resource.kind==='game'))next.document.eligibility.gameIds=[];return next;},'Remove block and its routes');selectedId='';}
+  function removeNode(id:string){if(canvasView.referenceNodeIds.has(id))return;apply(()=>{const next=graphRemoveNode(graph,id);if(document.resources.some(resource=>resource.id===id&&resource.kind==='game')&&!next.document.resources.some(resource=>resource.kind==='game'))next.document.eligibility.gameIds=[];return next;},'Remove block and its routes');selectedId='';}
   function optionKey(port:DeepReadonly<ObservedResourcePort>):string{return JSON.stringify([port.descriptor.id,port.contractHash]);}
   function chooseMapping(portId:string,key:string){const observed=mappingOptions.find(port=>optionKey(port)===key);const next={...selectedMappings};if(observed)next[portId]=observed;else delete next[portId];selectedMappings=next;}
   async function browseAssignment(operation:'open'|'next'|'previous'){
@@ -342,17 +342,18 @@
       {#if node.processing}<ProfileTransformSettings node={node.processing} {typeOptions} remove={()=>removeOverviewTransform(node.id,selectedTransformLane)} changeType={kind=>pendingIndex>=0?changeConnectionTransform(pendingIndex,kind):changeOverviewTransform(node.id,kind)} change={updateProcessing} configure={(kind,parameters)=>configureDraft(node.id,kind,parameters)}/>{/if}
     {/snippet}
     {#snippet inspector(node)}
+      {@const reference=canvasView.referenceNodeIds.has(node.id)}
       {@const physicalController=node.resource?.kind==='device'&&node.observation?.resourceType==='host-controller'}
-      <fieldset class="authoring-inspector" disabled={readOnly}>
+      <fieldset class="authoring-inspector" disabled={readOnly||reference}>
         {#if node.resource?.kind==='debug-controller'}
-          <ProfileDebugControllerEditor resource={node.resource} profileId={document.id} revision={document.revision} {active} disabled={readOnly} update={updateDebug}/>
+          <ProfileDebugControllerEditor resource={node.resource} profileId={document.id} revision={document.revision} {active} disabled={readOnly||reference} update={updateDebug}/>
         {:else}
         {#if node.resource}<ProfileResourceSettings {node} {document} {games} controller={physicalController} source={assignmentSource} resources={assignmentResources} page={assignmentPage} mappings={selectedMappings} options={mappingOptions} busy={assignmentBusy} error={assignmentError} hasPrevious={assignmentBrowser.hasPrevious} hasNext={assignmentBrowser.hasNext} policy={(key,value)=>resourcePolicy(node,key,value)} visibility={value=>apply(()=>graphSetVisibility(graph,node.id,value==='hidden-while-active'?'hidden-while-active':'visible'),'Edit visibility intent')} publication={value=>publicationPolicy(node,value)} chooseSource={value=>{assignmentSource=value;if(value)void browseAssignment('open');}} {chooseMapping} browse={browseAssignment} assign={assignResource}/>{/if}
-        {#if node.virtual}<ProfileVirtualEditor output={node.virtual} profileId={document.id} revision={document.revision} disabled={readOnly} change={updateVirtual}/>{/if}
+        {#if node.virtual}<ProfileVirtualEditor output={node.virtual} profileId={document.id} revision={document.revision} disabled={readOnly||reference} change={updateVirtual}/>{/if}
         {#if node.desktop}<ProfileDesktopEditor output={node.desktop} change={updateDesktop}/>{/if}
         {/if}
       </fieldset>
-      {#if node.resource?.kind==='companion'}<ProfileCompanionEditor {graph} {inventory} resourceId={node.id} {readOnly} {active} client={companionDiscovery} {change}/>{/if}
+      {#if node.resource?.kind==='companion'}<ProfileCompanionEditor {graph} {inventory} resourceId={node.id} readOnly={readOnly||reference} {active} client={companionDiscovery} {change}/>{/if}
       {#if physicalController}
         <ProfileControllerInputs resource={node.observation} {active}/>
       {/if}
@@ -361,8 +362,8 @@
         {@const details=discoveries[catalogueSourceId(node)]?.details}
         {@const assigned=!!catalogueSource&&node.assignment?.sourceId===catalogueSource.id&&node.resource.ports.every(port=>discoveredChoices[node.id]?.some(choice=>choice.current&&choice.profilePortId===port.id))}
         {#key `${node.id}/${catalogueSource?.id??''}`}
-          {#if !assigned&&node.resource.ports.length&&catalogueSource}<ProfileIntegrationAssignment ports={node.resource.ports} options={details?.ports??[]} busy={discoveryBusy.includes(node.id)} {readOnly} assign={selections=>apply(()=>graphAssignResource(graph,node.id,catalogueSource,selections),'Match integration signals')}/>{/if}
-          {#each ['input','output'] as direction (direction)}<ProfileIntegrationPorts direction={direction==='input'?'input':'output'} ports={discoveredChoices[node.id]??[]} busy={discoveryBusy.includes(node.id)} error={discoveryErrors[node.id]??''} readOnly={readOnly||!assigned} select={port=>port.direction==='input'?destination(node.id,undefined,port.key):source(node.id,undefined,port.key)} retry={()=>retryDiscovery(node.id)}/>{/each}
+          {#if !assigned&&node.resource.ports.length&&catalogueSource}<ProfileIntegrationAssignment ports={node.resource.ports} options={details?.ports??[]} busy={discoveryBusy.includes(node.id)} readOnly={readOnly||reference} assign={selections=>apply(()=>graphAssignResource(graph,node.id,catalogueSource,selections),'Match integration signals')}/>{/if}
+          {#each ['input','output'] as direction (direction)}<ProfileIntegrationPorts direction={direction==='input'?'input':'output'} ports={discoveredChoices[node.id]??[]} busy={discoveryBusy.includes(node.id)} error={discoveryErrors[node.id]??''} readOnly={readOnly||reference||!assigned} select={port=>port.direction==='input'?destination(node.id,undefined,port.key):source(node.id,undefined,port.key)} retry={()=>retryDiscovery(node.id)}/>{/each}
         {/key}
       {/if}
 

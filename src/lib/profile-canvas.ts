@@ -185,3 +185,5 @@ export function portContractLabel(contract:DeepReadonly<ProfilePortContract>):st
 export function canvasGameId(node:CanvasNode,document?:Pick<DeepReadonly<ProfileDocument>,'eligibility'>):GameId|null{const id=node.observation?.attributes.gameId??(node.resource?.kind==='game'?document?.eligibility.gameIds[0]:undefined);return isGameId(id)?id:null;}
 export {integrationPortPage,integrationPortTypeLabel} from './profile-inspector/integration-ports.ts';
 export {integrationCataloguePorts} from './profile-inspector/integration-catalogue.ts';
+
+export {profileCanvasView} from './profile-canvas-view.ts';
