@@ -11,4 +11,10 @@
   --ui-input-cell-height: 32px;
   --ui-input-cell-min-width: 48px;
   --ui-input-cell-gap: 5px;
+  --ui-analog-gap: 7px;
+  --ui-analog-padding: 8px;
+  --ui-axis-height: 24px;
+  --ui-hat-gap: 3px;
+  --ui-hat-size: 90px;
+  --ui-hat-icon-size: 15px;
 }

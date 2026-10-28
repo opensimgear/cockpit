@@ -1,3 +1,4 @@
+export {axisVisual,hatVisual} from './input-visuals/model.ts';
 import type { HidHideSelfAccess, VisibilityCommand, VisibilityStatus } from './visibility';
 export type ControllerCommand = VisibilityCommand | 'controller_list' | 'controller_inspect' | 'controller_update' | 'controller_forget' | 'controller_reassign';
 export type HostController = {
