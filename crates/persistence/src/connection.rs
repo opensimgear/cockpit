@@ -2,6 +2,8 @@
 use super::*;
 impl Database {
     pub(crate) fn connect(&self, create: bool) -> Result<Connection, String> {
+        #[cfg(test)]
+        OPEN_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
         if rusqlite::version() != SQLITE_RUNTIME_VERSION {
             return Err("Unsupported SQLite runtime. Use the pinned bundled Cockpit build.".into());
         }
@@ -88,4 +90,9 @@ impl Database {
         crate::epoch::read(&connection)?;
         Ok(connection)
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static OPEN_ATTEMPTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }

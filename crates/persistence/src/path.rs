@@ -17,19 +17,7 @@ pub fn check_path(path: &Path, create: bool) -> Result<(), String> {
         let parent = components.peek().is_some();
         match std::fs::symlink_metadata(&current) {
             Ok(meta) => {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::MetadataExt;
-                    if meta.file_attributes() & 0x400 != 0 {
-                        return Err("Persistence cannot follow reparse points.".into());
-                    }
-                }
-                if meta.file_type().is_symlink()
-                    || (parent && !meta.is_dir())
-                    || (!parent && !meta.is_file())
-                {
-                    return Err("Persistence path is indirect or has the wrong type.".into());
-                }
+                validate(&meta, parent)?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 if parent && create {
@@ -45,6 +33,28 @@ pub fn check_path(path: &Path, create: bool) -> Result<(), String> {
             }
             Err(_) => return Err("Cannot inspect persistence path.".into()),
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn check_leaf(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => validate(&meta, false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err("Cannot inspect persistence path.".into()),
+    }
+}
+
+fn validate(meta: &std::fs::Metadata, parent: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            return Err("Persistence cannot follow reparse points.".into());
+        }
+    }
+    if meta.file_type().is_symlink() || (parent && !meta.is_dir()) || (!parent && !meta.is_file()) {
+        return Err("Persistence path is indirect or has the wrong type.".into());
     }
     Ok(())
 }

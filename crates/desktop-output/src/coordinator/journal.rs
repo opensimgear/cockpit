@@ -20,7 +20,7 @@ impl Store {
         lock.try_lock()
             .map_err(|_| "Another desktop output session owns this recovery evidence.")?;
         let evidence =
-            osg_persistence::Evidence::open(path, "recovery-desktop", MAX_JOURNAL_BYTES)?;
+            osg_persistence::Evidence::open_live(path, "recovery-desktop", MAX_JOURNAL_BYTES)?;
         if evidence.payload().is_some() {
             Coordinator::inspect_journal(path)?;
             evidence.verify()?;

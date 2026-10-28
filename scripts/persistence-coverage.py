@@ -49,7 +49,7 @@ def main():
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
     source_root = root / 'crates/persistence/src'
-    sources = [source_root / f'{module}.rs' for module in ['lib', 'repository', 'path', 'namespace', 'profile_index', 'observation', 'evidence', 'connection', 'epoch', 'restore', 'activity/mod', 'activity/query']]
+    sources = [source_root / f'{module}.rs' for module in ['lib', 'repository', 'path', 'namespace', 'profile_index', 'observation', 'evidence', 'evidence/live', 'connection', 'epoch', 'restore', 'activity/mod', 'activity/query']]
     summary = {}
     for source in sources:
         module = source.relative_to(source_root).as_posix()
@@ -57,7 +57,7 @@ def main():
                          '-show-line-counts-or-regions', source], root)
         (output / f'{module.removesuffix(".rs").replace("/", "-")}-lines.txt').write_text(annotated, encoding='utf-8')
         lines = source.read_text(encoding='utf-8').splitlines()
-        end = next((i + 1 for i, line in enumerate(lines) if line.strip() == '#[cfg(test)]'), len(lines) + 1)
+        end = next((i + 1 for i, line in enumerate(lines) if line == '#[cfg(test)]'), len(lines) + 1)
         counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotated.splitlines()
                   if (match := re.match(r'^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\|', line)) and int(match[1]) < end}
         if not counts:

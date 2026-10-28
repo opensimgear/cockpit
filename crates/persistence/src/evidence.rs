@@ -2,6 +2,9 @@
 //! with the adapter; database transactions never contain external effects.
 use crate::{Change, Database, PayloadCheck};
 use std::path::Path;
+use std::sync::Mutex;
+
+mod live;
 
 pub struct Evidence {
     database: Database,
@@ -10,6 +13,7 @@ pub struct Evidence {
     limit: usize,
     revision: u64,
     payload: Option<Vec<u8>>,
+    live: Option<Mutex<live::Reader>>,
 }
 impl Evidence {
     pub fn open(anchor: &Path, domain: &str, limit: usize) -> Result<Self, String> {
@@ -29,7 +33,16 @@ impl Evidence {
             limit,
             revision,
             payload,
+            live: None,
         })
+    }
+    /// Retain a checked connection for repeated pre-dispatch verification.
+    /// The adapter must retain its OS lifetime ownership alongside this value.
+    pub fn open_live(anchor: &Path, domain: &str, limit: usize) -> Result<Self, String> {
+        let mut evidence = Self::open(anchor, domain, limit)?;
+        evidence.live = Some(Mutex::new(live::Reader::open(&evidence.database)?));
+        evidence.verify()?;
+        Ok(evidence)
     }
     /// Passive inspection never creates a database or reads retired JSON files.
     pub fn inspect(anchor: &Path, domain: &str, limit: usize) -> Result<Option<Vec<u8>>, String> {
@@ -73,6 +86,12 @@ impl Evidence {
         Ok(keys)
     }
     pub fn verify(&self) -> Result<(), String> {
+        if let Some(reader) = &self.live {
+            return reader
+                .try_lock()
+                .map_err(|_| "Recovery evidence verification is already in progress.")?
+                .verify(self);
+        }
         let (revision, record) = self.database.read_with_revision(&self.domain, &self.key)?;
         if revision != self.revision
             || record.as_ref().map(|r| r.payload.as_slice()) != self.payload()
@@ -83,6 +102,9 @@ impl Evidence {
     }
     pub fn write(&mut self, payload: &[u8]) -> Result<(), String> {
         bounded(Some(payload), self.limit)?;
+        if self.live.is_some() {
+            self.verify()?;
+        }
         let revisions = self.database.commit_exact(
             &[Change {
                 domain: &self.domain,
