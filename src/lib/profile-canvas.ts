@@ -183,3 +183,4 @@ export function portContractLabel(contract:DeepReadonly<ProfilePortContract>):st
   return`${contract.delivery} · ${contract.semantics} · ${contract.parameters.length?contract.parameters.map(parameter=>`${parameter.name}: ${scalarLabel(parameter.schema)}`).join(', '):'no arguments'}`;
 }
 export function canvasGameId(node:CanvasNode):GameId|null{const id=node.observation?.attributes.gameId;return isGameId(id)?id:null;}
+export {integrationOutputPage,outputTypeLabel} from './profile-inspector/integration-outputs.ts';

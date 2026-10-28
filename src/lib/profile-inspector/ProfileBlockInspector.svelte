@@ -47,6 +47,7 @@
   {#if portError}<p class="port-error" role="alert">{portError}</p>{/if}
 
   {#if resourceNode}
+    {#if node.resource?.kind!=='game'}
     <details class="ports-section">
       <summary>Ports · {inputs.length + outputs.length}</summary>
       {#each portCategories as category (category)}
@@ -87,6 +88,7 @@
       </details>
     {/if}
 
+    {/if}
     {#if node.observation}
       <details class="metadata-section"><summary>Details</summary>
         {#if node.observation.diagnostics.length}<ul class="diagnostics">{#each node.observation.diagnostics as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}
