@@ -8,4 +8,7 @@
   --ui-section-gap: 24px;
   --ui-panel-padding: 20px;
   --ui-control-height: 40px;
+  --ui-input-cell-height: 32px;
+  --ui-input-cell-min-width: 48px;
+  --ui-input-cell-gap: 5px;
 }

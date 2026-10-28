@@ -65,6 +65,7 @@
 {/if}
 
 <style>
+  .button-matrix :global(.button-cell > .connection-badge), .button-matrix :global(.button-slot > .connection-badge) { right: 0; }
   .live-input-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: var(--ui-section-gap); }
   .live-input-layout.buttons-only, .live-input-layout.analog-only { grid-template-columns: minmax(0, 1fr); }
   .analog-inputs, .button-inputs { min-width: 0; }
@@ -76,10 +77,10 @@
   small { font-size: 9px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
   .analog-control > :global(small) { grid-column: 1 / -1; }
   meter { width: 100%; min-width: 0; accent-color: var(--accent); }
-  .button-matrix { display: grid; grid-template-columns: repeat(auto-fill, 40px); gap: 6px; }
-  .button-slot { position: relative; height: 40px; }
-  .button-control { position: absolute; top: 0; left: 0; width: 40px; min-height: 40px; padding: 0; border: 1px solid var(--line); border-radius: 6px; color: var(--soft); background: var(--input-bg); text-align: left; cursor: help; }
-  .button-number { display: flex; align-items: center; justify-content: center; gap: 4px; height: 38px; font-size: 11px; font-weight: 570; font-variant-numeric: tabular-nums; }
+  .button-matrix { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--ui-input-cell-min-width)), 1fr)); gap: var(--ui-input-cell-gap); }
+  .button-slot { position: relative; min-width: 0; height: var(--ui-input-cell-height); }
+  .button-control { position: absolute; top: 0; left: 0; width: 100%; height: var(--ui-input-cell-height); min-height: var(--ui-input-cell-height); box-sizing: border-box; padding: 0; border: 1px solid var(--line); border-radius: 6px; color: var(--soft); background: var(--input-bg); text-align: left; cursor: help; }
+  .button-number { display: flex; align-items: center; justify-content: center; gap: 4px; height: calc(var(--ui-input-cell-height) - 2px); font-size: 11px; font-weight: 570; font-variant-numeric: tabular-nums; }
   .button-information { display: none; flex-direction: column; gap: 5px; padding: 12px; }
   .pressed { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
   .waiting { border-style: dashed; color: var(--muted); }
@@ -93,8 +94,7 @@
   .simple .analog-control { padding: 6px 0; border: 0; background: transparent; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 8px; }
   .simple .analog-control strong, .simple .input-value { font-size: var(--ui-text-size); }
   .simple .analog-control > .input-value { grid-column: 3; grid-row: 1; text-align: right; font-variant-numeric: tabular-nums; }
-  .simple .button-matrix { grid-template-columns: repeat(auto-fill, 28px); gap: 5px; }
-  .button-indicator { display: grid; place-items: center; width: 28px; height: 28px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--soft); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .button-indicator { display: grid; place-items: center; width: 100%; height: var(--ui-input-cell-height); box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: var(--input-bg); color: var(--soft); font-size: 11px; font-variant-numeric: tabular-nums; }
   .button-indicator.pressed { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
   .button-indicator.waiting { border-style: dashed; color: var(--muted); }
   @media (max-width: 700px) { .live-input-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
