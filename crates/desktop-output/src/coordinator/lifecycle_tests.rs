@@ -325,6 +325,7 @@ fn acknowledged_stop_is_idempotent_and_cannot_reuse_a_dead_worker() {
             Ok(Ack {
                 sequence: r.sequence,
                 operation_id: None,
+                pointer_batch: None,
                 ok: true,
                 attempted: 0,
                 confirmed: 0,

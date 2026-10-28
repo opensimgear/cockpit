@@ -132,57 +132,7 @@ impl Desktop {
         Ok(())
     }
     fn flush(&mut self, now: u64) -> Result<(), String> {
-        let mut cancelled = BTreeSet::new();
-        for delivery in self.scheduler.drain() {
-            let cleanup = matches!(&delivery.intent, osg_mapping::desktop::Intent::Cleanup)
-                || matches!(&delivery.intent, osg_mapping::desktop::Intent::Held { controls } if controls.is_empty());
-            if cleanup && self.armed.get(&delivery.action_id) != Some(&delivery.producer) {
-                // A neutral baseline can precede this generation's first Arm.
-                // Only a token which acquired an owner may release that owner.
-                self.audit_drop(&delivery, 1);
-                continue;
-            }
-            if !cleanup && cancelled.contains(&delivery.action_id) {
-                self.audit_drop(&delivery, 2);
-                continue;
-            }
-            if !cleanup && self.armed.get(&delivery.action_id) != Some(&delivery.producer) {
-                self.output
-                    .arm(delivery.producer.clone(), delivery.action_id.clone())?;
-                self.armed
-                    .insert(delivery.action_id.clone(), delivery.producer.clone());
-            }
-            let acknowledgement = self.output.submit(delivery.clone(), now)?;
-            if acknowledgement.collision || acknowledgement.skipped {
-                if self.diagnostics.len() == 32 {
-                    self.diagnostics.pop_front();
-                }
-                self.diagnostics.push_back(if acknowledgement.collision {
-                    format!("Desktop action {} shares a held native control; its pulse cannot manufacture a release edge.",delivery.action_id)
-                }else{format!("Desktop action {} expired before submission and was skipped.",delivery.action_id)});
-            }
-            if acknowledgement.skipped
-                && matches!(&delivery.intent,osg_mapping::desktop::Intent::Held{controls}if !controls.is_empty())
-            {
-                self.scheduler.cancel_action(
-                    &delivery.action_id,
-                    "Submission deadline expired; queued taps cancelled.",
-                )?;
-                cancelled.insert(delivery.action_id.clone());
-            }
-            if self.outcomes.len() == OUTCOME_LIMIT {
-                self.outcomes.pop_front();
-                self.dropped_outcomes = self.dropped_outcomes.saturating_add(1);
-            }
-            self.outcomes.push_back(Outcome {
-                delivery,
-                acknowledgement,
-            });
-        }
-        if !cancelled.is_empty() {
-            self.flush(now)?;
-        }
-        Ok(())
+        self.flush_dispatch(now)
     }
     fn baseline(&mut self, reducer: &Phase) -> Result<(), String> {
         let definitions = reducer
@@ -507,6 +457,13 @@ impl Drop for Desktop {
         let _ = self.stop();
     }
 }
+
+#[path = "desktop/dispatch.rs"]
+mod dispatch;
+
+#[cfg(test)]
+#[path = "desktop/dispatch_integration_tests.rs"]
+mod dispatch_integration_tests;
 
 #[cfg(test)]
 #[path = "desktop_tests.rs"]

@@ -9,6 +9,7 @@ pub mod transport;
 #[cfg(windows)]
 pub mod windows;
 pub mod worker;
+mod pointer_batch;
 pub use coordinator::{Coordinator, Snapshot};
 pub use protocol::{ProcessIdentity, Scope};
 

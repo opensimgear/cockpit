@@ -13,6 +13,8 @@ use std::{
 pub const MAX_JOURNAL_BYTES: usize = 131_072;
 #[path="coordinator/journal.rs"]
 mod journal;
+#[path = "coordinator/pointer_batch.rs"]
+mod pointer_batch;
 
 pub trait Channel: Send {
     fn request(&mut self, request: &Request) -> Result<Ack, String>;
@@ -74,6 +76,7 @@ impl Coordinator {
         let Some(channel) = self.channel.audit_id() else { return; };
         let operation = match &request.command {
             Command::Deliver { delivery } => delivery.operation_id.0,
+            Command::DeliverPointerBatch { deliveries } => deliveries.first().map_or(0, |d| d.operation_id.0),
             _ => 0,
         };
         crate::audit::record(crate::audit::Kind::ParentOutcome, &[
@@ -187,7 +190,8 @@ impl Coordinator {
         // Relative motion cannot acquire or release a held control and is never
         // replayed. Its operation counter is volatile, so successful pointer
         // updates need no recovery-evidence transaction on the lease path.
-        let pointer = matches!(&command, Command::Deliver { delivery } if matches!(delivery.intent, Intent::Pointer { .. }));
+        let pointer = matches!(&command, Command::Deliver { delivery } if matches!(delivery.intent, Intent::Pointer { .. }))
+            || matches!(&command, Command::DeliverPointerBatch { .. });
         let changes_ledger = !pointer && !matches!(command, Command::Renew { .. });
         let request = Request {
             sequence: Counter(self.sequence),
@@ -199,6 +203,7 @@ impl Coordinator {
                 Command::Activate { run, .. } => (0, 1, Some(run)),
                 Command::Arm { producer, .. } => (0, 2, Some(&producer.run)),
                 Command::Deliver { delivery } => (delivery.operation_id.0, 3, Some(&delivery.producer.run)),
+                Command::DeliverPointerBatch { deliveries } => (deliveries[0].operation_id.0, 8, Some(&deliveries[0].producer.run)),
                 Command::Renew { run } => (0, 4, Some(run)),
                 Command::Pause { run } => (0, 5, Some(run)),
                 Command::Recover { .. } => (0, 6, None),
@@ -234,6 +239,7 @@ impl Coordinator {
                     return Err("Desktop acknowledgement has the wrong operation identity.".into());
                 }
             }
+            pointer_batch::validate_ack(&request, &ack)?;
             if ack.attempted > MAX_BATCH
                 || ack.confirmed > ack.attempted
                 || (ack.ok && ack.attempted != ack.confirmed)

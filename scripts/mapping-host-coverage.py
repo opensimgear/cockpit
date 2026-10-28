@@ -68,12 +68,13 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *host_profiles, '-o', profile], root)
-    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game', 'companions', 'companion_native', 'companion_runs', 'typed_sources', 'desktop']]
+    sources = [root / f'crates/mapping-host/src/{module}.rs' for module in ['learn', 'router', 'service', 'settings', 'panels', 'game', 'companions', 'companion_native', 'companion_runs', 'typed_sources', 'desktop', 'desktop/dispatch']]
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
                          '-show-line-counts-or-regions', source], root)
-        (output / f'{source.stem}-lines.txt').write_text(annotated, encoding='utf-8')
+        module = source.relative_to(root / 'crates/mapping-host/src').with_suffix('').as_posix()
+        (output / f'{module.replace("/", "-")}-lines.txt').write_text(annotated, encoding='utf-8')
         lines = source.read_text(encoding='utf-8').splitlines()
         end = next((i + 1 for i, line in enumerate(lines) if line == '#[cfg(test)]'), len(lines) + 1)
         counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotated.splitlines()
@@ -82,7 +83,7 @@ def main():
             raise RuntimeError(f'No instrumented production lines for {source.name}.')
         covered = sum(counts.values())
         percent = 100 * covered / len(counts)
-        summary[source.name] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
+        summary[source.relative_to(root / 'crates/mapping-host/src').as_posix()] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
         print(f'{source.name}: {covered}/{len(counts)} production lines ({percent:.2f}%)', flush=True)
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] < 71 for item in summary.values()):

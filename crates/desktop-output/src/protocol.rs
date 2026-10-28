@@ -48,6 +48,7 @@ pub enum Command {
     Activate { run: RunToken, scope: Scope },
     Arm { producer: Token, action_id: String },
     Deliver { delivery: Delivery },
+    DeliverPointerBatch { deliveries: Vec<Delivery> },
     Renew { run: RunToken },
     Pause { run: RunToken },
     Recover { controls: Vec<Control> },
@@ -65,6 +66,7 @@ pub struct Request {
 pub struct Ack {
     pub sequence: Counter,
     pub operation_id: Option<Counter>,
+    pub pointer_batch: Option<PointerBatchAck>,
     pub ok: bool,
     pub attempted: usize,
     pub confirmed: usize,
@@ -75,6 +77,14 @@ pub struct Ack {
     pub collision: bool,
     pub error: Option<String>,
     pub held: Vec<Control>,
+}
+/// Exact ordered logical participants and the single physical vector they attest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PointerBatchAck {
+    pub operation_ids: Vec<Counter>,
+    pub dx: i32,
+    pub dy: i32,
 }
 pub trait Adapter {
     /// Check foreground identity and interactive desktop immediately before submission.

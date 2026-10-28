@@ -18,6 +18,8 @@ use std::{
     thread,
     time::Duration,
 };
+#[path = "worker/pointer_batch.rs"]
+mod pointer_batch;
 /// Diagnostic context is scoped to one actual adapter submission. Watchdog and
 /// error cleanup must never inherit the incoming request's operation identity.
 #[derive(Clone, Copy)]
@@ -161,12 +163,14 @@ impl<A: Adapter> Worker<A> {
         let (audit_operation, audit_category) = match &request.command {
             Command::Deliver { delivery } => (delivery.operation_id.0,
                 if matches!(delivery.intent, Intent::Cleanup) { 6 } else { 1 }),
+            Command::DeliverPointerBatch { deliveries } => (deliveries.first().map_or(0, |d| d.operation_id.0), 1),
             Command::Recover { .. } => (0, 3),
             _ => (0, 2),
         };
         let mut ack = Ack {
             sequence: request.sequence,
             operation_id: None,
+            pointer_batch: None,
             ok: false,
             attempted: 0,
             confirmed: 0,
@@ -266,6 +270,9 @@ impl<A: Adapter> Worker<A> {
                     ack.skipped = reduction.skipped;
                     ack.collision = reduction.collision;
                     events = reduction.events;
+                }
+                Command::DeliverPointerBatch { deliveries } => {
+                    events = self.pointer_batch(deliveries, request.deadline_us, now, &mut ack)?;
                 }
                 Command::Pause { run } => {
                     events = self.reducer.pause(&run);
@@ -428,11 +435,11 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
                     crate::audit::record(crate::audit::Kind::RequestDequeued, &[channel, request.sequence.0, depth as u64]);
                 }
                 let stop = matches!(request.command, Command::Stop);
-                let delivery = matches!(request.command, Command::Deliver { .. });
+                let delivery = matches!(request.command, Command::Deliver { .. } | Command::DeliverPointerBatch { .. });
                 let ack = worker.receive(request, clock());
                 if let Some(channel) = audit_channel {
                     crate::audit::record(crate::audit::Kind::WorkerOutcome, &[
-                        channel, ack.sequence.0, ack.operation_id.map(|value| value.0).unwrap_or(0),
+                        channel, ack.sequence.0, ack.operation_id.or_else(|| ack.pointer_batch.as_ref().and_then(|batch| batch.operation_ids.first().copied())).map(|value| value.0).unwrap_or(0),
                         audit_ack_flags(&ack), ack.attempted as u64, ack.confirmed as u64,
                     ]);
                 }
@@ -479,50 +486,5 @@ pub fn serve<A: Adapter, R: BufRead + Send + 'static, W: Write + Send + 'static>
 }
 
 #[cfg(test)]
-mod audit_context_tests {
-    use super::*;
-    use osg_mapping::{desktop::{Control, Delivery, Key}, engine::{typed::Token, Counter}};
-    use std::sync::Mutex;
-
-    struct ShortThenCleanup {
-        contexts: Arc<Mutex<Vec<(u64, u64, u64)>>>,
-        calls: usize,
-    }
-    impl Adapter for ShortThenCleanup {
-        fn eligible(&mut self, _: &Scope) -> Result<bool, String> { Ok(true) }
-        fn submit(&mut self, events: &[NativeEvent]) -> Result<usize, String> {
-            let context = submission_context().expect("each adapter submission has its own context");
-            self.contexts.lock().unwrap().push((context.request, context.operation, context.category));
-            self.calls += 1;
-            Ok(if self.calls == 1 { 0 } else { native_count(events) })
-        }
-    }
-
-    #[test]
-    fn short_direct_submission_cleanup_has_no_inherited_request_or_operation() {
-        assert!(submission_context().is_none());
-        let contexts = Arc::new(Mutex::new(vec![]));
-        let mut worker = Worker::new(ShortThenCleanup { contexts: contexts.clone(), calls: 0 });
-        let run = RunToken { session: "context-test-run".into(), generation: Counter(1) };
-        let producer = Token { run: run.clone(), node_id: "key-source".into(), dependencies: vec![] };
-        for (sequence, command) in [
-            (1, Command::Activate { run, scope: Scope::DesktopWide }),
-            (2, Command::Arm { producer: producer.clone(), action_id: "hold".into() }),
-        ] {
-            assert!(worker.receive(Request { sequence: Counter(sequence), deadline_us: None, command }, 0).ok);
-        }
-        let ack = worker.receive(Request {
-            sequence: Counter(3), deadline_us: None,
-            command: Command::Deliver { delivery: Delivery {
-                producer, action_id: "hold".into(), operation_id: Counter(1), sequence: Counter(1),
-                at_us: Counter(1), deadline_us: None,
-                intent: Intent::Held { controls: vec![Control::Key { key: Key(4) }] },
-            } },
-        }, 1);
-        assert!(!ack.ok && ack.uncertain && ack.cleanup_complete);
-        assert_eq!((ack.attempted, ack.confirmed), (1, 0));
-        assert!(ack.held.is_empty() && worker.held().is_empty());
-        assert_eq!(*contexts.lock().unwrap(), [(3, 1, 1), (0, 0, 5)]);
-        assert!(submission_context().is_none(), "request scope must be restored after error cleanup");
-    }
-}
+#[path = "worker/audit_context_tests.rs"]
+mod audit_context_tests;

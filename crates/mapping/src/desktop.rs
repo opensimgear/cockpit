@@ -393,6 +393,7 @@ pub struct Scheduler {
     states: BTreeMap<String, State>,
     latest: BTreeMap<String, Token>,
     now: u64,
+    pointer_due: Option<u64>,
     active: bool,
     sequence: u64,
     deliveries: VecDeque<Delivery>,
@@ -437,6 +438,7 @@ impl Scheduler {
             states,
             latest: BTreeMap::new(),
             now: 0,
+            pointer_due: None,
             active: true,
             sequence: 0,
             deliveries: VecDeque::new(),
@@ -769,6 +771,7 @@ impl Scheduler {
             return Ok(());
         }
         self.advance_clock(at)?;
+        let pointer_was_idle = !self.states.values().any(|state| state.velocity != 0.0);
         let state = self.states.get_mut(id).unwrap();
         state.producer = Some(producer.clone());
         if baseline {
@@ -795,14 +798,16 @@ impl Scheduler {
                 state.armed = true;
                 state.remainder = 0.0;
             }
-            if state.velocity == 0.0 || baseline {
-                state.pointer_at = self.now;
-            }
             state.velocity = if state.armed && !baseline {
                 value.signum() * value.abs().powf(curve) * speed as f64
             } else {
                 0.0
             };
+            // All pointer actions share one emission cadence. Starting another
+            // axis while moving cannot introduce a second, offset native tick.
+            if pointer_was_idle && state.velocity != 0.0 {
+                self.pointer_due = Some(self.now.saturating_add(POINTER_TICK_US));
+            }
             return Ok(());
         }
         let PortValue::Boolean(down) = value else {
@@ -908,6 +913,7 @@ impl Scheduler {
     fn advance_clock(&mut self, at: Counter) -> Result<(), String> {
         self.now = at.0;
         self.record(None, "advance", format!("{}", at.0));
+        let pointer_tick = self.pointer_due.is_some_and(|due| due <= at.0);
         let ids = self.definitions.keys().cloned().collect::<Vec<_>>();
         for id in ids {
             let action = self.definitions[&id].clone();
@@ -976,13 +982,14 @@ impl Scheduler {
             }
             let state = self.states.get_mut(&id).unwrap();
             if let Action::Pointer { axis, .. } = action {
-                let elapsed = at.0.saturating_sub(state.pointer_at);
-                if elapsed >= POINTER_TICK_US && state.velocity != 0.0 {
-                    let elapsed = elapsed.min(MAX_ELAPSED_US);
-                    let total = state.remainder + state.velocity * elapsed as f64 / 1_000_000.0;
-                    let delta = total.trunc() as i32;
-                    state.remainder = total - delta as f64;
-                    state.pointer_at = at.0;
+                // Integrate the previous velocity on every clock advance,
+                // before accept() changes it. Emission alone is tick gated.
+                let elapsed = at.0.saturating_sub(state.pointer_at).min(MAX_ELAPSED_US);
+                state.pointer_at = at.0;
+                state.remainder += state.velocity * elapsed as f64 / 1_000_000.0;
+                if pointer_tick && state.velocity != 0.0 {
+                    let delta = state.remainder.trunc() as i32;
+                    state.remainder -= delta as f64;
                     if delta != 0 {
                         let producer = state.producer.clone().unwrap();
                         let (dx, dy) = match axis {
@@ -999,6 +1006,11 @@ impl Scheduler {
                 }
             }
         }
+        self.pointer_due = if self.states.values().any(|state| state.velocity != 0.0) {
+            if pointer_tick { Some(at.0.saturating_add(POINTER_TICK_US)) } else { self.pointer_due }
+        } else {
+            None
+        };
         Ok(())
     }
 }
@@ -1035,3 +1047,7 @@ pub fn hat_direction(value: Option<u8>, direction: HatDirection, diagonal: HatDi
 #[cfg(test)]
 #[path = "desktop_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "desktop_pointer_tests.rs"]
+mod pointer_tests;

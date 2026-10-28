@@ -151,6 +151,10 @@ impl Coordinator {
                 }
                 Command::Arm { producer, .. } => validate_run(&producer.run)?,
                 Command::Deliver { delivery } => validate_run(&delivery.producer.run)?,
+                Command::DeliverPointerBatch { deliveries } => {
+                    crate::pointer_batch::describe(deliveries)?;
+                    validate_run(&deliveries[0].producer.run)?;
+                }
                 Command::Renew { run } | Command::Pause { run } => validate_run(run)?,
                 Command::Stop | Command::Recover { .. } => {}
             }

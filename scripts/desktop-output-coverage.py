@@ -157,7 +157,8 @@ def main():
     summary = {}
     # Native process entry, Win32 injection and receiver probes have a separate
     # interactive acceptance boundary. Coverage here cannot qualify that path.
-    for module in ("keys", "protocol", "reducer", "worker", "coordinator", "coordinator/journal"):
+    for module in ("keys", "protocol", "reducer", "pointer_batch", "worker", "worker/pointer_batch",
+                   "coordinator", "coordinator/journal", "coordinator/pointer_batch"):
         source = root / f"crates/desktop-output/src/{module}.rs"
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0], f"-instr-profile={profile}",
                          "-show-line-counts-or-regions", source], root)
