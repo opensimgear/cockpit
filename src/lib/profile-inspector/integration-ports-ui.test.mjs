@@ -44,15 +44,15 @@ async function component(name) {
 }
 
 await component('../Icon.svelte');
-const source = await readFile(new URL('./ProfileIntegrationOutputs.svelte', import.meta.url), 'utf8');
-function harness({ ports = [], busy = false, error = '', readOnly = false, query = '', page = 0, duringRender = () => {} } = {}) {
+const source = await readFile(new URL('./ProfileIntegrationPorts.svelte', import.meta.url), 'utf8');
+function harness({ ports = [], busy = false, error = '', readOnly = false, query = '', page = 0, direction = 'output', duringRender = () => {} } = {}) {
   const seeded = source.replace("let query=$state(''),page=$state(0),filterInput:HTMLInputElement;",
     `let query=$state(${JSON.stringify(query)}),page=$state(${page}),filterInput:HTMLInputElement;`)
-    .replace('</script>', `captureIntegrationOutputs({filter,clear,choose,setPage(value){page=value;},get state(){return{query,page};}});</script>`);
+    .replace('</script>', `captureIntegrationPorts({filter,clear,choose,setPage(value){page=value;},get state(){return{query,page};}});</script>`);
   assert.notEqual(seeded, source, 'The component state seed must match production source.');
-  const compiled = compile(seeded, { filename: new URL('./ProfileIntegrationOutputs.svelte', import.meta.url).pathname, generate: 'server' });
+  const compiled = compile(seeded, { filename: new URL('./ProfileIntegrationPorts.svelte', import.meta.url).pathname, generate: 'server' });
   const dependencies = new Map();
-  const filename = new URL('./ProfileIntegrationOutputs.svelte', import.meta.url);
+  const filename = new URL('./ProfileIntegrationPorts.svelte', import.meta.url);
   for (const match of compiled.js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g)) {
     const dependency = libModuleName(match[1], filename);
     dependencies.set(dependency, { default: cache.get(dependency) });
@@ -62,7 +62,7 @@ function harness({ ports = [], busy = false, error = '', readOnly = false, query
   vm.runInNewContext(transpile(compiled.js.code), {
     exports,
     TextEncoder,
-    captureIntegrationOutputs: value => { Object.assign(captured, value); duringRender(value); },
+    captureIntegrationPorts: value => { Object.assign(captured, value); duringRender(value); },
     require(specifier) {
       const dependency = libModuleName(specifier, filename);
       if (dependency === 'svelte/internal/server') return server;
@@ -75,7 +75,7 @@ function harness({ ports = [], busy = false, error = '', readOnly = false, query
   }, { filename: filename.pathname });
   const selected = [], retried = [];
   const body = render(exports.default, { props: {
-    ports, busy, error, readOnly,
+    ports, busy, error, readOnly, direction,
     select: port => selected.push(port),
     retry: () => retried.push('retry'),
   } }).body;
@@ -88,19 +88,41 @@ const port = (id, name = id, direction = 'output', unit = null) => ({
   sourceId: 'game-source', observed: null, current: true,
 });
 
-test('renders output choices as one row each and bounds the initial catalogue page to 32', () => {
+test('renders the complete output catalogue as paged choices without adding declarations', () => {
   const ports = [...Array.from({ length: 40 }, (_, index) => port(`out-${index}`, `Output ${index}`)), port('input-speed', 'Input speed', 'input')];
   const { body } = harness({ ports });
 
-  assert.equal((body.match(/class="output-tile/g) ?? []).length, 32);
+  assert.equal((body.match(/class="port-tile/g) ?? []).length, 32);
   assert.match(body, /aria-label="Integration outputs"/);
   assert.match(body, /Output 0/);
   assert.match(body, /Output 31/);
   assert.doesNotMatch(body, /Output 32|Input speed/);
-  assert.match(body, /32 \/ 40/);
+  assert.match(body, /1–32 \/ 40/);
 });
 
-test('a quick filter finds later-page names, IDs, and units while excluding input choices', () => {
+test('input catalogue page shows automatic unpinned inputs without output choices', () => {
+  const action = { delivery: 'action', semantics: 'setter', endpoint: 'light', parameters: [], readable: false, display: null, ownership: null };
+  const ports = [port('state-output', 'Aircraft state'), { ...port('set-light', 'Set light', 'input'), contract: action }];
+  const { body } = harness({ ports, direction: 'input' });
+  assert.match(body, /aria-label="Integration inputs"/);
+  assert.match(body, /Set light/);
+  assert.doesNotMatch(body, /Aircraft state/);
+  assert.match(body, /Filter inputs/);
+  assert.match(body, /action · setter/);
+});
+
+test('input quick filter finds later catalogue entries beyond the first page', () => {
+  const ports = [...Array.from({ length: 36 }, (_, index) => port(`in-${index}`, `Input ${index}`, 'input')),
+    port('late-id', 'Tail command', 'input'), port('output-late', 'Tail command output', 'output')];
+  const byName = harness({ ports, direction: 'input', query: 'Tail command' }).body;
+  assert.match(byName, /Tail command/);
+  assert.doesNotMatch(byName, /Input 0|Tail command output/);
+  const byId = harness({ ports, direction: 'input', query: 'late-id' }).body;
+  assert.match(byId, /Tail command/);
+  assert.doesNotMatch(byId, /Tail command output/);
+});
+
+test('an output quick filter finds later-page names, IDs, and units while excluding input choices', () => {
   const ports = [...Array.from({ length: 36 }, (_, index) => port(`out-${index}`, `Output ${index}`)),
     port('late-id', 'Tail channel', 'output', 'km/h'), port('input-late', 'Tail channel input', 'input', 'km/h')];
   const byName = harness({ ports, query: 'Tail channel' }).body;
@@ -132,7 +154,7 @@ test('loading and errors stay visible, retry is disabled while busy, and browsin
   assert.match(body, /role="alert"/);
   assert.match(body, /Catalogue refresh failed/);
   assert.match(body, /class="retry[^\"]*" disabled=""/);
-  assert.match(body, /class="output-tile[^"]*"[^>]*disabled/);
+  assert.match(body, /class="port-tile[^"]*"[^>]*disabled/);
   assert.deepEqual(snapshots, [0, 0]);
   assert.deepEqual(selected, []);
   assert.deepEqual(retried, []);
@@ -157,5 +179,13 @@ test('select passes the exact choice once when enabled and is blocked while busy
   const failed = harness({ ports: [choice], error: 'Catalogue changed; refresh failed.' });
   failed.handlers.choose(choice);
   assert.deepEqual(failed.selected, []);
-  assert.match(failed.body, /class="output-tile[^"]*"[^>]*disabled/);
+  assert.match(failed.body, /class="port-tile[^"]*"[^>]*disabled/);
+});
+
+
+test('browsing pages does not select or persist anything', () => {
+  const ports = Array.from({ length: 40 }, (_, index) => port(`input-${index}`, `Command ${index}`, 'input'));
+  const { handlers, selected } = harness({ ports, direction: 'input' });
+  handlers.setPage(1);
+  assert.deepEqual(selected, []);
 });

@@ -16,7 +16,7 @@
   import {graphSetDesktop}from'./profile-graph';
   import ProfileControllerInputs from './ProfileControllerInputs.svelte';
   import ProfileResourceSettings from './profile-inspector/ProfileResourceSettings.svelte';
-  import ProfileIntegrationOutputs from './profile-inspector/ProfileIntegrationOutputs.svelte';
+  import ProfileIntegrationPorts from './profile-inspector/ProfileIntegrationPorts.svelte';
   import ProfileCompanionEditor from './ProfileCompanionEditor.svelte';
   import type{ProfileLearningClient}from'./profile-learning';
   import {canvasNodes,portContractLabel,type CanvasNode,type CanvasPoint} from './profile-canvas';
@@ -349,7 +349,7 @@
       {#if physicalController}
         <ProfileControllerInputs resource={node.observation} {active}/>
       {/if}
-      {#if node.resource?.kind==='game'}{#key node.id}<ProfileIntegrationOutputs ports={discoveredChoices[node.id]??[]} busy={discoveryBusy.includes(node.id)} error={discoveryErrors[node.id]??''} {readOnly} select={port=>source(node.id,undefined,port.key)} retry={()=>retryDiscovery(node.id)}/>{/key}{/if}
+      {#if node.resource?.kind==='game'}{#key node.id}{#each ['input','output'] as direction (direction)}<ProfileIntegrationPorts direction={direction==='input'?'input':'output'} ports={discoveredChoices[node.id]??[]} busy={discoveryBusy.includes(node.id)} error={discoveryErrors[node.id]??''} {readOnly} select={port=>port.direction==='input'?destination(node.id,undefined,port.key):source(node.id,undefined,port.key)} retry={()=>retryDiscovery(node.id)}/>{/each}{/key}{/if}
 
     {/snippet}
   </ProfileCanvas>
