@@ -225,7 +225,7 @@ impl Fixture {
         // Keep production provider/sealing admission intact. The isolated actor
         // substitutes only its serial driver; native compilation/token checks
         // and the actual Host lifecycle below remain production paths.
-        let mut candidate = Candidate { launch_preparation: false,
+        let mut candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
             document: default_document(),
             assignments: vec![],
             read_only: false,
@@ -485,7 +485,7 @@ fn retiring_an_unacquired_owner_never_claims_or_releases() {
 fn required_legacy_action_capability_blocks_before_any_native_claim() {
     let mut f = Fixture::new();
     let state = f.host.run(&f.run.owner).unwrap();
-    let candidate = Candidate { launch_preparation: false,
+    let candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
         document: state.document.clone(),
         assignments: state.assignments.clone(),
         read_only: false,
@@ -502,7 +502,7 @@ fn required_legacy_action_capability_blocks_before_any_native_claim() {
         &candidate,
     )
     .unwrap();
-    let c = Candidate { launch_preparation: false,
+    let c = Candidate { virtual_slots: Default::default(), launch_preparation: false,
         stage: Some(stage),
         ..candidate
     };

@@ -8,6 +8,9 @@ use crate::{
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+#[path = "virtual_slots.rs"]
+pub mod virtual_slots;
+
 pub struct Service {
     library: Library,
     store: Option<Store>,
@@ -64,7 +67,8 @@ impl Service {
         let fields: &[&str] = match command {
             "profile_list" | "profile_status" | "profile_companion_references" => &[],
             "profile_apply" => &["id"],
-            "profile_get" | "profile_export" | "profile_assignments_get" => &["id"],
+            "profile_get" | "profile_export" | "profile_assignments_get" | "profile_virtual_slots_get" => &["id"],
+            "profile_virtual_slot_set" => &["id", "expectedRevision", "nodeId", "slot"],
             "profile_assignments_save" => &["id", "expectedRevision", "assignments"],
             "profile_create" => &["name"],
             "profile_rename" => &["id", "name", "expectedRevision"],
@@ -111,6 +115,8 @@ impl Service {
                 let document = self.document(required_text(request, "id")?)?;
                 Ok(json!({"document":document}))
             }
+            "profile_virtual_slots_get" => self.virtual_slots_response(required_text(request, "id")?),
+            "profile_virtual_slot_set" => self.set_virtual_slot(request),
             "profile_assignments_get" => {
                 let id = required_text(request, "id")?;
                 let (document, assignments, read_only) = self.compile_source(id)?;
@@ -274,6 +280,7 @@ impl Service {
                     Ok(json!({"id":profile.id,"name":profile.name,"revision":profile.revision,
                         "isDefault":profile.id == DEFAULT_PROFILE_ID,"semanticHash":semantic_hash(profile)?,"gameIds":profile.eligibility.game_ids}))
                 }).collect::<Result<Vec<Value>, String>>()?;
+                library.prune_virtual_slots();
                 self.persist(&library)?;
                 self.library = library;
                 return Ok(
@@ -348,6 +355,7 @@ impl Service {
                 library
                     .local_assignments
                     .insert(id.to_owned(), assignments.clone());
+                library.prune_virtual_slots();
                 self.persist(&library)?;
                 self.library = library;
                 return Ok(
@@ -391,6 +399,7 @@ impl Service {
                 check_revision(self.document(id)?, expected_revision(request)?)?;
                 library.profiles.retain(|p| p.id != id);
                 library.local_assignments.remove(id);
+                library.prune_virtual_slots();
                 self.persist(&library)?;
                 self.library = library;
                 self.session.fallback_if_removed(id);
@@ -398,6 +407,7 @@ impl Service {
             }
             _ => return Err("Unknown profile mutation.".into()),
         };
+        library.prune_virtual_slots();
         self.persist(&library)?;
         self.library = library;
         Ok(json!({"document":output,"session":self.session.status()}))

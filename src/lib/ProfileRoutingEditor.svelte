@@ -352,7 +352,7 @@
           {/if}
         </details>{/if}
         {#if node.processing}<ProfileTransformSettings node={node.processing} remove={()=>removeOverviewTransform(node.id)} change={updateProcessing} configure={(kind,parameters)=>configureDraft(node.id,kind,parameters)} actions={actionPorts}/>{#if node.processing.inputs.length===1&&node.processing.outputs.length===1}<button class="text-button" onclick={()=>apply(()=>graphBypassProcessing(graph,node.id),'Remove transformation and join compatible route')}>Remove transformation and join compatible route</button>{/if}{/if}
-        {#if node.virtual}<ProfileVirtualEditor output={node.virtual} change={updateVirtual}/>{/if}
+        {#if node.virtual}<ProfileVirtualEditor output={node.virtual} profileId={document.id} revision={document.revision} disabled={readOnly} change={updateVirtual}/>{/if}
         {#if node.desktop}<ProfileDesktopEditor output={node.desktop} change={updateDesktop}/>{/if}
         {#if !node.virtual}<p class="remove-help">Removing this block also removes {document.bindings.filter(binding=>binding.from.nodeId===node.id||binding.to.nodeId===node.id).length} exact routes.</p><button class="text-button" onclick={()=>removeNode(node.id)}>Remove block and its routes</button>{/if}
         {/if}

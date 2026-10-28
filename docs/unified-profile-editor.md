@@ -192,3 +192,7 @@ Tests cover editor entry, empty creation, copy/assignment boundaries, atomic
 save, active-save updates, navigation races, port paging, typed graph authoring,
 scope persistence, activation switching/cancellation, Undo/Redo and separate Debug rendering. Hardware, driver and
 game behavior are additionally checked through the running development Cockpit.
+
+## Virtual controller slots
+
+Choose **Slot** in a virtual block’s settings to use Automatic selection or a specific configured vJoy slot. The choice is saved on this computer, separately from the portable profile. Availability and complete button, axis and hat counts are shown beside each slot. **Use layout** matches those counts while preserving existing control IDs; connected inputs cannot be removed. Save layout changes before activating. Apply checks the selected slot’s current layout and ownership and never substitutes another slot for an explicit selection.

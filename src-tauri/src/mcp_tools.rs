@@ -290,6 +290,25 @@ impl Tools {
                 Ok(state)
             }
             "profile_get" => forward("profile_assignments_get", &["id"], Some("profiles")),
+            "profile_virtual_slots_get" => {
+                if !canonical_uuid(text(args, "id")?) {
+                    return Err(failure("invalid_arguments", "id must be a canonical lowercase UUID.", false));
+                }
+                forward("profile_virtual_slots_get", &["id"], Some("profiles"))
+            }
+            "profile_virtual_slot_set" => {
+                if !canonical_uuid(text(args, "id")?) {
+                    return Err(failure("invalid_arguments", "id must be a canonical lowercase UUID.", false));
+                }
+                let node_id = text(args, "nodeId")?;
+                if node_id.len() > 80
+                    || !node_id.bytes().next().is_some_and(|byte| byte.is_ascii_alphabetic())
+                    || !node_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+                {
+                    return Err(failure("invalid_arguments", "nodeId must be a portable profile identifier.", false));
+                }
+                forward("profile_virtual_slot_set", &["id", "expectedRevision", "nodeId", "slot"], Some("profiles"))
+            }
             "profile_export" => forward("profile_export", &["id"], Some("profiles")),
             "profile_status" => forward("profile_status", &[], Some("profiles")),
             "profile_create" => forward("profile_create", &["name"], Some("profiles")),

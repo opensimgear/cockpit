@@ -473,7 +473,7 @@ impl GatewayManager {
                 self.refresh_saved_panel_references()?;
                 let id = request["id"].as_str().ok_or("Choose a saved profile to activate.")?;
                 let expected = request["expectedRevision"].as_u64().filter(|revision| *revision > 0 && *revision <= osg_profiles::MAX_REVISION).ok_or("Activation requires the current saved profile version.")?;
-                let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_source(id)?;
+                let (document, assignments, read_only, virtual_slots) = self.profiles.lock().unwrap_or_else(|p| p.into_inner()).compile_virtual_source(id)?;
                 if document.revision != expected { return Err("The saved profile changed. Reload it before activating.".into()); }
                 self.capture_profile_activation(request, &document, &assignments);
                 let game_id = request.get("gameId").map(|value| value.as_str().filter(|id| osg_profiles::activation::valid_game_id(id)).map(str::to_owned).ok_or("Choose a registered game context or omit gameId for ordinary hardware.")).transpose()?;
@@ -482,7 +482,7 @@ impl GatewayManager {
                 self.pin_staged_manual(id,admission_epoch,expected_owner.as_ref(),native_authorization)?;
                 crate::profile_session::apply_staged_admitted_checked(
                     &self.profile_session,
-                    crate::profile_session::Candidate { launch_preparation: false, document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
+                    crate::profile_session::Candidate { virtual_slots, launch_preparation: false, document, assignments, read_only, game_id, admission_epoch: Some(admission_epoch), stage: None },
                     |candidate| self.prepare_profile_at(candidate,admission_epoch),
                     |candidate| {
                         let admission = self.profile_admission.write().unwrap_or_else(|p| p.into_inner());
@@ -494,8 +494,8 @@ impl GatewayManager {
                         }
                         self.guard_retired_recovery()?;
                         let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
-                        let (document, assignments, read_only) = profiles.compile_source(id)?;
-                        let saved = crate::profile_session::Candidate { launch_preparation: false,
+                        let (document, assignments, read_only, virtual_slots) = profiles.compile_virtual_source(id)?;
+                        let saved = crate::profile_session::Candidate { virtual_slots, launch_preparation: false,
                             document, assignments, read_only, game_id: candidate.game_id.clone(), admission_epoch: candidate.admission_epoch, stage: None,
                         };
                         candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
@@ -1949,8 +1949,8 @@ mod tests {
         assert_eq!(applied["ok"],true);
         let retained_owner = applied["state"]["profiles"]["profileSession"]["owner"].clone();
         let captured = manager.profile_admission_epoch.load(Ordering::Acquire);
-        let (document, assignments, read_only) = manager.profiles.lock().unwrap().compile_source(osg_profiles::DEFAULT_PROFILE_ID).unwrap();
-        let mut candidate = crate::profile_session::Candidate { launch_preparation: false,
+        let (document, assignments, read_only, virtual_slots) = manager.profiles.lock().unwrap().compile_virtual_source(osg_profiles::DEFAULT_PROFILE_ID).unwrap();
+        let mut candidate = crate::profile_session::Candidate { virtual_slots, launch_preparation: false,
             document, assignments, read_only, game_id: None, admission_epoch: Some(captured), stage: None,
         };
         candidate.stage = Some((manager.profile_prepare)(&candidate).unwrap());

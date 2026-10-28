@@ -40,9 +40,9 @@ impl GatewayManager {
             // slow preparation yields to newer saves and emergency controls.
             let response = Self::activity_profile_mutation(&mut profiles,request)?;
             let candidate = owner.as_ref().map(|owner| {
-                let (document, assignments, read_only) = profiles.compile_source(&owner.profile_id)?;
+                let (document, assignments, read_only, virtual_slots) = profiles.compile_virtual_source(&owner.profile_id)?;
                 let game_id=saved_game_context(&document);
-                Ok::<_, String>(Candidate { document, assignments, read_only, game_id,
+                Ok::<_, String>(Candidate { virtual_slots, document, assignments, read_only, game_id,
                     launch_preparation: false, admission_epoch: arrival, stage: None })
             }).transpose();
             (response, owner, candidate)
@@ -86,9 +86,9 @@ impl GatewayManager {
                 return Err("Applying the saved changes was cancelled by deactivation, recovery or a newer profile control.".into());
             }
             self.guard_retired_recovery()?;
-            let (document, assignments, read_only) = self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(&previous.profile_id)?;
+            let (document, assignments, read_only, virtual_slots) = self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_virtual_source(&previous.profile_id)?;
             let game_id=saved_game_context(&document);
-            let saved = Candidate { document, assignments, read_only, game_id,
+            let saved = Candidate { virtual_slots, document, assignments, read_only, game_id,
                 launch_preparation: false, admission_epoch: Some(epoch), stage: None };
             candidate.stage.as_ref().ok_or("Fresh native preparation is missing.")?.validate(&saved)?;
             // Health can retire a run without an operator epoch change. Check its

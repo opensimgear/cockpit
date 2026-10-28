@@ -77,6 +77,8 @@ pub fn catalogue() -> Vec<Value> {
         tool("operation_status","Reconcile a retained mutation for this authenticated client. The ledger survives reconnects during this MCP server lifetime; reconcile native state after a server restart.",vec![("operationId",string(36))],&["operationId"]),
         tool("profiles_list","List saved profile summaries, revisions, eligibility and selection. Saving and selection do not activate outputs.",page(),&[]),
         tool("profile_get","Read a saved portable profile and its exact machine-local resource assignments. Use returned revision for edits.",vec![("id",string(36))],&["id"]),
+        tool("profile_virtual_slots_get","Read this computer's saved vJoy slot pins for one profile. These machine-local pins are separate from the portable profile document and do not acquire devices.",vec![("id",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36}))],&["id"]),
+        tool("profile_virtual_slot_set","Pin or unpin one logical virtual controller to a vJoy slot in this computer's local profile settings. Requires the exact saved profile revision; this does not activate or acquire the slot.",vec![("id",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36})),("expectedRevision",revision()),("nodeId",json!({"type":"string","minLength":1,"maxLength":80,"pattern":"^[A-Za-z][A-Za-z0-9._-]{0,79}$"})),("slot",json!({"type":["integer","null"],"minimum":1,"maximum":16}))],&["id","expectedRevision","nodeId","slot"]),
         tool("profile_export","Export one portable JSON profile. Machine-local assignments are deliberately separate.",vec![("id",string(36))],&["id"]),
         tool("profile_status","Inspect selected, saved and applied snapshots, exact native owner, recovery and automatic policy. This never starts outputs.",vec![],&[]),
         tool("profile_create","Create an empty saved profile without changing the applied run. Prefer profile_prepare_changes for validated authoring.",vec![("name",string(80))],&["name"]),
@@ -190,6 +192,7 @@ pub fn is_mutation(name: &str) -> bool {
                 | "profile_rename"
                 | "profile_delete"
                 | "profile_import"
+                | "profile_virtual_slot_set"
                 | "profile_save_prepared"
                 | "profile_apply"
                 | "activation_cancel"

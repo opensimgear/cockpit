@@ -25,6 +25,7 @@ mod launch;
 pub(crate) struct Candidate {
     pub document: ProfileDocument,
     pub assignments: Vec<LocalAssignment>,
+    pub virtual_slots: std::collections::BTreeMap<String, u8>,
     pub read_only: bool,
     /// Native selection only; a browser cannot provide process identity.
     pub game_id: Option<String>,

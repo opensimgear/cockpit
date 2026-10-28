@@ -1,8 +1,9 @@
 <script lang="ts">
   import{untrack}from'svelte';
+  import ProfileVirtualSlot from './ProfileVirtualSlot.svelte';
   import{graphVirtualPorts}from'./profile-graph';
   import type{DeepReadonly,ProfileControllerLayout,ProfileVirtualOutput}from'./profiles';
-  let{output,change}:{output:DeepReadonly<ProfileVirtualOutput>;change:(output:Omit<ProfileVirtualOutput,'ports'>)=>void}=$props();
+  let{output,change,profileId='',revision=0,disabled=false}:{output:DeepReadonly<ProfileVirtualOutput>;change:(output:Omit<ProfileVirtualOutput,'ports'>)=>void;profileId?:string;revision?:number;disabled?:boolean}=$props();
   const copy=<T,>(value:T):T=>JSON.parse(JSON.stringify(value));
   let draft=$state(copy(untrack(()=>output)) as ProfileVirtualOutput),signature=$state(JSON.stringify(untrack(()=>output)));
   const error=$derived.by(()=>{try{graphVirtualPorts(draft.layout);return '';}catch(error){return error instanceof Error?error.message:String(error);}});
@@ -19,6 +20,7 @@
 </script>
 <section class="virtual-editor" aria-label="Virtual controller layout editor"><h4>Logical controller layout</h4><p>Stable logical control IDs stay attached to existing bindings. Native preflight checks the actual backend; editing creates no controller.</p>
   <label>Controller label<input maxlength="80" value={draft.name} oninput={event=>draft={...draft,name:event.currentTarget.value}}/></label><label class="check"><input type="checkbox" checked={draft.required} onchange={event=>draft={...draft,required:event.currentTarget.checked}}/> Required controller</label>
+  <ProfileVirtualSlot {output} {profileId} {revision} {disabled} changeLayout={layout=>{change({id:output.id,name:output.name,required:output.required,layout:copy(layout)});draft={...draft,layout:copy(layout)};}}/>
   <div class="counts">{#each ['buttons','axes','hats'] as kind}<label>{kind}<input type="number" min="0" max={kind==='axes'?16:kind==='hats'?4:128} value={draft.layout[kind as 'buttons'|'axes'|'hats'].length} onchange={event=>resize(kind as 'buttons'|'axes'|'hats',Number(event.currentTarget.value))}/></label>{/each}</div>
   <p>At most 128 total controls, 16 axes and four hats per controller; eight controllers per native plan. Removing a connected control requires removing its route explicitly.</p>
   {#each draft.layout.axes as item,index (item.portId)}<fieldset><legend>Axis {index+1} · {item.portId}</legend><label>Native range<select value={item.range} onchange={event=>axis(index,{range:event.currentTarget.value==='unipolar'?'unipolar':'bipolar'})}><option value="bipolar">Bipolar · −32768…32767</option><option value="unipolar">Unipolar · 0…32767</option></select></label><label>Neutral fallback<input type="number" min={item.range==='bipolar'?-32768:0} max="32767" value={item.fallback} oninput={event=>axis(index,{fallback:Number(event.currentTarget.value)})}/></label></fieldset>{/each}

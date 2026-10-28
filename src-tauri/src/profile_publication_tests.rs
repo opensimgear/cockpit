@@ -1086,7 +1086,7 @@ mod native_host {
             } else {
                 vec![]
             };
-            let mut candidate = Candidate { launch_preparation: false,
+            let mut candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
                 document,
                 assignments,
                 read_only: false,

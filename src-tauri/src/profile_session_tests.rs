@@ -128,7 +128,7 @@ impl Host for Fake {
     }
 }
 fn candidate() -> Candidate {
-    Candidate { launch_preparation: false,
+    Candidate { virtual_slots: Default::default(), launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,
@@ -486,6 +486,7 @@ fn native_stage_is_bound_to_the_complete_candidate_and_consumed_once() {
     let mutations: Vec<Box<dyn Fn(&mut Candidate)>> = vec![
         Box::new(|value| value.document.name = "Changed draft".into()),
         Box::new(|value| value.document.revision += 1),
+        Box::new(|value| { value.virtual_slots.insert("target".into(), 2); }),
         Box::new(|value| value.read_only = true),
         Box::new(|value| value.game_id = Some("dcs".into())),
         Box::new(|value| value.launch_preparation = true),

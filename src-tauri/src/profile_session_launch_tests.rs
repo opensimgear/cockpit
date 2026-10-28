@@ -101,7 +101,7 @@ fn fixture(path: Option<PathBuf>) -> (Coordinator<Fake>, Arc<Mutex<Probe>>) {
     (Coordinator::new(Fake(p.clone()), path), p)
 }
 fn candidate() -> Candidate {
-    Candidate { launch_preparation: false,
+    Candidate { virtual_slots: Default::default(), launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,

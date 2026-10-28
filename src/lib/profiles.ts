@@ -81,8 +81,10 @@ export type ProfileSession = {
 };
 export type ProfileSummary = { id: string; name: string; revision: number; isDefault: boolean; semanticHash: string; gameIds?:string[] };
 export type ProfilePublicationReferences = { schemaVersion: 1; libraryFingerprint: string; hashes: string[] };
-export type ProfileCommand = 'profile_companion_references' | 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
+export type ProfileCommand = 'profile_virtual_slots_get' | 'profile_virtual_slot_set' | 'profile_companion_references' | 'profile_list' | 'profile_get' | 'profile_create' | 'profile_rename' | 'profile_duplicate' | 'profile_delete' | 'profile_save' | 'profile_import' | 'profile_export' | 'profile_status' | 'profile_select' | 'profile_apply' | 'profile_stop' | 'profile_recover' | 'profile_selection_mode' | 'profile_reset' | 'profile_assignments_get' | 'profile_assignments_save' | 'profile_editor_save';
 export type ProfileRequest =
+  | {command:'profile_virtual_slots_get';id:string}
+  | {command:'profile_virtual_slot_set';id:string;expectedRevision:number;nodeId:string;slot:number|null}
   | { command: 'profile_list' | 'profile_status' | 'profile_companion_references' }
   | { command: 'profile_get' | 'profile_export' | 'profile_assignments_get'; id: string }
   | { command: 'profile_assignments_save'; id: string; expectedRevision: number; assignments: ProfileLocalAssignment[] }

@@ -28,6 +28,9 @@ impl Backend for Fake {
         self.calls.lock().unwrap().push(request.clone());
         request.as_object_mut().unwrap().remove("clientId");
         let command = request["command"].as_str().unwrap().to_owned();
+        if command == "profile_virtual_slots_get" || command == "profile_virtual_slot_set" {
+            return json!({"ok":true,"state":{"profiles":{"profileId":request["id"],"profileRevision":4,"readOnly":false,"virtualSlots":[{"nodeId":"virtual-1","slot":request.get("slot").cloned().unwrap_or(Value::Null)}]}}});
+        }
         if command == "profile_compile" || command == "profile_compilation_inspect" {
             return match self.compilation.request(&request, |_, assignments| {
                 Ok(osg_profiles::compiler_models::CompileSnapshot {
@@ -164,6 +167,36 @@ fn catalogue_is_explicit_strict_unique_and_annotated_consistently() {
         false
     );
     assert_eq!(tools.call("profile_apply",json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1,"operationId":operation()}),CLIENT)["error"]["code"],"invalid_arguments");
+}
+
+#[test]
+fn virtual_slot_tools_forward_local_profile_requests_with_strict_arguments() {
+    let (tools, fake) = setup();
+    let id = uuid::Uuid::new_v4().to_string();
+    let read = tools.call("profile_virtual_slots_get", json!({"id":id}), CLIENT);
+    assert_eq!(read["ok"], true, "{read}");
+    assert_eq!(read["data"]["profileId"], id);
+    assert_eq!(read["data"]["virtualSlots"][0]["nodeId"], "virtual-1");
+    assert_eq!(fake.calls.lock().unwrap()[0], json!({"command":"profile_virtual_slots_get","id":id,"clientId":native_client(CLIENT)}));
+
+    let operation_id = operation();
+    let set_args = json!({"id":id,"expectedRevision":4,"nodeId":"virtual-1","slot":3,"operationId":operation_id});
+    let saved = tools.call("profile_virtual_slot_set", set_args.clone(), CLIENT);
+    assert_eq!(saved["ok"], true, "{saved}");
+    assert_eq!(saved["data"]["virtualSlots"][0]["slot"], 3);
+    assert_eq!(tools.call("profile_virtual_slot_set", set_args, CLIENT), saved);
+    assert_eq!(fake.calls.lock().unwrap()[1], json!({"command":"profile_virtual_slot_set","id":id,"expectedRevision":4,"nodeId":"virtual-1","slot":3,"clientId":native_client(CLIENT)}));
+
+    for invalid in [
+        json!({"id":id,"expectedRevision":4,"nodeId":"virtual-1","slot":17,"operationId":operation()}),
+        json!({"id":id,"expectedRevision":4,"nodeId":"virtual-1","slot":1.5,"operationId":operation()}),
+        json!({"id":id,"expectedRevision":4,"nodeId":"bad/id","slot":1,"operationId":operation()}),
+        json!({"id":"not-a-uuid","expectedRevision":4,"nodeId":"virtual-1","slot":null,"operationId":operation()}),
+    ] {
+        assert_eq!(tools.call("profile_virtual_slot_set", invalid, CLIENT)["error"]["code"], "invalid_arguments");
+    }
+    let null_slot = tools.call("profile_virtual_slot_set", json!({"id":id,"expectedRevision":4,"nodeId":"virtual-1","slot":null,"operationId":operation()}), CLIENT);
+    assert_eq!(null_slot["ok"], true, "{null_slot}");
 }
 
 #[test]

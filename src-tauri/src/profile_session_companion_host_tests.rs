@@ -185,7 +185,7 @@ fn prospective_catalogue_uses_retained_desired_publication_without_mutating_obse
     command["command"] = json!("companion_publish");
     crate::retain_companion_test_fixture(&hub,&command).unwrap();
     assert_ne!(desired.publication_hash, publication.publication_hash);
-    let mut candidate = Candidate { launch_preparation: false,
+    let mut candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
         read_only: false,
@@ -284,7 +284,7 @@ fn unassigned_paired_component_prepares_and_journals_its_first_panel_without_a_c
     let(hub,panel)=fixture();
     hub.command(&json!({"command":"companion_unassign","instanceId":"instance"})).unwrap();
     let instance=osg_companion_service::profile::profile_instance_id("screen");
-    let mut candidate=Candidate{launch_preparation:false,document:osg_profiles::default_document(),assignments:vec![],read_only:false,game_id:None,admission_epoch:Some(1),stage:None};
+    let mut candidate=Candidate { virtual_slots: Default::default(),launch_preparation:false,document:osg_profiles::default_document(),assignments:vec![],read_only:false,game_id:None,admission_epoch:Some(1),stage:None};
     candidate.document.companion_assignments.push(osg_profiles::CompanionAssignment{panel_id:None,resource_id:"screen".into(),publication_hash:panel.publication_hash.clone()});
     let mut captured=snapshot();
     captured.assignments.push(osg_profiles::store::LocalAssignment{resource_id:"screen".into(),source_id:"paired-inventory".into(),ports:vec![]});
@@ -306,7 +306,7 @@ fn unassigned_paired_component_prepares_and_journals_its_first_panel_without_a_c
     hub.acquire_profile_assignment(&receipt).unwrap();assert!(hub.resource_instance_ids().contains(&instance));
     hub.restore_profile_assignment(&receipt).unwrap();assert!(hub.resource_instance_ids().is_empty());
     captured.resources[0].summary.attributes.insert("companionId".into(),"another-installation".into());
-    let candidate=Candidate{launch_preparation:false,document:{let mut document=osg_profiles::default_document();document.companion_assignments=plan.companion_assignments;document},assignments:vec![],read_only:false,game_id:None,admission_epoch:Some(1),stage:None};
+    let candidate=Candidate { virtual_slots: Default::default(),launch_preparation:false,document:{let mut document=osg_profiles::default_document();document.companion_assignments=plan.companion_assignments;document},assignments:vec![],read_only:false,game_id:None,admission_epoch:Some(1),stage:None};
     assert!(prepare_catalogues(&hub,&captured,&candidate).is_err());
 }
 
@@ -596,7 +596,7 @@ impl NativeFixture {
         )
     }
     pub(crate) fn candidate(&self, default: bool) -> Candidate {
-        let mut candidate = Candidate { launch_preparation: false,
+        let mut candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
             document: osg_profiles::default_document(),
             assignments: vec![],
             read_only: false,

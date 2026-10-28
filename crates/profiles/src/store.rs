@@ -19,6 +19,8 @@ pub struct LocalAssignment {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Library {
     pub profiles: Vec<ProfileDocument>,
+    #[serde(default)]
+    pub local_virtual_slots: BTreeMap<String, BTreeMap<String, u8>>,
     pub local_assignments: BTreeMap<String, Vec<LocalAssignment>>,
 }
 
@@ -26,6 +28,7 @@ impl Default for Library {
     fn default() -> Self {
         Self {
             profiles: vec![default_document()],
+            local_virtual_slots: BTreeMap::new(),
             local_assignments: BTreeMap::new(),
         }
     }
@@ -64,7 +67,20 @@ impl Library {
                 .ok_or("Local assignments reference a profile that does not exist.")?;
             validate_assignments(document, assignments)?;
         }
+        for (id, slots) in &self.local_virtual_slots {
+            let document = self.profiles.iter().find(|p| &p.id == id)
+                .ok_or("Local virtual slots reference a missing profile.")?;
+            crate::service::virtual_slots::validate(document, slots)?;
+        }
         Ok(())
+    }
+
+    pub fn prune_virtual_slots(&mut self) {
+        self.local_virtual_slots.retain(|id, slots| {
+            let Some(document) = self.profiles.iter().find(|p| &p.id == id) else { return false; };
+            slots.retain(|node, _| document.virtual_outputs.iter().any(|output| &output.id == node));
+            !slots.is_empty()
+        });
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, String> {

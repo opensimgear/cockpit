@@ -30,12 +30,12 @@ impl GatewayManager {
         game_id: Option<String>,
         epoch: u64,
     ) -> Result<Candidate, String> {
-        let (document, assignments, read_only) = self
+        let (document, assignments, read_only, virtual_slots) = self
             .profiles
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .compile_source(&original.document.id)?;
-        let saved = Candidate { launch_preparation: original.launch_preparation,
+            .compile_virtual_source(&original.document.id)?;
+        let saved = Candidate { virtual_slots, launch_preparation: original.launch_preparation,
             document,
             assignments,
             read_only,
@@ -210,11 +210,11 @@ impl GatewayManager {
             self.profile_automatic.change(|settings| { settings.preferred_profiles.insert(game_id.into(), selected.into()); Ok(()) })?;
         }
         let (settings, policy_epoch, policy_read_only) = self.profile_automatic.config();
-        let (document, assignments, read_only) = self
+        let (document, assignments, read_only, virtual_slots) = self
             .profiles
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .compile_source(&intent.profile_id)?;
+            .compile_virtual_source(&intent.profile_id)?;
         if read_only {
             return Err("Repair profile storage before launching a game.".into());
         }
@@ -223,7 +223,7 @@ impl GatewayManager {
         )?;
         self.capture_profile_activation_id(&activation_id, &document, &assignments);
         let result = (|| {
-            let mut candidate = Candidate { launch_preparation: true,
+            let mut candidate = Candidate { virtual_slots, launch_preparation: true,
                 document,
                 assignments,
                 read_only,
@@ -404,12 +404,12 @@ impl GatewayManager {
                         );
                     }
                     // Pin saved graph/assignments against the final one-use stage.
-                    let (document, assignments, read_only) = self
+                    let (document, assignments, read_only, virtual_slots) = self
                         .profiles
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
-                        .compile_source(&capture.intent.profile_id)?;
-                    candidate.stage.as_ref().unwrap().validate(&Candidate { launch_preparation: candidate.launch_preparation,
+                        .compile_virtual_source(&capture.intent.profile_id)?;
+                    candidate.stage.as_ref().unwrap().validate(&Candidate { virtual_slots, launch_preparation: candidate.launch_preparation,
                         document,
                         assignments,
                         read_only,

@@ -719,8 +719,9 @@ impl NativeProfileHost {
             .collect();
         let mut reuses_output = false;
         let bindings = if !plan.program.controllers.is_empty() && slots.is_some() {
-            match crate::profile_session_virtual::select(
+            match crate::profile_session_virtual::select_pinned(
                 &plan.program.controllers,
+                &candidate.virtual_slots,
                 slots.as_deref().unwrap(),
                 source.as_ref().and_then(|source|source.output.as_ref()),
             ) {

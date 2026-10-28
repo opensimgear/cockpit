@@ -333,7 +333,7 @@ impl DcsLive {
         )
     }
     fn candidate(&self, default: bool) -> Candidate {
-        let mut candidate = Candidate { launch_preparation: false,
+        let mut candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
             document: osg_profiles::default_document(),
             assignments: vec![],
             read_only: false,

@@ -60,7 +60,7 @@ impl Fixture {
             ProcessingNode { draft: None, id: "base".into(), name: "Always active Base".into(), operation: Operation::Constant { value: PortValue::Boolean(true) }, inputs: vec![], outputs: vec![port("value", Direction::Output)] },
         ];
         document.bindings.push(Binding { id: "read-input".into(), from: Endpoint { node_id: "controls".into(), port_id: "pressed".into() }, to: Endpoint { node_id: "read-controls".into(), port_id: "value".into() } });
-        let candidate = Candidate { launch_preparation: false, document, assignments: vec![LocalAssignment { resource_id: "controls".into(), source_id: source, ports: vec![PortExpectation { profile_port_id: "pressed".into(), observed_port_id: descriptor.id.clone(), expected_contract_hash: descriptor.contract_hash().unwrap() }] }], read_only: false, game_id: None, admission_epoch: Some(1), stage: None };
+        let candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false, document, assignments: vec![LocalAssignment { resource_id: "controls".into(), source_id: source, ports: vec![PortExpectation { profile_port_id: "pressed".into(), observed_port_id: descriptor.id.clone(), expected_contract_hash: descriptor.contract_hash().unwrap() }] }], read_only: false, game_id: None, admission_epoch: Some(1), stage: None };
         Self { _directory: directory, feed, resources, controllers, games, companions, epoch, candidate }
     }
     fn host(&self) -> NativeProfileHost { NativeProfileHost::new(self.resources.clone(), self.controllers.clone(), self.games.clone(), self.companions.clone(), Arc::new(crate::gateways::ProfilePanelIo::empty()), false, self.epoch.clone()) }

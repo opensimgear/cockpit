@@ -51,11 +51,21 @@ fn owned_slot(proof: &osg_virtual_controller::session::RunningOutput, slot: &Slo
             .iter()
             .any(|old| old.slot == slot.id && old.match_slot(slot).is_ok())
 }
-pub(crate) fn select(
+pub(crate) fn select_pinned(
     controllers: &[VirtualController],
+    pins: &std::collections::BTreeMap<String, u8>,
     slots: &[Slot],
     outgoing: Option<&osg_virtual_controller::session::RunningOutput>,
 ) -> Result<Selection, String> {
+    let mut requested = std::collections::BTreeMap::new();
+    for controller in controllers {
+        if let Some(slot) = pins.get(&controller.id) {
+            if !(1..=16).contains(slot) { return Err(format!("vJoy slot {slot} for target {} must be from 1 through 16.", controller.id)); }
+            if let Some(other) = requested.insert(*slot, &controller.id) {
+                return Err(format!("vJoy slot {slot} is explicitly assigned to both targets {other} and {}. Choose distinct slots before Apply.", controller.id));
+            }
+        }
+    }
     let mut used = BTreeSet::new();
     let mut result = vec![];
     let mut reused = false;
@@ -76,7 +86,11 @@ pub(crate) fn select(
                 .map_err(|_| "Virtual hat capacity exceeded.")?,
         };
         layout.validate()?;
-        let mut available = slots.iter().collect::<Vec<_>>();
+        let explicit = pins.get(&controller.id);
+        let mut available = slots.iter().filter(|slot| match explicit {
+            Some(id) => slot.id == *id,
+            None => !requested.contains_key(&slot.id),
+        }).collect::<Vec<_>>();
         // Preserve a compatible existing logical target's native slot before
         // considering another eligible slot. No driver status is normalized.
         available.sort_by_key(|slot| {
@@ -100,7 +114,10 @@ pub(crate) fn select(
                 let axes = AXIS_USAGES.iter().copied().filter(|usage|slot.axes.iter().any(|axis|axis.usage==*usage)).collect();
                 let binding = Binding { target: controller.id.clone(), slot: slot.id, axes, layout: layout.clone() };
                 binding.match_slot(slot).is_ok().then_some((binding, slot.status == Status::Busy))
-            }).ok_or_else(||format!("No free or exactly owned retiring backend slot matches the complete layout of {}. Configure an unused matching slot before Apply.",controller.id))?;
+            }).ok_or_else(|| match explicit {
+                Some(slot) => format!("vJoy slot {slot} selected for target {} is missing, owned by another process, or incompatible with its complete layout. Free or configure that exact slot, or change its selection before Apply.", controller.id),
+                None => format!("No free or exactly owned retiring backend slot matches the complete layout of {}. Configure an unused matching slot before Apply.",controller.id),
+            })?;
         used.insert(binding.0.slot);
         reused |= binding.1;
         result.push(binding.0);
@@ -230,6 +247,10 @@ pub(crate) fn recover_output(
     osg_virtual_controller::session::Session::recover_stored_exact(factory, path, &record)
 }
 #[cfg(test)]
+pub(crate) fn select(controllers: &[VirtualController], slots: &[Slot], outgoing: Option<&osg_virtual_controller::session::RunningOutput>) -> Result<Selection, String> {
+    select_pinned(controllers, &Default::default(), slots, outgoing)
+}
+#[cfg(test)]
 pub(crate) fn bindings(
     controllers: &[VirtualController],
     slots: &[Slot],
@@ -289,6 +310,32 @@ mod tests {
         );
         assert_eq!(planned[0].axes, vec![0x30]);
         assert_eq!(planned[0].fallback().axes, vec![0]);
+    }
+    #[test]
+    fn explicit_slots_reserve_targets_before_automatic_allocation() {
+        let pins = std::collections::BTreeMap::from([("pinned".into(), 2)]);
+        let selected = select_pinned(
+            &[controller("automatic"), controller("pinned")], &pins,
+            &[slot(2, Status::Free), slot(4, Status::Free)], None,
+        ).unwrap();
+        assert_eq!(selected.bindings.iter().map(|binding|binding.slot).collect::<Vec<_>>(), vec![4,2]);
+        assert!(!selected.reused);
+    }
+    #[test]
+    fn explicit_slots_never_fall_back_when_missing_busy_or_incompatible() {
+        let pins = std::collections::BTreeMap::from([("target".into(), 2)]);
+        for status in [Status::Busy, Status::Owned, Status::Missing, Status::Unknown] {
+            let error = select_pinned(&[controller("target")], &pins,
+                &[slot(2,status),slot(4,Status::Free)], None).err().unwrap();
+            assert!(error.contains("slot 2") && error.contains("target"));
+        }
+        assert!(select_pinned(&[controller("target")], &pins, &[slot(4,Status::Free)], None).is_err());
+        let mut incompatible = slot(2,Status::Free); incompatible.buttons=2;
+        assert!(select_pinned(&[controller("target")], &pins, &[incompatible,slot(4,Status::Free)],None).is_err());
+        let duplicates = std::collections::BTreeMap::from([("a".into(),2),("b".into(),2)]);
+        let error = select_pinned(&[controller("a"),controller("b")], &duplicates,
+            &[slot(2,Status::Free),slot(4,Status::Free)],None).err().unwrap();
+        assert!(error.contains("slot 2") && error.contains("a") && error.contains("b"));
     }
     #[test]
     fn busy_missing_or_mismatched_layouts_are_preserved() {

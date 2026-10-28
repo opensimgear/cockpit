@@ -24,6 +24,7 @@ fn fingerprint(candidate: &Candidate) -> Result<[u8; 32], String> {
     let bytes = serde_json::to_vec(&(
         &candidate.document,
         &candidate.assignments,
+        &candidate.virtual_slots,
         candidate.read_only,
         &candidate.game_id,
         candidate.launch_preparation,

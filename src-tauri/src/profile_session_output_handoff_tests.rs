@@ -302,7 +302,7 @@ fn token(owner: &RunOwner) -> RunToken {
 fn candidate(revision: u64) -> Candidate {
     let mut document = default_document();
     document.revision = revision;
-    Candidate { launch_preparation: false,
+    Candidate { virtual_slots: Default::default(), launch_preparation: false,
         document,
         assignments: vec![],
         read_only: false,
@@ -688,7 +688,8 @@ fn handoff_fences_current_owner_epoch_worker_layout_and_inspection_age() {
         output: Some(proof.clone()),
     };
     let slots = vec![driver.lock().unwrap().slot.clone()];
-    let selected = output::select(&[controller("renamed", 1234)], &slots, Some(&proof)).unwrap();
+    let pins = std::collections::BTreeMap::from([("renamed".into(), 3)]);
+    let selected = output::select_pinned(&[controller("renamed", 1234)], &pins, &slots, Some(&proof)).unwrap();
     assert!(selected.reused);
     assert_eq!(selected.bindings[0].slot, 3);
     let handoff = PreparedHandoff {
@@ -734,7 +735,7 @@ fn handoff_fences_current_owner_epoch_worker_layout_and_inspection_age() {
             Some(&owner)
         )
         .is_err());
-    assert!(output::select(&[controller("renamed", 0)], &foreign.slots, Some(&proof)).is_err());
+    assert!(output::select_pinned(&[controller("renamed", 0)], &pins, &foreign.slots, Some(&proof)).is_err());
     foreign.slots[0].owner_pid = None;
     assert!(foreign
         .validate(

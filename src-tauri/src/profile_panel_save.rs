@@ -48,7 +48,7 @@ impl GatewayManager {
                 profiles.refresh_companion_panel(&saved.panel_id,&saved.publication_hash,&saved.previous_hashes.iter().cloned().collect())?;
                 let owner=status.owner.filter(|_|matches!(status.state,State::Running|State::Degraded));
                 let candidate=owner.as_ref().map(|owner|{
-                    let (document,assignments,read_only)=profiles.compile_source(&owner.profile_id)?;
+                    let (document, assignments, read_only, virtual_slots)=profiles.compile_virtual_source(&owner.profile_id)?;
                     // A passive catalogue read can already have advanced saved
                     // references; a failed earlier apply leaves them advanced
                     // too. Compare the durable revision to the actual owner,
@@ -57,7 +57,7 @@ impl GatewayManager {
                         assignment.panel_id.as_deref().map(|id|id==saved.panel_id)
                             .unwrap_or(assignment.publication_hash==saved.publication_hash));
                     if !uses_panel||document.revision==owner.profile_revision {return Ok(None);}
-                    Ok::<_,String>(Some(Candidate{document,assignments,read_only,game_id:owner.game_id.clone(),launch_preparation:false,admission_epoch:arrival,stage:None}))
+                    Ok::<_,String>(Some(Candidate { virtual_slots,document,assignments,read_only,game_id:owner.game_id.clone(),launch_preparation:false,admission_epoch:arrival,stage:None}))
                 }).transpose()?.flatten();
                 // Uploading/restoring an immutable payload is passive. Only a
                 // real change to this active owner cancels older preparation.

@@ -626,11 +626,11 @@ impl GatewayManager {
         };
         let mut enumeration_changed = false;
         let result = (|| {
-            let (document, assignments, read_only) = self
+            let (document, assignments, read_only, virtual_slots) = self
                 .profiles
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .compile_source(&target.profile_id)?;
+                .compile_virtual_source(&target.profile_id)?;
             self.capture_profile_activation_id(&activation_id, &document, &assignments);
             enumeration_changed =
                 crate::games::launch::enumeration_intents(&document).requires_startup_notice();
@@ -646,7 +646,7 @@ impl GatewayManager {
                 .cloned();
             crate::profile_session::apply_staged_admitted(
                 &self.profile_session,
-                crate::profile_session::Candidate { launch_preparation: false,
+                crate::profile_session::Candidate { virtual_slots, launch_preparation: false,
                     document,
                     assignments,
                     read_only,
@@ -680,13 +680,13 @@ impl GatewayManager {
                         self.games.validate_profile_activation(proof)?;
                     }
                     let mut profiles = self.profiles.lock().unwrap_or_else(|p| p.into_inner());
-                    let (document, assignments, read_only) =
-                        profiles.compile_source(&target.profile_id)?;
+                    let (document, assignments, read_only, virtual_slots) =
+                        profiles.compile_virtual_source(&target.profile_id)?;
                     candidate
                         .stage
                         .as_ref()
                         .ok_or("Automatic native preparation is missing.")?
-                        .validate(&crate::profile_session::Candidate { launch_preparation: false,
+                        .validate(&crate::profile_session::Candidate { virtual_slots, launch_preparation: false,
                             document,
                             assignments,
                             read_only,

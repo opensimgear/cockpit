@@ -114,7 +114,7 @@ fn corrupt_installation_store_never_verifies_or_launches_the_discovered_fallback
             .unwrap_err()
             .contains("Repair game installation metadata"));
     }
-    let mut candidate = crate::profile_session::Candidate {
+    let mut candidate = crate::profile_session::Candidate { virtual_slots: Default::default(),
         launch_preparation: false,
         document: osg_profiles::default_document(),
         assignments: vec![],
