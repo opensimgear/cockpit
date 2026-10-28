@@ -134,11 +134,15 @@ impl Sources {
                 .find(|item| item.key == companion.instance_id)
                 .cloned()
                 .unwrap_or_else(|| {
-                    observation(
+                    let mut item = observation(
                         String::new(),
                         companion.name.clone(),
                         ResourceType::Companion,
-                    )
+                    );
+                    // No assignment is authoritative absence of panel controls,
+                    // unlike an assigned panel whose publication is offline.
+                    item.ports = Some(PortUpdate::complete(vec![]).expect("Empty catalogue is valid"));
+                    item
                 });
             item.key = format!("paired:{}", companion.companion_id);
             item.name = companion.name;

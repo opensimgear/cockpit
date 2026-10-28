@@ -395,7 +395,7 @@ impl Runtime {
             .as_ref()
             .map_or(Ok(None), Store::load)
             .and_then(|saved| saved.map(Registry::restore).transpose());
-        let (registry, diagnostics, read_only) = match loaded {
+        let (mut registry, diagnostics, read_only) = match loaded {
             Ok(registry) => (registry.unwrap_or_default(), vec![], false),
             Err(error) => (
                 Registry::new(),
@@ -406,6 +406,9 @@ impl Runtime {
             ),
         };
         let saved = registry.saved_fingerprint().expect("inventory metadata fingerprint");
+        // Acquired readers are session state, never a second persisted catalogue.
+        let retired_deliveries = registry.retire_restored_game_deliveries()
+            .expect("validated restored game delivery retirement");
         let state = Arc::new(Mutex::new(State {
             saved,
             registry,
@@ -413,7 +416,7 @@ impl Runtime {
             diagnostics,
             read_only,
             fingerprints: BTreeMap::new(),
-            pending_save: false,
+            pending_save: retired_deliveries,
             game_metadata: BTreeMap::new(),
             game_deliveries: BTreeMap::new(),
             game_command_withdrawals: BTreeMap::new(),
@@ -528,6 +531,7 @@ impl Runtime {
         Self::adopt_prepared(state, Self::prepare_batches(batches));
     }
     fn adopt_prepared(state: &Mutex<State>, batches: PreparedBatches) {
+        let game_ids = game_retention::catalogue_membership(&batches);
         let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
         let mut changed = false;
         for (scope, batch) in batches {
@@ -563,7 +567,9 @@ impl Runtime {
                 let owner=game.split(':').next().unwrap_or(game);
                 if state.game_deliveries.get(owner).is_some_and(|batch| validate_admitted_game_catalogues(batch,&state.game_metadata).is_err()) {
                     let overlay = state.game_deliveries.remove(owner).unwrap();
-                    state.registry.provider_failed(&overlay.scope, "Game process, setup or catalogue changed; acquire a fresh native baseline.");
+                    if let Err(error) = state.registry.retire_game_delivery(&overlay.scope) {
+                        state.diagnostics.push(error);
+                    }
                     state.fingerprints.remove(&overlay.scope);
                     changed = true;
                 }
@@ -572,6 +578,12 @@ impl Runtime {
                 state.fingerprints.remove(&scope);
                 state.registry.provider_failed(&scope, &error);
                 changed = true;
+            }
+        }
+        if let Some(game_ids) = game_ids {
+            match game_retention::retain(&mut state, &game_ids) {
+                Ok(retired) => changed |= retired,
+                Err(error) => state.diagnostics.push(error),
             }
         }
         state.pending_save |= changed;
@@ -764,6 +776,8 @@ pub(crate) fn attributes<const N: usize>(fields: [(&str, String); N]) -> BTreeMa
 
 #[path = "profile_resources_game.rs"]
 mod game_delivery;
+#[path = "profile_resources/game_retention.rs"]
+mod game_retention;
 use game_delivery::validate_admitted_game_catalogues;
 
 #[cfg(test)]

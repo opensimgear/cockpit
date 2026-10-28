@@ -4,11 +4,13 @@
   import {portContractLabel,type CanvasNode} from '../profile-canvas';
   import type {DeepReadonly,ProfileDocument} from '../profiles';
   import type {ObservedResourcePort,ResourceDetails,ResourceSummary} from '../profile-inventory';
+  import {gameIntegrationSourceStatus} from '../profile-game-source';
+  import type {Game} from '../games';
 
-  let {node,document,controller=false,source='',resources=[],page=null,mappings={},options=[],busy=false,error='',hasPrevious=false,hasNext=false,
+  let {node,document,controller=false,source='',resources=[],games=[],page=null,mappings={},options=[],busy=false,error='',hasPrevious=false,hasNext=false,
     policy,visibility,publication,chooseSource,chooseMapping,browse,assign}: {
     node:CanvasNode;document:DeepReadonly<ProfileDocument>;controller?:boolean;source?:string;
-    resources?:readonly DeepReadonly<ResourceSummary>[];page?:DeepReadonly<ResourceDetails>|null;
+    resources?:readonly DeepReadonly<ResourceSummary>[];games?:readonly Game[];page?:DeepReadonly<ResourceDetails>|null;
     mappings?:Record<string,DeepReadonly<ObservedResourcePort>>;options?:readonly DeepReadonly<ObservedResourcePort>[];
     busy?:boolean;error?:string;hasPrevious?:boolean;hasNext?:boolean;
     policy:(key:'name'|'required',value:string|boolean)=>void;visibility:(value:string)=>void;publication:(value:string)=>void;
@@ -18,7 +20,13 @@
   const resource=$derived(node.resource);
   const capability=$derived(graphPublicationCapability(node.observation));
   const publicationMode=$derived(document.overrides.find(item=>item.resourceId===node.id)?.enabled);
-  const selectedSource=$derived(source||node.assignment?.sourceId||'');
+  const selectedSource=$derived(resources.some(item=>item.id===source)?source:resources.some(item=>item.id===node.assignment?.sourceId)?node.assignment!.sourceId:'');
+  const unavailableAssignment=$derived(!!node.assignment&&!resources.some(item=>item.id===node.assignment?.sourceId));
+  function sourceStatus(item:DeepReadonly<ResourceSummary>){
+    if(item.resourceType!=='game-integration')return item.availability;
+    const game=games.find(game=>game.id===item.attributes.gameId&&(game.integrationKey??game.id)===item.attributes.integrationKey);
+    return gameIntegrationSourceStatus(game,[item]);
+  }
   function key(port:DeepReadonly<ObservedResourcePort>){return JSON.stringify([port.descriptor.id,port.contractHash]);}
 </script>
 
@@ -34,9 +42,9 @@
     {#if !controller&&resource.kind!=='companion'}
       <label>Source<select aria-label="Inventory resource" value={selectedSource} disabled={busy} onchange={event=>chooseSource(event.currentTarget.value)}>
         <option value="" disabled>Choose a source</option>
-        {#each resources as item (item.id)}<option value={item.id}>{item.name} · {item.availability}</option>{/each}
-        {#if node.assignment&&!resources.some(item=>item.id===node.assignment?.sourceId)}<option value={node.assignment.sourceId}>Saved source · unavailable</option>{/if}
+        {#each resources as item (item.id)}<option value={item.id}>{item.name} · {sourceStatus(item)}</option>{/each}
       </select></label>
+      {#if unavailableAssignment}<p class="error" role="status">The saved source is unavailable. Choose a current source to reassign this resource.</p>{/if}
       {#if node.assignment&&!source}<button class="text-button" onclick={()=>chooseSource(node.assignment!.sourceId)}><Icon name="link" size={14}/>Map ports</button>{/if}
       {#if busy}<p role="status">Loading ports…</p>{/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}

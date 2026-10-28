@@ -11,6 +11,7 @@
   import type{ProfileSummary}from'./profiles';
   import type{ProfileLibraryClient}from'./profile-library';
   import { gatewayRequest } from './gateway';
+  import { gameIntegrationSourceChoices } from './profile-game-source';
   import { DEFAULT_PROFILE_ID, ProfilesClient, profileDocumentError, type ProfileDocument, type ProfileLocalAssignment } from './profiles';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
   import { ProfileEditorStore, ProfileNavigationGuard, addProfileResources, profileEditorDirty } from './profile-editor';
@@ -58,7 +59,7 @@
   const editor = $derived(workspace.editor);
   const editorInventory=$derived([...workspace.inventory,...Object.values(dcsCatalogues).filter(source=>!workspace.inventory.some(current=>current.id===source.id))]);
   const selectedGame=$derived(editor?profileGameContext(editor.document):'');
-  const selectedGameRegistered=$derived($registeredGames.some(game=>game.id===selectedGame));
+  const gameSourceChoices=$derived(gameIntegrationSourceChoices($registeredGames,workspace.inventory));
   const contextGame=$derived($registeredGames.find(game=>game.id===selectedGame)??gameCatalogue.find(game=>game.id===selectedGame));
   const vehicleTabs=$derived(editor?.document.vehicleTabs??[]);
   const vehicleTabsEnabled=$derived(!!selectedGame&&gameHasIntegration(contextGame)&&(contextGame?.vehicleSupport?.supported??true));
@@ -264,7 +265,7 @@
     {#if error}<p class="workspace-error" role="alert">{error}</p>{/if}
     <div class="profile-authoring">
       <div class="profile-components-column">
-        <label class="game-context" title="Saved with the profile. Selecting a context makes this profile available for that game. Integrated games also add their telemetry block.">Game context<select aria-label="Game context" value={selectedGame} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#if selectedGame&&!selectedGameRegistered}<option value={selectedGame} disabled>{profileGameName(selectedGame)} · Unavailable</option>{/if}{#each $registeredGames as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label>
+        <label class="game-context" title="Saved with the profile. Selecting a context makes this profile available for that game. Integrated games also add their telemetry block.">Game context<select aria-label="Game context" value={gameSourceChoices.some(choice=>choice.game.id===selectedGame)?selectedGame:''} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#each gameSourceChoices as choice (choice.game.id)}<option value={choice.game.id}>{choice.game.name} · {choice.status}</option>{/each}</select></label>
       <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} editorGroups={tabDocument?.editor.groups??[]} canAddGroup={!activeVehicleTabId} addGroup={()=>{if(!activeVehicleTabId)routingEditor?.addGroup();}} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.filter(node=>profileTabNodeIds(editor.document).has(node.id)||tabNodeIds.has(node.id)).length} keyboardAdded={!canDropComponent({kind:'desktop',device:'keyboard'})} mouseAdded={!canDropComponent({kind:'desktop',device:'mouse'})}
         processingCount={editor.document.processingNodes.length+(editor.document.desktopOutputs??[]).reduce((count,node)=>count+node.actions.length,0)} addTransformation={preset=>{if(canDropComponent({kind:'transformation',preset}))routingEditor?.addTransformation(preset);}}
         {capturedCompanionIds} companionPanelCount={editor.document.companionAssignments.length} companionPanels={companionCatalogue?.panels??[]} companionPanelsLoaded={!!companionCatalogue} companionPanelsBusy={companionPanelsBusy||companionDropBusy} {companionPanelsError} refreshPanels={()=>void refreshCompanionPanels()} addCompanionPanel={(sourceId,publicationHash)=>void addCompanionPanel(sourceId,publicationHash)}
@@ -311,7 +312,7 @@
               {#if dcsCatalogueError}<p class="workspace-error" role="alert">{dcsCatalogueError}</p><button class="secondary-button" disabled={dcsCatalogueBusy} onclick={()=>void loadDcsVehicleCatalogue()}>Retry aircraft catalogue</button>{/if}
             </div>
           {/if}
-          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={routingInventory} inventoryClient={resources} companionClient={companionAuthoring} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} {active} runtimeIdle={learningIdle} {inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy||companionDropBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')}/>{/key}{/if}
+          {#if addingVehicleTab}<div class="vehicle-empty"><Icon name="plus" size={24}/><p>Choose a vehicle to start configuring its canvas.</p></div>{:else}{#key `${editor.document.id}/${activeVehicleTabId}`}<ProfileRoutingEditor bind:this={routingEditor} document={editor.document} {activeVehicleTabId} assignments={editor.assignments} inventory={routingInventory} games={$registeredGames} inventoryClient={resources} companionClient={companionAuthoring} compilerClient={compiler} {learningClient} {editorContext} {paletteDrag} {canDropComponent} {dropComponent} {endPaletteDrag} {active} runtimeIdle={learningIdle} {inventoryRevision} readOnly={workspace.readOnly||workspace.busy||libraryBusy||companionDropBusy} bind:selectedId={routingSelection} change={(draft,label)=>change(draft.document,draft.assignments,label)} openGameSettings={openGameSettings?gameSettings:undefined} undo={()=>historyStep('undo')} redo={()=>historyStep('redo')}/>{/key}{/if}
         </div>
       </div>
     </div>

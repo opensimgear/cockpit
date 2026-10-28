@@ -144,13 +144,26 @@ impl GamesRuntime {
         runtime
     }
     pub(crate) fn resource_catalogue(&self) -> Vec<Value> {
-        let mut catalogue = self
+        let catalogue = self
             .inner
             .settings
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .catalogue
             .clone();
+        self.decorate_resource_catalogue(catalogue)
+    }
+    pub(crate) fn authoritative_resource_catalogue(&self) -> Result<Vec<Value>, String> {
+        let catalogue = {
+            let settings = self.inner.settings.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(error) = &settings.metadata_error {
+                return Err(error.clone());
+            }
+            settings.catalogue.clone()
+        };
+        Ok(self.decorate_resource_catalogue(catalogue))
+    }
+    fn decorate_resource_catalogue(&self, mut catalogue: Vec<Value>) -> Vec<Value> {
         for game in catalogue.iter_mut().filter(|game| game["provider"].is_string()) {
             self.inner.setup.decorate(std::slice::from_mut(game));
         }

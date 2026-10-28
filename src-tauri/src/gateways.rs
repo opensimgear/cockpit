@@ -664,6 +664,10 @@ impl GatewayManager {
         // Collection and presentation reads are outside both admission guards.
         if committed.is_ok() {
             self.games.finish_metadata();
+            if matches!(request["command"].as_str(), Some("game_add" | "game_save" | "game_rescan" | "game_remove" | "game_discovery_apply" | "game_installation_select")) {
+                // Publish configured membership before acknowledging the change.
+                let _ = self.profile_resources.refresh_native();
+            }
             self.profile_wake.notify();
         }
         let mut response = match committed {

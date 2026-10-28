@@ -100,10 +100,7 @@ impl Runtime {
                 .is_some_and(|old| old.session == batch.session)
             {
                 state.game_deliveries.remove(&game);
-                state.registry.provider_failed(
-                    &batch.scope,
-                    "The acquired game reader lost validated sample metadata.",
-                );
+                state.registry.retire_game_delivery(&batch.scope)?;
                 state.pending_save = true;
             }
             return Err(error);
@@ -137,9 +134,7 @@ impl Runtime {
             state
                 .game_command_withdrawals
                 .remove(&(game.into(), provider_session.into()));
-            state
-                .registry
-                .provider_failed(&old.scope, "The native profile game reader stopped.");
+            state.registry.retire_game_delivery(&old.scope)?;
             state.pending_save = true;
         }
         Ok(())

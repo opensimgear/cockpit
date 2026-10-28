@@ -18,6 +18,16 @@ fn runtime()->(GamesRuntime,tempfile::TempDir) {
     (runtime,root)
 }
 #[test]
+fn resource_membership_is_authoritative_only_when_configured_metadata_loaded() {
+    let (runtime, _root) = runtime();
+    runtime.seed_test_catalogue(vec![json!({"id":"fixture","name":"Fixture"})]);
+    assert_eq!(runtime.authoritative_resource_catalogue().unwrap()[0]["id"], "fixture");
+    runtime.inner.settings.lock().unwrap().metadata_error = Some("Cannot load configured games".into());
+    assert_eq!(runtime.authoritative_resource_catalogue().unwrap_err(), "Cannot load configured games");
+    // A display snapshot remains available, but cannot authorize deletion.
+    assert_eq!(runtime.resource_catalogue()[0]["id"], "fixture");
+}
+#[test]
 fn cached_metadata_is_passive_and_remains_available_after_manual_rename() {
     let (runtime,_root)=runtime();let request=json!({"command":"game_metadata_get","gameId":"fixture"});
     assert_eq!(runtime.metadata_details(&request).unwrap()["status"],"not-cached");

@@ -123,6 +123,7 @@ impl Rig {
         for resource in &document.resources {
             let osg = resource.id.starts_with("can-") || resource.id == "direct-usb";
             let (resource_type, evidence, transport) = match resource.kind {
+                ResourceKind::DebugController => continue,
                 ResourceKind::Device if osg => (
                     ResourceType::OsgModule,
                     EvidenceKind::VerifiedPhysical,

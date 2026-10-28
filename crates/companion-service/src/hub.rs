@@ -19,6 +19,8 @@ use zeroize::{Zeroize, Zeroizing};
 mod content;
 #[path="hub_display.rs"]
 mod display;
+#[path="hub_retirement.rs"]
+mod retirement;
 pub use content::SavedPanel;
 
 pub const LEASE_MS: u64 = 1500;
@@ -632,16 +634,10 @@ impl Hub {
                 )?;
                 record.credentials.retain(|c| c.companion_id != companion);
                 record.instances.retain(|a| a.companion_id != companion);
-                self.persist(&record)?;
-                let sessions: Vec<_> = inner
-                    .sessions
-                    .iter()
-                    .filter(|(_, s)| s.companion_id == companion)
-                    .map(|(id, _)| id.clone())
-                    .collect();
-                for id in sessions {
-                    self.disarm(inner, &id, "revoked", true);
-                }
+                self.commit_instance_removal(inner, &record, "revoked")?;
+                let sessions = inner.sessions.iter().filter(|(_, s)| s.companion_id == companion)
+                    .map(|(id, _)| id.clone()).collect::<Vec<_>>();
+                for session in sessions { self.disarm(inner, &session, "revoked", true); }
                 inner.connections.retain(|_, c| c != companion);
                 let connected=inner.connections.keys().cloned().collect::<BTreeSet<_>>();
                 inner.display_reports.retain(|connection,_|connected.contains(connection));
@@ -760,9 +756,7 @@ impl Hub {
                 let mut record=inner.record.clone();
                 let companion=record.instances.iter().find(|a|a.instance_id==instance).map(|a|a.companion_id.clone()).ok_or("Unknown controller instance.")?;
                 record.instances.retain(|a|a.instance_id!=instance);
-                let sessions=inner.sessions.iter().filter(|(_,s)|s.token.source_id==instance).map(|(id,_)|id.clone()).collect::<Vec<_>>();
-                for id in sessions { self.disarm(&mut inner,&id,"assignment-removed",true); }
-                self.persist(&record)?;
+                self.commit_instance_removal(&mut inner, &record, "assignment-removed")?;
                 inner.record=record;
                 display::clear_companion(&mut inner,&companion);
                 inner.feedback.remove(instance);

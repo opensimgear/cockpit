@@ -13,6 +13,9 @@ use std::sync::{Arc, OnceLock};
 #[path = "resources_companion.rs"]
 mod companion;
 
+#[path = "resources/games.rs"]
+mod games;
+
 pub const MAX_RESOURCES: usize = 2048;
 pub const MAX_CACHED_PORTS: usize = 262_144;
 pub const MAX_OBSERVATIONS: usize = 256;

@@ -1,7 +1,19 @@
 impl Sources {
     fn collect_games(&mut self, revision: u64) -> Vec<(String, Result<ProviderBatch, String>)> {
-        let mut batches = vec![];
-        for game in self.games.resource_catalogue() {
+        let scope = "game-catalogue";
+        let catalogue = match self.games.authoritative_resource_catalogue() {
+            Ok(catalogue) => catalogue,
+            Err(error) => return vec![(scope.into(), Err(error))],
+        };
+        let allowed = catalogue.iter()
+            .filter(|game| crate::game_discovery::integration_binding(game).is_some())
+            .filter_map(|game| game["id"].as_str())
+            .collect::<BTreeSet<_>>();
+        self.catalogues.retain(|key, _| allowed.contains(key.split(':').next().unwrap_or(key)));
+        // A successful complete snapshot authorizes retirement of removed games.
+        // An unavailable SDK or stopped game still belongs to this catalogue.
+        let mut batches = vec![(scope.into(), Ok(batch(scope, &self.session, revision, vec![])))];
+        for game in catalogue {
             let Some(id) = game["id"].as_str() else {
                 continue;
             };

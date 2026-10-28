@@ -32,13 +32,14 @@
   import {createProcessingDraft,graphDropProcessing,isProcessingDraft,graphUpdateProcessing,processingDerivedNode,updateProcessingDraft}from'./profile-transform-drafts';
   import ProfileTransformSettings from './ProfileTransformSettings.svelte';
   import {gatewayRequest}from'./gateway';
+  import {matchingGameIntegrationSources}from'./profile-game-source';
   import type{CompilationSummary,CompileDiagnostic,ProfileCompilerClient}from'./profile-compilation';
   import type{DeepReadonly,ProfileDocument,ProfileLocalAssignment,ProfilePortContract,ProfileProcessingNode,ProfileVirtualOutput,ProfileResource}from'./profiles';
   import type{ObservedResourcePort,ProfileInventoryClient,ResourceDetails,ResourceSummary}from'./profile-inventory';
-  import type{GameId}from'./games';
+  import type{Game,GameId}from'./games';
   import {ProfileCompanionAuthoringClient,type ProfileCompanionPage}from'./profile-companion-authoring';
-  let{document,assignments,inventory,inventoryClient,compilerClient,learningClient,companionClient,editorContext='',activeVehicleTabId='',active=true,runtimeIdle=false,inventoryRevision=0,readOnly=false,selectedId=$bindable(''),change,openGameSettings,undo,redo,paletteDrag=null,canDropComponent,dropComponent,endPaletteDrag}:{
-    document:DeepReadonly<ProfileDocument>;assignments:readonly DeepReadonly<ProfileLocalAssignment>[];inventory:readonly DeepReadonly<ResourceSummary>[];inventoryClient:Pick<ProfileInventoryClient,'inspect'>;compilerClient?:Pick<ProfileCompilerClient,'compile'|'inspect'>;inventoryRevision?:number;readOnly?:boolean;selectedId?:string;
+  let{document,assignments,inventory,games=[],inventoryClient,compilerClient,learningClient,companionClient,editorContext='',activeVehicleTabId='',active=true,runtimeIdle=false,inventoryRevision=0,readOnly=false,selectedId=$bindable(''),change,openGameSettings,undo,redo,paletteDrag=null,canDropComponent,dropComponent,endPaletteDrag}:{
+    document:DeepReadonly<ProfileDocument>;assignments:readonly DeepReadonly<ProfileLocalAssignment>[];inventory:readonly DeepReadonly<ResourceSummary>[];games?:readonly Game[];inventoryClient:Pick<ProfileInventoryClient,'inspect'>;compilerClient?:Pick<ProfileCompilerClient,'compile'|'inspect'>;inventoryRevision?:number;readOnly?:boolean;selectedId?:string;
     change:(draft:ProfileGraphDraft,label:string)=>void;openGameSettings?:(gameId:GameId,returnState?:unknown)=>void;undo?:()=>void;redo?:()=>void;
     companionClient?:Pick<ProfileCompanionAuthoringClient,'catalogue'|'inspect'>;learningClient?:Pick<ProfileLearningClient,'start'|'status'|'cancel'>;editorContext?:string;activeVehicleTabId?:string;active?:boolean;runtimeIdle?:boolean;
     paletteDrag?:ProfilePaletteDrag|null;canDropComponent?:(component:ProfilePaletteComponent)=>boolean;dropComponent?:(component:ProfilePaletteComponent,position:CanvasPoint)=>void;endPaletteDrag?:()=>void;
@@ -101,7 +102,9 @@
   const selectedEdge=$derived(visibleDocument.bindings.find(binding=>binding.id===selectedEdgeId));
   const insertOptions=$derived(PROCESSING_PRESETS.filter(([kind])=>{if(!selectedEdge)return false;try{processingInsertion(selectedEdge.id,kind);return true;}catch{return false;}}).map(([value,label])=>({value,label})));
   const actionPorts=$derived(nodes.flatMap(node=>graphPorts(document,node.id).filter(port=>port.contract.delivery==='action').map(port=>({label:`${node.name} / ${port.name}`,contract:port.contract}))));
-  const assignmentResources=$derived(inventory.filter(resource=>selected?.resource?.kind!=='companion'&&selected?.resource?.kind===(resource.resourceType==='game-integration'?'game':resource.resourceType==='companion'?'companion':'device')));
+  const assignmentGameId=$derived(selected?.resource?.kind==='game'?selected.observation?.attributes.gameId??document.vehicleTabs?.find(tab=>tab.nodeIds.includes(selected.id))?.gameId??document.eligibility.gameIds[0]??'':'');
+  const assignmentGame=$derived(games.find(game=>game.id===assignmentGameId));
+  const assignmentResources=$derived(selected?.resource?.kind==='game'?matchingGameIntegrationSources(assignmentGame,inventory):inventory.filter(resource=>selected?.resource?.kind!=='companion'&&selected?.resource?.kind===(resource.resourceType==='companion'?'companion':'device')));
   const mappingOptions=$derived.by(()=>{const ports=[...(assignmentPage?.ports??[]),...Object.values(selectedMappings)],seen=new Set<string>();return ports.filter(port=>{const key=optionKey(port);if(seen.has(key))return false;seen.add(key);return true;});});
   $effect(()=>{const id=selectedId;if(id!==assignmentFor){assignmentFor=id;assignmentSource='';assignmentPage=null;selectedMappings={};assignmentError='';assignmentBusy=false;assignmentEpoch++;assignmentBrowser.clear();}});
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
@@ -347,7 +350,7 @@
         {#if node.resource?.kind==='debug-controller'}
           <ProfileDebugControllerEditor resource={node.resource} profileId={document.id} revision={document.revision} {active} disabled={readOnly} update={updateDebug}/>
         {:else}
-        {#if node.resource}<ProfileResourceSettings {node} {document} controller={physicalController} source={assignmentSource} resources={assignmentResources} page={assignmentPage} mappings={selectedMappings} options={mappingOptions} busy={assignmentBusy} error={assignmentError} hasPrevious={assignmentBrowser.hasPrevious} hasNext={assignmentBrowser.hasNext} policy={(key,value)=>resourcePolicy(node,key,value)} visibility={value=>apply(()=>graphSetVisibility(graph,node.id,value==='hidden-while-active'?'hidden-while-active':'visible'),'Edit visibility intent')} publication={value=>publicationPolicy(node,value)} chooseSource={value=>{assignmentSource=value;if(value)void browseAssignment('open');}} {chooseMapping} browse={browseAssignment} assign={assignResource}/>{/if}
+        {#if node.resource}<ProfileResourceSettings {node} {document} {games} controller={physicalController} source={assignmentSource} resources={assignmentResources} page={assignmentPage} mappings={selectedMappings} options={mappingOptions} busy={assignmentBusy} error={assignmentError} hasPrevious={assignmentBrowser.hasPrevious} hasNext={assignmentBrowser.hasNext} policy={(key,value)=>resourcePolicy(node,key,value)} visibility={value=>apply(()=>graphSetVisibility(graph,node.id,value==='hidden-while-active'?'hidden-while-active':'visible'),'Edit visibility intent')} publication={value=>publicationPolicy(node,value)} chooseSource={value=>{assignmentSource=value;if(value)void browseAssignment('open');}} {chooseMapping} browse={browseAssignment} assign={assignResource}/>{/if}
         {#if node.processing}<ProfileTransformSettings node={node.processing} change={updateProcessing} configure={(kind,parameters)=>configureDraft(node.id,kind,parameters)} actions={actionPorts}/>{#if node.processing.inputs.length===1&&node.processing.outputs.length===1}<details><summary>Routing</summary><button class="text-button" onclick={()=>apply(()=>graphBypassProcessing(graph,node.id),'Remove transformation and join compatible route')}><Icon name="link" size={14}/>Bypass</button></details>{/if}{/if}
         {#if node.virtual}<ProfileVirtualEditor output={node.virtual} profileId={document.id} revision={document.revision} disabled={readOnly} change={updateVirtual}/>{/if}
         {#if node.desktop}<ProfileDesktopEditor output={node.desktop} change={updateDesktop}/>{/if}

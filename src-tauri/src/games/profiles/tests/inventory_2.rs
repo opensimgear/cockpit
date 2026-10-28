@@ -32,6 +32,9 @@ fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unass
         )
         .unwrap()
         .unwrap();
+        hub.retain_legacy_test_fixture(serde_json::from_str(include_str!(
+            "../../../../../crates/companion-service/tests/fixtures/c1-flight-publication.json"
+        )).unwrap()).unwrap();
         sources.host = Arc::new(crate::companion_host::Runtime::with_profile_metadata(
             hub.clone(),
             sources.companions.clone(),
@@ -41,7 +44,15 @@ fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unass
         assert_eq!(items.len(), 2);
         assert!(items
             .iter()
-            .all(|item| item.route.is_none() && item.ports.is_none()));
+            .all(|item| item.route.is_none() && item.ports.is_some()));
+        let mut registry = Registry::new();
+        for (scope, result) in sources.collect(1) {
+            if matches!(scope.as_str(), "companions" | "paired-companions") {
+                registry.reconcile(result.unwrap()).unwrap();
+            }
+        }
+        let resource = registry.list(0, 32).unwrap().resources.remove(0);
+        assert!(resource.cached_port_count > 0, "An assigned offline panel keeps its controls");
         let component = items
             .iter()
             .find(|item| {
@@ -60,14 +71,14 @@ fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unass
         hub.command(&request).unwrap();
         assert_eq!(
             sources.companions.resource_inventory().len(),
-            1,
-            "Sink definitions intentionally remain cached."
+            0,
+            "Removed assignments must retire native source descriptors."
         );
         let remaining = sources.companion_observations().unwrap();
         if removal == "companion_unassign" {
             assert_eq!(remaining.len(), 1);
             assert_eq!(remaining[0].key, "paired:paired");
-            assert!(remaining[0].ports.is_none());
+            assert!(remaining[0].ports.as_ref().unwrap().ports.is_empty());
             assert!(remaining[0].route.is_none());
             assert_eq!(
                 remaining[0].evidence[0].value,
@@ -75,6 +86,19 @@ fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unass
             );
         } else {
             assert!(remaining.is_empty());
+        }
+        for (scope, result) in sources.collect(2) {
+            if matches!(scope.as_str(), "companions" | "paired-companions") {
+                registry.reconcile(result.unwrap()).unwrap();
+            }
+        }
+        if removal == "companion_unassign" {
+            let retained = registry.inspect(&resource.id, 0, 32).unwrap();
+            assert!(retained.ports.is_empty());
+            assert_eq!(retained.resource.port_count, 0);
+            assert!(!retained.resource.attributes.contains_key("publicationHash"));
+        } else {
+            assert_eq!(registry.list(0, 32).unwrap().total, 0);
         }
     }
 }
