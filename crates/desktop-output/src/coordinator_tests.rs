@@ -273,7 +273,6 @@ fn submit_keeps_both_dispatch_writes_and_elides_only_unchanged_owner_projection(
     assert_eq!(Coordinator::inspect_journal(&path).unwrap().owners, owners);
 
     for (operation, intent) in [
-        (2, Intent::Pointer { dx: 1, dy: -1 }),
         (3, Intent::Repeat { key: Key(4) }),
         (4, Intent::Wheel { horizontal: 1, vertical: 0 }),
     ] {
@@ -356,15 +355,36 @@ fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg
 
 #[test]
 fn stale_evidence_and_exclusive_lifetime_owner_prevent_helper_dispatch(){
+    struct CountRequests { inner: Fixture, requests: Arc<Mutex<usize>> }
+    impl Channel for CountRequests {
+        fn request(&mut self, request: &Request) -> Result<Ack, String> {
+            *self.requests.lock().unwrap() += 1;
+            self.inner.request(request)
+        }
+    }
     let directory=tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();let path=directory.path().join("journal.json");
-    let mut c=fixture(Fault::None);c.journal=Some(path.clone());
+    let requests=Arc::new(Mutex::new(0));
+    let mut c=Coordinator::with_channel(Box::new(CountRequests {
+        inner: Fixture { worker: crate::worker::Worker::new(Recording), fault: Fault::None, inspect: None, seen: Arc::default() },
+        requests: requests.clone(),
+    }),clock);c.journal=Some(path.clone());
     c.snapshot.journal_owner=Some(run());c.snapshot.journal_scope=Some(Scope::DesktopWide);
     c.activate(run(),Scope::DesktopWide).unwrap();
+    c.arm(token(),"action".into()).unwrap();
     assert!(Coordinator::spawn_with_journal(false,false,path.clone()).unwrap_err_string().contains("owns"));
     let original=sql_read(&path).unwrap();
+    let before=*requests.lock().unwrap();
+    let mut pointer=delivery();pointer.intent=Intent::Pointer { dx: 1, dy: 0 };
     let mut foreign=original.clone();foreign.push(b' ');sql_write(&path,&foreign).unwrap();
+    assert!(c.submit(pointer.clone(),0).unwrap_err().contains("externally"));
+    assert_eq!(*requests.lock().unwrap(),before);
     assert!(c.arm(token(),"action".into()).unwrap_err().contains("externally"));
     assert_eq!(sql_read(&path).unwrap(),foreign);
+    sql_write(&path,&original).unwrap();
+    assert!(c.submit(pointer.clone(),0).unwrap_err().contains("externally"));
+    osg_persistence::test_support::write_evidence(&path,"recovery-desktop",None).unwrap();
+    assert!(c.submit(pointer,0).unwrap_err().contains("externally"));
+    assert_eq!(*requests.lock().unwrap(),before);
     sql_write(&path,&original).unwrap();
     assert!(c.stop_all().is_err()); // Equal bytes cannot rewind the owner revision.
     drop(c);

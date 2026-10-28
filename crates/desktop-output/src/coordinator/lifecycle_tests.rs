@@ -1,5 +1,208 @@
 use super::*;
 #[test]
+fn successful_pointer_updates_leave_recovery_evidence_unchanged() {
+    let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+    let path = dir.path().join("journal.json");
+    let mut c = fixture(Fault::None);
+    c.journal = Some(path.clone());
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+    let before = c.persist_attempts.get();
+    let durable = sql_read(&path).unwrap();
+    for operation in 1..=32 {
+        let mut value = delivery();
+        value.operation_id = Counter(operation);
+        value.intent = Intent::Pointer { dx: 1, dy: -1 };
+        c.submit(value.clone(), 0).unwrap();
+        assert!(c.submit(value, 0).unwrap_err().contains("Stale"));
+    }
+    assert_eq!(c.persist_attempts.get(), before, "motion cannot change held-control recovery evidence");
+    assert_eq!(sql_read(&path).unwrap(), durable);
+}
+#[test]
+fn held_key_recovery_evidence_survives_pointer_updates() {
+    let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+    let path = dir.path().join("journal.json");
+    let mut c = fixture(Fault::None);
+    c.journal = Some(path.clone());
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+    c.submit(delivery(), 0).unwrap();
+    let durable = sql_read(&path).unwrap();
+    let before = c.persist_attempts.get();
+    for operation in 2..=16 {
+        let mut value = delivery();
+        value.operation_id = Counter(operation);
+        value.intent = Intent::Pointer { dx: 2, dy: 0 };
+        c.submit(value, 0).unwrap();
+    }
+    assert_eq!(c.persist_attempts.get(), before);
+    assert_eq!(sql_read(&path).unwrap(), durable);
+    let retained = Coordinator::inspect_journal(&path).unwrap();
+    assert_eq!(retained.held, vec![key()]);
+    assert_eq!(retained.possible_held, vec![key()]);
+    drop(c);
+    let mut recovery = fixture(Fault::None);
+    recovery.journal = Some(path.clone());
+    recovery.snapshot = retained;
+    recovery.recover(vec![key()]).unwrap();
+    let recovered = Coordinator::inspect_journal(&path).unwrap();
+    assert!(recovered.held.is_empty() && recovered.possible_held.is_empty());
+}
+#[test]
+fn pointer_traffic_does_not_wait_on_a_locked_sqlite_writer_but_hold_changes_do() {
+    let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+    let path = dir.path().join("journal.json");
+    let events = Arc::new(Mutex::new(vec![]));
+    let mut c = Coordinator::with_channel(Box::new(PointerChannel {
+        worker: crate::worker::Worker::new(PointerRecording(events.clone())),
+        fault: Arc::new(Mutex::new(PointerFault::None)),
+    }), clock);
+    c.journal = Some(path.clone());
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+    c.submit(delivery(), 0).unwrap();
+    let database = osg_persistence::Database::for_namespace(&path).unwrap();
+    let lock = osg_persistence::test_support::hold_writer(&database).unwrap();
+    let before = c.persist_attempts.get();
+    for operation in 2..=128 {
+        let mut value = delivery();
+        value.operation_id = Counter(operation);
+        value.intent = Intent::Pointer { dx: 1, dy: 0 };
+        c.submit(value, 0).unwrap();
+    }
+    assert_eq!(c.persist_attempts.get(), before);
+    let dispatched = events.lock().unwrap().len();
+    let mut release = delivery();
+    release.operation_id = Counter(129);
+    release.intent = Intent::Held { controls: vec![] };
+    let started = std::time::Instant::now();
+    assert!(c.submit(release, 0).is_err(), "hold changes still require a durable pre-dispatch ledger");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(200));
+    assert_eq!(events.lock().unwrap().len(), dispatched);
+    drop(lock);
+    let retained = Coordinator::inspect_journal(&path).unwrap();
+    assert_eq!(retained.held, vec![key()]);
+    assert_eq!(retained.possible_held, vec![key()]);
+}
+
+#[derive(Clone, Copy)]
+enum PointerFault { None, Transport, Rejected, MissingHold, ExtraHold, Operation, Uncertain }
+struct PointerChannel {
+    worker: crate::worker::Worker<PointerRecording>,
+    fault: Arc<Mutex<PointerFault>>,
+}
+struct PointerRecording(Arc<Mutex<Vec<NativeEvent>>>);
+impl Adapter for PointerRecording {
+    fn eligible(&mut self, _: &Scope) -> Result<bool, String> { Ok(true) }
+    fn submit(&mut self, events: &[NativeEvent]) -> Result<usize, String> {
+        self.0.lock().unwrap().extend_from_slice(events);
+        Ok(native_count(events))
+    }
+}
+impl Channel for PointerChannel {
+    fn request(&mut self, request: &Request) -> Result<Ack, String> {
+        let mut ack = self.worker.receive(request.clone(), clock());
+        match std::mem::replace(&mut *self.fault.lock().unwrap(), PointerFault::None) {
+            PointerFault::None => {},
+            PointerFault::Transport => return Err("pointer transport failure".into()),
+            PointerFault::Rejected => { ack.ok = false; ack.error = Some("pointer rejected".into()); },
+            PointerFault::MissingHold => ack.held.clear(),
+            PointerFault::ExtraHold => ack.held.push(Control::Key { key: Key(5) }),
+            PointerFault::Operation => ack.operation_id = Some(Counter(999)),
+            PointerFault::Uncertain => { ack.ok = false; ack.uncertain = true; },
+        }
+        Ok(ack)
+    }
+}
+#[test]
+fn failed_pointer_acknowledgements_preserve_holds_and_block_replay() {
+    for fault in [PointerFault::Transport, PointerFault::MissingHold,
+        PointerFault::ExtraHold, PointerFault::Operation, PointerFault::Uncertain] {
+        let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+        let path = dir.path().join("journal.json");
+        let fault_slot = Arc::new(Mutex::new(PointerFault::None));
+        let events = Arc::new(Mutex::new(vec![]));
+        let mut c = Coordinator::with_channel(Box::new(PointerChannel {
+            worker: crate::worker::Worker::new(PointerRecording(events.clone())),
+            fault: fault_slot.clone(),
+        }), clock);
+        c.journal = Some(path.clone());
+        c.activate(run(), Scope::DesktopWide).unwrap();
+        c.arm(token(), "action".into()).unwrap();
+        c.submit(delivery(), 0).unwrap();
+        *fault_slot.lock().unwrap() = fault;
+        let before = c.persist_attempts.get();
+        let mut value = delivery();
+        value.operation_id = Counter(2);
+        value.intent = Intent::Pointer { dx: 1, dy: 0 };
+        assert!(c.submit(value.clone(), 0).is_err());
+        assert_eq!(c.persist_attempts.get(), before + 1);
+        let retained = Coordinator::inspect_journal(&path).unwrap();
+        assert!(retained.uncertain);
+        assert_eq!(retained.held, vec![key()]);
+        assert_eq!(retained.possible_held, vec![key()]);
+        let durable = sql_read(&path).unwrap();
+        let submitted = events.lock().unwrap().len();
+        value.operation_id = Counter(3);
+        assert!(c.submit(value, 0).unwrap_err().contains("uncertain"));
+        assert_eq!(events.lock().unwrap().len(), submitted);
+        assert_eq!(sql_read(&path).unwrap(), durable);
+        let motions = events.lock().unwrap().iter().filter(|event| matches!(event, NativeEvent::Pointer { .. })).count();
+        drop(c);
+        let mut recovery = Coordinator::with_channel(Box::new(PointerChannel {
+            worker: crate::worker::Worker::new(PointerRecording(events.clone())),
+            fault: fault_slot.clone(),
+        }), clock);
+        recovery.journal = Some(path.clone());
+        recovery.snapshot = retained;
+        recovery.recover(vec![key()]).unwrap();
+        assert_eq!(events.lock().unwrap().iter().filter(|event| matches!(event, NativeEvent::Pointer { .. })).count(), motions);
+        assert!(Coordinator::inspect_journal(&path).unwrap().held.is_empty());
+    }
+}
+#[test]
+fn definitive_pointer_rejection_persists_paused_holds_without_replaying_motion() {
+    let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+    let path = dir.path().join("journal.json");
+    let fault = Arc::new(Mutex::new(PointerFault::None));
+    let events = Arc::new(Mutex::new(vec![]));
+    let mut c = Coordinator::with_channel(Box::new(PointerChannel {
+        worker: crate::worker::Worker::new(PointerRecording(events.clone())), fault: fault.clone(),
+    }), clock);
+    c.journal = Some(path.clone());
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+    c.submit(delivery(), 0).unwrap();
+    *fault.lock().unwrap() = PointerFault::Rejected;
+    let before = c.persist_attempts.get();
+    let mut value = delivery();
+    value.operation_id = Counter(2);
+    value.intent = Intent::Pointer { dx: 1, dy: 0 };
+    assert!(c.submit(value, 0).unwrap_err().contains("pointer rejected"));
+    assert_eq!(c.persist_attempts.get(), before + 1);
+    let retained = Coordinator::inspect_journal(&path).unwrap();
+    assert_eq!(retained.phase, "paused");
+    assert!(!retained.uncertain);
+    assert_eq!(retained.held, vec![key()]);
+    assert_eq!(retained.possible_held, vec![key()]);
+    assert_eq!(events.lock().unwrap().iter().filter(|event| matches!(event, NativeEvent::Pointer { .. })).count(), 1);
+}
+#[test]
+fn expired_pointer_motion_never_reaches_the_adapter() {
+    let events = Arc::new(Mutex::new(vec![]));
+    let mut c = Coordinator::with_channel(Box::new(PointerChannel {
+        worker: crate::worker::Worker::new(PointerRecording(events.clone())),
+        fault: Arc::new(Mutex::new(PointerFault::None)),
+    }), clock);
+    c.activate(run(), Scope::DesktopWide).unwrap();
+    c.arm(token(), "action".into()).unwrap();
+    let mut value = delivery();
+    value.intent = Intent::Pointer { dx: 1, dy: 0 };
+    assert!(c.submit(value, 100).unwrap().skipped);
+    assert!(events.lock().unwrap().is_empty());
+}
+#[test]
 fn lifecycle_final_writes_remain_even_when_owners_are_unchanged() {
     let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
     let mut c = fixture(Fault::None);
@@ -29,7 +232,7 @@ fn lifecycle_final_writes_remain_even_when_owners_are_unchanged() {
 
 #[test]
 fn post_valid_ack_write_failure_preserves_pre_dispatch_journal_and_requires_recovery() {
-    for intent in [Intent::Held { controls: vec![key()] }, Intent::Pointer { dx: 1, dy: 0 }] {
+    for intent in [Intent::Held { controls: vec![key()] }] {
         let dir = tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
         let path = dir.path().join("journal.json");
         let mut c = fixture(Fault::None);

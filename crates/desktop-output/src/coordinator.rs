@@ -184,7 +184,11 @@ impl Coordinator {
             .sequence
             .checked_add(1)
             .ok_or("Desktop channel sequence exhausted.")?;
-        let changes_ledger = !matches!(command, Command::Renew { .. });
+        // Relative motion cannot acquire or release a held control and is never
+        // replayed. Its operation counter is volatile, so successful pointer
+        // updates need no recovery-evidence transaction on the lease path.
+        let pointer = matches!(&command, Command::Deliver { delivery } if matches!(delivery.intent, Intent::Pointer { .. }));
+        let changes_ledger = !pointer && !matches!(command, Command::Renew { .. });
         let request = Request {
             sequence: Counter(self.sequence),
             deadline_us,
@@ -203,6 +207,12 @@ impl Coordinator {
             let run_alias = run.and_then(|run| crate::audit::alias(crate::audit::AliasKind::Run, run.session.as_bytes())).unwrap_or(0);
             crate::audit::record(crate::audit::Kind::RequestIssued,
                 &[channel, request.sequence.0, operation, command, run_alias, run.map_or(0, |run| run.generation.0)]);
+        }
+        if pointer {
+            if let Err(error) = self.verify_current_evidence() {
+                self.audit_outcome(&request, None, 1);
+                return Err(error);
+            }
         }
         if changes_ledger {
             if !self.snapshot.uncertain {
@@ -233,6 +243,9 @@ impl Coordinator {
                 );
             }
             crate::reducer::recovery_releases(&ack.held)?;
+            if pointer && ack.held != self.snapshot.held {
+                return Err("Desktop pointer acknowledgement changed the held-control ledger.".into());
+            }
             if matches!(request.command, Command::Stop | Command::Recover { .. })
                 && (!ack.cleanup_complete || !ack.held.is_empty())
             {
@@ -340,9 +353,9 @@ impl Coordinator {
             next.delivery(&delivery, true)?;
         }
         self.reducer = next;
-        // send() already durably committed the validated ACK. Only submit can
-        // omit this third write: no phase/run state changes here, and owner
-        // operation counters are intentionally absent from the journal format.
+        // Hold-changing send() calls durably committed the validated ACK;
+        // pointer motion preserved that ledger. Owner operation counters are
+        // intentionally absent from the journal format.
         if self.update_owners() {
             self.persist()?;
         }

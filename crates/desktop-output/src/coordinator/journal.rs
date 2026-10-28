@@ -190,6 +190,17 @@ impl Coordinator {
         coordinator.recover(controls)?;
         coordinator.stop_all()
     }
+    /// Motion may omit writes, but must still hold the exact retained evidence
+    /// authority before native dispatch. Verification never creates a store.
+    pub(super) fn verify_current_evidence(&self) -> Result<(), String> {
+        let Some(path) = &self.journal else { return Ok(()); };
+        let slot = self.journal_store.borrow();
+        let store = slot.as_ref().ok_or("Desktop recovery evidence is not acquired.")?;
+        if store.path != *path {
+            return Err("Desktop recovery storage identity changed.".into());
+        }
+        store.evidence.verify()
+    }
     pub(super) fn persist(&self) -> Result<(), String> {
         let result = self.persist_inner();
         if result.is_err() && self.channel.audit_id().is_some() {
