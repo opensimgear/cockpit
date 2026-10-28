@@ -7,7 +7,7 @@ import {compile} from 'svelte/compiler';
 import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
-import {loadModules} from './test-module-loader.mjs';
+import {loadModules,libModuleName} from './test-module-loader.mjs';
 
 const modules=await loadModules([
   './canvas-navigation','./canvas-styling','./profile-canvas','./profile-canvas-render',
@@ -47,15 +47,16 @@ async function components(hooks={}){
       assert.notEqual(source,await readFile(filename,'utf8'),'Canvas instrumentation must match the production script.');
     }
     const {js}=compile(source,{filename:filename.pathname,generate:'server'}),dependencies=new Map();
-    for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});
+    for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(libModuleName(match[1],filename),{default:await component(libModuleName(match[1],filename))});
     const exports={};
     vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
       exports,TextEncoder,seedOverviewPair:()=>hooks.overviewPair??null,seedOverviewBundleId:()=>hooks.overviewBundleId??'',captureCanvas:value=>hooks.captureCanvas?.(value),
       require(specifier){
-        if(specifier==='svelte/internal/server')return server;
-        if(specifier==='svelte')return svelte;
-        if(dependencies.has(specifier))return dependencies.get(specifier);
-        const key=specifier.replace(/\.ts$/,'');
+        const dependency=libModuleName(specifier,filename);
+        if(dependency==='svelte/internal/server')return server;
+        if(dependency==='svelte')return svelte;
+        if(dependencies.has(dependency))return dependencies.get(dependency);
+        const key=dependency.replace(/\.ts$/,'');
         if(modules.has(key))return modules.get(key);
         throw new Error(`Unexpected UI dependency ${specifier}`);
       },

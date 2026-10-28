@@ -1,6 +1,7 @@
 import {signalOverview} from './profile-signal-overview';
 import { profileAssignmentsError, profileDocumentError, type DeepReadonly, type ProfileBinding, type ProfileControllerLayout, type ProfileDocument, type ProfileEndpoint, type ProfileLocalAssignment, type ProfilePort, type ProfilePortContract, type ProfileProcessingNode, type ProfileScalarSchema, type ProfileVirtualOutput } from './profiles';
 import { resourcePortError, type ObservedResourcePort, type ResourceSummary } from './profile-inventory';
+import {desktopDevices,desktopDisplayPorts,desktopInputLabel} from './profile-desktop-blocks';
 import { desktopActionLabel, desktopActionPort, type ProfileDesktopOutput } from './profile-desktop';
 
 export type ProfileGraphDraft = { document: ProfileDocument; assignments: ProfileLocalAssignment[] };
@@ -26,7 +27,7 @@ export function graphFreshId(document: DeepReadonly<ProfileDocument>, prefix: 'r
 }
 export function graphPorts(document: DeepReadonly<ProfileDocument>, nodeId: string): readonly DeepReadonly<ProfilePort>[] {
   const node=nodes(document).find(node=>node.id===nodeId);
-  return !node ? [] : 'ports' in node ? node.ports : [...node.inputs,...node.outputs];
+  return !node ? [] : 'actions' in node ? desktopDisplayPorts(node) : 'ports' in node ? node.ports : [...node.inputs,...node.outputs];
 }
 export function graphPort(document: DeepReadonly<ProfileDocument>, endpoint: DeepReadonly<ProfileEndpoint>): DeepReadonly<ProfilePort>|undefined {
   return graphPorts(document,endpoint.nodeId).find(port=>port.id===endpoint.portId);
@@ -113,12 +114,12 @@ export function graphSetDesktop(value:DeepReadonly<ProfileGraphDraft>,output:Pro
   const next=graphDraft(value),existing=next.document.desktopOutputs??[];
   if(nodes(next.document).some(node=>node.id===output.id)&&!existing.some(node=>node.id===output.id))throw new Error('Use a unique desktop endpoint identity.');
   const scope=existing.some(node=>node.id===output.id)?nodeTab(next.document,output.id):activeVehicleTabId;
-  if(existing.some(node=>node.id!==output.id&&(!nodeTab(next.document,node.id)||!scope||nodeTab(next.document,node.id)===scope)))throw new Error('Base and each vehicle tab support one active logical keyboard and mouse endpoint.');
+  if(existing.some(node=>node.id!==output.id&&(!nodeTab(next.document,node.id)||!scope||nodeTab(next.document,node.id)===scope)&&desktopDevices(node).some(kind=>desktopDevices(output).includes(kind))))throw new Error('Base and each vehicle tab support one active Keyboard block and one active Mouse block.');
   scopeNewNode(next.document,output.id,scope);
   const updated=clone<ProfileDesktopOutput>(output);
   updated.ports=updated.actions.map(definition=>{
     const previous=existing.find(node=>node.id===output.id),oldAction=previous?.actions.find(action=>action.portId===definition.portId),oldName=previous?.ports.find(port=>port.id===definition.portId)?.name;
-    const name=!oldAction||oldName===desktopActionLabel(oldAction.action)?desktopActionLabel(definition.action):updated.ports.find(port=>port.id===definition.portId)?.name??desktopActionLabel(definition.action);
+    const name=oldAction&&oldName===desktopActionLabel(oldAction.action)?desktopActionLabel(definition.action):updated.ports.find(port=>port.id===definition.portId)?.name??desktopInputLabel(definition.action);
     return desktopActionPort(definition.portId,name,definition.action);
   });
   // A changed action contract invalidates connected edges; the user must retarget explicitly.
@@ -126,7 +127,9 @@ export function graphSetDesktop(value:DeepReadonly<ProfileGraphDraft>,output:Pro
     const previous=existing.find(node=>node.id===updated.id)?.ports.find(port=>port.id===binding.to.portId),replacement=updated.ports.find(port=>port.id===binding.to.portId);
     if(!replacement||previous&&canonical(previous.contract)!==canonical(replacement.contract))throw new Error('Disconnect routes before removing an action or changing its input delivery.');
   }
-  next.document.desktopOutputs=[...existing.filter(node=>node.id!==output.id),updated];return checked(next);
+  // Keyboard and Mouse use one native output adapter and therefore one scope.
+  const sharedScope=existing.some(node=>node.id===output.id)?updated.scope:existing.length?existing[0].scope:updated.scope;
+  next.document.desktopOutputs=[...existing.filter(node=>node.id!==output.id),updated].map(node=>{const updated={...node};if(sharedScope)updated.scope=clone(sharedScope);else delete updated.scope;return updated;});return checked(next);
 }
 function portableContract(contract: DeepReadonly<ProfilePortContract>): ProfilePortContract {
   const next=clone(contract);if(next.delivery==='action'||next.delivery==='invocation')for(const parameter of next.parameters)parameter.name=parameter.id;return next;

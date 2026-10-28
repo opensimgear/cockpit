@@ -74,6 +74,36 @@ fn desktop_exact_actions_reject_wrong_contracts_duplicates_unsupported_keys_and_
     assert_eq!(compile(&second,&snapshot()).readiness,PlanReadiness::Invalid);
 }
 #[test]
+fn keyboard_and_mouse_blocks_compile_separately_with_a_shared_scope() {
+    use osg_mapping::desktop::{Action, MouseButton};
+    let mut source = document();
+    let mut mouse = source.desktop_outputs[0].clone();
+    mouse.id = "mouse".into(); mouse.name = "Mouse".into();
+    mouse.actions[0].action = Action::MouseHold { button: MouseButton::Left };
+    mouse.actions[1].action = Action::MouseClick { button: MouseButton::Right, down_ms: 30, up_ms: 30 };
+    source.desktop_outputs.push(mouse);
+    let mut route = source.bindings[0].clone();
+    route.id = "mouse-route".into(); route.to.node_id = "mouse".into();
+    source.bindings.push(route);
+    assert!(validate_document(&source).is_ok());
+    assert_eq!(ProfileDocument::parse(&source.export().unwrap()).unwrap(), source);
+    let mut capture = snapshot();
+    capture.backend.desktop_available = true; capture.backend.desktop_enabled = true; capture.backend.desktop_qualified = true;
+    let report = compile(&source, &capture);
+    assert_eq!(report.readiness, PlanReadiness::Ready, "{:?}", report.diagnostics);
+    let sinks = report.plan.unwrap().sinks;
+    assert_eq!(sinks.len(), 3);
+    assert!(sinks.iter().any(|sink| sink.endpoint.node_id == "mouse"));
+    assert!(sinks.iter().any(|sink| sink.endpoint.node_id == "desktop"));
+    source.desktop_outputs[1].scope = Some(DesktopScope::DesktopWide);
+    assert!(validate_document(&source).is_err(), "One native adapter must never silently choose between conflicting scopes");
+    source.desktop_outputs[0].scope = Some(DesktopScope::DesktopWide);
+    assert!(validate_document(&source).is_ok());
+    let mut third = source.desktop_outputs[1].clone(); third.id = "third".into();
+    source.desktop_outputs.push(third);
+    assert!(validate_document(&source).is_err());
+}
+#[test]
 fn blank_editor_remains_valid_while_desktop_definition_budget_is_shared() {
     assert!(validate_document(&default_document()).is_ok());
     assert_eq!(compile(&default_document(),&snapshot()).readiness,PlanReadiness::Ready);

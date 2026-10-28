@@ -659,7 +659,7 @@ pub(super) fn definitions() -> Value {
                 ("gameId", text()),
                 ("vehicleId", text()),
                 ("vehicleName", text()),
-                ("nodeIds", list(text(), 337)),
+                ("nodeIds", list(text(), 338)),
             ],
             &[],
         ),
@@ -789,7 +789,7 @@ pub(super) fn definitions() -> Value {
                 ("bindings", list(reference("Binding"), 512)),
                 ("processingNodes", list(reference("ProcessingNode"), 256)),
                 ("virtualOutputs", list(reference("VirtualOutput"), 16)),
-                ("desktopOutputs", list(reference("DesktopOutput"), 33)),
+                ("desktopOutputs", list(reference("DesktopOutput"), 66)),
                 ("visibility", list(reference("VisibilityIntent"), 64)),
                 ("overrides", list(reference("RuntimeOverride"), 64)),
                 (
@@ -842,7 +842,7 @@ pub(super) fn definitions() -> Value {
             variant(
                 "kind",
                 "replace_desktop_outputs",
-                vec![("outputs", list(reference("DesktopOutput"), 33))],
+                vec![("outputs", list(reference("DesktopOutput"), 66))],
                 &[],
             ),
             variant(

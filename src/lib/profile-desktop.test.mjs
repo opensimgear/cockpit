@@ -27,7 +27,7 @@ test('desktop validation rejects unsupported identities, hidden contract changes
  assert.equal(desktopActionValid({kind:'chord',keys:[224,224]}),false);assert.equal(desktopActionValid({kind:'pointer',axis:'x',speed:100,curve:Infinity}),false);
  const invalid=structuredClone(fixture);invalid.desktopOutputs[0].ports[0].contract.delivery='event';assert.ok(profileDocumentError(invalid));
  assert.ok(profileDocumentError({...fixture,desktopOutputs:null}));
- const graph={document:structuredClone(fixture),assignments:[]};assert.throws(()=>graphSetDesktop(graph,desktopPreset('key-hold','second').output),/one active logical keyboard and mouse endpoint/);assert.deepEqual(graph.document,fixture,'rejecting another endpoint preserves the existing document');
+ const graph={document:structuredClone(fixture),assignments:[]};assert.throws(()=>graphSetDesktop(graph,desktopPreset('key-hold','second').output),/one active Keyboard block/);assert.deepEqual(graph.document,fixture,'rejecting another endpoint preserves the existing document');
  const nativeOrder=structuredClone(graph);for(const port of nativeOrder.document.desktopOutputs[0].ports)port.contract=Object.fromEntries(Object.entries(port.contract).sort(([a],[b])=>a.localeCompare(b)));
  const retarget=structuredClone(nativeOrder.document.desktopOutputs[0]);retarget.actions[0].action.key=79;const updated=graphSetDesktop(nativeOrder,retarget);assert.equal(updated.document.desktopOutputs[0].actions[0].action.key,79);assert.equal(updated.document.bindings.length,3);
  const changed=structuredClone(fixture.desktopOutputs[0]);changed.actions[0].action={kind:'key-tap',key:44,downMs:30,upMs:30};assert.throws(()=>graphSetDesktop(graph,changed),/Disconnect routes/);

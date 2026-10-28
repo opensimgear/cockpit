@@ -165,10 +165,10 @@ test('saving an inactive empty profile needs no inventory or separate Apply requ
   assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
 });
 
-test('a disconnected desktop endpoint saves with one warning only for the explicit save',async()=>{
+test('unused desktop inputs save without disconnected-port warnings',async()=>{
   const h=harness();h.store.beginBlank([]);const notifications=[];h.store.subscribeSaveNotifications(value=>notifications.push(value));
   const document=plain(h.store.state.editor.document);document.desktopOutputs=[modules.get('./profile-desktop').desktopPreset('key-hold','desktop').output];h.store.update(document);await h.store.save();
-  assert.equal(h.store.state.error,'');assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.docs.get(document.id).desktopOutputs.length,1);assert.deepEqual(plain(notifications),[{message:'Profile saved. 1 selected port is not connected.',kind:'warning'}]);assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
+  assert.equal(h.store.state.error,'');assert.equal(profileEditorDirty(h.store.state.editor),false);assert.equal(h.docs.get(document.id).desktopOutputs.length,1);assert.deepEqual(plain(notifications),[{message:'Profile saved.',kind:'info'}]);assert.deepEqual(h.calls.map(call=>Array.isArray(call)?call[0]:call),['save']);
   await h.store.refreshInventory();await h.store.refreshSaved();h.store.back();await h.store.open(document.id);assert.equal(notifications.length,1,'Background refresh and reopening cannot replay the warning.');
 });
 

@@ -133,7 +133,6 @@ function saveWarnings(document: ProfileDocument, assignments: ProfileLocalAssign
     const ports = [
         ...document.resources.flatMap(resource => resource.ports.map(port => ({ nodeId: resource.id, portId: port.id }))),
         ...document.processingNodes.flatMap(node => [...node.inputs, ...node.outputs].map(port => ({ nodeId: node.id, portId: port.id }))),
-        ...(document.desktopOutputs ?? []).flatMap(output => output.ports.map(port => ({ nodeId: output.id, portId: port.id }))),
     ];
     const unconnected = ports.filter(port => !bound.has(endpoint(port))).length;
     const used = (resource: ProfileDocument['resources'][number]) => resource.ports.length || document.companionAssignments.some(panel => panel.resourceId === resource.id)

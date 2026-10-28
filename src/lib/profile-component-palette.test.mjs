@@ -8,7 +8,7 @@ import * as server from 'svelte/internal/server';
 import ts from 'typescript';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./profile-editor','./profile-palette','./profile-processing','./profile-companion-authoring']);
+const modules=await loadModules(['./profile-desktop','./profile-editor','./profile-palette','./profile-processing','./profile-companion-authoring']);
 const {PROCESSING_PRESETS}=modules.get('./profile-processing');
 
 const filename=new URL('./ProfileComponentPalette.svelte',import.meta.url);
@@ -24,7 +24,7 @@ const Palette=exports.default;
 const never=()=>{throw new Error('Rendering a palette must not change the profile.');};
 const game=(id,name)=>({id:`integration:${id}`,name,resourceType:'game-integration',availability:'online',attributes:{gameId:id}});
 const controller={id:'controller:1',name:'Stick',resourceType:'host-controller',availability:'online',attributes:{}};
-const props={inventory:[game('dcs','DCS World'),game('x-plane-12','X-Plane 12'),controller],assignedIds:new Set(),resourceCount:0,virtualCount:0,desktopAdded:false,refresh:never,addResource:never,addVirtual:never,addDesktop:never,addGroup:never,focusGroup:never,renameGroup:never,deleteGroup:never};
+const props={inventory:[game('dcs','DCS World'),game('x-plane-12','X-Plane 12'),controller],assignedIds:new Set(),resourceCount:0,virtualCount:0,keyboardAdded:false,mouseAdded:false,refresh:never,addResource:never,addVirtual:never,addDesktop:never,addGroup:never,focusGroup:never,renameGroup:never,deleteGroup:never};
 const body=patch=>render(Palette,{props:{...props,...patch}}).body;
 
 test('game integrations are managed by the saved context and never offered as palette components',()=>{

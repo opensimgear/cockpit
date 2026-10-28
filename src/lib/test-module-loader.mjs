@@ -4,6 +4,12 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import {webcrypto} from 'node:crypto';
 
+export function libModuleName(specifier, parent) {
+  if (!specifier.startsWith('.')) return specifier;
+  const root = fileURLToPath(new URL('.', import.meta.url));
+  return './' + fileURLToPath(new URL(specifier, parent)).slice(root.length).replaceAll('\\', '/');
+}
+
 /** Load pure TS helpers with their real dependencies and source filenames so
  * Node's built-in coverage reports include the exercised production code. */
 export async function loadModules(names) {

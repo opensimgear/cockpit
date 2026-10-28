@@ -45,7 +45,7 @@ export function desktopActionContract(action:DeepReadonly<DesktopAction>):Profil
 }
 export function desktopActionPort(id:string,name:string,action:DeepReadonly<DesktopAction>):ProfilePort{return{id,name,direction:'input',contract:desktopActionContract(action)};}
 export function desktopActionLabel(action:DeepReadonly<DesktopAction>):string {
-  if('key'in action)return`${action.kind} · ${desktopKeyLabel(action.key)}`;
+  if('key'in action)return desktopKeyLabel(action.key);
   if(action.kind==='chord')return action.keys.map(desktopKeyLabel).join(' + ');
   if('button'in action)return`${action.kind} · ${action.button}`;
   return action.kind==='wheel'?`Wheel ${action.horizontal}, ${action.vertical}`:`Pointer ${action.axis.toUpperCase()} · ${action.speed} px/s`;

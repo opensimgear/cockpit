@@ -18,6 +18,7 @@
   import {profilePaletteCanAdd,profilePalettePanelReason,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag}from'./profile-palette';
   import type {ProcessingPreset}from'./profile-processing';
   import {ProfileCompanionAuthoringClient,graphCaptureCompanionPanel,latestCompanionPanels,type ProfileCompanionCatalogue}from'./profile-companion-authoring';
+  import {type DesktopBlockKind} from './profile-desktop-blocks';
   import type {CanvasPoint}from'./profile-canvas';
   import {profileGameContext,profileGameContextNeedsSync,profileGameName,profileSetGameContext,profileAddVehicleIntegration,profileChangeVehicleIntegration,profileGameTabInventory,profileReconcileDcsVehicleCatalogue}from'./profile-game-context';
   import {profileAddVehicleTab,profileRemoveVehicleTab,profileStampVehicleNodes,profileTabDocument,profileTabNodeIds}from'./profile-vehicle-tabs';
@@ -45,7 +46,7 @@
   let workspace = $state.raw(store.state);
   const history=new ProfileEditorUndo(store);
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
-  let routingEditor=$state.raw<{addVirtual:(position?:CanvasPoint)=>void;addDebug:(position?:CanvasPoint)=>void;addDesktop:(position?:CanvasPoint)=>void;addTransformation:(preset:ProcessingPreset,position?:CanvasPoint)=>void;addGroup:()=>string|undefined;focusGroup:(id:string)=>void;renameGroup:(id:string,name:string)=>void;deleteGroup:(id:string)=>void}>();
+  let routingEditor=$state.raw<{addVirtual:(position?:CanvasPoint)=>void;addDebug:(position?:CanvasPoint)=>void;addDesktop:(position?:CanvasPoint,kind?:DesktopBlockKind)=>void;addTransformation:(preset:ProcessingPreset,position?:CanvasPoint)=>void;addGroup:()=>string|undefined;focusGroup:(id:string)=>void;renameGroup:(id:string,name:string)=>void;deleteGroup:(id:string)=>void}>();
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let companionCatalogue=$state.raw<DeepReadonly<ProfileCompanionCatalogue>|null>(null),companionPanelsBusy=$state(false),companionPanelsError=$state(''),companionDropBusy=$state(false),companionCatalogueEpoch=0,companionDropEpoch=0;
   let editingName = $state(false), nameDraft = $state('');
@@ -201,7 +202,7 @@
     if(!canDropComponent(component))return;
     if(component.kind==='virtual')routingEditor?.addVirtual(position);
     else if(component.kind==='debug-controller')routingEditor?.addDebug(position);
-    else if(component.kind==='desktop')routingEditor?.addDesktop(position);
+    else if(component.kind==='desktop')routingEditor?.addDesktop(position,component.device);
     else if(component.kind==='transformation')routingEditor?.addTransformation(component.preset,position);
     else if(component.kind==='companion-panel')void addCompanionPanel(component.sourceId,component.publicationHash,position);
     else{const resource=workspace.inventory.find(resource=>resource.id===component.sourceId);if(resource)addResource(resource,position);}
@@ -264,10 +265,10 @@
     <div class="profile-authoring">
       <div class="profile-components-column">
         <label class="game-context" title="Saved with the profile. Selecting a context makes this profile available for that game. Integrated games also add their telemetry block.">Game context<select aria-label="Game context" value={selectedGame} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#if selectedGame&&!selectedGameRegistered}<option value={selectedGame} disabled>{profileGameName(selectedGame)} · Unavailable</option>{/if}{#each $registeredGames as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label>
-      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} editorGroups={tabDocument?.editor.groups??[]} canAddGroup={!activeVehicleTabId} addGroup={()=>{if(!activeVehicleTabId)routingEditor?.addGroup();}} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.filter(node=>profileTabNodeIds(editor.document).has(node.id)||tabNodeIds.has(node.id)).length} desktopAdded={!!editor.document.desktopOutputs?.some(node=>profileTabNodeIds(editor.document).has(node.id)||tabNodeIds.has(node.id))}
+      <ProfileComponentPalette inventory={workspace.inventory} {assignedIds} editorGroups={tabDocument?.editor.groups??[]} canAddGroup={!activeVehicleTabId} addGroup={()=>{if(!activeVehicleTabId)routingEditor?.addGroup();}} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.filter(node=>profileTabNodeIds(editor.document).has(node.id)||tabNodeIds.has(node.id)).length} keyboardAdded={!canDropComponent({kind:'desktop',device:'keyboard'})} mouseAdded={!canDropComponent({kind:'desktop',device:'mouse'})}
         processingCount={editor.document.processingNodes.length+(editor.document.desktopOutputs??[]).reduce((count,node)=>count+node.actions.length,0)} addTransformation={preset=>{if(canDropComponent({kind:'transformation',preset}))routingEditor?.addTransformation(preset);}}
         {capturedCompanionIds} companionPanelCount={editor.document.companionAssignments.length} companionPanels={companionCatalogue?.panels??[]} companionPanelsLoaded={!!companionCatalogue} companionPanelsBusy={companionPanelsBusy||companionDropBusy} {companionPanelsError} refreshPanels={()=>void refreshCompanionPanels()} addCompanionPanel={(sourceId,publicationHash)=>void addCompanionPanel(sourceId,publicationHash)}
-        disabled={workspace.readOnly||workspace.busy||libraryBusy||addingVehicleTab||companionDropBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>{void store.refreshInventory();if(companionCatalogue)void refreshCompanionPanels();}} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDebug={()=>{if(canDropComponent({kind:'debug-controller'}))routingEditor?.addDebug();}} addDesktop={()=>{if(canDropComponent({kind:'desktop'}))routingEditor?.addDesktop();}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
+        disabled={workspace.readOnly||workspace.busy||libraryBusy||addingVehicleTab||companionDropBusy} refreshing={workspace.inventoryBusy} error={workspace.inventoryError} refresh={()=>{void store.refreshInventory();if(companionCatalogue)void refreshCompanionPanels();}} addResource={resource=>addResource(resource)} addVirtual={()=>{if(canDropComponent({kind:'virtual'}))routingEditor?.addVirtual();}} addDebug={()=>{if(canDropComponent({kind:'debug-controller'}))routingEditor?.addDebug();}} addDesktop={kind=>{if(canDropComponent({kind:'desktop',device:kind}))routingEditor?.addDesktop(undefined,kind);}} startDrag={startPaletteDrag} endDrag={endPaletteDrag}/>
       </div>
       <div class="profile-canvas-workspace">
         {#if vehicleTabsEnabled&&!addingVehicleTab}<ProfileVehicleConflicts document={editor.document} assignments={editor.assignments} {activeVehicleTabId} {compiler} {inventoryRevision} {active}/>{/if}

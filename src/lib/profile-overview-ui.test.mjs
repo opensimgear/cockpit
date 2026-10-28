@@ -8,7 +8,7 @@ import {compile} from 'svelte/compiler';
 import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
-import {loadModules} from './test-module-loader.mjs';
+import {loadModules,libModuleName} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./persistence/ui-preferences','./ui-settings-guard','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
 modules.get('./games').updateGameCatalogue(discoveredGames);

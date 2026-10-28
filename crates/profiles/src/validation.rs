@@ -141,7 +141,7 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
     if document.vehicle_tabs.is_empty() { return validate_graph_document(document); }
     check(document.vehicle_tabs.len() <= 32, "A profile supports at most 32 vehicle tabs.")?;
     check(document.resources.len()<=MAX_RESOURCES && document.processing_nodes.len()<=MAX_PROCESSING_NODES
-        && document.virtual_outputs.len()<=MAX_VIRTUAL_OUTPUTS && document.desktop_outputs.len()<=33
+        && document.virtual_outputs.len()<=MAX_VIRTUAL_OUTPUTS && document.desktop_outputs.len()<=66
         && document.bindings.len()<=MAX_BINDINGS, "Profile exceeds resource, processing, output or binding limits.")?;
     check(serde_json::to_vec(document).map_err(|error|error.to_string())?.len() <= MAX_PROFILE_BYTES, "Profile exceeds 512 KiB.")?;
     let mut node_ids = BTreeSet::new();
@@ -157,7 +157,7 @@ pub fn validate_document(document: &ProfileDocument) -> Result<(), String> {
         check(crate::resources_ports::text(&tab.vehicle_id,256).is_ok() && tab.vehicle_id.trim()==tab.vehicle_id, "Vehicle identity requires 1-256 bytes without control characters.")?;
         check(document.eligibility.game_ids.len()==1 && document.eligibility.game_ids.contains(&tab.game_id), "Vehicle tabs require their single selected game context.")?;
         check(tabs.insert(&tab.id) && vehicles.insert((&tab.game_id,&tab.vehicle_id)), "Vehicle tabs and vehicle selections must be unique.")?;
-        check(tab.node_ids.len()<=337, "A vehicle tab exceeds its node limit.")?;
+        check(tab.node_ids.len()<=338, "A vehicle tab exceeds its node limit.")?;
         for node in &tab.node_ids {
             check(node_ids.contains(node.as_str()) && owners.insert(node.as_str(),tab.id.as_str()).is_none(), "Vehicle tab node is unknown, duplicated or belongs to another tab.")?;
         }
@@ -206,7 +206,7 @@ fn validate_graph_document(document: &ProfileDocument) -> Result<(), String> {
         document.resources.len() <= MAX_RESOURCES
             && document.processing_nodes.len() <= MAX_PROCESSING_NODES
             && document.virtual_outputs.len() <= MAX_VIRTUAL_OUTPUTS
-            && document.desktop_outputs.len() <= 1
+            && crate::desktop_blocks::desktop_outputs_valid(&document.desktop_outputs)
             && document.processing_nodes.len() + document.desktop_outputs.iter().map(|output| output.actions.len()).sum::<usize>() <= 256
             && document.bindings.len() <= MAX_BINDINGS,
         "Profile exceeds resource, processing, output or binding limits.",

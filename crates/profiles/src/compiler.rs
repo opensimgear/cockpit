@@ -126,7 +126,7 @@ fn compile_mode(
         || document.processing_nodes.len() > crate::validation::MAX_PROCESSING_NODES
         || document.bindings.len() > crate::validation::MAX_BINDINGS
         || document.virtual_outputs.len() > crate::validation::MAX_VIRTUAL_OUTPUTS
-        || document.desktop_outputs.len() > 1
+        || !crate::desktop_blocks::desktop_outputs_valid(&document.desktop_outputs)
         || ports > crate::validation::MAX_PORTS
     {
         error(&mut report.diagnostics, "graphBudgetExceeded", "The complete graph exceeds its bounded resource, processing, binding, output or port budget; no instructions were truncated.", GraphLocation::default());

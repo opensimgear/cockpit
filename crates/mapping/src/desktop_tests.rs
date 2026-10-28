@@ -492,7 +492,9 @@ fn multiple_desktop_endpoints_and_mismatched_action_contracts_are_rejected() {
     assert!(program
         .compile()
         .unwrap_err()
-        .contains("one logical desktop"));
+        .contains("one Keyboard block"));
+    program.sinks[1].kind = SinkKind::Desktop { action: Action::MouseHold { button: MouseButton::Left } };
+    assert!(program.compile().is_ok(), "Independent Keyboard and Mouse blocks share the runtime");
     program.sinks.pop();
     program.sinks[0].kind = SinkKind::Desktop {
         action: Action::KeyTap {

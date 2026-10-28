@@ -1,4 +1,6 @@
 <script lang="ts">
+  import {DESKTOP_KEYS} from './profile-desktop';
+  import type {DesktopBlockKind} from './profile-desktop-blocks';
   import Icon from './Icon.svelte';
   import type {DeepReadonly, ProfileEditorGroup} from './profiles';
   import type {ResourceSummary, ResourceType} from './profile-inventory';
@@ -7,11 +9,11 @@
   import {PROCESSING_PRESETS,type ProcessingPreset} from './profile-processing';
   import {latestCompanionPanels,type ProfileCompanionPanel} from './profile-companion-authoring';
 
-  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, addTransformation=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDebug=()=>{}, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
-    inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; desktopAdded:boolean;
+  let {inventory, assignedIds, resourceCount, virtualCount, keyboardAdded=false, mouseAdded=false, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, addTransformation=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDebug=()=>{}, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+    inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; keyboardAdded?:boolean; mouseAdded?:boolean;
     editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];canAddGroup?:boolean;
     disabled?:boolean; refreshing?:boolean; error?:string; refresh:()=>void;
-    addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDebug?:()=>void; addDesktop:()=>void;
+    addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDebug?:()=>void; addDesktop:(kind:DesktopBlockKind)=>void;
     processingCount?:number;addTransformation?:(preset:ProcessingPreset)=>void;
     capturedCompanionIds?:ReadonlySet<string>;companionPanelCount?:number;companionPanels?:readonly DeepReadonly<ProfileCompanionPanel>[];companionPanelsLoaded?:boolean;companionPanelsBusy?:boolean;companionPanelsError?:string;refreshPanels?:()=>void;addCompanionPanel?:(sourceId:string,publicationHash:string)=>void;
     addGroup?:()=>void;focusGroup?:(id:string)=>void;renameGroup?:(id:string,name:string)=>void;deleteGroup?:(id:string)=>void;
@@ -41,7 +43,8 @@
   const visibleGroups=$derived(editorGroups.filter(group=>!query||`${group.name} groups`.toLocaleLowerCase().includes(query)));
   const showVirtual=$derived(!query||'virtual controller outputs'.includes(query));
   const showDebug=$derived(!query||'debug controller axes buttons hats input'.includes(query));
-  const showDesktop=$derived(!query||'keyboard mouse desktop outputs'.includes(query));
+  const desktopComponents=$derived(([{kind:'keyboard',label:'Keyboard',description:'All physical keys',added:keyboardAdded},{kind:'mouse',label:'Mouse',description:'Buttons, pointer and scrolling',added:mouseAdded}] as const).filter(item=>!query||`${item.label} desktop outputs`.toLocaleLowerCase().includes(query)));
+  const showDesktop=$derived(desktopComponents.length>0);
   const transformations=$derived([
     {preset:'identity' as ProcessingPreset,label:'Transformation',description:'Choose a type after dropping'},
     ...PROCESSING_PRESETS.filter(([preset])=>preset!=='identity').map(([preset,label])=>({preset,label:preset==='scale'?'Multiply':preset==='range-map'?'Map range':preset==='format'?'Format text':label,description:preset==='scale'?'Multiply and offset a numeric signal':'Configure on the canvas'})),
@@ -98,9 +101,9 @@
       {/each}
       {#if companionPanelsLoaded&&!panelComponents.length&&!companionPanelsBusy}<p class="group-hint">No compatible saved panels. Save a panel in the panel designer, then refresh.</p>{/if}
     </div></details>{/if}
-      {#if showVirtual||showDesktop}<details class="editor-accordion" aria-label="Output components" open={isOpen('outputs')} ontoggle={event=>rememberOpen(event,'outputs')}><summary>Outputs<span class="category-count">{Number(showVirtual)+Number(showDesktop)}</span></summary><div class="accordion-content">
+      {#if showVirtual||showDesktop}<details class="editor-accordion" aria-label="Output components" open={isOpen('outputs')} ontoggle={event=>rememberOpen(event,'outputs')}><summary>Outputs<span class="category-count">{Number(showVirtual)+desktopComponents.length}</span></summary><div class="accordion-content">
         {#if showVirtual}<button class="component" aria-label="Add virtual controller" disabled={disabled||virtualCount>=8} draggable={!disabled&&virtualCount<8} ondragstart={event=>beginDrag(event,{component:{kind:'virtual'},name:'Virtual controller',category:'Virtual controller'})} ondragend={endDrag} onclick={addVirtual}><span class="component-icon"><Icon name="gamepad" size={17}/></span><span class="component-copy"><strong>Virtual controller</strong><small>Buttons, axes and hats</small></span><Icon name="plus" size={14}/></button>{/if}
-        {#if showDesktop}<button class="component" aria-label="Add keyboard and mouse" disabled={disabled||desktopAdded} draggable={!disabled&&!desktopAdded} ondragstart={event=>beginDrag(event,{component:{kind:'desktop'},name:'Keyboard and mouse',category:'Keyboard and mouse'})} ondragend={endDrag} onclick={addDesktop}><span class="component-icon"><Icon name="devices" size={17}/></span><span class="component-copy"><strong>Keyboard and mouse</strong><small>{desktopAdded?'Added to profile':'Keys, pointer and buttons'}</small></span><Icon name={desktopAdded?'check':'plus'} size={14}/></button>{/if}
+        {#each desktopComponents as item (item.kind)}<button class="component" aria-label={`Add ${item.label.toLowerCase()}`} disabled={disabled||item.added||processingCount+(item.kind==='keyboard'?DESKTOP_KEYS.length:11)>256} draggable={!disabled&&!item.added&&processingCount+(item.kind==='keyboard'?DESKTOP_KEYS.length:11)<=256} ondragstart={event=>beginDrag(event,{component:{kind:'desktop',device:item.kind},name:item.label,category:item.label})} ondragend={endDrag} onclick={()=>addDesktop(item.kind)}><span class="component-icon"><Icon name={item.kind} size={17}/></span><span class="component-copy"><strong>{item.label}</strong><small>{item.added?'Added to profile':item.description}</small></span><Icon name={item.added?'check':'plus'} size={14}/></button>{/each}
       </div></details>{/if}
     {#each categories as category (category.type)}
       {@const items=components.filter(resource=>resource.resourceType===category.type)}

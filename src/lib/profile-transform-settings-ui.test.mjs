@@ -7,7 +7,7 @@ import {compile} from 'svelte/compiler';
 import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
-import {loadModules} from './test-module-loader.mjs';
+import {loadModules,libModuleName} from './test-module-loader.mjs';
 const modules=await loadModules(['./profile-transform-drafts','./profile-editor','./profile-canvas']);
 const {createProcessingDraft:create,graphDropProcessing:drop,graphUpdateProcessing:update,resolveProcessingDraft:resolve}=modules.get('./profile-transform-drafts');
 const {blankProfile}=modules.get('./profile-editor');
@@ -24,8 +24,8 @@ async function view(node,props={}){
     if(name==='./ProfileTransformSettings.svelte')source=source.replace('</script>','captureSettings({type});</script>');
     if(name==='./ProfileProcessingEditor.svelte')source=source.replace('</script>','captureProcessing({field,ruleField,save,autoSave,get draft(){return draft;},get portsEditable(){return portsEditable;},get compact(){return compact;}});</script>');
     const {js}=compile(source,{filename:filename.pathname,generate:'server'}),dependencies=new Map();
-    for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});
-    const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,captureSettings:value=>settings=value,captureProcessing:value=>processing=value,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(dependencies.has(name))return dependencies.get(name);const key=name.replace(/\.ts$/,'');if(modules.has(key))return modules.get(key);throw Error(`Unexpected transformation settings dependency ${name}`);}},{filename:filename.pathname});
+    for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(libModuleName(match[1],filename),{default:await component(libModuleName(match[1],filename))});
+    const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,captureSettings:value=>settings=value,captureProcessing:value=>processing=value,require(name){name=libModuleName(name,filename);if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(dependencies.has(name))return dependencies.get(name);const key=name.replace(/\.ts$/,'');if(modules.has(key))return modules.get(key);throw Error(`Unexpected transformation settings dependency ${name}`);}},{filename:filename.pathname});
     components.set(name,exports.default);return exports.default;
   }
   const Component=await component('./ProfileTransformSettings.svelte'),body=render(Component,{props:{node,change:()=>true,configure:()=>true,...props}}).body;

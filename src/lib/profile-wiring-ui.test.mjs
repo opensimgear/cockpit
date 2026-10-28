@@ -7,7 +7,7 @@ import { compile } from 'svelte/compiler';
 import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
-import { loadModules } from './test-module-loader.mjs';
+import { loadModules, libModuleName } from './test-module-loader.mjs';
 
 const modules = await loadModules(['./profile-overview-routing','./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview']);
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -29,6 +29,33 @@ canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire
 const lanesCode=transpile(compile(await readFile(new URL('./ProfileSignalLanes.svelte',import.meta.url),'utf8'),{filename:'ProfileSignalLanes.svelte',generate:'server'}).js.code);
 const controlsCode=transpile(compile(await readFile(new URL('./CanvasViewControls.svelte',import.meta.url),'utf8'),{filename:'CanvasViewControls.svelte',generate:'server'}).js.code);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
+const inspectorCache = new Map();
+async function loadInspector(name) {
+  if (inspectorCache.has(name)) return inspectorCache.get(name);
+  const filename = new URL(name, import.meta.url);
+  const { js } = compile(await readFile(filename, 'utf8'), { filename: filename.pathname, generate: 'server' });
+  const dependencies = new Map();
+  for (const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g)) {
+    const dependency = libModuleName(match[1], filename);
+    dependencies.set(dependency, { default: await loadInspector(dependency) });
+  }
+  const exports = {};
+  vm.runInNewContext(transpile(js.code), {
+    exports, TextEncoder,
+    require(specifier) {
+      const dependency = libModuleName(specifier, filename);
+      if (dependency === 'svelte/internal/server') return server;
+      if (dependency === 'svelte') return svelte;
+      if (dependencies.has(dependency)) return dependencies.get(dependency);
+      const key = dependency.replace(/\.ts$/, '');
+      if (modules.has(key)) return modules.get(key);
+      throw new Error(`Unexpected inspector dependency ${specifier}`);
+    }
+  }, { filename: filename.pathname });
+  inspectorCache.set(name, exports.default);
+  return exports.default;
+}
+const Inspector = await loadInspector('./profile-inspector/ProfileBlockInspector.svelte');
 
 // Invoke the production Svelte closures with explicit pointer-capture and hit-test fixtures.
 // Actual browser dispatch and hit testing are covered by the running cockpit UI checks.
@@ -47,6 +74,7 @@ function harness(props = {}, arrowStyle='smooth',cornerRadius=24,wheelAction='pa
       if (name === 'svelte') return svelte;
       if (name === './ProfileSignalLanes.svelte') return {default:Lanes};
       if (name === './CanvasViewControls.svelte') return {default:Controls};
+      if (name === './profile-inspector/ProfileBlockInspector.svelte') return {default:Inspector};
       if (name === './Icon.svelte') return { default: Icon };
       const key = name.replace(/\.ts$/, '');
       if (modules.has(key)) return modules.get(key);

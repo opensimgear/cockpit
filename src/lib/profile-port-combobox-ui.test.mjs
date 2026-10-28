@@ -7,6 +7,7 @@ import { compile } from 'svelte/compiler';
 import { render } from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
+import {libModuleName} from './test-module-loader.mjs';
 
 const source = await readFile(new URL('./ProfilePortCombobox.svelte', import.meta.url), 'utf8');
 
@@ -23,7 +24,7 @@ async function view(props = {}) {
     const { js } = compile(text, { filename: filename.pathname, generate: 'server' });
     const dependencies = new Map();
     for (const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g)) {
-      dependencies.set(match[1], { default: await component(match[1]) });
+      dependencies.set(libModuleName(match[1],filename), { default: await component(libModuleName(match[1],filename)) });
     }
     const exports = {};
     vm.runInNewContext(ts.transpileModule(js.code, {
@@ -33,6 +34,7 @@ async function view(props = {}) {
       TextEncoder,
       capture(value) { handlers = value; },
       require(dependency) {
+        dependency = libModuleName(dependency, filename);
         if (dependency === 'svelte/internal/server') return server;
         if (dependency === 'svelte') return svelte;
         if (dependencies.has(dependency)) return dependencies.get(dependency);

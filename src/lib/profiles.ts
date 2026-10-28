@@ -1,4 +1,5 @@
 /** Portable unified profile contracts. Native validation remains authoritative. */
+import {desktopOutputsValid} from './profile-desktop-blocks.ts';
 import {debugControllerError} from './profile-debug-controller.ts';
 import { desktopActionValid, desktopActionContract, desktopOutputScopeValid, type ProfileDesktopOutput } from './profile-desktop.ts';
 import type { GameId } from './games';
@@ -241,19 +242,20 @@ export function profileDocumentError(value: unknown): string {
   if (!list(value.processingNodes, 256) || !value.processingNodes.every(row => exact(row, [...labelKeys, 'operation', 'inputs', 'outputs',...(object(row)&&Object.hasOwn(row,'draft')?['draft']:[])]) && nodeLabel(row) && operation(row.operation) && ports(row.inputs) && ports(row.outputs) && (!Object.hasOwn(row,'draft') || row.inputs.length>0 && processingDraftValid(row.draft,row.operation)) && ((row.operation as ProfileOperation).kind !== 'script' || row.inputs.length >= 1 && row.inputs.length <= 32 && row.outputs.length >= 1 && row.outputs.length <= 16))) return 'Use supported processing nodes and typed ports.';
   if (!list(value.virtualOutputs, 16) || !value.virtualOutputs.every(row => exact(row, [...labelKeys, 'required', 'ports', 'layout']) && nodeLabel(row) && typeof row.required === 'boolean' && ports(row.ports) && layout(row.layout))) return 'Use valid logical virtual outputs.';
   const desktops=Object.hasOwn(value,'desktopOutputs')?value.desktopOutputs:[];
-  if(!list(desktops,Object.hasOwn(value,'vehicleTabs')?33:1)||!desktops.every(desktopOutput))return 'Use one desktop endpoint per active tab with one exact typed action per input port.';
+  if(!list(desktops,Object.hasOwn(value,'vehicleTabs')?66:2)||!desktops.every(desktopOutput))return 'Use Keyboard and Mouse blocks with one exact typed action per input port.';
+  if(!Object.hasOwn(value,'vehicleTabs')&&!desktopOutputsValid(desktops as ProfileDesktopOutput[]))return 'Use one Keyboard block and one Mouse block with a shared output scope.';
   if(value.processingNodes.length+desktops.reduce<number>((sum,row)=>sum+(row as ProfileDesktopOutput).actions.length,0)>256)return 'Desktop actions and processing nodes together support at most 256 definitions.';
   const nodes = [...value.resources, ...value.processingNodes, ...value.virtualOutputs,...desktops] as (ProfileResource | ProfileProcessingNode | ProfileVirtualOutput | ProfileDesktopOutput)[];
   if (new Set(nodes.map(row => row.id)).size !== nodes.length) return 'Graph node identifiers must be unique.';
   if(Object.hasOwn(value,'vehicleTabs')){
-    if(!list(value.vehicleTabs,32)||!value.vehicleTabs.every(tab=>exact(tab,['id','gameId','vehicleId','vehicleName','nodeIds'])&&identifier(tab.id)&&identifier(tab.gameId)&&boundedText(tab.vehicleId,256)&&tab.vehicleId.trim()===tab.vehicleId&&text(tab.vehicleName)&&list(tab.nodeIds,337)&&tab.nodeIds.every(identifier)))return 'Use bounded vehicle tabs with a selected vehicle and known graph nodes.';
+    if(!list(value.vehicleTabs,32)||!value.vehicleTabs.every(tab=>exact(tab,['id','gameId','vehicleId','vehicleName','nodeIds'])&&identifier(tab.id)&&identifier(tab.gameId)&&boundedText(tab.vehicleId,256)&&tab.vehicleId.trim()===tab.vehicleId&&text(tab.vehicleName)&&list(tab.nodeIds,338)&&tab.nodeIds.every(identifier)))return 'Use bounded vehicle tabs with a selected vehicle and known graph nodes.';
     const tabs=value.vehicleTabs as ProfileVehicleTab[],nodeIds=new Set(nodes.map(node=>node.id)),owners=new Map<string,string>();
     if(new Set(tabs.map(tab=>tab.id)).size!==tabs.length||new Set(tabs.map(tab=>`${tab.gameId}\0${tab.vehicleId}`)).size!==tabs.length)return 'Use each vehicle only once in a profile.';
     for(const tab of tabs){
       if((value.eligibility.gameIds as string[]).length!==1||!(value.eligibility.gameIds as string[]).includes(tab.gameId))return 'Vehicle tabs require their single selected game context.';
       for(const nodeId of tab.nodeIds){if(!nodeIds.has(nodeId)||owners.has(nodeId))return 'Vehicle tab node is unknown, duplicated or belongs to another tab.';owners.set(nodeId,tab.id);}
     }
-    if(desktops.filter(output=>!owners.has((output as ProfileDesktopOutput).id)).length>1||tabs.some(tab=>desktops.filter(output=>!owners.has((output as ProfileDesktopOutput).id)||owners.get((output as ProfileDesktopOutput).id)===tab.id).length>1))return 'Use at most one desktop endpoint in Base and each active vehicle combination.';
+    if(!desktopOutputsValid(desktops.filter(output=>!owners.has((output as ProfileDesktopOutput).id)) as ProfileDesktopOutput[])||tabs.some(tab=>!desktopOutputsValid(desktops.filter(output=>!owners.has((output as ProfileDesktopOutput).id)||owners.get((output as ProfileDesktopOutput).id)===tab.id) as ProfileDesktopOutput[])))return 'Use one Keyboard block and one Mouse block with a shared output scope in each active vehicle combination.';
   }
   if (nodes.reduce((sum, row) => sum + ('ports' in row ? row.ports.length : row.inputs.length + row.outputs.length), 0) > 1024) return 'Use at most 1024 graph ports.';
   if (!list(value.bindings, 512) || !value.bindings.every(row => exact(row, ['id', 'from', 'to']) && identifier(row.id) && endpoint(row.from) && endpoint(row.to)) || new Set(value.bindings.map(row => (row as ProfileBinding).id)).size !== value.bindings.length) return 'Use unique bindings with logical graph endpoints.';

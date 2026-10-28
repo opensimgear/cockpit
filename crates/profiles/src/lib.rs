@@ -3,6 +3,7 @@ pub mod activation;
 pub mod compiler;
 pub mod debug_controller;
 pub mod compiler_models;
+pub mod desktop_blocks;
 pub mod model;
 pub mod resources;
 pub mod resources_ports;

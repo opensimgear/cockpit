@@ -111,9 +111,9 @@ impl ProfileDocument {
         if document.resources.len() > crate::validation::MAX_RESOURCES
             || document.processing_nodes.len() > crate::validation::MAX_PROCESSING_NODES
             || document.virtual_outputs.len() > crate::validation::MAX_VIRTUAL_OUTPUTS
-            || document.desktop_outputs.len() > 33
+            || document.desktop_outputs.len() > 66
             || document.vehicle_tabs.len() > 32
-            || document.vehicle_tabs.iter().any(|tab|tab.node_ids.len()>337)
+            || document.vehicle_tabs.iter().any(|tab|tab.node_ids.len()>338)
             || document.desktop_outputs.iter().any(|output| output.actions.len() > 128)
             || document.processing_nodes.len() + document.desktop_outputs.iter().map(|output| output.actions.len()).sum::<usize>() > 256
             || document.bindings.len() > crate::validation::MAX_BINDINGS

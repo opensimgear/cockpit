@@ -759,7 +759,7 @@ impl Program {
             }
         }
         let mut targets = BTreeSet::new();
-        let mut desktop_endpoints = BTreeSet::new();
+        let mut desktop_endpoints = BTreeMap::<&str, u8>::new();
         for sink in &self.sinks {
             port_id(&sink.id)?;
             port_id(&sink.endpoint.node_id)?;
@@ -779,10 +779,15 @@ impl Program {
                 if sink.contract != action.contract() {
                     return Err("Desktop sink differs from its exact typed action port.".into());
                 }
-                desktop_endpoints.insert(&sink.endpoint.node_id);
-                if desktop_endpoints.len()>1 {
-                    return Err("An execution program supports one logical desktop endpoint.".into());
+                let device = match action {
+                    crate::desktop::Action::MouseHold { .. } | crate::desktop::Action::MouseClick { .. }
+                    | crate::desktop::Action::Wheel { .. } | crate::desktop::Action::Pointer { .. } => 2,
+                    _ => 1,
+                };
+                if desktop_endpoints.iter().any(|(node, kinds)| *node != sink.endpoint.node_id && kinds & device != 0) {
+                    return Err("An execution program supports one Keyboard block and one Mouse block.".into());
                 }
+                *desktop_endpoints.entry(&sink.endpoint.node_id).or_default() |= device;
             }
             if let SinkKind::Virtual {
                 controller_id,
