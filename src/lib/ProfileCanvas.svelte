@@ -10,7 +10,7 @@
   import type { ObservedResourcePort, ProfileInventoryClient, ResourceDetails, ResourceSummary } from './profile-inventory';
   import type { GameId } from './games';
   import { PROFILE_BLOCK_HEIGHT, PROFILE_BLOCK_WIDTH } from './profile-editor';
-  import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
+  import { canvasControllerEffects, canvasCreateGroup, canvasDeleteGroup, canvasFit, canvasGameId, canvasGroupAt, canvasGroups, canvasFocusNode, canvasFocusConnection, canvasMoveGroup, canvasMoveIntoGroup, canvasNodes, canvasNodeSize, canvasNodeAnchor, PROFILE_TRANSFORM_HEADER, PROFILE_TRANSFORM_PORT_ROW, canvasPan, canvasPortCollapsed, canvasRenameGroup, canvasResizeGroup, canvasSearch, canvasStatus, canvasTogglePorts, canvasTransports, canvasZoom, portContractLabel, type CanvasGroup, type CanvasNode, type CanvasPoint, type CanvasViewport } from './profile-canvas';
   import { createDiagramRouter, diagramPendingPath, diagramRoutes, diagramSegmentLine } from './profile-diagram';
   import {canvasRouteNodes,canvasOverviewRouteNodes,canvasPreviewRoutes,createOverviewMerger,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
   import {profileReshapeWireSegment,profileSetWireRoute,profileInsertWireHandle,profileMoveWireHandle,profileRemoveWireHandle,profileWireHandleOnRoute}from'./profile-wire-layout';
@@ -43,6 +43,7 @@
   } = $props();
   let stage: HTMLDivElement;
   let inspectorPanel=$state.raw<HTMLElement|undefined>();
+  let lanesPanel=$state.raw<HTMLElement|undefined>();
   let mounted=$state(false);
   let selectionView:CanvasViewport|null=null,focusedSelectionId='';
   const inspectorContentId = $props.id();
@@ -155,7 +156,7 @@
   $effect(()=>{const scope=`${document.id}/${activeVehicleTabId}`;if(scope!==laneScope){laneScope=scope;closeLanes();}});
   $effect(()=>{if(overview&&selectedId&&allNodes.some(node=>node.id===selectedId&&node.processing)){activeTransform=selectedId;showTransforms=true;selectedId='';}});
   $effect(()=>{if(activeVehicleTabId!==previousVehicleTab){previousVehicleTab=activeVehicleTabId;layoutEpoch++;layoutBusy=false;selectionView=null;focusedSelectionId='';clearPendingMove();clearConnectionClick();drag=null;dragged=null;wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';groupPreview=null;segmentDrag=null;segmentPreview=null;segmentBlocked=false;palettePreview=null;layoutError='';fitView();}});
-  $effect(()=>{void focusSelectionId;void inspectorPanel;void drag;void wire;void segmentDrag;void connectionOpen;if(mounted)untrack(syncSelectionFocus);});
+  $effect(()=>{void focusSelectionId;void inspectorPanel;void overviewBundle?.id;void lanesPanel;void drag;void wire;void segmentDrag;void connectionOpen;if(mounted)untrack(syncSelectionFocus);});
   $effect(()=>{if(!paletteDrag||readOnly||!dropComponent||canDropComponent?.(paletteDrag.component)===false)palettePreview=null;});
   $effect(()=>{if(bundlePicker&&!bundleMembers.length)bundlePicker=null;});
   $effect(()=>{void activeVehicleTabId;void document.id;bundlePicker=null;});
@@ -176,7 +177,7 @@
     const bundle=overviewById.get(id);if(!bundle)return;
     const destinationId=destinationOverviewId(bundle.binding.to.nodeId),pair={from:bundle.binding.from.nodeId,to:bundle.binding.to.nodeId};
     if(overviewBundleId===destinationId){overviewPair=pair;return;}
-    pendingOverviewDrop=null;clearConnectionClick();selectionView=null;focusedSelectionId='';
+    pendingOverviewDrop=null;clearConnectionClick();
     closeConnectionPanel?.();selectConnection?.('');selectedId='';showTransforms=false;activeTransform='';overviewPair=pair;overviewBundleId=destinationId;
   }
   function slideLanes(_node:HTMLElement){return {duration:window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:180,css:(t:number)=>`transform:translateY(${(1-t)*100}%)`};}
@@ -285,6 +286,16 @@
   function restoreSelectionView(){const previous=selectionView;selectionView=null;focusedSelectionId='';if(previous)view={...previous};return !!previous;}
   function syncSelectionFocus(){
     if(drag||wire||segmentDrag)return;
+    const connection=overviewBundle;
+    if(connection){
+      if(!stage||!lanesPanel||focusedSelectionId===connection.id)return;
+      const ids=new Set([connection.binding.from.nodeId,connection.binding.to.nodeId,...connection.lanes.flatMap(lane=>lane.sources.map(source=>source.nodeId))]);
+      const members=new Set(overviewBundles.filter(bundle=>bundle.binding.to.nodeId===connection.binding.to.nodeId).map(bundle=>bundle.id));
+      const points=[...overviewNetwork.routes.filter(route=>members.has(route.binding.id)).flatMap(route=>route.points),...overviewNetwork.merges.filter(merge=>merge.targetNodeId===connection.binding.to.nodeId).flatMap(merge=>merge.points)];
+      const focused=canvasFocusConnection(nodes.filter(node=>ids.has(node.id)),points,stage.clientWidth||900,Math.max(1,(stage.clientHeight||600)-lanesPanel.offsetHeight));
+      if(focused){selectionView??={...view};focusedSelectionId=connection.id;view=focused;}
+      return;
+    }
     const node=nodesById.get(selectedId);
     if(!node||connectionOpen){restoreSelectionView();return;}
     if(!stage||!inspectorPanel||node.id===focusedSelectionId)return;
@@ -612,7 +623,7 @@
     </aside>
     {/if}
   {#if overview&&(overviewBundle||showTransforms)}
-    <div class="canvas-lanes-panel" transition:slideLanes>
+    <div class="canvas-lanes-panel" bind:this={lanesPanel} transition:slideLanes>
     {#key overviewBundle?.id??'transforms'}<ProfileSignalLanes {addTransformInput} {routeIssue} {routeEndpoint} {sourceInputs} bundle={overviewBundle} nodes={laneNodes} draftConnection={connectionDraft} {activeIncompleteRowId} addConnection={overviewBundle&&addOverviewConnection?()=>addOverviewConnection?.(overviewPair?.from??overviewBundle!.binding.from.nodeId,overviewBundle!.binding.to.nodeId):undefined} removeTransform={removeOverviewTransform} selectTransform={selectOverviewTransform} bind:activeTransform close={()=>closeLanes(true)} {transformSettings} transfer={transferTransform} insert={(id,before)=>{const target=before?visibleDocument.bindings.find(binding=>binding.to.nodeId===before&&overviewBundle?.lanes.find(lane=>lane.id===id)?.bindingIds.includes(binding.id))?.id??id:id;if(pendingOverviewDrop){dropOnConnection?.(pendingOverviewDrop.component,target,pendingOverviewDrop.position);pendingOverviewDrop=null;}else insertTransform?.(target,id);}} disconnect={disconnectConnection} {readOnly}/>{/key}
     </div>
   {/if}

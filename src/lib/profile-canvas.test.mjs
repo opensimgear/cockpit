@@ -138,3 +138,26 @@ test('fit includes measured widget cards of different sizes and ignores invalid 
  const {canvasNodeSize}=modules.get('./profile-canvas');
  for(const size of [{width:NaN,height:20},{width:20,height:Infinity},{width:0,height:20},{width:20,height:-1},{width:210}])assert.deepEqual(plain(canvasNodeSize(size)),{width:PROFILE_BLOCK_WIDTH,height:PROFILE_BLOCK_HEIGHT});
 });
+
+test('connection focus frames only its cards and every routed arrow detour',()=>{
+  const {canvasFocusConnection}=modules.get('./profile-canvas'),nodes=[
+    {kind:'resource',position:{x:-300,y:-100},width:100,height:80},
+    {kind:'processing',position:{x:200,y:50},width:100,height:80},
+    {kind:'resource',position:{x:5000,y:5000},width:400,height:300}
+  ],points=[{x:-50,y:-400},{x:500,y:300}],before=plain(nodes),view=canvasFocusConnection(nodes.slice(0,2),points,800,600);
+  assert.deepEqual(plain(nodes),before);
+  assert.equal(view.zoom,300/700);
+  assert.ok(Math.abs((-300+800/2)*view.zoom+view.x-400)<1e-8);
+  assert.ok(Math.abs((-400+700/2)*view.zoom+view.y-300)<1e-8);
+  for(const point of points){assert.ok(point.x*view.zoom+view.x>=400-800/2*view.zoom-1e-8);assert.ok(point.x*view.zoom+view.x<=400+800/2*view.zoom+1e-8);}
+});
+
+test('connection focus handles negative geometry, route-only bounds, narrow viewports, and invalid input',()=>{
+  const {canvasFocusConnection}=modules.get('./profile-canvas'),node=Object.freeze({kind:'resource',position:Object.freeze({x:-1e6,y:1e6}),width:200,height:100}),before=plain(node);
+  const narrow=canvasFocusConnection([node],[{x:-999000,y:1001000}],1,1);assert.equal(narrow.zoom,.1);assert.ok(Object.values(narrow).every(Number.isFinite));assert.deepEqual(plain(node),before);
+  const route=canvasFocusConnection([],[{x:-40,y:-20},{x:60,y:80}],400,300);assert.equal(route.zoom,1.5);assert.equal((-40+50)*route.zoom+route.x,200);assert.equal((-20+50)*route.zoom+route.y,150);
+  assert.equal(canvasFocusConnection([],[],400,300),null);
+  for(const value of [0,-1,NaN,Infinity,-Infinity]){assert.throws(()=>canvasFocusConnection([],[],value,300),/positive viewport/);assert.throws(()=>canvasFocusConnection([],[],400,value),/positive viewport/);}
+  assert.throws(()=>canvasFocusConnection([{position:{x:NaN,y:0}}],[],400,300),/finite connection/);
+  assert.throws(()=>canvasFocusConnection([],[{x:0,y:Infinity}],400,300),/finite connection/);
+});

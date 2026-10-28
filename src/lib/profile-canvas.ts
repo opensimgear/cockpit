@@ -59,6 +59,26 @@ export function canvasFocusNode(node:CanvasNodeGeometry&{position:CanvasPoint},a
   if(![x,y].every(finite))throw new Error('Keep the focused block within finite canvas coordinates.');
   return{x,y,zoom};
 }
+/** Frame only the connected cards and their routed arrow, using the available unobscured canvas region. */
+export function canvasFocusConnection(nodes:readonly (CanvasNodeGeometry&{position:CanvasPoint})[],points:readonly CanvasPoint[],availableWidth:number,availableHeight:number):CanvasViewport|null{
+  if(![availableWidth,availableHeight].every(finite)||availableWidth<=0||availableHeight<=0)throw new Error('Focus needs finite connection coordinates and a positive viewport size.');
+  if(!nodes.length&&!points.length)return null;
+  let left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity;
+  const include=(x:number,y:number)=>{left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);};
+  for(const node of nodes){
+    if(![node.position.x,node.position.y].every(finite))throw new Error('Focus needs finite connection coordinates and a positive viewport size.');
+    const size=canvasNodeSize(node),nodeRight=node.position.x+size.width,nodeBottom=node.position.y+size.height;
+    if(![nodeRight,nodeBottom].every(finite))throw new Error('Keep the focused connection within finite canvas coordinates.');
+    include(node.position.x,node.position.y);include(nodeRight,nodeBottom);
+  }
+  for(const point of points){
+    if(![point.x,point.y].every(finite))throw new Error('Focus needs finite connection coordinates and a positive viewport size.');
+    include(point.x,point.y);
+  }
+  const width=Math.max(1,right-left),height=Math.max(1,bottom-top);
+  if(![left,top,width,height].every(finite))throw new Error('Keep the focused connection within finite canvas coordinates.');
+  return canvasFocusNode({position:{x:left,y:top},width,height},availableWidth,availableHeight);
+}
 export function canvasMove(document:DeepReadonly<ProfileDocument>,nodeId:string,position:CanvasPoint):ProfileDocument{
   if(![position.x,position.y].every(finite)||![...document.resources,...document.processingNodes,...document.virtualOutputs,...(document.desktopOutputs??[])].some(node=>node.id===nodeId))throw new Error('Move an existing block to finite coordinates.');
   const next=JSON.parse(JSON.stringify(document)) as ProfileDocument;next.editor.positions=next.editor.positions.filter(p=>p.nodeId!==nodeId);next.editor.positions.push({nodeId,x:clamp(position.x,-1e6,1e6),y:clamp(position.y,-1e6,1e6)});return next;
