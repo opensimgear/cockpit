@@ -8,8 +8,7 @@ import * as server from 'svelte/internal/server';
 import ts from 'typescript';
 import {loadModules} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./profile-desktop','./profile-editor','./profile-palette','./profile-processing','./profile-companion-authoring']);
-const {PROCESSING_PRESETS}=modules.get('./profile-processing');
+const modules=await loadModules(['./profile-desktop','./profile-editor','./profile-palette','./profile-companion-authoring']);
 
 const filename=new URL('./ProfileComponentPalette.svelte',import.meta.url);
 const {js}=compile(await readFile(filename,'utf8'),{filename:filename.pathname,generate:'server'});
@@ -32,14 +31,15 @@ test('game integrations are managed by the saved context and never offered as pa
 });
 
 test('all independent component accordions start closed, with groups leading outputs and devices',()=>{
-  const html=body({inventory:[...props.inventory,{id:'module:1',name:'Module',resourceType:'osg-module',availability:'online',attributes:{}},{id:'companion:1',name:'Display',resourceType:'companion',availability:'online',attributes:{componentKind:'paired-companion'}}]}),labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);assert.deepEqual(labels,['Profile groups','Transformation components','Companion panel components','Output components','Controllers','OSG devices','Companions']);assert.ok(!/<details[^>]*\bname=/.test(html));assert.ok(!/<details\b[^>]*\sopen(?:[\s=>])/.test(html));
+  const html=body({inventory:[...props.inventory,{id:'module:1',name:'Module',resourceType:'osg-module',availability:'online',attributes:{}},{id:'companion:1',name:'Display',resourceType:'companion',availability:'online',attributes:{componentKind:'paired-companion'}}]}),labels=[...html.matchAll(/<details\b[^>]*aria-label="([^"]+)"/g)].map(match=>match[1]);assert.deepEqual(labels,['Profile groups','Companion panel components','Output components','Controllers','OSG devices','Companions']);assert.ok(!/<details[^>]*\bname=/.test(html));assert.ok(!/<details\b[^>]*\sopen(?:[\s=>])/.test(html));
 });
 
-test('palette renders every real transformation preset and enforces read-only and capacity limits',()=>{
+test('palette leaves transformation creation to the route overview',()=>{
   for(const patch of [{},{disabled:true},{processingCount:256}]){
-    const html=body(patch),buttons=[...html.matchAll(/<button\b[^>]*data-processing-preset="([^"]+)"[^>]*>/g)];
-    assert.deepEqual(buttons.map(match=>match[1]),Array.from(PROCESSING_PRESETS,([id])=>id));
-    for(const [tag] of buttons)assert.equal(/\sdisabled(?:[\s=>])/.test(tag),!!patch.disabled||patch.processingCount===256);
+    const html=body(patch);
+    assert.ok(!html.includes('Transformation components'));
+    assert.ok(!html.includes('data-processing-preset'));
+    assert.ok(!html.includes('Drop a transformation'));
   }
 });
 

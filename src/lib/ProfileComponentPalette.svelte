@@ -6,15 +6,14 @@
   import type {ResourceSummary, ResourceType} from './profile-inventory';
   import {profileCategory} from './profile-editor';
   import {PROFILE_PALETTE_MIME,profilePalettePanelReason,type ProfilePaletteDrag} from './profile-palette';
-  import {PROCESSING_PRESETS,type ProcessingPreset} from './profile-processing';
   import {latestCompanionPanels,type ProfileCompanionPanel} from './profile-companion-authoring';
 
-  let {inventory, assignedIds, resourceCount, virtualCount, keyboardAdded=false, mouseAdded=false, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, addTransformation=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDebug=()=>{}, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+  let {inventory, assignedIds, resourceCount, virtualCount, keyboardAdded=false, mouseAdded=false, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDebug=()=>{}, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
     inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; keyboardAdded?:boolean; mouseAdded?:boolean;
     editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];canAddGroup?:boolean;
     disabled?:boolean; refreshing?:boolean; error?:string; refresh:()=>void;
     addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDebug?:()=>void; addDesktop:(kind:DesktopBlockKind)=>void;
-    processingCount?:number;addTransformation?:(preset:ProcessingPreset)=>void;
+    processingCount?:number;
     capturedCompanionIds?:ReadonlySet<string>;companionPanelCount?:number;companionPanels?:readonly DeepReadonly<ProfileCompanionPanel>[];companionPanelsLoaded?:boolean;companionPanelsBusy?:boolean;companionPanelsError?:string;refreshPanels?:()=>void;addCompanionPanel?:(sourceId:string,publicationHash:string)=>void;
     addGroup?:()=>void;focusGroup?:(id:string)=>void;renameGroup?:(id:string,name:string)=>void;deleteGroup?:(id:string)=>void;
     startDrag?:(drag:ProfilePaletteDrag)=>void;endDrag?:()=>void;
@@ -45,10 +44,6 @@
   const showDebug=$derived(!query||'debug controller axes buttons hats input'.includes(query));
   const desktopComponents=$derived(([{kind:'keyboard',label:'Keyboard',description:'All physical keys',added:keyboardAdded},{kind:'mouse',label:'Mouse',description:'Buttons, pointer and scrolling',added:mouseAdded}] as const).filter(item=>!query||`${item.label} desktop outputs`.toLocaleLowerCase().includes(query)));
   const showDesktop=$derived(desktopComponents.length>0);
-  const transformations=$derived([
-    {preset:'identity' as ProcessingPreset,label:'Transformation',description:'Choose a type after dropping'},
-    ...PROCESSING_PRESETS.filter(([preset])=>preset!=='identity').map(([preset,label])=>({preset,label:preset==='scale'?'Multiply':preset==='range-map'?'Map range':preset==='format'?'Format text':label,description:preset==='scale'?'Multiply and offset a numeric signal':'Configure on the canvas'})),
-  ].filter(item=>!query||`${item.label} ${item.description} transformation`.toLocaleLowerCase().includes(query)));
   const pairedCompanions=$derived(inventory.filter(resource=>resource.resourceType==='companion'&&resource.attributes.componentKind==='paired-companion'));
   const panelComponents=$derived(pairedCompanions.flatMap(source=>latestCompanionPanels(companionPanels).filter(panel=>!profilePalettePanelReason(panel,source)).map(panel=>({source,panel}))).filter(({source,panel})=>!query||`${source.name} ${panel.title} companion panels`.toLocaleLowerCase().includes(query)));
   function isOpen(category:string){return !!query||!!expanded[category];}
@@ -87,11 +82,6 @@
         </div>
       </details>
     {/if}
-    {#if transformations.length}<details class="editor-accordion" aria-label="Transformation components" open={isOpen('transformations')} ontoggle={event=>rememberOpen(event,'transformations')}><summary>Transformations<span class="category-count">{transformations.length}</span></summary><div class="accordion-content">
-      {#each transformations as item (item.preset)}
-        <button class="component" data-processing-preset={item.preset} aria-label={`Add ${item.label}`} disabled={disabled||processingCount>=256} draggable={!disabled&&processingCount<256} ondragstart={event=>beginDrag(event,{component:{kind:'transformation',preset:item.preset},name:item.label,category:'Transformation'})} ondragend={endDrag} onclick={()=>addTransformation(item.preset)}><span class="component-icon"><Icon name="sliders" size={17}/></span><span class="component-copy"><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="plus" size={14}/></button>
-      {/each}
-    </div></details>{/if}
     {#if pairedCompanions.length&&(!query||panelComponents.length||'companion panels'.includes(query))}<details class="editor-accordion" aria-label="Companion panel components" open={isOpen('panels')} ontoggle={event=>rememberOpen(event,'panels')}><summary>Companion panels<span class="category-count">{panelComponents.length}</span></summary><div class="accordion-content">
       <button class="refresh-panels" disabled={companionPanelsBusy} onclick={refreshPanels}><Icon name="refresh" size={13}/>{companionPanelsBusy?'Reading saved panels…':companionPanelsError?'Retry saved panels':'Refresh saved panels'}</button>
       {#if companionPanelsError}<p class="group-hint palette-error" role="status">{companionPanelsError}</p>{/if}
@@ -120,10 +110,10 @@
       </div></details>{/if}
 
     {/each}
-    {#if !components.length&&!showVirtual&&!showDebug&&!showDesktop&&!visibleGroups.length&&!transformations.length&&!panelComponents.length}<p class="palette-empty">No matching components.</p>{/if}
+    {#if !components.length&&!showVirtual&&!showDebug&&!showDesktop&&!visibleGroups.length&&!panelComponents.length}<p class="palette-empty">No matching components.</p>{/if}
     {#if !inventory.length&&!refreshing&&!query&&!showDebug}<p class="palette-empty">No devices or companions found.</p>{/if}
   </div>
-  <footer>{resourceCount} / 64 resources <span>Drag components onto the canvas. Drop a transformation onto a connection to insert it.</span></footer>
+  <footer>{resourceCount} / 64 resources <span>Drag components onto the canvas.</span></footer>
 </aside>
 
 <style>
