@@ -52,7 +52,7 @@ fn tool(name: &str, description: &str, properties: Vec<(&str, Value)>, required:
         .map(|(key, value)| (key.to_owned(), value))
         .collect::<serde_json::Map<String, Value>>();
     let mut required = required.iter().map(|key| json!(key)).collect::<Vec<_>>();
-    if mutation {
+    if mutation && !is_streaming(name) {
         props.insert("operationId".into(),json!({"type":"string","format":"uuid","minLength":36,"maxLength":36,"description":"Fresh canonical lowercase UUID. Replay the exact same arguments with this identity to recover the original result; never reuse for different work."}));
         required.push(json!("operationId"));
     }
@@ -136,6 +136,8 @@ pub fn catalogue() -> Vec<Value> {
         tool("activation_cancel","Cancel an exact pending native activation. Its epoch fence cannot deactivate a newer applied owner. Cleanup is never cancelled.",vec![("activationId",string(36))],&["activationId"]),
         tool("profile_stop","Explicitly stop and neutralize native profile outputs. Emergency cleanup stays available when preparation fails or another operation is pending.",vec![],&[]),
         tool("profile_recover","Explicitly retry cleanup of retained native ownership/recovery receipts. Does not replay a saved graph or activate outputs.",vec![],&[]),
+        tool("profile_debug_controller_status","Read volatile values of a debug controller for the exact applied profile owner.",vec![("owner",owner()),("nodeId",string(80))],&["owner","nodeId"]),
+        tool("profile_debug_controller_input","Atomically drive authored debug controls in the exact running profile. Values persist until another update or Stop. Each stream uses strictly increasing canonical decimal sequences; exact retries are harmless. This streaming mutation uses streamId/sequence instead of operationId, with sixteen streams per controller and bounded backpressure.",vec![("owner",owner()),("nodeId",string(80)),("streamId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36})),("sequence",json!({"type":"string","minLength":1,"maxLength":20,"pattern":"^[1-9][0-9]*$"})),("changes",json!({"type":"array","minItems":1,"maxItems":128,"items":{"type":"object","additionalProperties":false,"properties":{"portId":string(80),"value":{"type":["boolean","integer"]}},"required":["portId","value"]}}))],&["owner","nodeId","streamId","sequence","changes"]),
         tool("applied_ports_inspect","Inspect actual declared-port samples for an exact applied owner. Saved/selected profile state cannot impersonate an applied runtime.",fields(vec![("owner",owner()),("nodeId",string(80))],page()),&["owner"]),
         tool("applied_topology_inspect","Page immutable nodes or edges from an exact native applied owner.",fields(vec![("owner",owner()),("section",choice(&["nodes","edges"]))],page()),&["owner","section"]),
         tool("system_inventory","Read supplemental native virtual/hidden/controller inventory. Reuse observedAt when paging a captured snapshot.",vec![("offset",integer(0,4096)),("limit",integer(1,32)),("observedAt",integer(1,u64::MAX))],&[]),
@@ -168,7 +170,10 @@ fn activity_catalogue() -> Vec<Value> {
     ]
 }
 
+pub fn is_streaming(name:&str)->bool {name=="profile_debug_controller_input"}
+
 pub fn is_mutation(name: &str) -> bool {
+    if is_streaming(name) { return true; }
     matches!(name,"activity_clear"|"activity_settings_save") || super::companion_controls::mutation(name)
         || matches!(
             name,

@@ -155,6 +155,7 @@ pub(crate) trait Host: Send {
     fn set_cleanup_progress(&mut self, _: Option<u64>) {}
     fn activation_progress(&self, _: Option<u64>, _: &str, _: &str) {}
     fn desktop_status(&self) -> Value { Value::Null }
+    fn debug_controller(&mut self,_:&OwnedRun,_:&crate::profile_debug_controller::Request)->Result<Value,String> { Err("This profile host has no debug controllers.".into()) }
     fn output_handoff(&mut self, _: &OwnedRun, _: u64) -> Result<Option<osg_virtual_controller::session::RunningOutput>, String> { Ok(None) }
     fn prepare(&mut self, candidate: &Candidate, owner: &RunOwner) -> Result<Prepared, String>;
     fn validate_prepared(&mut self, prepared: &Prepared, owner: &RunOwner) -> Result<(), String>;
@@ -286,6 +287,11 @@ impl<H: Host> Coordinator<H> {
             status["state"]=serde_json::json!("recovery-needed");status["error"]=serde_json::json!(self.status.fault);
         }
         status
+    }
+    pub(crate) fn debug_controller(&mut self,request:&crate::profile_debug_controller::Request)->Result<Value,String> {
+        if !self.validates(&request.owner) {return Err("The requested debug controller owner expired; inspect the current running revision.".into());}
+        let run=self.manifest.active.as_ref().filter(|run|run.owner==request.owner).ok_or("The native applied manifest no longer owns this revision.")?;
+        self.host.debug_controller(run,request)
     }
     pub(crate) fn validates(&self, owner: &RunOwner) -> bool {
         matches!(self.status.state, State::Running | State::Degraded)

@@ -75,6 +75,7 @@ mod profile_resources;
 mod profile_activation_window;
 mod profile_system_notification;
 mod profile_compilation;
+mod profile_debug_controller;
 mod profile_desktop_preview;
 mod profile_input_learning;
 mod profile_retired_recovery;

@@ -19,7 +19,7 @@ function scopeNewNode(document:ProfileDocument,nodeId:string,tabId=''):void {
   tab.nodeIds.push(nodeId);
 }
 
-export function graphFreshId(document: DeepReadonly<ProfileDocument>, prefix: 'route'|'transform'|'virtual'|'desktop'|'port'): string {
+export function graphFreshId(document: DeepReadonly<ProfileDocument>, prefix: 'route'|'transform'|'virtual'|'desktop'|'port'|'debug'): string {
   const used = new Set([...nodes(document).map(node=>node.id), ...document.bindings.map(binding=>binding.id), ...nodes(document).flatMap(node=>'ports' in node ? node.ports.map(port=>port.id) : [...node.inputs,...node.outputs].map(port=>port.id))]);
   for(let n=1;n<=4096;n++)if(!used.has(`${prefix}-${n}`))return `${prefix}-${n}`;
   throw new Error('No unused logical graph identity is available.');
@@ -77,6 +77,7 @@ export function graphDraft(value: DeepReadonly<ProfileGraphDraft>): ProfileGraph
   if(error)throw new Error(error);
   for(const assignment of value.assignments){
     const resource=value.document.resources.find(resource=>resource.id===assignment.resourceId);
+    if(resource?.kind==='debug-controller')throw new Error('Debug controllers do not use local hardware assignments.');
     if(!resource||resource.ports.length!==assignment.ports.length||resource.ports.some(port=>!assignment.ports.some(pin=>pin.profilePortId===port.id)))throw new Error('A local assignment must pin every selected logical port of its resource exactly once.');
   }
   return clone<ProfileGraphDraft>(value);

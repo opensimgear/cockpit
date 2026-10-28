@@ -1,4 +1,5 @@
 /** Portable unified profile contracts. Native validation remains authoritative. */
+import {debugControllerError} from './profile-debug-controller.ts';
 import { desktopActionValid, desktopActionContract, desktopOutputScopeValid, type ProfileDesktopOutput } from './profile-desktop.ts';
 import type { GameId } from './games';
 export const PROFILE_SCHEMA_VERSION = 2;
@@ -31,7 +32,7 @@ export type ProfileBuiltin =
   | { kind: 'gesture'; gesture: 'tap' | 'hold' | 'double-tap'; holdUs: number; doubleUs: number; pulseUs: number }
   | { kind: 'pulse'; durationUs: number; repeatUs: number }
   | { kind: 'macro'; steps: { afterUs: number; pressed: boolean }[] };
-export type ProfileResource = { id: string; name: string; kind: 'device' | 'companion' | 'game'; required: boolean; ports: ProfilePort[] };
+export type ProfileResource = { id: string; name: string; kind: 'device' | 'companion' | 'game' | 'debug-controller'; required: boolean; ports: ProfilePort[] };
 export type ProfileEndpoint = { nodeId: string; portId: string };
 export type ProfileBinding = { id: string; from: ProfileEndpoint; to: ProfileEndpoint };
 export type ProfileOperation = { kind: 'identity' | 'not' | 'invert' | 'gate' | 'any' | 'all' | 'event-to-state' }
@@ -235,7 +236,8 @@ export function profileDocumentError(value: unknown): string {
   if (!exact(value, ['schemaVersion', 'id', 'name', 'revision', 'eligibility', 'resources', 'bindings', 'processingNodes', 'virtualOutputs', 'visibility', 'overrides', 'companionAssignments', 'editor',...(object(value)&&Object.hasOwn(value,'desktopOutputs')?['desktopOutputs']:[]),...(object(value)&&Object.hasOwn(value,'vehicleTabs')?['vehicleTabs']:[])])) return 'Use the unified portable profile document without local assignments or legacy fields.';
   if (value.schemaVersion !== PROFILE_SCHEMA_VERSION || !uuid(value.id) || !text(value.name) || !whole(value.revision, 1, Number.MAX_SAFE_INTEGER)) return 'Choose a supported profile schema, canonical UUID, name and revision.';
   if (!exact(value.eligibility, ['gameIds']) || !list(value.eligibility.gameIds, 32) || !value.eligibility.gameIds.every(identifier) || new Set(value.eligibility.gameIds).size !== value.eligibility.gameIds.length) return 'Choose unique logical game identifiers.';
-  if (!list(value.resources, 64) || !value.resources.every(row => exact(row, [...labelKeys, 'kind', 'required', 'ports']) && nodeLabel(row) && ['device', 'companion', 'game'].includes(String(row.kind)) && typeof row.required === 'boolean' && ports(row.ports))) return 'Use valid logical resources and typed ports.';
+  if (!list(value.resources, 64) || !value.resources.every(row => exact(row, [...labelKeys, 'kind', 'required', 'ports']) && nodeLabel(row) && ['device', 'companion', 'game', 'debug-controller'].includes(String(row.kind)) && typeof row.required === 'boolean' && ports(row.ports))) return 'Use valid logical resources and typed ports.';
+  for (const resource of value.resources as ProfileResource[]) if (resource.kind === 'debug-controller') { const error = debugControllerError(resource); if (error) return error; }
   if (!list(value.processingNodes, 256) || !value.processingNodes.every(row => exact(row, [...labelKeys, 'operation', 'inputs', 'outputs',...(object(row)&&Object.hasOwn(row,'draft')?['draft']:[])]) && nodeLabel(row) && operation(row.operation) && ports(row.inputs) && ports(row.outputs) && (!Object.hasOwn(row,'draft') || row.inputs.length>0 && processingDraftValid(row.draft,row.operation)) && ((row.operation as ProfileOperation).kind !== 'script' || row.inputs.length >= 1 && row.inputs.length <= 32 && row.outputs.length >= 1 && row.outputs.length <= 16))) return 'Use supported processing nodes and typed ports.';
   if (!list(value.virtualOutputs, 16) || !value.virtualOutputs.every(row => exact(row, [...labelKeys, 'required', 'ports', 'layout']) && nodeLabel(row) && typeof row.required === 'boolean' && ports(row.ports) && layout(row.layout))) return 'Use valid logical virtual outputs.';
   const desktops=Object.hasOwn(value,'desktopOutputs')?value.desktopOutputs:[];

@@ -7,11 +7,11 @@
   import {PROCESSING_PRESETS,type ProcessingPreset} from './profile-processing';
   import {latestCompanionPanels,type ProfileCompanionPanel} from './profile-companion-authoring';
 
-  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, addTransformation=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
+  let {inventory, assignedIds, resourceCount, virtualCount, desktopAdded, processingCount=0, capturedCompanionIds=new Set<string>(), companionPanelCount=0, companionPanels=[], companionPanelsLoaded=false, companionPanelsBusy=false, companionPanelsError='', refreshPanels=()=>{}, addCompanionPanel=()=>{}, addTransformation=()=>{}, editorGroups=[], canAddGroup=true, disabled=false, refreshing=false, error='', refresh, addResource, addVirtual, addDebug=()=>{}, addDesktop, addGroup=()=>{}, focusGroup=()=>{}, renameGroup, deleteGroup=()=>{}, startDrag=()=>{}, endDrag=()=>{}}: {
     inventory:readonly DeepReadonly<ResourceSummary>[]; assignedIds:ReadonlySet<string>; resourceCount:number; virtualCount:number; desktopAdded:boolean;
     editorGroups?:readonly DeepReadonly<ProfileEditorGroup>[];canAddGroup?:boolean;
     disabled?:boolean; refreshing?:boolean; error?:string; refresh:()=>void;
-    addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDesktop:()=>void;
+    addResource:(resource:DeepReadonly<ResourceSummary>)=>void; addVirtual:()=>void; addDebug?:()=>void; addDesktop:()=>void;
     processingCount?:number;addTransformation?:(preset:ProcessingPreset)=>void;
     capturedCompanionIds?:ReadonlySet<string>;companionPanelCount?:number;companionPanels?:readonly DeepReadonly<ProfileCompanionPanel>[];companionPanelsLoaded?:boolean;companionPanelsBusy?:boolean;companionPanelsError?:string;refreshPanels?:()=>void;addCompanionPanel?:(sourceId:string,publicationHash:string)=>void;
     addGroup?:()=>void;focusGroup?:(id:string)=>void;renameGroup?:(id:string,name:string)=>void;deleteGroup?:(id:string)=>void;
@@ -40,6 +40,7 @@
     .slice().sort((a,b)=>a.name.localeCompare(b.name)));
   const visibleGroups=$derived(editorGroups.filter(group=>!query||`${group.name} groups`.toLocaleLowerCase().includes(query)));
   const showVirtual=$derived(!query||'virtual controller outputs'.includes(query));
+  const showDebug=$derived(!query||'debug controller axes buttons hats input'.includes(query));
   const showDesktop=$derived(!query||'keyboard mouse desktop outputs'.includes(query));
   const transformations=$derived([
     {preset:'identity' as ProcessingPreset,label:'Transformation',description:'Choose a type after dropping'},
@@ -103,7 +104,8 @@
       </div></details>{/if}
     {#each categories as category (category.type)}
       {@const items=components.filter(resource=>resource.resourceType===category.type)}
-      {#if items.length}<details class="editor-accordion" aria-label={category.label} open={isOpen(category.type)} ontoggle={event=>rememberOpen(event,category.type)}><summary>{category.label}<span class="category-count">{items.length}</span></summary><div class="accordion-content">
+      {#if items.length||category.type==='host-controller'&&showDebug}<details class="editor-accordion" aria-label={category.label} open={isOpen(category.type)} ontoggle={event=>rememberOpen(event,category.type)}><summary>{category.label}<span class="category-count">{items.length+(category.type==='host-controller'&&showDebug?1:0)}</span></summary><div class="accordion-content">
+        {#if category.type==='host-controller'&&showDebug}<button class="component" aria-label="Add debug controller" disabled={disabled||resourceCount>=64} draggable={!disabled&&resourceCount<64} ondragstart={event=>beginDrag(event,{component:{kind:'debug-controller'},name:'Debug controller',category:'Debug controller'})} ondragend={endDrag} onclick={addDebug}><span class="component-icon"><Icon name="bug" size={17}/></span><span class="component-copy"><strong>Debug controller</strong><small>Interactive axes, buttons and hats</small></span><Icon name="plus" size={14}/></button>{/if}
         {#each items as resource (resource.id)}
           {@const inProfile=added(resource)}
           <button class="component" data-resource-id={resource.id} title={resource.name} aria-label={`Add ${resource.name}`} disabled={disabled||inProfile||resourceCount>=64} draggable={!disabled&&!inProfile&&resourceCount<64} ondragstart={event=>beginDrag(event,{component:{kind:'resource',sourceId:resource.id},name:resource.name,category:profileCategory(resource)})} ondragend={endDrag} onclick={()=>addResource(resource)}>
@@ -115,8 +117,8 @@
       </div></details>{/if}
 
     {/each}
-    {#if !components.length&&!showVirtual&&!showDesktop&&!visibleGroups.length&&!transformations.length&&!panelComponents.length}<p class="palette-empty">No matching components.</p>{/if}
-    {#if !inventory.length&&!refreshing&&!query}<p class="palette-empty">No devices or companions found.</p>{/if}
+    {#if !components.length&&!showVirtual&&!showDebug&&!showDesktop&&!visibleGroups.length&&!transformations.length&&!panelComponents.length}<p class="palette-empty">No matching components.</p>{/if}
+    {#if !inventory.length&&!refreshing&&!query&&!showDebug}<p class="palette-empty">No devices or companions found.</p>{/if}
   </div>
   <footer>{resourceCount} / 64 resources <span>Drag components onto the canvas. Drop a transformation onto a connection to insert it.</span></footer>
 </aside>

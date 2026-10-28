@@ -64,6 +64,7 @@ struct NativeRun {
     backend: osg_profiles::compiler_models::BackendCapabilities,
     delivery: Option<ExecutionPlan>,
     inputs: Option<crate::profile_session_inputs::HidInputs>,
+    debug_inputs: crate::profile_debug_controller::DebugInputs,
     panels: crate::profile_session_panels_inputs::PanelInputs,
     actions: crate::profile_session_actions::PanelActions,
     baselines: Vec<osg_mapping::engine::typed::Frame>,
@@ -121,6 +122,14 @@ fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
 }
 impl NativeProfileHost {
+    pub(crate) fn debug_controller_request(&mut self,run:&OwnedRun,request:&crate::profile_debug_controller::Request)->Result<serde_json::Value,String> {
+        self.fence(&run.owner)?;
+        let now=self.controllers.stream_page("",0).captured_us;
+        let state=self.run(&run.owner)?;
+        if state.vehicle_paused { return Err("Wait for the active vehicle profile variant.".into()); }
+        let at=now.max(state.reducer.as_ref().ok_or("The profile reducer is stopped.")?.at_us().0);
+        state.debug_inputs.request(request,at)
+    }
     fn unavailable_peripherals(snapshot: &osg_profiles::compiler_models::CompileSnapshot, document: &osg_profiles::ProfileDocument) -> BTreeMap<String, String> {
         document.resources.iter().filter(|resource| matches!(resource.kind, osg_profiles::ResourceKind::Device | osg_profiles::ResourceKind::Companion))
             .filter_map(|resource| {
@@ -863,6 +872,7 @@ impl Host for NativeProfileHost {
             document, source_document:candidate.document.clone(),source_assignments:candidate.assignments.clone(),vehicle_selection,vehicle_paused:false,vehicle_error:None,
             backend, delivery: None, inputs: None, panels,
             baselines: vec![], reducer: None, recording: RecordingSink::default(),
+            debug_inputs: crate::profile_debug_controller::DebugInputs::default(),
             started: Instant::now(), clock_origin: 0, bindings, output: None, desktop: None, desktop_scope, output_handoff, scripts, game, game_preparation,
             child_game_owner: None, game_retry: None, game_resume: None, launch_epoch_bound: false, launch_context_installed: false,
             companions, companion_catalogues, companion_retry: None, companion_initial_operations:BTreeMap::new(), visibility,
@@ -978,6 +988,7 @@ impl Host for NativeProfileHost {
         self.report_progress(&run.owner, "cleanup-validating-recorded-outputs", "Validating recorded profile outputs");
         self.prepare_action_recovery(run)
     }
+    fn debug_controller(&mut self,run:&OwnedRun,request:&crate::profile_debug_controller::Request)->Result<serde_json::Value,String> { self.debug_controller_request(run,request) }
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
         if self.prepared.contains_key(&key(&run.owner)) {
             self.report_progress(&run.owner, "neutralizing-outputs", "Stopping profile outputs");
@@ -998,6 +1009,7 @@ impl Host for NativeProfileHost {
             if let Some(epoch)=progress_epoch {Self::emit_progress(progress.as_ref(),epoch,step,message);}
         };
         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
+            state.debug_inputs.clear();
             state.publication.revoke_renewal();
             if let Some(mut desktop) = state.desktop.take() {
                 let program=state.delivery.as_ref().or(state.acquisition_plan.as_ref()).or(state.report.plan.as_ref())
@@ -1138,6 +1150,9 @@ impl Host for NativeProfileHost {
                 state.baselines.extend(game_frames);
                 state.baselines.extend(panel_frames);
                 state.baselines.extend(companion_frames);
+                let (debug,debug_frames)=crate::profile_debug_controller::DebugInputs::capture(&state.document,&delivery,run.owner.generation,state.clock_origin)?;
+                state.debug_inputs=debug;
+                state.baselines.extend(debug_frames);
                 state.delivery = Some(delivery);
                 self.refresh_action_binding(&run.owner)
             }
@@ -1215,6 +1230,9 @@ impl Host for NativeProfileHost {
                 state.baselines.extend(game_frames);
                 state.baselines.extend(panel_frames);
                 state.baselines.extend(companion_frames);
+                let (debug,debug_frames)=crate::profile_debug_controller::DebugInputs::capture(&state.document,&delivery,run.owner.generation,state.clock_origin.max(controllers.stream_page("",0).captured_us))?;
+                state.debug_inputs=debug;
+                state.baselines.extend(debug_frames);
                 state.delivery = Some(delivery);
                 dcs_hid::validate(state, &resources, &panels_io)?;
                 Self::check_epoch(&admission_epoch,state.admission_epoch)?;
@@ -1363,7 +1381,9 @@ impl Host for NativeProfileHost {
             .reducer
             .as_mut()
             .ok_or("The profile reducer is stopped.")?;
-        let frames = frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames).collect::<Vec<_>>();
+        let frames = frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames).chain(state.debug_inputs.poll()).collect::<Vec<_>>();
+        let batch_clock=frames.iter().map(|frame|frame.captured_us).max().unwrap_or(reducer.at_us());
+        state.debug_inputs.refresh_liveness(reducer,Counter(batch_clock.0.max(reducer.at_us().0)))?;
         degraded.extend(reducer.accept_batch(frames.iter().cloned())?);
         let elapsed = u64::try_from(state.started.elapsed().as_micros())
             .map_err(|_| "Profile runtime clock exhausted.")?;
@@ -1376,6 +1396,7 @@ impl Host for NativeProfileHost {
             ),
         );
         if let Some(inputs) = state.inputs.as_ref() { inputs.refresh_liveness(controllers.as_ref(), reducer, tick)?; }
+        state.debug_inputs.refresh_liveness(reducer,tick)?;
         for (source,generation,ports) in panels.liveness {
             reducer.observe_port_liveness(&source,generation,tick,&ports)?;
         }

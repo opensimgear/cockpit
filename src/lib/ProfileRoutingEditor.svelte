@@ -8,6 +8,9 @@
   import Icon from './Icon.svelte';
   import ProfileProcessingEditor from './ProfileProcessingEditor.svelte';
   import ProfileVirtualEditor from './ProfileVirtualEditor.svelte';
+  import ProfileDebugControllerEditor from './ProfileDebugControllerEditor.svelte';
+  import {debugControllerResource} from './profile-debug-controller';
+  import {graphSetDebugController} from './profile-debug-graph';
   import ProfileDesktopEditor from './ProfileDesktopEditor.svelte';
   import type {ProfileDesktopOutput}from'./profile-desktop';
   import {graphSetDesktop}from'./profile-graph';
@@ -28,7 +31,7 @@
   import ProfileTransformSettings from './ProfileTransformSettings.svelte';
   import {gatewayRequest}from'./gateway';
   import type{CompilationSummary,CompileDiagnostic,ProfileCompilerClient}from'./profile-compilation';
-  import type{DeepReadonly,ProfileDocument,ProfileLocalAssignment,ProfilePortContract,ProfileProcessingNode,ProfileVirtualOutput}from'./profiles';
+  import type{DeepReadonly,ProfileDocument,ProfileLocalAssignment,ProfilePortContract,ProfileProcessingNode,ProfileVirtualOutput,ProfileResource}from'./profiles';
   import type{ObservedResourcePort,ProfileInventoryClient,ResourceDetails,ResourceSummary}from'./profile-inventory';
   import type{GameId}from'./games';
   import {ProfileCompanionAuthoringClient,type ProfileCompanionPage}from'./profile-companion-authoring';
@@ -234,6 +237,7 @@
   export function renameGroup(id:string,name:string){canvas?.renameGroup(id,name);}
   export function deleteGroup(id:string){canvas?.deleteGroup(id);}
   export function addVirtual(position?:CanvasPoint){const id=graphFreshId(document,'virtual');apply(()=>{if(!profilePaletteCanAdd({kind:'virtual'},document,assignments,inventory,activeVehicleTabId))throw new Error('A profile supports at most eight active virtual controllers.');return placeComponent(graphSetVirtual(graph,{id,name:'Virtual controller',required:false,layout:{buttons:['button-1','button-2','button-3','button-4'],axes:[],hats:[]}},activeVehicleTabId),id,position);},'Add virtual controller');}
+  export function addDebug(position?:CanvasPoint){if(!profilePaletteCanAdd({kind:'debug-controller'},document,assignments,inventory,activeVehicleTabId))return;const id=graphFreshId(document,'debug');apply(()=>placeComponent(graphSetDebugController(graph,debugControllerResource(id),activeVehicleTabId),id,position),'Add debug controller');}
   export function addDesktop(position?:CanvasPoint){if(!profilePaletteCanAdd({kind:'desktop'},document,assignments,inventory,activeVehicleTabId))return;const id=graphFreshId(document,'desktop');apply(()=>placeComponent(graphSetDesktop(graph,{id,name:'Keyboard and mouse',required:false,scope:{kind:'selected-game'},ports:[],actions:[{portId:'action-1',action:{kind:'key-hold',key:44}}]},activeVehicleTabId),id,position),'Add keyboard and mouse endpoint');}
   function updateDesktop(output:ProfileDesktopOutput){apply(()=>graphSetDesktop(graph,output),'Edit typed desktop actions');}
   function processingInsertion(bindingId:string|null,kind:ProcessingPreset,base:DeepReadonly<ProfileGraphDraft>=graph){
@@ -266,6 +270,7 @@
   function configureDraft(id:string,kind:ProcessingPreset,parameters:Record<string,unknown>={}){return apply(()=>updateProcessingDraft(graph,id,kind,parameters),'Configure transformation');}
   function quickFactor(node:DeepReadonly<ProfileProcessingNode>,input:HTMLInputElement){if(node.operation.kind!=='scale')return;if(!updateProcessing({...copy(node) as ProfileProcessingNode,operation:{...node.operation,factor:Number(input.value)}}))input.value=String(node.operation.factor);}
   function updateVirtual(output:Omit<ProfileVirtualOutput,'ports'>){apply(()=>graphSetVirtual(graph,output),'Edit virtual controller layout');}
+  function updateDebug(resource:ProfileResource){apply(()=>graphSetDebugController(graph,resource),'Edit debug controller');}
   function removeNode(id:string){apply(()=>{const next=graphRemoveNode(graph,id);if(document.resources.some(resource=>resource.id===id&&resource.kind==='game')&&!next.document.resources.some(resource=>resource.kind==='game'))next.document.eligibility.gameIds=[];return next;},'Remove block and its routes');selectedId='';}
   function optionKey(port:DeepReadonly<ObservedResourcePort>):string{return JSON.stringify([port.descriptor.id,port.contractHash]);}
   function chooseMapping(portId:string,key:string){const observed=mappingOptions.find(port=>optionKey(port)===key);const next={...selectedMappings};if(observed)next[portId]=observed;else delete next[portId];selectedMappings=next;}
@@ -338,7 +343,9 @@
     {#snippet inspector(node)}
       {@const physicalController=node.resource?.kind==='device'&&node.observation?.resourceType==='host-controller'}
       <fieldset class="authoring-inspector" disabled={readOnly}>
-        {#if physicalController&&node.resource}
+        {#if node.resource?.kind==='debug-controller'}
+          <ProfileDebugControllerEditor resource={node.resource} profileId={document.id} revision={document.revision} {active} disabled={readOnly} update={updateDebug}/>
+        {:else if physicalController&&node.resource}
           <label>Label<input value={node.resource.name} maxlength="80" onchange={event=>resourcePolicy(node,'name',event.currentTarget.value)}/></label>
           <label class="check"><input type="checkbox" checked={node.resource.required} onchange={event=>resourcePolicy(node,'required',event.currentTarget.checked)}/> Required</label>
           <label>Visibility<select aria-label="Visibility" value={document.visibility.find(intent=>intent.resourceId===node.id)?.mode??'visible'} onchange={event=>apply(()=>graphSetVisibility(graph,node.id,event.currentTarget.value==='hidden-while-active'?'hidden-while-active':'visible'),'Edit visibility intent')}><option value="visible">Visible</option><option value="hidden-while-active">Hidden while profile is active</option></select></label>
@@ -361,7 +368,7 @@
       {#if physicalController}
         <ProfileControllerInputs resource={node.observation} {active}/>
       {/if}
-      {#if physicalController||node.virtual}
+      {#if physicalController||node.virtual||node.resource?.kind==='debug-controller'}
         <footer class="controller-actions"><button class="secondary-button destructive-button" disabled={readOnly} onclick={()=>removeNode(node.id)}><Icon name="trash" size={14}/>Remove</button></footer>
       {/if}
     {/snippet}

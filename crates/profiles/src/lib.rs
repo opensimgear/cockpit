@@ -1,6 +1,7 @@
 //! Portable unified profile documents. Parsing and validation never acquire a device.
 pub mod activation;
 pub mod compiler;
+pub mod debug_controller;
 pub mod compiler_models;
 pub mod model;
 pub mod resources;

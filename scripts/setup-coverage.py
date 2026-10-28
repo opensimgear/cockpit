@@ -36,7 +36,7 @@ def main():
                     'game_context.rs', 'game_context_runtime.rs', 'games/integration/provider_settings.rs', 'games/integration/settings.rs',
                     'games/integration/requests.rs', 'games/integration/provision.rs',
                     'games/integration/inspection.rs', 'games/integration/catalogues.rs',
-                    'profile_session.rs', 'profile_session_journal.rs', 'profile_session_games.rs',
+                    'profile_debug_controller.rs', 'profile_session.rs', 'profile_session_journal.rs', 'profile_session_games.rs',
                     'profile_session_stage.rs', 'profile_session_inputs.rs',
                     'profile_session_scripts.rs', 'profile_session_virtual.rs',
                     'profile_hid_publication.rs', 'profile_session_dcs_hid.rs',

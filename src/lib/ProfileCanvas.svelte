@@ -155,7 +155,7 @@
   const outputs = $derived(selected?.resource?.ports.filter(port=>port.direction==='output') ?? selected?.processing?.outputs ?? []);
   const gameId = $derived(selected ? canvasGameId(selected) : null);
   const observedId = $derived(selected?.observation ? selected.assignment?.sourceId : undefined);
-  const simpleInspector = $derived(simpleControllerInspector && selected?.resource?.kind === 'device' && selected.observation?.resourceType === 'host-controller');
+  const simpleInspector = $derived(simpleControllerInspector && (selected?.resource?.kind === 'debug-controller' || selected?.resource?.kind === 'device' && selected.observation?.resourceType === 'host-controller'));
   let portEpoch = 0;
   let laneScope=untrack(()=>`${document.id}/${activeVehicleTabId}`);
   $effect(()=>{const scope=`${document.id}/${activeVehicleTabId}`;if(scope!==laneScope){laneScope=scope;closeLanes();}});
@@ -611,7 +611,7 @@
     {:else if selected}
     <aside class="canvas-inspector" aria-label="Selected block inspector" data-expanded="true" bind:this={inspectorPanel} transition:slideDetails>
         {#if !simpleInspector}<button class="inspector-close" aria-label="Close component settings" onclick={()=>selectedId=''}><Icon name="close" size={16}/></button>{/if}
-        <div class="inspector-content" class:controller-inspector={simpleInspector&&selected.resource?.kind==='device'} id={inspectorContentId} data-inspector-content>
+        <div class="inspector-content" class:controller-inspector={simpleInspector&&!!selected.resource} id={inspectorContentId} data-inspector-content>
         {#if !simpleInspector}
         <p class="inspector-category">{selected.category}</p><h3>{selected.name}</h3><p class="inspector-state">{canvasStatus(selected)}</p>
         {#if selected.resource}<p class="inspector-note">{selected.resource.required?'Required':'Optional'} resource. Its saved identity and routes remain when disconnected.</p>{/if}

@@ -316,6 +316,7 @@ fn compile_mode(
                 document.companion_assignments.iter().find(|a| a.resource_id == resource.id).map(|a| a.publication_hash.as_str()),
             );
             let (adapter, runtime_adapter) = match resource.kind {
+                ResourceKind::DebugController => unreachable!("Validated debug controllers have output ports only"),
                 ResourceKind::Game => (
                     SinkAdapter::SimulatorCommand,
                     ResourceAdapter::SimulatorCommand,

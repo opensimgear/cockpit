@@ -50,6 +50,7 @@ impl Request {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum NodeKind {
+    DebugController,
     Desktop,
     Device,
     Companion,
@@ -292,6 +293,7 @@ pub(crate) fn capture_variant(
                     id: node.id.clone(),
                     name: node.name.clone(),
                     kind: match node.kind {
+                        ResourceKind::DebugController => NodeKind::DebugController,
                         ResourceKind::Device => NodeKind::Device,
                         ResourceKind::Companion => NodeKind::Companion,
                         ResourceKind::Game => NodeKind::Game,

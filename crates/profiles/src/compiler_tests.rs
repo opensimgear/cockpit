@@ -93,6 +93,7 @@ fn snapshot(document: &ProfileDocument) -> CompileSnapshot {
             id: id.clone(),
             name: logical.name.clone(),
             resource_type: match logical.kind {
+                ResourceKind::DebugController => unreachable!("Debug controllers have no inventory capture"),
                 ResourceKind::Device if osg => ResourceType::OsgModule,
                 ResourceKind::Device => ResourceType::HostController,
                 ResourceKind::Companion => ResourceType::Companion,

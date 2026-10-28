@@ -59,3 +59,21 @@ fn transport_limits_preserve_operation_identity_without_returning_oversized_data
     assert_eq!(error["operationId"], id);
     assert!(transport::operation_error("native_failure", "Inspect", Some(json!(1))).get("operationId").is_none());
 }
+
+#[test]
+fn debug_controller_streaming_requires_write_credentials() {
+    let server=Server::open(Arc::new(GatewayManager::mcp_test_manager()),None);
+    let reader=server.create_credential("Debug reader".into(),"read".into(),0).unwrap();
+    let writer=server.create_credential("Debug writer".into(),"write".into(),1).unwrap();
+    let reservation=std::net::TcpListener::bind("127.0.0.1:0").unwrap();let port=reservation.local_addr().unwrap().port();drop(reservation);
+    server.configure(SettingsUpdate{expected_settings_revision:2,enabled:true,port}).unwrap();
+    let generation=server.state.lock().unwrap().listener.as_ref().unwrap().generation;
+    let reader=server.authenticate(reader["token"].as_str().unwrap(),generation).unwrap();
+    let writer=server.authenticate(writer["token"].as_str().unwrap(),generation).unwrap();
+    let input=crate::mcp_tools::is_mutation("profile_debug_controller_input");
+    let status=crate::mcp_tools::is_mutation("profile_debug_controller_status");
+    assert!(input);assert!(!status);
+    assert!(!server.authorized(&reader,input));assert!(server.authorized(&reader,status));
+    assert!(server.authorized(&writer,input));
+    server.shutdown();
+}

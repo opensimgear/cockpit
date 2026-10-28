@@ -1116,6 +1116,12 @@ impl GatewayManager {
                 Err(error) => json!({"ok":false,"error":error.chars().take(256).collect::<String>()}),
             };
         }
+        if matches!(command.as_str(),"profile_debug_controller_status"|"profile_debug_controller_input") {
+            request.as_object_mut().unwrap().remove("clientId");
+            let result=crate::profile_debug_controller::Request::parse(&request).and_then(|request|self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).debug_controller(&request));
+            if command=="profile_debug_controller_input" && result.is_ok() {self.profile_wake.notify();}
+            return match result {Ok(state)=>json!({"ok":true,"state":{"debugController":state}}),Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()})};
+        }
         if command == "profile_runtime_inspect" {
             request.as_object_mut().unwrap().remove("clientId");
             let result = crate::profile_session::inspection::Request::parse(&request)
@@ -2706,3 +2712,7 @@ mod tests {
         assert!(inner.adapters.lock().unwrap().is_empty());
     }
 }
+
+#[cfg(test)]
+#[path="profile_debug_controller_gateway_tests.rs"]
+mod debug_controller_tests;

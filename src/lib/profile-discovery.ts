@@ -89,7 +89,7 @@ export function profileDiscoveredPorts(value: DeepReadonly<ProfileGraphDraft>, n
     const key = pin && JSON.stringify([pin.observedPortId, pin.expectedContractHash]);
     if (key) selected.add(key);
     const observed = key ? byVariant.get(key) ?? null : null;
-    return { ...port, id: port.id, key: port.id, profilePortId: port.id, sourceId: assignment?.sourceId ?? null, observed, current: resource ? observed?.current === true : true, ...(companionPage && observed ? { companionPage } : {}) };
+    return { ...port, id: port.id, key: port.id, profilePortId: port.id, sourceId: assignment?.sourceId ?? null, observed, current: !resource || resource.kind === 'debug-controller' || observed?.current === true, ...(companionPage && observed ? { companionPage } : {}) };
   });
   for (const [variant, observed] of byVariant) {
     if ((!observed.current && !companionPage) || selected.has(variant)) continue;

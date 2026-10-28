@@ -151,6 +151,10 @@ pub(super) fn resolve(
         route: None,
         readiness: PlanReadiness::Blocked,
     };
+    if logical.kind == ResourceKind::DebugController {
+        result.readiness = PlanReadiness::Ready;
+        return result;
+    }
     let game_dormant = logical.kind == ResourceKind::Game && snapshot.game_context.is_none();
     if game_dormant {
         result.readiness = PlanReadiness::Dormant;

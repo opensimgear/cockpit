@@ -222,6 +222,7 @@ fn validate_graph_document(document: &ProfileDocument) -> Result<(), String> {
     }
     let mut nodes = BTreeMap::<&str, Vec<&Port>>::new();
     for resource in &document.resources {
+        if resource.kind == ResourceKind::DebugController { crate::debug_controller::validate(resource)?; }
         id(&resource.id)?;
         label(&resource.name)?;
         check(

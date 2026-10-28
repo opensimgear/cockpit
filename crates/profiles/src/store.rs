@@ -116,6 +116,7 @@ pub fn validate_assignments(
             .iter()
             .find(|r| r.id == assignment.resource_id)
             .unwrap();
+        if resource.kind == crate::ResourceKind::DebugController { return Err("Debug controllers do not use local assignments.".into()); }
         if assignment.ports.len() != resource.ports.len() {
             return Err("Local assignment must pin every logical port exactly.".into());
         }

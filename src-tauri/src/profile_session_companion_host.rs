@@ -285,7 +285,7 @@ impl NativeProfileHost {
         prepared: &ExecutionPlan,
     ) -> Result<(ExecutionPlan, Vec<osg_mapping::engine::typed::Frame>), String> {
         if self.run(owner)?.companions.is_empty() {
-            return Ok((self.resources.bind_delivery_reads(prepared)?, vec![]));
+            return Ok((crate::profile_debug_controller::bind_delivery(&self.resources,prepared,&self.prepared[&key(owner)].document)?, vec![]));
         }
         self.report_progress(owner, "companion-baseline", "Waiting for companion panel readiness");
         let callback = self.progress.clone();
@@ -361,7 +361,7 @@ impl NativeProfileHost {
                     .iter()
                     .all(|c| admitted_current(&snapshot, c, &native))
             {
-                if let Ok(delivery) = resources.bind_delivery_reads(prepared) {
+                if let Ok(delivery) = crate::profile_debug_controller::bind_delivery(&resources,prepared,&state.document) {
                     state.companions.bind_delivery_plan(&delivery)?;
                     if let Some(frames) = state.companions.baseline(
                         &hub,

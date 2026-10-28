@@ -163,7 +163,7 @@ impl Tools {
         if let Err(error) = definitions::validate(&schema["inputSchema"], &args, "arguments") {
             return failure("invalid_arguments", &error, false);
         }
-        let mutation = is_mutation(name);
+        let mutation = is_mutation(name) && !definitions::is_streaming(name);
         let operation = args["operationId"].as_str().unwrap_or("");
         if mutation {
             if !canonical_uuid(operation) {
@@ -444,6 +444,8 @@ impl Tools {
                 client,
                 Some("profiles"),
             ),
+            "profile_debug_controller_status" => forward("profile_debug_controller_status", &["owner","nodeId"],Some("debugController")),
+            "profile_debug_controller_input" => forward("profile_debug_controller_input", &["owner","nodeId","streamId","sequence","changes"],Some("debugController")),
             "applied_ports_inspect" => forward(
                 "profile_runtime_inspect",
                 &["owner", "nodeId", "offset", "limit"],

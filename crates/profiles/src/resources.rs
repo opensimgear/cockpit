@@ -1057,6 +1057,7 @@ impl Registry {
             ),
             Ok(entry) => {
                 let kind_matches = match logical.kind {
+                    crate::ResourceKind::DebugController => false,
                     crate::ResourceKind::Device => matches!(
                         entry.saved.resource_type,
                         ResourceType::HostController | ResourceType::OsgModule

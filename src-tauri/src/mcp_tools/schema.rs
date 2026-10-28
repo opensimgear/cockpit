@@ -204,7 +204,7 @@ pub(super) fn definitions() -> Value {
             vec![
                 ("id", text()),
                 ("name", text()),
-                ("kind", enumeration(&["device", "companion", "game"])),
+                ("kind", enumeration(&["device", "companion", "game", "debug-controller"])),
                 ("required", boolean()),
                 ("ports", list(reference("Port"), 1024)),
             ],
