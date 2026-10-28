@@ -15,7 +15,7 @@
   import {canvasRouteNodes,canvasOverviewRouteNodes,canvasPreviewRoutes,createOverviewMerger,bundleDiagramRoutes,buildDiagramWireTrunks,type DiagramWireBundle}from'./profile-canvas-render';
   import {profileReshapeWireSegment,profileSetWireRoute,profileInsertWireHandle,profileMoveWireHandle,profileRemoveWireHandle,profileWireHandleOnRoute}from'./profile-wire-layout';
   import {canvasStyling}from'./canvas-styling';
-  import {canvasNavigation,canvasWheelNavigation}from'./canvas-navigation';
+  import {canvasNavigation,canvasWheelNavigation,createCanvasCamera}from'./canvas-navigation';
   import {inputAvailability,portBindingCounts}from'./profile-input-availability';
   import {processingSummary} from './profile-processing';
   import type{CompileDiagnostic}from'./profile-compilation';
@@ -54,6 +54,11 @@
   let overviewPair=$state<{from:string;to:string}|null>(null);
   let searchInput: HTMLInputElement;
   let view = $state<CanvasViewport>({ ...untrack(() => document.editor.viewport) });
+  let cameraAnimating=$state(false),restoringView:CanvasViewport|null=null;
+  let cameraSettled:Promise<boolean>=Promise.resolve(true);
+  const camera=createCanvasCamera(()=>view,next=>{view=next;},{request:callback=>requestAnimationFrame(callback),cancel:id=>cancelAnimationFrame(id),now:()=>performance.now(),reducedMotion:()=>window.matchMedia('(prefers-reduced-motion: reduce)').matches,activity:active=>{cameraAnimating=active;}});
+  function transitionView(next:CanvasViewport,animate=true){cameraSettled=camera.move(next,animate&&mounted);return cameraSettled;}
+  function cancelCamera(){restoringView=null;camera.cancel();}
   let dragged = $state<{id:string;position:CanvasPoint}|null>(null);
   let wire=$state<{nodeId:string;portId?:string;direction:'input'|'output';pointer:number;start:CanvasPoint;end:CanvasPoint;moved:boolean;reconnect?:{bindingId:string;side:'from'|'to'}}|null>(null);
   let wireTargetId=$state(''),wireTargetPort=$state(''),hoveredEdgeId=$state(''),paletteConnectionId=$state('');
@@ -166,9 +171,9 @@
     if (resourceId) void loadPorts('open',resourceId);
   });
   onMount(() => { if (fitOnMount) fitView();mounted=true; });
-  onDestroy(() => { portEpoch++;layoutEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
-  function fitView() { const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];view = canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600); }
-  function fit() { bundlePicker=null;fitView(); }
+  onDestroy(() => { if(mounted)camera.destroy();mounted=false;restoringView=null;portEpoch++;layoutEpoch++; browser.clear();clearPendingMove();clearConnectionClick(); });
+  function fitView(animate=false) { if(!animate)cancelCamera(); const points=[...nodes,...frames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])];void transitionView(canvasFit(points,stage?.clientWidth || 900,stage?.clientHeight || 600),animate); }
+  function fit() { bundlePicker=null;restoringView=null;fitView(true); }
   function closeLanes(notify=false){pendingOverviewDrop=null;overviewBundleId='';overviewPair=null;showTransforms=false;activeTransform='';if(notify)closeConnectionPanel?.();}
   export function closeConnectionOverview(){closeLanes(false);}
   export function openConnectionOverview(from:string,to:string){pendingOverviewDrop=null;selectedId='';showTransforms=false;activeTransform='';overviewPair={from,to};overviewBundleId=destinationOverviewId(to);}
@@ -190,7 +195,7 @@
     }
     update(settings);return{update};
   }
-  function zoom(factor:number,at?:CanvasPoint) { bundlePicker=null;view=canvasZoom(view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2}); }
+  function zoom(factor:number,at?:CanvasPoint) { bundlePicker=null;restoringView=null;void transitionView(canvasZoom(camera.destination??view,factor,at??{x:(stage?.clientWidth||900)/2,y:(stage?.clientHeight||600)/2})); }
   async function layout() {
     if(readOnly||layoutBusy||drag||segmentDrag||wire)return;
     const sourceDocument=document,tab=activeVehicleTabId,epoch=++layoutEpoch;
@@ -213,14 +218,14 @@
       next.editor.positions=[...next.editor.positions.filter(position=>!visibleIds.has(position.nodeId)),...positions];
       for(const position of positions)next=canvasMoveIntoGroup(next,position.nodeId,position);
       const nextVisible=profileTabDocument(next,activeVehicleTabId),nextNodes=canvasNodes(nextVisible,assignments,inventory).filter(node=>!overview||!node.processing),nextFrames=overview?[]:canvasGroups(nextVisible,nextNodes);
-      view=canvasFit([...nextNodes,...nextFrames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])],stage?.clientWidth||900,stage?.clientHeight||600);
+      void transitionView(canvasFit([...nextNodes,...nextFrames.flatMap(frame=>[{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}])],stage?.clientWidth||900,stage?.clientHeight||600));
       return next;
       }),'Auto-layout');
     }catch(error){if(epoch===layoutEpoch&&tab===activeVehicleTabId)layoutError=error instanceof Error?error.message:String(error);}
     finally{if(epoch===layoutEpoch)layoutBusy=false;}
   }
   function choose(id:string) { closeLanes();bundlePicker=null;clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId=id; }
-  function chooseConnection(id:string) {bundlePicker=null;stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView())void tick().then(()=>{if(!selectedId)selectConnection?.(id);});else selectConnection(id);}else editConnection?.(id);}
+  function chooseConnection(id:string) {bundlePicker=null;stage?.focus?.({preventScroll:true});if(selectConnection){selectedId='';if(restoreSelectionView()){if(mounted)void cameraSettled.then(completed=>{if(completed&&!selectedId)selectConnection?.(id);});else void tick().then(()=>{if(!selectedId)selectConnection?.(id);});}else selectConnection(id);}else editConnection?.(id);}
   function openBundle(event:MouseEvent|KeyboardEvent,bundle:DiagramWireBundle,insertion?:{component:ProfilePaletteComponent;position:CanvasPoint}){
     event.preventDefault();event.stopPropagation();clearConnectionClick();closeConnectionPanel?.();selectConnection?.('');selectedId='';
     const members=bundle.id.startsWith('trunk:')?bundle.members:bundleDiagramRoutes(routes).find(group=>group.members.some(route=>route.binding.id===bundle.route.binding.id))?.members??bundle.members;
@@ -283,7 +288,7 @@
     const component=paletteDrag!.component,position=palettePosition(event),hit=(event.target as Element|null)?.closest<SVGElement>('[data-connection-id]'),bindingId=component.kind==='transformation'?hit?.dataset.connectionId:undefined,bundle=hit?.dataset.bundleId?clickableBundles.find(bundle=>bundle.id===hit.dataset.bundleId&&bundle.members.length>1):undefined;clearPalettePreview();
     try{if(overview&&bindingId&&overviewById.has(bindingId)&&component.kind==='transformation'){const projected=destinationById.get(destinationOverviewId(overviewById.get(bindingId)!.binding.to.nodeId))!;if(projected.lanes.length===1)dropOnConnection?.(component,projected.lanes[0].id,position);else{openOverview(bindingId);pendingOverviewDrop={component,position};}}else if(bundle&&component.kind==='transformation'&&dropOnConnection)openBundle(event,bundle,{component,position});else if(bindingId&&dropOnConnection)dropOnConnection(component,bindingId,position);else dropComponent?.(component,position);}finally{endPaletteDrag?.();}
   }
-  function restoreSelectionView(){const previous=selectionView;selectionView=null;focusedSelectionId='';if(previous)view={...previous};return !!previous;}
+  function restoreSelectionView(){const previous=selectionView;selectionView=null;focusedSelectionId='';if(previous){restoringView=previous;void transitionView({...previous}).then(()=>{if(restoringView===previous)restoringView=null;});}return !!previous;}
   function syncSelectionFocus(){
     if(drag||wire||segmentDrag)return;
     const connection=overviewBundle;
@@ -293,14 +298,14 @@
       const members=new Set(overviewBundles.filter(bundle=>bundle.binding.to.nodeId===connection.binding.to.nodeId).map(bundle=>bundle.id));
       const points=[...overviewNetwork.routes.filter(route=>members.has(route.binding.id)).flatMap(route=>route.points),...overviewNetwork.merges.filter(merge=>merge.targetNodeId===connection.binding.to.nodeId).flatMap(merge=>merge.points)];
       const focused=canvasFocusConnection(nodes.filter(node=>ids.has(node.id)),points,stage.clientWidth||900,Math.max(1,(stage.clientHeight||600)-lanesPanel.offsetHeight));
-      if(focused){selectionView??={...view};focusedSelectionId=connection.id;view=focused;}
+      if(focused){selectionView??=restoringView??{...view};restoringView=null;focusedSelectionId=connection.id;void transitionView(focused);}
       return;
     }
     const node=nodesById.get(selectedId);
     if(!node||connectionOpen){restoreSelectionView();return;}
     if(!stage||!inspectorPanel||node.id===focusedSelectionId)return;
     const width=stage.clientWidth||900,height=stage.clientHeight||600,availableWidth=Math.max(1,width-inspectorPanel.offsetWidth);
-    selectionView??={...view};focusedSelectionId=node.id;view=canvasFocusNode(node,availableWidth,height);
+    selectionView??=restoringView??{...view};restoringView=null;focusedSelectionId=node.id;void transitionView(canvasFocusNode(node,availableWidth,height));
   }
   function slideDetails(_node: HTMLElement) {
     return { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180,
@@ -318,14 +323,14 @@
   export function addGroup(name='Group'){if(readOnly||activeVehicleTabId)return;layoutError='';try{const next=canvasCreateGroup(document,name,{x:(32-view.x)/view.zoom,y:(32-view.y)/view.zoom});const id=next.editor.groups!.at(-1)!.id;change(next,'Create group');return id;}catch(error){layoutError=error instanceof Error?error.message:String(error);}}
   export function renameGroup(id:string,name:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasRenameGroup(source,id,name)),'Rename group');}
   export function deleteGroup(id:string){editLayout(()=>scopedCanvasEdit(document,source=>canvasDeleteGroup(source,id)),'Delete group');}
-  export function focusGroup(id:string){const frame=frames.find(group=>group.id===id);if(!frame)return;view=canvasFit([{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}],stage?.clientWidth||900,stage?.clientHeight||600);}
+  export function focusGroup(id:string){const frame=frames.find(group=>group.id===id);if(!frame)return;void transitionView(canvasFit([{position:{x:frame.x,y:frame.y}},{position:{x:frame.x+frame.width-PROFILE_BLOCK_WIDTH,y:frame.y+frame.height-PROFILE_BLOCK_HEIGHT}}],stage?.clientWidth||900,stage?.clientHeight||600));}
   function togglePorts(category:ProfilePortGroup){if(selected)editLayout(()=>canvasTogglePorts(document,selected.id,category),canvasPortCollapsed(document,selected.id,category)?'Expand port category':'Collapse port category');}
   function focusMatch() { const node=matches[0];if(node)choose(node.id); }
   function begin(event:PointerEvent,id?:string) {
     if(event.button!==0)return;
     const target = event.target as Element;
     if(target.closest('.signal-edge-hit,.signal-trunk-hit,.connection-bundle-badge,.connection-trunk-badge,.connection-endpoint,.connection-segment,.connection-reroute')||target.closest('button,input,select,a')&&!target.closest('.block-heading'))return;
-    bundlePicker=null;clearConnectionClick();
+    cancelCamera();bundlePicker=null;clearConnectionClick();
     id ??= target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
     event.preventDefault();stage.setPointerCapture(event.pointerId);
     drag={id,origin:id?{...nodes.find(node=>node.id===id)!.position}:{x:0,y:0},start:{x:event.clientX,y:event.clientY},viewport:{...view},pointer:event.pointerId,moved:false};
@@ -341,7 +346,7 @@
   function routeHandles(bindingId:string,points:readonly CanvasPoint[]){return visibleDocument.editor.wireRoutes?.find(route=>route.bindingId===bindingId)?.handles?.map((point,index)=>({point,index})).filter(({point})=>profileWireHandleOnRoute(point,points))??[];}
   function beginHandle(event:PointerEvent,bindingId:string,index:number){
     if(readOnly||event.button!==0)return;const route=routes.find(route=>route.binding.id===bindingId),saved=visibleDocument.editor.wireRoutes?.find(route=>route.bindingId===bindingId);if(!route||!saved?.handles?.[index])return;
-    event.preventDefault();event.stopPropagation();stage?.focus?.({preventScroll:true});layoutError='';segmentBlocked=false;segmentPreview=null;
+    cancelCamera();event.preventDefault();event.stopPropagation();stage?.focus?.({preventScroll:true});layoutError='';segmentBlocked=false;segmentPreview=null;
     const source=profileSetWireRoute({document,assignments:[]},bindingId,route.points,saved.handles).document;
     segmentDrag={bindingId,index:-1,handleIndex:index,points:route.points.map(point=>({...point})),source,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},moved:false};stage.setPointerCapture(event.pointerId);
   }
@@ -357,7 +362,7 @@
   }
   function beginSegment(event:PointerEvent,bindingId:string,index:number){
     if(readOnly||wireStyle!=='orthogonal'||event.button!==0)return;const route=routes.find(route=>route.binding.id===bindingId);if(!route||!route.points[index+1])return;
-    event.preventDefault();event.stopPropagation();stage?.focus?.({preventScroll:true});layoutError='';segmentBlocked=false;segmentPreview=null;segmentDrag={bindingId,index,points:route.points.map(point=>({...point})),source:document,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},moved:false};stage.setPointerCapture(event.pointerId);
+    cancelCamera();event.preventDefault();event.stopPropagation();stage?.focus?.({preventScroll:true});layoutError='';segmentBlocked=false;segmentPreview=null;segmentDrag={bindingId,index,points:route.points.map(point=>({...point})),source:document,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},moved:false};stage.setPointerCapture(event.pointerId);
   }
   function moveSegment(event:PointerEvent){if(!segmentDrag||segmentDrag.pointer!==event.pointerId)return;const state=segmentDrag,delta={x:event.clientX-state.start.x,y:event.clientY-state.start.y};
     if(state.handleIndex!==undefined){if(!state.moved&&Math.hypot(delta.x,delta.y)<4)return;state.moved=true;const point=state.source.editor.wireRoutes?.find(route=>route.bindingId===state.bindingId)?.handles?.[state.handleIndex];if(!point)return;try{segmentPreview=validateWireEdit(profileMoveWireHandle({document:state.source,assignments:[]},state.bindingId,state.handleIndex,{x:point.x+delta.x/view.zoom,y:point.y+delta.y/view.zoom}).document,state.bindingId);segmentBlocked=false;layoutError='';}catch(error){segmentBlocked=true;layoutError=error instanceof Error?error.message:String(error);}return;}
@@ -368,7 +373,7 @@
   function segmentKeyboard(event:KeyboardEvent,bindingId:string,index:number){if(readOnly||wireStyle!=='orthogonal'||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;const route=routes.find(route=>route.binding.id===bindingId),a=route?.points[index],b=route?.points[index+1];if(!route||!a||!b)return;event.preventDefault();event.stopPropagation();if((a.y===b.y)!==['ArrowUp','ArrowDown'].includes(event.key))return;const step=event.shiftKey?40:10;editLayout(()=>movedSegment(document,bindingId,route.points,index,{x:(a.x+b.x)/2+(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0),y:(a.y+b.y)/2+(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)}),'Move wire segment');}
   function beginGroup(event:PointerEvent,frame:CanvasGroup,mode:'move'|'resize'){
     event.stopPropagation();if(readOnly||event.button!==0)return;
-    event.preventDefault();bundlePicker=null;stage.setPointerCapture(event.pointerId);layoutError='';groupBlocked=false;
+    cancelCamera();event.preventDefault();bundlePicker=null;stage.setPointerCapture(event.pointerId);layoutError='';groupBlocked=false;
     drag={group:{id:frame.id,mode,frame,source:document},origin:{x:frame.x,y:frame.y},start:{x:event.clientX,y:event.clientY},viewport:{...view},pointer:event.pointerId,moved:false};
   }
   function previewGroup(delta:CanvasPoint){
@@ -377,12 +382,12 @@
     catch(error){groupBlocked=true;layoutError=error instanceof Error?error.message:String(error);}
   }
   function beginWire(event:PointerEvent,nodeId:string,direction:'input'|'output',portId?:string){
-    if(readOnly||!connectBlocks||event.button!==0||direction==='input'&&inputState(nodeId,portId).full)return;event.stopPropagation();event.preventDefault();stage?.focus?.({preventScroll:true});suppressWireClick=false;wireRejectedId='';wireRejectedPort='';wireRejectedReason='';
+    if(readOnly||!connectBlocks||event.button!==0||direction==='input'&&inputState(nodeId,portId).full)return;event.stopPropagation();cancelCamera();event.preventDefault();stage?.focus?.({preventScroll:true});suppressWireClick=false;wireRejectedId='';wireRejectedPort='';wireRejectedReason='';
     bundlePicker=null;clearConnectionClick();const node=nodes.find(node=>node.id===nodeId)!;
     wireTargetId='';wireTargetPort='';wire={nodeId,portId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:canvasNodeAnchor(node,direction,portId),moved:false};stage.setPointerCapture(event.pointerId);
   }
   function beginReconnect(event:PointerEvent,bindingId:string,side:'from'|'to'){
-    if(readOnly||!reconnectConnection||event.button!==0)return;event.stopPropagation();event.preventDefault();stage?.focus?.({preventScroll:true});
+    if(readOnly||!reconnectConnection||event.button!==0)return;event.stopPropagation();cancelCamera();event.preventDefault();stage?.focus?.({preventScroll:true});
     const binding=document.bindings.find(binding=>binding.id===bindingId);if(!binding)return;
     const nodeId=side==='from'?binding.to.nodeId:binding.from.nodeId,direction=side==='from'?'input':'output',node=nodes.find(node=>node.id===nodeId),moving=nodes.find(node=>node.id===binding[side].nodeId);if(!node||!moving)return;
     wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';wire={nodeId,portId:side==='from'?binding.to.portId:binding.from.portId,direction,pointer:event.pointerId,start:{x:event.clientX,y:event.clientY},end:canvasNodeAnchor(moving,side==='from'?'output':'input',binding[side].portId),moved:false,reconnect:{bindingId,side}};stage.setPointerCapture(event.pointerId);
@@ -417,7 +422,7 @@
     if(!drag||event.pointerId!==drag.pointer)return;if(!cancel){if(drag.group){if(drag.moved&&groupPreview&&!groupBlocked)change(groupPreview,drag.group.mode==='move'?'Move group':'Resize group');}else if(dragged&&!readOnly)editLayout(()=>scopedCanvasEdit(document,source=>canvasMoveIntoGroup(source,dragged!.id,dragged!.position)),'Move component');else if(!drag.moved){if(drag.id)choose(drag.id);else{closeLanes();closeConnectionPanel?.();selectConnection?.('');selectedId='';}}}else view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
   }
   function wheel(event:WheelEvent) {
-    event.preventDefault();if(segmentDrag)return;bundlePicker=null;
+    event.preventDefault();if(segmentDrag)return;cancelCamera();bundlePicker=null;
     const navigation=canvasWheelNavigation($canvasNavigation.wheelAction,event,stage.clientHeight);
     if(navigation.zoom){if(!navigation.deltaY)return;const rect=stage.getBoundingClientRect();view=canvasZoom(view,navigation.multiplier,{x:event.clientX-rect.left,y:event.clientY-rect.top});}
     else view=canvasPan(view,{x:-navigation.deltaX,y:-navigation.deltaY});
@@ -434,7 +439,7 @@
     if(!readOnly&&selectedEdgeId&&disconnectConnection&&['Delete','Backspace'].includes(event.key)){event.preventDefault();disconnectConnection(selectedEdgeId);return;}
     if(!readOnly&&(undo||redo)&&(event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())){event.preventDefault();if(event.shiftKey||event.key.toLowerCase()==='y')redo?.();else undo?.();return;}
     if((event.target as Element).closest('button,a'))return;
-    if(event.key==='+'||event.key==='='){event.preventDefault();zoom(1.2);}else if(event.key==='-'){event.preventDefault();zoom(1/1.2);}else if(event.key==='0'){event.preventDefault();fit();}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();view=canvasPan(view,{x:event.key==='ArrowLeft'?40:event.key==='ArrowRight'?-40:0,y:event.key==='ArrowUp'?40:event.key==='ArrowDown'?-40:0});}
+    if(event.key==='+'||event.key==='='){event.preventDefault();zoom(1.2);}else if(event.key==='-'){event.preventDefault();zoom(1/1.2);}else if(event.key==='0'){event.preventDefault();fit();}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();restoringView=null;void transitionView(canvasPan(camera.destination??view,{x:event.key==='ArrowLeft'?40:event.key==='ArrowRight'?-40:0,y:event.key==='ArrowUp'?40:event.key==='ArrowDown'?-40:0}));}
   }
   function lostPointer(event:PointerEvent){clearPendingMove();if(segmentDrag?.pointer===event.pointerId)cancelSegment();if(wire?.pointer===event.pointerId){wire=null;wireTargetId='';wireTargetPort='';wireRejectedId='';wireRejectedPort='';wireRejectedReason='';suppressWireClick=true;}if(drag?.pointer===event.pointerId){view={...drag.viewport};drag=null;dragged=null;groupPreview=null;groupBlocked=false;}}
   function connectionKey(event:KeyboardEvent,id:string){if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();chooseConnection(id);}else if(!readOnly&&['Delete','Backspace'].includes(event.key)&&disconnectConnection){event.preventDefault();event.stopPropagation();disconnectConnection(id);}}
@@ -466,7 +471,7 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The canvas is a keyboard pan/zoom application with instructions.) -->
     <div class="canvas-stage" data-view={overview?'overview':'detailed'} class:node-dragging={!!dragged||!!groupPreview} class:wire-blocked={!!wireRejectedReason||segmentBlocked} class:segment-dragging={!!segmentDrag} class:palette-dropping={!!palettePreview} role="application" aria-label="Profile canvas" aria-describedby="profile-canvas-help" tabindex="0" bind:this={stage} onpointerdown={event=>begin(event)} onpointermove={scheduleMove} onpointerup={event=>finish(event)} onpointercancel={event=>finish(event,true)} onlostpointercapture={lostPointer} onwheel={wheel} onkeydown={keyboard} ondragover={overPalette} ondragleave={leavePalette} ondrop={dropPalette}>
       {#if layoutError}<p class="canvas-layout-error port-error" role="alert">{layoutError}</p>{/if}
-      <div class="canvas-world" class:route-focused={!!overviewBundleId||!!selectedEdgeId} style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
+      <div class="canvas-world" data-camera-animating={cameraAnimating} class:route-focused={!!overviewBundleId||!!selectedEdgeId} style={`transform:translate(${view.x}px,${view.y}px) scale(${view.zoom})`}>
         {#if palettePreview&&paletteDrag}
           <div class="palette-drop-preview" role="img" aria-label="Component drop preview" data-component-kind={paletteDrag.component.kind} data-preview-x={palettePreview.x} data-preview-y={palettePreview.y} style={`left:${palettePreview.x}px;top:${palettePreview.y}px;width:${paletteSize.width}px;height:${paletteSize.height}px`}>
             <div class="preview-heading"><span class="block-category">{paletteDrag.category}</span><strong title={paletteDrag.name}>{paletteDrag.name}</strong></div>

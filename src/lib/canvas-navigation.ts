@@ -64,3 +64,5 @@ export function canvasWheelNavigation(action: CanvasWheelAction, event: Pick<Whe
     multiplier: event.deltaY === 0 ? 1 : event.deltaY < 0 ? 1.1 : 1 / 1.1,
   };
 }
+
+export {createCanvasCamera} from './profile-canvas-camera';

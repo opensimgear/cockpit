@@ -10,6 +10,7 @@ test('native arrow selection focuses connected routes and restores the original 
   const browser = await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP ?? 'http://127.0.0.1:9222');
   const page = browser.contexts().flatMap(context => context.pages()).find(page => /127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(page.url()));
   assert.ok(page, 'Start the native dev cockpit.');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   const request = value => page.evaluate(async request => (await import('/src/lib/gateway.ts')).gatewayRequest(request), value);
   const name = `Arrow focus ${randomUUID()}`;
   let profileId;
@@ -21,8 +22,38 @@ test('native arrow selection focuses connected routes and restores the original 
     const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
     return { x: matrix.e, y: matrix.f, zoom: matrix.a };
   });
-  const settleViewport = () => stage.evaluate(element => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const openArrow = async (bundleId, mouse = false) => {
+  const settleViewport = async () => {
+    await stage.evaluate(element => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(world).toHaveAttribute('data-camera-animating', 'false');
+    await stage.evaluate(element => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  };
+  const sampleCameraFrames = count => page.evaluate(async count => {
+    const world = document.querySelector('.canvas-world');
+    const sample = () => { const matrix = new DOMMatrixReadOnly(getComputedStyle(world).transform); return { x: matrix.e, y: matrix.f, zoom: matrix.a, animating: world.dataset.cameraAnimating }; };
+    const values = [];
+    for (let index = 0; index < count; index++) { await new Promise(resolve => requestAnimationFrame(resolve)); values.push(sample()); }
+    return values;
+  }, count);
+  const cameraAnimation = () => page.evaluate(() => new Promise(resolve => {
+    const world = document.querySelector('.canvas-world'), started = performance.now(), samples = [];
+    let observed = false, settledFrames = 0;
+    const frame = () => {
+      const matrix = new DOMMatrixReadOnly(getComputedStyle(world).transform), active = world.dataset.cameraAnimating === 'true';
+      const view = { x: matrix.e, y: matrix.f, zoom: matrix.a };
+      if (active) { observed = true; settledFrames = 0; samples.push(view); }
+      else if (observed) { samples.push(view); if (++settledFrames >= 2) { resolve({ observed, samples, final: view }); return; } }
+      if (performance.now() - started > 5000) { resolve({ observed, samples, final: view }); return; }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }));
+  const sameViewport = (left, right) => Math.abs(left.x-right.x)<.05 && Math.abs(left.y-right.y)<.05 && Math.abs(left.zoom-right.zoom)<.0001;
+  const assertAnimated = (result, start, label) => {
+    assert.ok(result.observed, `${label} sets the camera animation state.`);
+    assert.ok(result.samples.some(value => !sameViewport(value, start)), `${label} moves the rendered camera.`);
+    assert.ok(result.samples.some(value => !sameViewport(value, start) && !sameViewport(value, result.final)), `${label} exposes an intermediate rendered camera frame.`);
+  };
+  const openArrow = async (bundleId, { mouse = false, settle = true } = {}) => {
     const arrow = page.locator(`.signal-edge-hit:not(.overview-merge-hit)[data-connection-id='${bundleId}']`);
     await expect(arrow).toBeVisible();
     if (mouse) {
@@ -41,7 +72,7 @@ test('native arrow selection focuses connected routes and restores the original 
       await arrow.press('Enter');
     }
     await expect(overview).toBeVisible();
-    await settleViewport();
+    if (settle) await settleViewport();
   };
   const assertRouteFitsAboveLanes = async (nodeIds, bindingIds, panelTop) => {
     const stageRect = await stage.boundingBox();
@@ -138,10 +169,39 @@ test('native arrow selection focuses connected routes and restores the original 
     await expect(page.locator('.signal-edge-hit:not(.overview-merge-hit)')).toHaveCount(3);
     await expect(save).toBeDisabled();
 
-    // Establish a deliberate starting camera so selection must visibly focus the route.
-    for (let index = 0; index < 3; index++) await page.getByRole('button', { name: 'Zoom out', exact: true }).click();
+    // Toolbar zoom/fit and keyboard pan use the same rendered camera animation.
+    const initial = await viewport(), zoomOut = page.getByRole('button', { name: 'Zoom out', exact: true });
+    let animation = cameraAnimation();
+    await zoomOut.click();
+    let transition = await animation;
+    assertAnimated(transition, initial, 'Toolbar zoom');
+    await settleViewport();
+    const zoomed = await viewport();
+    animation = cameraAnimation();
+    await page.getByRole('button', { name: 'Fit all', exact: true }).click();
+    transition = await animation;
+    assertAnimated(transition, zoomed, 'Fit all');
+    await settleViewport();
+    const fitted = await viewport();
+    animation = cameraAnimation();
+    await stage.press('ArrowRight');
+    transition = await animation;
+    assertAnimated(transition, fitted, 'Keyboard pan');
+    await settleViewport();
+    const panned = await viewport();
+    animation = cameraAnimation();
+    await stage.press('ArrowLeft');
+    transition = await animation;
+    assertAnimated(transition, panned, 'Reverse keyboard pan');
+    await settleViewport();
+    assert.deepEqual(await viewport(), fitted, 'Opposing keyboard pans return to the fitted viewport.');
+    for (let index = 0; index < 3; index++) { await zoomOut.click(); await settleViewport(); }
     const original = await viewport();
-    await openArrow(fixture.primaryArrowIds[0], true);
+    const arrowAnimation = cameraAnimation();
+    await openArrow(fixture.primaryArrowIds[0], { mouse: true, settle: false });
+    const arrowTransition = await arrowAnimation;
+    assertAnimated(arrowTransition, original, 'Arrow selection');
+    await settleViewport();
     const focused = await viewport();
     assert.notDeepEqual(focused, original, 'Selecting an arrow changes the canvas view.');
     const lanesTop = (await overview.boundingBox()).y;
@@ -149,7 +209,12 @@ test('native arrow selection focuses connected routes and restores the original 
     await expect(save).toBeDisabled();
 
     // A second source arrow to the same destination preserves a user camera adjustment.
+    const beforeManualZoom = await viewport();
+    animation = cameraAnimation();
     await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    transition = await animation;
+    assertAnimated(transition, beforeManualZoom, 'Manual toolbar zoom while an arrow is focused');
+    await settleViewport();
     const manual = await viewport();
     await openArrow(fixture.primaryArrowIds[1]);
     assert.deepEqual(await viewport(), manual, 'Switching to another arrow with the same destination keeps the manual camera.');
@@ -161,17 +226,92 @@ test('native arrow selection focuses connected routes and restores the original 
     await expect(save).toBeDisabled();
     await openArrow(fixture.primaryArrowIds[0]);
     await assertRouteFitsAboveLanes([...fixture.sourceIds, 'virtual-primary'], fixture.primaryArrowIds, (await overview.boundingBox()).y);
+    const arrowRestoreStart = await viewport(), arrowRestoreAnimation = cameraAnimation();
     await page.keyboard.press('Escape');
     await expect(overview).toHaveCount(0);
+    const arrowRestoreTransition = await arrowRestoreAnimation;
+    assertAnimated(arrowRestoreTransition, arrowRestoreStart, 'Arrow overview dismissal');
+    await settleViewport();
     assert.deepEqual(await viewport(), original, 'Escape restores the exact original canvas transform.');
     await expect(save).toBeDisabled();
+
+    // Selecting a physical block animates its own focus and Escape restores the same baseline.
+    const block = page.locator(`.resource-block[data-node-id="${fixture.sourceIds[1]}"] .block-heading`);
+    const blockAnimation = cameraAnimation();
+    await block.focus();
+    await block.press('Enter');
+    const blockTransition = await blockAnimation;
+    assertAnimated(blockTransition, original, 'Physical block selection');
+    await settleViewport();
+    assert.notDeepEqual(await viewport(), original, 'Selecting a connected controller focuses its block.');
+    const blockRestoreStart = await viewport(), blockRestoreAnimation = cameraAnimation();
+    await page.keyboard.press('Escape');
+    const blockRestoreTransition = await blockRestoreAnimation;
+    assertAnimated(blockRestoreTransition, blockRestoreStart, 'Physical block dismissal');
+    await settleViewport();
+    assert.deepEqual(await viewport(), original, 'Escape from block selection restores the exact original transform.');
+    await expect(save).toBeDisabled();
+
+    // Reduced motion snaps to the same focused transform, then snaps back without an intermediate camera frame.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const reducedStart = await viewport();
+    await openArrow(fixture.primaryArrowIds[0], { settle: false });
+    const reducedFocusFrames = await sampleCameraFrames(3);
+    assert.ok(reducedFocusFrames.every(frame => frame.animating === 'false'), 'Reduced-motion arrow focus never starts a camera animation.');
+    assert.ok(reducedFocusFrames.every(frame => sameViewport(frame, focused)), 'Reduced-motion arrow focus lands directly on the same target transform.');
+    assert.notDeepEqual(reducedStart, focused, 'Reduced-motion selection still applies the focus target.');
+    await page.keyboard.press('Escape');
+    await expect(overview).toHaveCount(0);
+    await settleViewport();
+    const reducedRestoreFrames = await sampleCameraFrames(3);
+    assert.ok(reducedRestoreFrames.every(frame => frame.animating === 'false' && sameViewport(frame, original)), 'Reduced-motion restoration snaps directly to the original transform.');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
 
     // Selecting and dismissing through blank canvas uses the same restoration path.
     await openArrow(fixture.secondaryArrowId);
     await stage.click({ position: { x: 12, y: 12 } });
     await expect(overview).toHaveCount(0);
+    await settleViewport();
     assert.deepEqual(await viewport(), original, 'Dismissing on the blank canvas restores the exact original transform.');
+
+    // A background pointer press interrupts a camera transition at its rendered frame;
+    // subsequent dragging pans from that frame without the canceled animation resuming.
+    const blankPoint = await page.evaluate(() => {
+      const stage = document.querySelector('.canvas-stage'), rect = stage.getBoundingClientRect();
+      for (const [dx, dy] of [[12, 12], [12, 32], [32, 12], [44, 18]]) {
+        const x = rect.left + dx, y = rect.top + dy, hit = document.elementFromPoint(x, y);
+        if (hit && stage.contains(hit) && !hit.closest('.resource-block,svg,button,input,select,a,.canvas-lanes-panel')) return { x, y };
+      }
+      return null;
+    });
+    assert.ok(blankPoint, 'The stage top-left has a blank background point for the interruption drag.');
+    await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    await expect(world).toHaveAttribute('data-camera-animating', 'true');
+    let pointerHeld = false;
+    try {
+      await page.mouse.move(blankPoint.x, blankPoint.y, { steps: 1 });
+      await expect(world).toHaveAttribute('data-camera-animating', 'true');
+      await page.mouse.down();
+      pointerHeld = true;
+      await expect(world).toHaveAttribute('data-camera-animating', 'false');
+      const interrupted = await viewport(), heldFrames = await sampleCameraFrames(4);
+      assert.ok(heldFrames.every(frame => frame.animating === 'false' && sameViewport(frame, interrupted)), 'The interrupted camera remains fixed while the pointer is held.');
+      await page.mouse.move(blankPoint.x + 20, blankPoint.y + 10, { steps: 1 });
+      await sampleCameraFrames(2);
+      const dragged = await viewport();
+      assert.ok(Math.abs(dragged.x - interrupted.x - 20) < .1, 'Background drag pans exactly 20 screen pixels horizontally from the interrupted frame.');
+      assert.ok(Math.abs(dragged.y - interrupted.y - 10) < .1, 'Background drag pans exactly 10 screen pixels vertically from the interrupted frame.');
+      assert.ok(Math.abs(dragged.zoom - interrupted.zoom) < .0001, 'Background drag preserves the interrupted zoom.');
+      await page.mouse.up();
+      pointerHeld = false;
+      const afterRelease = await sampleCameraFrames(4);
+      assert.ok(afterRelease.every(frame => frame.animating === 'false' && sameViewport(frame, dragged)), 'The canceled animation does not resume after pointer release.');
+      await expect(save).toBeDisabled();
+    } finally {
+      if (pointerHeld) await page.mouse.up();
+    }
   } finally {
+    await page.emulateMedia({ reducedMotion: null });
     if (profileId) {
       const state = (await request({ command: 'profile_get', id: profileId })).profiles.document;
       await request({ command: 'profile_delete', id: profileId, expectedRevision: state.revision });
