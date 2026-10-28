@@ -17,9 +17,11 @@
   import ProfileControllerInputs from './ProfileControllerInputs.svelte';
   import ProfileResourceSettings from './profile-inspector/ProfileResourceSettings.svelte';
   import ProfileIntegrationPorts from './profile-inspector/ProfileIntegrationPorts.svelte';
+  import ProfileIntegrationAssignment from './profile-inspector/ProfileIntegrationAssignment.svelte';
+  import {profileGameIntegrationSource} from './profile-game-context';
   import ProfileCompanionEditor from './ProfileCompanionEditor.svelte';
   import type{ProfileLearningClient}from'./profile-learning';
-  import {canvasNodes,portContractLabel,type CanvasNode,type CanvasPoint} from './profile-canvas';
+  import {canvasNodes,portContractLabel,integrationCataloguePorts,type CanvasNode,type CanvasPoint} from './profile-canvas';
   import {profilePaletteCanAdd,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag} from './profile-palette';
   import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
   import {graphTransferProcessing,graphAssignResource,graphBypassProcessing,graphConnect,graphConnectionError,graphContractError,graphDisconnect,graphFreshId,graphInsertProcessing,graphInventorySignature,graphPort,graphPorts,graphPublicationCapability,graphRemoveNode,graphRemovePort,graphSelectProviderPort,graphSetProcessing,graphSetRuntimeOverride,graphSetVirtual,graphSetVisibility,type ProfileGraphDraft}from'./profile-graph';
@@ -72,10 +74,15 @@
   const graph=$derived({document,assignments});
   const connectionBinding=$derived(pendingConnection?{id:'',from:{nodeId:fromNode,portId:fromPort},to:{nodeId:toNode,portId:toPort}}:visibleDocument.bindings.find(binding=>binding.id===connectionRoute));
   const connectionChoices=$derived.by(()=>connectionBinding?PROCESSING_PRESETS.filter(([kind])=>{try{processingInsertion(connectionBinding.id||null,kind);return true;}catch{return false;}}):[]);
-  const discoveredChoices=$derived(discoveryChoices.collect(graph,nodes.map(node=>({nodeId:node.id,details:discoveries[node.assignment?.sourceId??'']?.details}))));
+  const catalogueSources=$derived(new Map(nodes.map(node=>[node.id,node.resource?.kind==='game'?profileGameIntegrationSource(document,node.id,inventory):node.observation])));
+  function catalogueSourceId(node:CanvasNode){return catalogueSources.get(node.id)?.id??node.assignment?.sourceId??'';}
+  const discoveredChoices=$derived.by(()=>{
+    const saved=discoveryChoices.collect(graph,nodes.map(node=>({nodeId:node.id,details:node.resource?.kind==='game'?null:discoveries[catalogueSourceId(node)]?.details})));
+    return Object.fromEntries(nodes.map(node=>{const id=catalogueSourceId(node),details=discoveries[id]?.details;return[node.id,node.resource?.kind==='game'&&details&&'resource' in details?integrationCataloguePorts(graph,node.id,id,details):saved[node.id]??[]];}));
+  });
   const discoveredPorts=$derived(Object.fromEntries(Object.entries(discoveredChoices).map(([id,ports])=>[id,ports.map(port=>({id:port.key,name:port.name,direction:port.direction,contract:port.contract}))])));
-  const discoveryBusy=$derived(nodes.filter(node=>discoveries[node.assignment?.sourceId??'']?.busy).map(node=>node.id));
-  const discoveryErrors=$derived(Object.fromEntries(nodes.flatMap(node=>discoveries[node.assignment?.sourceId??'']?.error?[[node.id,discoveries[node.assignment!.sourceId].error]]:[])));
+  const discoveryBusy=$derived(nodes.filter(node=>discoveries[catalogueSourceId(node)]?.busy).map(node=>node.id));
+  const discoveryErrors=$derived(Object.fromEntries(nodes.flatMap(node=>{const error=discoveries[catalogueSourceId(node)]?.error||(node.resource?.kind==='game'&&!catalogueSources.get(node.id)?'Integration catalogue unavailable. Check the selected game and aircraft configuration.':'');return error?[[node.id,error]]:[];})));
   const sourcePorts=$derived((discoveredChoices[fromNode]??[]).filter(port=>port.direction==='output')),targetPorts=$derived((discoveredChoices[toNode]??[]).filter(port=>port.direction==='input'));
   const fromChoice=$derived(sourcePorts.find(port=>port.key===fromPort)),toChoice=$derived(targetPorts.find(port=>port.key===toPort));
   const inputWriters=$derived.by(()=>{const writers=new Map<string,Map<string,DeepReadonly<ProfileDocument['bindings'][number]>>>();for(const binding of document.bindings){if(binding.id===editingRoute)continue;let ports=writers.get(binding.to.nodeId);if(!ports){ports=new Map();writers.set(binding.to.nodeId,ports);}if(!ports.has(binding.to.portId))ports.set(binding.to.portId,binding);}return writers;});
@@ -107,7 +114,7 @@
   let previousVehicleTab=untrack(()=>activeVehicleTabId);
   $effect(()=>{if(previousVehicleTab!==activeVehicleTabId){previousVehicleTab=activeVehicleTabId;clearedSource=false;clearedDestination=false;queuedInputs={};incompleteRows=[];activeIncompleteRowId='';queuedTransforms=[];draftRowOpen=false;laneError=null;routeErrors={};routeOpen=false;fromNode='';fromPort='';toNode='';toPort='';editingRoute='';connectionRoute='';pendingConnection=false;highlighted=[];message='';}});
   $effect(()=>{
-    const sources=assignments.filter(assignment=>visibleIds.has(assignment.resourceId)).map(assignment=>({sourceId:assignment.sourceId,resource:inventory.find(resource=>resource.id===assignment.sourceId),companion:document.resources.some(resource=>resource.id===assignment.resourceId&&resource.kind==='companion'),publication:document.companionAssignments.find(item=>item.resourceId===assignment.resourceId)?.publicationHash})),revision=inventoryRevision;
+    const sources=nodes.filter(node=>node.resource&&node.resource.kind!=='debug-controller').map(node=>({sourceId:catalogueSourceId(node),resource:catalogueSources.get(node.id),companion:node.resource?.kind==='companion',publication:document.companionAssignments.find(item=>item.resourceId===node.id)?.publicationHash})).filter(source=>!!source.sourceId),revision=inventoryRevision;
     untrack(()=>refreshDiscoveries(sources,revision));
   });
   $effect(()=>{if(!routeOpen||!autoCommitArmed||!active||readOnly)return;void sourcePorts;void targetPorts;void fromPort;void toPort;void queuedTransforms;void queuedInputs;void inputOptions;untrack(autoConnect);});
@@ -123,7 +130,7 @@
     try{const details=publication?await profileDiscoverCompanion(companionDiscovery,sourceId,publication):await profileDiscoverResource(inventoryClient,sourceId);if(!discoveryDisposed&&discoveries[sourceId]?.signature===signature)discoveries={...discoveries,[sourceId]:{signature,details,busy:false,error:''}};}
     catch(error){if(!discoveryDisposed&&discoveries[sourceId]?.signature===signature)discoveries={...discoveries,[sourceId]:{signature,details:null,busy:false,error:error instanceof Error?error.message:String(error)}};}
   }
-  function retryDiscovery(nodeId:string){const assignment=assignments.find(item=>item.resourceId===nodeId);if(assignment)void discover(assignment.sourceId,discoveries[assignment.sourceId]?.signature??'retry',document.companionAssignments.find(item=>item.resourceId===nodeId)?.publicationHash);}
+  function retryDiscovery(nodeId:string){const node=nodes.find(node=>node.id===nodeId),id=node&&catalogueSourceId(node);if(id)void discover(id,discoveries[id]?.signature??'retry',document.companionAssignments.find(item=>item.resourceId===nodeId)?.publicationHash);}
   function apply(edit:()=>ProfileGraphDraft,label:string,laneId=selectedTransformLane||editingRoute):boolean{if(readOnly)return false;message='';try{change(edit(),label);if(laneId){const next={...routeErrors};for(const row of signalOverview(document).flatMap(bundle=>bundle.lanes).filter(row=>row.id===laneId||row.bindingIds.includes(laneId)))delete next[row.id];routeErrors=next;}return true;}catch(error){message=error instanceof Error?error.message:String(error);const rows=signalOverview(document).flatMap(bundle=>bundle.lanes),affected=rows.filter(row=>laneId?row.id===laneId||row.bindingIds.includes(laneId):row.bindingIds.some(id=>message.startsWith(`${id}:`)));routeErrors={...routeErrors,...Object.fromEntries(affected.map(row=>[row.id,message]))};return false;}}
   function routeIssue(laneId:string){const incomplete=incompleteRows.find(row=>row.lane.id===laneId);if(incomplete)return incomplete.error;if(routeErrors[laneId])return routeErrors[laneId];if(laneError?.laneId===laneId)return laneError.message;const lane=signalOverview(document).flatMap(bundle=>bundle.lanes).find(row=>row.id===laneId);for(const id of lane?.bindingIds??[]){const binding=document.bindings.find(row=>row.id===id);if(binding){const error=graphConnectionError(document,binding.from,binding.to,id);if(error)return error;}}return '';}
   function anchored(position?:CanvasPoint,panelHeight=420):CanvasPoint{const width=typeof window==='undefined'?1200:window.innerWidth,height=typeof window==='undefined'?800:window.innerHeight;return{x:Math.max(12,Math.min(width-372,position?.x??width/2)),y:Math.max(12,Math.min(height-panelHeight,position?.y??height/3))};}
@@ -349,7 +356,15 @@
       {#if physicalController}
         <ProfileControllerInputs resource={node.observation} {active}/>
       {/if}
-      {#if node.resource?.kind==='game'}{#key node.id}{#each ['input','output'] as direction (direction)}<ProfileIntegrationPorts direction={direction==='input'?'input':'output'} ports={discoveredChoices[node.id]??[]} busy={discoveryBusy.includes(node.id)} error={discoveryErrors[node.id]??''} {readOnly} select={port=>port.direction==='input'?destination(node.id,undefined,port.key):source(node.id,undefined,port.key)} retry={()=>retryDiscovery(node.id)}/>{/each}{/key}{/if}
+      {#if node.resource?.kind==='game'}
+        {@const catalogueSource=catalogueSources.get(node.id)}
+        {@const details=discoveries[catalogueSourceId(node)]?.details}
+        {@const assigned=!!catalogueSource&&node.assignment?.sourceId===catalogueSource.id&&node.resource.ports.every(port=>discoveredChoices[node.id]?.some(choice=>choice.current&&choice.profilePortId===port.id))}
+        {#key `${node.id}/${catalogueSource?.id??''}`}
+          {#if !assigned&&node.resource.ports.length&&catalogueSource}<ProfileIntegrationAssignment ports={node.resource.ports} options={details?.ports??[]} busy={discoveryBusy.includes(node.id)} {readOnly} assign={selections=>apply(()=>graphAssignResource(graph,node.id,catalogueSource,selections),'Match integration signals')}/>{/if}
+          {#each ['input','output'] as direction (direction)}<ProfileIntegrationPorts direction={direction==='input'?'input':'output'} ports={discoveredChoices[node.id]??[]} busy={discoveryBusy.includes(node.id)} error={discoveryErrors[node.id]??''} readOnly={readOnly||!assigned} select={port=>port.direction==='input'?destination(node.id,undefined,port.key):source(node.id,undefined,port.key)} retry={()=>retryDiscovery(node.id)}/>{/each}
+        {/key}
+      {/if}
 
     {/snippet}
   </ProfileCanvas>

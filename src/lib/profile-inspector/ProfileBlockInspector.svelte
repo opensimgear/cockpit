@@ -26,7 +26,7 @@
   } = $props();
 
   const portCategories: ProfilePortGroup[] = ['outputs', 'inputs', 'actions'];
-  const gameId = $derived(canvasGameId(node));
+  const gameId = $derived(canvasGameId(node,document));
   const resourceNode = $derived(node.kind === 'resource' && !!node.resource && node.resource.kind !== 'debug-controller' && node.observation?.resourceType !== 'host-controller');
   const inputs = $derived(node.resource?.ports.filter(port => port.direction === 'input') ?? []);
   const outputs = $derived(node.resource?.ports.filter(port => port.direction === 'output') ?? []);
@@ -35,9 +35,7 @@
 <section class="block-inspector" aria-label="Block settings">
   {#if content}{@render content(node)}{/if}
 
-  {#if gameId && openGameSettings}
-    <button type="button" class="text-button settings-link" onclick={() => openGameSettings?.(gameId!, { profileId: document.id, resourceId: node.id })}><Icon name="arrow" size={14}/>Settings</button>
-  {/if}
+
 
   {#if resourceNode && diagnostics.length}
     <ul class="diagnostics" aria-label="Resource diagnostics">
@@ -89,7 +87,7 @@
     {/if}
 
     {/if}
-    {#if node.observation}
+    {#if node.observation && node.resource?.kind!=='game'}
       <details class="metadata-section"><summary>Details</summary>
         {#if node.observation.diagnostics.length}<ul class="diagnostics">{#each node.observation.diagnostics as diagnostic,index (index)}<li>{diagnostic}</li>{/each}</ul>{/if}
         {#each node.observation.connections as connection (`${connection.scope}/${connection.key}/${connection.route.id}`)}
@@ -102,7 +100,7 @@
     {/if}
   {/if}
 
-  {#if removeNode}<footer class="controller-actions"><button type="button" class="secondary-button destructive-button" disabled={readOnly} onclick={() => removeNode?.(node.id)}><Icon name="trash" size={14}/>Remove</button></footer>{/if}
+  {#if removeNode||gameId&&openGameSettings}<footer class="controller-actions">{#if gameId&&openGameSettings}<button type="button" class="secondary-button" onclick={()=>openGameSettings?.(gameId!,{profileId:document.id,resourceId:node.id})}><Icon name="arrow" size={14}/>Settings</button>{/if}{#if removeNode}<button type="button" class="secondary-button destructive-button" disabled={readOnly} onclick={() => removeNode?.(node.id)}><Icon name="trash" size={14}/>Remove</button>{/if}</footer>{/if}
 </section>
 
 <style>
@@ -124,10 +122,10 @@
   .pagination :global(.secondary-button),.catalogue-section>.secondary-button{display:inline-flex;align-items:center;gap:7px}
   .connection-row{padding:10px 0;border-bottom:1px solid var(--faint-line)}
   dl{margin:8px 0;overflow-wrap:anywhere}.attributes dl>div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);gap:10px;margin:6px 0}dt{color:var(--muted)}dd{margin:0;color:var(--soft)}
-  .settings-link{display:inline-flex;align-items:center;gap:7px;align-self:flex-start}
   .diagnostics{margin:0;padding-left:20px;color:#c7ad80;line-height:1.55}.diagnostics .diagnostic-error{color:var(--danger,#e67979)}
   .port-error{margin:0;color:var(--danger,#e67979);line-height:1.5}
-  .controller-actions{display:flex;justify-content:flex-end;flex-shrink:0;margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+  .controller-actions{display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+  .controller-actions>.secondary-button{display:inline-flex;align-items:center;gap:8px}
   .destructive-button{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--danger,#e67979);color:var(--danger,#e67979);background:transparent}
   .destructive-button:hover:enabled{background:color-mix(in srgb,var(--danger,#e67979) 12%,transparent)}
 </style>

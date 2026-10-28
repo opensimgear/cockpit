@@ -182,5 +182,6 @@ export function portContractLabel(contract:DeepReadonly<ProfilePortContract>):st
   if(contract.delivery==='event')return`event · ${scalarLabel(contract.schema)}`;
   return`${contract.delivery} · ${contract.semantics} · ${contract.parameters.length?contract.parameters.map(parameter=>`${parameter.name}: ${scalarLabel(parameter.schema)}`).join(', '):'no arguments'}`;
 }
-export function canvasGameId(node:CanvasNode):GameId|null{const id=node.observation?.attributes.gameId;return isGameId(id)?id:null;}
+export function canvasGameId(node:CanvasNode,document?:Pick<DeepReadonly<ProfileDocument>,'eligibility'>):GameId|null{const id=node.observation?.attributes.gameId??(node.resource?.kind==='game'?document?.eligibility.gameIds[0]:undefined);return isGameId(id)?id:null;}
 export {integrationPortPage,integrationPortTypeLabel} from './profile-inspector/integration-ports.ts';
+export {integrationCataloguePorts} from './profile-inspector/integration-catalogue.ts';

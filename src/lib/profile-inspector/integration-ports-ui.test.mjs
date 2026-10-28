@@ -92,12 +92,12 @@ test('renders the complete output catalogue as paged choices without adding decl
   const ports = [...Array.from({ length: 40 }, (_, index) => port(`out-${index}`, `Output ${index}`)), port('input-speed', 'Input speed', 'input')];
   const { body } = harness({ ports });
 
-  assert.equal((body.match(/class="port-tile/g) ?? []).length, 32);
+  assert.equal((body.match(/class="port-tile/g) ?? []).length, 10);
   assert.match(body, /aria-label="Integration outputs"/);
   assert.match(body, /Output 0/);
-  assert.match(body, /Output 31/);
-  assert.doesNotMatch(body, /Output 32|Input speed/);
-  assert.match(body, /1–32 \/ 40/);
+  assert.match(body, /Output 9/);
+  assert.doesNotMatch(body, /Output 10|Input speed/);
+  assert.match(body, /1–10 \/ 40/);
 });
 
 test('input catalogue page shows automatic unpinned inputs without output choices', () => {

@@ -150,6 +150,9 @@ export function graphAssignResource(value: DeepReadonly<ProfileGraphDraft>, reso
   next.assignments=next.assignments.filter(assignment=>assignment.resourceId!==resourceId);
   next.assignments.push({resourceId,sourceId:source.id,ports:selections.map(selection=>({profilePortId:selection.profilePortId,observedPortId:selection.observed.descriptor.id,expectedContractHash:selection.observed.contractHash}))});return checked(next);
 }
+export function graphProviderPortMatches(existing:DeepReadonly<ProfilePort>,observed:DeepReadonly<ObservedResourcePort>):boolean {
+  try{portSelection(existing,observed);return true;}catch{return false;}
+}
 /** Native IDs stay in local pins even when longer than a legal portable port ID. */
 export function graphSelectProviderPort(value: DeepReadonly<ProfileGraphDraft>, resourceId: string, sourceId: string, observed: DeepReadonly<ObservedResourcePort>, logicalPortId?: string): ProfileGraphDraft {
   const next=graphDraft(value),resource=next.document.resources.find(resource=>resource.id===resourceId),assignment=next.assignments.find(assignment=>assignment.resourceId===resourceId);

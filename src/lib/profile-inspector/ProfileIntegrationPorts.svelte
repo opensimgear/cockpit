@@ -11,7 +11,7 @@
   }=$props();
   let query=$state(''),page=$state(0),filterInput:HTMLInputElement;
   const label=$derived(direction==='input'?'Inputs':'Outputs');
-  const results=$derived(integrationPortPage(ports,query,page,32,direction));
+  const results=$derived(integrationPortPage(ports,query,page,10,direction));
   function filter(event:Event){query=(event.currentTarget as HTMLInputElement).value;page=0;}
   function clear(){query='';page=0;filterInput?.focus();}
   function choose(port:DeepReadonly<ProfileDiscoveredPort>){if(!readOnly&&!busy&&!error)select(port);}

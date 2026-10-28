@@ -16,6 +16,21 @@ ownership. The referenced companion publication and DCS setup are not included.
 The AH-6J tab demonstrates the original AH-6 catalogue; it does not qualify MH-6J
 commands for the distinct aircraft mod described below.
 
+Every integration block shows its full scoped catalogue before local assignment.
+For imported saved routes, use **Match saved signals** to select these exact ports;
+the assignment preserves the saved logical IDs and connections:
+
+| Block | Saved port | Native port |
+| --- | --- | --- |
+| Base | `altitude-ft-raw` | `channel:common:CommonData:ALT_MSL_FT:0` |
+| AH-6J | `panel-brightness` | `channel:MPS_PANELSDIM:0` |
+| AH-6J | `set-panel-brightness` | `command:MPS_PANELSDIM:set_state` |
+| F/A-18C | `panel-brightness` | `channel:INST_PNL_DIMMER:0` |
+| F/A-18C | `set-panel-brightness` | `command:INST_PNL_DIMMER:set_state` |
+
+CommonData supplies telemetry outputs and has no command inputs. Controller and
+companion assignments remain specific to the local setup.
+
 ## MH-6J read-only CommonData
 
 [MH6CommonData.lua](MH6CommonData.lua) adds the exact **MH-6J** aircraft identity to the checksum-pinned DCS-BIOS **0.11.7** runtime. It activates the existing CommonData telemetry module and a self-named module with no controls. It provides no cockpit commands and does not change the aircraft name received by Cockpit.

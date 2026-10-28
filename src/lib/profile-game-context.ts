@@ -97,7 +97,7 @@ export function profileReconcileDcsVehicleCatalogue(value:DeepReadonly<ProfileGr
   if(!tab||tab.gameId!=='dcs'||!profileDcsResourceMatchesVehicle(source,tab.vehicleId))throw Error('The DCS-BIOS catalogue does not match this aircraft tab.');
   let next=JSON.parse(JSON.stringify(value)) as ProfileGraphDraft;
   for(const block of next.document.resources.filter(resource=>resource.kind==='game'&&tab.nodeIds.includes(resource.id))){
-    const assignment=next.assignments.find(assignment=>assignment.resourceId===block.id);if(assignment?.sourceId===source.id)continue;
+    const assignment=next.assignments.find(assignment=>assignment.resourceId===block.id);if(assignment?.sourceId===source.id||!assignment&&block.ports.length)continue;
     const previous=inventory.find(resource=>resource.id===assignment?.sourceId),module=previous?.attributes.aircraftModule;
     if(block.ports.length&&module&&module!=='CommonData'&&module!==source.attributes.aircraftModule)throw Error('This aircraft tab has controls configured for another DCS-BIOS module. Remove those controls or add a new aircraft tab before changing its aircraft.');
     const selections=block.ports.map(port=>{const pin=assignment?.ports.find(pin=>pin.profilePortId===port.id),observed=pin&&ports.find(observed=>observed.descriptor.id===pin.observedPortId&&observed.contractHash===pin.expectedContractHash);if(!observed)throw Error(`The ${tab.vehicleName} catalogue cannot preserve “${port.name}”. Remove or explicitly reassign that control before changing this tab's aircraft.`);return {profilePortId:port.id,observed};});
