@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import { loadModules, libModuleName } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profile-overview-routing','./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview']);
+const modules = await loadModules(['./profile-palette','./profile-overview-routing','./profile-editor', './profile-canvas', './profile-diagram', './profile-processing', './profile-port-browser','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview']);
 const plain = value => JSON.parse(JSON.stringify(value));
 const port = (id, direction, name = id) => ({ id, direction, name, contract: { delivery: 'state', schema: { type: 'boolean' }, freshnessMs: 1000, fallback: null } });
 const resource = (id, ports = []) => ({ id, name: id, kind: 'device', required: false, ports });
@@ -25,7 +25,7 @@ const iconSource = await readFile(new URL('./Icon.svelte', import.meta.url), 'ut
 const iconCode = transpile(compile(iconSource, { filename: 'Icon.svelte', generate: 'server' }).js.code);
 let canvasSource = await readFile(new URL('./ProfileCanvas.svelte', import.meta.url), 'utf8');
 canvasSource = canvasSource.replace('const overview=true', 'const overview=false');
-canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,addWireHandle,beginHandle,handleKeyboard,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,syncSelectionFocus,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},setInspector(value){inspectorPanel=value;},setSelection(value){selectedId=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,selectionView,focusedSelectionId,suppressWireClick,paletteConnectionId,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
+canvasSource = canvasSource.replace('</script>', `captureCanvas({begin,beginWire,beginReconnect,beginSegment,addWireHandle,beginHandle,handleKeyboard,inputState,wireClick,move,scheduleMove,wheel,finish,keyboard,lostPointer,choose,chooseConnection,syncSelectionFocus,blockPorts,activeHandle,overPalette,dropPalette,setStage(value){stage=value;},setView(value){view=value;},setInspector(value){inspectorPanel=value;},setSelection(value){selectedId=value;},get state(){return{wire,wireTargetId,wireTargetPort,wireRejectedId,wireRejectedPort,wireRejectedReason,drag,view,selectedId,selectionView,focusedSelectionId,suppressWireClick,palettePreview,segmentDrag,segmentPreview,segmentBlocked,routes};}});</script>`);
 const lanesCode=transpile(compile(await readFile(new URL('./ProfileSignalLanes.svelte',import.meta.url),'utf8'),{filename:'ProfileSignalLanes.svelte',generate:'server'}).js.code);
 const controlsCode=transpile(compile(await readFile(new URL('./CanvasViewControls.svelte',import.meta.url),'utf8'),{filename:'CanvasViewControls.svelte',generate:'server'}).js.code);
 const canvasCode = transpile(compile(canvasSource, { filename: 'ProfileCanvas.svelte', generate: 'server' }).js.code);
@@ -118,18 +118,17 @@ const button = (body, attribute, id) => {
   assert.ok(tag, `Missing ${attribute} handle for ${id}`);
   return tag[0];
 };
-const namedButton = (body, nodeId, portId) => {
-  const tag = [...body.matchAll(/<button\b[^>]*>/g)].map(([tag]) => tag).find(tag => (tag.includes(`data-connection-source="${nodeId}"`) || tag.includes(`data-connection-target="${nodeId}"`)) && tag.includes(`data-connection-port="${portId}"`));
-  assert.ok(tag, `Missing ${nodeId}/${portId} named handle`);
-  return tag;
-};
-function namedTransforms() {
-  const document=profile(),processing=modules.get('./profile-processing'),contract=port('fixture','output').contract;
-  const gate=processing.processingTemplate('gate','gate',contract);gate.inputs[0].name='Enable';gate.inputs[1].name='Signal';gate.outputs[0].name='Result';
-  const script=processing.processingTemplate('script','script',contract);script.outputs[0].name='Primary';script.outputs.push({...plain(script.outputs[0]),id:'alternate',name:'Alternate'});
-  document.processingNodes=[gate,script];document.editor.positions.push({nodeId:'gate',x:600,y:250},{nodeId:'script',x:20,y:250});
+function namedResources() {
+  const document=profile();
+  const contract=port('fixture','output').contract;
+  document.resources.push(
+    resource('gate',[{...port('gate','input','Enable'),contract},{...port('value','input','Signal'),contract},{...port('out','output','Result'),contract}]),
+    resource('script',[{...port('first','output','Primary'),contract},{...port('alternate','output','Alternate'),contract}]),
+  );
+  document.editor.positions.push({nodeId:'gate',x:600,y:250},{nodeId:'script',x:20,y:250});
   return document;
 }
+const namedButton=(body,nodeId,direction='input')=>button(body,direction==='output'?'data-connection-source':'data-connection-target',nodeId);
 
 test('both wire directions preserve output-to-input routing, world coordinates and the exact profile', () => {
   for (const direction of ['output', 'input']) {
@@ -303,44 +302,42 @@ test('port discovery falls back to intrinsic processing, virtual and desktop con
   const inspected = harness({ selectedId: 'source' });assert.ok(inspected.body.includes('aria-label="Selected block inspector"'));assert.ok(!inspected.body.includes('aria-label="Exact connection editor"'));
 });
 
-test('compact Transform cards show named border ports instead of aggregate input and output boxes',()=>{
-  const document=namedTransforms(),h=harness({document}),articles=[...h.body.matchAll(/<article\b[^>]*data-node-id="([^"]+)"[^>]*>[\s\S]*?<\/article>/g)];
-  for(const id of ['gate','script']){
-    const article=articles.find(([,nodeId])=>nodeId===id)?.[0];assert.ok(article,id);assert.match(article,/width:224px;height:142px/);assert.match(article,/class="block-category[^"]*">Transform/);assert.ok(!article.includes('Processing'));assert.ok(!article.includes('block-port-groups'));assert.ok(!article.includes('Inputs / actions'));assert.ok(!article.includes('port-group-heading'));
-    assert.equal((article.match(/class="port-dot[^"]*"/g)??[]).length,3,'Each real named port has one visible border dot.');
-  }
-  for(const [nodeId,portId,name,direction]of [['gate','gate','Enable','input'],['gate','value','Signal','input'],['gate','out','Result','output'],['script','alternate','Alternate','output']]){
-    assert.match(namedButton(h.body,nodeId,portId),new RegExp(`aria-label="${name} ${direction} for `));assert.ok(new RegExp(`class="transform-port-name[^"]*">${name}</span>`).test(h.body));
-  }
-  const locked=harness({document,readOnly:true});for(const [nodeId,portId]of [['gate','gate'],['gate','value'],['gate','out'],['script','alternate']])assert.match(namedButton(locked.body,nodeId,portId),/\sdisabled(?:\s|>|=)/);
+test('processing nodes do not render standalone cards or connection handles',()=>{
+  const document=profile(),processing=modules.get('./profile-processing'),orphan=processing.processingTemplate('gate','orphan',port('fixture','output').contract);
+  document.processingNodes=[orphan];document.editor.positions.push({nodeId:'orphan',x:600,y:250});
+  const h=harness({document});
+  assert.doesNotMatch(h.body,/data-node-id="orphan"/);
+  assert.doesNotMatch(h.body,/data-connection-(?:source|target)="orphan"/);
   assert.deepEqual(plain(document),h.before);assert.deepEqual(h.edits,[]);
 });
 
-test('named-port drags preserve both exact identities in either direction and highlight only the intended rows',()=>{
-  const document=namedTransforms(),{canvasNodes,canvasNodeAnchor}=modules.get('./profile-canvas'),nodes=canvasNodes(document,[],[]);
+test('resource-port drags preserve exact identities in either direction and highlight the matching resource handles',()=>{
+  const document=namedResources(),{canvasNodes,canvasNodeAnchor}=modules.get('./profile-canvas'),nodes=canvasNodes(document,[],[]);
   for(const direction of ['output','input']){
     const h=harness({document}),origin=direction==='output'?'script':'gate',originPort=direction==='output'?'alternate':'value',target=direction==='output'?'gate':'script',targetPort=direction==='output'?'value':'alternate';
     h.handlers.beginWire(pointer(),origin,direction,originPort);assert.equal(h.handlers.state.wire.portId,originPort);assert.deepEqual(plain(h.handlers.state.wire.end),plain(canvasNodeAnchor(nodes.find(node=>node.id===origin),direction,originPort)),'The pending wire starts at its exact row border.');
-    assert.equal(h.handlers.activeHandle(origin,direction,originPort),true);assert.equal(h.handlers.activeHandle(origin,direction,direction==='output'?'out':'gate'),false);
+    assert.equal(h.handlers.activeHandle(origin,direction,originPort),true);assert.equal(h.handlers.activeHandle(origin,direction,direction==='output'?'first':'gate'),false);
     h.setHit(element({nodeId:target,...(direction==='output'?{input:target}:{output:target}),portId:targetPort}));h.handlers.move(pointer(550,300));
     assert.equal(h.handlers.state.wireTargetId,target);assert.equal(h.handlers.state.wireTargetPort,targetPort);assert.equal(h.handlers.activeHandle(target,direction==='output'?'input':'output',targetPort),true);assert.equal(h.handlers.activeHandle(target,direction==='output'?'input':'output',direction==='output'?'gate':'out'),false);
     h.handlers.finish(pointer(550,300));assert.deepEqual(plain(h.calls),[['connect','script','gate',{x:550,y:300},'alternate','value']]);assert.equal(h.captured.size,0);assert.deepEqual(h.edits,[]);assert.deepEqual(plain(document),h.before);
   }
 });
 
-test('named-port keyboard activation uses the exact row anchor and keeps an existing opposite endpoint pending',()=>{
-  const document=namedTransforms(),calls=[],h=harness({document,connectionOpen:true,connectionSourceId:'script',connectionSourcePort:'alternate',connectionFrom:(...args)=>calls.push(['from',...args]),connectionTo:(...args)=>calls.push(['to',...args]),selectConnection:id=>calls.push(['select',id])});
+test('resource-port keyboard activation keeps an opposite endpoint pending and uses resource anchors',()=>{
+  const document=namedResources(),calls=[],h=harness({document,connectionOpen:true,connectionSourceId:'script',connectionSourcePort:'alternate',connectionFrom:(...args)=>calls.push(['from',...args]),connectionTo:(...args)=>calls.push(['to',...args]),selectConnection:id=>calls.push(['select',id])});
+  const {canvasNodes,canvasNodeAnchor}=modules.get('./profile-canvas'),nodes=canvasNodes(document,[],[]);
+  const clientAnchor=(nodeId,direction,portId)=>{const anchor=canvasNodeAnchor(nodes.find(node=>node.id===nodeId),direction,portId);return{x:120+anchor.x*.5,y:80+anchor.y*.5};};
   h.handlers.setView({x:20,y:30,zoom:.5});h.handlers.wireClick(click(0),'gate','input','value');h.handlers.wireClick(click(0),'script','output','alternate');
-  assert.deepEqual(plain(calls),[['to','gate',{x:420,y:265},'value'],['from','script',{x:242,y:265},'alternate']]);assert.deepEqual(h.calls,[],'Starting the other endpoint must not clear the route through closeConnectionPanel.');
-  assert.match(namedButton(h.body,'script','alternate'),/data-connection-active="true"/);assert.match(namedButton(h.body,'script','out'),/data-connection-active="false"/);
+  assert.deepEqual(plain(calls),[['to','gate',clientAnchor('gate','input','value'),'value'],['from','script',clientAnchor('script','output','alternate'),'alternate']]);assert.deepEqual(h.calls,[],'Starting the other endpoint must not clear the route through closeConnectionPanel.');
+  assert.match(namedButton(h.body,'script','output'),/data-connection-active="true"/);
 });
 
-test('selected wires highlight only their exact named ports and reconnect either endpoint to another exact row',()=>{
-  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
+test('selected wires reconnect either resource endpoint to another exact named port',()=>{
+  const document=namedResources();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
   const {canvasNodes,canvasNodeAnchor}=modules.get('./profile-canvas'),nodes=canvasNodes(document,[],[]);
   for(const side of ['from','to']){
     const reconnected=[],h=harness({document,selectedEdgeId:'route',reconnectConnection:(...args)=>reconnected.push(args)}),fixedNode=side==='from'?'gate':'script',fixedPort=side==='from'?'value':'alternate',movingNode=side==='from'?'script':'gate',movingDirection=side==='from'?'output':'input',oldPort=side==='from'?'alternate':'value',newPort=side==='from'?'out':'gate';
-    for(const [nodeId,portId,active]of [['script','alternate',true],['script','out',false],['gate','value',true],['gate','gate',false]])assert.match(namedButton(h.body,nodeId,portId),new RegExp(`data-connection-active="${active}"`));
+    assert.match(namedButton(h.body,'script','output'),/data-connection-active="true"/);assert.match(namedButton(h.body,'gate','input'),/data-connection-active="true"/);
     h.handlers.beginReconnect(pointer(),'route',side);assert.equal(h.handlers.state.wire.nodeId,fixedNode);assert.equal(h.handlers.state.wire.portId,fixedPort);assert.deepEqual(plain(h.handlers.state.wire.end),plain(canvasNodeAnchor(nodes.find(node=>node.id===movingNode),movingDirection,oldPort)));
     h.setHit(element({nodeId:movingNode,...(side==='from'?{output:movingNode}:{input:movingNode}),portId:newPort}));h.handlers.move(pointer(500,350));h.handlers.finish(pointer(500,350));assert.deepEqual(plain(reconnected),[['route',side,movingNode,{x:500,y:350},newPort]]);assert.equal(h.handlers.state.wire,null);assert.equal(h.captured.size,0);assert.deepEqual(h.edits,[]);assert.deepEqual(h.calls,[]);
   }
@@ -359,24 +356,24 @@ test('selected wires expose endpoint labels, highlighted boxes, reconnect handle
   const locked=harness({document,selectedEdgeId:'route',readOnly:true,reconnectConnection(){}});assert.ok(!locked.body.includes('data-reconnect-side='));
 });
 
-test('fully connected named and aggregate inputs expose disabled drop targets while outputs remain available',()=>{
-  const document=namedTransforms();document.bindings=[
+test('resource port capacity remains exact while aggregate handles stay available for port selection',()=>{
+  const document=namedResources();document.bindings=[
     {id:'target-route',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'target',portId:'saved-led'}},
     {id:'gate-value',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}},
     {id:'gate-enable',from:{nodeId:'source',portId:'saved-fire'},to:{nodeId:'gate',portId:'gate'}}
   ];
   const h=harness({document});
   assert.match(button(h.body,'data-connection-target','target'),/\sdisabled(?:\s|>|=)/,'A full input group must not offer a new connection drop.');
-  assert.match(namedButton(h.body,'gate','value'),/\sdisabled(?:\s|>|=)/);assert.match(namedButton(h.body,'gate','gate'),/\sdisabled(?:\s|>|=)/);
-  assert.doesNotMatch(namedButton(h.body,'gate','out'),/\sdisabled(?:\s|>|=)/,'A fully connected transform can continue to fan out its output.');
-  assert.match(h.body,/All inputs are connected\./);assert.match(h.body,/This input is already connected\./);
+  assert.equal(h.handlers.inputState('gate','value').full,true);assert.equal(h.handlers.inputState('gate','gate').full,true);
+  assert.equal(h.handlers.blockPorts({resource:document.resources.find(resource=>resource.id==='gate')},'output').length,1);
+  assert.doesNotMatch(namedButton(h.body,'gate','output'),/\sdisabled(?:\s|>|=)/,'The resource output group remains available for port selection.');
   const partial=plain(document);partial.bindings=partial.bindings.filter(binding=>binding.id!=='gate-enable');
-  const p=harness({document:partial});assert.match(namedButton(p.body,'gate','value'),/\sdisabled(?:\s|>|=)/);assert.doesNotMatch(namedButton(p.body,'gate','gate'),/\sdisabled(?:\s|>|=)/,'One free input does not free another occupied exact input.');
+  const p=harness({document:partial});assert.equal(p.handlers.inputState('gate','value').full,true);assert.equal(p.handlers.inputState('gate','gate').full,false,'One free input does not free another occupied exact input.');
   assert.deepEqual(plain(h.document),h.before);assert.deepEqual(h.edits,[]);
 });
 
-test('occupied named inputs reject a new gesture but remain available to the reconnecting owner',()=>{
-  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
+test('occupied resource inputs reject a new gesture but remain available to the reconnecting owner',()=>{
+  const document=namedResources();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
   const h=harness({document,reconnectConnection(){}});
   assert.equal(h.handlers.inputState('gate','value').full,true);assert.equal(h.handlers.inputState('gate','gate').full,false);
   h.handlers.beginWire(pointer(),'gate','input','value');h.handlers.wireClick(click(0),'gate','input','value');assert.equal(h.handlers.state.wire,null);assert.deepEqual(h.calls,[]);
@@ -385,16 +382,16 @@ test('occupied named inputs reject a new gesture but remain available to the rec
   h.handlers.finish(pointer(),true);assert.equal(h.handlers.inputState('gate','value').full,true);assert.equal(h.captured.size,0);
 });
 
-test('toolbar reconnection frees only its own input and a new drag cannot borrow that exemption',()=>{
-  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}},{id:'other',from:{nodeId:'script',portId:'first'},to:{nodeId:'gate',portId:'gate'}}];
+test('toolbar reconnection frees only its own resource input and a new drag cannot borrow that exemption',()=>{
+  const document=namedResources();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}},{id:'other',from:{nodeId:'script',portId:'first'},to:{nodeId:'gate',portId:'gate'}}];
   const h=harness({document,reconnectingBindingId:'route'});
   assert.equal(h.handlers.inputState('gate','value').full,false);assert.equal(h.handlers.inputState('gate','gate').full,true);
   h.handlers.beginWire(pointer(),'script','output','alternate');assert.equal(h.handlers.inputState('gate','value').full,true,'An unrelated fresh connection must still see the occupied input.');h.handlers.finish(pointer(),true);
   assert.equal(h.handlers.inputState('gate','value').full,false);assert.deepEqual(h.edits,[]);
 });
 
-test('losing capture over an occupied input clears the rejected drop feedback',()=>{
-  const document=namedTransforms();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
+test('losing capture over an occupied resource input clears the rejected drop feedback',()=>{
+  const document=namedResources();document.bindings=[{id:'route',from:{nodeId:'script',portId:'alternate'},to:{nodeId:'gate',portId:'value'}}];
   const h=harness({document});h.handlers.beginWire(pointer(),'script','output','alternate');
   h.setHit(element({nodeId:'gate',input:'gate',portId:'value',disabled:true}));h.handlers.move(pointer(500,350));
   assert.equal(h.handlers.state.wireRejectedReason,'This input is already connected.');
@@ -463,27 +460,9 @@ test('dragging either selected endpoint opens only the matching reconnection ope
   }
 });
 
-test('dropping a transformation on a wire inserts there and ordinary canvas drops retain graph coordinates',()=>{
-  const component={kind:'transformation',preset:'scale'},insertions=[],drops=[],ended=[],h=harness({paletteDrag:{component,name:'Multiply',category:'Transformation'},dropComponent:(...args)=>drops.push(args),dropOnConnection:(...args)=>insertions.push(args),endPaletteDrag:()=>ended.push(true)});
-  const target={closest:selector=>selector==='[data-connection-id]'?{dataset:{connectionId:'route'}}:null};
-  const event={clientX:500,clientY:300,target,dataTransfer:{},preventDefault(){},stopPropagation(){}};
-  h.handlers.overPalette(event);assert.equal(h.handlers.state.paletteConnectionId,'route');h.handlers.dropPalette(event);
-  assert.deepEqual(plain(insertions),[[component,'route',{x:288,y:193}]],'A single-row transform is centered using its compact 224 × 114 bounds.');
-  assert.deepEqual(drops,[]);assert.equal(ended.length,1);
-  h.handlers.dropPalette({...event,target:{closest:()=>null}});assert.equal(drops.length,1);assert.equal(insertions.length,1);assert.equal(ended.length,2);
-});
-
-test('selected right-angle segment handles retain transformation insertion targets',()=>{
-  const component={kind:'transformation',preset:'scale'},insertions=[],drops=[];
-  const h=harness({document:orthogonalDocument(),selectedEdgeId:'route',paletteDrag:{component,name:'Multiply',category:'Transformation'},dropComponent:(...args)=>drops.push(args),dropOnConnection:(...args)=>insertions.push(args)},'orthogonal');
-  const segments=[...h.body.matchAll(/<path\b[^>]*data-segment-binding="route"[^>]*>/g)].map(([tag])=>tag);
-  assert.ok(segments.length,'The selected right-angle wire exposes draggable segments.');
-  for(const tag of segments){
-    const connectionId=tag.match(/data-connection-id="([^"]+)"/)?.[1];assert.equal(connectionId,'route');
-    const target={closest:selector=>selector==='[data-connection-id]'?{dataset:{connectionId}}:null};
-    const event={clientX:500,clientY:300,target,dataTransfer:{},preventDefault(){},stopPropagation(){}};
-    h.handlers.overPalette(event);assert.equal(h.handlers.state.paletteConnectionId,'route');h.handlers.dropPalette(event);
-  }
-  assert.equal(insertions.length,segments.length);assert.deepEqual(drops,[]);
-  for(const insertion of insertions)assert.deepEqual(plain(insertion),[component,'route',{x:288,y:193}]);
+test('legacy transformation drags cannot create a standalone block or insert into a wire',()=>{
+  const drops=[],h=harness({paletteDrag:{component:{kind:'transformation',preset:'scale'},name:'Multiply',category:'Transformation'},dropComponent:(...args)=>drops.push(args)});
+  const event={clientX:500,clientY:300,target:{closest:()=>null},dataTransfer:{},preventDefault(){throw Error('Rejected payload must not be admitted');},stopPropagation(){}};
+  h.handlers.overPalette(event);h.handlers.dropPalette(event);
+  assert.equal(h.handlers.state.palettePreview,null);assert.deepEqual(drops,[]);assert.deepEqual(h.edits,[]);
 });

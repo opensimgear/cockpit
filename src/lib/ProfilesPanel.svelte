@@ -17,7 +17,6 @@
   import { ProfileEditorStore, ProfileNavigationGuard, addProfileResources, profileEditorDirty } from './profile-editor';
   import {ProfileEditorUndo}from'./profile-graph-history';
   import {profilePaletteCanAdd,profilePalettePanelReason,profilePlaceComponent,type ProfilePaletteComponent,type ProfilePaletteDrag}from'./profile-palette';
-  import type {ProcessingPreset}from'./profile-processing';
   import {ProfileCompanionAuthoringClient,graphCaptureCompanionPanel,latestCompanionPanels,type ProfileCompanionCatalogue}from'./profile-companion-authoring';
   import {type DesktopBlockKind} from './profile-desktop-blocks';
   import type {CanvasPoint}from'./profile-canvas';
@@ -47,7 +46,7 @@
   let workspace = $state.raw(store.state);
   const history=new ProfileEditorUndo(store);
   let notice = $state(''), leaveDialog = $state(false), replaceSource = $state<string|null>(null), copyId = $state(DEFAULT_PROFILE_ID);
-  let routingEditor=$state.raw<{addVirtual:(position?:CanvasPoint)=>void;addDebug:(position?:CanvasPoint)=>void;addDesktop:(position?:CanvasPoint,kind?:DesktopBlockKind)=>void;addTransformation:(preset:ProcessingPreset,position?:CanvasPoint)=>void;addGroup:()=>string|undefined;focusGroup:(id:string)=>void;renameGroup:(id:string,name:string)=>void;deleteGroup:(id:string)=>void}>();
+  let routingEditor=$state.raw<{addVirtual:(position?:CanvasPoint)=>void;addDebug:(position?:CanvasPoint)=>void;addDesktop:(position?:CanvasPoint,kind?:DesktopBlockKind)=>void;addGroup:()=>string|undefined;focusGroup:(id:string)=>void;renameGroup:(id:string,name:string)=>void;deleteGroup:(id:string)=>void}>();
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let companionCatalogue=$state.raw<DeepReadonly<ProfileCompanionCatalogue>|null>(null),companionPanelsBusy=$state(false),companionPanelsError=$state(''),companionDropBusy=$state(false),companionCatalogueEpoch=0,companionDropEpoch=0;
   let editingName = $state(false), nameDraft = $state('');
@@ -204,7 +203,6 @@
     if(component.kind==='virtual')routingEditor?.addVirtual(position);
     else if(component.kind==='debug-controller')routingEditor?.addDebug(position);
     else if(component.kind==='desktop')routingEditor?.addDesktop(position,component.device);
-    else if(component.kind==='transformation')routingEditor?.addTransformation(component.preset,position);
     else if(component.kind==='companion-panel')void addCompanionPanel(component.sourceId,component.publicationHash,position);
     else{const resource=workspace.inventory.find(resource=>resource.id===component.sourceId);if(resource)addResource(resource,position);}
   }

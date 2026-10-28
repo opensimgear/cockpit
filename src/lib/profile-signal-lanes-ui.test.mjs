@@ -87,11 +87,9 @@ test('programmatically active shared transform opens beneath the first matching 
  assert.ok(firstRow<firstSettings&&firstSettings<secondRow,'settings follow the first row that contains the active transform');
 });
 
-test('standalone transform library keeps its settings available below the library',()=>{
+test('an unbundled lane editor renders no standalone transform UI',()=>{
  const body=render(Lanes,{props:{nodes,bundle:undefined,activeTransform:'stage',close(){},transformSettings(node){return node.name;}}}).body;
- assert.match(body,/Transform settings/);
- assert.match(body,/<div class="lane-settings[^\"]*" data-transform-settings="stage">/);
- assert.ok(body.indexOf('class="transform-library')<body.indexOf('class="lane-settings'),'library settings follow the transform library');
+ assert.doesNotMatch(body,/Transform settings|transform-library|data-transform-settings|data-transform-id/);
 });
 
 test('incomplete connection stays in the original row with its error and Add footer',()=>{

@@ -22,7 +22,7 @@ async function view(node,props={}){
     if(components.has(name))return components.get(name);
     const filename=new URL(name,import.meta.url);let source=await readFile(filename,'utf8');
     if(name==='./ProfileTransformSettings.svelte')source=source.replace('</script>','captureSettings({type});</script>');
-    if(name==='./ProfileProcessingEditor.svelte')source=source.replace('</script>','captureProcessing({field,ruleField,save,autoSave,get draft(){return draft;},get portsEditable(){return portsEditable;},get compact(){return compact;}});</script>');
+    if(name==='./ProfileProcessingEditor.svelte')source=source.replace('</script>','captureProcessing({field,ruleField,autoSave,get draft(){return draft;}});</script>');
     const {js}=compile(source,{filename:filename.pathname,generate:'server'}),dependencies=new Map();
     for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(libModuleName(match[1],filename),{default:await component(libModuleName(match[1],filename))});
     const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,captureSettings:value=>settings=value,captureProcessing:value=>processing=value,require(name){name=libModuleName(name,filename);if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(dependencies.has(name))return dependencies.get(name);const key=name.replace(/\.ts$/,'');if(modules.has(key))return modules.get(key);throw Error(`Unexpected transformation settings dependency ${name}`);}},{filename:filename.pathname});
@@ -39,7 +39,7 @@ test('identity and Boolean NOT expose only their type, without settings or metad
   assert.equal((h.body.match(/<select\b/g)??[]).length,1);
   assert.doesNotMatch(h.body,/<(?:input|textarea|button|details|h4|p)\b/);
   assert.doesNotMatch(h.body,/Block label|Declared ports|Advanced|Update visible node/);
-  assert.equal(h.processing.compact,true);assert.deepEqual(plain(node),before);
+  assert.match(h.body,/class="processing-editor compact[^\"]*"/);assert.deepEqual(plain(node),before);
  }
 });
 
@@ -88,8 +88,8 @@ test('builtin timing fields remain compact and persist through first-input resol
 test('script source remains editable without exposing port declarations or descriptions',async()=>{
  let value=drop(graph(),'script');const source='fn on_event(ctx) { transaction(ctx.state, #{out:scalar(42)}, []) }';
  const h=await view(value.document.processingNodes[0],{change:node=>{value=update(value,node);return true;}});
- assert.equal(h.processing.portsEditable,false);assert.equal((h.body.match(/<textarea\b/g)??[]).length,1);
- assert.doesNotMatch(h.body,/Declared ports|Needs input|Typed script parameters|ctx.inputs/);
+ assert.equal((h.body.match(/<textarea\b/g)??[]).length,1);
+ assert.doesNotMatch(h.body,/Declared ports|Add input port|Invocation output target|Needs input|Typed script parameters|ctx.inputs/);
  h.processing.field('source',source);assert.equal(h.processing.autoSave(),true);
  const resolved=resolve(value,'transform-1',state()).document.processingNodes[0];assert.equal(resolved.operation.source,source);assert.equal(resolved.inputs[0].contract.schema.unit,'rpm');
 });

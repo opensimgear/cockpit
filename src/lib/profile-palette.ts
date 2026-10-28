@@ -2,12 +2,11 @@ import {canvasMoveIntoGroup, canvasNodes, type CanvasPoint} from './profile-canv
 import type {DeepReadonly, ProfileDocument, ProfileLocalAssignment} from './profiles';
 import type {ResourceSummary} from './profile-inventory';
 import {profileTabDocument,profileTabNodeIds} from './profile-vehicle-tabs';
-import {PROCESSING_PRESETS,type ProcessingPreset} from './profile-processing';
 import {desktopDevices, desktopBlock, type DesktopBlockKind} from './profile-desktop-blocks';
 import type {ProfileCompanionPanel} from './profile-companion-authoring';
 
 export const PROFILE_PALETTE_MIME='application/x-opensimgear-profile-component';
-export type ProfilePaletteComponent={kind:'resource';sourceId:string}|{kind:'virtual'}|{kind:'debug-controller'}|{kind:'desktop';device?:DesktopBlockKind}|{kind:'transformation';preset:ProcessingPreset}|{kind:'companion-panel';sourceId:string;publicationHash:string};
+export type ProfilePaletteComponent={kind:'resource';sourceId:string}|{kind:'virtual'}|{kind:'debug-controller'}|{kind:'desktop';device?:DesktopBlockKind}|{kind:'companion-panel';sourceId:string;publicationHash:string};
 export type ProfilePaletteDrag={component:ProfilePaletteComponent;name:string;category:string};
 
 /** Only accept the bounded component identities carried by our own palette. */
@@ -16,7 +15,6 @@ export function profilePaletteComponentValid(value:unknown):value is ProfilePale
   const item=value as Record<string,unknown>,keys=Object.keys(item);
   if(item.kind==='virtual'||item.kind==='debug-controller')return keys.length===1;
   if(item.kind==='desktop')return keys.length===1||keys.length===2&&keys.includes('device')&&(item.device==='keyboard'||item.device==='mouse');
-  if(item.kind==='transformation')return keys.length===2&&PROCESSING_PRESETS.some(([preset])=>preset===item.preset);
   if(item.kind!=='resource'&&item.kind!=='companion-panel'||typeof item.sourceId!=='string'||!item.sourceId.length||new TextEncoder().encode(item.sourceId).length>256||/[\u0000-\u001f\u007f-\u009f]/.test(item.sourceId))return false;
   return item.kind==='resource'?keys.length===2:keys.length===3&&typeof item.publicationHash==='string'&&/^sha256:[0-9a-f]{64}$/.test(item.publicationHash);
 }
@@ -39,7 +37,6 @@ export function profilePaletteCanAdd(component:ProfilePaletteComponent,document:
     const budget=document.processingNodes.length+(document.desktopOutputs??[]).reduce((count,node)=>count+node.actions.length,0)+desktopBlock(kind,'preview').actions.length;
     return budget<=256&&(activeVehicleTabId?!conflicts(base.desktopOutputs)&&!conflicts(scoped.desktopOutputs):!conflicts(document.desktopOutputs));
   }
-  if(component.kind==='transformation')return document.processingNodes.length+(document.desktopOutputs??[]).reduce((count,node)=>count+node.actions.length,0)<256;
   const source=inventory.find(resource=>resource.id===component.sourceId);
   if(!source||source.resourceType==='game-integration'||document.resources.length>=64||source.resourceType==='companion'&&source.attributes.componentKind!=='paired-companion')return false;
   if(component.kind==='companion-panel'&&(source.resourceType!=='companion'||document.companionAssignments.length>=8||document.companionAssignments.some(panel=>assignments.some(assignment=>assignment.resourceId===panel.resourceId&&(assignment.sourceId===source.id||!!source.attributes.companionId&&inventory.find(other=>other.id===assignment.sourceId)?.attributes.companionId===source.attributes.companionId)))))return false;

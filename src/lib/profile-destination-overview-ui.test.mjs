@@ -9,11 +9,10 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules,libModuleName} from './test-module-loader.mjs';
 
-const modules=await loadModules([
-  './canvas-navigation','./canvas-styling','./profile-canvas','./profile-canvas-render',
+const modules=await loadModules(['./canvas-navigation','./canvas-styling','./profile-canvas','./profile-canvas-render',
   './profile-diagram','./profile-editor','./profile-input-availability','./profile-inventory',
   './profile-overview-layout','./profile-overview-routing','./profile-port-browser',
-  './profile-processing','./profile-signal-overview','./profile-vehicle-tabs','./profile-wire-layout',
+  './profile-palette','./profile-processing','./profile-signal-overview','./profile-vehicle-tabs','./profile-wire-layout',
 ]);
 const plain=value=>JSON.parse(JSON.stringify(value));
 const port=(id,direction)=>({id,name:id,direction,contract:{delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null}});
@@ -43,7 +42,7 @@ async function components(hooks={}){
     if(cache.has(name))return cache.get(name);
     const filename=new URL(name,import.meta.url);let source=await readFile(filename,'utf8');
     if(name==='./ProfileCanvas.svelte'){
-      source=source.replace('</script>',`overviewPair=seedOverviewPair();overviewBundleId=seedOverviewBundleId();captureCanvas({openOverview,get state(){return{overviewPair,overviewBundleId,overviewBundle,overviewBundles,overviewById,destinationBundles,destinationById};}});</script>`);
+      source=source.replace('</script>',`overviewPair=seedOverviewPair();overviewBundleId=seedOverviewBundleId();captureCanvas({openOverview,focusConnectionTransform,get state(){return{overviewPair,overviewBundleId,overviewBundle,overviewBundles,overviewById,destinationBundles,destinationById,activeTransform};}});</script>`);
       assert.notEqual(source,await readFile(filename,'utf8'),'Canvas instrumentation must match the production script.');
     }
     const {js}=compile(source,{filename:filename.pathname,generate:'server'}),dependencies=new Map();
@@ -101,4 +100,26 @@ test('canvas destination panel aggregates source rows, deduplicates shared route
   assert.equal(h.handlers.state.overviewBundle.lanes.filter(lane=>lane.id==='multi-input-route').length,1);
   assert.deepEqual(h.edits,[]);
   assert.deepEqual(original,before,'Read-only rendering and arrow selection must not mutate the profile draft.');
+});
+
+test('processing focus opens its owning destination overview and orphan transforms have no standalone route',async()=>{
+  const original=document(),hooks={overviewPair:{from:'stick',to:'flight'}};
+  original.bindings=original.bindings.filter(binding=>binding.id==='stick-to-mix'||binding.id==='multi-input-route');
+  const processing=modules.get('./profile-processing');
+  original.processingNodes=[processing.processingTemplate('gate','mix',port('fixture','output').contract)];
+  original.processingNodes[0].inputs[0].name='Enable';
+  original.processingNodes[0].inputs[1].name='Signal';
+  original.processingNodes[0].outputs[0].name='Result';
+  const h=await canvasHarness(original,hooks),destination=modules.get('./profile-signal-overview').destinationOverview(modules.get('./profile-signal-overview').signalOverview(original)).find(bundle=>bundle.binding.to.nodeId==='flight');
+  h.handlers.focusConnectionTransform('mix');
+  assert.equal(h.handlers.state.overviewBundleId,destination.id);
+  assert.deepEqual(plain(h.handlers.state.overviewPair),{from:'stick',to:'flight'});
+  assert.equal(h.handlers.state.activeTransform,'mix');
+
+  const orphan=processing.processingTemplate('gate','orphan',port('fixture','output').contract);
+  original.processingNodes=[orphan];
+  const standalone=await canvasHarness(original);
+  standalone.handlers.focusConnectionTransform('orphan');
+  assert.equal(standalone.handlers.state.overviewBundleId,'');
+  assert.equal(standalone.handlers.state.activeTransform,'');
 });

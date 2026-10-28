@@ -2,11 +2,10 @@
   import ProfileProcessingEditor from './ProfileProcessingEditor.svelte';
   import Icon from './Icon.svelte';
   import {PROCESSING_PRESETS,type ProcessingPreset}from'./profile-processing';
-  import type{DeepReadonly,ProfilePortContract,ProfileProcessingNode}from'./profiles';
-  let{node,change,configure,actions=[],typeOptions,changeType,remove}:{
+  import type{DeepReadonly,ProfileProcessingNode}from'./profiles';
+  let{node,change,configure,typeOptions,changeType,remove}:{
     node:DeepReadonly<ProfileProcessingNode>;change:(node:ProfileProcessingNode)=>boolean;
     configure:(kind:ProcessingPreset,parameters?:Record<string,unknown>)=>boolean;
-    actions?:{label:string;contract:DeepReadonly<ProfilePortContract>}[];
     typeOptions?:{value:ProcessingPreset;label:string}[];changeType?:(kind:ProcessingPreset)=>boolean|void;
     remove?:()=>void;
   }=$props();
@@ -22,7 +21,7 @@
     {#each options as option}<option value={option.value}>{option.label}</option>{/each}
   </select></label>
   {#if remove}<button class="delete-transform" aria-label={`Delete ${node.name}`} onclick={remove}><Icon name="trash" size={14}/>Delete</button>{/if}</div>
-  <ProfileProcessingEditor compact {node} {change} {actions} portsEditable={!node.draft}/>
+  <ProfileProcessingEditor {node} {change}/>
 </section>
 
 <style>
