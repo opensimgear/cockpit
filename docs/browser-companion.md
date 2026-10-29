@@ -41,7 +41,10 @@ independently of page rendering, focus and page timers. If the page stops sendin
 requests for one second, the worker releases any held controls to their declared
 fallback values while continuing feedback. Requests are ordered and never
 replayed. Connection-loss events start reconnection without waiting for a page
-poll. Older browsers retain the direct transport and its native lease protection.
+poll. Older browsers, and browsers whose worker fails to start within four
+seconds, use the direct transport and its native lease protection. This fallback
+only applies during startup; an established connection never replays commands
+through another transport.
 
 Unloading the page, changing page/panel or a connection failure clears queued
 input and closes the old connection. Cockpit neutralizes on disconnect and its
@@ -60,5 +63,10 @@ status remains visible in runtime inspection.
 Run pnpm browser:check and pnpm browser:test. The pnpm ui:build command builds both browser companion and Cockpit. Build Cockpit native after the UI so its build script embeds apps/browser-companion/dist.
 
 The companion-service HTTPS browser transport test covers static assets, Host/Origin admission, native protocol compatibility, one-use pairing, live assignment, input, disconnect neutralization, reconnection and revocation.
+
+With the native development Cockpit running, `node --test
+tests/ui/browser-worker-startup-native.mjs` verifies real browser pairing both
+normally and with the worker download deliberately stalled. Set
+`OSG_PLAYWRIGHT_MODULE` to the installed Playwright package when needed.
 
 The browser credential is available to same-origin JavaScript rather than OS-protected native storage. The dedicated origin, restrictive CSP, no third-party scripts, exact-origin WebSocket admission, and HTTPS protect this boundary. The public web endpoint exposes no Cockpit operator commands or arbitrary files.

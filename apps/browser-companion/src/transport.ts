@@ -1,4 +1,5 @@
 import { SocketTransport } from "./socket-transport.ts";
+const WORKER_STARTUP_TIMEOUT_MS=4000;
 export { MAX_TRANSFER, TransferDecoder, SocketTransport } from "./socket-transport.ts";
 export interface Credential { token:string; companionId:string; hostId:string }
 export function readCredential(storage: Pick<Storage,'getItem'>): Credential | null {
@@ -27,6 +28,8 @@ export class BrowserTransport {
   private counter=0;
   private closed=false;
   private connected:{resolve:()=>void;reject:(error:Error)=>void}|undefined;
+  private startupTimer:ReturnType<typeof setTimeout>|undefined;
+  private workerConnected=false;
   onclose:()=>void=()=>{};
   onreply:(reply:Record<string,any>)=>void=()=>{};
   private connectDirect(){const direct=this.direct=new SocketTransport();direct.onreply=reply=>this.onreply(reply);direct.onclose=()=>{if(!this.closed)this.onclose();};return direct.connect();}
@@ -36,9 +39,9 @@ export class BrowserTransport {
     try{worker=this.worker=new SharedWorker(new URL('./connection-worker.ts',import.meta.url),{type:'module'});}
     catch{return this.connectDirect();}
     worker.port.onmessage=({data})=>{
-      if(this.closed)return;
-      if(data.type==='connected'){this.connected?.resolve();this.connected=undefined;}
-      else if(data.type==='closed'){this.fail(Error('Cockpit connection closed'));this.onclose();}
+      if(this.closed||this.worker!==worker)return;
+      if(data.type==='connected'){this.workerConnected=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;this.connected?.resolve();this.connected=undefined;}
+      else if(data.type==='closed'){if(!this.workerConnected)this.fallbackDirect(worker);else{this.fail(Error('Cockpit connection closed'));this.onclose();}}
       else if(data.type==='feedback'){try{this.onreply(data.reply);worker.port.postMessage({type:'feedback-ack',id:data.id});}catch(error){this.fail(error instanceof Error?error:Error(String(error)));this.onclose();}}
       else if(data.type==='result'){
         const pending=this.pending.get(data.id);if(!pending)return;this.pending.delete(data.id);
@@ -46,9 +49,31 @@ export class BrowserTransport {
         else{try{this.onreply(data.reply);pending.resolve(data.reply);}catch(error){pending.reject(error instanceof Error?error:Error(String(error)));this.fail(Error('Invalid Cockpit reply'));this.onclose();}}
       }
     };
-    worker.onerror=()=>{if(!this.closed){this.fail(Error('Background Cockpit connection failed'));this.onclose();}};
+    worker.onerror=()=>{if(this.closed||this.worker!==worker)return;if(!this.workerConnected)this.fallbackDirect(worker);else{this.fail(Error('Background Cockpit connection failed'));this.onclose();}};
     worker.port.start();
-    return new Promise<void>((resolve,reject)=>{this.connected={resolve,reject};worker.port.postMessage({type:'connect'});});
+    return new Promise<void>((resolve,reject)=>{
+      this.connected={resolve,reject};
+      // A stalled worker download may never emit an error. Fall back before any RPC.
+      this.startupTimer=setTimeout(()=>this.fallbackDirect(worker),WORKER_STARTUP_TIMEOUT_MS);
+      worker.port.postMessage({type:'connect'});
+    });
+  }
+  private fallbackDirect(worker:SharedWorker){
+    if(this.closed||this.worker!==worker||this.workerConnected)return;
+    if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;
+    this.worker=undefined;
+    worker.onerror=null;
+    try{worker.port.postMessage({type:'close'});}catch{}
+    try{worker.port.close();}catch{}
+    const pending=this.connected;
+    if(!pending)return;
+    this.connectDirect().then(()=>{
+      if(this.connected!==pending)return;
+      this.connected=undefined;pending.resolve();
+    },error=>{
+      if(this.connected!==pending)return;
+      this.connected=undefined;pending.reject(error instanceof Error?error:Error(String(error)));
+    });
   }
   request(frame:Record<string,unknown>):Promise<any>{
     if(this.direct)return this.direct.request(frame);
@@ -62,8 +87,8 @@ export class BrowserTransport {
     this.close();
   }
   close(){
-    if(this.closed)return;this.closed=true;this.direct?.close();
-    this.worker?.port.postMessage({type:'close'});this.worker?.port.close();this.worker=undefined;
+    if(this.closed)return;this.closed=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;this.direct?.close();
+    try{this.worker?.port.postMessage({type:'close'});}catch{}try{this.worker?.port.close();}catch{}this.worker=undefined;
     const error=Error('Browser connection stopped');this.connected?.reject(error);this.connected=undefined;
     for(const pending of this.pending.values())pending.reject(error);this.pending.clear();
   }
