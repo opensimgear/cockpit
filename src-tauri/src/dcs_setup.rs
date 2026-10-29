@@ -878,30 +878,25 @@ fn with_loader(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn validate_catalogue(path: &Path) -> Result<(), String> {
-    let mut count = 0;
-    for entry in fs::read_dir(path)
-        .map_err(|e| format!("Cannot read installed DCS-BIOS catalogue: {e}"))?
-        .take(256)
-    {
-        let entry = entry.map_err(|e| e.to_string())?;
-        if entry
-            .path()
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("json"))
-        {
-            let value: Value = serde_json::from_slice(&read(&entry.path(), MAX_FILE)?)
-                .map_err(|_| format!("{} is not valid catalogue JSON.", entry.path().display()))?;
-            if !value.is_object() {
-                return Err("The installed DCS-BIOS catalogue must contain JSON objects.".into());
-            }
-            count += 1;
-        }
-    }
-    if count == 0 {
-        return Err("The installed DCS-BIOS catalogue is empty.".into());
-    }
-    // Validate the generic export metadata and one supported module through the production parser.
-    crate::dcs_bios::Catalogue::load_module(path, "A-10C").map(|_| ())
+    let metadata = |canonical: &str, legacy: &str| {
+        let canonical = path.join(canonical);
+        let selected = if canonical.exists() {
+            canonical
+        } else {
+            path.join(legacy)
+        };
+        crate::dcs_bios::read_json(&selected, crate::dcs_bios::MAX_DOCUMENT)
+    };
+    let start = metadata("MetadataStart.json", "MetaDataStart.json")?;
+    let end = metadata("MetadataEnd.json", "MetaDataEnd.json")?;
+    let aliases = crate::dcs_bios::read_json(
+        &path.join("AircraftAliases.json"),
+        crate::dcs_bios::MAX_DOCUMENT,
+    )?;
+    // Setup readiness depends on shared aircraft identity metadata. Individual
+    // aircraft documents are validated when that aircraft is selected, so a
+    // file DCS is currently rewriting cannot take down unrelated modules.
+    crate::dcs_bios::Catalogue::common_metadata(&start, &end, &aliases).map(|_| ())
 }
 fn module_check(module: &Path) -> Result<(), String> {
     reject_link(module)?;

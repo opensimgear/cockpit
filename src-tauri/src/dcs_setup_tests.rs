@@ -554,13 +554,32 @@ fn fork_config_duplicate_loader_and_malformed_catalogue_are_preserved() {
     )
     .unwrap();
     assert_eq!(inspect(&target).unwrap()["repairable"], false);
-    fs::write(target.join("Scripts/Export.lua"), LOADER).unwrap();
+}
+#[test]
+fn malformed_unrelated_aircraft_catalogue_does_not_block_readiness() {
+    let s = Scratch::new();
+    let target = s.target();
+    fixture_module(&target);
     fs::write(
-        target.join("Scripts/DCS-BIOS/doc/json/A-10C.json"),
+        target.join("Scripts/DCS-BIOS/doc/json/MiG-29 Fulcrum.json"),
         b"broken",
     )
     .unwrap();
-    assert_eq!(inspect(&target).unwrap()["ready"], false);
+    let state = inspect_base(&target).unwrap();
+    assert_eq!(state["moduleReady"], true, "{state}");
+}
+#[test]
+fn malformed_required_shared_catalogue_metadata_blocks_readiness() {
+    let s = Scratch::new();
+    let target = s.target();
+    fixture_module(&target);
+    fs::write(
+        target.join("Scripts/DCS-BIOS/doc/json/MetadataStart.json"),
+        b"broken",
+    )
+    .unwrap();
+    let state = inspect_base(&target).unwrap();
+    assert_eq!(state["moduleReady"], false, "{state}");
 }
 #[test]
 fn cancel_before_mutation_and_during_staging_restores_clean_target() {

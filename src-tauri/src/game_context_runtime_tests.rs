@@ -271,3 +271,5 @@ fn preparation_loss_revokes_before_dispatch_without_waiting_for_observer() {
     runtime.shutdown();
 }
 include!("game_context_runtime_tests_tail.rs");
+#[path = "game_context/decoration_tests.rs"]
+mod decoration;

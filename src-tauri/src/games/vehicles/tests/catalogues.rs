@@ -127,8 +127,7 @@ fn changing_selected_installation_hides_the_previous_live_car_before_observer_re
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
     let mut game = json!({"id":"assetto-corsa","integrationCompatible":true,"integrationKey":"assetto-corsa","provider":"assetto-corsa","installed":true,"installPath":scratch.path().join("AC"),"executable":scratch.path().join("AC/acs.exe")});
     tracker.observe(&game, &json!({}), None, "setup", false, 1);
-    tracker.entries.get_mut("assetto-corsa").unwrap().current =
-        Some(json!({"id":"lotus_elise_sc","name":"lotus_elise_sc"}));
+    tracker.set_test_vehicle("assetto-corsa", Some("lotus_elise_sc"));
     tracker.decorate(&mut game);
     assert_eq!(game["currentVehicle"]["id"], "lotus_elise_sc");
     game["installPath"] = json!(scratch.path().join("Other AC"));

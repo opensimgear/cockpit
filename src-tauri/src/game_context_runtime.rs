@@ -225,11 +225,14 @@ impl GamesRuntime {
         }));
     }
     pub(super) fn decorate_game_contexts(&self, games: &mut [Value]) {
-        let contexts = self
-            .inner
-            .contexts
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        self.decorate_game_contexts_with(games, |id| {
+            self.current_vehicle_id(id).and_then(|vehicle| {
+                self.inner.setup.integration_catalogue_metadata_for_vehicle("dcs", Some(&vehicle))
+                    .ok().and_then(|catalogue| catalogue["aircraftModule"].as_str().map(str::to_owned))
+            })
+        });
+    }
+    fn decorate_game_contexts_with(&self, games: &mut [Value], mut active_module: impl FnMut(&str) -> Option<String>) {
         for game in games {
             let id = game["id"].as_str().unwrap_or("").to_owned();
             if crate::game_discovery::integration_key(game).is_none() {
@@ -239,19 +242,12 @@ impl GamesRuntime {
                 continue;
             }
             if crate::game_discovery::integration_key(game) == Some("dcs") {
-                let active_module = self.current_vehicle_id(&id).and_then(|vehicle| {
-                    self.inner
-                        .setup
-                        .integration_catalogue_metadata_for_vehicle("dcs", Some(&vehicle))
-                        .ok()
-                        .and_then(|catalogue| {
-                            catalogue["aircraftModule"].as_str().map(str::to_owned)
-                        })
-                });
                 game["integrationSetup"]["aircraftModuleAutomatic"] = json!(true);
-                game["integrationSetup"]["activeAircraftModule"] = json!(active_module);
+                game["integrationSetup"]["activeAircraftModule"] = json!(active_module(&id));
             }
-            let mut context = contexts.view(&id);
+            // Provider metadata may scan/parse catalogue files. Only copy the
+            // broker view under its mutex; decoration never retains authority.
+            let mut context = self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner()).view(&id);
             if context["providerSetupRevision"].is_null() {
                 context["providerSetupRevision"] =
                     game["integrationSetup"]["providerSetupRevision"].clone();
@@ -308,6 +304,14 @@ impl GamesRuntime {
 }
 
 impl Inner {
+    // Reader destruction may unsubscribe in bounded batches and sleep. Retire
+    // under the mutex, then drop its owned batch only after releasing the guard.
+    fn update_vehicles<R>(&self, update: impl FnOnce(&mut crate::game_vehicles::Tracker) -> R) -> R {
+        let (value, retired) = { let mut vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
+            let value = update(&mut vehicles); (value, vehicles.take_retired()) };
+        drop(retired);
+        value
+    }
     fn poll_vehicle_telemetry(&self) {
         let games = if self.guard_installation_metadata().is_ok() {
             self.settings
@@ -321,22 +325,28 @@ impl Inner {
         } else {
             vec![]
         };
-        self.vehicles
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .poll_verified(
-                &games,
-                |id| {
-                    let key = games
-                        .iter()
-                        .find(|game| game["id"] == id)
-                        .and_then(crate::game_discovery::integration_key)
-                        .unwrap_or("");
-                    self.setup.provider_setup_revision(key)
-                },
-                |process| self.platform.alive(process).unwrap_or(false),
-            );
+        let candidates = self.vehicles.lock().unwrap_or_else(|p| p.into_inner()).poll_candidates();
+        let verified = candidates.into_iter().map(|candidate| candidate.verify(&games,
+            |id| {
+                let key = games.iter().find(|game| game["id"] == id)
+                    .and_then(crate::game_discovery::integration_key).unwrap_or("");
+                self.setup.provider_setup_revision(key)
+            },
+            |process| self.platform.alive(process).unwrap_or(false),
+        )).collect();
+        let polls = self.update_vehicles(|vehicles| vehicles.begin_polls(verified));
+        for poll in polls {
+            let result = poll.read();
+            let current_games = self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone();
+            let result = result.verify(&current_games, |id| {
+                let key = current_games.iter().find(|game| game["id"] == id)
+                    .and_then(crate::game_discovery::integration_key).unwrap_or("");
+                self.setup.provider_setup_revision(key)
+            }, |process| self.platform.alive(process).unwrap_or(false));
+            self.update_vehicles(|vehicles| vehicles.apply_poll(result));
+        }
     }
+
     fn runtime_vehicle_id(&self, id: &str) -> Option<String> {
         // Other games already select their profile vehicle independently. DCS
         // additionally binds decoder/command authority to its exact aircraft.
@@ -436,17 +446,15 @@ impl Inner {
                 .ok()
                 .map(|(connection, _, _)| connection);
             if let Some(connection) = connection {
-                self.vehicles
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .observe(
-                        &game,
-                        &connection,
-                        vehicle_process,
-                        &revision,
-                        supported && game["integrationSetup"]["state"] == "ready",
-                        epoch,
-                    );
+                let work = self.update_vehicles(|vehicles| vehicles.begin_observation(&game, &connection, vehicle_process, &revision,
+                        supported && game["integrationSetup"]["state"] == "ready", epoch));
+                if let Some(work) = work {
+                    let observed = work.read();
+                    let current_games = self.settings.lock().unwrap_or_else(|p| p.into_inner()).catalogue.clone();
+                    let observed = observed.verify(&current_games, &self.setup.provider_setup_revision(integration),
+                        |process| self.platform.alive(process).unwrap_or(false));
+                    self.update_vehicles(|vehicles| vehicles.apply_observation(observed));
+                }
             }
             let vehicle_id = self.runtime_vehicle_id(id);
             let catalogue = self

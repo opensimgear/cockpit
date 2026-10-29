@@ -150,8 +150,12 @@ pub(super) fn prepare_catalogues(
 }
 
 pub(super) fn project_preview(snapshot: &mut CompileSnapshot, hub: &Hub, document: &osg_profiles::ProfileDocument) -> Result<(), String> {
+    let mut preview_document = document.clone();
+    preview_document.companion_assignments.retain(|desired| {
+        snapshot.assignments.iter().any(|assignment| assignment.resource_id == desired.resource_id)
+    });
     let candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
-        document: document.clone(), assignments: snapshot.assignments.clone(), read_only: snapshot.read_only,
+        document: preview_document, assignments: snapshot.assignments.clone(), read_only: snapshot.read_only,
         game_id: None, admission_epoch: None, stage: None };
     let (catalogues, _) = prepare_catalogues(hub, snapshot, &candidate)?;
     crate::profile_resources::Runtime::project_offline_companion_catalogues(snapshot, &catalogues)

@@ -5,6 +5,34 @@ use osg_profiles::{
 };
 
 #[test]
+fn preview_without_local_companion_assignment_returns_compiler_input() {
+    let fixture = NativeFixture::new();
+    let candidate = fixture.candidate(false);
+    let mut preview = fixture
+        .resources
+        .snapshot_for_preparation(vec![])
+        .unwrap()
+        .0;
+    assert!(preview.assignments.is_empty());
+    let original = preview.clone();
+
+    NativeProfileHost::project_companion_preview(
+        &mut preview,
+        &fixture.hub,
+        &candidate.document,
+    )
+    .unwrap();
+
+    assert!(preview.assignments.is_empty());
+    assert_eq!(
+        preview.resources.iter().map(|resource| &resource.summary.id).collect::<Vec<_>>(),
+        original.resources.iter().map(|resource| &resource.summary.id).collect::<Vec<_>>()
+    );
+    let report = osg_profiles::compiler::compile(&candidate.document, &preview);
+    assert!(!report.diagnostics.is_empty());
+}
+
+#[test]
 fn offline_unassigned_pair_keeps_base_healthy_and_reconnects_its_desired_publication() {
     let mut fixture = NativeFixture::new();
     fixture.quit.store(true, Ordering::Release);

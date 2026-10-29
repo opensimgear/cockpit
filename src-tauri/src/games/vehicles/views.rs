@@ -9,6 +9,10 @@ impl Tracker {
                     return true;
                 }
                 entry.observed.elapsed() <= Duration::from_secs(2)
+                    && entry
+                        .telemetry
+                        .as_ref()
+                        .is_some_and(|capture| !capture.expired())
             })
             .and_then(|entry| entry.current.clone())
     }
@@ -18,7 +22,7 @@ impl Tracker {
             .filter(|entry| {
                 entry.installation == Self::installation(game)
                     && entry.enabled
-                    && entry.reader.is_some()
+                    && (entry.reader.is_some() || entry.polling)
                     && entry.observed.elapsed() <= Duration::from_secs(2)
             })
             .and_then(|entry| entry.telemetry.clone())
@@ -33,6 +37,24 @@ impl Tracker {
                 && entry.process.as_ref() == Some(process)
                 && entry.observed.elapsed() <= Duration::from_secs(2)
         })?;
+        if entry.polling {
+            let (snapshot, captured) = entry.detached_physics.as_ref()?;
+            let mut snapshot = snapshot.clone();
+            snapshot.age_ms = snapshot
+                .age_ms
+                .map(|age| age.saturating_add(captured.elapsed().as_millis() as u64));
+            if snapshot
+                .age_ms
+                .is_some_and(|age| age > crate::dcs_physics::FRESHNESS_MS)
+            {
+                snapshot.fresh = false;
+                if snapshot.status != "stopped" {
+                    snapshot.status = "stale".into();
+                }
+                snapshot.values.clear();
+            }
+            return Some(snapshot);
+        }
         let Reader::Dcs {
             physics: Some(physics),
             ..

@@ -112,6 +112,11 @@ impl Channel for Child {
 fn factory() -> (Factory, Arc<Mutex<DriverState>>) {
     factory_with_renewal_clock(false)
 }
+impl NativeProfileHost {
+    pub(crate) fn game_context_renewal_test_factory() -> Factory {
+        factory_with_renewal_clock(true).0
+    }
+}
 fn factory_with_renewal_clock(renewal_clock: bool) -> (Factory, Arc<Mutex<DriverState>>) {
     let state = Arc::new(Mutex::new(DriverState {
         slot: Slot {

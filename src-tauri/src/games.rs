@@ -179,8 +179,10 @@ impl GamesRuntime {
                     continue;
                 }
                 vehicles.decorate(game);
-                self.inner.setup.decorate_installed_cars(game);
             }
+        }
+        for game in catalogue.iter_mut().filter(|game| game["provider"].is_string()) {
+            self.inner.setup.decorate_installed_cars(game);
         }
         for game in &mut catalogue {
             game["profileContext"] = self

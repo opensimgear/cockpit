@@ -39,6 +39,8 @@ fn vehicle(game: &str, value: &str) -> Option<Value> {
 }
 
 mod sources;
+mod observation;
+mod polling;
 use sources::*;
 fn validate_saved(saved: &Value) -> Result<(), String> {
     let games = saved["games"]
@@ -91,6 +93,10 @@ struct Entry {
     retry: Instant,
     observed: Instant,
     observation_epoch: u64,
+    generation: u64,
+    polling: bool,
+    opening: Option<u64>,
+    detached_physics: Option<(crate::dcs_physics::Snapshot, Instant)>,
 }
 pub(crate) struct Tracker {
     writer: Option<osg_persistence::ObservationWriter<Value>>,
@@ -98,8 +104,13 @@ pub(crate) struct Tracker {
     origin: Instant,
     seen: BTreeMap<String, BTreeMap<String, Value>>,
     entries: BTreeMap<String, Entry>,
+    retired: Vec<Reader>,
 }
+pub(crate) struct RetiredReaders { _readers: Vec<Reader> }
 impl Tracker {
+    pub(crate) fn take_retired(&mut self) -> RetiredReaders {
+        RetiredReaders { _readers: std::mem::take(&mut self.retired) }
+    }
     fn installation(game: &Value) -> String {
         json!([
             game["installPath"],
@@ -175,187 +186,10 @@ impl Tracker {
             origin: Instant::now(),
             seen,
             entries: BTreeMap::new(),
+            retired: vec![],
         }
     }
-    pub(crate) fn observe(
-        &mut self,
-        game: &Value,
-        connection: &Value,
-        process: Option<ProcessIdentity>,
-        setup_revision: &str,
-        enabled: bool,
-        observation_epoch: u64,
-    ) {
-        let id = game["id"].as_str().unwrap_or("");
-        if !crate::game_discovery::valid_id(id)
-            || (!self.entries.contains_key(id) && self.entries.len() >= 512)
-        {
-            return;
-        }
-        let integration = crate::game_discovery::integration_key(game).unwrap_or("");
-        let enabled = enabled && !integration.is_empty();
-        let now = Instant::now();
-        let signature = json!([
-            process.as_ref().map(ProcessIdentity::value),
-            setup_revision,
-            Self::installation(game),
-            enabled
-        ])
-        .to_string();
-        let entry = self.entries.entry(id.into()).or_insert_with(|| Entry {
-            #[cfg(test)]
-            injected: false,
-            signature: String::new(),
-            integration: String::new(),
-            installation: String::new(),
-            setup_revision: String::new(),
-            enabled: false,
-            process: None,
-            reader: None,
-            current: None,
-            telemetry: None,
-            inspection: vec![],
-            inspected: now,
-            catalogued: now - Duration::from_secs(31),
-            vehicles: vec![],
-            error: None,
-            retry: now,
-            observed: now,
-            observation_epoch: 0,
-        });
-        if observation_epoch <= entry.observation_epoch {
-            return;
-        }
-        entry.observation_epoch = observation_epoch;
-        if entry.signature != signature {
-            entry.integration = integration.into();
-            entry.reader = None;
-            entry.current = None;
-            entry.telemetry = None;
-            entry.error = None;
-            entry.process = process;
-            entry.installation = Self::installation(game);
-            entry.setup_revision = setup_revision.into();
-            entry.enabled = enabled;
-            entry.signature = signature;
-            entry.retry = now;
-            entry.catalogued = now - Duration::from_secs(31);
-        }
-        entry.observed = now;
-        if entry.catalogued.elapsed() >= Duration::from_secs(30) {
-            entry.vehicles = match integration {
-                "dcs" => dcs_catalogue(connection).unwrap_or_default(),
-                "x-plane-11" | "x-plane-12" => xplane_catalogue(game),
-                _ => vec![],
-            };
-            entry.catalogued = now;
-        }
-        if enabled && entry.reader.is_none() && now >= entry.retry {
-            if let Some(process) = &entry.process {
-                match Reader::open(integration, connection, process) {
-                    Ok(mut reader) => {
-                        let _ = reader.inspect(integration, &entry.inspection);
-                        entry.reader = Some(reader);
-                        entry.error = None;
-                    }
-                    Err(error) => {
-                        entry.error = Some(error);
-                        entry.retry = now + Duration::from_secs(2);
-                    }
-                }
-            }
-        }
-    }
-    /// A separate native worker renews retained process identity without waiting
-    /// for setup inspection or aircraft catalogue construction. Telemetry still
-    /// has to advance through its own decoder freshness policy below.
-    pub(crate) fn poll_verified(
-        &mut self,
-        games: &[Value],
-        mut setup_revision: impl FnMut(&str) -> String,
-        mut alive: impl FnMut(&ProcessIdentity) -> bool,
-    ) {
-        for (id, entry) in &mut self.entries {
-            #[cfg(test)]
-            if entry.injected {
-                continue;
-            }
-            let qualified = entry.enabled
-                && games.iter().any(|game| {
-                    game["id"] == id.as_str()
-                        && game["installed"] == true
-                        && Self::installation(game) == entry.installation
-                })
-                && setup_revision(id) == entry.setup_revision
-                && entry.process.as_ref().is_some_and(&mut alive);
-            if qualified {
-                entry.observed = Instant::now();
-            } else {
-                entry.reader = None;
-                entry.current = None;
-                entry.telemetry = None;
-            }
-        }
-        self.poll();
-    }
-    pub(crate) fn poll(&mut self) {
-        let now_ms = self.origin.elapsed().as_millis() as u64;
-        let mut changed = false;
-        for (id, entry) in &mut self.entries {
-            #[cfg(test)]
-            if entry.injected {
-                continue;
-            }
-            // A stalled process scan cannot leave a previous vehicle selected.
-            if entry.observed.elapsed() > Duration::from_secs(2) {
-                entry.reader = None;
-                entry.current = None;
-                entry.telemetry = None;
-                continue;
-            }
-            let Some(reader) = &mut entry.reader else {
-                continue;
-            };
-            if !entry.inspection.is_empty() && entry.inspected.elapsed() > Duration::from_secs(5) {
-                entry.inspection.clear();
-                let _ = reader.inspect(&entry.integration, &[]);
-            }
-            match reader.poll_telemetry(now_ms) {
-                Ok((current, capture)) => {
-                    entry.telemetry = Some(capture);
-                    entry.current = current.and_then(|value| vehicle(&entry.integration, &value));
-                    if let Some(value) = &entry.current {
-                        let seen = self.seen.entry(id.clone()).or_default();
-                        let key = value["id"].as_str().unwrap();
-                        if !seen.contains_key(key) && seen.len() < MAX_VEHICLES {
-                            seen.insert(key.into(), value.clone());
-                            changed = true;
-                        }
-                    }
-                }
-                Err(error) => {
-                    entry.current = None;
-                    entry.telemetry = None;
-                    entry.reader = None;
-                    entry.error = Some(error);
-                    entry.retry = Instant::now() + Duration::from_secs(2);
-                }
-            }
-        }
-        if changed {
-            let games = self
-                .seen
-                .iter()
-                .map(|(id, values)| (id.clone(), json!(values.values().collect::<Vec<_>>())))
-                .collect::<serde_json::Map<_, _>>();
-            let value = json!({"schemaVersion":1,"games":games});
-            if let Some(writer) = &self.writer {
-                if let Err(error) = writer.queue(value) {
-                    self.retention_error = Some(error);
-                }
-            }
-        }
-    }
+
 }
 
 #[cfg(test)]

@@ -40,7 +40,8 @@ def main():
                     'profile_session_stage.rs', 'profile_session_inputs.rs',
                     'profile_session_scripts.rs', 'profile_session_virtual.rs',
                     'profile_hid_publication.rs', 'profile_session_dcs_hid.rs',
-                    'games/storage/car_catalogue.rs', 'games/vehicles/mod.rs', 'games/vehicles/sources.rs', 'games/vehicles/views.rs', 'profile_desktop_settings.rs']
+                    'games/storage/car_catalogue.rs', 'games/vehicles/mod.rs', 'games/vehicles/observation.rs', 'games/vehicles/polling.rs',
+                    'games/vehicles/sources.rs', 'games/vehicles/views.rs', 'profile_desktop_settings.rs']
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=root / '.research/setup-coverage')
     parser.add_argument('--module', action='append', choices=module_names,
