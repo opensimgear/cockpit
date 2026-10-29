@@ -304,7 +304,7 @@ fn peripheral_reconnect_progress_is_created_only_after_preparation_and_at_handof
 }
 
 #[test]
-fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
+fn manual_vehicle_switch_waits_for_confirmed_identity_before_reapplying() {
     let fixture=Fixture::with_vehicle_catalogues();let manager=&fixture.manager;
     let id=create(manager,"Vehicle variants");
     let mut document=ok(manager,"profile_get",json!({"id":id}))["document"].clone();
@@ -353,7 +353,11 @@ fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
     for _ in 0..3 {manager.poll_vehicle_profile();assert_eq!(owner(manager),Some(viper.clone()));}
     manager.games.set_test_vehicle("dcs",None);
     manager.profile_session.lock().unwrap().poll().unwrap();manager.poll_vehicle_profile();
-    let base=owner(manager).expect("Unknown vehicle keeps the Base profile active");assert!(base.generation>viper.generation);
+    assert_eq!(owner(manager),Some(viper.clone()),"An unknown observation must retain the applied variant and owner");
+    assert_eq!(active_nodes(&viper),["base-constant","viper-constant"]);
+    manager.games.set_test_vehicle("dcs",Some("unconfigured-aircraft"));
+    manager.profile_session.lock().unwrap().poll().unwrap();manager.poll_vehicle_profile();
+    let base=owner(manager).expect("A confirmed unconfigured vehicle selects Base");assert!(base.generation>viper.generation);
     assert_eq!(active_nodes(&base),["base-constant"]);
     let base_progress=request(manager,"profile_activation_current",json!({}))["state"]["profileActivation"].clone();
     assert_eq!(base_progress["vehicleName"],"Base");assert_eq!(base_progress["phase"],"succeeded");

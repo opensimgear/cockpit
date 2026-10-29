@@ -53,6 +53,30 @@ fn fake() -> Fake {
     }
 }
 #[test]
+fn live_desktop_process_reads_cached_identity_without_scanning_or_waiting() {
+    let platform = fake();
+    let observer = Observer::default();
+    assert_eq!(observer.try_current_process("dcs"), None);
+    observer.observe(&platform, &[game()]);
+    assert_eq!(observer.try_current_process("dcs"), Some(None));
+    *platform.current.lock().unwrap() = Ok(Some(running(1)));
+    observer.observe(&platform, &[game()]);
+    observer.observe(&platform, &[game()]);
+    let scans = platform.scans.load(Ordering::Relaxed);
+    assert_eq!(observer.try_current_process("dcs"), Some(Some(running(1))));
+    assert_eq!(platform.scans.load(Ordering::Relaxed), scans);
+    let mut state = observer.0.lock().unwrap();
+    let began = Instant::now();
+    assert_eq!(observer.try_current_process("dcs"), None);
+    assert!(began.elapsed() < Duration::from_millis(100));
+    state.at = Some(Instant::now() - MAX_AGE - Duration::from_millis(1));
+    drop(state);
+    assert_eq!(observer.try_current_process("dcs"), None);
+    *platform.current.lock().unwrap() = Ok(None);
+    observer.observe(&platform, &[game()]);
+    assert_eq!(observer.try_current_process("dcs"), Some(None));
+}
+#[test]
 fn uninstalled_supported_games_are_not_process_detection_failures() {
     let platform = fake();
     let observer = Observer::default();

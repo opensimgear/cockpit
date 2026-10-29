@@ -51,6 +51,7 @@ impl GameSources {
         Ok(())
     }
     pub(crate) fn admit(&mut self, games: &GamesRuntime) -> Result<(), String> {
+        let began = Instant::now();
         self.validate_catalogue(true)?;
         let Some(game) = &self.game else {
             return Ok(());
@@ -63,6 +64,7 @@ impl GameSources {
             );
         }
         self.context = Some(context);
+        self.validation.seed(began);
         Ok(())
     }
     fn validate_catalogue(&mut self, force: bool) -> Result<(), String> {
@@ -100,8 +102,28 @@ impl GameSources {
                 ..Default::default()
             };
         }
-        if let Err(error) = self.validate(games) {
-            return self.lose(clock(), error);
+        if baseline {
+            let began = Instant::now();
+            if let Err(error) = self.validate(games) { return self.lose(clock(), error); }
+            self.validation.seed(began);
+        } else if self.game.is_some() {
+            if !self.validation.started() {
+                let game = self.game.as_ref().unwrap();
+                let mut validate = games.profile_validation_task(game.proof.clone(), self.context.clone());
+                let mut catalogue = match &self.reader {
+                    Some(Reader::Dcs { catalogue_guard, .. }) => Some(catalogue_guard.clone()),
+                    _ => None,
+                };
+                self.validation.start(move || {
+                    if let Some(guard) = &mut catalogue { guard.validate(false)?; }
+                    validate()
+                });
+            }
+            match self.validation.poll() {
+                Ok(true) => {},
+                Ok(false) => return self.pending(clock(), "Game identity validation is pending; its branches await fresh evidence.".into()),
+                Err(error) => return self.lose(clock(), error),
+            }
         }
         // Process and catalogue validation may outlast the telemetry lease.
         // Timestamp actual acquisition after those checks, using the host's
@@ -139,13 +161,16 @@ impl GameSources {
         games: &GamesRuntime,
         clock: impl FnOnce() -> u64,
     ) -> GamePoll {
+        let began = Instant::now();
         if let Err(error) = self.validate_catalogue(true) {
             return self.lose(clock(), error);
         }
         for source in self.sources.values_mut() {
             source.available = false;
         }
-        self.poll_baseline(games, clock)
+        let poll = self.poll_baseline(games, clock);
+        if !poll.context_lost { self.validation.seed(began); }
+        poll
     }
     /// One bounded pre-arm read. The host owns waiting, cancellation and output
     /// heartbeats, including after discarding a queued pre-activation backlog.
@@ -161,6 +186,25 @@ impl GameSources {
     }
     pub(crate) fn fail(&mut self, now_us: u64, error: String) -> GamePoll {
         self.lose(now_us, error)
+    }
+    /// Temporary uncertainty withdraws samples and commands without retiring
+    /// the exact reader. Resumption requires a new source baseline.
+    pub(crate) fn pending(&mut self, now_us: u64, message: String) -> GamePoll {
+        self.fresh = false;
+        self.witness = None;
+        self.witnessed_progress = false;
+        let mut result = GamePoll { diagnostics: vec![message], ..Default::default() };
+        for (resource, state) in &mut self.sources {
+            if !state.available { continue; }
+            state.available = false;
+            state.sequence = state.sequence.saturating_add(1);
+            result.frames.push(Frame {
+                source: resource.clone(), generation: Counter(state.generation),
+                sequence: Counter(state.sequence), captured_us: Counter(now_us), reason: Reason::Gap,
+                changes: vec![],
+            });
+        }
+        result
     }
     fn read(&mut self, now_us: u64, baseline: bool) -> Result<Option<ExportSnapshot>, String> {
         match self.reader.as_mut() {

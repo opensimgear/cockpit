@@ -343,10 +343,6 @@ impl Hub {
         )?;
         self.replace_profile_assignment(&mut inner, receipt.instance_id(), Some(&desired))
     }
-    pub fn validate_profile_assignment(&self, receipt: &AssignmentReceipt) -> Result<(), String> {
-        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        validate_owned(&inner, receipt)
-    }
     /// Neutralization can verify its protected owner without a panel cache.
     /// This grants no publication, baseline, or feedback delivery capability.
     pub fn validate_profile_assignment_owner(
@@ -466,45 +462,5 @@ impl Hub {
         inner.record = record;
         inner.feedback.remove(instance);
         Ok(())
-    }
-    pub fn configure_profile_feedback(
-        &self,
-        receipt: &AssignmentReceipt,
-        bindings: &[FeedbackBinding],
-    ) -> Result<(), String> {
-        self.configure_feedback_authorized(
-            receipt.instance_id(),
-            receipt.publication_hash(),
-            bindings,
-            Some(receipt),
-        )
-    }
-    pub fn profile_feedback_token(
-        &self,
-        receipt: &AssignmentReceipt,
-    ) -> Result<FeedbackToken, String> {
-        self.feedback_token_authorized(receipt.instance_id(), Some(receipt))
-    }
-    pub fn publish_profile_feedback(
-        &self,
-        receipt: &AssignmentReceipt,
-        token: &FeedbackToken,
-        values: &[FeedbackSample],
-        mode: FeedbackMode,
-        now_ms: u64,
-    ) -> Result<u64, String> {
-        self.publish_feedback_authorized(token, values, mode, now_ms, Some(receipt))
-    }
-    pub fn clear_profile_feedback(
-        &self,
-        receipt: &AssignmentReceipt,
-        now_ms: u64,
-    ) -> Result<(), String> {
-        self.clear_feedback_authorized(
-            receipt.instance_id(),
-            receipt.publication_hash(),
-            now_ms,
-            Some(receipt),
-        )
     }
 }

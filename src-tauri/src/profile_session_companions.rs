@@ -1,5 +1,9 @@
 //! Profile-owned panel assignments, native input feeds and typed widget state.
 //! No global feedback route store or browser input participates in this adapter.
+#[path = "profile_session/companion_feedback.rs"]
+mod feedback;
+#[path = "profile_session/companion_pending.rs"]
+mod pending;
 use osg_companion_service::{
     profile::{AssignmentReceipt, Preparation},
     FeedbackBinding, FeedbackDescriptor, FeedbackKind, FeedbackMode, FeedbackProvenance,
@@ -63,8 +67,11 @@ struct Instance {
     sequence: u64,
     at: u64,
     ready: bool,
+    metadata_paused: bool,
     feedback_at: Option<u64>,
     feedback_live: bool,
+    feedback_clear_pending: bool,
+    feedback_cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 pub(crate) struct CompanionSources {
     instances: Vec<Instance>,
@@ -72,6 +79,7 @@ pub(crate) struct CompanionSources {
     acquired: bool,
     stopped: bool,
     run: Option<RunToken>,
+    feedback_worker: feedback::Worker<Vec<feedback::Completion>>,
 }
 #[derive(Default)]
 pub(crate) struct CompanionPoll {
@@ -248,8 +256,11 @@ impl CompanionSources {
                 sequence: 0,
                 at: 0,
                 ready: false,
+                metadata_paused: false,
                 feedback_at: None,
                 feedback_live: false,
+                feedback_clear_pending: false,
+                feedback_cancel: feedback::revocation(),
             });
         }
         for source in plan.sources.iter().filter(|source| {
@@ -281,6 +292,7 @@ impl CompanionSources {
             acquired: false,
             stopped: false,
             run: None,
+            feedback_worker: feedback::Worker::default(),
         })
     }
     pub(crate) fn is_empty(&self) -> bool {
@@ -472,6 +484,7 @@ impl CompanionSources {
         Ok(true)
     }
     pub(crate) fn bind_delivery_plan(&mut self, delivery: &ExecutionPlan) -> Result<(), String> {
+        self.cancel_feedback();
         let bindings = self
             .instances
             .iter()
@@ -506,6 +519,7 @@ impl CompanionSources {
         validate: impl Fn(&ResourceToken) -> Result<(), String>,
         now: u64,
     ) -> CompanionPoll {
+        self.cancel_feedback();
         let mut poll = CompanionPoll::default();
         if !self.acquired || self.stopped {
             return poll;
@@ -570,6 +584,7 @@ impl CompanionSources {
         poll
     }
     pub(crate) fn fail(&mut self, now: u64, error: String) -> CompanionPoll {
+        self.cancel_feedback();
         let mut result = CompanionPoll {
             frames: vec![],
             diagnostics: vec![error],
@@ -589,6 +604,7 @@ impl CompanionSources {
         &mut self,
         runtime: &crate::companion_host::Runtime,
     ) -> Result<(), String> {
+        self.cancel_feedback();
         if self.is_empty() {
             self.stopped = true;
             self.run = None;
@@ -723,6 +739,7 @@ impl CompanionSources {
                     // A discarded batch may already have converted a Gap and
                     // cleared ready before a later frame failed. Preserve its
                     // loss fence even though none of that batch is delivered.
+                    instance.revoke_feedback();
                     let clear = was_ready || instance.ready || instance.feedback_live;
                     if was_ready || instance.ready {
                         if let Ok(frame) = instance.loss(now_us) {
@@ -817,6 +834,7 @@ impl CompanionSources {
         diagnostics
     }
     pub(crate) fn stop(&mut self, hub: &Hub) -> Result<(), String> {
+        self.cancel_feedback();
         self.stopped = true;
         self.run = None;
         let mut errors = vec![];
@@ -979,6 +997,9 @@ impl Instance {
                 .as_ref()
                 .ok_or("The companion assignment is not acquired.")?,
         )?;
+        self.validate_binding_identity()
+    }
+    fn validate_binding_identity(&self) -> Result<(), String> {
         for input in &self.inputs {
             token(
                 input.token.as_ref(),
@@ -1041,6 +1062,8 @@ impl Instance {
         Ok(self.sequence)
     }
     fn loss(&mut self, now_us: u64) -> Result<Option<Frame>, String> {
+        self.revoke_feedback();
+        self.metadata_paused = false;
         self.ready = false;
         self.at = self.at.max(now_us);
         if self.inputs.is_empty() {
@@ -1086,6 +1109,7 @@ impl Instance {
         if !baseline && !self.ready {
             return Err("A complete fresh companion baseline is required after loss.".into());
         }
+        if self.generation != frame.generation.0 { self.revoke_feedback(); }
         self.generation = frame.generation.0;
         self.at = frame.captured_us.0;
         let mut changes = vec![];
@@ -1208,5 +1232,12 @@ fn feedback_sample(
 }
 
 #[cfg(test)]
-#[path = "profile_session_companions_tests.rs"]
-mod tests;
+mod tests {
+    include!("profile_session_companions_tests.rs");
+    mod async_feedback {
+        include!("profile_session/companion_feedback_integration_tests.rs");
+    }
+    mod metadata_pending {
+        include!("profile_session/companion_pending_tests.rs");
+    }
+}

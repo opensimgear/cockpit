@@ -11,7 +11,7 @@ const {chromium} = require(modulePath), {expect} = require(modulePath + '/test')
 test('the native companion inspector shows consistent input and output port tiles', {timeout: 60_000}, async () => {
   const browser = await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL ?? 'http://127.0.0.1:9222');
   try {
-    const page = browser.contexts().flatMap(context => context.pages()).find(candidate => candidate.url().includes(':1420'));
+    const page = browser.contexts().flatMap(context => context.pages()).find(candidate => candidate.url().includes(':1420') && !candidate.url().includes('profile-activation-window'));
     assert.ok(page, 'Start the running native dev Cockpit.');
     if (!await page.getByRole('heading', {name: 'DCS Feature Lab', exact: true}).isVisible()) {
       await page.getByRole('navigation', {name: 'Main navigation'}).getByRole('button', {name: 'Profiles', exact: true}).click();
@@ -23,6 +23,8 @@ test('the native companion inspector shows consistent input and output port tile
     if (!await panel.isVisible()) {
       await page.getByRole('article', {name: 'Browser panel · DCS controls and feedback · Companion', exact: true}).getByRole('button').first().click();
     }
+    await expect(panel.getByRole('combobox').nth(1)).toContainText('DCS · WIN Companion');
+    await expect(panel.getByText('Selected panel is missing from the local library.', {exact: true})).toBeHidden();
     const inspector = page.getByRole('complementary', {name: 'Selected block inspector'});
     const inputs = inspector.getByRole('region', {name: 'Companion inputs', exact: true});
     const outputs = inspector.getByRole('region', {name: 'Companion outputs', exact: true});

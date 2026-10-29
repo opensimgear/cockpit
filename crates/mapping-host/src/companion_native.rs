@@ -130,6 +130,49 @@ impl CompanionProvider {
     }
 }
 impl NativeFeed {
+    /// Recapture a live input pause atomically. Held controls wait without
+    /// changing queues; revoked writers and generations remain hard errors.
+    pub fn try_neutral_baseline_audited(&mut self) -> Result<Option<Vec<NativeFrame>>, String> {
+        let now = self.feed.provider.now();
+        let mut state = self.feed.provider.state.lock().unwrap_or_else(|p| p.into_inner());
+        expire(&mut state, now);
+        let subscription = state.subscriptions.get(&self.feed.subscription).ok_or("The native companion subscription ended.")?;
+        let ids = subscription.sources.keys().cloned().collect::<Vec<_>>();
+        let mut neutral = true;
+        for id in &ids {
+            let instance = state.instances.get(id).ok_or("The companion source was removed.")?;
+            let queue = &subscription.sources[id];
+            if instance.owner.is_none() || !queue.started || queue.restart_required
+                || instance.generation != queue.generation
+                || self.refreshed.get(id).is_none_or(|(generation, _)| *generation != instance.generation)
+                || instance.definition.publication_hash != queue.publication_hash {
+                return Err("The companion writer or native generation changed during input suspension.".into());
+            }
+            if instance.values.len() != instance.definition.controls.len() {
+                return Err("The native companion state is incomplete.".into());
+            }
+            if instance.definition.controls.iter().any(|control| instance.values.get(&control.id) != Some(&control.fallback)) {
+                neutral = false;
+            }
+        }
+        if !neutral { return Ok(None); }
+        let mut frames = vec![];
+        for id in ids {
+            let instance = &state.instances[&id];
+            let (generation, seen, values) = (instance.generation, instance.last_seen_us, instance.values.clone());
+            let queue = state.subscriptions.get_mut(&self.feed.subscription).unwrap().sources.get_mut(&id).unwrap();
+            queue.frames.clear(); queue.loss = None; queue.sequence = 1;
+            queue.audit_domain = audit::next_id().unwrap_or(0);
+            let frame = Frame { source: source(&id), generation: Counter(generation), sequence: Counter(1),
+                captured_us: Counter(now), reason: osg_mapping::engine::Reason::Baseline,
+                changes: values.into_iter().filter(|(id, _)| queue.controls.contains(id))
+                    .map(|(control, value)| Change { control, value }).collect() };
+            frames.push(audit_native_frame(self.feed.provider.audit_provider, self.feed.subscription,
+                queue, &id, frame, None, 1));
+            self.refreshed.insert(id, (generation, seen));
+        }
+        Ok(Some(frames))
+    }
     /// Diagnostic aliases only; no writer or output authority is exposed.
     pub fn diagnostic_identity(&self) -> (u64, u64) {
         (self.feed.provider.audit_provider, self.feed.subscription)
@@ -265,3 +308,7 @@ impl NativeFeed {
 #[cfg(test)]
 #[path = "companion_native_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "companion_neutral_resume_tests.rs"]
+mod neutral_resume_tests;

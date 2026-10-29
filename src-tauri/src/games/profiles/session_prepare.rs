@@ -5,10 +5,17 @@ impl GameSources {
     pub(crate) fn preparation_session(&self) -> Option<&str> {
         self.game.as_ref().map(|game| game.proof.session.as_str())
     }
+    pub(crate) fn reader_session(&self) -> &str { &self.reader_session }
     pub(crate) fn accepts_replacement(&self, game: &PreparedGame) -> bool {
-        self.game
-            .as_ref()
-            .is_none_or(|old| old.proof.session != game.proof.session)
+        self.game.as_ref().is_none_or(|old| self.lost
+            && (old.proof.session != game.proof.session
+                || old.proof == game.proof && old.integration_key == game.integration_key
+                    && old.aircraft_module == game.aircraft_module))
+    }
+    pub(crate) fn accepts_replacement_from(&self, previous: &str, game: &PreparedGame) -> bool {
+        // The source may have changed while a read-only worker was validating.
+        // Its captured predecessor must still be the reader being replaced.
+        self.reader_session == previous && self.accepts_replacement(game)
     }
     pub(crate) fn inherit_source_counters(&mut self, previous: &Self) {
         for (id, source) in &mut self.sources {
@@ -47,6 +54,7 @@ impl GameSources {
             acquired: false,
             published: None,
             physics: None,
+            validation: live_validation::Validation::default(),
         };
         let Some(game) = &result.game else {
             return Ok(result);

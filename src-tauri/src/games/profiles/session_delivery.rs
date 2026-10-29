@@ -204,6 +204,7 @@ impl GameSources {
         }
     }
     pub(crate) fn stop(&mut self) {
+        self.validation.cancel();
         if let Some(Reader::Acr {
             source: Some(source),
             ..

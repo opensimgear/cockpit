@@ -186,6 +186,7 @@ impl TelemetryCatalogue {
 
 /// Bounded passive invalidation only. Changed files never refresh an active
 /// reader's captured addresses, quantity interpretation or command authority.
+#[derive(Clone)]
 pub(crate) struct DcsCatalogueGuard {
     path: PathBuf,
     module: String,

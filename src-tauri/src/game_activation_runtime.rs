@@ -3,6 +3,11 @@
 use super::*;
 use osg_profiles::activation::{GameIdentity, VerifiedGame};
 impl GamesRuntime {
+    pub(crate) fn try_observed_desktop_process(&self, game_id: &str)
+        -> Result<Option<Option<crate::game_discovery::ProcessIdentity>>, String> {
+        if self.inner.closed.load(Ordering::Acquire) { return Err("The native game observer has stopped.".into()); }
+        Ok(self.inner.activation.try_current_process(game_id))
+    }
     /// Membership for current native selections is distinct from the syntax
     /// checks used to read persisted profiles and removed-game recovery state.
     pub(crate) fn registered_profile_game(&self, game_id: &str) -> Result<Value, String> {

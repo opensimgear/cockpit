@@ -1532,3 +1532,5 @@ fn populated_native_preparation_keeps_exact_pins_without_recapturing_unused_cata
         .stop()
         .unwrap();
 }
+
+include!("profile_session/activation_output_tests.rs");

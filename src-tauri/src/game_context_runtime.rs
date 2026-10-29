@@ -100,60 +100,28 @@ impl GamesRuntime {
         }))
     }
     pub(crate) fn validate_game_preparation(&self, proof: &GamePreparation) -> Result<(), String> {
-        let result: Result<(), String> = (|| {
-            self.inner.guard_installation_metadata()?;
-            self.inner
-                .contexts
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .validate_preparation(proof)?;
-            let game = self
-                .inner
-                .settings
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .catalogue
-                .iter()
-                .find(|game| game["id"] == proof.game_id)
-                .cloned()
-                .ok_or("The selected game installation changed.")?;
-            self.inner.setup.validate_native_build(&game, false)?;
-            if self.inner.platform.integration_process(&game)?.as_ref() != Some(&proof.process)
-                || !self.inner.platform.alive(&proof.process)?
-            {
-                return Err(
-                    "The prepared game process exited, was replaced or became ambiguous.".into(),
-                );
-            }
-            if self.inner.runtime_vehicle_id(&proof.game_id) != proof.vehicle_id {
-                return Err("The loaded DCS aircraft changed; acquire its current module before using this branch.".into());
-            }
-            let integration = crate::game_discovery::integration_key(&game)
-                .ok_or("The game integration binding changed.")?;
-            if self.inner.setup.provider_setup_revision(integration)
-                != proof.provider_setup_revision
-                || self
-                    .inner
-                    .setup
-                    .current_catalogue_revision_for_vehicle(
-                        integration,
-                        proof.vehicle_id.as_deref(),
-                    )
-                    .as_ref()
-                    != Some(&proof.catalogue_revision)
-            {
-                return Err("The prepared provider setup or catalogue changed.".into());
-            }
-            Ok(())
-        })();
+        let result = validate_preparation_inner(&self.inner, proof);
         if let Err(error) = &result {
-            self.inner
-                .contexts
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
+            self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner())
                 .invalidate_preparation(proof, error.clone());
         }
         result
+    }
+    /// Capture identity for strict validation away from the live health path.
+    pub(crate) fn profile_validation_task(
+        &self, proof: GamePreparation, context: Option<ContextToken>,
+    ) -> impl FnMut() -> Result<(), String> + Send + 'static {
+        let inner = self.inner.clone();
+        move || {
+            validate_preparation_inner(&inner, &proof)?;
+            if let Some(token) = &context {
+                if !token.matches_preparation(&proof) {
+                    return Err("The delivered game context differs from its preparation.".into());
+                }
+                inner.contexts.lock().unwrap_or_else(|p| p.into_inner()).validate(token)?;
+            }
+            Ok(())
+        }
     }
     pub(crate) fn admit_prepared_game_context(
         &self,
@@ -488,3 +456,5 @@ impl Inner {
 #[cfg(test)]
 #[path = "game_context_runtime_tests.rs"]
 mod tests;
+
+include!("games/context/validation.rs");

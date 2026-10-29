@@ -479,9 +479,11 @@ impl NativeProfileHost {
         state.launch_context_installed = true;
         state.desktop_scope=launched_desktop_scope(state.desktop_scope.as_ref(),payload.prepared.plan.requirements.desktop_input,&payload.started.process);
         state.report = payload.report;
+        state.game_publication.cancel();
         state.game = payload.game;
         state.game_preparation = payload.proof;
         state.baselines.clear();
+        self.with_activation_heartbeat(&run.owner, |host| host.capture_game_predecessor(&run.owner))?;
         Ok(payload.prepared)
     }
 }

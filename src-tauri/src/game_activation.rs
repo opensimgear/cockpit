@@ -70,6 +70,19 @@ fn checked_process(
     Ok((identity, process))
 }
 impl Observer {
+    /// Live desktop scope selection consumes the background process proof.
+    /// Missing/contended evidence waits; it never starts a foreground scan on
+    /// the mapping heartbeat. The desktop worker still checks exact process
+    /// identity and foreground ownership before each native submission.
+    pub(crate) fn try_current_process(&self, id: &str) -> Option<Option<ProcessIdentity>> {
+        let state = match self.0.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) { return None; }
+        state.entries.get(id).map(|entry| entry.confirmed.as_ref().map(|proof| proof.process.clone()))
+    }
     pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
         // Capture one process inventory for the whole registered catalogue.
         // Reject duplicates before discovery so one cycle cannot satisfy the

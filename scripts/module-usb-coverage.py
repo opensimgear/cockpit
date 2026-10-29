@@ -40,6 +40,14 @@ MODULE_TEST_SOURCES = {
     "profile_session_publication_host": ["profile_publication_tests",
                                          "profile_publication_action_tests"],
     "profile_session_companion_host": ["profile_session_companion_host_tests", "profile_session/companion_offline_tests"],
+    "profile_session/activation_heartbeat": ["profile_session/activation_heartbeat_tests",
+                                             "profile_session/activation_output_tests",
+                                             "profile_session/activation_phases"],
+    "profile_session/companion_feedback": ["profile_session/companion_feedback_tests",
+                                           "profile_session/companion_feedback_integration_tests"],
+    "games/profiles/session_validation": ["games/profiles/session_validation_tests"],
+    "games/context/validation": [],
+    "profile_session/game_publication": ["profile_session/game_publication_tests"],
 }
 MODULES.extend(["system_inventory", "system_inventory_associations"])
 TEST_FILTERS.append("system_inventory")
@@ -53,8 +61,19 @@ MODULES.append("profile_session/health_policy")
 TEST_FILTERS.append("profile_session_host::health_policy::tests")
 MODULES.append("profile_session/admission_diagnostics")
 TEST_FILTERS.append("profile_session_host::admission_diagnostics::tests")
+MODULES.append("profile_session/activation_heartbeat")
+TEST_FILTERS.append("profile_session_host::activation_heartbeat")
+MODULES.append("profile_session/companion_feedback")
+MODULES.append("profile_session/companion_pending")
+TEST_FILTERS.append("profile_session_companions::")
 MODULES.append("profile_resources/health")
 TEST_FILTERS.append("profile_resources::health::tests")
+MODULES.append("profile_resources/live_validation")
+TEST_FILTERS.append("profile_resources::live_validation::tests")
+MODULES.extend(["games/profiles/session_validation", "games/context/validation"])
+TEST_FILTERS.extend(["profile_session_games::", "games::context_runtime::"])
+MODULES.append("profile_session/game_publication")
+TEST_FILTERS.append("profile_session_host::game_publication::")
 MODULES.append("profile_resources/companion_catalogue")
 TEST_FILTERS.append("profile_resources::companion_catalogue::tests")
 
@@ -131,6 +150,10 @@ def tracked_source_paths(root, measured, focused):
                    ["profile_session_overrides", "profile_session_overrides_tests"])
     tracked.extend([root / "src-tauri/src/lib.rs", root / "src-tauri/src/profile_session_host.rs", root / "src-tauri/src/companion/host/mod.rs", root / "src-tauri/src/companion/host/commands.rs", root / "src-tauri/src/companion/host/presentation.rs", root / "src-tauri/src/companion/storage/host_settings.rs", root / "src-tauri/src/stm32.rs", root / "src-tauri/src/pico.rs", root / "src-tauri/src/games.rs", root / "src-tauri/src/game_discovery.rs", root / "src-tauri/src/game_context.rs", root / "src-tauri/src/game_context_runtime.rs", root / "src-tauri/src/profile_session.rs", root / "src-tauri/src/profile_session_stage.rs", root / "src-tauri/src/profile_session_journal.rs", root / "src-tauri/Cargo.toml", root / "src-tauri/Cargo.lock"])
     tracked.extend([Path(__file__).resolve(), root / "scripts/test_module_usb_coverage.py"])
+    tracked.extend(root / f"src-tauri/src/{name}.rs" for name in
+                   ["profile_session_games", "dcs_profile", "games/profiles/session_read",
+                    "games/profiles/session_prepare", "games/profiles/session_delivery",
+                    "games/profiles/resources_publication"])
     if not focused or "profile_automatic" in measured or "profile_game_orchestration_runtime" in measured or "profile_companion_retention" in measured or "profile_recovery_transport" in measured:
         # The full gate also pins Manager construction/admission. A focused
         # production-module report is explicitly not whole-Manager evidence.
@@ -147,8 +170,19 @@ def tracked_source_paths(root, measured, focused):
     tracked.extend([root / "src-tauri/src/profile_companion_authoring_gateway.rs",
                     root / "crates/companion-service/src/hub.rs",
                     root / "crates/companion-service/src/profile.rs",
+                    root / "crates/companion-service/src/profile_owned.rs",
+                    root / "crates/companion-service/src/profile/feedback.rs",
+                    root / "crates/companion-service/src/profile/confirmed.rs",
+                    root / "crates/companion-service/src/profile/confirmed_tests.rs",
+                    root / "crates/companion-service/src/hub_feedback.rs",
+                    root / "crates/companion-service/src/profile_feedback_async_tests.rs",
                     root / "crates/companion-service/src/publication.rs",
-                    root / "crates/mapping-host/src/companions.rs"])
+                    root / "crates/companion-service/src/publication/compiled.rs",
+                    root / "crates/companion-service/src/hub.rs",
+                    root / "crates/companion-service/src/compiled_hub_tests.rs",
+                    root / "crates/mapping-host/src/companions.rs",
+                    root / "crates/mapping-host/src/companion_native.rs",
+                    root / "crates/mapping-host/src/companion_neutral_resume_tests.rs"])
     # Profile hide handoff depends on the exact native owner/journal proof,
     # including restore-only worker admission rather than current hidden state.
     tracked.append(root / "crates/controller-input/src/lib.rs")

@@ -36,6 +36,10 @@ pub struct PublicationUpload {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Publication {
+    /// Immutable format fact established by full publication validation. Live
+    /// assignment checks must not parse the canonical raster manifest again.
+    #[serde(skip)]
+    browser_only: bool,
     #[serde(skip)]
     #[cfg(any(test,feature="legacy-test-fixtures"))]
     raster_cache: std::sync::Arc<std::sync::Mutex<BTreeMap<String, std::sync::Arc<Vec<u8>>>>>,
@@ -187,6 +191,7 @@ fn sorted(mut values: Vec<Value>, key: &str) -> Vec<Value> {
 }
 
 impl Publication {
+    pub(crate) fn requires_browser_companion(&self) -> bool { self.browser_only }
     pub fn definition(&self, instance_id: &str) -> SourceDefinition {
         SourceDefinition {
             source_id: instance_id.into(),
@@ -605,6 +610,7 @@ impl Publication {
             )?;
         }
         Ok(Self {
+            browser_only: false,
             raster_cache: Default::default(),
             canonical_document: upload.canonical_document,
             publication_hash: upload.publication_hash,

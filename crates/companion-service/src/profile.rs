@@ -160,6 +160,10 @@ impl Hub {
 #[path = "profile_owned.rs"]
 mod owned;
 pub use owned::{AssignmentReceipt, AssignmentRestore};
+#[path = "profile/feedback.rs"]
+mod feedback_api;
+#[path = "profile/confirmed.rs"]
+mod confirmed;
 
 pub(super) fn feedback_access(
     inner: &Inner,

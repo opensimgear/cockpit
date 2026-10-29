@@ -506,6 +506,7 @@ pub(super) fn validate(upload: PublicationUpload, doc: Value) -> Result<Publicat
         )?;
     }
     Ok(Publication {
+        browser_only: true,
         #[cfg(any(test, feature = "legacy-test-fixtures"))]
         raster_cache: Default::default(),
         canonical_document: upload.canonical_document,

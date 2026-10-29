@@ -41,10 +41,11 @@ struct State {
     pending_save: bool,
     game_metadata: BTreeMap<String, Arc<game_delivery::GameMetadata>>,
     game_deliveries: BTreeMap<String, ProviderBatch>,
+    game_delivery_readers: BTreeMap<String, String>,
     game_command_withdrawals: BTreeMap<(String, String), BTreeSet<String>>,
 }
 pub(crate) struct Runtime {
-    state: Arc<Mutex<State>>,
+    state: Arc<live_validation::StateMutex>,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
     collect: Collect,
@@ -56,6 +57,8 @@ pub(crate) struct Runtime {
     /// never wait for serialization, filesystem writes or durable replacement.
     persistence_gate: Arc<Mutex<()>>,
 }
+#[path = "profile_resources/live_validation.rs"]
+mod live_validation;
 #[path = "profile_resources/health.rs"]
 mod health;
 #[path = "profile_resources/companion_catalogue.rs"]
@@ -384,6 +387,11 @@ impl Runtime {
             return Err("Resource inventory has stopped.".into());
         }
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let result = Self::validate_delivery_locked(&state, token);
+        state.confirm(token, &result);
+        result
+    }
+    fn validate_delivery_locked(state: &State, token: &ResourceToken) -> Result<Route, String> {
         if state.read_only && token.access != Access::Read {
             return Err("Repair retained inventory before output delivery.".into());
         }
@@ -429,7 +437,7 @@ impl Runtime {
         // Acquired readers are session state, never a second persisted catalogue.
         let retired_deliveries = registry.retire_restored_game_deliveries()
             .expect("validated restored game delivery retirement");
-        let state = Arc::new(Mutex::new(State {
+        let state = Arc::new(live_validation::StateMutex::new(State {
             saved,
             registry,
             store,
@@ -439,6 +447,7 @@ impl Runtime {
             pending_save: retired_deliveries,
             game_metadata: BTreeMap::new(),
             game_deliveries: BTreeMap::new(),
+            game_delivery_readers: BTreeMap::new(),
             game_command_withdrawals: BTreeMap::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -547,10 +556,10 @@ impl Runtime {
         }).collect()
     }
     #[cfg(test)]
-    fn adopt(state: &Mutex<State>, batches: Vec<(String, Result<ProviderBatch, String>)>) {
+    fn adopt(state: &live_validation::StateMutex, batches: Vec<(String, Result<ProviderBatch, String>)>) {
         Self::adopt_prepared(state, Self::prepare_batches(batches));
     }
-    fn adopt_prepared(state: &Mutex<State>, batches: PreparedBatches) {
+    fn adopt_prepared(state: &live_validation::StateMutex, batches: PreparedBatches) {
         let game_ids = game_retention::catalogue_membership(&batches);
         let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
         let mut changed = false;
@@ -608,11 +617,11 @@ impl Runtime {
         }
         state.pending_save |= changed;
     }
-    fn persist(state: &Mutex<State>, gate: &Mutex<()>) {
+    fn persist(state: &live_validation::StateMutex, gate: &Mutex<()>) {
         Self::persist_with(state, gate, |store, saved| store.save(saved));
     }
     fn persist_with(
-        state: &Mutex<State>,
+        state: &live_validation::StateMutex,
         gate: &Mutex<()>,
         save: impl FnOnce(&Store, &osg_profiles::resources::SavedRegistry) -> Result<(), String>,
     ) {

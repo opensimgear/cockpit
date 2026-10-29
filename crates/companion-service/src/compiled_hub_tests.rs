@@ -141,3 +141,43 @@ fn compiled_assignment_and_profile_preparation_reject_esp32_without_replacing_ex
         false
     );
 }
+
+#[test]
+fn validated_publication_target_fact_is_private_and_survives_clone() {
+    let compiled = Publication::validate(compiled_fixture()).unwrap();
+    let legacy = Publication::validate_legacy_test_fixture(fixture()).unwrap();
+    assert!(compiled.requires_browser_companion());
+    assert!(compiled.clone().requires_browser_companion());
+    assert!(!legacy.requires_browser_companion());
+    assert!(!legacy.clone().requires_browser_companion());
+    for publication in [&compiled, &legacy] {
+        let encoded = serde_json::to_value(publication).unwrap();
+        assert!(encoded.get("browserOnly").is_none(), "The derived fact must never become an upload/storage field");
+    }
+}
+
+#[test]
+fn reloaded_compiled_assignment_keeps_browser_admission_and_usb_rejection() {
+    let directory = tempfile::tempdir().unwrap();
+    let open = || Hub::with_storage(Arc::new(crate::persistence::test_support::store(
+        directory.path().join("companion-host-state.dpapi"))), Arc::new(NullSourceSink)).unwrap();
+    let hub = open();
+    paired_kind(&hub, "browser", "desktop");
+    paired_kind(&hub, "usb-screen", "esp32");
+    let publication = publish(&hub, compiled_fixture());
+    assign(&hub, "browser", "browser-panel", &publication.publication_hash);
+    drop(hub);
+    // Loading archives revalidates immutable uploads and reconstructs the
+    // derived format fact; it cannot default to accepting USB raster panels.
+    let restored = open();
+    assert!(restored.assigned_publication("browser-panel").unwrap().requires_browser_companion());
+    let proof = restored.prepare_profile_assignment("browser-panel", &publication.publication_hash).unwrap();
+    let receipt = restored.capture_profile_assignment(&proof, &uuid::Uuid::new_v4().to_string(), None).unwrap();
+    restored.acquire_profile_assignment(&receipt).unwrap();
+    for _ in 0..128 { restored.validate_profile_assignment(&receipt).unwrap(); }
+    assert!(restored.command(&json!({"command":"companion_assign","companionId":"usb-screen",
+        "instanceId":"usb-panel","publicationHash":publication.publication_hash})).unwrap_err().contains("browser companions"));
+    assert!(restored.prepare_profile_assignment(&profile::profile_instance_id("usb-screen"),
+        &publication.publication_hash).unwrap_err().contains("browser companions"));
+    restored.validate_profile_assignment_owner(&receipt).unwrap();
+}

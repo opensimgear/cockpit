@@ -3,6 +3,9 @@ use crate::game_discovery::{Platform, ProcessIdentity};
 use osg_profiles::{compiler_models::*, resources::*, resources_ports::*};
 use std::sync::Mutex;
 
+#[path = "profile_session/vehicle_change_tests.rs"]
+mod vehicle_change_tests;
+
 struct Process(
     Mutex<Option<ProcessIdentity>>,
     std::sync::atomic::AtomicBool,
@@ -419,7 +422,15 @@ fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_ru
     *f.process.0.lock().unwrap()=None;
     let resources=f.host.resources.clone();let games=f.host.games.clone();
     let state=f.host.run(&f.run.owner).unwrap();
-    let closed=NativeProfileHost::game_poll(&resources,&games,state,||1_000_000).unwrap();
+    let deadline=Instant::now()+Duration::from_secs(3);
+    let closed=loop {
+        let sample=NativeProfileHost::game_poll(&resources,&games,state,||1_000_000).unwrap();
+        assert!(state.reducer.is_some(),"Pending validation must preserve the hardware reducer");
+        assert_eq!(state.owner,f.run.owner);
+        if sample.context_lost { break sample; }
+        assert!(Instant::now()<deadline,"The closed process was not invalidated: {:?}",sample.diagnostics);
+        std::thread::yield_now();
+    };
     assert!(closed.context_lost);
     assert!(state.reducer.is_some(),"Game loss must preserve the active hardware reducer");
     assert_eq!(state.owner,f.run.owner);
@@ -429,7 +440,11 @@ fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_ru
     let deadline=Instant::now()+Duration::from_secs(3);
     let returned=loop {
         let sample=NativeProfileHost::game_poll(&resources,&games,state,||2_000_000).unwrap();
-        if !sample.context_lost{break sample;}
+        let replaced=games.profile_game_context("x-plane-12").ok()
+            .is_some_and(|context|context.process==restarted && context.session!=original.session);
+        let claiming=state.game.provider_identity().is_some_and(|(game,reader)|
+            state.game_publication.claiming(&(game.to_owned(),reader.to_owned())));
+        if !sample.context_lost && replaced && !claiming {break sample;}
         assert!(Instant::now()<deadline,"{:?}",sample.diagnostics);
         std::thread::sleep(Duration::from_millis(5));
     };

@@ -152,6 +152,9 @@ pub(crate) struct Health {
 /// freshness. restore(recovery=true) may neutralize/unhide/restore still-owned
 /// setup, but must never rehide or replay input, commands, scripts or macros.
 pub(crate) trait Host: Send {
+    /// Keep prepared neutral outputs leased while their durable phase intent
+    /// is recorded. Active adapters retain their normal delivery heartbeat.
+    fn activation_storage<T>(&mut self, _: Option<&RunOwner>, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> { work() }
     fn set_cleanup_progress(&mut self, _: Option<u64>) {}
     fn activation_progress(&self, _: Option<u64>, _: &str, _: &str) {}
     fn desktop_status(&self) -> Value { Value::Null }
@@ -534,7 +537,11 @@ impl<H: Host> Coordinator<H> {
         Ok(())
     }
     fn persist(&mut self, next: Manifest) -> Result<(), String> {
-        self.store.save(&next)?;
+        let owner = next.pending.as_ref().and_then(|pending| pending.incoming.as_ref())
+            .or_else(|| self.manifest.pending.as_ref().and_then(|pending| pending.incoming.as_ref()))
+            .map(|run| run.owner.clone());
+        let store = &mut self.store;
+        self.host.activation_storage(owner.as_ref(), || store.save(&next))?;
         self.manifest = next;
         Ok(())
     }

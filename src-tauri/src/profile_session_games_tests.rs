@@ -788,10 +788,7 @@ fn replacement_reader_requires_fresh_native_context_and_advances_source_identity
     assert!(prior.fresh);
     let disconnected = old.lose(20_000, "Game closed".into());
     assert!(old.needs_context() && !old.can_command());
-    assert!(
-        !old.accepts_replacement(&fixture.game),
-        "The same retired proof cannot rearm a reader"
-    );
+    assert!(old.accepts_replacement(&fixture.game), "A lost reader may retry an unchanged strictly verified proof");
     let mut next_game = fixture.game.clone();
     next_game.proof.session = uuid::Uuid::new_v4().to_string();
     next_game.proof.process.epoch += 1;
@@ -811,6 +808,61 @@ fn replacement_reader_requires_fresh_native_context_and_advances_source_identity
         !replacement.can_command(),
         "Telemetry alone cannot mint applied command authority"
     );
+}
+
+#[test]
+fn unchanged_proof_recovers_only_a_lost_reader_with_a_new_advancing_baseline() {
+    let fixture = Dcs::new();
+    let mut old = fixture.sources();
+    let original_reader = old.provider_identity().unwrap().1.to_owned();
+    assert!(!old.accepts_replacement(&fixture.game), "A healthy reader cannot be duplicated");
+    feed(&mut old, 1, false, 0);
+    let prior = feed(&mut old, 2, true, 10_000);
+    assert!(prior.fresh);
+    let lost = old.lose(20_000, "Transient proof validation failure".into());
+    assert!(old.accepts_replacement_from(old.reader_session(), &fixture.game));
+    let mut replacement = GameSources::prepare(&fixture.plan, Some(fixture.game.clone())).unwrap();
+    assert_ne!(replacement.provider_identity().unwrap().1, original_reader);
+    replacement.inherit_source_counters(&old);
+    assert!(!feed(&mut replacement, 3, false, 30_000).fresh);
+    let recovered = feed(&mut replacement, 4, false, 40_000);
+    assert!(recovered.fresh);
+    assert_eq!(recovered.frames[0].reason, Reason::Baseline);
+    assert!(recovered.frames[0].generation > prior.frames[0].generation);
+    assert!(recovered.frames[0].sequence > lost.frames[0].sequence);
+    assert!(!replacement.can_command(), "A retried proof and telemetry cannot substitute for strict native admission");
+}
+
+#[test]
+fn unchanged_session_requires_exact_proof_and_late_predecessors_are_rejected() {
+    let fixture = Dcs::new();
+    let mut old = fixture.sources();
+    old.lose(10_000, "Transient validation failure".into());
+    for field in 0..5 {
+        let mut changed = fixture.game.clone();
+        match field {
+            0 => changed.proof.process.epoch += 1,
+            1 => changed.proof.provider_setup_revision.push('x'),
+            2 => changed.proof.catalogue_revision.push('x'),
+            3 => changed.proof.vehicle_id = Some("other".into()),
+            _ => changed.aircraft_module = Some("other".into()),
+        }
+        assert!(!old.accepts_replacement(&changed), "A reused session cannot change immutable proof field {field}");
+    }
+    let mut next = fixture.game.clone();
+    next.proof.session = uuid::Uuid::new_v4().to_string();
+    let mut current = GameSources::prepare(&fixture.plan, Some(next.clone())).unwrap();
+    assert!(!current.accepts_replacement(&next), "Healthy readers never accept duplicate workers");
+    current.lose(20_000, "Later transient failure".into());
+    assert!(!current.accepts_replacement_from(old.reader_session(), &fixture.game),
+        "A late worker for the prior reader cannot replace the changed current proof");
+    assert!(current.accepts_replacement_from(current.reader_session(), &next));
+    let mut same_proof_reader = GameSources::prepare(&fixture.plan, Some(fixture.game.clone())).unwrap();
+    same_proof_reader.lose(30_000, "A later loss after recovery under the same proof".into());
+    assert_ne!(same_proof_reader.reader_session(), old.reader_session());
+    assert!(!same_proof_reader.accepts_replacement_from(old.reader_session(), &fixture.game),
+        "The preparation proof may be unchanged while the exact predecessor reader has already changed");
+    assert!(same_proof_reader.accepts_replacement_from(same_proof_reader.reader_session(), &fixture.game));
 }
 #[test]
 fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline() {
@@ -875,7 +927,13 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
         .invoke(&games, &effect(&Dcs::new().command, 1))
         .is_err());
     *platform.process.lock().unwrap() = None;
-    let lost = reader.poll(&games, || 2);
+    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+    let lost = loop {
+        let poll = reader.poll(&games, || 2);
+        if poll.context_lost { break poll; }
+        assert!(Instant::now() < deadline, "Changed process was not invalidated by the live validator");
+        std::thread::yield_now();
+    };
     assert!(lost.context_lost);
     assert_eq!(lost.frames[0].reason, Reason::Disconnect);
     assert!(!lost.diagnostics.is_empty());
@@ -1070,7 +1128,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     );
     platform.validation_cost.store(101_000, Ordering::SeqCst);
     assert!(
-        !reader.poll(&games, clock).fresh,
+        !reader.poll_baseline(&games, clock).fresh,
         "Advancing the clock cannot extend a silent decoder's lease"
     );
     platform.validation_cost.store(10_000, Ordering::SeqCst);
@@ -1529,7 +1587,13 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
                 process: Mutex::new(None),
             }),
         );
-        let lost = reader.poll(&games, || 3000);
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        let lost = loop {
+            let poll = reader.poll(&games, || 3000);
+            if poll.context_lost { break poll; }
+            assert!(Instant::now() < deadline, "Changed catalogue was not invalidated by the live validator: {changed}");
+            std::thread::yield_now();
+        };
         assert!(lost.context_lost && !lost.fresh, "{changed}");
         assert!(
             lost.diagnostics

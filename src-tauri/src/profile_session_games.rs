@@ -144,6 +144,7 @@ pub(crate) struct GameSources {
     acquired: bool,
     published: Option<(u64, bool, bool)>,
     physics: Option<PhysicsMerge>,
+    validation: live_validation::Validation,
 }
 #[derive(Default)]
 pub(crate) struct GamePoll {
@@ -190,6 +191,8 @@ fn semantic_contract(mut contract: PortContract) -> PortContract {
     }
     contract
 }
+#[path = "games/profiles/session_validation.rs"]
+mod live_validation;
 include!("games/profiles/session_prepare.rs");
 include!("games/profiles/session_read.rs");
 include!("games/profiles/session_delivery.rs");

@@ -1,4 +1,7 @@
 use super::*;
+mod live_publication {
+    include!("profile_resources/game_live_publication_tests.rs");
+}
 use osg_profiles::{
     compiler_models::{SinkAdapter, SinkPlan, SourcePlan},
     resources::{IdentityEvidence, PortExpectation},

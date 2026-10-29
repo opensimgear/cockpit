@@ -167,6 +167,7 @@ pub struct Hub {
     started: Arc<Instant>,
     runtime_identity: Arc<String>,
     record_revision: Arc<std::sync::atomic::AtomicU64>,
+    confirmed_assignments: Arc<Mutex<BTreeMap<String, u64>>>,
 }
 pub struct NullSourceSink;
 impl SourceSink for NullSourceSink {
@@ -371,6 +372,7 @@ impl Hub {
             started: Arc::new(Instant::now()),
             runtime_identity: Arc::new(uuid::Uuid::new_v4().to_string()),
             record_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            confirmed_assignments: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -658,8 +660,7 @@ impl Hub {
         inner.publications.insert(p.publication_hash.clone(),p);Ok(summary)
     }
     fn validate_assignment_target(inner:&Inner,companion:&str,publication:&Publication)->Result<(),String>{
-        let compiled=serde_json::from_str::<Value>(&publication.canonical_document).map_err(|_|"Invalid retained publication.")?["schemaVersion"]==4;
-        ensure(!compiled||!inner.record.credentials.iter().any(|credential|credential.companion_id==companion&&credential.kind=="esp32"),"Compiled widgets are currently supported by browser companions only.")
+        ensure(!publication.requires_browser_companion()||!inner.record.credentials.iter().any(|credential|credential.companion_id==companion&&credential.kind=="esp32"),"Compiled widgets are currently supported by browser companions only.")
     }
     /// Explicit lower-level fixture insertion. This never relaxes the publication IPC contract.
     #[cfg(any(test,feature="legacy-test-fixtures"))]

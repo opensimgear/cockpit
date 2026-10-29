@@ -88,9 +88,37 @@ impl Hub {
         receipt: Option<&profile::AssignmentReceipt>,
     ) -> Result<u64, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        profile::feedback_access(&inner, &token.instance_id, receipt)?;
-        self.expire(&mut inner, now_ms)?;
+        self.validate_feedback_authorized(&mut inner, token, now_ms, receipt)?;
         let now = inner.last_now;
+        inner.feedback.get_mut(&token.instance_id).unwrap().publish(values, mode, now)
+    }
+    /// An optional presentation update never waits for the metadata lock. Age
+    /// and revocation are checked after ownership validation, under that lock.
+    pub(super) fn try_publish_feedback_authorized(
+        &self, token: &FeedbackToken, values: &[FeedbackSample], mode: FeedbackMode,
+        captured: std::time::Instant, max_age: std::time::Duration,
+        is_current: impl FnOnce() -> bool, receipt: Option<&profile::AssignmentReceipt>,
+    ) -> Result<Option<u64>, String> {
+        let mut inner = match self.inner.try_lock() {
+            Ok(inner) => inner,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::sync::TryLockError::Poisoned(poison)) => poison.into_inner(),
+        };
+        if captured.elapsed() >= max_age { return Ok(None); }
+        self.validate_feedback_authorized(&mut inner, token, self.now_ms(), receipt)?;
+        let elapsed = captured.elapsed();
+        if elapsed >= max_age || !is_current() { return Ok(None); }
+        let aged = values.iter().map(|sample| sample.aged(
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))).collect::<Vec<_>>();
+        let now = inner.last_now;
+        inner.feedback.get_mut(&token.instance_id).unwrap().publish(&aged, mode, now).map(Some)
+    }
+    fn validate_feedback_authorized(
+        &self, inner: &mut Inner, token: &FeedbackToken, now_ms: u64,
+        receipt: Option<&profile::AssignmentReceipt>,
+    ) -> Result<(), String> {
+        profile::feedback_access(inner, &token.instance_id, receipt)?;
+        self.expire(inner, now_ms)?;
         let session = inner
             .sessions
             .get(&token.session_id)
@@ -110,7 +138,7 @@ impl Hub {
             book.generation == token.feedback_generation,
             "Feedback binding generation changed.",
         )?;
-        book.publish(values, mode, now)
+        Ok(())
     }
     pub fn clear_feedback(
         &self,
@@ -128,8 +156,21 @@ impl Hub {
         receipt: Option<&profile::AssignmentReceipt>,
     ) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        profile::feedback_clear_access(&inner, instance, receipt)?;
-        self.expire(&mut inner, now_ms)?;
+        self.clear_feedback_locked(&mut inner, instance, publication_hash, now_ms, receipt)
+    }
+    pub(super) fn try_clear_feedback_authorized(&self, receipt: &profile::AssignmentReceipt) -> Result<bool, String> {
+        let mut inner = match self.inner.try_lock() {
+            Ok(inner) => inner,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(poison)) => poison.into_inner(),
+        };
+        self.clear_feedback_locked(&mut inner, receipt.instance_id(), receipt.publication_hash(), self.now_ms(), Some(receipt))?;
+        Ok(true)
+    }
+    fn clear_feedback_locked(&self, inner: &mut Inner, instance: &str, publication_hash: &str,
+        now_ms: u64, receipt: Option<&profile::AssignmentReceipt>) -> Result<(), String> {
+        profile::feedback_clear_access(inner, instance, receipt)?;
+        self.expire(inner, now_ms)?;
         ensure(
             inner
                 .record
@@ -185,3 +226,7 @@ impl Hub {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "profile_feedback_async_tests.rs"]
+mod async_tests;

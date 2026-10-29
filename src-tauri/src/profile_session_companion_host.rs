@@ -420,15 +420,15 @@ impl NativeProfileHost {
         let mut poll =
             state
                 .companions
-                .poll(&hub, |token| Self::validate_token(resources, token), now);
+                .poll_live(&hub, |token| resources.try_validate_live_delivery(token).map(|route| route.map(|_| ())), now);
         if let Some(capture) = state.companion_rebind.poll(&state.owner, &state.report.program_hash) {
             match capture {
                 Ok(rebind::Captured { delivery, allowed }) => {
-                    let rebound = state.companions.rebind(
+                    let rebound = state.companions.rebind_live(
                         &hub,
                         &delivery,
                         |logical| allowed.contains(logical),
-                        |token| Self::validate_token(resources, token),
+                        |token| resources.try_validate_live_delivery(token).map(|route| route.map(|_| ())),
                         now,
                     );
                     let replaced=rebound.frames.iter().map(|frame|frame.source.as_str()).collect::<BTreeSet<_>>();
@@ -439,7 +439,7 @@ impl NativeProfileHost {
                 Err(error) => poll.diagnostics.push(error),
             }
         }
-        if state.companion_rebind.ready(now) && state.companions.needs_rebind(|token| Self::validate_token(resources,token)) {
+        if state.companion_rebind.ready(now) && state.companions.needs_rebind_live(|token| resources.try_validate_live_delivery(token).map(|route| route.map(|_| ()))) {
             let resources = resources.clone();
             let assignments = state.assignments.clone();
             let catalogues = state.companion_catalogues.clone();
