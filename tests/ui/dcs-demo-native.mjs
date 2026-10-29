@@ -6,7 +6,7 @@ import {resolve} from 'node:path';
 const require=createRequire(import.meta.url);
 const {chromium}=require(process.env.OSG_PLAYWRIGHT_MODULE??'playwright');
 
-test('recovered DCS demo persists intact and opens both aircraft tabs in native Cockpit',async()=>{
+test('DCS demo persists intact and opens every integration in the shared native canvas',async()=>{
   const browser=await chromium.connectOverCDP(process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222');
   try {
     const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:1420/'));
@@ -30,14 +30,13 @@ test('recovered DCS demo persists intact and opens both aircraft tabs in native 
     await heading.or(edit).waitFor();
     if(await edit.count())await edit.click();
     await page.getByRole('button',{name:'Save',exact:true}).waitFor();
-    await page.getByText('VKB right - cyclic',{exact:true}).first().waitFor();
+    const canvas=page.getByRole('application',{name:'Profile canvas',exact:true});
+    for(const resource of expected.resources){const block=canvas.locator('[data-node-id="'+resource.id+'"]');await block.waitFor();assert.equal(await block.count(),1);assert.ok((await block.textContent()).includes(resource.name));}
+    for(const id of ['game-context-dcs-1','ah6-dcs','hornet-dcs'])assert.equal(await canvas.locator('[data-node-id="'+id+'"] [data-block-icon="link"]').count(),1);
+    assert.equal(await page.getByRole('group',{name:'Profile vehicle tabs'}).count(),0);
+    assert.equal(await page.getByLabel('Tab vehicle',{exact:true}).count(),0);
     await mkdir(resolve('.research/dcs-demo-native'),{recursive:true});
-    await page.screenshot({path:resolve('.research/dcs-demo-native/base.png')});
-    for (const [tab,label] of [['AH-6J','AH-6J - panel lights and telemetry'],['F/A-18C','F/A-18C - panel lights and telemetry']]) {
-      await page.getByRole('group',{name:'Profile vehicle tabs'}).getByRole('button',{name:tab,exact:true}).click();
-      await page.getByText(label,{exact:true}).first().waitFor();
-    }
-    await page.getByRole('group',{name:'Profile vehicle tabs'}).getByRole('button',{name:'Base',exact:true}).click();
+    await page.screenshot({path:resolve('.research/dcs-demo-native/shared-canvas.png')});
   }finally{await browser.close();}
 });
 

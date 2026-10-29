@@ -5,16 +5,28 @@
 The [WIN Companion panel](win-companion/README.md) provides minimal compiled
 controls and feedback widgets sized for the desktop destination.
 
-[feature-lab.profile.json](feature-lab.profile.json) restores the saved
-**DCS Feature Lab - AH-6J + F/A-18C** demo (archived revision 11, reset to revision 1
-for a fresh seed). It includes both aircraft tabs, controller processing, telemetry,
-virtual and desktop outputs, companion routes and the saved canvas layout.
-Debug builds include it in a fresh development database. Existing databases keep
-their saved contents; use **Profiles → Import profile** to add this document.
-Import creates a new profile identity without local hardware assignments or runtime
-ownership. The referenced companion publication and DCS setup are not included.
-The AH-6J tab demonstrates the original AH-6 catalogue; it does not qualify MH-6J
-commands for the distinct aircraft mod described below.
+[feature-lab.profile.json](feature-lab.profile.json) contains **DCS Feature Lab**,
+reset to revision 1 for a fresh seed. Common telemetry, AH-6J and F/A-18C lighting
+integrations share one canvas with controller processing, two virtual controllers,
+a desktop F12 output and the current WIN Companion panel. Its 40 signal rows use
+32 processing nodes and 74 connections. Debug builds include it in a fresh
+development database. Existing databases keep their saved contents; use
+**Profiles → Import profile** to add this document without local hardware
+assignments or runtime ownership.
+
+The companion selection references the compiled dcs-demo-win publication in
+[win-companion/workspace.json](win-companion/workspace.json). Its eight ports are
+four Boolean controls (Virtual A, Virtual B, Toggle test and DCS lighting) and
+four feedback inputs (altitude, altitude warning, rudder and aircraft brightness).
+The numeric feedback contracts have unit: null; display labels describe metres
+and percent. Explicit range maps convert raw altitude feet to the metre display
+and raw rudder/brightness values to percent. The old formatted-text route is
+removed because this panel has no text input. Aircraft brightness writers retain
+separate vehicle scopes while sharing one panel input. The profile requests no
+controller hiding, and import or seeding does not activate it.
+
+The AH-6J integration demonstrates the original AH-6 catalogue; it does not
+qualify MH-6J commands for the distinct aircraft mod described below.
 
 Every integration block shows its full scoped catalogue before local assignment.
 For imported saved routes, use **Match saved signals** to select these exact ports;
@@ -22,7 +34,7 @@ the assignment preserves the saved logical IDs and connections:
 
 | Block | Saved port | Native port |
 | --- | --- | --- |
-| Base | `altitude-ft-raw` | `channel:common:CommonData:ALT_MSL_FT:0` |
+| Common | `altitude-ft-raw` | `channel:common:CommonData:ALT_MSL_FT:0` |
 | AH-6J | `panel-brightness` | `channel:MPS_PANELSDIM:0` |
 | AH-6J | `set-panel-brightness` | `command:MPS_PANELSDIM:set_state` |
 | F/A-18C | `panel-brightness` | `channel:INST_PNL_DIMMER:0` |

@@ -34,15 +34,15 @@ fn fresh_examples_are_persisted_without_runtime_or_security_authority() {
         2
     );
     let dcs = library.profiles.iter().find(|p| p.id == DCS_ID).unwrap();
-    assert_eq!(dcs.name, "DCS Feature Lab - AH-6J + F/A-18C");
+    assert_eq!(dcs.name, "DCS Feature Lab");
     assert_eq!(dcs.revision, 1);
     assert_eq!(dcs.resources.len(), 7);
-    assert_eq!(dcs.processing_nodes.len(), 44);
-    assert_eq!(dcs.bindings.len(), 87);
+    assert_eq!(dcs.processing_nodes.len(), 32);
+    assert_eq!(dcs.bindings.len(), 74);
     assert_eq!(dcs.vehicle_tabs.len(), 2);
     assert_eq!(dcs.virtual_outputs.len(), 2);
     assert_eq!(dcs.desktop_outputs.len(), 1);
-    assert_eq!(dcs.visibility.len(), 1);
+    assert_eq!(dcs.visibility.len(), 0);
     assert_eq!(dcs.companion_assignments.len(), 1);
     assert_eq!(database.profile_index().unwrap().len(), 4);
     let bundle: Value = serde_json::from_slice(

@@ -64,16 +64,20 @@ test('exclusive direct and transformed alternatives keep their own terminal into
 test('the complete Feature Lab graph preserves both aircraft and Common signals together',async()=>{
   const document=JSON.parse(await readFile(new URL('../../examples/dcs-bios/feature-lab.profile.json',import.meta.url),'utf8')),before=plain(document);
   const bundles=signalOverview(document),lanes=destinationOverview(bundles).flatMap(bundle=>bundle.lanes);
-  assert.equal(bundles.length,13);assert.equal(lanes.length,41);
-  const expected=[['route-87','aux-panel','ah6-dcs'],['route-94','aux-panel','hornet-dcs'],['route-53','ah6-dcs','aux-panel'],['route-56','hornet-dcs','aux-panel']];
-  for(const [id,from,to] of expected){
-    const bundle=bundles.find(bundle=>bundle.binding.from.nodeId===from&&bundle.binding.to.nodeId===to),lane=bundle?.lanes.find(lane=>lane.id===id);
-    assert.ok(lane,`Missing aircraft row ${id}`);
+  assert.equal(lanes.length,40);
+  for(const aircraft of ['ah6-dcs','hornet-dcs'])for(const [from,to] of [['aux-panel',aircraft],[aircraft,'aux-panel']]){
+    const bundle=bundles.find(bundle=>bundle.binding.from.nodeId===from&&bundle.binding.to.nodeId===to);
+    assert.equal(bundle?.lanes.length,1,'Keep the aircraft lighting row '+from+' → '+to);const lane=bundle.lanes[0];
     assert.deepEqual(plain(lane.sources.map(source=>source.nodeId)),[from]);assert.equal(lane.destination.nodeId,to);
     const scopes=document.vehicleTabs.filter(tab=>[lane.destination.nodeId,...lane.sources.map(source=>source.nodeId),...lane.transforms].some(node=>tab.nodeIds.includes(node)));
-    assert.equal(scopes.length,1,`${id} must keep mutually exclusive aircraft separate`);
+    assert.equal(scopes.length,1,'Aircraft lighting rows retain their mutually exclusive scope');
   }
-  assert.ok(lanes.some(lane=>lane.id==='route-4'&&lane.sources[0].nodeId==='right-stick'&&lane.destination.nodeId==='virtual-flight'));
+  assert.ok(lanes.some(lane=>lane.sources[0].nodeId==='right-stick'&&lane.destination.nodeId==='virtual-flight'));
+  const panel=document.resources.find(resource=>resource.id==='aux-panel');assert.equal(panel.ports.length,8);
+  assert.equal(panel.ports.filter(port=>port.direction==='output').length,4);assert.equal(panel.ports.filter(port=>port.direction==='input').length,4);
+  assert.ok(!panel.ports.some(port=>port.id==='altitude-text'));assert.ok(!document.processingNodes.some(node=>node.operation.kind==='format-text'));
+  for(const port of panel.ports.filter(port=>port.direction==='input'&&port.contract.schema.type==='number'))assert.equal(port.contract.schema.unit,null);
+  assert.deepEqual([...new Set(lanes.filter(lane=>lane.destination.nodeId===panel.id).map(lane=>lane.destination.portId))].sort(),['aircraft-brightness','altitude-m','altitude-warning','rudder-percent']);
   assert.deepEqual(document,before);
 });
 test('multiple source ports feeding the same terminal are one route, not an inflated weight',()=>{
