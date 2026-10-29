@@ -6,6 +6,8 @@ use osg_companion_service::{profile::AssignmentReceipt, Hub};
 use osg_profiles::compiler_models::CompileSnapshot;
 use serde_json::Value;
 use std::collections::BTreeSet;
+#[path = "profile_session/companion_rebind.rs"]
+pub(super) mod rebind;
 
 const ASSIGNMENT: &str = "companion-assignment";
 const RELEASE: &str = "companion-release";
@@ -385,7 +387,7 @@ impl NativeProfileHost {
     }
     pub(super) fn companion_poll(
         runtime: &crate::companion_host::Runtime,
-        resources: &crate::profile_resources::Runtime,
+        resources: &Arc<crate::profile_resources::Runtime>,
         state: &mut NativeRun,
         now: u64,
     ) -> CompanionPoll {
@@ -400,38 +402,9 @@ impl NativeProfileHost {
             state
                 .companions
                 .poll(&hub, |token| Self::validate_token(resources, token), now);
-        if state
-            .companions
-            .needs_rebind(|token| Self::validate_token(resources, token))
-            && state
-                .companion_retry
-                .is_none_or(|last| now.saturating_sub(last) >= 100_000)
-        {
-            state.companion_retry = Some(now);
-            let capture = resources
-                .snapshot_for_compile(state.assignments.clone())
-                .and_then(|mut snapshot| {
-                    let allowed = state
-                        .companion_catalogues
-                        .iter()
-                        .filter(|c| admitted(&snapshot, c))
-                        .map(|c| c.logical_resource_id.clone())
-                        .collect::<BTreeSet<_>>();
-                    snapshot.backend = state.backend.clone();
-                    Self::game_capture(&mut snapshot, state.game_preparation.as_ref());
-                    let report = osg_profiles::compiler::compile(&state.document, &snapshot);
-                    if report.program_hash != state.report.program_hash {
-                        return Err(
-                            "The companion delivery graph changed; prepare a fresh profile.".into(),
-                        );
-                    }
-                    let delivery = report
-                        .plan
-                        .ok_or("The companion delivery graph is unavailable.")?;
-                    Ok((delivery, allowed))
-                });
+        if let Some(capture) = state.companion_rebind.poll(&state.owner, &state.report.program_hash) {
             match capture {
-                Ok((delivery, allowed)) => {
+                Ok(rebind::Captured { delivery, allowed }) => {
                     let rebound = state.companions.rebind(
                         &hub,
                         &delivery,
@@ -446,6 +419,30 @@ impl NativeProfileHost {
                 }
                 Err(error) => poll.diagnostics.push(error),
             }
+        }
+        if state.companion_rebind.ready(now) && state.companions.needs_rebind(|token| Self::validate_token(resources,token)) {
+            let resources = resources.clone();
+            let assignments = state.assignments.clone();
+            let catalogues = state.companion_catalogues.clone();
+            let backend = state.backend.clone();
+            let game = state.game_preparation.clone();
+            let document = state.document.clone();
+            let program_hash = state.report.program_hash.clone();
+            state.companion_rebind.start(now, state.owner.clone(), program_hash.clone(), move || {
+                // This worker only captures and compiles. Native subscriptions,
+                // baselines and current-token checks remain with this run's host.
+                let mut snapshot = resources.snapshot_for_compile(assignments)?;
+                let allowed = catalogues.iter().filter(|c|admitted(&snapshot,c))
+                    .map(|c|c.logical_resource_id.clone()).collect();
+                snapshot.backend = backend;
+                Self::game_capture(&mut snapshot,game.as_ref());
+                let report = osg_profiles::compiler::compile(&document,&snapshot);
+                if report.program_hash != program_hash {
+                    return Err("The companion delivery graph changed; prepare a fresh profile.".into());
+                }
+                let delivery = report.plan.ok_or("The companion delivery graph is unavailable.")?;
+                Ok(rebind::Captured { delivery, allowed })
+            });
         }
         poll
     }

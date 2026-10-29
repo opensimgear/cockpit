@@ -57,9 +57,20 @@ impl Worker {
             let mut output = BufReader::new(output);
             loop {
                 let result = match read_frame(&mut output) {
-                    Ok(Some(bytes)) => {
-                        serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string())
-                    }
+                    Ok(Some(bytes)) => serde_json::from_slice::<Value>(&bytes)
+                        .map_err(|e| e.to_string())
+                        .and_then(|response| {
+                            if response["fatal"] == true {
+                                Err(response["error"]
+                                    .as_str()
+                                    .unwrap_or("Output helper failed.")
+                                    .chars()
+                                    .take(256)
+                                    .collect())
+                            } else {
+                                Ok(response)
+                            }
+                        }),
                     Ok(None) => Err("Output helper exited.".into()),
                     Err(e) => Err(e.to_string()),
                 };
@@ -189,6 +200,19 @@ impl Worker {
     }
     pub fn alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
+    }
+    /// A dead child can have a final cleanup diagnostic still in its pipe.
+    /// Allow its reader a small bounded window without waiting on native code.
+    pub fn exit_error(&mut self) -> String {
+        let deadline = Instant::now() + Duration::from_millis(20);
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match self.incoming.recv_timeout(remaining) {
+                Ok(Err(error)) => return error,
+                Ok(Ok(_)) => continue,
+                Err(_) => break,
+            }
+        }
+        "Output helper exited.".into()
     }
     /// PID of the original retained child, never an independently reopened process.
     /// Callers must separately verify liveness on this same worker.

@@ -14,6 +14,9 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 pub trait Channel: Send {
     fn request(&mut self, message: &Message) -> Result<(), String>;
     fn alive(&mut self) -> bool;
+    fn exit_error(&mut self) -> String {
+        "Virtual output helper exited.".into()
+    }
     /// Identity of this retained child only; unknown channels grant no handoff proof.
     fn process_id(&self) -> Option<u32> {
         None
@@ -26,6 +29,9 @@ impl Channel for Worker {
     }
     fn alive(&mut self) -> bool {
         Worker::alive(self)
+    }
+    fn exit_error(&mut self) -> String {
+        Worker::exit_error(self)
     }
     fn process_id(&self) -> Option<u32> {
         Some(Worker::process_id(self))
@@ -232,10 +238,15 @@ impl Session {
     /// Keep prepared, neutral output leased while an owned visibility change
     /// verifies fresh capture. No mapping report is submitted before arming.
     pub fn keep_alive(&mut self) -> Result<(), String> {
-        let result = if self.worker.as_mut().is_some_and(|worker| worker.alive()) {
-            self.renew()
-        } else {
-            Err("Virtual output helper exited.".into())
+        let result = match self.worker.as_mut() {
+            Some(worker) => {
+                if worker.alive() {
+                    self.renew()
+                } else {
+                    Err(worker.exit_error())
+                }
+            }
+            None => Err("Virtual output helper exited.".into()),
         };
         result.map_err(|error| self.fail(error))
     }
@@ -255,7 +266,9 @@ impl Session {
             return Ok(None);
         };
         journal.verify_current()?;
-        let record = journal.record().ok_or("No confirmed output journal exists.")?;
+        let record = journal
+            .record()
+            .ok_or("No confirmed output journal exists.")?;
         let binding_identity = serde_json::to_vec(&self.bindings).map_err(|e| e.to_string())?;
         if record.phase != Phase::Confirmed
             || record.token != self.token
@@ -282,8 +295,13 @@ impl Session {
             return Err("Virtual output is stopped.".into());
         }
         let result = (|| {
-            if !self.worker.as_mut().is_some_and(|worker| worker.alive()) {
-                return Err("Virtual output helper exited.".into());
+            match self.worker.as_mut() {
+                Some(worker) => {
+                    if !worker.alive() {
+                        return Err(worker.exit_error());
+                    }
+                }
+                None => return Err("Virtual output helper exited.".into()),
             }
             self.renew()?;
             let deadline = Instant::now() + std::time::Duration::from_millis(8);
@@ -394,3 +412,6 @@ impl Drop for Session {
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "session_fault_tests.rs"]
+mod fault_tests;

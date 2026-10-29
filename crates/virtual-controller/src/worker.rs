@@ -135,6 +135,11 @@ pub fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
         Ok::<(), String>(())
     })();
     feeder.stop();
+    // Lease/transport failures can occur between requests. Preserve their cause
+    // after cleanup instead of closing stdout with an unexplained EOF.
+    if let Err(error) = &result {
+        let _ = responses.try_send(json!({"fatal":true,"ok":false,"error":error.chars().take(256).collect::<String>(),"active":false}));
+    }
     drop(responses);
     if completion.recv_timeout(Duration::from_millis(50)).is_ok() {
         let _ = writer.join();

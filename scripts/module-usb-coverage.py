@@ -46,6 +46,8 @@ MODULES.append("companion/storage/panels")
 TEST_FILTERS.append("companion_panels::tests")
 MODULES.append("window_persistence")
 TEST_FILTERS.append("window_persistence::tests")
+MODULES.append("profile_session/companion_rebind")
+TEST_FILTERS.append("profile_session_host::companion::rebind::tests")
 
 
 def run(args, root, env=None):

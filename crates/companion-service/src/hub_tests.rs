@@ -13,6 +13,8 @@ use std::{
 mod profile_tests;
 #[path = "operation_tests.rs"]
 mod operation_tests;
+#[path = "session_lease_tests.rs"]
+mod session_lease_tests;
 #[path = "profile_latest_tests.rs"]
 mod profile_latest_tests;
 #[path = "compiled_hub_tests.rs"]

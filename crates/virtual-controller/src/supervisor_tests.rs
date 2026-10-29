@@ -28,6 +28,35 @@ fn message() -> Message {
     }
 }
 #[test]
+fn asynchronous_worker_fault_is_preserved_for_requests_and_already_exited_children() {
+    let hello = "print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\n";
+    let fault = "print('{\"fatal\":true,\"ok\":false,\"active\":false,\"error\":\"Mapping heartbeat expired\"}',flush=True)\n";
+    let mut worker = spawn(&format!("{hello}import sys\nsys.stdin.readline()\n{fault}")).unwrap();
+    assert_eq!(
+        worker.request(&message()).unwrap_err(),
+        "Mapping heartbeat expired"
+    );
+    assert!(!worker.alive());
+
+    let mut worker = spawn(&format!("{hello}{fault}")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while worker.alive() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(!worker.alive());
+    assert_eq!(worker.exit_error(), "Mapping heartbeat expired");
+    assert_eq!(worker.exit_error(), "Output helper exited.");
+
+    let mut worker = spawn(&format!(
+        "{hello}import sys\nsys.stdin.readline()\nprint('{{\"fatal\":true}}',flush=True)\n"
+    ))
+    .unwrap();
+    assert_eq!(
+        worker.request(&message()).unwrap_err(),
+        "Output helper failed."
+    );
+}
+#[test]
 fn worker_identity_comes_from_the_retained_child_and_does_not_send_requests() {
     let mut worker = spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport sys\nfor line in sys.stdin:\n raise RuntimeError('identity inspection must not write to the child')\n").unwrap();
     let original = worker.child.id();

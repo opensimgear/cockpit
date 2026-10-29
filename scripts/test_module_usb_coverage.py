@@ -23,6 +23,9 @@ class RepositorySourceTests(unittest.TestCase):
         paths = coverage.tracked_source_paths(root, coverage.MODULES, False)
         self.assertTrue(paths)
         self.assertIn(root / "src-tauri/src/companion/storage/panels.rs", paths)
+        self.assertIn(root / "src-tauri/src/profile_session/companion_rebind.rs", paths)
+        self.assertIn(root / "src-tauri/src/profile_session/companion_rebind_tests.rs", paths)
+        self.assertIn("profile_session_host::companion::rebind::tests", coverage.TEST_FILTERS)
         for path in paths:
             with self.subTest(path=str(path.relative_to(root))):
                 self.assertTrue(path.is_file(), "Coverage must pin the current production/test source")

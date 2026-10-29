@@ -263,6 +263,62 @@ fn lease_expiry_releases_outputs_even_when_both_pipes_are_stalled() {
 }
 
 #[test]
+fn lease_expiry_forwards_its_cause_only_after_owned_output_is_released() {
+    struct DelayedEof(io::Cursor<Vec<u8>>);
+    impl io::Read for DelayedEof {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            let count = io::Read::read(&mut self.0, bytes)?;
+            if count == 0 {
+                thread::sleep(Duration::from_millis(500));
+            }
+            Ok(count)
+        }
+    }
+    struct CheckedOutput(SharedOutput, DriverFixture);
+    impl Write for CheckedOutput {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            // serde's string formatting can write a frame in several chunks.
+            let count = self.0.write(bytes)?;
+            let output = self.0 .0.lock().unwrap();
+            if output
+                .windows(b"heartbeat expired".len())
+                .any(|s| s == b"heartbeat expired")
+            {
+                assert_eq!(self.1 .0.lock().unwrap().last().unwrap(), "release");
+            }
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let data = messages();
+    let first = data.iter().position(|b| *b == b'\n').unwrap() + 1;
+    let driver = DriverFixture::default();
+    let output = SharedOutput::default();
+    let error = serve(
+        driver.clone(),
+        io::BufReader::new(DelayedEof(io::Cursor::new(data[..first].to_vec()))),
+        CheckedOutput(output.clone(), driver),
+        "fixture",
+    )
+    .unwrap_err();
+    assert!(error.contains("heartbeat expired"));
+    let responses: Vec<serde_json::Value> = output
+        .0
+        .lock()
+        .unwrap()
+        .split(|b| *b == b'\n')
+        .filter(|b| !b.is_empty())
+        .map(|b| serde_json::from_slice(b).unwrap())
+        .collect();
+    assert_eq!(responses.len(), 3);
+    assert_eq!(responses[2]["fatal"], true);
+    assert_eq!(responses[2]["active"], false);
+    assert_eq!(responses[2]["error"], error);
+}
+
+#[test]
 fn negative_acknowledgement_is_written_only_after_fallback_and_release() {
     struct CheckedOutput {
         driver: DriverFixture,

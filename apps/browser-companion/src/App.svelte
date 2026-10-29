@@ -37,21 +37,44 @@
   let disposed=false, pageHidden=false, nextAttempt=0, lastTick=performance.now();
   let handlingRuntimeError=false;
   let focusWork:Promise<void>|undefined;
+  let preparationHeartbeatTimer:ReturnType<typeof setInterval>|undefined;
+  let staleRecoveryWork:Promise<void>|undefined;
+  const obsoleteSession=(reason:unknown)=>String(reason).includes('Session is obsolete');
   const visible=()=>!pageHidden&&document.visibilityState==='visible';
   const focused=()=>visible()&&hasFocus;
   const current=(socket:BrowserTransport,version:number)=>version===epoch&&!disposed&&owner&&!pageHidden&&connection===socket;
   function emitOutput(change:{controlId:string;value:boolean|number}){if(active&&inputReady&&focused())queue.enqueue(epoch,[change]);}
+  function recoverObsoleteSession(reason:unknown,socket=connection,version=epoch):boolean{
+    if(!obsoleteSession(reason))return false;
+    error='';feedbackNotice='';
+    if(!socket){if(!connection){stop('Reconnecting to Cockpit…');nextAttempt=0;}return true;}
+    if(version!==epoch||connection!==socket||disposed||pageHidden||!owner)return true;
+    if(staleRecoveryWork)return true;
+    if(!session||!panel){stop('Reconnecting to Cockpit…');nextAttempt=0;return true;}
+    staleRecoveryWork=Promise.resolve().then(async()=>{
+      queue.stop();active=false;inputReady=false;panelError=false;panelView?.suspend();session=null;
+      feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
+      const presence=await socket.request({type:'presence',display:panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio)});
+      if(!current(socket,version))return;
+      await loadAssigned(socket,version,presence.assignments);
+    }).catch(e=>{
+      if(!current(socket,version))return;
+      if(obsoleteSession(e)){error='';stop('Reconnecting to Cockpit…');nextAttempt=performance.now()+1000;}
+      else{error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}
+    }).finally(()=>{staleRecoveryWork=undefined;});
+    return true;
+  }
   async function availableAssets(){try{return await cache.haveAssets();}catch(e){warning='Compiled asset cache unavailable; receiving fresh content.';let stored:string|undefined;cache=createCompiledAssetCache({read:async()=>stored,write:async value=>{stored=value;}});return [];}}
   const queue=createOrderedInputQueue(async(version,changes)=>{
     if(version!==epoch || !active || !inputReady || !connection || !session || !focused())throw new Error('Input session stopped');
     await connection.request(frame('input',{sequence:String(++sequence),changes}));
-  },reason=>stop(reason));
+  },reason=>{if(!recoverObsoleteSession(reason))stop(reason);});
   function frame(type:string,rest:Record<string,unknown>={}) {
     if(!session)throw new Error('No active panel session');
     return {version:1,type,clientId:session.clientId,sessionId:session.sessionId,generation:session.generation,publicationHash:session.publicationHash,...rest};
   }
   function stop(reason:string) {
-    epoch++;preparing?.abort();preparing=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
+    epoch++;preparing?.abort();preparing=undefined;if(preparationHeartbeatTimer)clearInterval(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
     feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
   }
@@ -69,9 +92,9 @@
   function resetFeedback(){feedbackView.reset();feedback={};suppressFeedbackCues=true;feedbackNotice='Visual state cleared locally. Controls are unchanged.';}
   async function resyncFeedback(){
     if(!connection||!session||!active)return;
-    const version=epoch;
-    try{await connection.request(frame('feedback-resync',{sequence:String(++resyncSequence)}));if(version===epoch)feedbackNotice='Fresh visual snapshot requested; controls were not replayed.';}
-    catch(e){if(version===epoch){feedbackNotice=String(e);stop('Feedback resync unavailable');}}
+    const socket=connection,version=epoch;
+    try{await socket.request(frame('feedback-resync',{sequence:String(++resyncSequence)}));if(version===epoch)feedbackNotice='Fresh visual snapshot requested; controls were not replayed.';}
+    catch(e){if(version===epoch){if(!recoverObsoleteSession(e,socket,version)){feedbackNotice=String(e);stop('Feedback resync unavailable');}}}
   }
   async function loadAssigned(socket:BrowserTransport, version:number, rows:typeof assignments){
     if(!current(socket,version))return;
@@ -82,25 +105,38 @@
     if(!assignment || !visible()){status=assignment?'Connected · panel paused while inactive':'Connected · assign a panel in Cockpit';return;}
     const haveAssets=await availableAssets();if(!current(socket,version))return;
     const opened=await socket.request({type:'open',instanceId:assignment.instanceId,publicationHash:assignment.publicationHash,widgetCapabilities:BROWSER_WIDGET_CAPABILITIES,haveAssets});
+    if(!current(socket,version))return;
     const p=opened.publication;
-    let verified,candidate:PreparedCompiledSurfaces|undefined;const controller=new AbortController();preparing=controller;
+    let verified,candidate:PreparedCompiledSurfaces|undefined,preparationHeartbeatWork:Promise<void>|undefined;
+    const controller=new AbortController(),preparationOperation={instanceId:assignment.instanceId,publicationHash:opened.publicationHash,sessionId:opened.sessionId,generation:opened.generation,attemptId:'1',phase:'checking-cache'};preparing=controller;heartbeat=0;
+    const sendPreparationHeartbeat=()=>{
+      if(!current(socket,version)||controller.signal.aborted||preparationHeartbeatWork)return;
+      preparationHeartbeatWork=socket.request({version:1,type:'heartbeat',clientId:opened.clientId,sessionId:opened.sessionId,generation:opened.generation,publicationHash:opened.publicationHash,sequence:String(++heartbeat),operation:preparationOperation})
+        .then(()=>{}).catch(e=>{if(current(socket,version)){if(!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}})
+        .finally(()=>preparationHeartbeatWork=undefined);
+    };
+    const loadHeartbeatTimer=setInterval(sendPreparationHeartbeat,500);
+    preparationHeartbeatTimer=loadHeartbeatTimer;
+    sendPreparationHeartbeat();
     try{
       verified=await cache.verifyDelivery(p);if(!current(socket,version))return;
       if(opened.publicationHash!==assignment.publicationHash || verified.publicationHash!==assignment.publicationHash)throw new Error('Panel assignment changed during delivery');
       candidate=await prepareCompiledSurfaces(verified,{signal:controller.signal});
+      if(preparationHeartbeatWork)await preparationHeartbeatWork;
+      if(!current(socket,version)){disposeCompiledSurfaces(candidate);candidate=undefined;return;}
     }
     catch(e){
-      if(!current(socket,version))return;
-      session=opened;heartbeat=0;panelError=true;active=false;
+      if(!current(socket,version)){disposeCompiledSurfaces(candidate);candidate=undefined;return;}
+      session=opened;panelError=true;active=false;
       panelView?.suspend();queue.stop();feedbackView.clear();feedback={};
-      status='Connected · panel error';error=String(e instanceof Error?e.message:e);return;
-    }finally{if(preparing===controller)preparing=undefined;}
+      status='Connected · panel error';error=obsoleteSession(e)?'':String(e instanceof Error?e.message:e);return;
+    }finally{if(preparationHeartbeatTimer===loadHeartbeatTimer){clearInterval(loadHeartbeatTimer);preparationHeartbeatTimer=undefined;}if(preparing===controller)preparing=undefined;}
     if(!current(socket,version)){disposeCompiledSurfaces(candidate);return;}
     const previousSurfaces=panelSurfaces;panelSurfaces=candidate;viewRevision++;
     panel=verified;pageId=panel.document.ui.pages.some(p=>p.id===pageId)?pageId:panel.document.ui.pages[0].id;
     void cache.save(verified).catch(()=>warning='Compiled visuals are active; durable cache storage is unavailable.');
 
-    panelError=false;session=opened;sequence=0;heartbeat=0;resyncSequence=0;feedbackView.clear();feedback={};suppressFeedbackCues=true;feedbackNotice='';
+    panelError=false;session=opened;sequence=0;resyncSequence=0;feedbackView.clear();feedback={};suppressFeedbackCues=true;feedbackNotice='';
     await tick();disposeCompiledSurfaces(previousSurfaces);if(!current(socket,version))return;
     const values=Object.fromEntries(panel.document.ui.controls.map(control=>[control.id,control.kind==='button'?false:control.fallback]));
     await socket.request(frame('baseline',{sequence:'0',values}));
@@ -119,7 +155,7 @@
       if(!current(socket,version))return;
       if(auth.hostId!==savedCredential.hostId || auth.companionId!==savedCredential.companionId)throw new Error('Saved Cockpit identity differs');
       await loadAssigned(socket,version,auth.assignments);
-    }catch(e){if(version===epoch){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');nextAttempt=performance.now()+2000;
+    }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');nextAttempt=performance.now()+2000;
       if(error.includes('invalid or revoked')){credential=null;clearCredential(localStorage,savedCredential.token);status='Pair this browser again in Cockpit';}
     }}
     finally{connecting=false;if(!credential && secret)void pair();}
@@ -146,24 +182,24 @@
       const saved={token:paired.token,companionId:paired.companionId,hostId:paired.hostId};
       saveCredential(localStorage,saved);credential=saved;secret='';history.replaceState(null,'','/');
       if(version===epoch){stop('Pairing saved · connecting…');nextAttempt=0;}
-    }catch(e){if(version===epoch&&!disposed){secret='';error=String(e instanceof Error?e.message:e);stop('Pairing did not complete');}}
+    }catch(e){if(version===epoch&&!disposed){secret='';error=obsoleteSession(e)?'':String(e instanceof Error?e.message:e);stop('Pairing did not complete');}}
     finally{connecting=false;void connect();}
   }
   let polling=false;
   async function poll(){
     const now=performance.now();
     if(now-lastTick>1000 && active&&inputReady)void refreshControls(true);lastTick=now;
-    if(polling || connecting || disposed || pageHidden || focusWork)return;
+    if(polling || connecting || disposed || pageHidden || focusWork || staleRecoveryWork)return;
     if(!connection){void connect();return;}
     const socket=connection,version=epoch;polling=true;
     try{
       const presence=await socket.request({type:'presence',display:panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio)});
       if(version!==epoch)return;
-      if(focusWork)return;
+      if(focusWork||staleRecoveryWork)return;
       if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
       if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
       else if(!session && visible() && assignments.length)await loadAssigned(socket,version,assignments);
-    }catch(e){if(version===epoch){if(String(e).includes('Session is obsolete'))void refreshControls(true);else{error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}}
+    }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
     finally{polling=false;}
   }
   async function toggleFullscreen(){
@@ -177,9 +213,10 @@
   function changedPage(value:string){stop('Panel page changed');pageId=value;nextAttempt=0;}
   function resumeVisible(){if(!visible()||disposed)return;nextAttempt=0;return connect();}
   function refreshControls(reopen=false):Promise<void>|undefined {
+    if(staleRecoveryWork)return staleRecoveryWork;
     queue.stop();inputReady=false;panelView?.reset();
     if(focusWork)return focusWork;
-    if(!connection||!session||!panel||panelError)return resumeVisible();
+    if(!connection||!session||!panel)return resumeVisible();
     const socket=connection,version=epoch;
     focusWork=Promise.resolve().then(async()=>{
       try{
@@ -194,7 +231,7 @@
           try{await socket.request(close);}catch(e){if(!String(e).includes('Session is obsolete'))throw e;}
           if(current(socket,version))await loadAssigned(socket,version,assignments);
         }
-      }catch(e){if(current(socket,version)){error=String(e);stop('Controls released · reconnecting to Cockpit');}}
+      }catch(e){if(current(socket,version)&&!recoverObsoleteSession(e,socket,version)){error=String(e);stop('Controls released · reconnecting to Cockpit');}}
     }).finally(()=>{focusWork=undefined;});
     return focusWork;
   }

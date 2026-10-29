@@ -24,6 +24,12 @@ Installed app access still requires Cockpit to be running and reachable. Listene
 
 A verified assigned panel opens a new session and sends every control's fallback value before becoming active automatically. There is no manual arming button. Inputs use the existing authenticated, ordered host protocol; they are never replayed after reconnect.
 
+Panel transfer and rendering use a separate, bounded preparation lease while
+controls remain disabled. The browser keeps that session alive during preparation;
+the short active-control lease begins after its neutral baseline is accepted.
+Expired sessions recover automatically and retrieve the current assignment and
+feedback snapshot without replaying old inputs or asking the user to reconnect.
+
 Losing focus clears queued input and sends every control's neutral value on the
 existing connection. Telemetry and feedback continue while Cockpit or a game has
 focus; browser controls stay disabled. Focusing the companion establishes a fresh

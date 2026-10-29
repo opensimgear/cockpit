@@ -96,6 +96,7 @@ struct Session {
     companion_id: String,
     token: SourceToken,
     armed: bool,
+    baseline_pending: bool,
     panel_error: bool,
     operation: Option<Value>,
     exhausted: bool,
@@ -107,8 +108,8 @@ struct Session {
     feedback_cursor: crate::feedback::FeedbackCursor,
 }
 fn preparing_panel(session: &Session) -> bool {
-    !session.armed && !session.panel_error && session.operation.as_ref().is_some_and(|operation|
-        matches!(operation["phase"].as_str(),Some("checking-cache"|"downloading"|"rendering")))
+    !session.armed && !session.panel_error && (session.baseline_pending || session.operation.as_ref().is_some_and(|operation|
+        matches!(operation["phase"].as_str(),Some("checking-cache"|"downloading"|"rendering"))))
 }
 fn operation_for_session(frame: &Value, session: &Session) -> Result<Option<Value>, String> {
     let Some(operation) = frame.get("operation") else { return Ok(None); };
@@ -1227,6 +1228,7 @@ impl Hub {
                                 publication_hash: p.publication_hash.clone(),
                             },
                             armed: false,
+                            baseline_pending: true,
                             exhausted: false,
                             sequence: 0,
                             heartbeat: 0,
@@ -1415,6 +1417,7 @@ impl Hub {
             let s = inner.sessions.get_mut(session_id).unwrap();
             if let Some(operation) = operation { s.operation = Some(operation); }
             s.armed = true;
+            s.baseline_pending = false;
             s.values = values;
             s.sequence = 0;
             s.last_seen = now;
