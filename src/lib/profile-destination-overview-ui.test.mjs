@@ -9,7 +9,7 @@ import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules,libModuleName} from './test-module-loader.mjs';
 
-const modules=await loadModules(['./canvas-navigation','./canvas-styling','./profile-canvas','./profile-canvas-render',
+const modules=await loadModules(['./profile-canvas/device-identity','./canvas-navigation','./canvas-styling','./profile-canvas','./profile-canvas-render',
   './profile-diagram','./profile-editor','./profile-input-availability','./profile-inventory',
   './profile-overview-layout','./profile-overview-routing','./profile-port-browser',
   './profile-palette','./profile-processing','./profile-signal-overview','./profile-vehicle-tabs','./profile-wire-layout',
