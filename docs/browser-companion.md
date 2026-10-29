@@ -70,3 +70,13 @@ normally and with the worker download deliberately stalled. Set
 `OSG_PLAYWRIGHT_MODULE` to the installed Playwright package when needed.
 
 The browser credential is available to same-origin JavaScript rather than OS-protected native storage. The dedicated origin, restrictive CSP, no third-party scripts, exact-origin WebSocket admission, and HTTPS protect this boundary. The public web endpoint exposes no Cockpit operator commands or arbitrary files.
+
+### A worker script stays pending in DevTools
+
+Brave and Edge can leave the SharedWorker script row pending with zero bytes in
+the page's Network panel even after the worker has downloaded, executed and
+connected. The worker's `connected` reply is the reliable startup check. Run
+`pnpm nx run native-host:native-browser` against the development
+Cockpit to verify its complete HTTPS asset and worker connection without changing
+pairing or the active profile. Set `OSG_BROWSER_EXECUTABLE` to a Brave executable
+to check that browser. See the [measured verification](verification/2026-10-29-browser-worker-download.md).
