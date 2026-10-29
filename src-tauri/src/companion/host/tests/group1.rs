@@ -269,6 +269,46 @@ use super::*;
         for name in names { std::fs::remove_file(directory.join(name)).unwrap(); }
         std::fs::remove_dir(directory).unwrap();
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_startup_creates_installation_unique_ca_and_reload_keeps_it() {
+        fn start(directory: &std::path::Path) -> (Arc<Runtime>, String) {
+            let runtime = Arc::new(Runtime::new(
+                Some(directory.to_path_buf()),
+                Arc::new(CompanionProvider::new(Arc::new(|| 1))),
+            ));
+            runtime.start_detection();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while runtime.services.get().is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "startup services were not initialized"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let certificate = runtime.services().unwrap().server.browser_certificate().unwrap();
+            (runtime, certificate)
+        }
+
+        let first_dir = crate::test_directory();
+        let second_dir = crate::test_directory();
+        let (first, first_ca) = start(first_dir.path());
+        let (second, second_ca) = start(second_dir.path());
+        assert_ne!(
+            first_ca, second_ca,
+            "each installation must generate its own root CA"
+        );
+
+        first.shutdown();
+        let (reloaded, reloaded_ca) = start(first_dir.path());
+        assert_eq!(
+            first_ca, reloaded_ca,
+            "restart must retain the installed root CA"
+        );
+        reloaded.shutdown();
+        second.shutdown();
+    }
     #[cfg(windows)]
     #[test]
     fn explicit_companion_request_reports_unreadable_retained_state_without_replacing_it() {
@@ -293,7 +333,7 @@ use super::*;
         std::fs::remove_dir(directory).unwrap();
     }
     #[test]
-    fn ordinary_startup_does_not_initialize_or_modify_protected_companion_state() {
+    fn runtime_construction_does_not_initialize_or_modify_protected_companion_state() {
         let directory = std::env::temp_dir().join(format!(
             "osg-companion-lazy-startup-{}",
             uuid::Uuid::new_v4()
@@ -305,7 +345,7 @@ use super::*;
         let runtime = Runtime::new(Some(directory.clone()), provider);
         assert!(
             runtime.services.get().is_none(),
-            "Unrelated gateway startup must not enter an OS credential service"
+            "Constructing the runtime must not enter an OS credential service"
         );
         runtime.shutdown();
         assert!(runtime.services.get().is_none());

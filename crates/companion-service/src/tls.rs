@@ -35,7 +35,12 @@ pub fn sha256(bytes: &[u8]) -> String {
 pub fn ca_spki_pin(der: &[u8]) -> Result<String, String> {
     let (remaining, certificate) =
         x509_parser::parse_x509_certificate(der).map_err(|_| "Invalid host CA certificate")?;
-    if !remaining.is_empty() || !certificate.is_ca() || !certificate.validity().is_valid() {
+    if !remaining.is_empty()
+        || !certificate.is_ca()
+        || !certificate.validity().is_valid()
+        || certificate.tbs_certificate.subject != certificate.tbs_certificate.issuer
+        || certificate.verify_signature(None).is_err()
+    {
         return Err("Host trust certificate is not a currently valid CA".into());
     }
     Ok(sha256(certificate.public_key().raw))
@@ -135,6 +140,16 @@ impl NativeIdentity {
         let leaf = params
             .signed_by(&leaf_key, &issuer)
             .map_err(|error| error.to_string())?;
+        let (_, ca) = x509_parser::parse_x509_certificate(&self.ca_cert_der)
+            .map_err(|_| "Invalid host CA certificate")?;
+        let (_, leaf_certificate) = x509_parser::parse_x509_certificate(leaf.der().as_ref())
+            .map_err(|_| "Invalid generated TLS leaf certificate")?;
+        if leaf_certificate
+            .verify_signature(Some(ca.public_key()))
+            .is_err()
+        {
+            return Err("Stored TLS CA key does not match its certificate".into());
+        }
         self.server_cert_der = leaf.der().to_vec();
         self.server_key_der.zeroize();
         self.server_key_der = leaf_key.serialize_der();
@@ -160,6 +175,10 @@ impl NativeIdentity {
         ca_spki_pin(&self.ca_cert_der)
     }
 }
+
+#[cfg(test)]
+#[path = "tls_persistence_tests.rs"]
+mod persistence_tests;
 
 #[cfg(test)]
 mod tests {

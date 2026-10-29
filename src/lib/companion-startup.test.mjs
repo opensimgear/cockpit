@@ -15,6 +15,6 @@ test('native read failures propagate without falling back to a designer or brows
   await assert.rejects(readNativeCompanionState(async()=>{throw Error('SQLite unavailable');}),/SQLite unavailable/);
   await assert.rejects(readNativeCompanionState(async()=>({})),/native Cockpit/);
 });
-test('mounting the app does not initialize companion trust or replay publications',async()=>{
+test('mounting the frontend leaves native startup trust and publications with their native owner',async()=>{
   const source=await readFile(new URL('../App.svelte',import.meta.url),'utf8');assert.equal(source.includes('restoreCompanionPanels'),false);assert.equal(source.includes("'companion_status'"),false);
 });

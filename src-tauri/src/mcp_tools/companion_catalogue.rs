@@ -5,7 +5,7 @@ pub(super) fn catalogue()->Vec<Value>{
     let selection=json!({"type":"object","additionalProperties":false,"properties":{"expectedHostToken":string(80),"companionIds":strings(32)},"required":["expectedHostToken"]});
     let mut tools=vec![
         tool("companion_inventory","Read retained companion identities, assignments, pending requests, saved publications, snapshotToken and listener state. Does not create host or TLS keys.",vec![],&[]),
-        tool("companion_certificate_get","Export the native listener's public browser certificate. Requires Configure access because first use can initialize the native protected identity. No private key is exposed.",vec![],&[]),
+        tool("companion_certificate_get","Export this installation's persisted public root CA certificate for browser trust. Requires Configure access. The server certificate and private keys are never exported.",vec![],&[]),
         tool("companion_pair_offer","Create a short-lived pairing offer using the native listener. Return its one-time link or manual payload only to the operator who requested pairing; never persist it in authoring data. ESP32 pairing retains its native availability gate.",vec![("kind",choice(&["browser","desktop","mobile","esp32"]))],&["kind"]),
         tool("companion_pair_cancel","Cancel the current short-lived pairing offer.",vec![],&[]),
         tool("companion_approve","Approve one exact current pairing request.",vec![("requestId",string(64)),("companionId",string(64))],&["requestId","companionId"]),

@@ -57,12 +57,11 @@ async function call(client, name, args = {}) {
 }
 async function ok(client, name, args = {}) { const result = await call(client, name, args); assert.equal(result.ok, true, `${name}: ${JSON.stringify(result)}`); return result.data; }
 const mutation = args => ({ ...args, operationId: randomUUID() });
-async function assertNoCompanionState(page) {
+async function companionState(page) {
   const status=await page.invoke('persistence_status'),{DatabaseSync}=await import('node:sqlite');
   const database=new DatabaseSync(status.path,{readOnly:true});
   try {
-    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM records WHERE domain='secrets' AND payload IS NOT NULL").get().count,0,'Passive MCP reads must not create native trust/TLS records');
-    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM records WHERE domain='companion' AND key='publications'").get().count,0,'Passive MCP reads must not create a host archive');
+    return database.prepare("SELECT domain,key,revision,hex(payload) AS payload FROM records WHERE domain='secrets' OR (domain='companion' AND key='publications') ORDER BY domain,key").all();
   }finally{database.close();}
 }
 
@@ -71,8 +70,15 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
   let page = await nativePage();
   const credentials = [], clients = [], profiles = new Set(), evidence = { client: '@modelcontextprotocol/sdk 1.32.1', hardwareValidation: 'Software acceptance; no physical-device qualification' };
   const artifacts = resolve('.research/mcp-native', String(Date.now())); await mkdir(artifacts, { recursive: true });
-  let settings, writer, endpoint;
+  let settings, writer, endpoint, initialCompanionState, initialCompanionCa;
   try {
+    if(process.env.OSG_MCP_EXPECT_NO_COMPANIONS){
+      initialCompanionState=await until(async()=>{
+        const records=await companionState(page);
+        return records.some(record=>record.key==='companion-identity')?records:null;
+      },'Native startup did not persist its own companion CA');
+      initialCompanionCa=(await page.native({command:'companion_browser_certificate'})).companions.certificatePem;
+    }
     await until(() => page.evaluate(() => typeof window.__TAURI_INTERNALS__?.invoke === 'function'
       && !!document.querySelector('nav[aria-label="Main navigation"]')), 'The native UI bridge did not finish startup');
     settings = await page.invoke('mcp_settings_get');
@@ -152,7 +158,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       const listener=await ok(reader,'companion_listener_get');assert.equal(listener.enabled,false);
       assert.equal((await ok(reader,'companion_usb_status')).usb.connected,false);
       assert.ok(!readTools.some(tool=>tool.name==='companion_certificate_get'));
-      await assertNoCompanionState(page);evidence.passiveCompanions={emptyCatalogue:true,listenerRead:true,noTrustOrTlsCreation:true};
+      assert.deepEqual(await companionState(page),initialCompanionState,'Passive MCP reads must preserve startup trust and publication records');evidence.passiveCompanions={emptyCatalogue:true,listenerRead:true,startupTrustPreserved:true};
     }
     const name = `MCP acceptance ${Date.now()}`;
     const prepared = await ok(writer, 'profile_prepare_changes', { name, expectedRevision: null });
@@ -230,7 +236,11 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       assert.equal((await ok(writer, 'profile_get', { id: prepared.profileId })).document.name, `${name} saved only`);
       assert.equal((await ok(writer, 'profile_status')).profileSession.owner, null, 'Restart must not replay an applied profile');
       assert.equal((await call(writer, 'operation_status', { operationId: saveArgs.operationId })).error.code, 'operation_unknown');
-      if(process.env.OSG_MCP_EXPECT_NO_COMPANIONS)await assertNoCompanionState(page);
+      if(process.env.OSG_MCP_EXPECT_NO_COMPANIONS){
+        // Startup may renew the leaf and reseal the identity record; the root stays exact.
+        assert.equal((await page.native({command:'companion_browser_certificate'})).companions.certificatePem,initialCompanionCa);
+        assert.deepEqual((await companionState(page)).map(record=>[record.domain,record.key]),initialCompanionState.map(record=>[record.domain,record.key]));
+      }
       evidence.restart = { settingsRestored: true, credentialRestored: true, savedProfileRestored: true, appliedRunNotReplayed: true, volatileLedgerReconciled: true };
     }
     evidence.completed = true; evidence.checkedAt = new Date().toISOString();

@@ -19,7 +19,7 @@
   const enabled=$derived(hostState.listener?.configuredEnabled??hostState.listener?.enabled??false);
   const portError = $derived(!Number.isInteger(port) || port < 1024 || port > 65535 ? 'Enter a port from 1024 to 65535.' : '');
   async function exportCertificate() {
-    try { if(await invoke('export_companion_certificate'))notify('Public certificate exported. Verify the fingerprint before trusting it on another device.'); }
+    try { if(await invoke('export_companion_certificate'))notify('Public root CA certificate exported. Follow the Brave installation steps in these settings.'); }
     catch(e){notify(String(e),'error');}
   }
   async function refresh() {
@@ -78,7 +78,18 @@
   <div class="preference-row browser-trust">
     <div class="trust-copy">
       <strong>Browser companion HTTPS</strong>
-      <p>Browsers on companion devices need to trust Cockpit’s certificate before opening pairing links or installing the browser app. Export the public certificate and verify its fingerprint through a trusted channel before installing it in the device’s certificate trust store.</p>
+      <p>Export Cockpit’s public root CA certificate and install it on each companion device before opening pairing links. Transfer it through a trusted channel and verify the CA public-key fingerprint shown below before trusting it. This export contains the root CA only; its private key stays protected on this PC.</p>
+      <details class="browser-install">
+        <summary>Install in Brave on Windows</summary>
+        <ol>
+          <li>Choose <strong>Export public certificate</strong>. Open the exported <code>opensimgear-cockpit-root-ca.crt</code> on the Windows PC running Brave.</li>
+          <li>Check that both <strong>Issued to</strong> and <strong>Issued by</strong> begin with <strong>OpenSimGear Companion CA</strong>, then choose <strong>Install Certificate</strong>.</li>
+          <li>Select <strong>Current User</strong>, then <strong>Place all certificates in the following store</strong>. Choose <strong>Browse → Trusted Root Certification Authorities</strong>, finish the wizard, and confirm installation of your verified Cockpit CA.</li>
+          <li>Completely quit and reopen Brave, then open the companion address. If the pairing link expired during setup, create a fresh one in Cockpit.</li>
+        </ol>
+        <p>Use the root CA exported here. The <strong>OpenSimGear Companion listener</strong> certificate shown in Brave’s address bar is renewed by Cockpit and should not be installed as a trusted root.</p>
+      </details>
+      <p>Each Cockpit installation creates its own CA locally on first start, saves it in protected storage, and reuses it across restarts and listener changes. Server certificate renewal keeps the same CA. Removing Cockpit’s saved identity requires installing a new CA and pairing again.</p>
       <p>Keep the LAN address and port stable for saved browser apps.</p>
       {#if hostState.listener?.caSpkiSha256}<div class="fingerprint"><span>CA public-key fingerprint</span><code>{hostState.listener.caSpkiSha256}</code></div>{/if}
     </div>
@@ -102,6 +113,11 @@
   select:disabled { cursor: not-allowed; opacity: .65; }
   .preference-row .field-error { color: var(--text); font-size: var(--ui-text-size); }
   .trust-copy { flex: 1 1 400px; min-width: 0; }
+  .browser-install { margin-top: 14px; max-width: 620px; }
+  .browser-install summary { cursor: pointer; color: var(--text); font-size: var(--ui-text-size); }
+  .browser-install ol { margin: 12px 0; padding-left: 22px; color: var(--muted); font-size: var(--ui-text-size); line-height: var(--ui-line-height); }
+  .browser-install li + li { margin-top: 10px; }
+  .browser-install strong { color: var(--text); font-weight: 500; }
   .browser-trust .secondary-button { flex-shrink: 0; }
   .fingerprint { display: grid; gap: 7px; margin-top: 14px; }
   .fingerprint > span { color: var(--muted); font-size: var(--ui-text-size); }

@@ -307,7 +307,7 @@ async fn export_companion_certificate(app: tauri::AppHandle, state: tauri::State
     tauri::async_runtime::spawn_blocking(move || {
         let result=service.request(serde_json::json!({"command":"companion_browser_certificate","clientId":"browser-certificate"}));
         let pem=result["state"]["companions"]["certificatePem"].as_str().ok_or("Cannot read Cockpit's public certificate")?;
-        let Some(file)=app.dialog().file().set_title("Export Cockpit public certificate").set_file_name("opensimgear-cockpit.crt").add_filter("Certificate",&["crt"]).blocking_save_file() else {return Ok(false)};
+        let Some(file)=app.dialog().file().set_title("Export Cockpit public root CA certificate").set_file_name("opensimgear-cockpit-root-ca.crt").add_filter("Certificate",&["crt"]).blocking_save_file() else {return Ok(false)};
         let path=file.into_path().map_err(|e|e.to_string())?;
         std::fs::write(path,pem).map_err(|e|e.to_string())?;
         Ok(true)

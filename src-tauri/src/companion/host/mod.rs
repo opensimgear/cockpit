@@ -70,9 +70,9 @@ fn interface_addresses()->Vec<String>{
 }
 impl Runtime {
     pub fn new(path: Option<PathBuf>, provider: Arc<CompanionProvider>) -> Self {
-        // Protected-store/TLS setup can require an OS credential service. Keep it
-        // outside ordinary gateway startup; explicit companion operations and
-        // captured-game recovery initialize the same retained state on demand.
+        // Construction stays inert. Native startup initializes protected
+        // companion state from the detection worker, where OS store errors are
+        // retained and surfaced by companion status.
         Self {
             path,
             stopped: AtomicBool::new(false),
@@ -94,18 +94,14 @@ impl Runtime {
             if runtime.stopped.load(Ordering::SeqCst) {
                 break;
             }
-            // Do not initialize protected storage for first-time users.
-            if runtime.services.get().is_some()
-                || runtime
-                    .path
-                    .as_ref()
-                    .is_some_and(|p| osg_companion_service::persistence::SealedSqliteStore::new(p.join("companion-host-state.dpapi")).exists().unwrap_or(true))
-            {
-                if let Ok(services) = runtime.services() {
-                    if crate::companion_panels::ready(&services.hub).unwrap_or(false) {
-                        Self::start_saved_listener(services);
-                        let _ = services.usb.reconnect_detected(&services.hub);
-                    }
+            // Initialize the installation's protected host identity on first
+            // native startup, even before the listener is enabled. `services`
+            // caches startup errors so an unavailable store cannot trigger a
+            // fresh CA on a later polling pass.
+            if let Ok(services) = runtime.services() {
+                if crate::companion_panels::ready(&services.hub).unwrap_or(false) {
+                    Self::start_saved_listener(services);
+                    let _ = services.usb.reconnect_detected(&services.hub);
                 }
             }
             drop(runtime);
