@@ -1,5 +1,49 @@
 
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "manual benchmark against the currently running DCS process"]
+    fn benchmark_current_dcs_process_inventory() {
+        let executable = std::env::var("OSG_BENCH_DCS_EXECUTABLE")
+            .expect("set OSG_BENCH_DCS_EXECUTABLE to the configured DCS executable");
+        let root = Path::new(&executable).parent().and_then(Path::parent).expect("DCS installation root");
+        let process_executables = ["bin/DCS.exe", "bin-mt/DCS.exe"].iter()
+            .map(|relative| root.join(relative).to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let game = json!({
+            "id":"dcs", "installed":true, "integrationCompatible":true,
+            "integrationKey":"dcs", "provider":"dcs-bios", "executable":executable,
+            "processExecutables":process_executables
+        });
+        let paths = process_paths(&game).expect("configured DCS process paths");
+        let mut samples = Vec::new();
+        let mut outcomes = BTreeMap::<String, usize>::new();
+        let mut last_processes = Vec::new();
+        let mut last_errors = BTreeMap::new();
+        for _ in 0..25 {
+            let started = Instant::now();
+            let inventory = native::inventory(&paths).expect("native process inventory");
+            let elapsed = started.elapsed();
+            samples.push(elapsed.as_micros());
+            let matching = inventory.processes.iter().filter(|(process, _)| {
+                paths.iter().any(|path| paths_match(path, &process.path))
+            }).collect::<Vec<_>>();
+            let outcome = match inventory.inspect(&paths, false) {
+                Ok(Some(_)) => "one-process".to_owned(),
+                Ok(None) => "no-process".to_owned(),
+                Err(error) => format!("error: {error}"),
+            };
+            *outcomes.entry(outcome).or_default() += 1;
+            last_processes = matching.iter().map(|(identity, _)| {
+                format!("pid={} epoch={} path={}", identity.pid, identity.epoch, identity.path)
+            }).collect::<Vec<_>>();
+            last_errors = inventory.errors;
+        }
+        samples.sort_unstable();
+        let percentile = |fraction: f64| samples[((samples.len() - 1) as f64 * fraction).round() as usize];
+        eprintln!("DCS_PROCESS_INVENTORY_BENCH samples={} paths={paths:?} p50_us={} p95_us={} max_us={} outcomes={outcomes:?} processes={last_processes:?} errors={last_errors:?}",
+            samples.len(), percentile(0.50), percentile(0.95), samples[samples.len() - 1]);
+    }
     #[test]
     fn one_protected_basename_does_not_poison_unrelated_batched_processes() {
         let process = ProcessIdentity {

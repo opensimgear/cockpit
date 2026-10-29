@@ -19,6 +19,7 @@ struct FakePlatform {
     process: Mutex<Option<ProcessIdentity>>,
     failed: AtomicBool,
     reads: std::sync::atomic::AtomicUsize,
+    observation_hook: Mutex<Option<(std::thread::ThreadId, Box<dyn FnOnce() + Send>)>>,
 }
 impl FakePlatform {
     fn new() -> Self {
@@ -30,6 +31,7 @@ impl FakePlatform {
             })),
             failed: AtomicBool::new(false),
             reads: std::sync::atomic::AtomicUsize::new(0),
+            observation_hook: Mutex::new(None),
         }
     }
 }
@@ -66,6 +68,16 @@ impl Platform for FakePlatform {
     fn alive(&self, identity: &ProcessIdentity) -> Result<bool, String> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         Ok(self.process.lock().unwrap().as_ref() == Some(identity))
+    }
+    fn integration_process(&self, game: &Value) -> Result<Option<ProcessIdentity>, String> {
+        let hook = {
+            let mut hook = self.observation_hook.lock().unwrap();
+            if hook.as_ref().is_some_and(|(thread, _)| *thread == std::thread::current().id()) {
+                hook.take()
+            } else { None }
+        };
+        if let Some((_, hook)) = hook { hook(); }
+        self.find(game)
     }
 }
 fn owner(game: Option<&str>) -> ProfileOwner {
@@ -273,3 +285,5 @@ fn preparation_loss_revokes_before_dispatch_without_waiting_for_observer() {
 include!("game_context_runtime_tests_tail.rs");
 #[path = "game_context/decoration_tests.rs"]
 mod decoration;
+#[path = "games/context/validation_tests.rs"]
+mod validation;

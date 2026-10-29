@@ -12,11 +12,15 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-const RESPONSE_DEADLINE_ERROR: &str = "Output helper exited or exceeded its response deadline.";
+const RESPONSE_DEADLINE_ERROR: &str = "Output helper response timed out.";
+struct Reply {
+    received: Instant,
+    result: Result<Value, String>,
+}
 pub struct Worker {
     child: Child,
     outgoing: Option<SyncSender<Vec<u8>>>,
-    incoming: Receiver<Result<Value, String>>,
+    incoming: Receiver<Reply>,
     timeout: Duration,
     activation_timeout: Duration,
     hello: Value,
@@ -56,7 +60,9 @@ impl Worker {
         thread::spawn(move || {
             let mut output = BufReader::new(output);
             loop {
-                let result = match read_frame(&mut output) {
+                let frame = read_frame(&mut output);
+                let received = Instant::now();
+                let result = match frame {
                     Ok(Some(bytes)) => serde_json::from_slice::<Value>(&bytes)
                         .map_err(|e| e.to_string())
                         .and_then(|response| {
@@ -75,7 +81,8 @@ impl Worker {
                     Err(e) => Err(e.to_string()),
                 };
                 let failed = result.is_err();
-                if replies.try_send(result).is_err() || failed {
+                let reply = Reply { received, result };
+                if replies.try_send(reply).is_err() || failed {
                     break;
                 }
             }
@@ -109,7 +116,7 @@ impl Worker {
         slot_ids: &[u8],
         deadline: Instant,
     ) -> Result<Value, String> {
-        let result = (|| {
+        let result: Result<Value, String> = (|| {
             if self.hello["backend"] != "vjoy-inspect-ready" {
                 return Err("This helper is not a ready read-only inspector.".into());
             }
@@ -118,7 +125,7 @@ impl Worker {
                     .map_err(|e| e.to_string())?;
             bytes.push(b'\n');
             if Instant::now() >= deadline {
-                return Err(RESPONSE_DEADLINE_ERROR.into());
+                return Err("Output helper response deadline expired before enqueue.".into());
             }
             self.outgoing
                 .as_ref()
@@ -133,20 +140,18 @@ impl Worker {
         result
     }
     fn reply_before(&mut self, deadline: Instant) -> Result<Value, String> {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .filter(|remaining| !remaining.is_zero())
-            .ok_or(RESPONSE_DEADLINE_ERROR)?;
-        let result = self
-            .incoming
-            .recv_timeout(remaining)
-            .map_err(|_| RESPONSE_DEADLINE_ERROR)?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let reply = self.incoming.recv_timeout(remaining).map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => RESPONSE_DEADLINE_ERROR,
+            mpsc::RecvTimeoutError::Disconnected => "Output helper reply reader disconnected.",
+        })?;
         // recv_timeout can return an already queued reply after this caller was
         // descheduled. A queued acknowledgement does not extend its deadline.
         if Instant::now() >= deadline {
-            return Err(RESPONSE_DEADLINE_ERROR.into());
+            let arrival = if reply.received < deadline { "before" } else { "after" };
+            return Err(format!("Output helper response consumed after its deadline; reader received it {arrival} deadline."));
         }
-        result
+        reply.result
     }
     pub fn request(&mut self, message: &Message) -> Result<(), String> {
         // Include serialization, enqueueing and any scheduler delay in one
@@ -156,15 +161,16 @@ impl Worker {
         } else {
             self.timeout
         };
-        let deadline = Instant::now() + timeout;
+        let started = Instant::now();
+        let deadline = started + timeout;
         let mut bytes = serde_json::to_vec(message).map_err(|e| e.to_string())?;
         if bytes.len() > FRAME_LIMIT {
             return Err("Output helper request exceeds its frame limit.".into());
         }
         bytes.push(b'\n');
-        let result = (|| {
+        let result: Result<(), String> = (|| {
             if Instant::now() >= deadline {
-                return Err(RESPONSE_DEADLINE_ERROR.into());
+                return Err("Output helper response deadline expired before enqueue.".into());
             }
             self.outgoing
                 .as_ref()
@@ -189,14 +195,28 @@ impl Worker {
                     .collect());
             }
             if Instant::now() >= deadline {
-                return Err(RESPONSE_DEADLINE_ERROR.into());
+                return Err("Output helper response deadline expired while validating acknowledgement.".into());
             }
             Ok(())
         })();
-        if result.is_err() {
+        result.map_err(|error| {
+            let command = match message {
+                Message::Start { .. } => "start".into(),
+                Message::Recover { .. } => "recover".into(),
+                Message::Renew { sequence, .. } => format!("renew sequence {}", sequence.0),
+                Message::Report { report, .. } => format!("report sequence {}", report.sequence.0),
+                Message::Stop { .. } => "stop".into(),
+            };
+            // Inspect the retained process before termination destroys evidence.
+            let child = match self.child.try_wait() {
+                Ok(None) => "running".into(),
+                Ok(Some(status)) => format!("exited ({status})"),
+                Err(error) => format!("status unavailable ({error})"),
+            };
+            let detail = format!("{error} [request={command}; budget={} ms; elapsed={} ms; pid={}; child={child}]", timeout.as_millis(), started.elapsed().as_millis(), self.child.id());
             self.terminate();
-        }
-        result
+            detail.chars().take(512).collect()
+        })
     }
     pub fn alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
@@ -207,8 +227,8 @@ impl Worker {
         let deadline = Instant::now() + Duration::from_millis(20);
         while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
             match self.incoming.recv_timeout(remaining) {
-                Ok(Err(error)) => return error,
-                Ok(Ok(_)) => continue,
+                Ok(Reply { result: Err(error), .. }) => return error,
+                Ok(Reply { result: Ok(_), .. }) => continue,
                 Err(_) => break,
             }
         }

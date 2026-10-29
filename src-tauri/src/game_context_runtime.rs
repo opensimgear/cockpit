@@ -110,17 +110,17 @@ impl GamesRuntime {
     /// Capture identity for strict validation away from the live health path.
     pub(crate) fn profile_validation_task(
         &self, proof: GamePreparation, context: Option<ContextToken>,
-    ) -> impl FnMut() -> Result<(), String> + Send + 'static {
+    ) -> impl FnMut() -> Result<Instant, String> + Send + 'static {
         let inner = self.inner.clone();
         move || {
-            validate_preparation_inner(&inner, &proof)?;
+            let observed = observe_preparation_inner(&inner, &proof)?;
             if let Some(token) = &context {
                 if !token.matches_preparation(&proof) {
                     return Err("The delivered game context differs from its preparation.".into());
                 }
                 inner.contexts.lock().unwrap_or_else(|p| p.into_inner()).validate(token)?;
             }
-            Ok(())
+            Ok(observed)
         }
     }
     pub(crate) fn admit_prepared_game_context(

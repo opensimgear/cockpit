@@ -4,7 +4,30 @@ use osg_profiles::{
     compiler_models::{ExecutionPlan, PlanReadiness},
     Endpoint, ProfileDocument,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Health describes the retained samples, including ticks with no new frames.
+/// A packet boundary alone is not evidence that an unavailable input recovered.
+pub(super) fn input_degradation(
+    phase: &osg_mapping::engine::typed::Phase,
+    plan: Option<&ExecutionPlan>,
+    document: &ProfileDocument,
+) -> Vec<String> {
+    use osg_mapping::{program::SignalSample, signal::PortContract};
+    let absent = plan.into_iter().flat_map(|plan| plan.sources.iter())
+        .filter(|source| source.readiness == PlanReadiness::Unavailable
+            && !required(document, &source.endpoint.node_id))
+        .map(|source| (source.endpoint.node_id.as_str(), source.endpoint.port_id.as_str()))
+        .collect::<BTreeSet<_>>();
+    phase.program().sources.iter().filter(|source| {
+        matches!(source.contract, PortContract::State { .. })
+            && !absent.contains(&(source.endpoint.node_id.as_str(), source.endpoint.port_id.as_str()))
+            && phase.inspected_sample(&source.endpoint)
+                .is_some_and(|(sample, _)| !matches!(sample, SignalSample::Known(_)))
+    }).map(|source| source.endpoint.node_id.as_str()).collect::<BTreeSet<_>>()
+        .into_iter().map(|id| format!("{id} has unavailable input samples; dependent work was revoked."))
+        .collect()
+}
 
 fn required(document: &ProfileDocument, id: &str) -> bool {
     document

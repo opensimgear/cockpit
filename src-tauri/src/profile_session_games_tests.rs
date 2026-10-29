@@ -1587,6 +1587,10 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
                 process: Mutex::new(None),
             }),
         );
+        // This catalogue-only fixture supplies an independently healthy process
+        // proof; native process fencing is exercised by the other reader tests.
+        reader.validation.seed(Instant::now());
+        reader.validation.start(|| Ok(Instant::now()));
         let deadline = Instant::now() + std::time::Duration::from_secs(2);
         let lost = loop {
             let poll = reader.poll(&games, || 3000);

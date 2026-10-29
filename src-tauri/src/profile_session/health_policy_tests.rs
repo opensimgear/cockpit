@@ -177,3 +177,52 @@ fn unexplained_unavailable_and_blocked_branches_remain_unhealthy() {
         .iter()
         .any(|message| message.starts_with("unknown:value is offline")));
 }
+
+#[test]
+fn unavailable_samples_remain_unhealthy_between_packets_until_known_again() {
+    use osg_mapping::{engine::{typed::{Change, Frame, Phase}, Counter, Reason}, program::SignalSample};
+    let (document, mut plan) = fixture();
+    plan.program.sources.push(osg_mapping::program::SourcePort {
+        endpoint: osg_mapping::program::Endpoint { node_id: "required".into(), port_id: "value".into() }, contract: contract(),
+    });
+    let mut phase = Phase::new(plan.program.clone(), Counter(1), uuid::Uuid::new_v4().to_string()).unwrap();
+    let frame = |sequence, reason, sample| Frame {
+        source: "required".into(), generation: Counter(1), sequence: Counter(sequence),
+        captured_us: Counter(sequence * 100), reason,
+        changes: vec![Change { port_id: "value".into(), sample }],
+    };
+    phase.accept_batch([frame(1, Reason::Baseline, SignalSample::scalar(PortValue::Boolean(false)))]).unwrap();
+    assert!(input_degradation(&phase, Some(&plan), &document).is_empty());
+    phase.accept_batch([frame(2, Reason::Change, SignalSample::Unknown)]).unwrap();
+    let unavailable = input_degradation(&phase, Some(&plan), &document);
+    assert_eq!(unavailable, vec!["required has unavailable input samples; dependent work was revoked."]);
+    for _ in 0..5 {
+        assert!(phase.accept_batch([]).unwrap().is_empty(), "No new packet was received");
+        assert_eq!(input_degradation(&phase, Some(&plan), &document), unavailable,
+            "An idle heartbeat must not fabricate a recovery");
+    }
+    phase.accept_batch([frame(3, Reason::Change, SignalSample::Unknown)]).unwrap();
+    assert_eq!(input_degradation(&phase, Some(&plan), &document), unavailable);
+    phase.accept_batch([frame(4, Reason::Change, SignalSample::scalar(PortValue::Boolean(true)))]).unwrap();
+    assert!(input_degradation(&phase, Some(&plan), &document).is_empty());
+    phase.advance(Counter(2_000_000)).unwrap();
+    assert_eq!(input_degradation(&phase, Some(&plan), &document), unavailable,
+        "Expired samples remain visible even without an incoming frame");
+}
+
+#[test]
+fn absent_optional_sources_and_quiet_events_do_not_add_health_warnings() {
+    use osg_mapping::{engine::{typed::Phase, Counter}, program::SourcePort};
+    let (document, mut plan) = fixture();
+    plan.sources.push(source("optional", PlanReadiness::Unavailable));
+    plan.program.sources = vec![
+        SourcePort { endpoint: osg_mapping::program::Endpoint { node_id: "optional".into(), port_id: "value".into() }, contract: contract() },
+        SourcePort { endpoint: osg_mapping::program::Endpoint { node_id: "required".into(), port_id: "value".into() }, contract: PortContract::Event { schema: ScalarSchema::Boolean {} } },
+    ];
+    let phase = Phase::new(plan.program.clone(), Counter(1), uuid::Uuid::new_v4().to_string()).unwrap();
+    assert!(input_degradation(&phase, Some(&plan), &document).is_empty());
+    plan.sources[0].readiness = PlanReadiness::Ready;
+    assert_eq!(input_degradation(&phase, Some(&plan), &document),
+        vec!["optional has unavailable input samples; dependent work was revoked."],
+        "A present optional source must still report actual unavailable data");
+}

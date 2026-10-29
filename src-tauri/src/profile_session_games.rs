@@ -145,6 +145,7 @@ pub(crate) struct GameSources {
     published: Option<(u64, bool, bool)>,
     physics: Option<PhysicsMerge>,
     validation: live_validation::Validation,
+    catalogue_validation: live_validation::Validation,
 }
 #[derive(Default)]
 pub(crate) struct GamePoll {

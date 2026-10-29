@@ -55,6 +55,7 @@ impl GameSources {
             published: None,
             physics: None,
             validation: live_validation::Validation::default(),
+            catalogue_validation: live_validation::Validation::catalogue(),
         };
         let Some(game) = &result.game else {
             return Ok(result);

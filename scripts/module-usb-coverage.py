@@ -45,8 +45,10 @@ MODULE_TEST_SOURCES = {
                                              "profile_session/activation_phases"],
     "profile_session/companion_feedback": ["profile_session/companion_feedback_tests",
                                            "profile_session/companion_feedback_integration_tests"],
-    "games/profiles/session_validation": ["games/profiles/session_validation_tests"],
-    "games/context/validation": [],
+    "games/profiles/session_validation": ["games/profiles/session_validation_tests",
+                                           "profile_session_games_tests"],
+    "games/context/validation": ["game_context_runtime_tests", "game_context_runtime_tests_tail",
+                                  "games/context/validation_tests"],
     "profile_session/game_publication": ["profile_session/game_publication_tests"],
 }
 MODULES.extend(["system_inventory", "system_inventory_associations"])

@@ -227,12 +227,15 @@ impl Session {
             .renewal
             .checked_add(1)
             .ok_or("Lease renewal counter exhausted.")?;
+        let sent = Instant::now();
         self.send(Message::Renew {
             token: self.token.clone(),
             sequence: Counter(next),
         })?;
         self.renewal = next;
-        self.renewed = Instant::now();
+        // The child lease starts on receipt, not when its acknowledgement is
+        // consumed. A delayed acknowledgement must not postpone the next renewal.
+        self.renewed = sent;
         Ok(())
     }
     /// Keep prepared, neutral output leased while an owned visibility change

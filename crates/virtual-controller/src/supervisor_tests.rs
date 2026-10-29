@@ -28,14 +28,59 @@ fn message() -> Message {
     }
 }
 #[test]
+fn request_failures_identify_timeout_eof_reader_loss_and_retained_child() {
+    let hello = "print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\n";
+    let mut timed = spawn(&format!("{hello}import sys,time\nsys.stdin.readline()\ntime.sleep(2)\n")).unwrap();
+    let pid = timed.process_id();
+    timed.response_timeout(Duration::from_millis(40));
+    let error = timed.request(&Message::Renew { token: message().token().clone(), sequence: Counter(9) }).unwrap_err();
+    assert!(error.starts_with("Output helper response timed out."), "{error}");
+    assert!(error.contains("request=renew sequence 9; budget=40 ms; elapsed="), "{error}");
+    assert!(error.contains(&format!("pid={pid}; child=running")), "{error}");
+    assert!(error.chars().count() <= 512);
+    assert!(!timed.alive());
+
+    let mut exited = spawn(&format!("{hello}import sys\nsys.exit(7)\n")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while exited.alive() && Instant::now() < deadline { thread::sleep(Duration::from_millis(2)); }
+    assert!(!exited.alive());
+    let error = exited.request(&message()).unwrap_err();
+    assert!(error.starts_with("Output helper exited."), "{error}");
+    assert!(error.contains("child=exited (") && error.contains('7'), "{error}");
+    assert!(error.contains("request=stop; budget=500 ms; elapsed="), "{error}");
+
+    let mut disconnected = spawn(&format!("{hello}import time\ntime.sleep(2)\n")).unwrap();
+    let (sender, receiver) = mpsc::sync_channel(1);
+    disconnected.incoming = receiver;
+    drop(sender);
+    let error = disconnected.request(&message()).unwrap_err();
+    assert!(error.starts_with("Output helper reply reader disconnected."), "{error}");
+    assert!(error.contains("child=running"), "{error}");
+    assert!(!disconnected.alive());
+}
+#[test]
+fn report_failure_keeps_sequence_and_bounds_untrusted_diagnostic() {
+    let mut worker = spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport sys,json\nmsg=json.loads(sys.stdin.readline())\nprint(json.dumps({'ok':False,'token':msg['token'],'error':'x'*700}),flush=True)\n").unwrap();
+    let token = message().token().clone();
+    let binding = crate::vjoy::tests::binding();
+    let report = osg_mapping::engine::Report {
+        session: token.session.clone(), run_generation: token.generation,
+        sequence: Counter(17), at_us: Counter(1), target: binding.target.clone(),
+        reason: osg_mapping::engine::ReportReason::Change, state: binding.fallback(),
+    };
+    let error = worker.request(&Message::Report { token, report }).unwrap_err();
+    assert!(error.starts_with(&"x".repeat(256)), "{error}");
+    assert!(error.contains("request=report sequence 17; budget=500 ms; elapsed="), "{error}");
+    assert!(error.contains("pid=") && error.contains("child="), "{error}");
+    assert!(error.chars().count() <= 512);
+    assert!(!worker.alive());
+}
+#[test]
 fn asynchronous_worker_fault_is_preserved_for_requests_and_already_exited_children() {
     let hello = "print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\n";
     let fault = "print('{\"fatal\":true,\"ok\":false,\"active\":false,\"error\":\"Mapping heartbeat expired\"}',flush=True)\n";
     let mut worker = spawn(&format!("{hello}import sys\nsys.stdin.readline()\n{fault}")).unwrap();
-    assert_eq!(
-        worker.request(&message()).unwrap_err(),
-        "Mapping heartbeat expired"
-    );
+    assert!(worker.request(&message()).unwrap_err().starts_with("Mapping heartbeat expired [request=stop;"));
     assert!(!worker.alive());
 
     let mut worker = spawn(&format!("{hello}{fault}")).unwrap();
@@ -51,10 +96,7 @@ fn asynchronous_worker_fault_is_preserved_for_requests_and_already_exited_childr
         "{hello}import sys\nsys.stdin.readline()\nprint('{{\"fatal\":true}}',flush=True)\n"
     ))
     .unwrap();
-    assert_eq!(
-        worker.request(&message()).unwrap_err(),
-        "Output helper failed."
-    );
+    assert!(worker.request(&message()).unwrap_err().starts_with("Output helper failed. [request=stop;"));
 }
 #[test]
 fn worker_identity_comes_from_the_retained_child_and_does_not_send_requests() {
@@ -76,12 +118,14 @@ fn a_queued_acknowledgement_cannot_extend_an_expired_response_deadline() {
     let mut child = spawn("print('{\"ok\":true,\"backend\":\"fixture\",\"protocol\":1}',flush=True)\nimport time\ntime.sleep(2)\n").unwrap();
     let (replies, incoming) = mpsc::sync_channel(1);
     child.incoming = incoming;
-    replies.send(Ok(serde_json::json!({"ok":true}))).unwrap();
+    let received = Instant::now() - Duration::from_millis(10);
+    replies.send(Reply { received, result: Ok(serde_json::json!({"ok":true})) }).unwrap();
     // Model a caller resumed after its deadline with the acknowledgement already
     // queued. This is deterministic and does not rely on scheduler timing.
     let expired = Instant::now() - Duration::from_millis(1);
-    assert!(child.reply_before(expired).is_err());
-    assert_eq!(child.incoming.try_recv().unwrap().unwrap()["ok"], true);
+    assert!(child.reply_before(expired).unwrap_err().contains("reader received it before deadline"));
+    replies.send(Reply { received: Instant::now(), result: Ok(serde_json::json!({"ok":true})) }).unwrap();
+    assert!(child.reply_before(expired).unwrap_err().contains("reader received it after deadline"));
     child.terminate();
     assert!(!child.alive());
 }
@@ -98,9 +142,9 @@ fn inspector_requests_cannot_use_an_output_worker_or_rebase_an_expired_query() {
     let (queued, incoming) = mpsc::sync_channel(1);
     inspector.incoming = incoming;
     queued
-        .send(Ok(
+        .send(Reply { received: Instant::now(), result: Ok(
             serde_json::json!({"nonce":"nonce","result":{"ok":true,"slots":[]}}),
-        ))
+        ) })
         .unwrap();
     let (outgoing, writes) = mpsc::sync_channel(1);
     inspector.outgoing = Some(outgoing);
@@ -110,7 +154,7 @@ fn inspector_requests_cannot_use_an_output_worker_or_rebase_an_expired_query() {
         .contains("deadline"));
     assert!(writes.try_recv().is_err()); // Not even an expired queued request is sent.
     assert_eq!(
-        inspector.incoming.try_recv().unwrap().unwrap()["nonce"],
+        inspector.incoming.try_recv().unwrap().result.unwrap()["nonce"],
         "nonce"
     );
     assert!(!inspector.alive());

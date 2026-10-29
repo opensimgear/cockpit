@@ -1171,6 +1171,7 @@ impl Host for NativeProfileHost {
             reducer.observe_liveness(&source,generation,tick)?;
         }
         reducer.advance(tick)?;
+        degraded.extend(health_policy::input_degradation(reducer, state.delivery.as_ref(), &state.document));
         degraded.extend(state.scripts.poll(reducer));
         state.recording.record(reducer.drain_reports());
         let effects = reducer.drain();

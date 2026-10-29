@@ -51,3 +51,64 @@ The source change is limited to feedback timing, cached observer outcomes,
 diagnostic spacing and their regressions. Existing workspace changes are excluded
 from the commit, including the unrelated peripheral-policy edit in
 `profile_session_host.rs`.
+
+## Remaining runtime errors
+
+The follow-up found five identity-validation warnings, a virtual-output helper
+deadline failure, and repeated unavailable-sample warnings during baseline
+acquisition. Windows also reported one access failure and one ambiguous process
+match around a DCS restart. A 25-sample production inventory benchmark against
+both configured DCS runtime paths found exactly one live process each time, with
+no access errors: 17.039 ms median, 19.072 ms p95 and 20.072 ms maximum.
+
+The identity worker previously scheduled another full process scan as soon as
+each scan completed. Its 100 ms freshness window also began when work was queued,
+before periodic catalogue parsing and native build validation. Live timing traces
+measured 20–28 ms of catalogue work followed by a 12–27 ms process observation;
+combined work and heartbeat jitter intermittently expired otherwise healthy
+process evidence. Process and catalogue verification now have independent,
+reader-owned workers. Process evidence refreshes after 25 ms and expires at
+100 ms. Catalogue metadata checks refresh after 125 ms and retain the existing
+250 ms metadata horizon and two-second content-check policy. They force real
+file checks and timestamp before I/O. A slow catalogue check cannot starve native
+process checks; failure or expired evidence in either worker still withdraws
+the affected branches. Both workers are cancelled when the reader is retired.
+The process timestamp is captured immediately before native observation. Setup,
+catalogue, vehicle, preparation, installation and active-owner fences are checked
+again before the result is accepted. Library names and artwork do not revoke
+process evidence.
+
+Input health now retains unavailable state samples between telemetry packets.
+An idle heartbeat cannot report recovery while the source is still unknown;
+valid samples clear the warning. Expected optional absence and quiet event ports
+remain healthy. The mapping reducer's output revocation behavior is unchanged.
+
+Virtual-output renewal now measures its interval from request start instead of
+acknowledgement receipt. This preserves lease margin when acknowledgements take
+time. The 100 ms IPC deadline, 250 ms worker lease and 50 ms renewal interval are
+unchanged. Supervisor diagnostics distinguish missing replies, closed readers,
+and acknowledgements consumed after their deadline, and include bounded request,
+sequence, elapsed time and retained process status before termination.
+
+The old live session hit its heartbeat watchdog during heavy native testing and
+required desktop recovery before restart. Explicit recovery completed. Genuine
+process ambiguity, access failures, disconnects and uncertain cleanup still stop
+or withdraw affected work; these checks are not suppressed.
+
+Follow-up validation:
+
+- Native library: 1,652 passed, one existing `hold` topology-fixture failure,
+  12 ignored; all new regressions passed.
+- Virtual controller: all 105 tests passed. Changed-module coverage is 97.41%
+  for the supervisor and 92.68% for the session; every virtual-output gate passed.
+- Input health coverage: 99.17%. Proof workers: 98.18%. Native validation:
+  100%. Context entry point including its validation fragment: 89.41%.
+  Game reader including preparation, polling and delivery: 91.11%.
+- Coverage tooling: six tests passed. Frontend type/fixture checks passed with
+  zero Svelte errors or warnings.
+- Strict live acceptance uses `OSG_RUNTIME_HEALTH_NATIVE=1 node --test
+  tests/ui/profile-feedback-rate-native.mjs` against the rebuilt DCS session.
+  It passed over five minutes with 1,377 running samples, no degradation reasons
+  and zero new Activity warnings or errors. The paired companion remained
+  connected and armed. The result is saved in
+  `.research/activity-errors/runtime-health-soak.json`.

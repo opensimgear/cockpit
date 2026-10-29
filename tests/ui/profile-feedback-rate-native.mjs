@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {mkdir, writeFile} from 'node:fs/promises';
 
-test('native DCS companion feedback stays healthy across mapping heartbeats', {
-  skip: process.env.OSG_FEEDBACK_RATE_NATIVE !== '1', timeout: 180_000,
+const strictHealth = process.env.OSG_RUNTIME_HEALTH_NATIVE === '1';
+const soakMs = strictHealth ? 300_000 : 120_000;
+test('native DCS companion feedback and profile health stay stable across mapping heartbeats', {
+  skip: !strictHealth && process.env.OSG_FEEDBACK_RATE_NATIVE !== '1', timeout: soakMs + 60_000,
 }, async () => {
   const require = createRequire(import.meta.url);
   const {chromium} = require(process.env.OSG_PLAYWRIGHT_MODULE
@@ -33,9 +35,10 @@ test('native DCS companion feedback stays healthy across mapping heartbeats', {
         'A connected and armed profile companion is required.');
     };
     await connected();
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + soakMs;
     while (Date.now() < deadline) {
       const current = await status();
+      evidence.final = current;
       evidence.samples++;
       evidence.states[current.state] = (evidence.states[current.state] ?? 0) + 1;
       assert.deepEqual(current.owner, initial.owner, 'The native owner changed during the feedback soak.');
@@ -44,6 +47,7 @@ test('native DCS companion feedback stays healthy across mapping heartbeats', {
         evidence.degradations[reason] = (evidence.degradations[reason] ?? 0) + 1;
         assert.doesNotMatch(reason, /feedback:.*(?:rate|30\s*Hz)/i);
       }
+      if (strictHealth) assert.equal(current.state, 'running', JSON.stringify(current));
       await new Promise(resolve => setTimeout(resolve, 200));
     }
     await connected();
@@ -53,11 +57,13 @@ test('native DCS companion feedback stays healthy across mapping heartbeats', {
     }})).activity;
     evidence.warnings = activity.events;
     assert.ok(activity.total <= activity.events.length, 'Too many warnings to verify the full soak.');
+    if (strictHealth) assert.equal(activity.total, 0, JSON.stringify(activity.events));
     assert.ok(!activity.events.some(event => /feedback:.*(?:rate|30\s*Hz)/i.test(event.message)),
       JSON.stringify(activity.events));
   } finally {
     await mkdir('.research/activity-errors', {recursive: true});
-    await writeFile('.research/activity-errors/native-soak.json', JSON.stringify(evidence, null, 2));
+    const filename = strictHealth ? 'runtime-health-soak.json' : 'native-soak.json';
+    await writeFile('.research/activity-errors/' + filename, JSON.stringify(evidence, null, 2));
     await browser.close();
   }
 });
