@@ -1089,6 +1089,9 @@ impl GatewayManager {
                     let read_only = self.profiles.lock().unwrap_or_else(|p| p.into_inner())
                         .compile_source(osg_profiles::DEFAULT_PROFILE_ID)?.2;
                     let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                    if !document.companion_assignments.is_empty() {
+                        crate::profile_session_host::NativeProfileHost::project_companion_preview(&mut snapshot, &self.companion_host.profile_metadata()?, document)?;
+                    }
                     crate::profile_compilation::capture_output_capabilities(document, &mut snapshot.backend, self.profile_native,
                         osg_virtual_controller::inspection::current,
                         || self.controllers.request(&json!({"command":"controller_visibility_status"})));
@@ -1108,6 +1111,9 @@ impl GatewayManager {
                     assignment.ports.retain(|port| resource.ports.iter().any(|logical| logical.id == port.profile_port_id));
                 }
                 let mut snapshot = self.profile_resources.snapshot_for_compile(assignments)?;
+                if !document.companion_assignments.is_empty() {
+                    crate::profile_session_host::NativeProfileHost::project_companion_preview(&mut snapshot, &self.companion_host.profile_metadata()?, document)?;
+                }
                 crate::profile_compilation::capture_output_capabilities(document, &mut snapshot.backend, self.profile_native,
                     osg_virtual_controller::inspection::current,
                     || self.controllers.request(&json!({"command":"controller_visibility_status"})));

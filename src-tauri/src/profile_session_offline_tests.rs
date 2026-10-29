@@ -54,7 +54,7 @@ impl Fixture {
         let companions = Arc::new(crate::companion_host::Runtime::new(None, Arc::new(osg_mapping_host::companions::CompanionProvider::new(Arc::new(|| 0)))));
         let epoch = Arc::new(AtomicU64::new(1));
         let mut document = new_document("Offline native peripheral").unwrap();
-        document.resources.push(Resource { id: "controls".into(), name: "Flight controls".into(), kind: ResourceKind::Device, required: true, ports: vec![port("pressed", Direction::Output)] });
+        document.resources.push(Resource { id: "controls".into(), name: "Flight controls".into(), kind: ResourceKind::Device, required: false, ports: vec![port("pressed", Direction::Output)] });
         document.processing_nodes = vec![
             ProcessingNode { draft: None, id: "read-controls".into(), name: "Read controls".into(), operation: Operation::Identity {}, inputs: vec![port("value", Direction::Input)], outputs: vec![port("output", Direction::Output)] },
             ProcessingNode { draft: None, id: "base".into(), name: "Always active Base".into(), operation: Operation::Constant { value: PortValue::Boolean(true) }, inputs: vec![], outputs: vec![port("value", Direction::Output)] },
@@ -73,17 +73,17 @@ impl Fixture {
 impl Drop for Fixture { fn drop(&mut self) { self.resources.shutdown(); self.games.shutdown(); self.companions.shutdown(); self.controllers.shutdown(); } }
 
 #[test]
-fn required_offline_input_activates_degraded_and_keeps_base_and_health_running() {
+fn optional_offline_input_activates_healthy_and_keeps_base_and_health_running() {
     let fixture = Fixture::new();
     let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
     coordinator.apply(fixture.staged()).unwrap();
     let status = coordinator.status().clone();
-    assert_eq!(status.state, crate::profile_session::State::Degraded);
-    assert!(status.degradation.iter().any(|message| message.contains("Flight controls") && message.contains("offline")));
+    assert_eq!(status.state, crate::profile_session::State::Running);
+    assert!(status.degradation.is_empty());
     let owner = status.owner.unwrap();
     for _ in 0..3 {
         coordinator.poll().unwrap();
-        assert_eq!(coordinator.status().state, crate::profile_session::State::Degraded);
+        assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
         assert_eq!(coordinator.status().owner.as_ref(), Some(&owner));
     }
     let request = crate::profile_session::inspection::Request::parse(&json!({"command":"profile_runtime_inspect","owner":owner,"nodeId":"base"})).unwrap();
@@ -95,7 +95,7 @@ fn required_offline_input_activates_degraded_and_keeps_base_and_health_running()
 }
 
 #[test]
-fn unused_offline_peripheral_still_has_a_named_persistent_degradation() {
+fn unused_optional_offline_peripheral_does_not_degrade_the_profile() {
     let mut fixture = Fixture::new();
     fixture.candidate.document.resources[0].ports.clear();
     fixture.candidate.assignments[0].ports.clear();
@@ -104,8 +104,8 @@ fn unused_offline_peripheral_still_has_a_named_persistent_degradation() {
     let mut coordinator = crate::profile_session::Coordinator::new(fixture.host(), None);
     coordinator.apply(fixture.staged()).unwrap();
     coordinator.poll().unwrap();
-    assert_eq!(coordinator.status().state, crate::profile_session::State::Degraded);
-    assert_eq!(coordinator.status().degradation, vec!["Flight controls is offline; its settings and peripheral controls are inactive."]);
+    assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
+    assert!(coordinator.status().degradation.is_empty());
     assert!(coordinator.status().owner.is_some());
     coordinator.stop().unwrap();
 }

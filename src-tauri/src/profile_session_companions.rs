@@ -286,6 +286,9 @@ impl CompanionSources {
     pub(crate) fn is_empty(&self) -> bool {
         self.instances.is_empty()
     }
+    pub(crate) fn has_resource(&self, logical: &str) -> bool {
+        self.instances.iter().any(|instance|instance.logical==logical)
+    }
     pub(crate) fn validate_preparation(
         &self,
         runtime: &crate::companion_host::Runtime,

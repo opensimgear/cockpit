@@ -102,7 +102,7 @@
     assignments=rows;
     if(!rows.some(a=>a.instanceId===selected))selected=rows[0]?.instanceId??'';
     const assignment=rows.find(a=>a.instanceId===selected);
-    if(!assignment || !visible()){status=assignment?'Connected · panel paused while inactive':'Connected · assign a panel in Cockpit';return;}
+    if(!assignment){status='No panel assigned';return;}
     const haveAssets=await availableAssets();if(!current(socket,version))return;
     const opened=await socket.request({type:'open',instanceId:assignment.instanceId,publicationHash:assignment.publicationHash,widgetCapabilities:BROWSER_WIDGET_CAPABILITIES,haveAssets});
     if(!current(socket,version))return;
@@ -139,7 +139,7 @@
     panelError=false;session=opened;sequence=0;resyncSequence=0;feedbackView.clear();feedback={};suppressFeedbackCues=true;feedbackNotice='';
     await tick();disposeCompiledSurfaces(previousSurfaces);if(!current(socket,version))return;
     const values=Object.fromEntries(panel.document.ui.controls.map(control=>[control.id,control.kind==='button'?false:control.fallback]));
-    await socket.request(frame('baseline',{sequence:'0',values}));
+    await socket.request(frame('baseline',{sequence:'0',values,operation:{...preparationOperation,phase:'ready'}}));
     if(!current(socket,version))return;
     inputReady=focused();if(inputReady)queue.start();else queue.stop();
     active=true;status=focused()?'Connected · panel active':'Connected · feedback active · controls paused';error='';
@@ -148,7 +148,7 @@
     if(!owner || connecting || connection || !credential || disposed || pageHidden || performance.now()<nextAttempt)return;
     connecting=true;const savedCredential=credential;const version=epoch,socket=new BrowserTransport();connection=socket;
     socket.onreply=reply=>consume(reply,version);
-    socket.onclose=()=>{if(connection===socket)stop('Offline · reconnecting to Cockpit');};
+    socket.onclose=()=>{if(connection===socket){stop('Offline · reconnecting to Cockpit');nextAttempt=0;void connect();}};
     try {
       await socket.connect();if(!current(socket,version))return;
       const auth=await socket.request({type:'auth',token:savedCredential.token});
@@ -188,7 +188,7 @@
   let polling=false;
   async function poll(){
     const now=performance.now();
-    if(now-lastTick>1000 && active&&inputReady)void refreshControls(true);lastTick=now;
+    if(now-lastTick>1000 && active&&inputReady)void refreshControls();lastTick=now;
     if(polling || connecting || disposed || pageHidden || focusWork || staleRecoveryWork)return;
     if(!connection){void connect();return;}
     const socket=connection,version=epoch;polling=true;
@@ -198,7 +198,7 @@
       if(focusWork||staleRecoveryWork)return;
       if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
       if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
-      else if(!session && visible() && assignments.length)await loadAssigned(socket,version,assignments);
+      else if(!session && assignments.length)await loadAssigned(socket,version,assignments);
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
     finally{polling=false;}
   }
@@ -212,34 +212,33 @@
   }
   function changedPage(value:string){stop('Panel page changed');pageId=value;nextAttempt=0;}
   function resumeVisible(){if(!visible()||disposed)return;nextAttempt=0;return connect();}
-  function refreshControls(reopen=false):Promise<void>|undefined {
+  function refreshControls():Promise<void>|undefined {
     if(staleRecoveryWork)return staleRecoveryWork;
     queue.stop();inputReady=false;panelView?.reset();
     if(focusWork)return focusWork;
+    if(panelError)return;
     if(!connection||!session||!panel)return resumeVisible();
     const socket=connection,version=epoch;
     focusWork=Promise.resolve().then(async()=>{
       try{
-        if(!reopen){
-          const changes=panel!.document.ui.controls.map(control=>({controlId:control.id,value:control.kind==='button'?false:control.fallback}));
-          for(let offset=0;offset<changes.length;offset+=64)await socket.request(frame('input',{sequence:String(++sequence),changes:changes.slice(offset,offset+64)}));
-          if(!current(socket,version))return;
-          status='Connected · feedback active · controls paused';
-        }
-        if(focused()||reopen){
-          const close=frame('close');session=null;active=false;
-          try{await socket.request(close);}catch(e){if(!String(e).includes('Session is obsolete'))throw e;}
-          if(current(socket,version))await loadAssigned(socket,version,assignments);
-        }
+        // Focus changes and timer jitter release local requests, but a valid
+        // neutralized session can resume without decoding the whole panel again.
+        // An expired session is recovered only after the host rejects its identity.
+        const changes=panel!.document.ui.controls.map(control=>({controlId:control.id,value:control.kind==='button'?false:control.fallback}));
+        for(let offset=0;offset<changes.length;offset+=64)await socket.request(frame('input',{sequence:String(++sequence),changes:changes.slice(offset,offset+64)}));
+        if(!changes.length)await socket.request(frame('heartbeat',{sequence:String(++heartbeat)}));
+        if(!current(socket,version))return;
+        inputReady=focused();if(inputReady)queue.start();else queue.stop();
+        status=inputReady?'Connected · panel active':'Connected · feedback active · controls paused';
       }catch(e){if(current(socket,version)&&!recoverObsoleteSession(e,socket,version)){error=String(e);stop('Controls released · reconnecting to Cockpit');}}
     }).finally(()=>{focusWork=undefined;});
     return focusWork;
   }
   function blurred(){hasFocus=false;return refreshControls();}
-  function gainedFocus(){hasFocus=document.hasFocus();if(focused()&&!disposed)return refreshControls(true);}
+  function gainedFocus(){hasFocus=document.hasFocus();if(focused()&&!disposed)return refreshControls();}
   function visibilityChanged(){
     if(!visible()){if(secret){secret='';stop('Pairing paused while hidden');}else return blurred();}
-    else{hasFocus=document.hasFocus();return refreshControls(true);}
+    else{hasFocus=document.hasFocus();return refreshControls();}
   }
   function pageHiding(){pageHidden=true;secret='';stop('Panel page unloaded');}
   function pageShowing(){pageHidden=false;return resumeVisible();}

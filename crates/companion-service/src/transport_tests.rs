@@ -468,7 +468,7 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
         loop{match stream.read(&mut buffer){Ok(0)=>break,Ok(n)=>response.extend_from_slice(&buffer[..n]),Err(e) if e.kind()==std::io::ErrorKind::UnexpectedEof=>break,Err(e)=>panic!("{e}")}}
         String::from_utf8(response).unwrap()
     };
-    let response=http("/",address);assert!(response.starts_with("HTTP/1.1 200"));assert!(response.contains("frame-ancestors 'none'"));assert!(response.ends_with("browser companion"));
+    let response=http("/",address);assert!(response.starts_with("HTTP/1.1 200"));assert!(response.contains("frame-ancestors 'none'"));assert!(response.contains("worker-src 'self'"));assert!(response.ends_with("browser companion"));
     assert!(http("/../../Cargo.toml",address).starts_with("HTTP/1.1 404"));
     assert!(http("/","attacker.example").starts_with("HTTP/1.1 403"));
     let connect=|request_origin:&str| {

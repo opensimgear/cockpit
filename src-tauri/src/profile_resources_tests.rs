@@ -195,7 +195,7 @@ fn desired_companion_capture_never_borrows_current_ports_and_only_binds_actual_m
     runtime.state.lock().unwrap().registry.reconcile(batch("companions","provider",1,vec![current.clone()])).unwrap();
     let id=runtime.state.lock().unwrap().registry.list(0,1).unwrap().resources[0].id.clone();
     let old=current.ports.as_ref().unwrap().ports[0].clone();let mut future=old.clone();future.id="future-button".into();
-    let mut catalogue=CompanionCatalogue{logical_resource_id:"panel".into(),inventory_resource_id:id.clone(),instance_id:"instance".into(),publication_hash:digest('b'),capability_fingerprint:digest('d'),ports:vec![future.clone()]};
+    let mut catalogue=CompanionCatalogue{logical_resource_id:"panel".into(),inventory_resource_id:id.clone(),instance_id:"instance".into(),companion_id:"screen".into(),paired_identity_fingerprint:None,publication_hash:digest('b'),capability_fingerprint:digest('d'),ports:vec![future.clone()]};
     let mut assignment=LocalAssignment{resource_id:"panel".into(),source_id:id.clone(),ports:vec![PortExpectation{profile_port_id:"pressed".into(),observed_port_id:old.id.clone(),expected_contract_hash:old.contract_hash().unwrap()}]};
     let(_,pins)=runtime.snapshot_for_preparation_with_companions(vec![assignment.clone()],std::slice::from_ref(&catalogue)).unwrap();
     assert!(pins.is_empty(),"An old advertised port absent from the desired publication cannot be prepared.");
@@ -238,7 +238,7 @@ fn paired_component_delivery_keeps_its_provider_key_and_admits_only_verified_nat
         if prepared_transport==Transport::Integration {current.ports=None;}
         runtime.state.lock().unwrap().registry.reconcile(batch("paired-companions","provider",1,vec![current.clone()])).unwrap();
         let id=runtime.state.lock().unwrap().registry.list(0,1).unwrap().resources[0].id.clone();
-        let catalogue=CompanionCatalogue{logical_resource_id:"panel".into(),inventory_resource_id:id.clone(),instance_id:"instance".into(),publication_hash:digest('a'),capability_fingerprint:digest('b'),ports:vec![input.clone(),feedback.clone()]};
+        let catalogue=CompanionCatalogue{logical_resource_id:"panel".into(),inventory_resource_id:id.clone(),instance_id:"instance".into(),companion_id:"screen".into(),paired_identity_fingerprint:None,publication_hash:digest('a'),capability_fingerprint:digest('b'),ports:vec![input.clone(),feedback.clone()]};
         let assignment=LocalAssignment{resource_id:"panel".into(),source_id:id.clone(),ports:[("pressed",&input),("light",&feedback)].into_iter().map(|(logical,port)|PortExpectation{profile_port_id:logical.into(),observed_port_id:port.id.clone(),expected_contract_hash:port.contract_hash().unwrap()}).collect()};
         if prepared_transport==Transport::Integration {
             let(_,pins)=runtime.snapshot_for_preparation_with_companions(vec![assignment.clone()],std::slice::from_ref(&catalogue)).unwrap();

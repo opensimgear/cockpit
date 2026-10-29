@@ -217,6 +217,93 @@ fn owner(manager: &GatewayManager) -> Option<crate::profile_session::RunOwner> {
 }
 
 #[test]
+fn failed_peripheral_reconnects_back_off_per_run_owner_even_when_route_identity_flaps() {
+    let run_owner = crate::profile_session::RunOwner {
+        session: "11111111-1111-4111-8111-111111111111".into(),
+        generation: 3,
+        profile_id: osg_profiles::DEFAULT_PROFILE_ID.into(),
+        profile_revision: 8,
+        game_id: Some("dcs".into()),
+    };
+    let other_owner = crate::profile_session::RunOwner { generation: 4, ..run_owner.clone() };
+    let now = Instant::now();
+    let mut last = None;
+    assert!(!peripheral_retry_blocked(last.as_ref(), &run_owner, now));
+
+    record_peripheral_attempt(&mut last, run_owner.clone(), &Err("candidate changed".into()), now);
+    assert!(peripheral_retry_blocked(last.as_ref(), &run_owner, now + Duration::from_secs(4)));
+    // A new route/provider session fingerprint must not bypass the owner-level gate.
+    assert!(peripheral_retry_blocked(last.as_ref(), &run_owner, now + Duration::from_secs(5) - Duration::from_millis(1)));
+    assert!(!peripheral_retry_blocked(last.as_ref(), &other_owner, now + Duration::from_secs(1)));
+    assert!(!peripheral_retry_blocked(last.as_ref(), &run_owner, now + Duration::from_secs(5)));
+
+    let retry = now + Duration::from_secs(5);
+    record_peripheral_attempt(&mut last, run_owner.clone(), &Err("still offline".into()), retry);
+    assert!(peripheral_retry_blocked(last.as_ref(), &run_owner, retry + Duration::from_secs(9)));
+    assert!(!peripheral_retry_blocked(last.as_ref(), &run_owner, retry + Duration::from_secs(10)));
+
+    for attempt in 0..12 {
+        let previous = last.as_ref().unwrap().at;
+        let next = previous + peripheral_retry_delay(last.as_ref().unwrap().failures);
+        record_peripheral_attempt(&mut last, run_owner.clone(), &Err(format!("route {attempt} changed")), next);
+    }
+    assert_eq!(peripheral_retry_delay(last.as_ref().unwrap().failures), PERIPHERAL_RETRY_MAX);
+    let recovered = last.as_ref().unwrap().at + PERIPHERAL_RETRY_MAX;
+    record_peripheral_attempt(&mut last, run_owner.clone(), &Ok(()), recovered);
+    assert_eq!(peripheral_retry_delay(last.as_ref().unwrap().failures), PERIPHERAL_RETRY_BASE);
+}
+
+#[test]
+fn peripheral_reconnect_progress_is_created_only_after_preparation_and_at_handoff_admission() {
+    let fixture = Fixture::new();
+    let manager = &fixture.manager;
+    ok(manager, "profile_apply", json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+    let run_owner = owner(manager).unwrap();
+    let epoch = manager.profile_admission_epoch.load(Ordering::Acquire);
+    let candidate = manager.profile_session.lock().unwrap().peripheral_candidate(&run_owner, epoch).unwrap();
+    let activation_id = std::cell::RefCell::new(None);
+
+    let failed = crate::profile_session::apply_staged_admitted_checked(
+        &manager.profile_session,
+        candidate,
+        |_| Err("Companion session changed during preparation.".into()),
+        |_| -> Result<(), String> {
+            panic!("failed read-only preparation must not announce activation progress");
+        },
+        || {},
+        Some(&Some(run_owner.clone())),
+    );
+    assert!(failed.is_err());
+    assert!(request(manager, "profile_activation_current", json!({}))["state"]["profileActivation"].is_null());
+
+    let candidate = manager.profile_session.lock().unwrap().peripheral_candidate(&run_owner, epoch).unwrap();
+    let observed_during_handoff = std::cell::Cell::new(false);
+    let applied = crate::profile_session::apply_staged_admitted_checked(
+        &manager.profile_session,
+        candidate,
+        |candidate| manager.prepare_profile_at(candidate, epoch),
+        |candidate| {
+            let admission = manager.profile_admission.write().unwrap();
+            let game = manager.game_admission.read().unwrap();
+            let id = manager.start_peripheral_profile_reconnect(candidate).unwrap();
+            *activation_id.borrow_mut() = Some(id.clone());
+            observed_during_handoff.set(request(manager, "profile_activation_current", json!({}))["state"]["profileActivation"]["activationId"] == id);
+            Ok((admission, game))
+        },
+        || { manager.profile_admission_epoch.fetch_add(1, Ordering::AcqRel); },
+        Some(&Some(run_owner)),
+    );
+    assert!(applied.is_ok());
+    assert!(observed_during_handoff.get(), "successful reconnection exposes progress during the admitted handoff");
+    let id = activation_id.into_inner().unwrap();
+    manager.finish_profile_activation(&id, &json!({"ok":true}));
+    let completed = request(manager, "profile_activation_status", json!({"activationId":id}));
+    assert_eq!(completed["state"]["profileActivation"]["phase"], "succeeded");
+    assert_eq!(completed["state"]["profileActivation"]["origin"], "peripheral-reconnect");
+    manager.shutdown();
+}
+
+#[test]
 fn manual_vehicle_switch_reapplies_once_and_vehicle_loss_returns_to_base() {
     let fixture=Fixture::with_vehicle_catalogues();let manager=&fixture.manager;
     let id=create(manager,"Vehicle variants");

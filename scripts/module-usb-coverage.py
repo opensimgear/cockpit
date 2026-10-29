@@ -39,6 +39,7 @@ MODULE_TEST_SOURCES = {
                             "profile_publication_action_tests"],
     "profile_session_publication_host": ["profile_publication_tests",
                                          "profile_publication_action_tests"],
+    "profile_session_companion_host": ["profile_session_companion_host_tests", "profile_session/companion_offline_tests"],
 }
 MODULES.extend(["system_inventory", "system_inventory_associations"])
 TEST_FILTERS.append("system_inventory")
@@ -48,6 +49,14 @@ MODULES.append("window_persistence")
 TEST_FILTERS.append("window_persistence::tests")
 MODULES.append("profile_session/companion_rebind")
 TEST_FILTERS.append("profile_session_host::companion::rebind::tests")
+MODULES.append("profile_session/health_policy")
+TEST_FILTERS.append("profile_session_host::health_policy::tests")
+MODULES.append("profile_session/admission_diagnostics")
+TEST_FILTERS.append("profile_session_host::admission_diagnostics::tests")
+MODULES.append("profile_resources/health")
+TEST_FILTERS.append("profile_resources::health::tests")
+MODULES.append("profile_resources/companion_catalogue")
+TEST_FILTERS.append("profile_resources::companion_catalogue::tests")
 
 
 def run(args, root, env=None):

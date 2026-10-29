@@ -90,13 +90,13 @@ pub(super) fn prepare_catalogues(
         if resource.summary.resource_type != osg_profiles::resources::ResourceType::Companion {
             return Err("The selected native resource is not a companion.".into());
         }
-        if resource.summary.availability == osg_profiles::resources::Availability::Offline {
-            // No assignment receipt, delivery subscription or panel load is
-            // created for an absent peer. Its retained graph stays unavailable
-            // and a matching reconnect receives a fresh fenced preparation.
-            continue;
-        }
-        let instances = resource
+        let offline = resource.summary.availability == osg_profiles::resources::Availability::Offline;
+        let instances = if offline {
+            if resource.summary.attributes.get("componentKind").is_none_or(|kind|kind!="paired-companion") { continue; }
+            let companion = resource.summary.attributes.get("companionId");
+            hub.resource_companions().into_iter().filter(|paired|Some(&paired.companion_id)==companion)
+                .map(|paired|paired.instance_id).collect::<BTreeSet<_>>()
+        } else { resource
             .summary
             .connections
             .iter()
@@ -104,11 +104,12 @@ pub(super) fn prepare_catalogues(
                 || (c.route.transport==Transport::Integration && resource.summary.attributes.get("componentKind").is_some_and(|kind|kind=="paired-companion")
                     && c.route.attributes.get("preparationOnly").is_some_and(|kind|kind=="paired-companion")))
             .filter_map(|c| c.route.id.strip_prefix("companion:"))
-            .collect::<BTreeSet<_>>();
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>() };
         if instances.len() != 1 {
             return Err("Connect the exact paired companion through one verified native route before applying its panel.".into());
         }
-        let instance = *instances.iter().next().unwrap();
+        let instance = instances.iter().next().unwrap().as_str();
         if !selected.insert(instance.to_owned()) {
             return Err("A profile cannot assign the same companion instance twice.".into());
         }
@@ -125,6 +126,8 @@ pub(super) fn prepare_catalogues(
             logical_resource_id: desired.resource_id.clone(),
             inventory_resource_id: assignment.source_id.clone(),
             instance_id: instance.into(),
+            companion_id: proof.companion_id().into(),
+            paired_identity_fingerprint: hub.resource_companions().into_iter().find(|paired|paired.companion_id==proof.companion_id()).map(|paired|paired.identity_fingerprint),
             publication_hash: proof.publication_hash().into(),
             capability_fingerprint: proof.capability_fingerprint().into(),
             ports: crate::profile_resource_ports::companion(&definition, proof.feedback())?
@@ -138,12 +141,20 @@ pub(super) fn prepare_catalogues(
                 })
                 .collect(),
         });
-        bindings.push(PreparedCompanion {
+        if !offline { bindings.push(PreparedCompanion {
             resource_id: desired.resource_id.clone(),
             proof,
-        });
+        }); }
     }
     Ok((catalogues, bindings))
+}
+
+pub(super) fn project_preview(snapshot: &mut CompileSnapshot, hub: &Hub, document: &osg_profiles::ProfileDocument) -> Result<(), String> {
+    let candidate = Candidate { virtual_slots: Default::default(), launch_preparation: false,
+        document: document.clone(), assignments: snapshot.assignments.clone(), read_only: snapshot.read_only,
+        game_id: None, admission_epoch: None, stage: None };
+    let (catalogues, _) = prepare_catalogues(hub, snapshot, &candidate)?;
+    crate::profile_resources::Runtime::project_offline_companion_catalogues(snapshot, &catalogues)
 }
 
 fn decode(receipt: &Receipt) -> Result<Option<(bool, AssignmentReceipt)>, String> {
@@ -312,12 +323,13 @@ impl NativeProfileHost {
             // browser's actual generation. Wait for that cached observation:
             // synchronous discovery here can starve the acquired output lease.
             // A prior generation still cannot authorize the replacement writer.
-            let snapshot = resources.snapshot_for_compile(self.run(owner)?.assignments.clone())?;
+            let state=self.run(owner)?;
+            let snapshot = resources.snapshot_for_compile_with_companions(state.assignments.clone(), &state.companion_catalogues)?;
             let native = provider.resource_inventory();
             let now = self.controllers.stream_page("", 0).captured_us;
             let state = self.run(owner)?;
             let mut current_operations = vec![];
-            for catalogue in &state.companion_catalogues {
+            for catalogue in state.companion_catalogues.iter().filter(|catalogue|state.companions.has_resource(&catalogue.logical_resource_id)) {
                 let report = runtime.profile_panel_operation(&catalogue.instance_id, &catalogue.publication_hash);
                 if let Some(report) = &report {
                     if !report.live_session {
@@ -361,6 +373,7 @@ impl NativeProfileHost {
                 && state
                     .companion_catalogues
                     .iter()
+                    .filter(|catalogue|state.companions.has_resource(&catalogue.logical_resource_id))
                     .all(|c| admitted_current(&snapshot, c, &native))
             {
                 if let Ok(delivery) = crate::profile_debug_controller::bind_delivery(&resources,prepared,&state.document) {
@@ -372,7 +385,9 @@ impl NativeProfileHost {
                     ).map_err(|error| format!("The acquired companion baseline rejected its native bindings: {error}"))? {
                         self.check_transition(owner)?;
                         let native = provider.resource_inventory();
-                        if self.run(owner)?.companion_catalogues.iter()
+                        let state=self.run(owner)?;
+                        if state.companion_catalogues.iter()
+                            .filter(|catalogue|state.companions.has_resource(&catalogue.logical_resource_id))
                             .all(|catalogue| admitted_current(&snapshot, catalogue, &native)) {
                             return Ok((delivery, frames));
                         }
@@ -431,7 +446,7 @@ impl NativeProfileHost {
             state.companion_rebind.start(now, state.owner.clone(), program_hash.clone(), move || {
                 // This worker only captures and compiles. Native subscriptions,
                 // baselines and current-token checks remain with this run's host.
-                let mut snapshot = resources.snapshot_for_compile(assignments)?;
+                let mut snapshot = resources.snapshot_for_compile_with_companions(assignments, &catalogues)?;
                 let allowed = catalogues.iter().filter(|c|admitted(&snapshot,c))
                     .map(|c|c.logical_resource_id.clone()).collect();
                 snapshot.backend = backend;

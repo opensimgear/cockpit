@@ -229,7 +229,10 @@ impl Desktop {
             }
             self.shadow = None;
             self.focused = false;
-            return Ok(vec!["Keyboard and mouse output is waiting for its application scope; returning requires neutral controls.".into()]);
+            // Losing focus is expected application scoping. The paused status
+            // remains inspectable, while only actual delivery failures affect
+            // profile health.
+            return Ok(vec![]);
         }
         if !self.focused {
             self.focused = true;
@@ -468,3 +471,7 @@ mod dispatch_integration_tests;
 #[cfg(test)]
 #[path = "desktop_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "desktop/focus_health_tests.rs"]
+mod focus_health_tests;

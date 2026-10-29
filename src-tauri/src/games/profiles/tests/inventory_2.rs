@@ -51,7 +51,9 @@ fn companion_membership_keeps_offline_assigned_panels_and_drops_revoked_or_unass
                 registry.reconcile(result.unwrap()).unwrap();
             }
         }
-        let resource = registry.list(0, 32).unwrap().resources.remove(0);
+        let resource = registry.list(0, 32).unwrap().resources.into_iter().find(|resource|
+            resource.attributes.get("componentKind").is_some_and(|kind| kind == "paired-companion")
+        ).unwrap();
         assert!(resource.cached_port_count > 0, "An assigned offline panel keeps its controls");
         let component = items
             .iter()

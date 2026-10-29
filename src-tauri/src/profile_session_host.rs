@@ -12,6 +12,10 @@ mod action;
 mod publication;
 #[path = "profile_session_dcs_hid.rs"]
 mod dcs_hid;
+#[path = "profile_session/health_policy.rs"]
+mod health_policy;
+#[path = "profile_session/admission_diagnostics.rs"]
+mod admission_diagnostics;
 
 use crate::profile_session::{
     Admission, AdmissionBlocker, ApplyPhase, BlockerKind, Candidate, Health, Host, OwnedRun,
@@ -122,6 +126,9 @@ fn key(owner: &RunOwner) -> String {
     format!("{}:{}", owner.session, owner.generation)
 }
 impl NativeProfileHost {
+    pub(crate) fn project_companion_preview(snapshot: &mut osg_profiles::compiler_models::CompileSnapshot, hub: &osg_companion_service::Hub, document: &osg_profiles::ProfileDocument) -> Result<(), String> {
+        companion::project_preview(snapshot, hub, document)
+    }
     pub(crate) fn debug_controller_request(&mut self,run:&OwnedRun,request:&crate::profile_debug_controller::Request)->Result<serde_json::Value,String> {
         self.fence(&run.owner)?;
         let now=self.controllers.stream_page("",0).captured_us;
@@ -138,17 +145,6 @@ impl NativeProfileHost {
                     .is_none_or(|captured| captured.summary.availability == osg_profiles::resources::Availability::Offline);
                 absent.then(|| (resource.id.clone(), assignment.source_id.clone()))
             }).collect()
-    }
-    fn unavailable_plan_diagnostics(plan: &ExecutionPlan) -> Vec<String> {
-        let mut messages = plan.branches.iter()
-            .filter(|branch| branch.readiness == PlanReadiness::Unavailable || !branch.required && branch.readiness == PlanReadiness::Blocked)
-            .map(|branch| format!("{}:{} is unavailable; this branch is inactive.", branch.sink.node_id, branch.sink.port_id))
-            .collect::<Vec<_>>();
-        messages.extend(plan.sources.iter().filter(|source| source.readiness == PlanReadiness::Unavailable)
-            .map(|source| format!("{}:{} is offline; its input is inactive.", source.endpoint.node_id, source.endpoint.port_id)));
-        messages.extend(plan.visibility.iter().filter(|intent| intent.readiness == PlanReadiness::Unavailable)
-            .map(|intent| format!("{} is offline; its visibility setting is inactive.", intent.resource_id)));
-        dcs_hid::unique_diagnostics(messages)
     }
     fn waiting_for_vehicle(document:&osg_profiles::ProfileDocument,vehicle_id:Option<&str>)->bool {
         !document.vehicle_tabs.is_empty() && vehicle_id.is_none()
@@ -453,6 +449,7 @@ impl NativeProfileHost {
                 let (sender,receiver)=std::sync::mpsc::channel();
                 let games=games.clone();let resources=resources.clone();
                 let document=state.document.clone();let assignments=state.assignments.clone();let backend=state.backend.clone();
+                let companion_catalogues=state.companion_catalogues.clone();
                 let program_hash=state.report.program_hash.clone();let previous=state.game.preparation_session().map(str::to_owned);
                 // Catalogue and executable inspection can be slow. Keep it off
                 // the active owner's health/lease renewal path. Late readers
@@ -461,7 +458,7 @@ impl NativeProfileHost {
                     let result=(||->Result<Option<NativeGameResume>,String>{
                         let Some(proof)=games.prepare_profile_game_context(&id)? else{return Ok(None);};
                         if previous.as_deref()==Some(proof.proof.session.as_str()){return Ok(None);}
-                        let mut snapshot=resources.snapshot_for_compile(assignments)?;
+                        let mut snapshot=resources.snapshot_for_compile_with_companions(assignments,&companion_catalogues)?;
                         snapshot.backend=backend;Self::game_capture(&mut snapshot,Some(&proof));
                         let report=osg_profiles::compiler::compile(&document,&snapshot);
                         if report.program_hash!=program_hash||matches!(report.readiness,PlanReadiness::Invalid|PlanReadiness::Blocked){return Err("The returning game's mappings changed or are unavailable; save the profile to update them.".into());}
@@ -529,7 +526,7 @@ impl NativeProfileHost {
                 if stale {
                     // A fresh reader baseline may replace only cached delivery
                     // tokens, never the immutable graph or its local assignment.
-                    let mut snapshot = resources.snapshot_for_compile(state.assignments.clone())?;
+                    let mut snapshot = resources.snapshot_for_compile_with_companions(state.assignments.clone(), &state.companion_catalogues)?;
                     snapshot.backend = state.backend.clone();
                     Self::game_capture(&mut snapshot, state.game_preparation.as_ref());
                     let report = osg_profiles::compiler::compile(&state.document, &snapshot);
@@ -686,34 +683,7 @@ impl NativeProfileHost {
             .ok_or("The profile compiler did not produce an executable plan.")?;
         let publication=crate::profile_session_overrides::Staged::prepare(&plan,&snapshot)?;
         let mut admission = Admission::default();
-        if matches!(
-            report.readiness,
-            PlanReadiness::Invalid | PlanReadiness::Blocked
-        ) {
-            admission.blockers.extend(
-                report
-                    .diagnostics
-                    .iter()
-                    .filter(|diagnostic| {
-                        diagnostic.severity
-                            == osg_profiles::compiler_models::DiagnosticSeverity::Error
-                    })
-                    .map(|diagnostic| AdmissionBlocker {
-                        kind: if report.readiness == PlanReadiness::Invalid {
-                            BlockerKind::Structural
-                        } else {
-                            BlockerKind::RequiredResource
-                        },
-                        message: diagnostic.message.clone(),
-                    }),
-            );
-            if admission.blockers.is_empty() {
-                admission.blockers.push(AdmissionBlocker {
-                    kind: BlockerKind::RequiredResource,
-                    message: "The profile requires a current compatible native resource.".into(),
-                });
-            }
-        }
+        admission.blockers = admission_diagnostics::blockers(&report, &candidate.document);
         admission.blockers.extend(Self::blockers(&plan));
         admission.waiting_baselines = plan
             .sources
@@ -753,12 +723,7 @@ impl NativeProfileHost {
             .map(|branch| format!("{}:{}", branch.sink.node_id, branch.sink.port_id))
             .collect();
         let unavailable_peripherals = Self::unavailable_peripherals(&snapshot, &candidate.document);
-        admission.optional_unavailable = Self::unavailable_plan_diagnostics(&plan);
-        admission.optional_unavailable.extend(unavailable_peripherals.keys().map(|id| {
-            let name = candidate.document.resources.iter().find(|resource| &resource.id == id).map_or(id.as_str(), |resource| resource.name.as_str());
-            format!("{name} is offline; its settings and peripheral controls are inactive.")
-        }));
-        admission.optional_unavailable = dcs_hid::unique_diagnostics(admission.optional_unavailable);
+        admission.optional_unavailable = health_policy::admission_degradation(&plan, &candidate.document, &unavailable_peripherals);
         let prepared = Prepared {
             plan,
             admission,
@@ -1123,7 +1088,8 @@ impl Host for NativeProfileHost {
                     self.report_progress(&run.owner, "companion-assignment", "Assigning companion panels");
                 }
                 self.run(&run.owner)?.companions.acquire(&runtime, &selected)?;
-                for catalogue in &self.run(&run.owner)?.companion_catalogues {
+                for catalogue in self.prepared[&key(&run.owner)].companion_catalogues.iter()
+                    .filter(|catalogue|self.prepared[&key(&run.owner)].companions.has_resource(&catalogue.logical_resource_id)) {
                     runtime.profile_retry_panel(&catalogue.instance_id,&catalogue.publication_hash)?;
                 }
                 self.acquire_actions(&run.owner)
@@ -1166,13 +1132,14 @@ impl Host for NativeProfileHost {
                 let panels_io = self.panels.clone();
                 let admission_epoch=self.admission_epoch.clone();
                 let progress = self.progress.clone();
-                let (assignments, document, backend, game_preparation) = {
+                let (assignments, document, backend, game_preparation, companion_catalogues) = {
                     let state = self.run(&run.owner)?;
                     (
                         state.assignments.clone(),
                         state.document.clone(),
                         state.backend.clone(),
                         state.game_preparation.clone(),
+                        state.companion_catalogues.clone(),
                     )
                 };
                 // Acquisition/visibility can outlast telemetry freshness. Wait
@@ -1190,16 +1157,16 @@ impl Host for NativeProfileHost {
                 // panel session. Reacquire actual baselines before final compile.
                 self.companion_baseline(&run.owner, &prepared.plan)?;
                 self.report_progress(&run.owner, "configuring-mappings", "Configuring profile mappings");
-                let mut snapshot = resources.snapshot_for_compile(assignments)?;
+                let mut snapshot = resources.snapshot_for_compile_with_companions(assignments, &companion_catalogues)?;
                 snapshot.backend = backend;
                 Self::game_capture(&mut snapshot, game_preparation.as_ref());
                 let delivery = osg_profiles::compiler::compile(&document, &snapshot);
-                if matches!(
-                    delivery.readiness,
-                    PlanReadiness::Invalid | PlanReadiness::Blocked
-                ) || delivery.program_hash.as_deref() != Some(&prepared.program_hash)
-                {
-                    return Err("The final native delivery plan changed or remained blocked after acquisition.".into());
+                if matches!(delivery.readiness, PlanReadiness::Invalid | PlanReadiness::Blocked) {
+                    let blockers=admission_diagnostics::blockers(&delivery,&document);
+                    return Err(format!("Final native delivery is unavailable: {}",blockers.iter().map(|blocker|blocker.message.trim_end_matches('.')).collect::<Vec<_>>().join("; ")));
+                }
+                if delivery.program_hash.as_deref() != Some(&prepared.program_hash) {
+                    return Err("The final native delivery program differs from its prepared program".into());
                 }
                 let delivery = delivery
                     .plan
@@ -1439,7 +1406,7 @@ impl Host for NativeProfileHost {
         let state = self.prepared.get(&key(owner)).filter(|state| state.owner == *owner)?;
         if state.unavailable_peripherals.is_empty() || state.vehicle_paused { return None; }
         let assignments = state.assignments.iter().filter(|assignment| state.unavailable_peripherals.contains_key(&assignment.resource_id)).cloned().collect::<Vec<_>>();
-        let (snapshot, preparations) = self.resources.snapshot_for_preparation(assignments).ok()?;
+        let (snapshot, preparations) = self.resources.try_snapshot_for_preparation(assignments).ok()??;
         if snapshot.read_only { return None; }
         let mut returned = vec![];
         for assignment in &snapshot.assignments {
@@ -1448,9 +1415,18 @@ impl Host for NativeProfileHost {
                 && resource.summary.availability == osg_profiles::resources::Availability::Online
                 && matches!(resource.summary.resource_type, osg_profiles::resources::ResourceType::HostController | osg_profiles::resources::ResourceType::OsgModule | osg_profiles::resources::ResourceType::Companion)) else { continue; };
             let companion = resource.summary.resource_type == osg_profiles::resources::ResourceType::Companion;
+            let prospective = companion.then(||state.companion_catalogues.iter().find(|catalogue|
+                catalogue.logical_resource_id==assignment.resource_id && catalogue.inventory_resource_id==assignment.source_id
+                    && resource.summary.attributes.get("componentKind").is_some_and(|kind|kind=="paired-companion")
+                    && resource.summary.attributes.get("companionId")==Some(&catalogue.companion_id)
+                    && resource.summary.connections.iter().any(|connection|connection.route.id==format!("companion:{}",catalogue.instance_id)
+                        && connection.route.transport==Transport::Integration
+                        && connection.route.attributes.get("preparationOnly").is_some_and(|kind|kind=="paired-companion")))).flatten();
             if assignment.ports.iter().any(|expected| {
-                !resource.ports.iter().any(|port| port.descriptor.id == expected.observed_port_id
+                !(resource.ports.iter().any(|port| port.descriptor.id == expected.observed_port_id
                     && port.contract_hash == expected.expected_contract_hash && (port.current || companion))
+                    || prospective.is_some_and(|catalogue|catalogue.ports.iter().any(|port|port.id==expected.observed_port_id
+                        && port.contract_hash().ok().as_ref()==Some(&expected.expected_contract_hash))))
                     || !companion && !preparations.iter().any(|pin| pin.resolved().resource_id == assignment.source_id
                         && pin.resolved().port.id == expected.observed_port_id
                         && pin.resolved().port.contract_hash().ok().as_ref() == Some(&expected.expected_contract_hash))

@@ -382,6 +382,7 @@ impl GatewayManager {
                     crate::profile_session_host::NativeProfileHost::stage_launch_context(
                         &self.profile_resources,
                         &self.games,
+                        &self.companion_host,
                         &self.controllers,
                         self.profile_native,
                         &candidate,

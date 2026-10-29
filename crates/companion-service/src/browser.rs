@@ -22,7 +22,7 @@ pub(crate) fn serve_http<S:Write>(stream:&mut S,request:&Request,origin:&str,ass
     }else if let Some(asset)=assets.iter().find(|a|a.path==request.uri().path()){
         ("200 OK",asset.mime,asset.bytes)
     }else{("404 Not Found","text/plain",b"Not found".as_slice())};
-    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'\r\n\r\n",body.len()).map_err(|e|e.to_string())?;
+    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'\r\n\r\n",body.len()).map_err(|e|e.to_string())?;
     stream.write_all(body).map_err(|e|e.to_string())
 }
 pub(crate) struct Replay<S>{pub prefix:std::io::Cursor<Vec<u8>>,pub stream:S}

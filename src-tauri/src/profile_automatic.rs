@@ -10,6 +10,49 @@ use osg_profiles::{
 };
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 
+const PERIPHERAL_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIPHERAL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[derive(Clone)]
+struct PeripheralAttempt {
+    owner: crate::profile_session::RunOwner,
+    at: std::time::Instant,
+    failures: u8,
+}
+
+fn peripheral_retry_delay(failures: u8) -> std::time::Duration {
+    let exponent = failures.saturating_sub(1).min(3);
+    let multiplier = 1_u32.checked_shl(u32::from(exponent)).unwrap_or(u32::MAX);
+    PERIPHERAL_RETRY_BASE
+        .saturating_mul(multiplier)
+        .min(PERIPHERAL_RETRY_MAX)
+}
+
+fn peripheral_retry_blocked(
+    last: Option<&PeripheralAttempt>,
+    owner: &crate::profile_session::RunOwner,
+    now: std::time::Instant,
+) -> bool {
+    last.is_some_and(|attempt| {
+        attempt.owner == *owner
+            && now.saturating_duration_since(attempt.at) < peripheral_retry_delay(attempt.failures)
+    })
+}
+
+fn record_peripheral_attempt(
+    last: &mut Option<PeripheralAttempt>,
+    owner: crate::profile_session::RunOwner,
+    result: &Result<(), String>,
+    now: std::time::Instant,
+) {
+    let failures = if result.is_ok() { 0 } else {
+        last.as_ref()
+            .filter(|attempt| attempt.owner == owner)
+            .map_or(1, |attempt| attempt.failures.saturating_add(1))
+    };
+    *last = Some(PeripheralAttempt { owner, at: now, failures });
+}
+
 struct State {
     settings: Settings,
     read_only: bool,
@@ -21,7 +64,7 @@ struct State {
     target: Option<Target>,
     last_attempt: Option<Target>,
     last_vehicle_attempt: Option<(crate::profile_session::RunOwner,String,std::time::Instant)>,
-    last_peripheral_attempt: Option<(crate::profile_session::RunOwner,String,std::time::Instant)>,
+    last_peripheral_attempt: Option<PeripheralAttempt>,
 }
 
 pub(super) struct Runtime {
@@ -208,6 +251,24 @@ impl Runtime {
 }
 
 impl GatewayManager {
+    fn start_admitted_peripheral_reconnect(
+        &self,
+        candidate: &crate::profile_session::Candidate,
+        owner: &crate::profile_session::RunOwner,
+        fingerprint: &str,
+    ) -> Result<Option<String>, String> {
+        self.guard_retired_recovery()?;
+        let coordinator = self.profile_session.lock().unwrap_or_else(|p| p.into_inner());
+        if !coordinator.validates(owner) {
+            return Err("The active profile changed before peripheral reconnection admission.".into());
+        }
+        if coordinator.peripheral_change() != Some((owner.clone(), fingerprint.to_owned())) {
+            return Err("Peripheral readiness changed during preparation; no stale device was activated.".into());
+        }
+        drop(coordinator);
+        Ok(self.start_peripheral_profile_reconnect(candidate).ok())
+    }
+
     /// Only peripherals captured as absent may request a native rebind. The
     /// running source stays immutable; fresh ownership and baselines use the
     /// same staged handoff as Apply and vehicle changes.
@@ -217,7 +278,7 @@ impl GatewayManager {
         let Some((owner,fingerprint))=changed else{return;};
         {
             let state=self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner());
-            if state.last_peripheral_attempt.as_ref().is_some_and(|(previous,change,at)|previous==&owner&&change==&fingerprint&&at.elapsed()<std::time::Duration::from_secs(5)){return;}
+            if peripheral_retry_blocked(state.last_peripheral_attempt.as_ref(), &owner, std::time::Instant::now()) {return;}
         }
         let previous=self.profile_pending.fetch_add(1,Ordering::AcqRel);
         let _pending=PendingProfileApply(&self.profile_pending);
@@ -232,25 +293,29 @@ impl GatewayManager {
         })();
         let Ok(candidate)=captured else{return;};
         let epoch=candidate.admission_epoch.unwrap();
-        let activation_id=self.start_peripheral_profile_reconnect(&candidate).ok();
-        self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner()).last_peripheral_attempt=Some((owner.clone(),fingerprint.clone(),std::time::Instant::now()));
+        let activation_id=std::cell::RefCell::new(None);
         let result=crate::profile_session::apply_staged_admitted_checked(
             &self.profile_session,candidate,|candidate|self.prepare_profile_at(candidate,epoch),
-            |_| {
+            |candidate| {
                 let admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
                 let game=self.game_admission.read().unwrap_or_else(|p|p.into_inner());
                 if self.closed.load(Ordering::Acquire)||self.profile_admission_epoch.load(Ordering::Acquire)!=epoch||self.profile_automatic.pending(){return Err("Peripheral reconnection was cancelled by a newer native control.".to_owned());}
-                self.guard_retired_recovery()?;
-                if self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).peripheral_change()!=Some((owner.clone(),fingerprint.clone())){return Err("Peripheral readiness changed during preparation; no stale device was activated.".into());}
+                *activation_id.borrow_mut()=self.start_admitted_peripheral_reconnect(&candidate,&owner,&fingerprint)?;
                 self.note_profile_activation(epoch,"reconnecting-peripherals","Applying fresh device baselines and reconnecting available profile devices…");
                 Ok((admission,game))
             },
             ||{self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);},Some(&Some(owner.clone())));
-        if let Some(id)=activation_id {
-            self.finish_profile_activation(&id,&match result {
+        if let Some(id)=activation_id.into_inner() {
+            self.finish_profile_activation(&id,&match &result {
                 Ok(())=>json!({"ok":true}),Err(error)=>json!({"ok":false,"error":error}),
             });
         }
+        record_peripheral_attempt(
+            &mut self.profile_automatic.state.lock().unwrap_or_else(|p|p.into_inner()).last_peripheral_attempt,
+            owner,
+            &result,
+            std::time::Instant::now(),
+        );
     }
     /// Vehicle selection follows the running profile in both Manual and
     /// Automatic mode. Reuse the same guarded, one-use handoff as a saved edit.

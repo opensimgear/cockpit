@@ -4,7 +4,7 @@ use crate::{keys::scan_code, protocol::*};
 use osg_mapping::desktop::MouseButton;
 use std::{mem::size_of, ptr};
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, FILETIME, HANDLE},
+    Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, FILETIME, HANDLE, HWND},
     Security::{
         GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsValidSid,
         TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
@@ -77,9 +77,14 @@ pub fn process_identity(pid: u32) -> Result<ProcessIdentity, String> {
     identity(handle.0, pid)
 }
 pub fn foreground_identity() -> Result<ProcessIdentity, String> {
-    let foreground = unsafe { GetForegroundWindow() };
+    observed_foreground()?.ok_or_else(|| "No foreground application can be identified.".into())
+}
+fn observed_foreground() -> Result<Option<ProcessIdentity>, String> {
+    foreground_identity_for(unsafe { GetForegroundWindow() })
+}
+fn foreground_identity_for(foreground: HWND) -> Result<Option<ProcessIdentity>, String> {
     if foreground.is_null() {
-        return Err("No foreground application can be identified.".into());
+        return Ok(None);
     }
     let mut pid = 0;
     unsafe {
@@ -88,7 +93,7 @@ pub fn foreground_identity() -> Result<ProcessIdentity, String> {
     if pid == 0 {
         return Err("Foreground application identity is unknown.".into());
     }
-    process_identity(pid)
+    process_identity(pid).map(Some)
 }
 fn same_identity(a: &ProcessIdentity, b: &ProcessIdentity) -> bool {
     a.pid == b.pid && a.created == b.created && a.executable.eq_ignore_ascii_case(&b.executable)
@@ -177,18 +182,30 @@ pub fn eligible_scope(scope: &Scope) -> Result<bool, String> {
     if !interactive_desktop()? {
         return Ok(false);
     }
-    let current = foreground_identity()?;
-    let handle = open(current.pid)?;
-    if integrity(handle.0)? > integrity(unsafe { GetCurrentProcess() })? {
-        return Err(
-            "Foreground application has higher integrity; run the target unelevated.".into(),
-        );
-    }
+    eligible_foreground(scope, observed_foreground(), |current| {
+        let handle = open(current.pid)?;
+        if integrity(handle.0)? > integrity(unsafe { GetCurrentProcess() })? {
+            return Err("Foreground application has higher integrity; run the target unelevated.".into());
+        }
+        Ok(())
+    })
+}
+fn eligible_foreground(
+    scope: &Scope,
+    observed: Result<Option<ProcessIdentity>, String>,
+    inspect: impl FnOnce(&ProcessIdentity) -> Result<(), String>,
+) -> Result<bool, String> {
+    let Some(current) = observed? else { return Ok(false); };
+    inspect(&current)?;
     Ok(match scope {
         Scope::DesktopWide => true,
         Scope::Application { identity } => same_identity(identity, &current),
     })
 }
+
+#[cfg(test)]
+#[path = "windows/scope_tests.rs"]
+mod scope_tests;
 /// Local namespace is Windows-session scoped and spans desktop/browser services.
 /// An event is used as lifetime exclusion, avoiding thread-affine mutex ownership.
 pub struct SessionLock {

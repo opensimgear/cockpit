@@ -111,7 +111,9 @@ impl Desktop {
         Ok(())
     }
     pub(crate) fn poll(&mut self,frames:&[Frame],reducer:&Phase)->Result<Vec<String>,String>{
-        if self.started&&self.scope.is_none(){return Ok(vec!["Context scoped bindings are waiting for the game to open.".into()]);}
+        // An accepted selected-game scope remains dormant until its process
+        // exists. Waiting is inspectable state, without output or a health fault.
+        if self.started&&self.scope.is_none(){return Ok(vec![]);}
         self.inner.as_mut().ok_or("The desktop adapter is stopped.")?.poll(frames,reducer)
     }
     pub(crate) fn keep_alive(&mut self)->Result<(),String>{self.inner.as_mut().map_or(Ok(()),|inner|inner.keep_alive())}
@@ -125,6 +127,20 @@ impl Desktop {
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn absent_selected_game_is_healthy_waiting_without_accessing_desktop_output(){
+        let program=Program{sources:vec![],nodes:vec![],sinks:vec![],controllers:vec![]};
+        let owner=RunOwner{session:"94a5ece4-4e3a-4395-a69b-3aa79c1ecf12".into(),generation:1,
+            profile_id:"94a5ece4-4e3a-4395-a69b-3aa79c1ecf13".into(),profile_revision:1,game_id:Some("dcs".into())};
+        let reducer=Phase::new(program.clone(),Counter(1),owner.session.clone()).unwrap();
+        let mut desktop=Desktop{inner:None,owner,program,scope:None,started:true};
+        assert!(desktop.poll(&[],&reducer).unwrap().is_empty());
+        assert_eq!(desktop.status()["state"],"waiting");
+        assert_eq!(desktop.status()["scopeError"],"Waiting for the profile's game to open.");
+        assert!(desktop.inner.is_none(),"Waiting must not construct or activate an output adapter");
+        desktop.started=false;
+        assert!(desktop.poll(&[],&reducer).unwrap_err().contains("adapter is stopped"),"Actual adapter failures remain errors");
+    }
     #[test]
     fn selected_game_without_a_native_process_cannot_fall_back_to_a_local_application(){
         let unrelated=crate::game_discovery::ProcessIdentity{pid:99,path:"C:\\Fixture\\Other.exe".into(),epoch:88};

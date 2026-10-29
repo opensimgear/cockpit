@@ -1,7 +1,9 @@
 //! A journaled hardware hold has no reducer. Only a sealed fresh game context
 //! may complete it; its native hardware owner and restoration receipts stay put.
 use super::*;
-use osg_profiles::{compiler_models::DiagnosticSeverity, resources::PortPreparation, ResourceKind};
+use osg_profiles::{resources::PortPreparation, ResourceKind};
+#[cfg(test)]
+use osg_profiles::compiler_models::DiagnosticSeverity;
 use std::time::Duration;
 
 struct NativeLaunchContext {
@@ -23,36 +25,13 @@ fn game_resource(document: &osg_profiles::ProfileDocument, id: &str) -> bool {
         .iter()
         .any(|resource| resource.id == id && resource.kind == ResourceKind::Game)
 }
-fn prepared_report(report: &CompilationReport) -> Result<Prepared, String> {
+fn prepared_report(report: &CompilationReport, document: &osg_profiles::ProfileDocument) -> Result<Prepared, String> {
     let plan = report
         .plan
         .clone()
         .ok_or("The launch context has no compiled profile program.")?;
     let mut admission = Admission::default();
-    if matches!(
-        report.readiness,
-        PlanReadiness::Invalid | PlanReadiness::Blocked
-    ) {
-        admission.blockers.extend(
-            report
-                .diagnostics
-                .iter()
-                .filter(|d| d.severity == DiagnosticSeverity::Error)
-                .map(|d| AdmissionBlocker {
-                    kind: if report.readiness == PlanReadiness::Invalid {
-                        BlockerKind::Structural
-                    } else {
-                        BlockerKind::RequiredResource
-                    },
-                    message: d.message.clone(),
-                }),
-        );
-        if admission.blockers.is_empty() {
-            return Err(
-                "The launched game requires an available compatible native resource.".into(),
-            );
-        }
-    }
+    admission.blockers = admission_diagnostics::blockers(report, document);
     admission
         .blockers
         .extend(NativeProfileHost::blockers(&plan));
@@ -72,7 +51,7 @@ fn prepared_report(report: &CompilationReport) -> Result<Prepared, String> {
         .filter(|b| b.readiness == PlanReadiness::Dormant)
         .map(|b| format!("{}:{}", b.sink.node_id, b.sink.port_id))
         .collect();
-    admission.optional_unavailable = NativeProfileHost::unavailable_plan_diagnostics(&plan);
+    admission.optional_unavailable = health_policy::admission_degradation(&plan, document, &BTreeMap::new());
     Ok(Prepared {
         plan,
         admission,
@@ -222,6 +201,7 @@ impl NativeProfileHost {
     pub(crate) fn stage_launch_context(
         resources: &crate::profile_resources::Runtime,
         games: &crate::games::GamesRuntime,
+        companions: &crate::companion_host::Runtime,
         controllers: &osg_controller_input::ControllerService,
         native: bool,
         candidate: &Candidate,
@@ -255,7 +235,12 @@ impl NativeProfileHost {
         // arrives, the ordinary vehicle switch stages the matching full variant.
         let document=candidate.document.for_vehicle(None,None);
         let assignments=candidate.assignments.iter().filter(|assignment|document.resources.iter().any(|resource|resource.id==assignment.resource_id)).cloned().collect();
-        let (mut snapshot, pins) = resources.snapshot_for_preparation(assignments)?;
+        let (initial, _) = resources.snapshot_for_preparation(assignments)?;
+        let selected=Candidate {document:document.clone(),assignments:initial.assignments.clone(),..candidate.clone()};
+        let (catalogues, _)=if document.companion_assignments.is_empty(){(vec![],vec![])}else{
+            companion::prepare_catalogues(&companions.profile_metadata()?, &initial,&selected)?
+        };
+        let (mut snapshot, pins) = resources.snapshot_for_preparation_with_companions(initial.assignments,&catalogues)?;
         Self::game_capture(&mut snapshot, proof.as_ref());
         snapshot.backend.name = osg_mapping_host::service::BACKEND.into();
         snapshot.backend.available = if native && !candidate.document.virtual_outputs.is_empty() {
@@ -283,7 +268,7 @@ impl NativeProfileHost {
         }
         let report =
             osg_profiles::compiler::compile_for_preparation(&document, &snapshot, &pins);
-        let prepared = prepared_report(&report)?;
+        let prepared = prepared_report(&report, &document)?;
         if !prepared.admission.blockers.is_empty() {
             return Err(prepared
                 .admission
@@ -342,7 +327,7 @@ impl NativeProfileHost {
         {
             return Err("This exact hardware run cannot bind another launch hold.".into());
         }
-        let mut snapshot = resources.snapshot_for_compile(state.assignments.clone())?;
+        let mut snapshot = resources.snapshot_for_compile_with_companions(state.assignments.clone(), &state.companion_catalogues)?;
         snapshot.backend = state.backend.clone();
         let report = osg_profiles::compiler::compile(&state.document, &snapshot);
         if matches!(

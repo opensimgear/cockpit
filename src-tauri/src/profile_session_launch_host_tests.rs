@@ -192,6 +192,7 @@ impl Fixture {
             NativeProfileHost::stage_launch_context(
                 &self.host.resources,
                 &self.host.games,
+                &self.host.companions,
                 &self.host.controllers,
                 false,
                 &c,
@@ -471,6 +472,7 @@ fn launch_capture_rejects_missing_native_game_readonly_reused_or_uncancelled_can
         assert!(NativeProfileHost::stage_launch_context(
             &f.host.resources,
             &f.host.games,
+            &f.host.companions,
             &f.host.controllers,
             false,
             &c,
@@ -483,6 +485,7 @@ fn launch_capture_rejects_missing_native_game_readonly_reused_or_uncancelled_can
     assert!(NativeProfileHost::stage_launch_context(
         &f.host.resources,
         &f.host.games,
+        &f.host.companions,
         &f.host.controllers,
         false,
         &base,
@@ -507,6 +510,7 @@ fn hardware_launch_completes_with_no_selected_context_or_no_optional_provider() 
             NativeProfileHost::stage_launch_context(
                 &f.host.resources,
                 &f.host.games,
+                &f.host.companions,
                 &f.host.controllers,
                 false,
                 &candidate,
@@ -567,6 +571,7 @@ fn verified_policy_context_may_be_another_running_game_without_authorizing_the_r
         NativeProfileHost::stage_launch_context(
             &f.host.resources,
             &f.host.games,
+            &f.host.companions,
             &f.host.controllers,
             false,
             &candidate,
@@ -738,7 +743,7 @@ fn compile_admission_preserves_structural_resource_and_optional_dormant_diagnost
         read_only: false,
     };
     let report = osg_profiles::compiler::compile(&f.candidate.document, &snapshot);
-    assert!(prepared_report(&report)
+    assert!(prepared_report(&report, &f.candidate.document)
         .unwrap()
         .admission
         .blockers
@@ -752,21 +757,21 @@ fn compile_admission_preserves_structural_resource_and_optional_dormant_diagnost
         location: GraphLocation::default(),
     });
     assert_eq!(
-        prepared_report(&invalid).unwrap().admission.blockers[0].kind,
+        prepared_report(&invalid, &f.candidate.document).unwrap().admission.blockers[0].kind,
         BlockerKind::Structural
     );
     invalid.readiness = PlanReadiness::Blocked;
     assert_eq!(
-        prepared_report(&invalid).unwrap().admission.blockers[0].kind,
+        prepared_report(&invalid, &f.candidate.document).unwrap().admission.blockers[0].kind,
         BlockerKind::RequiredResource
     );
     invalid.diagnostics.clear();
-    assert!(prepared_report(&invalid).is_err());
+    assert!(prepared_report(&invalid, &f.candidate.document).unwrap().admission.blockers[0].message.contains("without a resource diagnostic"));
     invalid.plan = None;
-    assert!(prepared_report(&invalid).is_err());
+    assert!(prepared_report(&invalid, &f.candidate.document).is_err());
     let mut missing_hash = report;
     missing_hash.program_hash = None;
-    assert!(prepared_report(&missing_hash).is_err());
+    assert!(prepared_report(&missing_hash, &f.candidate.document).is_err());
 }
 
 #[test]

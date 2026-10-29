@@ -7,6 +7,8 @@ use osg_profiles::resources::{Availability, Connection, ResourceSummary, Resourc
 
 #[path = "profile_session_companion_live_tests.rs"]
 mod live;
+#[path = "profile_session/companion_offline_tests.rs"]
+mod offline;
 
 #[test]
 fn companion_progress_uses_the_reported_phase_and_byte_counts() {
@@ -328,6 +330,7 @@ pub(crate) struct NativeFixture {
     baseline_delay_ms: Arc<AtomicU64>,
     baseline_waiting: Arc<std::sync::atomic::AtomicBool>,
     peer_session: Arc<std::sync::Mutex<Value>>,
+    secret: String,
 }
 impl NativeFixture {
     pub(crate) fn new() -> Self {
@@ -463,6 +466,7 @@ impl NativeFixture {
         let peer_waiting = baseline_waiting.clone();
         let peer_session = Arc::new(std::sync::Mutex::new(Value::Null));
         let session_capture = peer_session.clone();
+        let retained_secret = secret.clone();
         let peer = std::thread::spawn(move || {
             let mut opened: Option<serde_json::Value> = None;
             let mut sequence = 0u64;
@@ -582,6 +586,7 @@ impl NativeFixture {
             baseline_delay_ms,
             baseline_waiting,
             peer_session,
+            secret: retained_secret,
         }
     }
     pub(crate) fn host(&self) -> NativeProfileHost {

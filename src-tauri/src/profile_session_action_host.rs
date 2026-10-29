@@ -170,7 +170,7 @@ impl NativeProfileHost {
     fn action_delivery(&mut self, owner: &RunOwner) -> Result<ExecutionPlan, String> {
         let resources = self.resources.clone();
         let state = self.run(owner)?;
-        let mut snapshot = resources.snapshot_for_compile(state.assignments.clone())?;
+        let mut snapshot = resources.snapshot_for_compile_with_companions(state.assignments.clone(), &state.companion_catalogues)?;
         snapshot.backend = state.backend.clone();
         Self::game_capture(&mut snapshot, state.game_preparation.as_ref());
         let report = osg_profiles::compiler::compile(&state.document, &snapshot);

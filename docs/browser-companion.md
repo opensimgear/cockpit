@@ -32,18 +32,28 @@ feedback snapshot without replaying old inputs or asking the user to reconnect.
 
 Losing focus clears queued input and sends every control's neutral value on the
 existing connection. Telemetry and feedback continue while Cockpit or a game has
-focus; browser controls stay disabled. Focusing the companion establishes a fresh
-control session and neutral baseline on that same authenticated connection before
-enabling controls. Pairing and authentication alone do not grant control input.
+focus; browser controls stay disabled. Focusing the companion neutralizes and
+validates the existing session before enabling controls. A new session is opened
+only if its identity expired. Pairing and authentication alone do not grant input.
 
-Hidden pages retain their connection while the browser can run them. Browser
-throttling can expire the 1.5-second input lease; the next update opens a fresh
-session without replaying input. Unloading the page, changing page/panel or a
-connection failure still clears queued input and closes the old connection.
-Cockpit neutralizes on disconnect and its lease bounds recovery when a browser
-stops running. One same-origin tab owns the companion
+Where supported, a SharedWorker owns the socket and its 250 ms heartbeat,
+independently of page rendering, focus and page timers. If the page stops sending
+requests for one second, the worker releases any held controls to their declared
+fallback values while continuing feedback. Requests are ordered and never
+replayed. Connection-loss events start reconnection without waiting for a page
+poll. Older browsers retain the direct transport and its native lease protection.
+
+Unloading the page, changing page/panel or a connection failure clears queued
+input and closes the old connection. Cockpit neutralizes on disconnect and its
+lease still bounds recovery if the browser or worker stops. One same-origin tab owns the companion
 where Web Locks is supported; the host independently enforces one writer for an
 assigned instance.
+
+An absent optional companion leaves its dependent routes inactive without marking
+the whole profile degraded. Required resources and actual delivery errors still
+affect profile health. A normal pause outside a desktop output's application scope
+is healthy, as is waiting for the profile's game to open; the paused or waiting
+status remains visible in runtime inspection.
 
 ## Build and verify
 

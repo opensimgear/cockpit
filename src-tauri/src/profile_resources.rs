@@ -25,6 +25,8 @@ pub(crate) struct CompanionCatalogue {
     pub logical_resource_id: String,
     pub inventory_resource_id: String,
     pub instance_id: String,
+    pub companion_id: String,
+    pub paired_identity_fingerprint: Option<String>,
     pub publication_hash: String,
     pub capability_fingerprint: String,
     pub ports: Vec<osg_profiles::resources_ports::PortDescriptor>,
@@ -54,7 +56,15 @@ pub(crate) struct Runtime {
     /// never wait for serialization, filesystem writes or durable replacement.
     persistence_gate: Arc<Mutex<()>>,
 }
+#[path = "profile_resources/health.rs"]
+mod health;
+#[path = "profile_resources/companion_catalogue.rs"]
+mod companion_catalogue;
+
 impl Runtime {
+    pub(crate) fn project_offline_companion_catalogues(snapshot: &mut osg_profiles::compiler_models::CompileSnapshot, catalogues: &[CompanionCatalogue]) -> Result<(), String> {
+        companion_catalogue::capture_offline(snapshot, catalogues)
+    }
     /// Return the independently registered read-only authoring catalogue. This
     /// does not mint delivery tokens or change an applied reader.
     pub(crate) fn dcs_vehicle_authoring_resource(&self, module: &str) -> Result<Value, String> {
@@ -280,12 +290,22 @@ impl Runtime {
             return Err("Companion preparation needs unique exact assigned instances within its bounded catalogue.".into());
         }
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut snapshot = Self::snapshot_locked(&state, assignments)?;
+        Self::snapshot_for_preparation_locked(&state, assignments, companions)
+    }
+    fn snapshot_for_preparation_locked(
+        state: &State,
+        assignments: Vec<osg_profiles::store::LocalAssignment>,
+        companions: &[CompanionCatalogue],
+    ) -> Result<(osg_profiles::compiler_models::CompileSnapshot, Vec<PortPreparation>), String> {
+        let mut snapshot = Self::snapshot_locked(state, assignments)?;
+        companion_catalogue::capture_offline(&mut snapshot, companions)?;
         let mut preparations = Vec::new();
         let mut fingerprints = BTreeSet::new();
         if !state.read_only {
             for assignment in &snapshot.assignments {
                 let companion=companions.iter().find(|c|c.logical_resource_id==assignment.resource_id);
+                if companion.is_some() && snapshot.resources.iter().any(|resource| resource.summary.id == assignment.source_id
+                    && resource.summary.availability == osg_profiles::resources::Availability::Offline) { continue; }
                 for expected in &assignment.ports {
                     let descriptor = if let Some(companion)=companion {
                         companion.ports.iter().find(|p|p.id==expected.observed_port_id && p.contract_hash().ok().as_ref()==Some(&expected.expected_contract_hash))
