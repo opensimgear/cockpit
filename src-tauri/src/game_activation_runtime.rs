@@ -4,7 +4,7 @@ use super::*;
 use osg_profiles::activation::{GameIdentity, VerifiedGame};
 impl GamesRuntime {
     pub(crate) fn try_observed_desktop_process(&self, game_id: &str)
-        -> Result<Option<Option<crate::game_discovery::ProcessIdentity>>, String> {
+        -> Result<crate::game_activation::CurrentProcessObservation, String> {
         if self.inner.closed.load(Ordering::Acquire) { return Err("The native game observer has stopped.".into()); }
         Ok(self.inner.activation.try_current_process(game_id))
     }

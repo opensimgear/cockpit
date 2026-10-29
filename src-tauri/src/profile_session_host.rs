@@ -374,8 +374,9 @@ impl NativeProfileHost {
         let id=state.child_game_owner.as_ref().and_then(|owner|owner.game_id.as_deref()).or(state.owner.game_id.as_deref());
         let Some(id)=id else{return Ok(vec![]);};
         let (scope,diagnostics)=match games.try_observed_desktop_process(id) {
-            Ok(Some(process))=>(process.map(|process|osg_desktop_output::Scope::Application{identity:crate::profile_session_desktop::identity(&process)}),vec![]),
-            Ok(None)=>return Ok(vec!["Context scoped bindings are waiting for a fresh native process observation.".into()]),
+            Ok(crate::game_activation::CurrentProcessObservation::Observed(process))=>(process.map(|process|osg_desktop_output::Scope::Application{identity:crate::profile_session_desktop::identity(&process)}),vec![]),
+            Ok(crate::game_activation::CurrentProcessObservation::Busy)=>return Ok(vec![]),
+            Ok(crate::game_activation::CurrentProcessObservation::Unavailable)=>return Ok(vec!["Context scoped bindings are waiting for a fresh native process observation.".into()]),
             Err(error)=>(None,vec![format!("Context scoped bindings are waiting: {error}")]),
         };
         state.desktop.as_mut().unwrap().refresh_context(scope.clone())?;

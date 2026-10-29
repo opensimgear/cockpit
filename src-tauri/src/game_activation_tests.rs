@@ -56,25 +56,64 @@ fn fake() -> Fake {
 fn live_desktop_process_reads_cached_identity_without_scanning_or_waiting() {
     let platform = fake();
     let observer = Observer::default();
-    assert_eq!(observer.try_current_process("dcs"), None);
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Unavailable);
     observer.observe(&platform, &[game()]);
-    assert_eq!(observer.try_current_process("dcs"), Some(None));
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Observed(None));
     *platform.current.lock().unwrap() = Ok(Some(running(1)));
     observer.observe(&platform, &[game()]);
     observer.observe(&platform, &[game()]);
     let scans = platform.scans.load(Ordering::Relaxed);
-    assert_eq!(observer.try_current_process("dcs"), Some(Some(running(1))));
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Observed(Some(running(1))));
     assert_eq!(platform.scans.load(Ordering::Relaxed), scans);
     let mut state = observer.0.lock().unwrap();
     let began = Instant::now();
-    assert_eq!(observer.try_current_process("dcs"), None);
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Busy);
     assert!(began.elapsed() < Duration::from_millis(100));
     state.at = Some(Instant::now() - MAX_AGE - Duration::from_millis(1));
     drop(state);
-    assert_eq!(observer.try_current_process("dcs"), None);
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Unavailable);
     *platform.current.lock().unwrap() = Ok(None);
     observer.observe(&platform, &[game()]);
-    assert_eq!(observer.try_current_process("dcs"), Some(None));
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Observed(None));
+}
+
+#[test]
+fn desktop_observation_reports_contention_separately_from_missing_or_stale_evidence() {
+    let platform = fake();
+    let observer = Observer::default();
+    assert_eq!(
+        observer.try_current_process("dcs"),
+        CurrentProcessObservation::Unavailable,
+        "no completed observation remains unavailable"
+    );
+
+    observer.observe(&platform, &[game()]);
+    assert_eq!(
+        observer.try_current_process("dcs"),
+        CurrentProcessObservation::Observed(None),
+        "a fresh scan with no process is distinct from missing evidence"
+    );
+    assert_eq!(
+        observer.try_current_process("unknown"),
+        CurrentProcessObservation::Unavailable,
+        "a fresh catalogue without this game has no game-specific evidence"
+    );
+
+    let state = observer.0.lock().unwrap();
+    assert_eq!(
+        observer.try_current_process("dcs"),
+        CurrentProcessObservation::Busy,
+        "lock contention must not be conflated with an absent process"
+    );
+    assert_eq!(observer.try_current_process("dcs"), CurrentProcessObservation::Busy);
+    drop(state);
+
+    observer.0.lock().unwrap().at = Some(Instant::now() - MAX_AGE - Duration::from_millis(1));
+    assert_eq!(
+        observer.try_current_process("dcs"),
+        CurrentProcessObservation::Unavailable,
+        "stale evidence remains unavailable, not busy"
+    );
 }
 #[test]
 fn uninstalled_supported_games_are_not_process_detection_failures() {

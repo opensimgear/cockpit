@@ -58,6 +58,51 @@ fn feedback_fences_wire_and_native_generations_in_their_own_domains() {
     assert_eq!(reply["feedback"]["values"][0]["value"], false);
 }
 
+#[test]
+fn slow_validation_and_simulator_time_jump_do_not_bypass_feedback_cooldown() {
+    let (fixture, mut adapter, phase, _) = armed();
+    let next_phase = Phase::new_at(
+        fixture.delivery().program,
+        Counter(2),
+        uuid::Uuid::new_v4().to_string(),
+        Counter(100_000),
+    ).unwrap();
+    let validated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed_validation = validated.clone();
+    assert!(adapter
+        .publish_feedback_background(
+            &fixture.hub,
+            &phase,
+            |_| {
+                std::thread::sleep(Duration::from_millis(40));
+                Ok(())
+            },
+            100,
+        )
+        .is_empty());
+    assert!(complete(&mut adapter, &fixture.hub, &phase).is_empty());
+
+    adapter.run = Some(next_phase.run_token());
+    assert!(adapter
+        .publish_feedback_background(
+            &fixture.hub,
+            &next_phase,
+            move |_| {
+                observed_validation.store(true, std::sync::atomic::Ordering::Release);
+                Ok(())
+            },
+            100_000,
+        )
+        .is_empty());
+    assert!(!validated.load(std::sync::atomic::Ordering::Acquire), "Simulator time bypassed the monotonic feedback cooldown");
+    assert!(!adapter.feedback_worker.busy());
+
+    std::thread::sleep(super::super::feedback::MIN_PUBLISH_INTERVAL);
+    assert!(adapter.publish_feedback_background(&fixture.hub, &next_phase, |_| Ok(()), 100_000).is_empty());
+    assert!(adapter.feedback_worker.busy(), "Feedback did not resume after the real cooldown");
+    assert!(complete(&mut adapter, &fixture.hub, &next_phase).is_empty());
+}
+
 fn complete(adapter: &mut CompanionSources, hub: &Hub, phase: &Phase) -> Vec<String> {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut diagnostics = vec![];
@@ -214,6 +259,9 @@ fn feedback_admission_reports_missing_delivery_token_without_starting_worker() {
         vec!["companion feedback: Bind current companion feedback delivery tokens first."]
     );
     assert!(!adapter.feedback_worker.busy());
+    assert!(adapter.publish_feedback_background(
+        &fixture.hub, &phase, |_| panic!("Missing-token retries must remain throttled"), 100,
+    ).is_empty());
 }
 
 #[test]
@@ -267,11 +315,11 @@ fn failed_completion_from_a_superseded_reducer_is_ignored() {
         fixture.delivery().program,
         Counter(2),
         uuid::Uuid::new_v4().to_string(),
-        Counter(200),
+        Counter(100_000),
     )
     .unwrap();
     adapter.run = Some(next_phase.run_token());
-    adapter.instances[0].feedback_at = Some(200);
+    adapter.instances[0].feedback_at = Some(Instant::now());
 
     let deadline = Instant::now() + Duration::from_secs(1);
     let mut diagnostics = vec![];
@@ -280,7 +328,7 @@ fn failed_completion_from_a_superseded_reducer_is_ignored() {
             &fixture.hub,
             &next_phase,
             |_| panic!("A superseded completion must be discarded before new validation"),
-            200,
+            100_000,
         ));
         assert!(
             Instant::now() < deadline,

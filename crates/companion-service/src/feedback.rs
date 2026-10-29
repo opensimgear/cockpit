@@ -371,7 +371,7 @@ impl FeedbackBook {
         ensure(
             self.updated
                 .is_none_or(|time| now.saturating_sub(time) >= 34),
-            "Feedback rate exceeds30Hz.",
+            "Feedback rate exceeds 30 Hz.",
         )?;
         let sequence = self
             .sequence

@@ -29,6 +29,7 @@ use osg_profiles::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
+    time::Instant,
 };
 
 pub(crate) struct PreparedCompanion {
@@ -68,7 +69,7 @@ struct Instance {
     at: u64,
     ready: bool,
     metadata_paused: bool,
-    feedback_at: Option<u64>,
+    feedback_at: Option<Instant>,
     feedback_live: bool,
     feedback_clear_pending: bool,
     feedback_cancel: Arc<std::sync::atomic::AtomicBool>,
@@ -784,7 +785,7 @@ impl CompanionSources {
                 || instance.outputs.is_empty()
                 || instance
                     .feedback_at
-                    .is_some_and(|last| now_us.saturating_sub(last) < 34_000)
+                    .is_some_and(|last| last.elapsed() < feedback::MIN_PUBLISH_INTERVAL)
             {
                 continue;
             }
@@ -817,9 +818,11 @@ impl CompanionSources {
                 )?;
                 Ok::<_, String>(())
             })();
-            instance.feedback_at = Some(now_us);
+            instance.feedback_at = Some(Instant::now());
             match result {
-                Ok(()) => instance.feedback_live = true,
+                Ok(()) => {
+                    instance.feedback_live = true;
+                }
                 Err(error) => {
                     if instance.feedback_live {
                         if let Some(receipt) = &instance.receipt {

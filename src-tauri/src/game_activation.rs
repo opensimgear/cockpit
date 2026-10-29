@@ -30,6 +30,20 @@ struct State {
 #[derive(Default)]
 pub(crate) struct Observer(Mutex<State>);
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CurrentProcessObservation {
+    /// The background observer is publishing a result. Keep the last accepted
+    /// scope and retry on the next health tick without treating contention as
+    /// evidence that the process disappeared.
+    Busy,
+    /// No current observation is available, it is stale, or this game has no
+    /// entry. Callers must continue to treat these cases as unavailable.
+    Unavailable,
+    /// A fresh observer cycle completed. The inner option is the confirmed
+    /// process; `None` is fresh evidence that no matching process is running.
+    Observed(Option<ProcessIdentity>),
+}
+
 pub(crate) fn identity(platform: &dyn Platform, game: &Value) -> Result<GameIdentity, String> {
     if game["installed"] != true || game["processMonitoringSupported"] != true {
         return Err("The selected installation has no native process monitoring support.".into());
@@ -74,14 +88,21 @@ impl Observer {
     /// Missing/contended evidence waits; it never starts a foreground scan on
     /// the mapping heartbeat. The desktop worker still checks exact process
     /// identity and foreground ownership before each native submission.
-    pub(crate) fn try_current_process(&self, id: &str) -> Option<Option<ProcessIdentity>> {
+    pub(crate) fn try_current_process(&self, id: &str) -> CurrentProcessObservation {
         let state = match self.0.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return None,
+            Err(std::sync::TryLockError::WouldBlock) => return CurrentProcessObservation::Busy,
         };
-        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) { return None; }
-        state.entries.get(id).map(|entry| entry.confirmed.as_ref().map(|proof| proof.process.clone()))
+        if state.at.is_none_or(|at| at.elapsed() > MAX_AGE) {
+            return CurrentProcessObservation::Unavailable;
+        }
+        state.entries.get(id).map_or(
+            CurrentProcessObservation::Unavailable,
+            |entry| CurrentProcessObservation::Observed(
+                entry.confirmed.as_ref().map(|proof| proof.process.clone()),
+            ),
+        )
     }
     pub(crate) fn observe(&self, platform: &dyn Platform, games: &[Value]) {
         // Capture one process inventory for the whole registered catalogue.

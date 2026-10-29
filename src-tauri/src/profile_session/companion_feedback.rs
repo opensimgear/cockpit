@@ -7,6 +7,7 @@ use std::{
 };
 
 const MAX_AGE: Duration = Duration::from_millis(250);
+pub(super) const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(34);
 pub(super) fn revocation() -> Arc<AtomicBool> { Arc::new(AtomicBool::new(false)) }
 
 pub(super) struct Worker<T> {
@@ -124,6 +125,9 @@ impl CompanionSources {
                     if completion.cancelled.load(Ordering::Acquire) || self.run.as_ref() != Some(&completion.run) { continue; }
                     if let Some(instance) = self.instances.iter_mut().find(|instance|
                         instance.logical == completion.logical && instance.generation == completion.generation && instance.ready) {
+                        // Back off failed and expired attempts too; immediately
+                        // retrying them would churn workers on every heartbeat.
+                        instance.feedback_at = Some(Instant::now());
                         match completion.result {
                             Ok(published) => { if published { instance.feedback_live = true; } }
                             Err(error) => {
@@ -147,7 +151,7 @@ impl CompanionSources {
         let mut jobs = vec![];
         for instance in &mut self.instances {
             if !instance.ready || instance.feedback_clear_pending || instance.outputs.is_empty()
-                || instance.feedback_at.is_some_and(|last| now_us.saturating_sub(last) < 34_000) { continue; }
+                || instance.feedback_at.is_some_and(|last| last.elapsed() < MIN_PUBLISH_INTERVAL) { continue; }
             let result = (|| {
                 let receipt = instance.receipt.clone().ok_or("The companion feedback owner is missing.")?;
                 let tokens = instance.outputs.iter().map(|output| output.token.clone()
@@ -163,7 +167,7 @@ impl CompanionSources {
                 Ok::<_, String>(Job { logical: instance.logical.clone(), generation: instance.generation,
                     run: phase.run_token(), receipt, tokens, samples, captured, cancelled: instance.feedback_cancel.clone() })
             })();
-            instance.feedback_at = Some(now_us);
+            instance.feedback_at = Some(Instant::now());
             match result {
                 Ok(job) => jobs.push(job),
                 Err(error) => diagnostics.push(format!("{} feedback: {error}", instance.logical)),
