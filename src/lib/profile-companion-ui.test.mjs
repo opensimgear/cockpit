@@ -6,7 +6,7 @@ const draft=()=>({document:{schemaVersion:2,id:'11111111-1111-4111-8111-11111111
 const deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve};};
 async function view(value=draft(),seed={},props={}){
   const filename=new URL('./ProfileCompanionEditor.svelte',import.meta.url);let source=await readFile(filename,'utf8');source=source.replace("  import Icon from './Icon.svelte';",'').replace(/<Icon\b[^>]*\/>/g,'');
-  source=source.replace('  const resource=$derived',"  const seeded=seedCompanion();catalogue=seeded.catalogue??catalogue;page=seeded.page??page;chosen=seeded.chosen??chosen;target=seeded.target??target;mappings=seeded.mappings??mappings;clearPorts=seeded.clearPorts??clearPorts;group=seeded.group??group;\n  const resource=$derived");
+  source=source.replace('  const resource=$derived',"  const seeded=seedCompanion();catalogue=seeded.catalogue??catalogue;page=seeded.page??page;chosen=seeded.chosen??chosen;target=seeded.target??target;mappings=seeded.mappings??mappings;clearPorts=seeded.clearPorts??clearPorts;\n  const resource=$derived");
   source=source.replace('</script>',"captureCompanion({refresh,autoBrowsePanels,choose,chooseTarget,browse,capture,release,reconcile,chooseMapping,addPort,syncContext,setGraph(value){graph=value;syncContext();},get state(){return{catalogue,page,chosen,target,busy,error};}});</script>");
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={},destroyers=[],calls=[],edits=[];let handlers;
   const client=new api.ProfileCompanionAuthoringClient(async request=>{calls.push(plain(request));return request.command==='profile_companion_catalogue'?catalogue():page();});
@@ -48,7 +48,7 @@ test('an empty companion block can choose an unused paired target and saved pane
 
 test('a zero-control saved panel is selectable and an empty native port page creates no dummy controls',async()=>{
   const empty={...panel(),panelId:'acr-display',title:'ACR display',controlCount:0},emptyPage={...page(),total:0,ports:[]},h=await view(draft(),{catalogue:{...catalogue(),panels:[empty,panel(6)]},chosen:hash(1),page:emptyPage});
-  assert.ok(h.html.includes('ACR display · 0 controls'));assert.ok(h.html.includes('0 controls'));assert.ok(h.html.includes('No ports in this group on this page.'));assert.ok(h.html.includes('0 ports'));assert.ok(!h.html.includes('1–0'));assert.doesNotMatch(h.html,/>Add<\/button>/);h.handlers.capture();assert.equal(h.edits.length,1);assert.deepEqual(h.edits[0].next.document.companionAssignments,[{resourceId:'screen',panelId:'acr-display',publicationHash:hash(1)}]);assert.deepEqual(h.edits[0].next.document.resources[0].ports,[]);assert.deepEqual(h.edits[0].next.document.bindings,[]);assert.deepEqual(h.calls,[]);
+  assert.ok(h.html.includes('ACR display · 0 controls'));assert.ok(h.html.includes('0 controls'));assert.ok(h.html.includes('No inputs on this page.'));assert.ok(h.html.includes('No outputs on this page.'));assert.ok(h.html.includes('0 ports'));assert.ok(!h.html.includes('1–0'));assert.doesNotMatch(h.html,/>Add<\/button>/);h.handlers.capture();assert.equal(h.edits.length,1);assert.deepEqual(h.edits[0].next.document.companionAssignments,[{resourceId:'screen',panelId:'acr-display',publicationHash:hash(1)}]);assert.deepEqual(h.edits[0].next.document.resources[0].ports,[]);assert.deepEqual(h.edits[0].next.document.bindings,[]);assert.deepEqual(h.calls,[]);
 });
 
 test('panel selection honors the chosen companion compatibility and cannot capture an incompatible or unknown target',async()=>{

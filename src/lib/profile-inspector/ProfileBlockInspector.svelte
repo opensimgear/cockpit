@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import Icon from '../Icon.svelte';
+  import ProfileCompanionPorts from './ProfileCompanionPorts.svelte';
   import type { DeepReadonly, ProfileDocument, ProfilePortGroup } from '../profiles';
   import type { ObservedResourcePort, ResourceDetails } from '../profile-inventory';
   import type { GameId } from '../games';
@@ -46,6 +47,10 @@
 
   {#if resourceNode}
     {#if node.resource?.kind!=='game'}
+    {#if node.resource?.kind==='companion'}
+      <ProfileCompanionPorts nodeId={node.id} ports={node.resource.ports} direction="input" {readOnly} removePort={removeProviderPort}/>
+      <ProfileCompanionPorts nodeId={node.id} ports={node.resource.ports} direction="output" {readOnly} removePort={removeProviderPort}/>
+    {:else}
     <details class="ports-section">
       <summary>Ports · {inputs.length + outputs.length}</summary>
       {#each portCategories as category (category)}
@@ -63,6 +68,7 @@
         </section>
       {/each}
     </details>
+    {/if}
 
     {#if node.observation && node.assignment && (!companionAuthoring || node.resource?.kind !== 'companion')}
       <details class="catalogue-section">

@@ -49,8 +49,8 @@ test('configured unassigned integration retains Settings through the saved game 
  const html=body({node:node('game',false)}),actions=footer(html);assert.match(actions,/>Settings<\/button>/);assert.match(actions,/>Remove<\/button>/);
 });
 
-test('companion inspectors retain their Details and ports sections',()=>{
- const html=body({node:node('companion')});assert.match(html,/metadata-section/);assert.match(html,/<summary\b[^>]*>Details<\/summary>/);assert.match(html,/ports-section/);assert.doesNotMatch(footer(html),/>Settings<\/button>/);
+test('companion inspectors retain Details and show compact selected ports',()=>{
+ const html=body({node:node('companion')});assert.match(html,/metadata-section/);assert.match(html,/<summary\b[^>]*>Details<\/summary>/);assert.match(html,/Companion inputs/);assert.match(html,/Companion outputs/);assert.doesNotMatch(html,/ports-section/);assert.doesNotMatch(footer(html),/>Settings<\/button>/);
 });
 
 test('read-only game inspector disables Remove while retaining available Settings',()=>{
