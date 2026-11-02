@@ -20,6 +20,8 @@ pub(crate) mod inspection;
 pub(crate) mod topology;
 #[path = "profile_session_launch.rs"]
 mod launch;
+#[path = "profile_session/scheduling.rs"]
+pub(crate) mod scheduling;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Candidate {
@@ -187,6 +189,9 @@ pub(crate) trait Host: Send {
     ) -> Result<(), String>;
     fn restore(&mut self, run: &OwnedRun, recovery: bool) -> Result<(), String>;
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String>;
+    /// An absolute host wake for a pending authored or source-expiry deadline.
+    /// Adapter service/lease checks retain their separate scheduling policy.
+    fn next_deadline(&self, _: &OwnedRun) -> Option<std::time::Instant> { None }
     /// A native observation requests one fresh, safely staged graph variant.
     fn vehicle_change(&self, _: &RunOwner) -> Option<String> { None }
     fn vehicle_switch_failed(&mut self, _: &RunOwner, _: &str) {}

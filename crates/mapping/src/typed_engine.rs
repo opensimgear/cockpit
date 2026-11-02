@@ -612,6 +612,9 @@ impl Phase {
             self.stop();
             return Err("Typed source batch exceeded its frame budget.".into());
         }
+        if frames.is_empty() {
+            return Ok(vec![]);
+        }
         struct Fence {
             first: usize,
             state: SourceState,
@@ -1615,36 +1618,10 @@ impl Phase {
         }
         let mut work = 0;
         loop {
-            let stale = self
-                .compiled
-                .contracts
-                .iter()
-                .filter_map(|(endpoint, contract)| match contract {
-                    PortContract::State { freshness_ms, .. }
-                        if matches!(self.values[endpoint].sample, SignalSample::Known(_))
-                            && !self.compiled.program.nodes.iter().any(|node| {
-                                node.id == endpoint.node_id
-                                    && matches!(node.operation, Operation::Constant { .. })
-                            }) =>
-                    {
-                        self.values[endpoint]
-                            .observed
-                            .checked_add(*freshness_ms as u64 * 1000)
-                    }
-                    _ => None,
-                })
-                .min();
-            let internal = self
-                .states
-                .values()
-                .filter_map(|state| state.rule.next())
-                .min();
-            let external = self.timers.first_key_value().map(|((at, ..), _)| *at);
-            let Some(at) = [stale, internal, external]
-                .into_iter()
-                .flatten()
-                .min()
-                .filter(|at| *at <= now.0)
+            let deadlines = self.pending_deadlines();
+            let (stale, internal, external) =
+                (deadlines.stale, deadlines.internal, deadlines.external);
+            let Some(at) = deadlines.next().filter(|at| *at <= now.0)
             else {
                 break;
             };
@@ -2108,3 +2085,6 @@ fn from_legacy(value: crate::profile::Value) -> PortValue {
 #[cfg(test)]
 #[path = "typed_engine_tests.rs"]
 mod tests;
+
+#[path = "typed_engine/deadlines.rs"]
+mod deadlines;

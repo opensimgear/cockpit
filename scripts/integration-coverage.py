@@ -65,7 +65,8 @@ def main():
                          'dcs_bios/decoded/state.rs', 'dcs_bios/decoded/source.rs', 'dcs_profile/shared.rs'])
     module_names.append('xplane/subscriptions.rs')
     module_names.extend(['xplane/owner.rs', 'xplane/owner/client.rs', 'xplane/owner/worker.rs',
-                         'xplane/permissions.rs', 'games/process_monitor.rs', 'gateways/process_monitor.rs', 'mcp_tools.rs'])
+                         'xplane/permissions.rs', 'games/process_monitor.rs', 'gateways/process_monitor.rs', 'mcp_tools.rs',
+                         'profile_session/scheduling.rs'])
     if os.name == 'nt':
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',

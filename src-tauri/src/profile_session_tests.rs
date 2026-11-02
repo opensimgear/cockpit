@@ -14,6 +14,7 @@ struct Probe {
     health: Health,
     reject_admission: bool,
     returned_peripheral: Option<String>,
+    deadline: Option<std::time::Instant>,
 }
 struct Fake(Arc<Mutex<Probe>>);
 fn checkpoint(probe: &mut Probe, name: String) -> Result<(), String> {
@@ -117,6 +118,9 @@ impl Host for Fake {
         checkpoint(&mut probe, "health".into())?;
         Ok(probe.health.clone())
     }
+    fn next_deadline(&self, _: &OwnedRun) -> Option<std::time::Instant> {
+        self.0.lock().unwrap().deadline
+    }
     fn peripheral_change(&self,owner:&RunOwner)->Option<String> {
         let probe=self.0.lock().unwrap();
         (probe.owner.as_ref()==Some(owner)).then(||probe.returned_peripheral.clone()).flatten()
@@ -161,6 +165,26 @@ fn startup_is_zero_effect_and_default_needs_no_optional_backend() {
     assert!(!runtime.validates(&owner));
     assert_eq!(probe.lock().unwrap().value, 42);
     assert!(!probe.lock().unwrap().hidden);
+}
+
+#[test]
+fn scheduled_deadlines_belong_only_to_the_current_active_owner() {
+    let (mut runtime, probe) = coordinator(None);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1);
+    probe.lock().unwrap().deadline = Some(deadline);
+    assert_eq!(runtime.next_deadline(), None);
+    runtime.apply(candidate()).unwrap();
+    assert_eq!(runtime.next_deadline(), Some(deadline));
+    let calls = probe.lock().unwrap().calls.len();
+    assert_eq!(runtime.next_deadline(), Some(deadline));
+    assert_eq!(probe.lock().unwrap().calls.len(), calls, "Reading a deadline cannot poll or activate outputs");
+    runtime.stop().unwrap();
+    assert_eq!(runtime.next_deadline(), None);
+    runtime.apply(candidate()).unwrap();
+    probe.lock().unwrap().health.stop = Some("native source stopped".into());
+    runtime.poll().unwrap();
+    assert_eq!(runtime.status().state, State::Faulted);
+    assert_eq!(runtime.next_deadline(), None);
 }
 #[test]
 fn returned_peripherals_reuse_the_captured_source_and_cannot_revive_a_stopped_or_replaced_owner() {

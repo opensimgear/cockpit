@@ -1102,6 +1102,15 @@ impl Host for NativeProfileHost {
         self.prepared.remove(&key(&run.owner));
         Ok(())
     }
+    fn next_deadline(&self, run: &OwnedRun) -> Option<Instant> {
+        let state = self.prepared.get(&key(&run.owner))?;
+        let deadline = state.reducer.as_ref()?.next_deadline_us()?;
+        // Sample before taking the native clock lock: contention can make the
+        // estimate early, but must never postpone an already-authored deadline.
+        let before = Instant::now();
+        let now = self.controllers.stream_page("", 0).captured_us;
+        Some(crate::profile_session::scheduling::host_deadline(before, now, deadline.0))
+    }
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String> {
         self.fence(&run.owner)?;
         if self.vehicle_change(&run.owner).is_some() || self.run(&run.owner)?.vehicle_paused {
@@ -1151,17 +1160,12 @@ impl Host for NativeProfileHost {
         let frames = frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames).chain(state.debug_inputs.poll()).collect::<Vec<_>>();
         let batch_clock=frames.iter().map(|frame|frame.captured_us).max().unwrap_or(reducer.at_us());
         state.debug_inputs.refresh_liveness(reducer,Counter(batch_clock.0.max(reducer.at_us().0)))?;
-        degraded.extend(reducer.accept_batch(frames.iter().cloned())?);
-        let elapsed = u64::try_from(state.started.elapsed().as_micros())
-            .map_err(|_| "Profile runtime clock exhausted.")?;
-        let tick = Counter(
-            reducer.at_us().0.max(
-                state
-                    .clock_origin
-                    .checked_add(elapsed)
-                    .ok_or("Profile runtime clock exhausted.")?,
-            ),
-        );
+        if !frames.is_empty() {
+            degraded.extend(reducer.accept_batch(frames.iter().cloned())?);
+        }
+        // Use the same journal admission clock as source frames. Pairing an
+        // earlier Instant with a later clock sample can run ahead of capture.
+        let tick = Counter(reducer.at_us().0.max(controllers.stream_page("", 0).captured_us));
         if let Some(inputs) = state.inputs.as_ref() { inputs.refresh_liveness(controllers.as_ref(), reducer, tick)?; }
         state.debug_inputs.refresh_liveness(reducer,tick)?;
         for (source,generation,ports) in panels.liveness {

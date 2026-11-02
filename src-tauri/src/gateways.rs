@@ -384,13 +384,13 @@ impl GatewayManager {
                 while !closed.load(Ordering::Acquire) {
                     let observed = wake.observed();
                     crate::profile_session_desktop::observe_foreground();
-                    let active = {
+                    let (active, deadline) = {
                         let mut runtime = runtime.lock().unwrap_or_else(|p| p.into_inner());
                         let _ = runtime.poll();
                         activity_session.lock().unwrap_or_else(|p|p.into_inner()).observe(runtime.status());
-                        runtime.status().owner.is_some()
+                        (runtime.status().owner.is_some(), runtime.next_deadline())
                     };
-                    wake.wait(observed, std::time::Duration::from_millis(if active { 5 } else { 100 }));
+                    wake.wait(observed, crate::profile_session::scheduling::service_wait(active, deadline, std::time::Instant::now()));
                 }
             });
             let _ = profile_wake.thread.set(worker.thread().clone());
