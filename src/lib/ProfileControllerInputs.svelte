@@ -34,7 +34,7 @@
   });
 </script>
 
-<section class="controller-inputs" aria-label="Live inputs">
+<section class="controller-inputs" aria-label="Live inputs" data-controller-source-id={sourceId}>
   <h4>Inputs</h4>
   {#if error}<p role="status">{error}</p>
   {:else if !online}<p>Controller is offline.</p>

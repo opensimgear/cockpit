@@ -364,3 +364,23 @@ fn encoded_publication_fences_counter_exhaustion_without_partial_commit() {
         assert!(reader.try_recv().unwrap().is_none());
     }
 }
+
+#[test]
+fn owner_retirement_closes_live_readers_and_fences_late_old_owner() {
+    let (broker, publisher) = broker();
+    let mut reader = broker.subscribe("client", "ui", "controls").unwrap();
+    reader.recv().unwrap();
+    publisher.publish(1, json!(1), json!(1), 2, "clock").unwrap();
+    assert!(broker.retire(&publisher));
+    let closed = reader.recv().unwrap();
+    assert_eq!(closed.kind, "loss");
+    assert_eq!(closed.reason.as_deref(), Some("closed"));
+    assert!(matches!(broker.subscribe("other", "ui", "controls"), Err(RegistryError::UnknownTopic)));
+    let replacement = broker.register(spec("controls"), json!(42), 3, "clock".into()).unwrap();
+    assert!(!broker.retire(&publisher));
+    assert!(matches!(publisher.publish(1, json!(2), json!(2), 4, "clock"),
+        Err(RegistryError::Publish(PublishError::Closed))));
+    let mut current = broker.subscribe("new-client", "ui", "controls").unwrap();
+    assert_eq!(current.recv().unwrap().payload, Some(json!(42)));
+    assert_eq!(replacement.revision(), 1);
+}

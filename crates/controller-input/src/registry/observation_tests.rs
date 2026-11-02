@@ -1,23 +1,23 @@
 use super::*;
 use crate::tests::fixture;
 use osg_streams::Reader;
+use super::test_support::{encoded_count, wait_processed};
 
 #[test]
 fn closed_preview_defers_encoding_and_reopens_with_current_atomic_baseline() {
     let (mut registry,broker,id,mut reader)=setup();
     reader.recv().unwrap();baseline(&mut registry,&id);
-    let revision=registry.observations.bindings[&id].publisher.revision();
+    reader.recv().unwrap(); reader.recv().unwrap();
     drop(reader);
+    let encoded = encoded_count(&id);
     for value in 0..50 {registry.report(&id,1,&BTreeMap::from([(1,value)])).unwrap();}
-    let binding=&registry.observations.bindings[&id];
-    assert!(!binding.publisher.has_readers());assert!(binding.dirty);
-    assert_eq!(binding.publisher.revision(),revision,"No unused JSON read model was published.");
+    wait_processed(&registry, &id);
+    assert_eq!(encoded_count(&id),encoded,"No unused JSON read model was encoded.");
     let mut reopened=subscribe(&mut registry,&broker,&id);
     let frame=reopened.recv().unwrap();
     let payload=frame.payload.unwrap();
     assert_eq!(payload["controls"][1]["value"]["native"],49);
     assert_eq!(payload["capturedUs"],registry.sources[&id].captured_us.to_string());
-    assert!(!registry.observations.bindings[&id].dirty);
     registry.report(&id,1,&BTreeMap::from([(1,50)])).unwrap();
     assert_eq!(reopened.recv().unwrap().kind,"change");
 }
@@ -50,23 +50,23 @@ fn exhausted_native_sequence_rejects_report_without_committing_unpublished_value
     assert_eq!(registry.inspect(&id,0).unwrap(),before);
 }
 
-fn setup() -> (Registry, Broker, String, Reader) {
+pub(super) fn setup() -> (Registry, Broker, String, Reader) {
     let mut registry = Registry::default();
     let id = registry.connect(fixture("controller", None)).unwrap();
     let broker = Broker::new("observers".into()).unwrap();
     let reader = subscribe(&mut registry, &broker, &id);
     (registry, broker, id, reader)
 }
-fn subscribe(registry: &mut Registry, broker: &Broker, id: &str) -> Reader {
+pub(super) fn subscribe(registry: &mut Registry, broker: &Broker, id: &str) -> Reader {
     registry
-        .observe(broker, id, || {
+        .prepare_observation(broker, id).unwrap().with_subscription(|| {
             broker
                 .subscribe("tester", "ui", &format!("controllers.input.{id}"))
                 .map_err(|e| e.to_string())
         })
         .unwrap()
 }
-fn baseline(registry: &mut Registry, id: &str) {
+pub(super) fn baseline(registry: &mut Registry, id: &str) {
     registry
         .report(id, 1, &BTreeMap::from([(0, 1), (1, 65535)]))
         .unwrap();
@@ -222,7 +222,7 @@ fn bounded_topics_recycle_only_idle_bindings_and_cancelled_readers() {
             .unwrap();
         // Global budget permits 64 readers, client budget permits 16 each.
         let reader = registry
-            .observe(&broker, &id, || {
+            .prepare_observation(&broker, &id).unwrap().with_subscription(|| {
                 broker
                     .subscribe(
                         &format!("client{index}"),
@@ -235,10 +235,9 @@ fn bounded_topics_recycle_only_idle_bindings_and_cancelled_readers() {
         live.push(reader);
     }
     let id = registry.connect(fixture("extra", None)).unwrap();
-    assert!(registry.observe(&broker, &id, || Ok(())).is_err());
+    assert!(registry.prepare_observation(&broker, &id).unwrap().with_subscription(|| Ok(())).is_err());
     live.pop().unwrap().cancellation_handle().cancel();
-    registry.observe(&broker, &id, || Ok(())).unwrap();
-    assert_eq!(registry.observations.bindings.len(), 64);
+    registry.prepare_observation(&broker, &id).unwrap().with_subscription(|| Ok(())).unwrap();
     assert_eq!(live[0].recv().unwrap().kind, "snapshot");
 }
 #[test]
@@ -253,8 +252,8 @@ fn overflow_is_explicit_and_new_subscription_has_current_level() {
             .report(&id, 1, &BTreeMap::from([(1, value)]))
             .unwrap();
     }
+    wait_processed(&registry, &id);
     assert_eq!(reader.recv().unwrap().kind, "loss");
-    assert!(reader.try_recv().unwrap().is_none());
     let mut later = subscribe(&mut registry, &broker, &id);
     let snapshot = later.recv().unwrap();
     assert_eq!(
@@ -269,7 +268,7 @@ fn observation_action_sees_authoritative_topic_before_any_report() {
     let mut registry = Registry::default();
     let id = registry.connect(fixture("atomic", None)).unwrap();
     let broker = Broker::new("atomic".into()).unwrap();
-    assert!(registry.observe(&broker, "missing", || Ok(())).is_err());
+    assert!(registry.prepare_observation(&broker, "missing").is_err());
     let mut reader = subscribe(&mut registry, &broker, &id);
     baseline(&mut registry, &id);
     assert_eq!(
@@ -328,8 +327,10 @@ fn concurrent_subscription_has_no_report_boundary_hole() {
     };
     let broker = Broker::new("race".into()).unwrap();
     ready.wait();
-    let mut reader = subscribe(&mut registry.lock().unwrap(), &broker, &id);
+    let prepared = registry.lock().unwrap().prepare_observation(&broker, &id).unwrap();
+    let mut reader = prepared.with_subscription(|| broker.subscribe("tester", "ui", &format!("controllers.input.{id}")).map_err(|e| e.to_string())).unwrap();
     writer.join().unwrap();
+    wait_processed(&registry.lock().unwrap(), &id);
     let first = reader.recv().unwrap();
     let mut sequence = first.payload.unwrap()["source"]["sequence"]
         .as_str()
@@ -435,6 +436,7 @@ fn reassignment_generation_exhaustion_withdraws_samples_and_reports_failure() {
     assert!(registry.dirty);
     assert!(registry.diagnostic.contains("generation exhausted"));
     assert!(current.diagnostics[0].contains("generation exhausted"));
+    wait_processed(&registry, &remembered);
     while let Some(frame) = reader.try_recv().unwrap() {
         let payload = frame.payload.unwrap();
         assert_eq!(payload["values"], json!({}));

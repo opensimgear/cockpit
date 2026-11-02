@@ -25,7 +25,7 @@ fn main() {
         let mut data=BTreeMap::from([(128,0),(129,2048),(130,2048),(131,2048),(132,2048),(133,2048),(134,8),(135,0),(136,0)]);
         registry.report(&id,1,&data).unwrap();
         let broker=Broker::new("report-cost".into()).unwrap();
-        let mut reader=if observed {Some(registry.observe(&broker,&id,||broker.subscribe("diagnostic","ui",&format!("controllers.input.{id}")).map_err(|e|e.to_string())).unwrap())}else{None};
+        let mut reader=if observed {Some(registry.prepare_observation(&broker,&id).unwrap().with_subscription(||broker.subscribe("diagnostic","ui",&format!("controllers.input.{id}")).map_err(|e|e.to_string())).unwrap())}else{None};
         if let Some(reader)=&mut reader {reader.recv().unwrap();}
         if scenario=="opened-then-closed" {drop(reader.take());}
         let mut times=Vec::new();
@@ -35,7 +35,12 @@ fn main() {
             registry.report(&id,1,&data).unwrap();
             let elapsed=started.elapsed().as_micros() as u64;
             if index>=100 {times.push(elapsed);}
-            if let Some(reader)=&mut reader {assert!(reader.try_recv().unwrap().is_some());}
+            if let Some(reader)=&mut reader {
+                let frame=reader.recv().unwrap();assert_eq!(frame.kind,"change");
+                let payload=frame.payload.unwrap();
+                assert_eq!(payload["source"]["sequence"],(index+2).to_string());
+                assert_eq!(payload["values"]["hid:0001:0030:1:0:128"]["native"],data[&128]);
+            }
         }
         times.sort_unstable();
         results.push(json!({"scenario":scenario,"previewRegistered":reader.is_some(),"controls":137,"samples":times.len(),

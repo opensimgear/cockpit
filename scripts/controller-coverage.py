@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from native_coverage_sources import measure_module
 
 
 def run(args, root, env=None):
@@ -71,19 +72,13 @@ def main():
         sources.append(root / 'crates/controller-input/src/visibility/windows.rs')
     summary = {}
     for source in sources:
-        annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
-                         '-show-line-counts-or-regions', source], root)
-        (output / f'{source.parent.name}-{source.stem}-lines.txt').write_text(annotated, encoding='utf-8')
-        lines = source.read_text(encoding='utf-8').splitlines()
-        end = next((i + 1 for i, line in enumerate(lines) if line.strip() == '#[cfg(test)]'), len(lines) + 1)
-        counts = {int(match[1]): int(match[2]) for line in annotated.splitlines()
-                  if (match := re.match(r'^\s*(\d+)\|\s*(\d+)\|', line)) and int(match[1]) < end}
-        if not counts:
-            raise RuntimeError(f'No instrumented production lines for {source.name}.')
-        covered = sum(count > 0 for count in counts.values())
-        percent = 100 * covered / len(counts)
-        summary[str(source.relative_to(root / "crates/controller-input/src"))] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
-        print(f'{source.name}: {covered}/{len(counts)} production lines ({percent:.2f}%)', flush=True)
+        result, annotated = measure_module(source, lambda path: run([
+            llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
+            '-show-line-counts-or-regions', path], root), root)
+        name = str(source.relative_to(root / 'crates/controller-input/src'))
+        (output / (name.replace('\\', '-').replace('/', '-') + '-lines.txt')).write_text(annotated, encoding='utf-8')
+        summary[name] = result
+        print(f"{name}: {result['covered']}/{result['lines']} production lines ({result['percent']:.2f}%)", flush=True)
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] < 71 for item in summary.values()):
         raise SystemExit('Each controller module must meet 71% production line coverage.')

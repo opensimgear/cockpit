@@ -210,6 +210,23 @@ impl Broker {
         Ok(Reader::new(topic, subscription, lease))
     }
 
+    /// Withdraw this exact registration, including its existing readers.
+    /// A stale owner cannot remove a replacement registered under the same name.
+    pub fn retire(&self, publisher: &Publisher) -> bool {
+        let removed = {
+            let mut state = self.shared.lock();
+            let topic = &publisher.topic;
+            if !state.topics.get(&topic.identity.topic)
+                .is_some_and(|current| Arc::ptr_eq(current, topic))
+            {
+                return false;
+            }
+            state.topics.remove(&topic.identity.topic).expect("current topic")
+        };
+        removed.stream.close();
+        true
+    }
+
     /// Retire only this exact current registration, atomically against subscribe.
     /// Lock order matches subscribe: broker first, then stream.
     pub fn retire_if_idle(&self, publisher: &Publisher) -> bool {

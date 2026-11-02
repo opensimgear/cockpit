@@ -296,12 +296,17 @@ impl ControllerService {
         }
         Ok(result)
     }
-    /// Register a passive selected-source topic and subscribe at the same owner
-    /// boundary. This never acquires a device or alters report freshness.
+    /// Capture and pin a typed owner boundary, then await the preview worker and
+    /// subscribe after releasing the native capture mutex.
     pub fn observe<T>(&self, broker: &osg_streams::Broker, id: &str,
         action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         if self.stop.load(Ordering::Acquire) { return Err("Controller capture has stopped.".into()); }
-        self.registry.lock().unwrap_or_else(|p| p.into_inner()).observe(broker,id,action)
+        let observation = {
+            let mut registry = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            if self.stop.load(Ordering::Acquire) { return Err("Controller capture has stopped.".into()); }
+            registry.prepare_observation(broker, id)?
+        };
+        observation.with_subscription(action)
     }
     pub fn set_report_wake(&self, wake: Arc<dyn Fn() + Send + Sync>) {
         self.registry.lock().unwrap_or_else(|p|p.into_inner()).set_report_wake(wake);
@@ -351,6 +356,9 @@ impl ControllerService {
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
+        let observations = self.registry.lock().unwrap_or_else(|p| p.into_inner())
+            .take_observation_shutdown();
+        observations.shutdown();
         let _ = self.save();
     }
     pub fn status(&self) -> Value {
