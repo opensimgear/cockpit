@@ -35,10 +35,10 @@ def main():
     run([llvm/f'llvm-profdata{suffix}','merge','-sparse','--failure-mode=all',*profiles.glob('*.profraw'),'-o',profile],root)
     objects=[item for binary in binaries[1:] for item in ['-object',binary]]
     summary={}
-    for module in ['evaluator','wire','worker','resources','replay','main','heap','typed','typed_evaluator','typed_worker']:
+    for module in ['evaluator','wire','worker','resources','replay','main','heap','typed','typed_evaluator','typed_worker','typed_worker/transport']:
         source=root/f'crates/logic/src/{module}.rs'
         annotated=run([llvm/f'llvm-cov{suffix}','show',binaries[0],*objects,f'-instr-profile={profile}','-show-line-counts-or-regions',source],root)
-        (output/f'{module}-lines.txt').write_text(annotated,encoding='utf-8')
+        (output/f'{module.replace("/", "-")}-lines.txt').write_text(annotated,encoding='utf-8')
         lines=source.read_text(encoding='utf-8').splitlines()
         end=next((i+1 for i,line in enumerate(lines) if line.strip()=='#[cfg(test)]'),len(lines)+1)
         counts={}

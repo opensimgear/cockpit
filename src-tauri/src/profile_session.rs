@@ -192,6 +192,11 @@ pub(crate) trait Host: Send {
     /// An absolute host wake for a pending authored or source-expiry deadline.
     /// Adapter service/lease checks retain their separate scheduling policy.
     fn next_deadline(&self, _: &OwnedRun) -> Option<std::time::Instant> { None }
+    /// None is allowed only when every active source, completion and lease has
+    /// a notification or an explicit deadline. Other adapters retain service.
+    fn service_interval(&self, _: &OwnedRun) -> Option<std::time::Duration> {
+        Some(std::time::Duration::from_millis(5))
+    }
     /// A native observation requests one fresh, safely staged graph variant.
     fn vehicle_change(&self, _: &RunOwner) -> Option<String> { None }
     fn vehicle_switch_failed(&mut self, _: &RunOwner, _: &str) {}

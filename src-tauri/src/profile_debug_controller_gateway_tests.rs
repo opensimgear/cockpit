@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 fn debug_document() -> osg_profiles::ProfileDocument {
     use osg_profiles::{
@@ -62,6 +63,31 @@ fn debug_document() -> osg_profiles::ProfileDocument {
     wire.to.node_id = "identity2".into();
     document.bindings.push(wire);
     document
+}
+
+#[test]
+fn native_internal_service_opt_out_ends_when_an_external_resource_is_authored() {
+    let manager = Arc::new(GatewayManager::mcp_test_manager());
+    let request = |mut value: Value| {
+        value["clientId"] = json!("internal-service-regression");
+        let response = manager.request(value);
+        assert_eq!(response["ok"], true, "{response}");
+        response
+    };
+    let mut document = debug_document();
+    request(json!({"command":"profile_editor_save","document":document,"expectedRevision":1,"assignments":[]}));
+    request(json!({"command":"profile_apply","id":document.id,"expectedRevision":2}));
+    assert_eq!(manager.profile_session.lock().unwrap().service_interval(), None);
+    request(json!({"command":"profile_stop"}));
+    assert_eq!(manager.profile_session.lock().unwrap().service_interval(), Some(Duration::from_millis(100)));
+
+    document.revision = 2;
+    document.resources[0].kind = osg_profiles::ResourceKind::Device;
+    request(json!({"command":"profile_editor_save","document":document,"expectedRevision":2,"assignments":[]}));
+    request(json!({"command":"profile_apply","id":document.id,"expectedRevision":3}));
+    assert_eq!(manager.profile_session.lock().unwrap().service_interval(), Some(Duration::from_millis(5)));
+    request(json!({"command":"profile_stop"}));
+    manager.shutdown();
 }
 #[test]
 fn native_debug_gateway_mcp_updates_real_mapping_and_retires_owner() {

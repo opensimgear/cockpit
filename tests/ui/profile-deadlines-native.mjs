@@ -55,3 +55,45 @@ test('native routing expires an authored pulse without another input or visible 
     }finally{page.close();}
   }
 });
+
+test('internal script completion and freshness expiry run without a service interval',{
+  skip:process.env.OSG_PROFILE_DEADLINES_NATIVE!=='1',timeout:120000,
+},async()=>{
+  const page=await nativePage(),directory=`.research/reactive/profile-completion-native/${Date.now()}`;
+  await mkdir(directory,{recursive:true});
+  let profile,owner;
+  const request=async value=>{
+    const reply=await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({...value,clientId:'profile-completion-acceptance'})}})`);
+    assert.equal(reply.ok,true,`${value.command}: ${reply.error}`);return reply.state;
+  };
+  try{
+    assert.equal((await request({command:'profile_status'})).profiles.profileSession.owner,null);
+    profile=(await request({command:'profile_create',name:`Script completion acceptance ${Date.now()}`})).profiles.document;
+    const contract={delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:false};
+    profile.processingNodes=[
+      {id:'constant',name:'Constant input',operation:{kind:'constant',value:false},inputs:[],outputs:[{id:'out',name:'Output',direction:'output',contract}]},
+      {id:'script',name:'Isolated script',operation:{kind:'script',source:'fn on_start(ctx) { transaction(#{}, #{out: scalar(true)}, []) } fn on_event(ctx) { transaction(ctx.state, #{out: scalar(true)}, []) }',parameters:{}},
+        inputs:[{id:'input',name:'Input',direction:'input',contract}],outputs:[{id:'out',name:'Output',direction:'output',contract}]},
+    ];
+    profile.bindings=[{id:'constant-script',from:{nodeId:'constant',portId:'out'},to:{nodeId:'script',portId:'input'}}];
+    profile=(await request({command:'profile_editor_save',document:profile,assignments:[],expectedRevision:profile.revision})).profiles.document;
+    const applied=(await request({command:'profile_apply',id:profile.id,expectedRevision:profile.revision,expectedActiveOwner:null})).profiles.profileSession;
+    assert.equal(applied.state,'running',JSON.stringify(applied));owner=applied.owner;
+    const inspect=async()=>(await request({command:'profile_runtime_inspect',owner,nodeId:'script',offset:0,limit:64})).profileInspection;
+    const value=page=>page.ports.find(port=>port.endpoint.portId==='out').sample;
+    const completed=await until(inspect,page=>value(page).status==='known'&&value(page).value.value===true);
+    await new Promise(resolve=>setTimeout(resolve,1150));
+    const expired=await inspect();
+    await writeFile(`${directory}/last-inspection.json`,JSON.stringify({completed,expired},null,2)+'\n');
+    assert.notEqual(value(expired).status,'known',`One completed script callback must not fabricate fresh output indefinitely: ${JSON.stringify(value(expired))}`);
+    await request({command:'profile_stop'});
+    await writeFile(`${directory}/evidence.json`,JSON.stringify({at:new Date().toISOString(),actualNativeCockpit:true,profile:profile.id,owner,
+      noPhysicalOutputs:true,simulatorQualified:false,latencyQualified:false,completed,expired,stopped:true},null,2)+'\n');
+  }finally{
+    try{
+      const current=(await request({command:'profile_status'})).profiles.profileSession.owner;
+      if(owner&&current?.session===owner.session&&current.generation===owner.generation)await request({command:'profile_stop'});
+      if(profile)await request({command:'profile_delete',id:profile.id,expectedRevision:profile.revision});
+    }finally{page.close();}
+  }
+});

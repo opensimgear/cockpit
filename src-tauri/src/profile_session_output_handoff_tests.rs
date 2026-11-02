@@ -1026,6 +1026,7 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
         &incoming,
         Some(run.clone()),
         Some(source.clone()),
+        None,
         &|| Ok(vec![driver.lock().unwrap().slot.clone()]),
         &|ids| {
             assert_eq!(ids, &[3]);
@@ -1053,6 +1054,7 @@ fn actual_native_host_can_neutralize_an_already_stopped_session_repeatedly() {
             &incoming,
             Some(run.clone()),
             Some(source),
+            None,
             &|| {
                 inspections.fetch_add(1, Ordering::SeqCst);
                 Ok(vec![driver.lock().unwrap().slot.clone()])
@@ -1441,6 +1443,7 @@ fn populated_native_preparation_keeps_exact_pins_without_recapturing_unused_cata
             host.controllers.clone(),
             true,
             &requested,
+            None,
             None,
             None,
             &|| Ok(vec![driver.lock().unwrap().slot.clone()]),

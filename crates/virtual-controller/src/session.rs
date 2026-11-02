@@ -109,6 +109,7 @@ impl Session {
                 return Err(error);
             }
         };
+        let started = Instant::now();
         if let Err(error) = worker.request(&Message::Start {
             token: token.clone(),
             bindings: bindings.clone(),
@@ -144,7 +145,7 @@ impl Session {
             bindings,
             cursor,
             renewal: 0,
-            renewed: Instant::now(),
+            renewed: started,
             recovery_required: false,
         })
     }
@@ -206,6 +207,15 @@ impl Session {
     }
     pub fn active(&self) -> bool {
         self.worker.is_some()
+    }
+    /// The current lease renewal deadline, anchored to the last successful
+    /// renewal's send time. Querying it never renews or otherwise mutates the
+    /// session. A due deadline remains due until a renewal succeeds.
+    pub fn renewal_deadline(&self) -> Option<Instant> {
+        if !self.active() || self.recovery_required {
+            return None;
+        }
+        Some(self.renewed + std::time::Duration::from_micros(RENEW_US))
     }
     pub fn recovery_required(&self) -> bool {
         self.recovery_required

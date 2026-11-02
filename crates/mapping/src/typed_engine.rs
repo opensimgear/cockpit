@@ -1065,6 +1065,14 @@ impl Phase {
                     node_id: node.id.clone(),
                     port_id: id,
                 };
+                // Constants have no new observation when another branch runs.
+                // Rewriting an unchanged value would manufacture dirty input
+                // and callbacks, including when a script's own output expires.
+                if matches!(node.operation, Operation::Constant { .. })
+                    && self.values[&endpoint].sample == sample
+                {
+                    continue;
+                }
                 self.put(&endpoint, sample);
                 dirty.insert(endpoint.clone());
                 if fire {

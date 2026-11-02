@@ -34,7 +34,7 @@ fn prepared_report(report: &CompilationReport, document: &osg_profiles::ProfileD
     admission.blockers = admission_diagnostics::blockers(report, document);
     admission
         .blockers
-        .extend(NativeProfileHost::blockers(&plan));
+        .extend(NativeProfileHost::blockers(&plan, None));
     admission.waiting_baselines = plan
         .sources
         .iter()

@@ -186,10 +186,16 @@ impl ProfileWake {
     }
     fn observed(&self) -> u64 { self.epoch.load(Ordering::Acquire) }
     fn wait(&self, observed: u64, timeout: std::time::Duration) -> bool {
+        self.wait_scheduled(observed, Some(timeout))
+    }
+    fn wait_scheduled(&self, observed: u64, timeout: Option<std::time::Duration>) -> bool {
         // An IPC wait inside poll may consume an unpark token. The epoch still
         // requires another drain before the worker may return to its fallback.
         if self.observed() != observed { return false; }
-        std::thread::park_timeout(timeout);
+        match timeout {
+            Some(timeout) => std::thread::park_timeout(timeout),
+            None => std::thread::park(),
+        }
         true
     }
 }
@@ -367,9 +373,11 @@ impl GatewayManager {
         let prepare_companions = companion_host.clone();
         let prepare_controllers = controllers.clone();
         let prepare_session = profile_session.clone();
+        let prepare_wake = profile_wake.clone();
         let profile_prepare: ProfilePrepare = Arc::new(move |candidate| {
             let outgoing = prepare_session.lock().unwrap_or_else(|p| p.into_inner()).native_handoff_source(candidate)?;
-            crate::profile_session_host::NativeProfileHost::stage_with_output_handoff(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate, outgoing)
+            let wake = prepare_wake.clone();
+            crate::profile_session_host::NativeProfileHost::stage_with_output_handoff(&prepare_resources, &prepare_games, &prepare_companions, prepare_controllers.clone(), native, candidate, outgoing, Arc::new(move || wake.notify()))
         });
         let profile_closed = Arc::new(AtomicBool::new(false));
         let activity = crate::activity::Runtime::new(&anchor);
@@ -384,13 +392,13 @@ impl GatewayManager {
                 while !closed.load(Ordering::Acquire) {
                     let observed = wake.observed();
                     crate::profile_session_desktop::observe_foreground();
-                    let (active, deadline) = {
+                    let (service, deadline) = {
                         let mut runtime = runtime.lock().unwrap_or_else(|p| p.into_inner());
                         let _ = runtime.poll();
                         activity_session.lock().unwrap_or_else(|p|p.into_inner()).observe(runtime.status());
-                        (runtime.status().owner.is_some(), runtime.next_deadline())
+                        (runtime.service_interval(), runtime.next_deadline())
                     };
-                    wake.wait(observed, crate::profile_session::scheduling::service_wait(active, deadline, std::time::Instant::now()));
+                    wake.wait_scheduled(observed, crate::profile_session::scheduling::service_wait(service, deadline, std::time::Instant::now()));
                 }
             });
             let _ = profile_wake.thread.set(worker.thread().clone());
@@ -1507,6 +1515,28 @@ mod tests {
             value
         }).collect()
     }
+    #[test]
+    fn profile_wake_without_service_timer_waits_for_committed_notification() {
+        let wake = Arc::new(ProfileWake::default());
+        let worker_wake = wake.clone();
+        let (ready, entered) = std::sync::mpsc::sync_channel(1);
+        let (done, finished) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let observed = worker_wake.observed();
+            ready.send(()).unwrap();
+            while worker_wake.observed() == observed {
+                worker_wake.wait_scheduled(observed, None);
+            }
+            done.send(worker_wake.observed()).unwrap();
+        });
+        wake.thread.set(worker.thread().clone()).unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(finished.recv_timeout(Duration::from_millis(40)).is_err());
+        wake.notify();
+        assert_eq!(finished.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
+        worker.join().unwrap();
+    }
+
     #[test]
     fn profile_wake_preserves_committed_frames_before_park_during_poll_and_coalesced_bursts() {
         let wake = Arc::new(ProfileWake::default());

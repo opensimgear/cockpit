@@ -10,13 +10,18 @@ use osg_mapping::{
 };
 use std::{
     process::{Child, Command, Stdio},
-    sync::mpsc::{self, Receiver, SyncSender, TryRecvError},
+    sync::{
+        mpsc::{self, Receiver, SyncSender, TryRecvError},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 pub const ARG: &str = "--osg-logic-worker-typed-v2";
 const RESPONSE_DEADLINE: Duration = Duration::from_millis(100);
 const RESPONSE_TIMEOUT: &str =
     "Script helper response exceeded 100 ms; evaluation is limited to 5 ms.";
+#[path = "typed_worker/transport.rs"]
+mod transport;
 pub struct TypedWorker {
     definition: Definition,
     pub source_hash: String,
@@ -24,10 +29,19 @@ pub struct TypedWorker {
     _resources: resources::Guard,
     outgoing: SyncSender<Request>,
     incoming: Receiver<Result<Reply, String>>,
+    events: Arc<transport::Events>,
     pending: Option<(Invocation, Instant)>,
 }
 impl TypedWorker {
     pub fn spawn(executable: &std::path::Path, node: &Node) -> Result<Self, String> {
+        Self::spawn_with_wake(executable, node, Arc::new(|| {}))
+    }
+    /// The callback only signals the owner to poll; it runs on the pipe threads.
+    pub fn spawn_with_wake(
+        executable: &std::path::Path,
+        node: &Node,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Self, String> {
         let definition = Definition::from_node(node)?;
         let mut command = Command::new(executable);
         command
@@ -49,24 +63,18 @@ impl TypedWorker {
                 return Err(error);
             }
         };
-        let mut input = child.stdin.take().ok_or("Missing logic worker stdin.")?;
-        let mut output = child.stdout.take().ok_or("Missing logic worker stdout.")?;
+        let input = child.stdin.take().ok_or("Missing logic worker stdin.")?;
+        let output = child.stdout.take().ok_or("Missing logic worker stdout.")?;
         let (tx, requests) = mpsc::sync_channel::<Request>(1);
         let (replies, rx) = mpsc::sync_channel(1);
+        let events = Arc::new(transport::Events::new(wake));
+        let writer_events = events.clone();
+        let writer_replies = replies.clone();
         std::thread::spawn(move || {
-            while let Ok(request) = requests.recv() {
-                if wire::write(&request, &mut input).is_err() {
-                    break;
-                }
-            }
+            transport::write_requests(input, requests, writer_replies, writer_events)
         });
-        std::thread::spawn(move || loop {
-            let reply = wire::read(&mut output);
-            let failed = reply.is_err();
-            if replies.send(reply).is_err() || failed {
-                break;
-            }
-        });
+        let reader_events = events.clone();
+        std::thread::spawn(move || transport::read_replies(output, replies, reader_events));
         let mut worker = Self {
             source_hash: crate::worker::hash(&definition.source),
             definition: definition.clone(),
@@ -74,6 +82,7 @@ impl TypedWorker {
             _resources: resources,
             outgoing: tx,
             incoming: rx,
+            events,
             pending: None,
         };
         worker
@@ -94,6 +103,10 @@ impl TypedWorker {
         }
     }
     pub fn submit(&mut self, request: ScriptInvocation) -> Result<(), String> {
+        if let Some(error) = self.events.failure() {
+            self.terminate();
+            return Err(error);
+        }
         if self.pending.is_some() || self.child.is_none() {
             return Err("Script helper is busy or stopped.".into());
         }
@@ -104,17 +117,21 @@ impl TypedWorker {
         }
         let retained = request.clone();
         let started = Instant::now();
+        self.pending = Some((retained, started));
         if let Err(error) = self.outgoing.try_send(Request::Invoke { request }) {
             self.terminate();
             return Err(error.to_string());
         }
-        self.pending = Some((retained, started));
         Ok(())
     }
     pub fn id(&self) -> Option<u32> {
         self.child.as_ref().map(Child::id)
     }
     pub fn alive(&mut self) -> bool {
+        if self.events.failure().is_some() {
+            self.terminate();
+            return false;
+        }
         self.child
             .as_mut()
             .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
@@ -122,15 +139,23 @@ impl TypedWorker {
     pub fn pending(&self) -> Option<&ScriptTicket> {
         self.pending.as_ref().map(|(request, _)| &request.ticket)
     }
+    /// Absolute host response deadline. Polling or receiving a reply never extends it.
+    pub fn response_deadline(&self) -> Option<Instant> {
+        self.pending
+            .as_ref()
+            .map(|(_, started)| *started + RESPONSE_DEADLINE)
+    }
     pub fn poll(&mut self) -> Option<(ScriptTicket, Result<ScriptTransaction, String>)> {
         let (request, started) = self.pending.as_ref()?;
-        let result = response(
-            &self.incoming,
-            request,
-            &self.definition,
-            *started,
-            Instant::now,
-        )?;
+        let result = self.events.failure().map(Err).or_else(|| {
+            response(
+                &self.incoming,
+                request,
+                &self.definition,
+                *started,
+                Instant::now,
+            )
+        })?;
         let ticket = request.ticket.clone();
         self.pending = None;
         if result.is_err() {
@@ -139,6 +164,7 @@ impl TypedWorker {
         Some((ticket, result))
     }
     pub fn terminate(&mut self) {
+        self.events.stop();
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             std::thread::spawn(move || {

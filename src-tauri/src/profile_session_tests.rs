@@ -15,6 +15,7 @@ struct Probe {
     reject_admission: bool,
     returned_peripheral: Option<String>,
     deadline: Option<std::time::Instant>,
+    internal: bool,
 }
 struct Fake(Arc<Mutex<Probe>>);
 fn checkpoint(probe: &mut Probe, name: String) -> Result<(), String> {
@@ -121,6 +122,9 @@ impl Host for Fake {
     fn next_deadline(&self, _: &OwnedRun) -> Option<std::time::Instant> {
         self.0.lock().unwrap().deadline
     }
+    fn service_interval(&self, _: &OwnedRun) -> Option<std::time::Duration> {
+        (!self.0.lock().unwrap().internal).then_some(std::time::Duration::from_millis(5))
+    }
     fn peripheral_change(&self,owner:&RunOwner)->Option<String> {
         let probe=self.0.lock().unwrap();
         (probe.owner.as_ref()==Some(owner)).then(||probe.returned_peripheral.clone()).flatten()
@@ -185,6 +189,19 @@ fn scheduled_deadlines_belong_only_to_the_current_active_owner() {
     runtime.poll().unwrap();
     assert_eq!(runtime.status().state, State::Faulted);
     assert_eq!(runtime.next_deadline(), None);
+}
+
+#[test]
+fn internal_service_opt_out_cannot_survive_the_owned_run() {
+    let (mut runtime, probe) = coordinator(None);
+    probe.lock().unwrap().internal = true;
+    assert_eq!(runtime.service_interval(), Some(std::time::Duration::from_millis(100)));
+    runtime.apply(candidate()).unwrap();
+    assert_eq!(runtime.service_interval(), None);
+    probe.lock().unwrap().internal = false;
+    assert_eq!(runtime.service_interval(), Some(std::time::Duration::from_millis(5)));
+    runtime.stop().unwrap();
+    assert_eq!(runtime.service_interval(), Some(std::time::Duration::from_millis(100)));
 }
 #[test]
 fn returned_peripherals_reuse_the_captured_source_and_cannot_revive_a_stopped_or_replaced_owner() {

@@ -1,6 +1,9 @@
 use super::super::*;
 use crate::signal::{Direction, PortDescriptor};
 
+#[path = "constant_tests.rs"]
+mod constants;
+
 fn endpoint(node: &str) -> Endpoint {
     Endpoint {
         node_id: node.into(),

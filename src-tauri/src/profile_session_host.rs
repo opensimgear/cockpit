@@ -22,6 +22,9 @@ mod activation_heartbeat;
 mod activation_phases;
 #[path = "profile_session/game_publication.rs"]
 mod game_publication;
+#[cfg(test)]
+#[path = "profile_session/script_scope_tests.rs"]
+mod script_scope_tests;
 
 use crate::profile_session::{
     Admission, AdmissionBlocker, ApplyPhase, BlockerKind, Candidate, Health, Host, OwnedRun,
@@ -281,7 +284,7 @@ impl NativeProfileHost {
             Ok(())
         }
     }
-    fn blockers(plan: &ExecutionPlan) -> Vec<AdmissionBlocker> {
+    fn blockers(plan: &ExecutionPlan, candidate: Option<&Candidate>) -> Vec<AdmissionBlocker> {
         let mut blockers = vec![];
         // Every enabled adapter must have its concrete native implementation.
         // Capability gaps are explicit; they never fall back to browser values.
@@ -319,12 +322,15 @@ impl NativeProfileHost {
                 });
             }
         }
+        let internal = candidate.is_some_and(|candidate| candidate.game_id.is_none() && !candidate.launch_preparation
+            && crate::profile_session::scheduling::internal_sources_only(&candidate.document)
+            && plan.sinks.is_empty() && plan.program.sinks.is_empty() && plan.program.controllers.is_empty());
         if plan.program.nodes.iter().any(|node| {
             matches!(
                 node.operation,
                 osg_mapping::program::Operation::Script { .. }
             )
-        }) && !osg_mapping_host::service::SCRIPT_LIVE_QUALIFIED
+        }) && !osg_mapping_host::service::SCRIPT_LIVE_QUALIFIED && !internal
         {
             blockers.push(AdmissionBlocker {
                 kind: BlockerKind::Script,
@@ -586,7 +592,7 @@ impl NativeProfileHost {
         candidate:&Candidate,
         outgoing:Option<OwnedRun>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
-        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,None,
+        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,None,None,
             &osg_virtual_controller::inspection::current,
             &|ids|osg_virtual_controller::inspection::sample_current(ids).map(|sample|sample.into_parts()))
     }
@@ -598,12 +604,13 @@ impl NativeProfileHost {
         native:bool,
         candidate:&Candidate,
         source:Option<crate::profile_session::HandoffSource>,
+        wake:crate::profile_session_scripts::Wake,
     )->Result<Arc<crate::profile_session::Stage>,String> {
         if source.as_ref().is_some_and(|source|Some(source.admission_epoch)!=candidate.admission_epoch) {
             return Err("The outgoing virtual proof belongs to another admission epoch.".into());
         }
         let outgoing=source.as_ref().map(|source|source.run.clone());
-        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,source,
+        Self::stage_internal(resources,games,companions,controllers,native,candidate,outgoing,source,Some(wake),
             &osg_virtual_controller::inspection::current,
             &|ids|osg_virtual_controller::inspection::sample_current(ids).map(|sample|sample.into_parts()))
     }
@@ -616,6 +623,7 @@ impl NativeProfileHost {
         candidate:&Candidate,
         outgoing:Option<OwnedRun>,
         source:Option<crate::profile_session::HandoffSource>,
+        wake:Option<crate::profile_session_scripts::Wake>,
         inspect:&dyn Fn()->Result<Vec<osg_virtual_controller::vjoy::Slot>,String>,
         sample:&dyn Fn(&[u8])->Result<(Vec<osg_virtual_controller::vjoy::Slot>,Instant),String>,
     )->Result<Arc<crate::profile_session::Stage>,String> {
@@ -683,7 +691,7 @@ impl NativeProfileHost {
         let publication=crate::profile_session_overrides::Staged::prepare(&plan,&snapshot)?;
         let mut admission = Admission::default();
         admission.blockers = admission_diagnostics::blockers(&report, &candidate.document);
-        admission.blockers.extend(Self::blockers(&plan));
+        admission.blockers.extend(Self::blockers(&plan, Some(source_candidate)));
         admission.waiting_baselines = plan
             .sources
             .iter()
@@ -745,6 +753,7 @@ impl NativeProfileHost {
         let scripts = crate::profile_session_scripts::Scripts::prepare(
             &prepared.plan.program,
             &std::env::current_exe().map_err(|error| error.to_string())?,
+            wake,
         )?;
         let game = crate::profile_session_games::GameSources::prepare(
             &prepared.plan,
@@ -1102,14 +1111,31 @@ impl Host for NativeProfileHost {
         self.prepared.remove(&key(&run.owner));
         Ok(())
     }
+    fn service_interval(&self, run: &OwnedRun) -> Option<std::time::Duration> {
+        let internal = self.prepared.get(&key(&run.owner)).is_some_and(|state| {
+            state.owner == run.owner && !state.vehicle_paused
+                && state.reducer.as_ref().is_some_and(|reducer| reducer.active() && reducer.fault().is_none())
+                && crate::profile_session::scheduling::internal_sources_only(&state.source_document)
+                && crate::profile_session::scheduling::internal_sources_only(&state.document)
+                && state.assignments.is_empty() && state.source_assignments.is_empty()
+                && run.owner.game_id.is_none() && state.game_preparation.is_none()
+                && state.child_game_owner.is_none() && state.game_resume.is_none()
+                && state.output.is_none() && state.desktop.is_none()
+                && state.actions.is_empty() && state.publication.is_empty()
+                && state.visibility.is_empty() && state.companions.is_empty()
+        });
+        (!internal).then_some(std::time::Duration::from_millis(5))
+    }
     fn next_deadline(&self, run: &OwnedRun) -> Option<Instant> {
         let state = self.prepared.get(&key(&run.owner))?;
-        let deadline = state.reducer.as_ref()?.next_deadline_us()?;
-        // Sample before taking the native clock lock: contention can make the
-        // estimate early, but must never postpone an already-authored deadline.
-        let before = Instant::now();
-        let now = self.controllers.stream_page("", 0).captured_us;
-        Some(crate::profile_session::scheduling::host_deadline(before, now, deadline.0))
+        let routing = state.reducer.as_ref().and_then(|reducer| reducer.next_deadline_us()).map(|deadline| {
+            // Clock-lock contention can make this early, never postpone it.
+            let before = Instant::now();
+            let now = self.controllers.stream_page("", 0).captured_us;
+            crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
+        });
+        [routing, state.scripts.next_deadline(), state.output.as_ref().and_then(|output| output.renewal_deadline())]
+            .into_iter().flatten().min()
     }
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String> {
         self.fence(&run.owner)?;
@@ -1158,6 +1184,7 @@ impl Host for NativeProfileHost {
             .as_mut()
             .ok_or("The profile reducer is stopped.")?;
         let frames = frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames).chain(state.debug_inputs.poll()).collect::<Vec<_>>();
+        degraded.extend(state.scripts.revoke_failed(reducer));
         let batch_clock=frames.iter().map(|frame|frame.captured_us).max().unwrap_or(reducer.at_us());
         state.debug_inputs.refresh_liveness(reducer,Counter(batch_clock.0.max(reducer.at_us().0)))?;
         if !frames.is_empty() {
