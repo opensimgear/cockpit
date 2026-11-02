@@ -1,11 +1,15 @@
 //! Bounded, nonconsuming native report history. UI snapshots never feed mappings.
 use crate::registry::{Control, Sample};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Weak,
+    },
     time::Instant,
-    sync::Arc,
 };
 pub const REPORT_LIMIT: usize = 1024;
+pub const REPORT_WATCH_LIMIT: usize = 64;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reason {
     Baseline,
@@ -44,16 +48,39 @@ pub struct Page {
     pub gap: bool,
     pub events: Vec<Event>,
 }
+struct WatchState {
+    ids: BTreeSet<String>,
+    wake: Arc<dyn Fn() + Send + Sync>,
+    read_cursor: AtomicU64,
+}
+/// A source selection's wake lease. Dropping it revokes the callback without
+/// taking a registry lock; the journal retains only a weak reference.
+#[must_use = "keep the report watch alive for the selected routing sources"]
+pub struct ReportWatch {
+    state: Arc<WatchState>,
+}
+impl ReportWatch {
+    /// Acknowledge an atomically copied snapshot or page. A stale acknowledgement
+    /// cannot move the consumer backwards or create spurious overflow wakeups.
+    pub fn advance(&self, cursor: u64) {
+        self.state.read_cursor.fetch_max(cursor, Ordering::Release);
+    }
+}
 pub(crate) struct Journal {
     origin: Instant,
     cursor: u64,
     events: VecDeque<Event>,
-    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    watches: Vec<Weak<WatchState>>,
 }
 impl Clone for Journal {
     fn clone(&self) -> Self {
         // Metadata transactions cannot notify the live routing owner.
-        Self {origin:self.origin,cursor:self.cursor,events:self.events.clone(),wake:None}
+        Self {
+            origin: self.origin,
+            cursor: self.cursor,
+            events: self.events.clone(),
+            watches: vec![],
+        }
     }
 }
 impl Default for Journal {
@@ -62,12 +89,44 @@ impl Default for Journal {
             origin: Instant::now(),
             cursor: 0,
             events: VecDeque::new(),
-            wake: None,
+            watches: vec![],
         }
     }
 }
 impl Journal {
-    pub(crate) fn set_wake(&mut self, wake: Arc<dyn Fn() + Send + Sync>) { self.wake=Some(wake); }
+    pub(crate) fn watch(
+        &mut self,
+        ids: &[String],
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<ReportWatch, String> {
+        self.watches.retain(|watch| watch.strong_count() > 0);
+        if self.watches.len() >= REPORT_WATCH_LIMIT {
+            return Err("Controller report watch limit reached.".into());
+        }
+        let state = Arc::new(WatchState {
+            ids: ids.iter().cloned().collect(),
+            wake,
+            read_cursor: AtomicU64::new(self.cursor),
+        });
+        self.watches.push(Arc::downgrade(&state));
+        Ok(ReportWatch { state })
+    }
+    fn notify(&mut self, source: &str, evicted: Option<u64>, exhausted: bool) {
+        self.watches.retain(|watch| {
+            let Some(watch) = watch.upgrade() else {
+                return false;
+            };
+            if exhausted
+                || watch.ids.contains(source)
+                || evicted.is_some_and(|cursor| cursor > watch.read_cursor.load(Ordering::Acquire))
+            {
+                // Wake only: the owner drains committed state after the capture
+                // mutex exits. Callbacks must not take host/registry locks or do I/O.
+                (watch.wake)();
+            }
+            true
+        });
+    }
     pub fn now(&self) -> u64 {
         u64::try_from(self.origin.elapsed().as_micros())
             .unwrap_or(u64::MAX - 1)
@@ -80,17 +139,16 @@ impl Journal {
         // Exhaustion faults consumers permanently; it must never reuse a cursor.
         let Some(next) = self.cursor.checked_add(1) else {
             self.events.clear();
-            if let Some(wake)=&self.wake {wake();}
+            self.notify(&event.source, None, true);
             return None;
         };
         self.cursor = next;
         event.cursor = next;
         event.captured_us = self.now();
-        if self.events.len() == REPORT_LIMIT {
-            self.events.pop_front();
-        }
+        let evicted =
+            (self.events.len() == REPORT_LIMIT).then(|| self.events.pop_front().unwrap().cursor);
         self.events.push_back(event.clone());
-        if let Some(wake)=&self.wake {wake();}
+        self.notify(&event.source, evicted, next == u64::MAX);
         Some(event)
     }
     pub fn page(&self, session: &str, expected_session: &str, after: u64) -> Page {

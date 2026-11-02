@@ -62,6 +62,7 @@ impl NativeProfileHost {
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
                     self.controllers.as_ref(),
+                    self.input_wake.clone(),
                     |token| Self::validate_token(&self.resources, token),
                 ).map_err(|error| format!("Initial physical input baseline failed. {error}"))?;
                 let state = self.run(&run.owner)?;
@@ -137,6 +138,7 @@ impl NativeProfileHost {
                 let (inputs, baselines) = crate::profile_session_inputs::HidInputs::capture(
                     &delivery,
                     controllers.as_ref(),
+                    self.input_wake.clone(),
                     |token| Self::validate_token(&resources, token),
                 ).map_err(|error| format!("Final physical input baseline failed. {error}"))?;
                 let game_frames = self.game_baseline(&run.owner)

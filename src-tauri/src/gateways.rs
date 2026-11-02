@@ -302,8 +302,6 @@ impl GatewayManager {
         let retired_recovery = Arc::new(crate::profile_retired_recovery::Recovery::new(root.clone(), native));
         let companion_clock = controllers.clone();
         let profile_wake = Arc::new(ProfileWake::default());
-        let controller_wake = profile_wake.clone();
-        controllers.set_report_wake(Arc::new(move || controller_wake.notify()));
         let companion_wake = profile_wake.clone();
         let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::with_wake(
             Arc::new(move || companion_clock.stream_page("", 0).captured_us),
@@ -363,9 +361,11 @@ impl GatewayManager {
         let profile_activations=Arc::new(profile_activation_progress::Tracker::default());
         let progress_tracker=profile_activations.clone();
         let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());
+        let input_wake = profile_wake.clone();
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone())
-                .with_progress(Arc::new(move|epoch,step,message|progress_tracker.note(epoch,step,message))),
+                .with_progress(Arc::new(move|epoch,step,message|progress_tracker.note(epoch,step,message)))
+                .with_input_wake(Arc::new(move || input_wake.notify())),
             native.then(|| crate::config_paths::config_path().with_file_name("profile-session-v1.json")),
         )));
         let prepare_resources = profile_resources.clone();

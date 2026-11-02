@@ -133,6 +133,7 @@ pub(crate) struct NativeProfileHost {
     recovery_publications: BTreeMap<String, crate::profile_session_overrides::Overrides>,
     last_desktop_status: serde_json::Value,
     progress: Option<ProgressCallback>,
+    input_wake: Option<crate::profile_session_scripts::Wake>,
     cleanup_epoch: Option<u64>,
 }
 fn key(owner: &RunOwner) -> String {
@@ -191,6 +192,7 @@ impl NativeProfileHost {
             recovery_publications: BTreeMap::new(),
             last_desktop_status: serde_json::Value::Null,
             progress: None,
+            input_wake: None,
             cleanup_epoch: None,
         }
     }
@@ -198,6 +200,10 @@ impl NativeProfileHost {
     /// from whichever profile happens to be active when a callback is read.
     pub(crate) fn with_progress(mut self, callback: ProgressCallback) -> Self {
         self.progress = Some(callback);
+        self
+    }
+    pub(crate) fn with_input_wake(mut self, wake: crate::profile_session_scripts::Wake) -> Self {
+        self.input_wake = Some(wake);
         self
     }
     fn report_progress(&self, owner: &RunOwner, step: &str, message: &str) {
@@ -983,6 +989,7 @@ impl Host for NativeProfileHost {
         if let Some(state) = self.prepared.get_mut(&key(&run.owner)) {
             state.game_publication.cancel();
             state.debug_inputs.clear();
+            state.inputs.take();
             state.publication.revoke_renewal();
             if let Some(mut desktop) = state.desktop.take() {
                 let program=state.delivery.as_ref().or(state.acquisition_plan.as_ref()).or(state.report.plan.as_ref())

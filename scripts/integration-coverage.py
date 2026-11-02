@@ -66,7 +66,8 @@ def main():
     module_names.append('xplane/subscriptions.rs')
     module_names.extend(['xplane/owner.rs', 'xplane/owner/client.rs', 'xplane/owner/worker.rs',
                          'xplane/permissions.rs', 'games/process_monitor.rs', 'gateways/process_monitor.rs', 'mcp_tools.rs',
-                         'profile_session/scheduling.rs', 'profile_session_scripts.rs'])
+                         'profile_session/scheduling.rs', 'profile_session_scripts.rs',
+                         'profile_session_inputs.rs', 'profile_session/activation_phases.rs'])
     if os.name == 'nt':
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',

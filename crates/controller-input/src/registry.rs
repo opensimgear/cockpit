@@ -38,8 +38,13 @@ impl Default for Registry {
 impl Registry {
     /// Wake-only callback: it must not collect state, perform I/O or take a
     /// routing lock. The receiver reads committed reports after this lock exits.
-    pub fn set_report_wake(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
-        self.journal.set_wake(wake);
+    pub fn watch_reports(&mut self, ids: &[String], wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Result<crate::stream::ReportWatch, String> {
+        if ids.is_empty() || ids.len() > 16
+            || ids.iter().collect::<BTreeSet<_>>().len() != ids.len()
+            || ids.iter().any(|id| !self.sources.contains_key(id)) {
+            return Err("Select 1 to 16 distinct known physical controllers.".into());
+        }
+        self.journal.watch(ids, wake)
     }
     pub fn resource_inventory(&self) -> ResourceInventory {
         ResourceInventory {
