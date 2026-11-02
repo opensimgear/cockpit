@@ -179,6 +179,7 @@ impl Reader {
         &mut self,
         now_ms: u64,
     ) -> Result<(Option<String>, Capture), String> {
+        let source_clock = Instant::now();
         match self {
             Self::Dcs {
                 source,
@@ -193,19 +194,25 @@ impl Reader {
             } => {
                 guard.validate(false)?;
                 let mut drained = false;
+                let mut reports = Vec::with_capacity(64);
                 for _ in 0..64 {
-                    let Some(bytes) = source.receive()? else {
+                    let Some(report) = source.receive_captured()? else {
                         drained = true;
                         break;
                     };
-                    decoder.feed(&bytes, now_ms);
+                    reports.push(report);
                 }
-                if !drained && source.receive()?.is_some() {
+                if !drained && source.receive_captured()?.is_some() {
                     decoder.reset_stream(now_ms);
                     return Err("DCS vehicle observation backlog exceeded its bound.".into());
                 }
-                decoder.tick(now_ms);
-                let snapshot = decoder.snapshot(now_ms);
+                let captured_clock = Instant::now();
+                let captured_ms = now_ms.saturating_add(u64::try_from(captured_clock.duration_since(source_clock).as_millis()).unwrap_or(u64::MAX));
+                for report in reports {
+                    decoder.feed_captured(&report, captured_ms, captured_clock);
+                }
+                decoder.tick(captured_ms);
+                let snapshot = decoder.snapshot(captured_ms);
                 if let Some(aircraft) = snapshot.aircraft.as_ref().filter(|_| snapshot.fresh) {
                     let path = Path::new(connection["cataloguePath"].as_str().unwrap());
                     let current = dcs_profile::resolve_aircraft_module(path, aircraft)?;

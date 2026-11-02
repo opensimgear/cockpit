@@ -121,8 +121,8 @@ impl GameSources {
             }
         }
         // Process and catalogue validation may outlast the telemetry lease.
-        // Timestamp actual acquisition after those checks, using the host's
-        // source clock, rather than backdating newly received simulator bytes.
+        // Correlate native capture after those checks. Queueing/validation time
+        // must not become new source evidence when the consumer finally reads.
         let now_us = clock();
         let snapshot = self.read(now_us, baseline);
         match snapshot {
@@ -223,14 +223,15 @@ impl GameSources {
                     return Ok(None);
                 };
                 let mut drained = false;
+                let mut reports = Vec::with_capacity(64);
                 for _ in 0..64 {
-                    let Some(bytes) = receiver.receive()? else {
+                    let Some(report) = receiver.receive_captured()? else {
                         drained = true;
                         break;
                     };
-                    decoder.feed(&bytes, now_us / 1000);
+                    reports.push(report);
                 }
-                if !drained && receiver.receive()?.is_some() {
+                if !drained && receiver.receive_captured()?.is_some() {
                     decoder.reset_stream(now_us / 1000);
                     if baseline {
                         // Activation can spend longer than the receive bound in
@@ -245,6 +246,12 @@ impl GameSources {
                         return Ok(None);
                     }
                     return Err("The native simulator receive queue exceeded its bound; the branch was disarmed instead of replaying a backlog.".into());
+                }
+                // Anchor after taking this bounded batch. A concurrent native
+                // receive during draining is valid, not a future-clock fault.
+                let captured_clock = Instant::now();
+                for report in reports {
+                    decoder.feed_captured(&report, now_us / 1000, captured_clock);
                 }
                 decoder.tick(now_us / 1000);
                 Ok(Some(decoder.snapshot(now_us / 1000)))

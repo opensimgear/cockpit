@@ -555,19 +555,20 @@ fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frame
     sender
         .send_to(&bytes(1, true), ("127.0.0.1", port))
         .unwrap();
-    let snapshot = receive_counter(&mut source, 1, 0);
-    assert!(!source.frames(snapshot, 0).fresh);
+    // The source clock predates receive ownership, including queued packets.
+    let snapshot = receive_counter(&mut source, 1, 1_000_000);
+    assert!(!source.frames(snapshot, 1_000_000).fresh);
     sender
         .send_to(&bytes(2, true), ("127.0.0.1", port))
         .unwrap();
-    let snapshot = receive_counter(&mut source, 2, 10_000);
-    let baseline = source.frames(snapshot, 10_000);
+    let snapshot = receive_counter(&mut source, 2, 1_010_000);
+    let baseline = source.frames(snapshot, 1_010_000);
     assert!(baseline.fresh);
     assert_eq!(
         baseline.frames[0].changes[0].sample,
         SignalSample::scalar(PortValue::Number(1.0))
     );
-    let lost = source.lose(20_000, "Verified process exited".into());
+    let lost = source.lose(1_020_000, "Verified process exited".into());
     assert!(lost.context_lost);
     assert_eq!(lost.frames.len(), 1);
     assert_eq!(lost.frames[0].source, "game");
@@ -1136,10 +1137,8 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
         baseline = reader.poll_baseline(&games, clock);
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert_eq!(
-        baseline.frames[0].captured_us.0, 2_010_000,
-        "New bytes must not inherit the clock from before slow native validation"
-    );
+    assert_eq!(baseline.frames[0].captured_us.0, 2_010_000,
+        "Reducer admission follows validation; native capture age stays in decoder evidence");
     platform.validation_cost.store(101_000, Ordering::SeqCst);
     assert!(
         !reader.poll_baseline(&games, clock).fresh,

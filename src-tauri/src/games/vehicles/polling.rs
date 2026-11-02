@@ -48,7 +48,8 @@ impl VehiclePoll {
         // Inspection requests made while the reader was detached are picked up
         // on its next poll. No reader may hold the state mutex during provider I/O.
         let _ = self.reader.inspect(&self.integration, &self.inspection);
-        self.result = Some(self.reader.poll_telemetry(self.now_ms).map(
+        let read_ms = self.now_ms.saturating_add(u64::try_from(self.at.elapsed().as_millis()).unwrap_or(u64::MAX));
+        self.result = Some(self.reader.poll_telemetry(read_ms).map(
             |(current, mut capture)| {
                 capture.at = self.at;
                 (current, capture)
