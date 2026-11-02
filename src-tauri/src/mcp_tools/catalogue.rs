@@ -108,6 +108,8 @@ pub fn catalogue() -> Vec<Value> {
         tool("game_installation_select","Select one discovered installation for a registered game without launching it.",vec![("gameId",game_id()),("installationId",string(256))],&["gameId","installationId"]),
         tool("game_vehicles_list","Search/page one game's retained native aircraft/car catalogue without selecting a vehicle, registering resources or starting a provider. Includes current native vehicle context and a catalogue/setup stamp; these metadata do not prove current live readiness.",fields(vec![("gameId",game_id()),("search",json!({"type":"string","maxLength":200}))],page()),&["gameId"]),
         tool("game_telemetry_inspect","Read bounded passive telemetry values and canonical channel metadata from one game. This does not start a provider or apply a profile.",fields(vec![("gameId",string(64)),("search",json!({"type":"string","maxLength":200})),("group",json!({"type":"string","maxLength":256}))],page()),&[]),
+        tool("game_process_monitor_enable","Explicitly request Windows permission for native process notifications for the currently observed X-Plane session. May show Windows consent for a temporary helper; installs no service and sends no simulator commands. Inspect games_list for progress.",vec![("gameId",game_id())],&["gameId"]),
+        tool("game_process_monitor_cancel","Cancel pending permission or stop process monitoring for this X-Plane integration. This withdraws its telemetry authority and closes its temporary helper.",vec![("gameId",game_id())],&["gameId"]),
         tool("game_aircraft_resource","Explicitly register an installed DCS aircraft catalogue as an authoring resource in native inventory. This changes catalogue discovery but does not activate a game/provider/profile. Uses native installed catalogue validation; accepts no filesystem path.",vec![("vehicleId",string(128))],&["vehicleId"]),
         tool("companions_list","List retained companion resources with exact identities and connection state from the native inventory.",page(),&[]),
         tool("mcp_settings_get","Read this running Cockpit MCP server's public configuration, credential metadata and exact settingsRevision. Bearer tokens and hashes are excluded.",vec![],&[]),
@@ -213,6 +215,8 @@ pub fn is_mutation(name: &str) -> bool {
                 | "game_tags_save"
                 | "game_remove"
                 | "game_installation_select"
+                | "game_process_monitor_enable"
+                | "game_process_monitor_cancel"
                 | "gateway_session"
                 | "gateway_config_change"
                 | "usb_module_session"

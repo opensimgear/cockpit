@@ -5,6 +5,8 @@ use crate::{
     transport::{Factory, NativeFactory, PortInfo},
 };
 use serde_json::{json, Value};
+#[path = "gateways/process_monitor.rs"]
+mod process_monitor;
 
 /// A metadata write may carry one already-bounded discovery artwork preview
 /// (128 KiB JPEG plus its base64 and JSON envelope).
@@ -147,7 +149,7 @@ fn profile_guard_operation(command: &str) -> Option<&str> {
         "companion_status" | "companion_inventory" | "companion_firmware_check" | "companion_usb_ports" | "companion_usb_status" | "companion_browser_certificate"
         | "companion_publish_begin" | "companion_publish_chunk" | "companion_publish_commit" | "companion_publish_abort" | "companion_prune"
         | "controller_list" | "controller_inspect" | "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_restore"
-        | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_metadata_get" | "game_telemetry_inspect" | "game_integration_settings_save"
+        | "integration_get_state" | "integration_catalogue" | "dcs_status" | "dcs_catalogue" | "game_get_state" | "game_metadata_get" | "game_telemetry_inspect" | "game_integration_settings_save" | "game_process_monitor_enable" | "game_process_monitor_cancel"
         | "game_tag_definitions_save" | "game_tags_save" | "game_discovery_start" | "game_background_save" | "game_add" | "game_save"|"game_rescan" | "game_remove" | "game_discovery_apply"
         | "module_usb_ports" | "module_usb_list" | "module_usb_status" | "module_usb_config_read" | "module_usb_actions_describe" | "module_usb_actions_state" | "module_usb_events_state" | "module_usb_events_read") { return None; }
     if command.starts_with("module_usb_") || command.starts_with("controller_") || command.starts_with("config_") || command.starts_with("action_") || matches!(command,"connect"|"disconnect"|"release"|"profile_reset") { return Some("claim"); }
@@ -164,7 +166,7 @@ fn learning_interrupt(request:&Value)->bool{
         return !matches!(command,
             "module_usb_ports"|"module_usb_list"|"module_usb_status"|"module_usb_config_read"|"module_usb_actions_describe"|"module_usb_actions_state"|"module_usb_events_state"|"module_usb_events_read"
             |"controller_list"|"controller_inspect"|"controller_visibility_status"|"controller_visibility_inspect"|"controller_visibility_processes"
-            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_metadata_get"|"game_telemetry_inspect"|"game_discovery_start"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
+            |"integration_get_state"|"integration_catalogue"|"dcs_status"|"dcs_catalogue"|"game_get_state"|"game_metadata_get"|"game_telemetry_inspect"|"game_process_monitor_enable"|"game_process_monitor_cancel"|"game_discovery_start"|"game_background_save"|"companion_status"|"companion_inventory"|"companion_firmware_check"|"companion_usb_ports"|"companion_usb_status"|"companion_browser_certificate"
             |"companion_publish_begin"|"companion_publish_chunk"|"companion_publish_commit"|"companion_publish_abort"|"companion_prune");
     }
     matches!(command,"start"|"stop"|"apply"|"save"|"register"|"unregister"|"enable"|"disable"|"forget"|"update-profile"|"configure"|"claim"|"release"|"connect"|"disconnect"|"reconnect"|"remove"|"config_apply"|"config_apply_save"|"config_save"|"config_discard"|"config_reset"|"action_claim"|"action_claim_current"|"action_renew"|"action_release"|"action_invoke"|"action_invoke_owned"|"debug_invoke")
@@ -820,6 +822,9 @@ impl GatewayManager {
                 Err(error) => self.error(&error,None),
             };
         }
+        if command == "game_process_monitor_cancel" {
+            return self.process_monitor_cancel_request(&request, native_authorization.as_ref());
+        }
         if matches!(command, "game_get_state" | "game_discovery_start") {
             return self.request_inner_at(request, None, native_authorization.as_ref(), passive_profile_reads);
         }
@@ -1466,6 +1471,7 @@ impl Drop for GatewayManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("gateways/process_monitor_tests.rs");
     use std::{path::PathBuf, sync::mpsc, time::Duration};
     const CLIENT: &str = "cockpit-fleet-test-client";
     fn wake_source(wake: Arc<ProfileWake>) -> (osg_mapping_host::companions::CompanionProvider,

@@ -64,6 +64,14 @@ def main():
     module_names.extend(['dcs_bios/transport_client.rs', 'dcs_bios/decoded/mod.rs',
                          'dcs_bios/decoded/state.rs', 'dcs_bios/decoded/source.rs', 'dcs_profile/shared.rs'])
     module_names.append('xplane/subscriptions.rs')
+    module_names.extend(['xplane/owner.rs', 'xplane/owner/client.rs', 'xplane/owner/worker.rs',
+                         'xplane/permissions.rs', 'games/process_monitor.rs', 'gateways/process_monitor.rs', 'mcp_tools.rs'])
+    if os.name == 'nt':
+        module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
+                             'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',
+                             'xplane/process_events/bridge.rs', 'xplane/process_events/bridge/protocol.rs',
+                             'xplane/process_events/bridge/security.rs', 'xplane/process_events/bridge/wait.rs',
+                             'xplane/process_events/bridge/launch.rs'])
     parser.add_argument('--module', action='append', choices=module_names, help='Focused local coverage; CI measures every module.')
     parser.add_argument('--test-filter', action='append', default=[])
     parser.add_argument('--output-dir', type=Path,

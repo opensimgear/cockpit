@@ -238,6 +238,7 @@ impl GameSources {
             "x-plane-11" | "x-plane-12" => {
                 let mut connection = game.connection.clone();
                 connection["processIdentity"] = game.proof.process.value();
+                connection["providerSetupRevision"] = json!(game.proof.provider_setup_revision);
                 Reader::Xplane {
                     connection,
                     outputs: crate::game_channels::source_rows(&game.integration_key, &rows),

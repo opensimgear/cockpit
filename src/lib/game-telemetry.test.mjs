@@ -79,3 +79,10 @@ test('hide, resume and dispose fence late replies; failures retain only an expli
   failure.setActive(true);await failure.refresh();failing=true;assert.equal(await failure.refresh(),false);
   assert.match(failure.state.error,/Source disconnected/);assert.equal(failure.state.stale,true);assert.equal(telemetryValue(failure.state.report.games[0].channels[0],failure.state.stale),'—');
 });
+
+test('telemetry accepts the registered game library instead of assuming seven fixed titles',async()=>{
+  const games=Array.from({length:33},(_,index)=>game({id:`game-${index}`,channels:[],total:0,groups:[]}));
+  const client=new GameTelemetryClient(async()=>({schemaVersion:1,games}));
+  assert.equal((await client.inspect({gameId:'game-20',offset:0,limit:64})).games.length,33);
+  await assert.rejects(()=>new GameTelemetryClient(async()=>({schemaVersion:1,games:Array.from({length:513},(_,index)=>({...games[0],id:`game-${index}`}))})).inspect({offset:0,limit:64}),/invalid or incomplete/);
+});

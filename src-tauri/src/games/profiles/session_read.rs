@@ -249,7 +249,11 @@ impl GameSources {
                 canonical_outputs,
                 ..
             }) => {
-                let mut snapshot = source.poll(Instant::now()).0;
+                let mut snapshot = source.snapshot()?.0;
+                if self.game.as_ref().and_then(|game| game.proof.vehicle_id.as_ref())
+                    .zip(snapshot.aircraft.as_ref()).is_some_and(|(expected, actual)| expected.replace('\\', "/") != actual.replace('\\', "/")) {
+                    return Err("X-Plane aircraft changed from the captured game context; prepare a new reader.".into());
+                }
                 if let Some(game) = &self.game {
                     crate::game_channels::project_rows(
                         &game.integration_key,

@@ -106,6 +106,7 @@ pub mod stm32;
 mod transport;
 mod xplane;
 mod xplane_installation;
+pub fn process_events_helper_main() -> Option<i32> { xplane::process_helper_main() }
 
 // macOS exposes its system temporary parent through /var -> /private/var.
 // Positive storage fixtures use a real parent; explicit symlink tests still
@@ -426,6 +427,7 @@ pub fn run() {
             event,
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
+            xplane::permissions::cancel_all();
             desktop::shutdown(handle);
             handle.state::<profile_activation_window::ActivationWindowState>().shutdown();
             handle.state::<Arc<mcp::Server>>().shutdown();

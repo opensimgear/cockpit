@@ -1,6 +1,7 @@
 <script lang="ts">
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
+  import GameProcessMonitor from './GameProcessMonitor.svelte';
   import {gameCatalogue,type GameId} from './games';
   import {GameTelemetryClient,GameTelemetryController,preferredTelemetryGame,telemetryAge,telemetryContext,telemetryStatus,telemetryValue} from './game-telemetry';
   let {active=true,controller:supplied}:{active?:boolean;controller?:GameTelemetryController}=$props();
@@ -44,6 +45,7 @@
       <div class="source-heading"><div><h2>{game.name}</h2><p>{game.source||'Source not available'}</p></div><span class="source-status" class:live={!view.stale&&['live','ready','receiving'].includes(game.status)} class:paused={!view.stale&&game.status==='paused'}>{view.stale?'Stale capture':telemetryStatus(game.status)}</span></div>
       {#if game.message}<p class="source-message">{game.message}</p>{/if}
       <dl class="source-facts"><div><dt>Last packet</dt><dd>{game.packet??'Not observed'}</dd></div><div><dt>Packet age</dt><dd>{telemetryAge(game.ageMs)}</dd></div>{#each context as entry (entry.label)}<div><dt>{entry.label}</dt><dd>{entry.value}</dd></div>{/each}</dl>
+      <GameProcessMonitor gameId={game.id}/>
     </section>
     <div class="channel-layout">
       <nav class="telemetry-groups" aria-label="Telemetry categories"><button class:chosen={!group} aria-pressed={!group} onclick={()=>chooseGroup('')}>All channels <span>{game.groups.reduce((total,group)=>total+group.total,0)}</span></button>{#each game.groups as category (category.id)}<button class:chosen={group===category.id} aria-pressed={group===category.id} onclick={()=>chooseGroup(category.id)}>{category.label} <span>{category.total}</span></button>{/each}</nav>

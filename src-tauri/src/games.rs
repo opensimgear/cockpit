@@ -79,6 +79,7 @@ pub(crate) mod launch;
 mod metadata_api;
 #[path="games/metadata_read.rs"]
 mod metadata_read;
+mod process_monitor;
 #[path = "games/artwork_options.rs"]
 mod artwork_options;
 #[path="activity/games.rs"]
@@ -166,6 +167,10 @@ impl GamesRuntime {
     fn decorate_resource_catalogue(&self, mut catalogue: Vec<Value>) -> Vec<Value> {
         for game in catalogue.iter_mut().filter(|game| game["provider"].is_string()) {
             self.inner.setup.decorate(std::slice::from_mut(game));
+            if let Some(integration) = crate::game_discovery::integration_binding(game)
+                .filter(|integration| integration.starts_with("x-plane-")) {
+                game["processMonitor"] = crate::xplane::permissions::status(integration);
+            }
         }
         self.decorate_game_contexts(&mut catalogue);
         {
@@ -255,6 +260,9 @@ impl GamesRuntime {
         if matches!(command,"game_discovery_apply"|"game_save"|"game_rescan"|"game_remove"|"game_installation_select"|"game_tag_definitions_save"|"game_tags_save"|"game_background_save") {return self.metadata_request(request);}
         if command=="game_get_state" {
             if !known(request,&["command","clientId"]) {return Err("Unknown game status field.".into());}return Ok(());
+        }
+        if matches!(command, "game_process_monitor_enable" | "game_process_monitor_cancel") {
+            return self.process_monitor_request(request);
         }
         if command.starts_with("game_integration_") {
             if command != "game_integration_cancel" {

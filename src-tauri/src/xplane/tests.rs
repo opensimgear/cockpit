@@ -1,6 +1,6 @@
 use super::*;
 
-fn flush_requested(source: &mut Source) {
+fn flush_requested(source: &mut Driver) {
     while !source.pending_subscriptions.is_empty() {
         source.flush_subscriptions(source.last_subscription_batch + Duration::from_millis(100)).unwrap();
     }
@@ -30,7 +30,7 @@ include!("selection_tests.rs");
 // WouldBlock when the nonblocking receiver is polled immediately afterwards.
 // Synchronize at the socket boundary so a baseline is consumed before sending
 // its advancing frame, without changing the production polling behavior.
-fn poll_after_delivery(source: &mut Source, now: Instant) -> (ExportSnapshot, Value) {
+fn poll_after_delivery(source: &mut Driver, now: Instant) -> (ExportSnapshot, Value) {
     let deadline = Instant::now() + Duration::from_secs(5);
     // Windows rejects a short UDP peek with WSAEMSGSIZE instead of truncating.
     let mut datagram = [0u8; MAX_PACKET + 1];
@@ -104,7 +104,7 @@ fn simulated_udp_session_renews_unsubscribes_and_disarms_on_errors_and_exit() {
     connection["port"] = json!(server.local_addr().unwrap().port());
     let alive = Arc::new(AtomicBool::new(true));
     let monitored = alive.clone();
-    let mut source = Source::connect(
+    let mut source = Driver::connect(
         &connection,
         outputs(),
         vec![true; subscriptions().len()],
@@ -435,7 +435,7 @@ fn udp_reply_port_filters_wrong_sources_and_reports_conflicts() {
         .unwrap();
     let mut v = defaults(11);
     v["port"] = json!(server.local_addr().unwrap().port());
-    let socket = Source::socket(&v).unwrap();
+    let socket = Driver::socket(&v).unwrap();
     socket.send(&request(123, 10, "sim/time/paused")).unwrap();
     let mut bytes = [0; 512];
     let (n, peer) = server.recv_from(&mut bytes).unwrap();
@@ -452,5 +452,5 @@ fn udp_reply_port_filters_wrong_sources_and_reports_conflicts() {
     let n = socket.recv(&mut bytes).unwrap();
     assert_eq!(decode(&bytes[..n], 123, 1).unwrap(), vec![(0, 1.)]);
     v["listenPort"] = json!(socket.local_addr().unwrap().port());
-    assert!(Source::socket(&v).is_err());
+    assert!(Driver::socket(&v).is_err());
 }

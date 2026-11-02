@@ -33,6 +33,9 @@ impl VehicleObservation {
             });
         }
         if let Some(process) = &self.process {
+            if self.integration.starts_with("x-plane-") {
+                self.connection["providerSetupRevision"] = json!(self.setup_revision);
+            }
             self.reader = Some(open(&self.integration, &self.connection, process).map(
                 |mut reader| {
                     let _ = reader.inspect(&self.integration, &self.inspection);

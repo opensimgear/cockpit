@@ -31,7 +31,7 @@ function game(value:unknown):value is GameTelemetryGame{
     &&(value.packet===undefined||value.packet===null||typeof value.packet==='string'&&value.packet.length<=256||typeof value.packet==='number'&&Number.isFinite(value.packet))
     &&(value.ageMs===undefined||age(value.ageMs))&&(value.message===undefined||value.message===null||typeof value.message==='string'&&value.message.length<=4096);
 }
-export function isGameTelemetryReport(result:unknown):result is GameTelemetryReport{return object(result)&&result.schemaVersion===1&&Array.isArray(result.games)&&result.games.length>0&&result.games.length<=7&&result.games.every(game)&&new Set(result.games.map(game=>game.id)).size===result.games.length&&JSON.stringify(result).length<=1024*1024&&(result.capturedAt===undefined||text(result.capturedAt,256));}
+export function isGameTelemetryReport(result:unknown):result is GameTelemetryReport{return object(result)&&result.schemaVersion===1&&Array.isArray(result.games)&&result.games.length>0&&result.games.length<=512&&result.games.every(game)&&new Set(result.games.map(game=>game.id)).size===result.games.length&&JSON.stringify(result).length<=1024*1024&&(result.capturedAt===undefined||text(result.capturedAt,256));}
 function freeze<T>(value:T):DeepReadonly<T>{
   const copy=JSON.parse(JSON.stringify(value));
   const visit=(entry:unknown)=>{if(entry&&typeof entry==='object'){Object.values(entry).forEach(visit);Object.freeze(entry);}};visit(copy);return copy;

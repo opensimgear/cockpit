@@ -1,4 +1,4 @@
-fn packet_for(source: &Source, values: &[(usize, f64)]) -> Vec<u8> {
+fn packet_for(source: &Driver, values: &[(usize, f64)]) -> Vec<u8> {
     let mut bytes = b"RREF,".to_vec();
     for (logical, value) in values {
         let wire = source.plan.index_for(&source.paths[*logical]).unwrap();
@@ -20,9 +20,9 @@ fn passive_selection_preserves_profile_context_values_and_wire_indices() {
     extra.id = "sim/flightmodel/forces/g_nrml".into();
     extra.dataref = extra.id.clone(); extra.minimum = None; extra.maximum = None;
     let catalogue = [profile.clone(), extra.clone()].into_iter().map(|c| (c.id.clone(), c)).collect();
-    let mut source = Source::connect_selected(&connection,
+    let mut source = Driver::connect_selected(&connection,
         vec![json!({"id":"speed","channel":profile.id})],
-        vec![true; GUARDS.len()+PATH_BYTES+1], catalogue, vec![profile.clone()], Box::new(|| Ok(()))).unwrap();
+        vec![true; GUARDS.len()+PATH_BYTES+1], catalogue, vec![profile.clone()], Box::new(|| Ok(())), false).unwrap();
     flush_requested(&mut source);
     let mut bytes = [0; 512];
     let mut peer = None;
@@ -85,7 +85,7 @@ fn selection_queue_overflow_is_transactional_and_pending_retired_requests_cannot
     let server = UdpSocket::bind("127.0.0.1:0").unwrap();
     let mut connection = defaults(12);
     connection["port"] = json!(server.local_addr().unwrap().port());
-    let mut source = Source::connect(&connection, outputs(), vec![true; subscriptions().len()], Box::new(|| Ok(()))).unwrap();
+    let mut source = Driver::connect(&connection, outputs(), vec![true; subscriptions().len()], Box::new(|| Ok(()))).unwrap();
     flush_requested(&mut source);
     // Inspection aliases an already-required profile path: no duplicate wire request.
     source.set_inspection_channels(&["airspeed_kts".into()]).unwrap();
@@ -117,7 +117,7 @@ fn failed_context_fence_is_explicitly_terminal_until_reactivation() {
     let server = UdpSocket::bind("127.0.0.1:0").unwrap();
     let mut connection = defaults(12);
     connection["port"] = json!(server.local_addr().unwrap().port());
-    let mut source = Source::connect(&connection, outputs(), vec![true; subscriptions().len()], Box::new(|| Ok(()))).unwrap();
+    let mut source = Driver::connect(&connection, outputs(), vec![true; subscriptions().len()], Box::new(|| Ok(()))).unwrap();
     flush_requested(&mut source);
     let now = Instant::now();
     source.last_subscription_batch = now;
@@ -132,4 +132,19 @@ fn failed_context_fence_is_explicitly_terminal_until_reactivation() {
     assert!(status["status"].as_str().unwrap().contains("reactivate"));
     assert!(source.set_inspection_channels(&["airspeed_kts".into()]).is_err());
     source.pending_subscriptions.clear();
+}
+
+#[test]
+fn deferred_creation_sends_no_subscriptions_before_capture_worker_readiness() {
+    let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+    server.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
+    let mut connection = defaults(12);
+    connection["port"] = json!(server.local_addr().unwrap().port());
+    let mut driver = Driver::connect_selected(&connection, vec![], vec![true; GUARDS.len()+PATH_BYTES],
+        BTreeMap::new(), vec![], Box::new(|| Ok(())), true).unwrap();
+    assert_eq!(driver.pending_subscriptions.len(), GUARDS.len()+PATH_BYTES);
+    let mut bytes = [0; 512];
+    assert!(server.recv_from(&mut bytes).is_err());
+    driver.flush_subscriptions(Instant::now()).unwrap();
+    assert_eq!(server.recv_from(&mut bytes).unwrap().0, 413);
 }

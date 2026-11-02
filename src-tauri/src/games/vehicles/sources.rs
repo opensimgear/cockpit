@@ -156,8 +156,6 @@ impl Reader {
             "x-plane-11" | "x-plane-12" => {
                 let mut connection = connection.clone();
                 connection["processIdentity"] = process.value();
-                // A separate ephemeral return port avoids taking over a profile's subscriptions.
-                connection["listenPort"] = json!(0);
                 Ok(Self::Xplane(crate::xplane::Source::new(
                     &connection,
                     vec![],
@@ -263,7 +261,7 @@ impl Reader {
                 ))
             }
             Self::Xplane(source) => {
-                let snapshot = source.poll(Instant::now()).0;
+                let snapshot = source.snapshot()?.0;
                 Ok((
                     snapshot.aircraft.clone().filter(|_| snapshot.fresh),
                     Capture::export("x-plane-12", &snapshot),

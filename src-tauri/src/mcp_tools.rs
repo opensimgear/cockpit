@@ -387,6 +387,7 @@ impl Tools {
                 Ok(data)
             }
             "game_vehicles_list" => self.game_vehicles(args, client),
+            "game_process_monitor_enable" | "game_process_monitor_cancel" => forward(name, &["gameId"], Some("games")),
             "game_telemetry_inspect" => forward(
                 "game_telemetry_inspect",
                 &["gameId", "search", "group", "offset", "limit"],
@@ -897,3 +898,6 @@ mod workspace_tests;
 #[cfg(test)]
 #[path="mcp_tools/ui_preferences_tests.rs"]
 mod ui_preferences_tests;
+#[cfg(test)]
+#[path = "mcp_tools/process_monitor_tests.rs"]
+mod process_monitor_tests;
