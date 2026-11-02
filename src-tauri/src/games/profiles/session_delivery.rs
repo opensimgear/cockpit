@@ -96,7 +96,8 @@ impl GameSources {
         else {
             return Err("The native simulator command transport is unavailable.".into());
         };
-        transport.send_control(&command, &argument)
+        transport.send_control_for_aircraft(&command, &argument,
+            self.game.as_ref().and_then(|game| game.proof.vehicle_id.as_deref()))
     }
     fn command_request(&mut self, effect: &Effect) -> Result<(String, String), String> {
         if self.command_revoked(effect) {

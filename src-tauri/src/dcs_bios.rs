@@ -998,6 +998,7 @@ impl Session {
 
 mod transport;
 pub(crate) use transport::CapturedDatagram;
+pub(crate) mod decoded;
 pub use transport::Transport;
 
 #[cfg(test)]

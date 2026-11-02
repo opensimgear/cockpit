@@ -7,8 +7,6 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
     let dcs = json!({"id":"flight-title","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
     let mut network = dcs_bios::Network::parse(&connection(5010)).unwrap();
     network.listen_port = 0;
-    let source = dcs_bios::Transport::open_network(&network).unwrap();
-    let address = source.local_addr().unwrap();
     let mut query = connection(5010);
     query["aircraftModule"] = json!("A-10C");
     let ports = dcs_profile::resource_catalogue(&query).unwrap();
@@ -20,6 +18,8 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
     )
     .unwrap();
     let decoder = dcs_profile::ExportSession::from_sources(catalogue, 1500, vec![]).unwrap();
+    let source = dcs_bios::decoded::Source::open(&network, decoder.decode_spec().unwrap()).unwrap();
+    let address = source.local_addr().unwrap();
     tracker.observe(&dcs, &connection(5010), Some(process()), "setup", false, 2);
     tracker.entries.get_mut("flight-title").unwrap().reader = Some(Reader::Dcs {
         source,
@@ -36,6 +36,7 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
         .unwrap()
         .send_to(&frame("A-10C", 1), address)
         .unwrap();
+    UdpSocket::bind("127.0.0.1:0").unwrap().send_to(&frame("A-10C", 2), address).unwrap();
     for _ in 0..100 {
         tracker.poll();
         if tracker.current("flight-title").is_some() {
@@ -66,11 +67,14 @@ fn independent_process_checks_survive_slow_catalogue_observation_but_never_exten
         let game = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios","installed":true,"executable":"DCS.exe"});
         let games = vec![game.clone()];
         let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
-        tracker.observe(&game, &connection(port), Some(process()), "setup", true, 1);
+        let mut native_connection = connection(port);
+        native_connection["freshnessMs"] = json!(100);
+        tracker.observe(&game, &native_connection, Some(process()), "setup", true, 1);
         let producer = UdpSocket::bind("127.0.0.1:0").unwrap();
         producer
             .send_to(&frame("A-10C_2", 1), ("127.0.0.1", port))
             .unwrap();
+        producer.send_to(&frame("A-10C_2", 2), ("127.0.0.1", port)).unwrap();
         for _ in 0..100 {
             tracker.poll_verified(
                 &games,
@@ -88,7 +92,7 @@ fn independent_process_checks_survive_slow_catalogue_observation_but_never_exten
         // advancing export retain the same aircraft without a Base transition.
         tracker.entries.get_mut("dcs").unwrap().observed -= Duration::from_secs(3);
         producer
-            .send_to(&frame("A-10C_2", 2), ("127.0.0.1", port))
+            .send_to(&frame("A-10C_2", 3), ("127.0.0.1", port))
             .unwrap();
         for _ in 0..100 {
             tracker.poll_verified(
@@ -96,7 +100,7 @@ fn independent_process_checks_survive_slow_catalogue_observation_but_never_exten
                 |_| "setup".into(),
                 |captured| captured == &process(),
             );
-            if matches!(tracker.entries["dcs"].reader.as_ref(), Some(Reader::Dcs {decoder,..}) if decoder.snapshot(0).counter == Some(2))
+            if matches!(tracker.entries["dcs"].reader.as_ref(), Some(Reader::Dcs {decoder,..}) if decoder.snapshot(0).counter == Some(3))
             {
                 break;
             }
@@ -105,14 +109,26 @@ fn independent_process_checks_survive_slow_catalogue_observation_but_never_exten
         assert_eq!(tracker.current("dcs").unwrap()["id"], "A-10C_2");
         tracker.origin -= Duration::from_millis(1501);
         tracker.poll_verified(&games, |_| "setup".into(), |_| true);
+        assert!(tracker.current("dcs").is_some(), "A consumer clock cannot fabricate native expiry.");
+        let Some(Reader::Dcs { source, .. }) = &tracker.entries["dcs"].reader else { panic!() };
+        let mut expiry = source.subscribe().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let delivery = expiry.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().expect("native source expiry");
+            let snapshot = match delivery { osg_streams::Delivery::Snapshot(frame) => frame.value,
+                osg_streams::Delivery::Event(frame) => frame.value, osg_streams::Delivery::Loss(_) => continue };
+            if snapshot.status == "stale" { break; }
+        }
+        tracker.poll_verified(&games, |_| "setup".into(), |_| true);
         assert_eq!(
             tracker.current("dcs"),
             None,
             "Process liveness cannot renew stale telemetry"
         );
         producer
-            .send_to(&frame("A-10C_2", 3), ("127.0.0.1", port))
+            .send_to(&frame("A-10C_2", 4), ("127.0.0.1", port))
             .unwrap();
+        producer.send_to(&frame("A-10C_2", 5), ("127.0.0.1", port)).unwrap();
         for _ in 0..100 {
             tracker.poll_verified(&games, |_| "setup".into(), |_| true);
             if tracker.current("dcs").is_some() {

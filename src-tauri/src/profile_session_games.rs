@@ -110,7 +110,7 @@ struct DeliveryCatalogue {
 enum Reader {
     Dcs {
         network: crate::dcs_bios::Network,
-        transport: Option<crate::dcs_bios::Transport>,
+        transport: Option<crate::dcs_bios::decoded::Source>,
         decoder: crate::dcs_profile::ExportSession,
         catalogue_guard: crate::dcs_profile::DcsCatalogueGuard,
         physics_outputs: Vec<Value>,

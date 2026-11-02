@@ -32,8 +32,8 @@ impl GameSources {
         }
         match self.reader.as_mut() {
             Some(Reader::Dcs {
-                network, transport, ..
-            }) => *transport = Some(crate::dcs_bios::Transport::open_network(network)?),
+                network, transport, decoder, ..
+            }) => *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec()?)?),
             Some(Reader::Xplane {
                 connection,
                 outputs,
@@ -222,38 +222,26 @@ impl GameSources {
                 let Some(receiver) = transport.as_ref() else {
                     return Ok(None);
                 };
-                let mut drained = false;
-                let mut reports = Vec::with_capacity(64);
-                for _ in 0..64 {
-                    let Some(report) = receiver.receive_captured()? else {
-                        drained = true;
-                        break;
-                    };
-                    reports.push(report);
-                }
-                if !drained && receiver.receive_captured()?.is_some() {
-                    decoder.reset_stream(now_us / 1000);
-                    if baseline {
-                        // Activation can spend longer than the receive bound in
-                        // other phases. Drop queued pre-activation datagrams and
-                        // require new aircraft identity and advancing counters.
-                        // Live polling still disarms on the same overflow.
+                let snapshot = match receiver.snapshot() {
+                    Ok(snapshot) => snapshot,
+                    Err(_) if baseline => {
+                        // Recovery registers a new coherent source baseline;
+                        // it cannot replay the lost reader's partial history.
+                        decoder.reset_stream(now_us / 1000);
                         drop(transport.take());
-                        *transport = Some(crate::dcs_bios::Transport::open_network(network)?);
+                        *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec()?)?);
                         self.witness = None;
                         self.witnessed_progress = false;
                         self.fresh = false;
                         return Ok(None);
                     }
-                    return Err("The native simulator receive queue exceeded its bound; the branch was disarmed instead of replaying a backlog.".into());
+                    Err(error) => return Err(error),
+                };
+                if self.game.as_ref().and_then(|game| game.proof.vehicle_id.as_ref())
+                    .zip(snapshot.aircraft.as_ref()).is_some_and(|(expected, actual)| expected != actual) {
+                    return Err("DCS aircraft changed from the captured game context; prepare a new reader.".into());
                 }
-                // Anchor after taking this bounded batch. A concurrent native
-                // receive during draining is valid, not a future-clock fault.
-                let captured_clock = Instant::now();
-                for report in reports {
-                    decoder.feed_captured(&report, now_us / 1000, captured_clock);
-                }
-                decoder.tick(now_us / 1000);
+                decoder.accept_shared(snapshot)?;
                 Ok(Some(decoder.snapshot(now_us / 1000)))
             }
             Some(Reader::Xplane {
@@ -304,7 +292,8 @@ impl GameSources {
         }
     }
     fn frames(&mut self, mut snapshot: ExportSnapshot, now_us: u64) -> GamePoll {
-        if snapshot.fresh {
+        let shared_baseline = matches!(&self.reader, Some(Reader::Dcs { decoder, .. }) if decoder.shared_baseline_ready());
+        if snapshot.fresh || snapshot.mission_active && shared_baseline {
             if let Some(counter) = snapshot.counter {
                 match self.witness {
                     Some((epoch, previous)) if epoch == snapshot.epoch => {
@@ -317,7 +306,7 @@ impl GameSources {
                     }
                 }
                 self.witness = Some((snapshot.epoch, counter));
-                snapshot.fresh = self.witnessed_progress;
+                snapshot.fresh &= self.witnessed_progress;
             } else {
                 snapshot.fresh = false;
             }

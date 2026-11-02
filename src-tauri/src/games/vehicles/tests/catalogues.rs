@@ -191,11 +191,18 @@ fn introspection_and_profile_share_unicast_exports_without_stealing_frames() {
     let first = frame("A-10C", 1);
     producer.send_to(&first, ("127.0.0.1", port)).unwrap();
     assert_eq!(receive(&profile), Some(first));
+    assert_eq!(observer.poll(1000).unwrap(), None, "An identity baseline is not advancing source evidence.");
+    let advancing = frame("A-10C", 2);
+    producer.send_to(&advancing, ("127.0.0.1", port)).unwrap();
+    assert_eq!(receive(&profile), Some(advancing));
     // This consumer clock must predate native acquisition; zero cannot
     // represent a datagram queued before the first consumer read.
     assert_eq!(poll(&mut observer, 1000), Some("A-10C".into()));
-    let second = frame("A-10C_2", 2);
+    let second = frame("A-10C_2", 3);
     producer.send_to(&second, ("127.0.0.1", port)).unwrap();
+    assert_eq!(receive(&profile), Some(second));
+    let variant_baseline = frame("A-10C_2", 4);
+    producer.send_to(&variant_baseline, ("127.0.0.1", port)).unwrap();
     for _ in 0..100 {
         if observer.poll(1100).unwrap() == Some("A-10C_2".into()) {
             break;
@@ -203,8 +210,7 @@ fn introspection_and_profile_share_unicast_exports_without_stealing_frames() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(observer.poll(1100).unwrap(), Some("A-10C_2".into()));
-    assert_eq!(receive(&profile), Some(second));
-    assert_eq!(observer.poll(2601).unwrap(), None);
+    assert_eq!(receive(&profile), Some(variant_baseline));
 }
 
 #[test]

@@ -1210,6 +1210,7 @@ pub(crate) struct ExportSnapshot {
     pub malformed_frames: u64,
 }
 pub(crate) struct ExportSession {
+    shared: Option<crate::dcs_bios::decoded::Snapshot>,
     capture_cursor: Option<(String, u64)>,
     catalogue: Catalogue,
     outputs: Vec<CompiledOutput>,
@@ -1250,6 +1251,7 @@ impl ExportSession {
             return Err("Invalid or duplicate native DCS source identity.".into());
         }
         Ok(Self {
+            shared: None,
             capture_cursor: None,
             parser: Parser::new(catalogue.counter.address),
             catalogue,
@@ -1267,6 +1269,7 @@ impl ExportSession {
     }
     pub fn new(profile: &CompiledProfile) -> Self {
         Self {
+            shared: None,
             capture_cursor: None,
             catalogue: profile.catalogue.clone(),
             outputs: profile.outputs.clone(),
@@ -1297,6 +1300,7 @@ impl ExportSession {
             .is_some_and(|a| self.catalogue.aircraft_names.contains(a))
     }
     pub fn tick(&mut self, now_ms: u64) {
+        if self.shared.is_some() { return; }
         if self
             .last_frame
             .is_some_and(|t| now_ms.saturating_sub(t) > self.freshness_ms)
@@ -1310,12 +1314,14 @@ impl ExportSession {
         }
     }
     pub fn reset_stream(&mut self, _now_ms: u64) {
+        self.shared = None;
         self.capture_cursor = None;
         self.aircraft = None;
         self.invalidate();
         self.parser = Parser::new(self.catalogue.counter.address);
     }
     pub fn feed(&mut self, bytes: &[u8], now_ms: u64) {
+        self.shared = None;
         self.tick(now_ms);
         for event in self.parser.feed(bytes) {
             match event {
@@ -1376,6 +1382,7 @@ impl ExportSession {
         }
     }
     pub fn snapshot(&self, now_ms: u64) -> ExportSnapshot {
+        if let Some(snapshot) = &self.shared { return self.project_shared(snapshot, Instant::now()); }
         let mission_active = self.active();
         let fresh = mission_active
             && self
@@ -1414,12 +1421,15 @@ impl ExportSession {
 
 #[path = "dcs_profile/capture.rs"]
 mod capture;
+#[path = "dcs_profile/shared.rs"]
+mod shared;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dcs_bios::Block;
     include!("dcs_profile/capture_tests.rs");
+    include!("dcs_profile/shared_tests.rs");
 
     // Authored fixtures use upstream JSON shapes/names from DCS-Skunkworks
     // 11c6209; synthetic addresses here are deliberately not aircraft constants.

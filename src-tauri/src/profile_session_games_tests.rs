@@ -12,6 +12,7 @@ use std::fs;
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+include!("games/profiles/exact_context_tests.rs");
 
 fn empty_plan() -> ExecutionPlan {
     osg_profiles::compiler::compile(
@@ -168,13 +169,13 @@ pub(super) fn baseline_reader() -> (GameSources, std::net::SocketAddr, tempfile:
     // tests. This fixture cannot admit simulator commands or a real game.
     source.game = None;
     let Some(Reader::Dcs {
-        network, transport, ..
+        network, transport, decoder, ..
     }) = &mut source.reader
     else {
         panic!()
     };
     network.listen_port = 0;
-    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
+    *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
     let address = transport.as_ref().unwrap().local_addr().unwrap();
     network.listen_port = address.port();
     (source, address, fixture.folder)
@@ -186,6 +187,35 @@ fn feed(source: &mut GameSources, counter: u8, on: bool, now_us: u64) -> GamePol
     decoder.feed(&bytes(counter, on), now_us / 1000);
     let snapshot = decoder.snapshot(now_us / 1000);
     source.frames(snapshot, now_us)
+}
+// Observe the worker's committed journal without draining the tested client's
+// backlog. A new subscription receives the current coherent baseline.
+fn wait_committed_counter(source: &GameSources, counter: u16) {
+    let Some(Reader::Dcs { transport: Some(transport), .. }) = &source.reader else {
+        panic!()
+    };
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let mut observer = transport.subscribe().unwrap();
+        if let Some(osg_streams::Delivery::Snapshot(snapshot)) = observer.try_recv().unwrap() {
+            if snapshot.value.counter == Some(counter) {
+                return;
+            }
+        }
+        assert!(Instant::now() < deadline, "UDP counter {counter} was not committed");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+fn receive_counter(source: &mut GameSources, counter: u16, now_us: u64) -> ExportSnapshot {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let snapshot = source.read(now_us, false).unwrap().unwrap();
+        if snapshot.counter == Some(counter) {
+            return snapshot;
+        }
+        assert!(Instant::now() < deadline, "UDP counter {counter} was not decoded");
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 fn authorize(source: &mut GameSources) {
     let proof = &source.game.as_ref().unwrap().proof;
@@ -527,31 +557,17 @@ fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frame
     let port = reserve.local_addr().unwrap().port();
     drop(reserve);
     let Some(Reader::Dcs {
-        network, transport, ..
+        network, transport, decoder, ..
     }) = source.reader.as_mut()
     else {
         panic!()
     };
     network.listen_port = port;
-    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
+    *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
     // UDP delivery is asynchronous even on loopback. Observe each actual
     // decoded counter before sending the next; otherwise both packets may be
     // drained together and the first-witness guard correctly withholds fresh.
-    let receive_counter = |source: &mut GameSources, counter: u16, now_us| {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            let snapshot = source.read(now_us, false).unwrap().unwrap();
-            if snapshot.counter == Some(counter) {
-                return snapshot;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "UDP counter {counter} was not decoded"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    };
     sender
         .send_to(&bytes(1, true), ("127.0.0.1", port))
         .unwrap();
@@ -1089,7 +1105,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     // passive observer's socket. Process proof validation remains authoritative;
     // this test transport cannot acquire admitted simulator command authority.
     let Some(Reader::Dcs {
-        network, transport, ..
+        network, transport, decoder, ..
     }) = &mut reader.reader
     else {
         panic!()
@@ -1098,7 +1114,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     network.listen_port = 0;
     network.multicast_group = None;
     network.multicast_interface = std::net::Ipv4Addr::LOCALHOST;
-    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
+    *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
     let address = transport.as_ref().unwrap().local_addr().unwrap();
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
     platform.armed.store(true, Ordering::SeqCst);
@@ -1140,9 +1156,14 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
     assert_eq!(baseline.frames[0].captured_us.0, 2_010_000,
         "Reducer admission follows validation; native capture age stays in decoder evidence");
     platform.validation_cost.store(101_000, Ordering::SeqCst);
+    assert!(reader.poll_baseline(&games, clock).fresh,
+        "The reducer clock cannot expire a still-fresh native capture");
+    // Native capture freshness uses Instant; the fake reducer clock exercises
+    // validation ordering without inventing native elapsed time.
+    std::thread::sleep(Duration::from_millis(110));
     assert!(
         !reader.poll_baseline(&games, clock).fresh,
-        "Advancing the clock cannot extend a silent decoder's lease"
+        "Validation cannot extend a silent decoder's native lease"
     );
     platform.validation_cost.store(10_000, Ordering::SeqCst);
     sender.send_to(&bytes(2, true), address).unwrap();
@@ -1478,16 +1499,20 @@ fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_ud
         .set_read_timeout(Some(std::time::Duration::from_millis(100)))
         .unwrap();
     let Some(Reader::Dcs {
-        network, transport, ..
+        network, transport, decoder, ..
     }) = &mut source.reader
     else {
         panic!()
     };
     network.listen_port = listen;
     network.command_port = commands.local_addr().unwrap().port();
-    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
-    feed(&mut source, 1, true, 0);
-    feed(&mut source, 2, true, 10_000);
+    *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    for (counter, now) in [(1, 0), (2, 10_000)] {
+        sender.send_to(&bytes(counter, true), ("127.0.0.1", listen)).unwrap();
+        let snapshot = receive_counter(&mut source, counter.into(), now);
+        assert_eq!(source.frames(snapshot, now).fresh, counter == 2);
+    }
     authorize(&mut source);
     let request = effect(&fixture.command, 1);
     let (command, argument) = source.command_request(&request).unwrap();
@@ -1504,14 +1529,14 @@ fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_ud
     assert_eq!(&data[..count], b"UFC_MASTER_CAUTION 1\n");
     assert!(source.command_request(&request).is_err());
     assert!(commands.recv_from(&mut data).is_err());
-    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
     for counter in 3..83 {
         sender
             .send_to(&bytes(counter, true), ("127.0.0.1", listen))
             .unwrap();
+        wait_committed_counter(&source, counter.into());
     }
     let error = source.read(30_000, false).unwrap_err();
-    assert!(error.contains("receive queue"));
+    assert!(error.contains("continuity") && error.contains("Overflow"), "{error}");
     let lost = source.fail(30_000, error);
     assert!(lost.context_lost);
     assert_eq!(lost.frames[0].reason, Reason::Disconnect);
@@ -1637,20 +1662,24 @@ fn activation_backlog_requires_new_identity_and_counter_progress_without_replayi
     let listen = reserve.local_addr().unwrap().port();
     drop(reserve);
     let Some(Reader::Dcs {
-        network, transport, ..
+        network, transport, decoder, ..
     }) = &mut source.reader
     else {
         panic!()
     };
     network.listen_port = listen;
-    *transport = Some(crate::dcs_bios::Transport::open_network(network).unwrap());
-    feed(&mut source, 1, true, 0);
-    assert!(feed(&mut source, 2, true, 10_000).fresh);
+    *transport = Some(crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec().unwrap()).unwrap());
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    for (counter, now) in [(1, 0), (2, 10_000)] {
+        sender.send_to(&bytes(counter, true), ("127.0.0.1", listen)).unwrap();
+        let snapshot = receive_counter(&mut source, counter.into(), now);
+        assert_eq!(source.frames(snapshot, now).fresh, counter == 2);
+    }
     for counter in 3..83 {
         sender
             .send_to(&bytes(counter, true), ("127.0.0.1", listen))
             .unwrap();
+        wait_committed_counter(&source, counter.into());
     }
     assert!(source.read(30_000, true).unwrap().is_none());
     assert!(!source.fresh);

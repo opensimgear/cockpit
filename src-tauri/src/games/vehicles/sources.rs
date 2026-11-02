@@ -74,7 +74,7 @@ pub(super) fn xplane_catalogue(game: &Value) -> Vec<Value> {
 
 pub(super) enum Reader {
     Dcs {
-        source: dcs_bios::Transport,
+        source: dcs_bios::decoded::Source,
         decoder: dcs_profile::ExportSession,
         guard: dcs_profile::DcsCatalogueGuard,
         connection: Value,
@@ -114,12 +114,13 @@ impl Reader {
                 let network = dcs_bios::Network::parse(connection)?;
                 let (decoder, guard, catalogue) =
                     dcs_profile::passive_telemetry_sources(path, module, network.freshness_ms)?;
+                let source = dcs_bios::decoded::Source::open(&network, decoder.decode_spec()?)?;
                 let (physics, physics_error) = match crate::dcs_physics::Source::open() {
                     Ok(source) => (Some(source), None),
                     Err(error) => (None, Some(error)),
                 };
                 Ok(Self::Dcs {
-                    source: dcs_bios::Transport::open_network(&network)?,
+                    source,
                     decoder,
                     guard,
                     connection: connection.clone(),
@@ -179,7 +180,6 @@ impl Reader {
         &mut self,
         now_ms: u64,
     ) -> Result<(Option<String>, Capture), String> {
-        let source_clock = Instant::now();
         match self {
             Self::Dcs {
                 source,
@@ -193,26 +193,8 @@ impl Reader {
                 physics_error,
             } => {
                 guard.validate(false)?;
-                let mut drained = false;
-                let mut reports = Vec::with_capacity(64);
-                for _ in 0..64 {
-                    let Some(report) = source.receive_captured()? else {
-                        drained = true;
-                        break;
-                    };
-                    reports.push(report);
-                }
-                if !drained && source.receive_captured()?.is_some() {
-                    decoder.reset_stream(now_ms);
-                    return Err("DCS vehicle observation backlog exceeded its bound.".into());
-                }
-                let captured_clock = Instant::now();
-                let captured_ms = now_ms.saturating_add(u64::try_from(captured_clock.duration_since(source_clock).as_millis()).unwrap_or(u64::MAX));
-                for report in reports {
-                    decoder.feed_captured(&report, captured_ms, captured_clock);
-                }
-                decoder.tick(captured_ms);
-                let snapshot = decoder.snapshot(captured_ms);
+                decoder.accept_shared(source.snapshot()?)?;
+                let snapshot = decoder.snapshot(now_ms);
                 if let Some(aircraft) = snapshot.aircraft.as_ref().filter(|_| snapshot.fresh) {
                     let path = Path::new(connection["cataloguePath"].as_str().unwrap());
                     let current = dcs_profile::resolve_aircraft_module(path, aircraft)?;
@@ -222,6 +204,7 @@ impl Reader {
                             &current,
                             connection["freshnessMs"].as_u64().unwrap_or(1500),
                         )?;
+                        *source = dcs_bios::decoded::Source::open(&dcs_bios::Network::parse(connection)?, next.0.decode_spec()?)?;
                         *decoder = next.0;
                         *guard = next.1;
                         *catalogue = next.2;
