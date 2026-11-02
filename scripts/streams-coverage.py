@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from native_coverage_sources import production_counts, production_code
 
 
 def run(arguments, root, env=None):
@@ -41,23 +42,24 @@ def main():
     run([llvm / f"llvm-profdata{suffix}", "merge", "-sparse", *profiles.glob("*.profraw"),
          "-o", profile], root)
     summary = {}
-    for source in sorted((root / "crates/streams/src").glob("*.rs")):
-        if source.stem == "tests" or source.stem.endswith("_tests"):
+    source_root=root / "crates/streams/src"
+    for source in sorted(source_root.rglob("*.rs")):
+        if source.stem == "tests" or source.stem.endswith("_tests") or "tests" in source.relative_to(source_root).parts:
             continue
         annotated = run([llvm / f"llvm-cov{suffix}", "show", binaries[0],
                          f"-instr-profile={profile}", "-show-line-counts-or-regions", source], root)
-        (output / f"{source.stem}-lines.txt").write_text(annotated, encoding="utf-8")
-        counts = {int(match[1]): float(match[2]) * {"": 1, "k": 1000, "M": 1000000}[match[3]]
-                  for line in annotated.splitlines()
-                  if (match := re.match(r"^\s*(\d+)\|\s*(\d+(?:\.\d+)?)([kM]?)\|", line))}
+        name=str(source.relative_to(source_root)).replace("\\","/")
+        (output / f"{name.replace('/', '-')}-lines.txt").write_text(annotated, encoding="utf-8")
+        source_text=source.read_text(encoding="utf-8")
+        counts = production_counts(source_text,annotated)
         if not counts:
-            if re.search(r"\bfn\s+\w+", source.read_text(encoding="utf-8")):
+            if re.search(r"\bfn\s+\w+", production_code(source_text)):
                 raise RuntimeError(f"No production coverage for {source.name}")
             continue  # Type declarations/module exports have no executable lines.
         covered = sum(count > 0 for count in counts.values())
         percent = 100 * covered / len(counts)
-        summary[source.name] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
-        print(f"{source.name}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
+        summary[name] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
+        print(f"{name}: {covered}/{len(counts)} production lines ({percent:.2f}%)", flush=True)
     if not summary:
         raise RuntimeError("No instrumented stream production modules")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

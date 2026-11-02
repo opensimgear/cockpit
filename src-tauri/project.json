@@ -131,6 +131,7 @@
     "widget-compiler",
     "companion-contracts",
     "companion-designer",
-    "companion-ui"
+    "companion-ui",
+    "native-streams"
   ]
 }

@@ -10,6 +10,7 @@ mod retained_game_companions;
 #[path="persistence/paths.rs"]
 mod config_paths;
 mod persistence;
+pub mod observations;
 #[path="mcp/server/mod.rs"]
 mod mcp;
 #[path="mcp/storage/credentials.rs"]
@@ -340,6 +341,13 @@ pub fn run() {
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("local-navigation")
                 .on_navigation(|window, url| local_document(url, window.app_handle().config().build.dev_url.as_ref()))
+                .on_page_load(|window, payload| {
+                    if matches!(payload.event(),tauri::webview::PageLoadEvent::Started) {
+                        if let Some(gateway)=window.app_handle().try_state::<NativeGateway>() {
+                            gateway.0.observations.close_client(&format!("window:{}",window.label()));
+                        }
+                    }
+                })
                 .build(),
         )
         .setup(|app| {
@@ -366,6 +374,9 @@ pub fn run() {
             persistence::persistence_status,
             persistence::persistence_workspace,
             persistence::ui::commands::persistence_ui_read,
+            observations::commands::observation_subscribe,
+            observations::commands::observation_acknowledge,
+            observations::commands::observation_unsubscribe,
             gateway_request,
             mcp::mcp_settings_get,
             mcp::mcp_settings_update,
@@ -393,6 +404,11 @@ pub fn run() {
             desktop::set_autostart
         ])
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(gateway)=window.app_handle().try_state::<NativeGateway>() {
+                    gateway.0.observations.close_client(&format!("window:{}",window.label()));
+                }
+            }
             desktop::window_event(window, event);
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<Arc<mcp::Server>>().shutdown();

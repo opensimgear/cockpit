@@ -141,6 +141,8 @@ jobs:
             printf "%s" "ephemeral-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets
             python3 scripts/setup-coverage.py --output-dir "$GITHUB_WORKSPACE/.research/setup-coverage"
           '
+      - name: Observation transport and producer coverage at least 71 percent
+        run: python3 scripts/observations-coverage.py
       - name: Bootstrap behavior tests
         run: |
           python3 -m unittest discover -s tests/e2e -p 'test_*.py'

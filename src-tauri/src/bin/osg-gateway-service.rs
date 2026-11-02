@@ -1,11 +1,12 @@
 //! Development browser transport using the same gateway manager as Cockpit desktop.
 use osg_cockpit::gateways::GatewayManager;
+use osg_cockpit::observations::ServiceOutput;
 use serde_json::{json, Value};
 use std::{
-    io::{self, BufRead, Write},
+    io::{self, BufRead},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     thread,
 };
@@ -46,10 +47,8 @@ fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Result<Vec<u8>, ()>
         }
     }
 }
-fn emit(output: &Mutex<io::Stdout>, response: Value) {
-    let mut output = output.lock().unwrap_or_else(|p| p.into_inner());
-    let _ = writeln!(output, "{response}");
-    let _ = output.flush();
+fn emit(output: &ServiceOutput, response: Value) {
+    let _ = output.emit(response);
 }
 fn main() {
     if let Some(code) = osg_desktop_output::entry::helper_main() { std::process::exit(code); }
@@ -76,7 +75,15 @@ fn main() {
     };
     let service = Arc::new(GatewayManager::new());
     service.start_automatic();
-    let output = Arc::new(Mutex::new(io::stdout()));
+    let (output, failed_output) = ServiceOutput::stdout();
+    let failed_service=service.clone();
+    thread::spawn(move||{
+        if failed_output.recv().is_ok() {
+            eprintln!("Gateway output transport failed; stopping owned runtime work.");
+            failed_service.shutdown();
+            std::process::exit(2);
+        }
+    });
     let active = Arc::new(AtomicUsize::new(0));
     let mut requests: Vec<thread::JoinHandle<()>> = Vec::new();
     let mut input = io::stdin().lock();
@@ -98,13 +105,29 @@ fn main() {
             }
         };
         if let Some(id) = request.get("requestId").cloned() {
-            if !id.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 80)
-                || !request["request"].is_object()
-            {
+            if !id.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 80) {
                 emit(
                     &output,
                     json!({"requestId":id,"response":{"ok":false,"error":"Invalid gateway request envelope."}}),
                 );
+                continue;
+            }
+            if let Some(control)=request.get("observation") {
+                if request.as_object().is_none_or(|fields|fields.len()!=2) {
+                    emit(&output,json!({"requestId":id,"response":{"ok":false,"error":"Invalid observation request envelope."}}));
+                    continue;
+                }
+                let (events,event_id)=(output.clone(),id.clone());
+                let response=service.observation_runtime().browser_request(control,move|delivery|{
+                    let mut value=serde_json::to_value(delivery).map_err(|error|error.to_string())?;
+                    value["requestId"]=event_id.clone();
+                    events.emit(json!({"observation":value}))
+                });
+                emit(&output,json!({"requestId":id,"response":response}));
+                continue;
+            }
+            if !request["request"].is_object() {
+                emit(&output,json!({"requestId":id,"response":{"ok":false,"error":"Invalid gateway request envelope."}}));
                 continue;
             }
             if active.fetch_add(1, Ordering::AcqRel) >= 32 {

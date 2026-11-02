@@ -13,7 +13,7 @@ function fixture(onRequest) {
   let handler, starts = 0;
   const httpServer = new EventEmitter();
   nativeGatewayBridge({ spawnProcess: () => { starts++; return process; } }).configureServer({
-    httpServer, middlewares: { use(path, callback) { assert.equal(path, '/api/gateway/'); handler = callback; } },
+    httpServer, middlewares: { use(path, callback) { if (path === '/api/gateway/') handler = callback; } },
   });
   async function request(payload, origin = 'http://127.0.0.1:1420') {
     const req = Readable.from([Buffer.from(JSON.stringify(payload))]);

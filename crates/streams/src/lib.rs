@@ -10,7 +10,15 @@ mod codec;
 mod fault;
 mod journal;
 mod lifecycle;
+mod registry;
 mod types;
+mod wire;
+
+pub use registry::{
+    Broker, Publisher, Reader, ReaderCancellation, RegistryError, TopicSpec, KNOWN_AUDIENCES,
+    MAX_CLIENT_READERS, MAX_READERS, MAX_TOPICS,
+};
+pub use wire::{WireFrame, MAX_CHANGE_BYTES, MAX_SNAPSHOT_BYTES};
 
 pub use journal::{Cancellation, Stream, Subscription};
 pub use types::{

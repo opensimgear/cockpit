@@ -56,3 +56,45 @@ test('typed preference validation rejects unknown fields and malformed values be
  const styling={arrowStyle:'orthogonal',cornerRadius:0};assert.deepEqual(validateUiValue('canvas-styling',styling),styling);assert.deepEqual(validateUiValue('remembered',{components:[],forgotten:{}}),{components:[],forgotten:{}});
  for(const [key,value] of [['theme','true'],['devices-mode','grid'],['canvas-navigation',{wheelAction:'other'}],['canvas-navigation',{wheelAction:'pan',extra:true}],['canvas-styling',{...styling,cornerRadius:101}],['canvas-styling',{...styling,cornerRadius:NaN}],['canvas-styling',{...styling,collapseParallelWires:false}],['remembered',[]],['remembered',{components:new Array(1025),forgotten:{}}],['remembered',{components:[],forgotten:new Array(1)}]])assert.throws(()=>validateUiValue(key,value),/invalid/);
 });
+
+test('observations validate canonical safe revisions and isolate unavailable owners without querying',async()=>{
+ const disk=native(),store=new UiPreferences(disk);await store.hydrate();let reads=0;disk.read=async()=>{reads++;throw Error('must not query');};
+ store.applyObservation('theme',{ready:true,revision:'3',value:true});assert.equal(store.get('theme').revision,3);assert.equal(store.get('theme').value,true);
+ store.applyObservation('theme',{ready:true,revision:'2',value:false});assert.equal(store.get('theme').value,true);
+ store.applyObservation('tray',{ready:false,error:'SQLite row unavailable'});assert.equal(store.get('tray').ready,false);assert.match(store.get('tray').error,/SQLite/);assert.equal(store.get('theme').ready,true);
+ for(const revision of ['03','-1','1e2','9007199254740992','18446744073709551616',3]){
+  store.applyObservation('theme',{ready:true,revision,value:false});assert.equal(store.get('theme').ready,false);assert.equal(store.get('theme').revision,3);
+ }
+ store.applyObservation('theme',{ready:true,revision:'9007199254740991',value:true});assert.equal(store.get('theme').revision,Number.MAX_SAFE_INTEGER);assert.equal(store.get('theme').ready,true);
+ store.applyObservation('theme',{ready:true,revision:'9007199254740991',value:'bad'});assert.equal(store.get('theme').ready,false);
+ store.applyObservation('remembered',{ready:true,revision:'1',value:null});assert.equal(store.get('remembered').revision,0);
+ store.observationError('unknown','ignored');assert.equal(reads,0);
+});
+
+test('stream loss fences delayed bootstrap and save completions until fresh observed evidence',async()=>{
+ const disk=native();let release;const original=disk.read;disk.read=async()=>{const snapshot=await original();await new Promise(resolve=>release=resolve);return snapshot;};
+ const store=new UiPreferences(disk);const reading=store.hydrate();while(!release)await new Promise(setImmediate);
+ store.applyObservation('theme',{ready:true,revision:'5',value:true});store.observationError('tray','lost');release();await reading;
+ assert.equal(store.get('theme').revision,5);assert.equal(store.get('theme').value,true);assert.equal(store.get('tray').ready,false);
+ let commit;disk.write=async()=>{await new Promise(resolve=>commit=resolve);return {revision:6,value:false};};
+ const saving=store.save('theme',false);while(!commit)await new Promise(setImmediate);store.observationError('theme','connection lost');commit();await saving;
+ assert.equal(store.get('theme').ready,false);assert.equal(store.get('theme').revision,5);assert.equal(store.get('theme').busy,false);
+ store.applyObservation('theme',{ready:true,revision:'6',value:false});assert.equal(store.get('theme').ready,true);assert.equal(store.get('theme').revision,6);
+});
+
+test('a bootstrap read failure cannot disable a newer successful stream baseline',async()=>{
+ let fail;const store=new UiPreferences({read:async()=>{await new Promise(resolve=>fail=resolve);throw Error('old read failed');},write:async()=>{throw Error('unused');}});
+ const reading=store.hydrate();store.applyObservation('theme',{ready:true,revision:'1',value:true});fail();await reading;
+ assert.equal(store.get('theme').ready,true);assert.equal(store.get('theme').value,true);assert.equal(store.get('tray').ready,false);
+});
+
+test('a rejected pending save cannot disable newer coherent stream evidence',async()=>{
+ const disk=native(),store=new UiPreferences(disk);await store.hydrate();let rejectSave;
+ disk.write=async()=>new Promise((_resolve,reject)=>{rejectSave=reject;});
+ const saving=store.save('theme',true);const rejected=assert.rejects(saving,/revision conflict/);
+ assert.equal(store.get('theme').busy,true);
+ store.applyObservation('theme',{ready:true,revision:'1',value:false});
+ assert.equal(store.get('theme').busy,true);rejectSave(Error('revision conflict'));await rejected;
+ assert.equal(store.get('theme').ready,true);assert.equal(store.get('theme').revision,1);assert.equal(store.get('theme').value,false);
+ assert.equal(store.get('theme').error,'');assert.equal(store.get('theme').busy,false);
+});

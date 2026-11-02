@@ -1,6 +1,7 @@
-/** Revisioned desktop preferences. Browser previews use session memory only. */
+/** Revisioned preferences shared by the native and browser service transports. */
 export const UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'remembered', 'tray', 'progress'] as const;
 export type UiKey = typeof UI_KEYS[number];
+export const OBSERVED_UI_KEYS = ['theme', 'devices-mode', 'canvas-navigation', 'canvas-styling', 'tray', 'progress'] as const;
 export type UiValues = {
   theme: boolean;
   'devices-mode': 'list' | 'topology';
@@ -44,7 +45,8 @@ export class UiPreferences {
   private transport: UiTransport | null;
   private entries = new Map<UiKey, UiEntry>();
   private listeners = new Map<UiKey, Set<(entry: UiEntry) => void>>();
-  private reading: Promise<boolean> | null = null;
+  private reading = new Map<string, Promise<boolean>>();
+  private observations = new Map<UiKey, number>();
   constructor(transport: UiTransport | null = null) {
     this.transport = transport;
     for (const key of UI_KEYS) this.entries.set(key, { revision: 0, value: structuredClone(defaults[key]), ready: !transport, busy: false, error: '' });
@@ -62,37 +64,67 @@ export class UiPreferences {
   }
   private update(key: UiKey, patch: Partial<UiEntry>) {
     this.entries.set(key, { ...this.entries.get(key)!, ...patch });
-    for (const listener of this.listeners.get(key) ?? []) listener(this.get(key));
+    for (const listener of this.listeners.get(key) ?? []) {
+      try { listener(this.get(key)); } catch { /* A consumer cannot block the committed state. */ }
+    }
   }
-  hydrate(): Promise<boolean> {
+  /** Stream values are committed evidence; never query storage to apply a delivery. */
+  applyObservation(key: UiKey, payload: unknown): void {
+    if (!OBSERVED_UI_KEYS.includes(key as typeof OBSERVED_UI_KEYS[number])) return;
+    try {
+      if (exact(payload, ['ready', 'error']) && payload.ready === false && typeof payload.error === 'string' && payload.error) {
+        this.observationError(key, payload.error); return;
+      }
+      if (!exact(payload, ['ready', 'revision', 'value']) || payload.ready !== true
+          || typeof payload.revision !== 'string' || !/^(0|[1-9][0-9]{0,15})$/.test(payload.revision)
+          || BigInt(payload.revision) > BigInt(Number.MAX_SAFE_INTEGER)) throw Error('Invalid observed UI preference revision.');
+      const nextRevision = Number(payload.revision);
+      const value = validateUiValue(key, payload.value);
+      if (nextRevision < this.get(key).revision) return;
+      this.observations.set(key, (this.observations.get(key) ?? 0) + 1);
+      this.update(key, { revision: nextRevision, value, ready: true, error: '' });
+    } catch (reason) { this.observationError(key, String(reason)); }
+  }
+  observationError(key: UiKey, message: string): void {
+    if (!UI_KEYS.includes(key)) return;
+    this.observations.set(key, (this.observations.get(key) ?? 0) + 1);
+    this.update(key, { ready: false, error: message });
+  }
+  hydrate(keys: readonly UiKey[] = UI_KEYS): Promise<boolean> {
     if (!this.transport) return Promise.resolve(true);
-    if (this.reading) return this.reading;
-    this.reading = this.read().finally(() => { this.reading = null; }); return this.reading;
+    const identity = [...keys].sort().join(',');
+    const pending = this.reading.get(identity);
+    if (pending) return pending;
+    const reading = this.read(keys).finally(() => { this.reading.delete(identity); });
+    this.reading.set(identity, reading); return reading;
   }
-  private async read(): Promise<boolean> {
+  private async read(keys: readonly UiKey[]): Promise<boolean> {
+    const epochs = new Map(keys.map(key => [key, this.observations.get(key) ?? 0]));
+    const unchanged = (key: UiKey) => epochs.get(key) === (this.observations.get(key) ?? 0);
     try {
       const snapshot = await this.transport!.read();
       if (!object(snapshot) || !exact(snapshot.entries, [...UI_KEYS])) throw Error('The native UI preference snapshot is incomplete.');
-      const rows = UI_KEYS.map(key => {
+      const rows = keys.map(key => {
         const row = snapshot.entries[key]; if (!object(row) || !revision(row.revision)) throw Error('The native UI preference revision is invalid.');
         return { key, revision: row.revision, value: validateUiValue(key, row.value === null ? defaults[key] : row.value) };
       });
-      for (const row of rows) if (row.revision >= this.entries.get(row.key)!.revision) this.update(row.key, { revision: row.revision, value: row.value, ready: true, error: '' });
+      for (const row of rows) if (unchanged(row.key) && row.revision >= this.entries.get(row.key)!.revision) this.update(row.key, { revision: row.revision, value: row.value, ready: true, error: '' });
       return true;
     } catch (reason) {
-      for (const key of UI_KEYS) this.update(key, { ready: false, error: `UI preferences could not be loaded: ${String(reason)}` });
+      for (const key of keys) if (unchanged(key)) this.update(key, { ready: false, error: `UI preferences could not be loaded: ${String(reason)}` });
       return false;
     }
   }
   async changed(key: UiKey, nextRevision: number): Promise<void> {
     if (!UI_KEYS.includes(key) || !revision(nextRevision)) return;
     // An event may overtake an already pending read of the previous snapshot.
-    for (let attempt = 0; attempt < 2 && nextRevision > this.get(key).revision; attempt++) if (!await this.hydrate()) break;
+    for (let attempt = 0; attempt < 2 && nextRevision > this.get(key).revision; attempt++) if (!await this.hydrate([key])) break;
   }
   async save<K extends UiKey>(key: K, value: UiValues[K]): Promise<UiEntry<K>> {
     const current = this.get(key); value = validateUiValue(key, value);
     if (!current.ready) throw Error('Refresh UI preferences before saving.');
     if (current.busy) throw Error('Wait for the current preference save to finish.');
+    const epoch = this.observations.get(key) ?? 0;
     this.update(key, { busy: true, error: '' });
     try {
       const saved = this.transport ? await this.transport.write(key, current.revision, value) : { revision: current.revision + 1, value };
@@ -102,10 +134,13 @@ export class UiPreferences {
         ? Object.keys(value).length === Object.keys(validated).length && Object.entries(value).every(([field, expected]) => Object.hasOwn(validated, field) && (validated as Record<string, unknown>)[field] === expected)
         : validated === value;
       if (key !== 'remembered' && !same) throw Error('The native preference commit returned a different value.');
-      if (saved.revision >= this.get(key).revision) this.update(key, { revision: saved.revision, value: validated, ready: true });
+      if (epoch === (this.observations.get(key) ?? 0) && saved.revision >= this.get(key).revision) this.update(key, { revision: saved.revision, value: validated, ready: true });
       return this.get(key);
     } catch (reason) {
-      this.update(key, { ready: false, error: `Preferences could not be saved: ${String(reason)}. Refresh before retrying.` }); throw reason;
+      if (epoch === (this.observations.get(key) ?? 0)) {
+        this.update(key, { ready: false, error: `Preferences could not be saved: ${String(reason)}. Refresh before retrying.` });
+      }
+      throw reason;
     } finally { this.update(key, { busy: false }); }
   }
 }

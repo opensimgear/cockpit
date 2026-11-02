@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-observation-unsubscribe"
+description = "Enables the observation_unsubscribe command without any pre-configured scope."
+commands.allow = ["observation_unsubscribe"]
+
+[[permission]]
+identifier = "deny-observation-unsubscribe"
+description = "Denies the observation_unsubscribe command without any pre-configured scope."
+commands.deny = ["observation_unsubscribe"]

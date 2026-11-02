@@ -4,6 +4,7 @@ use serde::Serialize;
 use serde_json::{json,Value};
 use std::{collections::BTreeMap,path::Path,sync::{Arc,Mutex}};
 mod validation;
+mod streams;
 pub(crate) mod commands;
 pub(crate) mod window_writer;
 pub(crate) use validation::{validate,WindowGeometry};
@@ -14,7 +15,8 @@ type Observer=Arc<dyn Fn(&str,u64)+Send+Sync>;
 #[serde(rename_all="camelCase")]
 pub(crate) struct Entry {pub revision:u64,pub value:Value}
 #[derive(Default)]
-struct State {entries:BTreeMap<String,Entry>,errors:BTreeMap<String,String>,observer:Option<Observer>,tray_available:bool}
+struct State {entries:BTreeMap<String,Entry>,errors:BTreeMap<String,String>,observer:Option<Observer>,tray_available:bool,
+    streams:BTreeMap<String,osg_streams::Publisher>,observation_clock:Option<crate::observations::Runtime>}
 #[derive(Clone)]
 pub(crate) struct Preferences {database:Result<Database,String>,state:Arc<Mutex<State>>}
 fn location(key:&str)->Result<(&str,&str),String>{
@@ -36,7 +38,14 @@ impl Preferences {
         let observer={let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
             if state.entries.get(key).is_some_and(|old|old.revision>entry.revision){return;}
             let changed=state.entries.get(key).is_none_or(|old|old.revision!=entry.revision);
-            state.errors.remove(key);state.entries.insert(key.into(),entry.clone());if changed{state.observer.clone()}else{None}};
+            state.errors.remove(key);state.entries.insert(key.into(),entry.clone());
+            if changed {
+                if let (Some(publisher),Some(clock))=(state.streams.get(key),state.observation_clock.as_ref()) {
+                    let payload=streams::payload(Ok(&entry));
+                    if publisher.publish(1,payload.clone(),payload,clock.captured_us(),"cockpit-state").is_err(){publisher.close();}
+                }
+                state.observer.clone()
+            }else{None}};
         if let Some(observer)=observer{observer(key,entry.revision);}
     }
     fn decoded(&self,key:&str,revision:u64,bytes:Option<&[u8]>)->Result<Entry,String>{

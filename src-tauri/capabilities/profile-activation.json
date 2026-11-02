@@ -5,6 +5,9 @@
   "windows": ["profile-activation"],
   "permissions": [
     "allow-persistence-ui-read",
+    "allow-observation-subscribe",
+    "allow-observation-acknowledge",
+    "allow-observation-unsubscribe",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-profile-activation-window-state",

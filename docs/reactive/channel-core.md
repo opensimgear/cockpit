@@ -42,7 +42,8 @@ overload; eligible absolute-state coalescing is a later specialized policy.
 
 Conformance fixtures in `crates/streams/tests/fixtures` describe snapshot/update,
 relative-delta, overflow-recovery and exact-counter boundaries. These are shared
-test inputs, not a claim that a JSON wire adapter already implements the contract.
+test inputs. The subsequently implemented registry and wire adapters are described
+in [transports.md](transports.md), with their own verification scope.
 Run `cargo test --locked --manifest-path crates/streams/Cargo.toml` and
 `python scripts/streams-coverage.py`. Native production line coverage uses the
 repository's LLVM tooling and 71% per-module floor. CI executes this with the

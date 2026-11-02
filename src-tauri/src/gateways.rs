@@ -203,6 +203,7 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 #[path="persistence/backup/gateway.rs"]
 mod storage_controls;
 pub struct GatewayManager {
+    pub(crate) observations: crate::observations::Runtime,
     activity: crate::activity::Runtime,
     storage:crate::persistence::backup::Runtime,
     widget_library: crate::widget_library::Runtime,
@@ -392,6 +393,7 @@ impl GatewayManager {
             worker
         });
         let manager = Self {
+            observations: crate::observations::Runtime::new(),
             activity,
             #[cfg(test)]
             test_namespace:None,
@@ -433,6 +435,7 @@ impl GatewayManager {
             companion_host,
         };
         manager.restore_automatic_selection();
+        manager.ui_preferences.bind_observations(&manager.observations);
         if native { manager.start_activity(); }
         manager
     }
@@ -1423,6 +1426,7 @@ impl GatewayManager {
         self.decorate(response, Some(&id))
     }
     pub fn shutdown(&self) {
+        self.observations.close();
         self.closed.store(true, Ordering::Release);
         self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
         self.profile_closed.store(true,Ordering::Release);

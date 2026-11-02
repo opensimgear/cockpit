@@ -278,7 +278,8 @@
       "name": "shell-fe",
       "catchAll": true,
       "additionalTests": [
-        "scripts/native-gateway-bridge.test.mjs"
+        "scripts/native-gateway-bridge.test.mjs",
+        "scripts/observations/bridge.test.mjs"
       ],
       "sourcePatterns": [
         "src/lib/activation-progress-presenter.*",
@@ -305,7 +306,8 @@
       "coverageScripts": [
         "debug:coverage",
         "activity:coverage",
-        "ui-preferences:coverage"
+        "ui-preferences:coverage",
+        "streams:coverage"
       ],
       "coverageTasks": [
         {
@@ -320,6 +322,24 @@
           ],
           "tests": [
             "src/lib/panel-actions.test.mjs"
+          ]
+        },
+        {
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=scripts/native-gateway-bridge.mjs",
+            "--test-coverage-include=scripts/observations/bridge.mjs",
+            "--test-coverage-include=scripts/observations/protocol.mjs",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "scripts/native-gateway-bridge.test.mjs",
+            "scripts/observations/bridge.test.mjs"
+          ],
+          "tests": [
+            "scripts/native-gateway-bridge.test.mjs",
+            "scripts/observations/bridge.test.mjs"
           ]
         }
       ]

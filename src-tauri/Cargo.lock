@@ -3438,6 +3438,7 @@ dependencies = [
  "osg-mapping-host",
  "osg-persistence",
  "osg-profiles",
+ "osg-streams",
  "osg-virtual-controller",
  "quick-xml",
  "rmcp",
@@ -3599,6 +3600,14 @@ dependencies = [
  "sha2",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "osg-streams"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
