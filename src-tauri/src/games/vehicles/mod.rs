@@ -96,7 +96,7 @@ struct Entry {
     generation: u64,
     polling: bool,
     opening: Option<u64>,
-    detached_physics: Option<(crate::dcs_physics::Snapshot, Instant)>,
+    detached_physics: Option<crate::dcs_physics::SourceView>,
 }
 pub(crate) struct Tracker {
     writer: Option<osg_persistence::ObservationWriter<Value>>,

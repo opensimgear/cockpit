@@ -40,10 +40,11 @@ struct SourceState {
     counter: Option<u16>,
     available: bool,
     physics_witness: Option<PhysicsWitness>,
-    physics_epoch: Option<(Option<String>, u64)>,
+    physics_epoch: Option<(Option<String>, Option<String>, u64)>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PhysicsWitness {
+    producer_id: Option<String>,
     session: Option<String>,
     epoch: u64,
     sequence: Option<u32>,
@@ -65,6 +66,7 @@ fn merge_dcs_physics(
     let fresh = snapshot.fresh
         && physics.is_some_and(|value| value.fresh && value.aircraft == snapshot.aircraft);
     let witness = PhysicsWitness {
+        producer_id: physics.map(|value| value.producer_id.clone()),
         session: physics.and_then(|value| value.session.clone()),
         epoch: physics.map_or(0, |value| value.epoch),
         sequence: physics.and_then(|value| value.sequence),

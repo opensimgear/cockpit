@@ -340,7 +340,7 @@ impl GameSources {
                         .as_ref()
                         .is_none_or(|previous| !previous.fresh)
                         || state.physics_epoch.as_ref()
-                            != Some(&(physics.witness.session.clone(), physics.witness.epoch)))
+                            != Some(&(physics.witness.producer_id.clone(), physics.witness.session.clone(), physics.witness.epoch)))
             });
             let baseline = snapshot.fresh
                 && (!state.available || state.epoch != snapshot.epoch || physics_baseline);
@@ -362,7 +362,7 @@ impl GameSources {
                 state.physics_witness = Some(physics.witness.clone());
                 if physics.witness.fresh {
                     state.physics_epoch =
-                        Some((physics.witness.session.clone(), physics.witness.epoch));
+                        Some((physics.witness.producer_id.clone(), physics.witness.session.clone(), physics.witness.epoch));
                 }
             }
             let changes=state.ports.iter().map(|port|Change {port_id:port.logical.clone(),sample:if !snapshot.fresh||physics.is_some_and(|physics|physics.stale.contains(&port.native)) {SignalSample::Stale} else {snapshot.values.get(&port.native).and_then(scalar).map(SignalSample::scalar).filter(|sample|matches!(sample,SignalSample::Known(value)if osg_mapping::engine::typed::accepts(&port.contract,value))).unwrap_or(SignalSample::Unknown)}}).collect();

@@ -122,7 +122,7 @@ impl Tracker {
                 Reader::Dcs {
                     physics: Some(physics),
                     ..
-                } => Some((physics.snapshot(), Instant::now())),
+                } => Some(physics.view()),
                 _ => None,
             };
             entry.polling = true;

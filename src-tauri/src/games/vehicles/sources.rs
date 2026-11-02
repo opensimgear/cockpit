@@ -225,6 +225,13 @@ impl Reader {
                         return Ok((None, capture));
                     }
                 }
+                if physics.as_ref().is_some_and(crate::dcs_physics::Source::is_finished) {
+                    *physics_error = physics.as_ref().and_then(|source| source.snapshot().error);
+                    // The completed worker has already released its socket.
+                    // Preserve BIOS while retrying this independent failed owner.
+                    *physics = None;
+                    *physics_retry = Instant::now() + Duration::from_secs(2);
+                }
                 if physics.is_none() && Instant::now() >= *physics_retry {
                     match crate::dcs_physics::Source::open() {
                         Ok(source) => {
@@ -236,19 +243,8 @@ impl Reader {
                     *physics_retry = Instant::now() + Duration::from_secs(2);
                 }
                 let mut capture = Capture::export("dcs", &snapshot);
-                let ownship = match physics.as_mut().map(|physics| physics.poll()) {
-                    Some(Ok(snapshot)) => {
-                        *physics_error = snapshot.error.clone();
-                        Some(snapshot)
-                    }
-                    Some(Err(error)) => {
-                        *physics = None;
-                        *physics_retry = Instant::now() + Duration::from_secs(2);
-                        *physics_error = Some(error);
-                        None
-                    }
-                    None => None,
-                };
+                let ownship = physics.as_ref().map(crate::dcs_physics::Source::snapshot);
+                if let Some(snapshot) = &ownship { *physics_error = snapshot.error.clone(); }
                 merge_ownship_capture(
                     &mut capture,
                     &snapshot,

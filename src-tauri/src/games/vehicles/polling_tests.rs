@@ -121,42 +121,43 @@ fn detached_reader_preserves_qualified_telemetry_without_refreshing_capture() {
 }
 
 #[test]
-fn detached_dcs_physics_keeps_its_original_age_and_expires_without_new_data() {
+fn detached_dcs_physics_observes_new_reports_and_deadline_without_bios_read_completion() {
+    use osg_streams::Delivery;
+    use std::net::{Ipv4Addr,UdpSocket};
     let (_directory, mut tracker, _) = fixture();
     let process = tracker.entries["x-plane-12"].process.clone().unwrap();
+    let source=crate::dcs_physics::Source::bind_loopback_ephemeral().unwrap();
+    let mut events=source.subscribe().unwrap();
+    events.recv().unwrap();
+    let sender=UdpSocket::bind((Ipv4Addr::LOCALHOST,0)).unwrap();
     let entry = tracker.entries.get_mut("x-plane-12").unwrap();
-    entry.integration = "dcs".into();
-    entry.reader = None;
-    entry.polling = true;
-    let mut snapshot = crate::dcs_physics::Session::new().snapshot(0);
-    snapshot.age_ms = Some(100);
-    snapshot.status = "live".into();
-    snapshot.fresh = true;
-    snapshot
-        .values
-        .insert("flight.ownship.inAir".into(), json!(true));
-    entry.detached_physics = Some((snapshot, Instant::now()));
-    let snapshot = tracker.dcs_physics(&process).unwrap();
-    assert!(snapshot.fresh);
-    assert!(snapshot.age_ms.unwrap() >= 100);
-    tracker
-        .entries
-        .get_mut("x-plane-12")
-        .unwrap()
-        .detached_physics
-        .as_mut()
-        .unwrap()
-        .1 -= Duration::from_millis(crate::dcs_physics::FRESHNESS_MS);
-    let snapshot = tracker.dcs_physics(&process).unwrap();
-    assert!(!snapshot.fresh);
-    assert_eq!(snapshot.status, "stale");
-    assert!(snapshot.values.is_empty());
-    assert!(tracker
-        .dcs_physics(&ProcessIdentity {
-            epoch: 11,
-            ..process
-        })
-        .is_none());
+    entry.integration = "dcs".into(); entry.reader = None; entry.polling = true;
+    entry.detached_physics=Some(source.view());
+    let packet=|sequence,in_air|json!({"schemaVersion":1,"source":"osg-dcs-ownship",
+        "session":"detached-integration","sequence":sequence,"modelTime":sequence as f64*0.05,
+        "planeId":5,"aircraft":"FA-18C_hornet","allowed":true,"paused":false,"activePause":false,
+        "stopped":false,"values":{"flight.ownship.inAir":in_air}});
+    let read_until=|events:&mut crate::dcs_physics::Reader, fresh:bool, sequence:u32| {
+        let deadline=Instant::now()+Duration::from_secs(2);
+        loop {
+            let delivery=events.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().expect("Ownship event deadline");
+            let snapshot=match delivery {Delivery::Snapshot(frame)=>frame.value,Delivery::Event(frame)=>frame.value,Delivery::Loss(_)=>continue};
+            if snapshot.fresh==fresh && snapshot.sequence==Some(sequence) {return snapshot;}
+        }
+    };
+    sender.send_to(packet(1,false).to_string().as_bytes(),source.local_addr()).unwrap();
+    sender.send_to(packet(2,false).to_string().as_bytes(),source.local_addr()).unwrap();
+    read_until(&mut events,true,2);
+    assert_eq!(tracker.dcs_physics(&process).unwrap().values["flight.ownship.inAir"],false);
+    sender.send_to(packet(3,true).to_string().as_bytes(),source.local_addr()).unwrap();
+    let current=read_until(&mut events,true,3);
+    assert_eq!(tracker.dcs_physics(&process).unwrap().values,current.values);
+    assert!(tracker.dcs_physics(&ProcessIdentity{epoch:11,..process.clone()}).is_none());
+    let expired=read_until(&mut events,false,3);
+    assert_eq!(expired.status,"stale");
+    let retained=tracker.dcs_physics(&process).unwrap();
+    assert!(!retained.fresh && retained.values.is_empty());
+    assert!(tracker.entries["x-plane-12"].polling,"No BIOS completion was required for either update.");
 }
 
 #[test]

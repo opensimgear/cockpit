@@ -255,6 +255,7 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     };
     let outputs = physics_outputs.clone();
     let mut physics = crate::dcs_physics::Snapshot {
+        producer_id: "producer-1".into(),
         epoch: 1,
         session: Some("mission-1".into()),
         aircraft: Some("A-10C".into()),
@@ -295,6 +296,19 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     let bios_generation = source.sources["bios-only"].generation;
     assert!(source.can_command());
     assert!(poll(&mut source, 2, &physics).frames.is_empty());
+
+    // Reopening the local producer can preserve the Lua mission, epoch and
+    // sequence. That replacement must still fence the old source baseline.
+    physics.producer_id = "producer-2".into();
+    let replacement = poll(&mut source, 2, &physics);
+    assert_eq!(replacement.frames.len(), 1);
+    assert_eq!(replacement.frames[0].source, "game");
+    assert_eq!(replacement.frames[0].reason, Reason::Baseline);
+    assert_eq!(source.sources["game"].generation, generation + 1);
+    assert_eq!(source.sources["bios-only"].generation, bios_generation);
+    assert!(source.can_command());
+    assert!(poll(&mut source, 2, &physics).frames.is_empty());
+    let generation = source.sources["game"].generation;
 
     physics.sequence = Some(2);
     physics

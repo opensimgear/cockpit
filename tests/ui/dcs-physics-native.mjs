@@ -3,7 +3,7 @@
 // All game-side writes, including Setup/Repair, stay in this private user folder.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {access, cp, mkdir, readFile, unlink, writeFile} from 'node:fs/promises';
+import {access, cp, mkdir, readFile, rm, unlink, writeFile} from 'node:fs/promises';
 import {dirname, resolve, sep} from 'node:path';
 import {execFile, spawn} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -12,6 +12,7 @@ import {createHash, randomUUID} from 'node:crypto';
 
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const normalizedPath = value => value.replace(/^\\\\\?\\/, '').replaceAll('/', '\\').toLowerCase().replace(/\\+$/, '');
 const nodeId = id => `value-${id.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
 const near = (actual, expected) => typeof expected === 'number'
   ? typeof actual === 'number' && Math.abs(actual - expected) < 1e-7
@@ -76,7 +77,7 @@ async function fixtureExecutable(directory) {
 }
 
 test('native managed DCS ownship physics and BIOS remain independent through withdrawal and rearm', {
-  skip: process.env.OSG_DCS_PHYSICS_NATIVE !== '1', timeout: 180000,
+  skip: process.env.OSG_DCS_PHYSICS_NATIVE !== '1', timeout: 300000,
 }, async () => {
   assert.equal(process.platform, 'win32');
   const directory = resolve('.research/dcs-physics-native', String(Date.now()));
@@ -115,7 +116,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       return row && row.status !== 'known' && row.value === null && {row, context: report.context};
     }, `Passive ${id} retained a known value`);
   }
-  let initialGames, initialProfiles, before, installationBefore, profile, child, producer, timer, fixtureSetup = false;
+  let initialGames, initialProfiles, before, installationBefore, fixtureInstallation, profile, child, producer, timer, fixtureSetup = false;
   let counter = 0, sequence = 0, modelTime = 0, planeId = 17, mode = 'baseline', emitPhysics = true;
   const aircraft = 'A-10C_2', biosId = 'common:CommonData:ALT_MSL_FT:0';
   const nativeValues = {'flight.airspeed.true': 210.25, 'flight.engine.left.speedPercent': 74.5,
@@ -157,7 +158,9 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
   }
   try {
     initialProfiles = await status(); initialGames = await games(); before = initialGames.catalogue.find(item => item.id === 'dcs').integrationSetup;
-    installationBefore = initialGames.manualInstallations?.dcs ?? null;
+    const originalDcs = initialGames.catalogue.find(item => item.id === 'dcs');
+    installationBefore = originalDcs.selectedInstallationId;
+    assert.ok(installationBefore, 'Select an existing DCS installation before starting this private acceptance fixture.');
     assert.ok(!initialGames.detectedGames?.some(item => item.gameId === 'dcs'), 'Close actual DCS before starting this private acceptance fixture.');
     assert.ok((before.connection?.cataloguePath || before.cataloguePath) && before.userFolder, 'An existing validated DCS-BIOS installation is required as a read-only copy source.');
     before.connection ??= {cataloguePath: before.cataloguePath, freshnessMs: 1500,
@@ -171,7 +174,14 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     await cp(biosSource, biosTarget, {recursive: true, errorOnExist: true, force: false});
     await writeFile(resolve(userFolder, 'Scripts/Export.lua'), "-- private native physics acceptance\npackage.path = package.path .. ';' .. lfs.writedir() .. 'Scripts/?.lua'\ndofile(lfs.writedir() .. [[Scripts\\DCS-BIOS\\BIOS.lua]])\n");
     const executable = await fixtureExecutable(directory);
-    await request({command: 'game_installation', gameId: 'dcs', executable});
+    const registered = (await request({command: 'game_add', name: originalDcs.name, installPath: resolve(directory, 'installation'), executable})).games;
+    assert.equal(registered.addedGameId, 'dcs');
+    fixtureInstallation = registered.catalogue.find(item => item.id === 'dcs').installations.find(item => normalizedPath(item.installPath) === normalizedPath(resolve(directory, 'installation')));
+    assert.ok(fixtureInstallation, 'The private DCS installation was not registered.');
+    assert.ok(!originalDcs.installations.some(item => item.id === fixtureInstallation.id));
+    evidence.fixtureInstallation = fixtureInstallation;
+    await request({command: 'game_installation_select', gameId: 'dcs', installationId: fixtureInstallation.id});
+    assert.equal((await game()).selectedInstallationId, fixtureInstallation.id);
     const connection = {...before.connection, cataloguePath: resolve(biosTarget, 'doc/json'), freshnessMs: 600,
       commandHost: '127.0.0.1', commandPort: 7778, listenAddress: '0.0.0.0', listenPort: 5010,
       multicastGroup: '239.255.50.10', multicastInterface: '127.0.0.1'};
@@ -265,7 +275,34 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
       await until(async () => (await game()).integrationSetup.state !== 'setting-up', 'Private setup removal did not finish', 15000);
       await assert.rejects(access(script));
     });
-    if (installationBefore !== undefined) await cleanup('Restore selected installation', () => request({command: 'game_installation', gameId: 'dcs', executable: installationBefore}));
+    if (fixtureInstallation) await cleanup('Restore selected installation', () => request({command: 'game_installation_select', gameId: 'dcs', installationId: installationBefore}));
+    if (fixtureInstallation) await cleanup('Remove only the private installation', async () => {
+      const installationFolder = resolve(directory, 'installation');
+      assert.ok(installationFolder.startsWith(directory + sep));
+      assert.equal(normalizedPath(fixtureInstallation.installPath), normalizedPath(installationFolder));
+      await rm(installationFolder, {recursive: true, force: true});
+      await until(async () => (await games()).discovery?.status !== 'scanning', 'Existing discovery did not finish', 90000);
+      const scan = async paths => {
+        await request({command: 'game_discovery_start', paths});
+        return until(async () => { const scan = (await games()).discovery; return scan.status === 'ready' && scan; }, 'Fixture removal discovery did not finish', 90000);
+      };
+      let discovery = await scan([]);
+      if (!discovery.libraries.some(library => library.id === 'disk')) {
+        // The API enables disk removal checks only with a configured scan root.
+        // Apply appends this private root; it preserves every existing scan root.
+        discovery = await scan([directory]);
+        evidence.cleanupAddedScanRoot = directory;
+      }
+      const removal = discovery.entries.find(item => item.action === 'remove' && item.gameId === 'dcs' && item.installationId === fixtureInstallation.id);
+      assert.ok(removal, 'Discovery must offer removal of exactly the missing private installation.');
+      assert.equal(normalizedPath(removal.installPath), normalizedPath(installationFolder));
+      await request({command: 'game_discovery_apply', scanId: discovery.scanId, actions: discovery.entries.map(item => ({id: item.id, selected: item.id === removal.id}))});
+      const current = await game(), original = initialGames.catalogue.find(item => item.id === 'dcs');
+      assert.equal(current.selectedInstallationId, installationBefore);
+      assert.deepEqual(current.installations, original.installations, 'Cleanup must preserve all original DCS installations exactly.');
+      assert.equal(current.name, original.name);
+      evidence.installationRestored = true;
+    });
     if (before) await cleanup('Restore provider settings', async () => {
       await request({command: 'game_integration_settings_save', gameId: 'dcs', expectedSetupRevision: (await game()).integrationSetup.providerSetupRevision, connection: before.connection, userFolder: before.userFolder, aircraftModule: before.aircraftModule ?? null});
       await request({command: 'game_integration_check', gameId: 'dcs'});
