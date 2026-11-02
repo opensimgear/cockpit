@@ -315,3 +315,25 @@ fn concurrent_snapshot_boundary_never_skips_a_committed_change() {
     }
     assert_eq!(revision, 101);
 }
+#[test]
+fn retirement_is_pointer_safe_idle_only_and_old_owner_cannot_remove_replacement() {
+    let (broker, publisher) = broker();
+    let reader = broker.subscribe("client", "ui", "controls").unwrap();
+    assert!(!broker.retire_if_idle(&publisher));
+    reader.cancellation_handle().cancel();
+    assert!(broker.retire_if_idle(&publisher));
+    assert!(!broker.retire_if_idle(&publisher));
+    let replacement = broker
+        .register(spec("controls"), json!({"value":42}), 1, "clock".into())
+        .unwrap();
+    assert!(!broker.retire_if_idle(&publisher));
+    assert!(matches!(
+        publisher.publish(1, json!({}), json!({}), 1, "clock"),
+        Err(RegistryError::Publish(PublishError::Closed))
+    ));
+    let mut reader = broker.subscribe("new-client", "ui", "controls").unwrap();
+    assert_eq!(reader.recv().unwrap().payload.unwrap()["value"], 42);
+    assert!(!broker.retire_if_idle(&replacement));
+    drop(reader);
+    assert!(broker.retire_if_idle(&replacement));
+}

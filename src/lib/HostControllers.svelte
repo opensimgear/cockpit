@@ -1,11 +1,12 @@
 <script lang="ts">
   import Notification from './Notification.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Icon from './Icon.svelte';
   import DeviceVisibility from './DeviceVisibility.svelte';
   import SystemControllerInputs from './SystemControllerInputs.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { controllerRoles, type ControllerResult, type HostController } from './controllers';
+  import { observeControllerInputs } from './controller-observations';
   let { topology = false, initialSourceId = '', detailsOnly = false }: { topology?: boolean; initialSourceId?: string; detailsOnly?: boolean } = $props();
   let inventory = $state<ControllerResult>({ sources: [], offset: 0, total: 0, limit: 32 });
   let detail = $state<ControllerResult | null>(null);
@@ -14,12 +15,13 @@
   let role = $state('controller');
   let remembered = $state('');
   let error = $state('');
+  let inventoryError = $state('');
   let actionError = $state('');
   let busy = $state(false);
   let page = $state(0);
   let disposed = false;
   let polling = false;
-  let selectionEpoch = 0;
+  let mounted = $state(false);
   let initializedSourceId = '';
   async function request(request: GatewayRequest) {
     const state = await gatewayRequest(request);
@@ -29,47 +31,32 @@
   async function refresh() {
     if (polling || busy || disposed) return;
     polling = true;
-    const epoch = selectionEpoch;
     try {
       const next = await request({ command: 'controller_list', offset: page });
       if (disposed) return;
       inventory = next;
-      if (selected) {
-        const sourceId = selected;
-        const nextDetail = await request({ command: 'controller_inspect', sourceId, offset: 0 });
-        const controls = [...nextDetail.controls ?? []];
-        while (controls.length < nextDetail.total) {
-          if (disposed || epoch !== selectionEpoch) return;
-          const offset = controls.length;
-          const next = await request({ command: 'controller_inspect', sourceId, offset });
-          if (next.offset !== offset || !next.controls?.length || next.total !== nextDetail.total || next.source?.id !== sourceId || next.source.generation !== nextDetail.source?.generation) {
-            throw new Error('Controller inputs changed while loading. Waiting for the next report.');
-          }
-          controls.push(...next.controls);
-        }
-        if (!disposed && epoch === selectionEpoch) {
-          detail = { ...nextDetail, controls };
-          if (nextDetail.source && initializedSourceId !== nextDetail.source.id) {
-            name = nextDetail.source.name;
-            role = nextDetail.source.role;
-            initializedSourceId = nextDetail.source.id;
-          }
-        }
-      }
-      error = '';
-    } catch (e) { if (!disposed) error = e instanceof Error ? e.message : String(e); }
+      inventoryError = '';
+    } catch (e) { if (!disposed) inventoryError = e instanceof Error ? e.message : String(e); }
     finally { polling = false; }
   }
   function select(source: HostController) {
-    selectionEpoch++; selected = source.id; detail = null; name = source.name; role = source.role; initializedSourceId = source.id; remembered = '';
+    if (selected !== source.id) detail = null;
+    selected = source.id; name = source.name; role = source.role; initializedSourceId = source.id; remembered = '';
     void refresh();
   }
   async function mutate(command: GatewayRequest) {
-    busy = true; selectionEpoch++;
+    busy = true;
+    const sourceId = selected;
     try {
       const next = await request(command);
-      if (command.command === 'controller_forget') { selected = ''; initializedSourceId = ''; detail = null; selectionEpoch++; }
-      else { detail = { ...next, controls: command.command === 'controller_update' ? detail?.controls ?? next.controls : next.controls }; selected = next.source?.id ?? selected; name = next.source?.name ?? name; role = next.source?.role ?? role; initializedSourceId = next.source?.id ?? initializedSourceId; }
+      if (selected === sourceId) {
+        if (command.command === 'controller_forget') { selected = ''; initializedSourceId = ''; detail = null; }
+        else {
+          selected = next.source?.id ?? selected;
+          name = next.source?.name ?? name; role = next.source?.role ?? role;
+          initializedSourceId = next.source?.id ?? initializedSourceId;
+        }
+      }
       actionError = '';
     } catch (e) { actionError = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
@@ -77,9 +64,24 @@
   }
   onMount(() => {
     selected = initialSourceId;
+    mounted = true;
     void refresh();
     const timer = setInterval(() => { void refresh(); }, 250);
-    return () => { disposed = true; clearInterval(timer); };
+    return () => { disposed = true; mounted = false; clearInterval(timer); };
+  });
+  $effect(() => {
+    const sourceId = selected;
+    if (!mounted || !sourceId) return;
+    detail = null;
+    return untrack(() => observeControllerInputs(sourceId, state => {
+      if (disposed || selected !== sourceId) return;
+      detail = state.detail ?? null;
+      error = state.error ?? '';
+      if (state.detail?.source && initializedSourceId !== sourceId) {
+        name = state.detail.source.name; role = state.detail.source.role;
+        initializedSourceId = sourceId;
+      }
+    }));
   });
 </script>
 
@@ -100,11 +102,12 @@
   {/if}
   {#if inventory.diagnostic}<Notification message={String(inventory.diagnostic)} kind="error" />{/if}
   {#if error}<Notification message={String(error)} kind="error" />{/if}
+  {#if inventoryError}<Notification message={String(inventoryError)} kind="error" />{/if}
   {#if actionError}<Notification message={String(actionError)} kind="error" />{/if}
   {#if detail?.source}
     {@const source = detail.source}
     <section class="panel host-detail" aria-label="Selected host controller">
-      <div class="panel-heading"><div><h2>{detailsOnly ? 'Controller settings' : source.name.trim()}</h2><p>Local identity, visibility preferences, and live input.</p></div>{#if !detailsOnly}<button class="text-button" onclick={() => { selectionEpoch++; selected = ''; detail = null; }}><Icon name="close" size={14} />Close</button>{/if}</div>
+      <div class="panel-heading"><div><h2>{detailsOnly ? 'Controller settings' : source.name.trim()}</h2><p>Local identity, visibility preferences, and live input.</p></div>{#if !detailsOnly}<button class="text-button" onclick={() => { selected = ''; detail = null; error = ''; }}><Icon name="close" size={14} />Close</button>{/if}</div>
       <div class="host-detail-body">
       <div class="controller-status"><span class="status-dot" class:offline={!source.online}></span><strong>{source.online ? source.baselineReady ? 'Live input' : 'Waiting for a complete baseline' : 'Offline · input values cleared'}</strong><span>Connection {source.generation} · report {source.sequence}</span></div>
       <div class="metadata">

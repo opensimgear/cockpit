@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import SystemControllerInputs from './SystemControllerInputs.svelte';
-  import { controllerSourceId, loadControllerInputs } from './controller-inputs';
-  import { gatewayRequest } from './gateway';
+  import { controllerSourceId } from './controller-inputs';
+  import { observeControllerInputs } from './controller-observations';
   import type { ControllerControl } from './controllers';
   import type { DeepReadonly } from './profiles';
   import type { ResourceSummary } from './profile-inventory';
@@ -10,37 +10,27 @@
   let { resource, active = true }: { resource?: DeepReadonly<ResourceSummary>; active?: boolean } = $props();
   let mounted = $state(false), controls = $state.raw<ControllerControl[]>([]), error = $state(''), ready = $state(false);
   const sourceId = $derived(controllerSourceId(resource));
-  const online = $derived(resource?.availability === 'online');
+  let observedOnline = $state<boolean | undefined>();
+  const online = $derived(observedOnline ?? resource?.availability === 'online');
   const generation = $derived(resource?.generation);
   onMount(() => { mounted = true; });
   $effect(() => {
     const id = sourceId;
     void generation;
-    controls = []; error = ''; ready = false;
-    if (!mounted || !active || !online || !id) return;
-    let disposed = false, busy = false;
-    async function refresh() {
-      if (disposed || busy || document.hidden) return;
-      busy = true;
-      try {
-        const result = await loadControllerInputs(id, async request => {
-          const state = await gatewayRequest(request);
-          if (!state.controllers) throw new Error('Input values are unavailable.');
-          return state.controllers;
-        }, () => !disposed && !document.hidden);
-        if (!disposed && result) {
-          controls = result.source?.online ? result.controls ?? [] : [];
-          error = result.source?.online ? '' : 'Controller is offline.';
-          ready = true;
-        }
-      } catch { if (!disposed) { controls = []; error = 'Input values are unavailable.'; } }
-      finally { busy = false; }
-    }
-    void refresh();
-    const timer = window.setInterval(refresh, 250);
-    function visibility() { if (document.hidden) { controls = []; ready = false; } else void refresh(); }
-    document.addEventListener('visibilitychange', visibility);
-    return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility); };
+    controls = []; error = ''; ready = false; observedOnline = undefined;
+    if (!mounted || !active || !id) return;
+    return untrack(() => observeControllerInputs(id, state => {
+      if (state.detail?.source) {
+        observedOnline = state.detail.source.online;
+        controls = state.detail.controls ?? [];
+        ready = state.detail.source.baselineReady;
+      } else {
+        controls = controls.map(control => ({ ...control, value: null }));
+        ready = false;
+      }
+      error = state.status === 'error' || state.status === 'lost'
+        ? state.error ?? 'Input values are unavailable.' : '';
+    }));
   });
 </script>
 

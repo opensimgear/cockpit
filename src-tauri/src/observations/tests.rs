@@ -3,6 +3,26 @@ use osg_streams::TopicSpec;
 use serde_json::json;
 use std::{sync::mpsc, time::Duration};
 
+#[test]
+fn manager_prepares_only_authorized_topics_before_browser_subscription() {
+    let manager=crate::gateways::GatewayManager::mcp_test_manager();
+    let unknown="controllers.input.11111111-1111-4111-8111-111111111111";
+    let forged=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"another-client","topic":unknown}),|_|Ok(()));
+    assert!(forged["error"].as_str().unwrap().contains("principal"));
+    let invalid=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev","topic":unknown,"authority":"output"}),|_|Ok(()));
+    assert!(invalid["error"].as_str().unwrap().contains("fields"));
+    let missing=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev","topic":unknown}),|_|Ok(()));
+    assert_eq!(missing["error"],"Unknown controller.");
+    let (send,receive)=mpsc::channel();
+    let opened=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev","topic":"preferences.theme"}),move|frame|send.send(frame).map_err(|e|e.to_string()));
+    assert_eq!(opened["ok"],true);
+    let first=receive.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(first.frame.topic,"preferences.theme");
+    let closed=manager.browser_observation_request(&json!({"operation":"unsubscribe","clientId":"browser-dev","subscriptionId":opened["subscriptionId"]}),|_|Ok(()));
+    assert_eq!(closed["ok"],true);
+    manager.shutdown();
+}
+
 fn setup() -> (Runtime, osg_streams::Publisher) {
     let runtime = Runtime::new();
     let publisher = runtime

@@ -3516,6 +3516,7 @@ dependencies = [
  "iohidmanager",
  "libc",
  "osg-persistence",
+ "osg-streams",
  "serde",
  "serde_json",
  "sha2",

@@ -26,12 +26,10 @@ pub(crate) fn observation_subscribe<R: tauri::Runtime>(
     {
         return Err("The activation window cannot observe this topic.".into());
     }
-    state
-        .0
-        .observations
+    state.0.with_observation_topic(&topic, || state.0.observations
         .subscribe(&client, "ui", &topic, move |delivery| {
             channel.send(delivery).map_err(|error| error.to_string())
-        })
+        }))
 }
 
 #[tauri::command]

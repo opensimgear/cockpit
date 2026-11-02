@@ -118,7 +118,7 @@ fn main() {
                     continue;
                 }
                 let (events,event_id)=(output.clone(),id.clone());
-                let response=service.observation_runtime().browser_request(control,move|delivery|{
+                let response=service.browser_observation_request(control,move|delivery|{
                     let mut value=serde_json::to_value(delivery).map_err(|error|error.to_string())?;
                     value["requestId"]=event_id.clone();
                     events.emit(json!({"observation":value}))

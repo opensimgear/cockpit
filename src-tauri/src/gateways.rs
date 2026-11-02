@@ -236,7 +236,7 @@ pub struct GatewayManager {
     closed: Arc<AtomicBool>,
     games: Arc<crate::games::GamesRuntime>,
     game_admission: RwLock<()>,
-    controllers: Arc<osg_controller_input::ControllerService>,
+    pub(crate) controllers: Arc<osg_controller_input::ControllerService>,
     retired_recovery: Arc<crate::profile_retired_recovery::Recovery>,
     companion_host: Arc<crate::companion_host::Runtime>,
     #[cfg(test)]

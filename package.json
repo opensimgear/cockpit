@@ -124,7 +124,8 @@
     "cockpit:check": "svelte-check --tsconfig ./tsconfig.json",
     "cockpit:build": "vite build",
     "profile-integrations:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/profile-integration-scope.ts --test-coverage-include=src/lib/profile-input-availability.ts --test-coverage-include=src/lib/profile-block-status.ts --test-coverage-include=src/lib/profile-game-context.ts --test-coverage-include=src/lib/profile-palette.ts --test-coverage-include=src/lib/profile-connection-draft.ts --test-coverage-include=src/lib/profile-route-endpoints.ts --test-coverage-include=src/lib/profile-vehicle-conflicts.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/profile-integration-scope.test.mjs src/lib/profile-input-availability.test.mjs src/lib/profile-block-status.test.mjs src/lib/profile-game-context.test.mjs src/lib/profile-palette.test.mjs src/lib/profile-connection-draft.test.mjs src/lib/profile-route-endpoints.test.mjs src/lib/profile-vehicle-conflicts.test.mjs",
-    "streams:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/streams/**/*.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/streams/*.test.mjs"
+    "streams:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/streams/**/*.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/streams/*.test.mjs",
+    "controller-streams:coverage": "node --experimental-test-coverage --test-coverage-include=src/lib/controller-observations.ts --test-coverage-lines=71 --test-coverage-branches=71 --test-coverage-functions=71 --test src/lib/controller-observations.test.mjs"
   },
   "dependencies": {
     "@opensimgear/companion-contracts": "workspace:*",

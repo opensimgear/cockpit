@@ -46,6 +46,7 @@
     }
   },
   "implicitDependencies": [
-    "native-persistence"
+    "native-persistence",
+    "native-streams"
   ]
 }

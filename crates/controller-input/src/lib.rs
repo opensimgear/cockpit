@@ -1,12 +1,12 @@
 //! Native input service shared by desktop and browser development transports.
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod capture;
+pub mod inventory;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 pub mod registry;
-pub mod inventory;
 pub mod stream;
 pub mod visibility;
 #[cfg(windows)]
@@ -22,11 +22,15 @@ use std::{
     thread::JoinHandle,
 };
 const MAX_SETTINGS: u64 = 1_048_576;
-fn validate_saved(saved:&Vec<SavedSource>)->Result<(),String> {Registry::default().restore(saved.clone())}
+fn validate_saved(saved: &Vec<SavedSource>) -> Result<(), String> {
+    Registry::default().restore(saved.clone())
+}
 pub struct ControllerService {
     registry: Arc<Mutex<Registry>>,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    #[cfg(windows)]
+    capture_wake: Option<Arc<windows::Wake>>,
     store: Option<osg_persistence::Repository<Vec<SavedSource>>>,
     persistence: Mutex<()>,
     storage_valid: bool,
@@ -36,11 +40,16 @@ impl ControllerService {
     /// Capture all retained metadata atomically; unlike UI pages, this cannot
     /// mix different connection generations between list and inspect calls.
     pub fn resource_inventory(&self) -> registry::ResourceInventory {
-        self.registry.lock().unwrap_or_else(|p| p.into_inner()).resource_inventory()
+        self.registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .resource_inventory()
     }
     /// Failed retained settings cannot authoritatively forget cached inventory.
     pub fn authoritative_resource_inventory(&self) -> Result<registry::ResourceInventory, String> {
-        if !self.storage_valid { return Err("Remembered controller settings could not be loaded; retained inventory is preserved.".into()); }
+        if !self.storage_valid {
+            return Err("Remembered controller settings could not be loaded; retained inventory is preserved.".into());
+        }
         Ok(self.resource_inventory())
     }
 
@@ -53,16 +62,28 @@ impl ControllerService {
     }
     fn start(path: Option<PathBuf>, native: bool, probe: bool) -> Self {
         let mut registry = Registry::default();
-        let storage=path.as_ref().map(|path| {
-            let db=osg_persistence::Database::for_namespace(path)?;
-            osg_persistence::Repository::new(db,
-"controllers",
-"identities",
-MAX_SETTINGS as usize,
-validate_saved)
-        }).transpose();
-        let loaded=storage.as_ref().map_err(Clone::clone).and_then(|store|store.as_ref().map_or(Ok(vec![]),|store|store.load().map(|saved|saved.unwrap_or_default())))
-            .and_then(|saved|registry.restore(saved));
+        let storage = path
+            .as_ref()
+            .map(|path| {
+                let db = osg_persistence::Database::for_namespace(path)?;
+                osg_persistence::Repository::new(
+                    db,
+                    "controllers",
+                    "identities",
+                    MAX_SETTINGS as usize,
+                    validate_saved,
+                )
+            })
+            .transpose();
+        let loaded = storage
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|store| {
+                store.as_ref().map_or(Ok(vec![]), |store| {
+                    store.load().map(|saved| saved.unwrap_or_default())
+                })
+            })
+            .and_then(|saved| registry.restore(saved));
         let storage_valid = loaded.is_ok();
         if let Err(error) = loaded {
             registry.diagnostic=format!("Remembered controllers could not be loaded; settings will not be overwritten: {error}");
@@ -72,22 +93,52 @@ validate_saved)
         let suppression = visibility::suppression::Control::default();
         let enabled = native
             && (cfg!(windows) || (probe && cfg!(any(target_os = "linux", target_os = "macos"))));
+        #[cfg(windows)]
+        let capture_wake = if enabled {
+            match windows::Wake::new() {
+                Ok(wake) => Some(Arc::new(wake)),
+                Err(error) => {
+                    let mut r = registry.lock().unwrap_or_else(|p| p.into_inner());
+                    r.backend_status = "unavailable".into();
+                    r.diagnostic = error;
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut visibility = visibility::service::Service::new(
-            path.as_ref().and_then(|path| path.parent()).map(|path| path.to_path_buf()),
+            path.as_ref()
+                .and_then(|path| path.parent())
+                .map(|path| path.to_path_buf()),
             registry.clone(),
-        ).with_suppression(suppression.clone());
+        )
+        .with_suppression(suppression.clone());
         if native && !probe && !cfg!(test) {
             visibility.startup_self_access();
         }
+        #[cfg(windows)]
+        let enabled = enabled && capture_wake.is_some();
         let worker = if enabled {
             let shared = registry.clone();
             let stopped = stop.clone();
             let suppression = suppression.clone();
+            #[cfg(windows)]
+            let wake = capture_wake
+                .as_ref()
+                .expect("enabled capture has wake event")
+                .clone();
             match std::thread::Builder::new()
                 .name("controller-input".into())
                 .spawn(move || {
                     let result = std::panic::catch_unwind(|| {
-                        native_run(shared.clone(), stopped, suppression)
+                        native_run(
+                            shared.clone(),
+                            stopped,
+                            suppression,
+                            #[cfg(windows)]
+                            wake,
+                        )
                     })
                     .unwrap_or_else(|_| Err("Controller capture stopped unexpectedly.".into()));
                     let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
@@ -124,6 +175,8 @@ validate_saved)
             stop,
             visibility,
             worker: Mutex::new(worker),
+            #[cfg(windows)]
+            capture_wake,
             store: storage.ok().flatten(),
             persistence: Mutex::new(()),
             storage_valid,
@@ -131,30 +184,65 @@ validate_saved)
     }
     fn save(&self) -> Result<(), String> {
         let _guard = self.persistence.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(store)=&self.store else {return if self.storage_valid {Ok(())} else {Err("Repair controller persistence before saving.".into())};};
-        if !self.storage_valid {return Err("Repair the existing controller settings before saving changes.".into());}
-        let saved={let r=self.registry.lock().unwrap_or_else(|p|p.into_inner());if !r.dirty {return Ok(());}r.saved()};
+        let Some(store) = &self.store else {
+            return if self.storage_valid {
+                Ok(())
+            } else {
+                Err("Repair controller persistence before saving.".into())
+            };
+        };
+        if !self.storage_valid {
+            return Err("Repair the existing controller settings before saving changes.".into());
+        }
+        let saved = {
+            let r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            if !r.dirty {
+                return Ok(());
+            }
+            r.saved()
+        };
         store.save(&saved)?;
-        let mut r=self.registry.lock().unwrap_or_else(|p|p.into_inner());
-        r.dirty=r.saved()!=saved;
+        let mut r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        r.dirty = r.saved() != saved;
         Ok(())
     }
-    fn edit(&self,request:&Value)->Result<Value,String> {
-        let _writer=self.persistence.lock().unwrap_or_else(|p|p.into_inner());
-        if !self.storage_valid {return Err("Repair controller persistence before editing remembered metadata.".into());}
-        let before=self.registry.lock().unwrap_or_else(|p|p.into_inner()).clone();let mut staged=before.clone();
-        let id=request["sourceId"].as_str().unwrap_or("");
-        match request["command"].as_str().unwrap_or("") {
-            "controller_update"=>staged.update(id,request["name"].as_str().unwrap_or(""),request["role"].as_str().unwrap_or(""))?,
-            "controller_forget"=>staged.forget(id)?,
-            "controller_reassign"=>staged.reassign(id,request["observedId"].as_str().unwrap_or(""))?,
-            _=>return Err("Unknown controller edit.".into()),
+    fn edit(&self, request: &Value) -> Result<Value, String> {
+        let _writer = self.persistence.lock().unwrap_or_else(|p| p.into_inner());
+        if !self.storage_valid {
+            return Err("Repair controller persistence before editing remembered metadata.".into());
         }
-        if let Some(store)=&self.store {store.save(&staged.saved())?;}
-        let mut r=self.registry.lock().unwrap_or_else(|p|p.into_inner());r.commit_metadata(&before,&staged);
-        let mut result=if request["command"]=="controller_forget" {r.list(0)} else {r.inspect(id,0)?};
+        let before = self
+            .registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let mut staged = before.clone();
+        let id = request["sourceId"].as_str().unwrap_or("");
+        match request["command"].as_str().unwrap_or("") {
+            "controller_update" => staged.update(
+                id,
+                request["name"].as_str().unwrap_or(""),
+                request["role"].as_str().unwrap_or(""),
+            )?,
+            "controller_forget" => staged.forget(id)?,
+            "controller_reassign" => {
+                staged.reassign(id, request["observedId"].as_str().unwrap_or(""))?
+            }
+            _ => return Err("Unknown controller edit.".into()),
+        }
+        if let Some(store) = &self.store {
+            store.save(&staged.saved())?;
+        }
+        let mut r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        r.commit_metadata(&before, &staged);
+        let mut result = if request["command"] == "controller_forget" {
+            r.list(0)
+        } else {
+            r.inspect(id, 0)?
+        };
         drop(r);
-        result["selfAccess"]=serde_json::json!(self.visibility.self_access_status());Ok(result)
+        result["selfAccess"] = serde_json::json!(self.visibility.self_access_status());
+        Ok(result)
     }
     pub fn request(&self, request: &Value) -> Result<Value, String> {
         if self.stop.load(Ordering::Acquire) {
@@ -182,7 +270,12 @@ validate_saved)
                 .filter(|v| *v <= 256)
                 .ok_or("Invalid controller page.")? as usize,
         };
-        if matches!(command,"controller_update"|"controller_forget"|"controller_reassign") {return self.edit(request);}
+        if matches!(
+            command,
+            "controller_update" | "controller_forget" | "controller_reassign"
+        ) {
+            return self.edit(request);
+        }
         let mut result = {
             let r = self.registry.lock().unwrap_or_else(|p| p.into_inner());
             match command {
@@ -202,6 +295,13 @@ validate_saved)
             }
         }
         Ok(result)
+    }
+    /// Register a passive selected-source topic and subscribe at the same owner
+    /// boundary. This never acquires a device or alters report freshness.
+    pub fn observe<T>(&self, broker: &osg_streams::Broker, id: &str,
+        action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        if self.stop.load(Ordering::Acquire) { return Err("Controller capture has stopped.".into()); }
+        self.registry.lock().unwrap_or_else(|p| p.into_inner()).observe(broker,id,action)
     }
     pub fn stream_snapshot(&self, ids: &[String]) -> Result<stream::Snapshot, String> {
         if self.stop.load(Ordering::Acquire) {
@@ -224,7 +324,10 @@ validate_saved)
     /// Internal coordinator boundary, deliberately separate from frontend IPC.
     pub fn game_visibility(&self, operation: &str, value: &Value) -> Result<Value, String> {
         if self.stop.load(Ordering::Acquire)
-            && matches!(operation, "capture" | "preflight" | "handoff_preflight" | "handoff_validate" | "start")
+            && matches!(
+                operation,
+                "capture" | "preflight" | "handoff_preflight" | "handoff_validate" | "start"
+            )
         {
             return Err("Controller capture has stopped; game visibility cannot activate.".into());
         }
@@ -233,13 +336,23 @@ validate_saved)
     pub fn shutdown(&self) {
         self.visibility.shutdown();
         self.stop.store(true, Ordering::Release);
+        #[cfg(windows)]
+        if let Some(wake) = &self.capture_wake {
+            if let Err(error) = wake.signal() {
+                self.registry
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .diagnostic = error;
+            }
+        }
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
         let _ = self.save();
     }
     pub fn status(&self) -> Value {
-        let mut result = self.registry
+        let mut result = self
+            .registry
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .list(0);
@@ -256,11 +369,12 @@ fn native_run(
     shared: Arc<Mutex<Registry>>,
     stop: Arc<AtomicBool>,
     suppression: visibility::suppression::Control,
+    #[cfg(windows)] wake: Arc<windows::Wake>,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
         let _ = suppression;
-        windows::run(shared, stop)
+        windows::run(shared, stop, wake)
     }
     #[cfg(target_os = "linux")]
     {
@@ -280,9 +394,11 @@ fn native_run(
 mod tests;
 
 #[cfg(test)]
-pub(crate) fn test_directory()->tempfile::TempDir {
-    let parent=std::env::temp_dir();
+pub(crate) fn test_directory() -> tempfile::TempDir {
+    let parent = std::env::temp_dir();
     #[cfg(unix)]
-    let parent=parent.canonicalize().expect("canonical OS temporary directory");
+    let parent = parent
+        .canonicalize()
+        .expect("canonical OS temporary directory");
     tempfile::tempdir_in(parent).expect("isolated controller fixture")
 }

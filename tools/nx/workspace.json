@@ -101,7 +101,8 @@
         "src/lib/controllers.test.mjs",
         "src/lib/controller-inputs.test.mjs",
         "src/lib/module-usb.test.mjs",
-        "src/lib/persistence/inventory-storage.test.mjs"
+        "src/lib/persistence/inventory-storage.test.mjs",
+        "src/lib/controller-observations.test.mjs"
       ],
       "sourcePatterns": [
         "src/lib/device-*.ts",
@@ -121,13 +122,15 @@
         "src/lib/controllers.*",
         "src/lib/module-usb.*",
         "src/lib/persistence/inventory-storage.*",
-        "tests/fixtures/system/**"
+        "tests/fixtures/system/**",
+        "src/lib/controller-observations.*"
       ],
       "coverageScripts": [
         "system-inventory:coverage",
         "controllers:coverage",
         "actions:coverage",
-        "module-usb:coverage"
+        "module-usb:coverage",
+        "controller-streams:coverage"
       ],
       "coverageTasks": [
         {

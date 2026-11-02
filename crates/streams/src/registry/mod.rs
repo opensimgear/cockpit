@@ -210,6 +210,29 @@ impl Broker {
         Ok(Reader::new(topic, subscription, lease))
     }
 
+    /// Retire only this exact current registration, atomically against subscribe.
+    /// Lock order matches subscribe: broker first, then stream.
+    pub fn retire_if_idle(&self, publisher: &Publisher) -> bool {
+        let mut state = self.shared.lock();
+        let topic = &publisher.topic;
+        if !state
+            .topics
+            .get(&topic.identity.topic)
+            .is_some_and(|current| Arc::ptr_eq(current, topic))
+        {
+            return false;
+        }
+        let mut stream = topic.stream.shared.lock();
+        if !stream.subscribers.is_empty() {
+            return false;
+        }
+        stream.closed = true;
+        state.topics.remove(&topic.identity.topic);
+        drop(stream);
+        topic.stream.shared.wake.notify_all();
+        true
+    }
+
     pub fn close_client(&self, client: &str) {
         let leases: Vec<_> = self
             .shared

@@ -48,9 +48,15 @@ def main():
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
     sources = [root / 'crates/controller-input/src/lib.rs', root / 'crates/controller-input/src/registry.rs']
+    # Keep each extracted production module individually accountable; tests are
+    # excluded rather than allowed to dilute the per-module coverage floor.
+    sources.extend(path for path in sorted((root / 'crates/controller-input/src/registry').rglob('*.rs'))
+                   if not any('test' in part for part in path.relative_to(root / 'crates/controller-input/src/registry').parts))
     sources.append(root / 'crates/controller-input/src/inventory.rs')
     if os.name == 'nt':
         sources.append(root / 'crates/controller-input/src/windows.rs')
+        sources.extend(path for path in sorted((root / 'crates/controller-input/src/windows').rglob('*.rs'))
+                       if not any('test' in part for part in path.relative_to(root / 'crates/controller-input/src/windows').parts))
     sources.append(root / 'crates/controller-input/src/capture.rs')
     sources.append(root / 'crates/controller-input/src/stream.rs')
     if sys.platform.startswith('linux'):

@@ -4,10 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     mem::size_of,
     ptr::{null, null_mut},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{atomic::AtomicBool, Arc, Mutex},
 };
 use windows_sys::Win32::{
     Devices::HumanInterfaceDevice::*,
@@ -16,6 +13,10 @@ use windows_sys::Win32::{
     System::LibraryLoader::GetModuleHandleW,
     UI::{Input::*, WindowsAndMessaging::*},
 };
+
+mod worker;
+
+pub use worker::Wake;
 
 // Keep Windows calls at an explicit boundary so authored descriptors, reports,
 // enumeration races and API failures exercise the production parser in native tests.
@@ -470,119 +471,8 @@ unsafe fn input(
     }
     Ok(())
 }
-pub fn run(shared: Shared, stop: Arc<AtomicBool>) -> Result<(), String> {
-    let api = Api::native();
-    unsafe {
-        let class = wide(&format!("OpenSimGearInput-{}", uuid::Uuid::new_v4()));
-        let instance = GetModuleHandleW(null());
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(procedure),
-            hInstance: instance,
-            lpszClassName: class.as_ptr(),
-            ..Default::default()
-        };
-        if RegisterClassW(&wc) == 0 {
-            return Err(win_error("Register controller input window"));
-        }
-        let window = CreateWindowExW(
-            0,
-            class.as_ptr(),
-            class.as_ptr(),
-            0,
-            0,
-            0,
-            0,
-            0,
-            HWND_MESSAGE,
-            null_mut(),
-            instance,
-            null(),
-        );
-        if window.is_null() {
-            UnregisterClassW(class.as_ptr(), instance);
-            return Err(win_error("Create controller input window"));
-        }
-        let registrations: Vec<_> = [4, 5, 8]
-            .iter()
-            .map(|usage| RAWINPUTDEVICE {
-                usUsagePage: 1,
-                usUsage: *usage,
-                dwFlags: RIDEV_INPUTSINK | RIDEV_DEVNOTIFY,
-                hwndTarget: window,
-            })
-            .collect();
-        if RegisterRawInputDevices(
-            registrations.as_ptr(),
-            3,
-            size_of::<RAWINPUTDEVICE>() as u32,
-        ) == 0
-        {
-            DestroyWindow(window);
-            UnregisterClassW(class.as_ptr(), instance);
-            return Err(win_error("Register background controller capture"));
-        }
-        let mut devices = BTreeMap::new();
-        let mut rescan = true;
-        let mut next_scan = std::time::Instant::now();
-        shared
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .backend_status = "ready".into();
-        while !stop.load(Ordering::Acquire) {
-            if rescan || std::time::Instant::now() >= next_scan {
-                next_scan = std::time::Instant::now() + std::time::Duration::from_secs(2);
-                match enumerate(&api, &mut devices, &shared) {
-                    Ok(()) => rescan = false,
-                    Err(e) => shared.lock().unwrap_or_else(|p| p.into_inner()).diagnostic = e,
-                }
-            }
-            let mut message = MSG::default();
-            for _ in 0..256 {
-                if PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) == 0 {
-                    break;
-                }
-                if message.message == WM_INPUT {
-                    if let Err(e) = input(&api, message.lParam as HRAWINPUT, &devices, &shared) {
-                        let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
-                        // A loss that cannot be attributed invalidates all observed baselines.
-                        let ids: Vec<_> = devices
-                            .values()
-                            .filter_map(|d| r.id_for_path(&d.path))
-                            .collect();
-                        for id in ids {
-                            r.fault(&id, &e);
-                        }
-                    }
-                } else if message.message == WM_INPUT_DEVICE_CHANGE {
-                    if message.wParam == GIDC_REMOVAL as usize {
-                        if let Some(device) = devices.remove(&(message.lParam as usize)) {
-                            let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
-                            if let Some(id) = r.id_for_path(&device.path) {
-                                r.disconnect(&id);
-                            }
-                        }
-                    }
-                    rescan = true;
-                }
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
-            MsgWaitForMultipleObjectsEx(0, null(), 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        }
-        let removal: Vec<_> = [4, 5, 8]
-            .iter()
-            .map(|usage| RAWINPUTDEVICE {
-                usUsagePage: 1,
-                usUsage: *usage,
-                dwFlags: RIDEV_REMOVE,
-                hwndTarget: null_mut(),
-            })
-            .collect();
-        RegisterRawInputDevices(removal.as_ptr(), 3, size_of::<RAWINPUTDEVICE>() as u32);
-        DestroyWindow(window);
-        UnregisterClassW(class.as_ptr(), instance);
-        Ok(())
-    }
+pub fn run(shared: Shared, stop: Arc<AtomicBool>, wake: Arc<Wake>) -> Result<(), String> {
+    worker::run(shared, stop, wake)
 }
 
 #[cfg(test)]

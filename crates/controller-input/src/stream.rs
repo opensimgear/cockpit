@@ -67,11 +67,11 @@ impl Journal {
     pub fn cursor(&self) -> u64 {
         self.cursor
     }
-    pub fn publish(&mut self, mut event: Event) {
+    pub fn publish(&mut self, mut event: Event) -> Option<Event> {
         // Exhaustion faults consumers permanently; it must never reuse a cursor.
         let Some(next) = self.cursor.checked_add(1) else {
             self.events.clear();
-            return;
+            return None;
         };
         self.cursor = next;
         event.cursor = next;
@@ -79,7 +79,8 @@ impl Journal {
         if self.events.len() == REPORT_LIMIT {
             self.events.pop_front();
         }
-        self.events.push_back(event);
+        self.events.push_back(event.clone());
+        Some(event)
     }
     pub fn page(&self, session: &str, expected_session: &str, after: u64) -> Page {
         let gap = expected_session != session
