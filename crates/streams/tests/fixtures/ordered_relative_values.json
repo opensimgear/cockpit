@@ -1,0 +1,6 @@
+{
+  "events": [
+    { "topic": "controller.edges", "source": "hid:wheel-2", "generation": "9", "sequence": "1", "revision": "101", "capturedUs": "700", "clockId": "host-monotonic", "payload": { "encoderDelta": -2 } },
+    { "topic": "controller.edges", "source": "hid:wheel-2", "generation": "9", "sequence": "2", "revision": "102", "capturedUs": "705", "clockId": "host-monotonic", "payload": { "encoderDelta": 3 } }
+  ]
+}

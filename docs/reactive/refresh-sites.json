@@ -54,6 +54,8 @@
   {"file":"crates/persistence/src/observation.rs","line":68,"kinds":["wait_timeout"]},
   {"file":"crates/persistence/src/observation.rs","line":137,"kinds":["wait_timeout"]},
   {"file":"crates/persistence/src/observation.rs","line":232,"kinds":["sleep"]},
+  {"file":"crates/streams/src/journal.rs","line":370,"kinds":["recv_timeout"]},
+  {"file":"crates/streams/src/journal.rs","line":400,"kinds":["wait_timeout"]},
   {"file":"crates/virtual-controller/src/inspection.rs","line":234,"kinds":["sleep"]},
   {"file":"crates/virtual-controller/src/supervisor.rs","line":144,"kinds":["recv_timeout"]},
   {"file":"crates/virtual-controller/src/supervisor.rs","line":229,"kinds":["recv_timeout"]},

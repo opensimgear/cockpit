@@ -36,6 +36,18 @@ refresh, source/protocol cadence, independent lease, deadline, debounce or anima
 No blanket timer ban: request timeouts, UI debounces, owned renewal and authored
 mapping behavior remain legitimate when they do not refresh application state.
 
+The currently supported telemetry adapters are Assetto Corsa, Assetto Corsa
+Competizione, Assetto Corsa EVO, Assetto Corsa Rally, DCS-BIOS, managed DCS ownship,
+and X-Plane 11/12 (see ../telemetry.md). Each of the four Assetto dialects has an
+unresolved shared-memory notification boundary; a packet identifier is evidence
+of a new sample only after a read, not a producer notification. A proposed bridge
+must run at the simulator/export producer and publish a coherent frame with the
+original packet identity. A helper that periodically copies the same pages is
+still sampling and does not pass this gate. Feasibility and live qualification
+must be established for each simulator separately. DCS export's existing up-to-20
+Hz source-defined frame callback is legitimate upstream cadence; downstream
+consumers must not turn its one-second freshness lease into a refresh interval.
+
 Preserve controller journal session/cursor/gap semantics, batch size 4,096,
 non-consuming multi-reader access, exact numeric domains and complete baselines.
 Preserve companion authenticated publication/owner fences, native subscription

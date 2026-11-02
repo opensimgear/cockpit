@@ -1,0 +1,27 @@
+{
+  "snapshot": {
+    "topic": "controller.levels",
+    "source": "hid:device-7",
+    "generation": "4",
+    "revision": "41",
+    "capturedUs": "900000",
+    "clockId": "host-monotonic",
+    "continuity": "baseline",
+    "quality": "good",
+    "payload": { "buttonA": false, "axisX": 0 }
+  },
+  "updates": [
+    {
+      "topic": "controller.edges",
+      "source": "hid:device-7",
+      "generation": "4",
+      "sequence": "18",
+      "revision": "42",
+      "capturedUs": "900800",
+      "clockId": "host-monotonic",
+      "continuity": "continuous",
+      "quality": "good",
+      "payload": { "buttonA": true }
+    }
+  ]
+}

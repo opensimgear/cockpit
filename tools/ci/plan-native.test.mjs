@@ -19,3 +19,9 @@ test('maps affected marker projects to only their platform jobs', () => {
 test('missing baseline selects every native integration job', () => {
   assert.ok(Object.values(planNative({ projects: [], full: true })).every(Boolean));
 });
+
+test('stream changes select the portable Rust platform matrix', () => {
+  const plan = planNative({ projects: ['native-streams'] });
+  assert.equal(plan.native_mapping, true);
+  assert.deepEqual(Object.entries(plan).filter(([, selected]) => selected).map(([name]) => name), ['native_mapping']);
+});

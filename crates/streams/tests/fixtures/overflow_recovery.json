@@ -1,0 +1,30 @@
+{
+  "deliveries": [
+    { "kind": "loss", "generation": "4", "revision": "73", "reason": "overflow" },
+    {
+      "kind": "snapshot",
+      "topic": "controller.levels",
+      "source": "hid:device-7",
+      "generation": "4",
+      "revision": "74",
+      "capturedUs": "901000",
+      "clockId": "host-monotonic",
+      "continuity": "baseline",
+      "quality": "good",
+      "payload": { "buttonA": false, "axisX": 12 }
+    },
+    {
+      "kind": "event",
+      "topic": "controller.edges",
+      "source": "hid:device-7",
+      "generation": "4",
+      "sequence": "1",
+      "revision": "75",
+      "capturedUs": "901500",
+      "clockId": "host-monotonic",
+      "continuity": "continuous",
+      "quality": "good",
+      "payload": { "buttonA": true }
+    }
+  ]
+}

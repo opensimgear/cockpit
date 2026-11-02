@@ -14,6 +14,7 @@ export function planNative({ projects, full = false }) {
   const selected = new Set(projects);
   return Object.fromEntries(Object.entries(projectsByFlag).map(([flag, project]) => [
     flag,
-    Boolean(full || selected.has(project)),
+    // Portable streams share the existing portable Rust platform matrix.
+    Boolean(full || selected.has(project) || (flag === 'native_mapping' && selected.has('native-streams'))),
   ]));
 }

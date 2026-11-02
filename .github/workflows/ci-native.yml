@@ -397,6 +397,8 @@ jobs:
         run: rustup component add llvm-tools-preview
       - name: Portable mapping tests and per-module coverage
         run: python scripts/mapping-coverage.py
+      - name: Portable stream conformance and per-module coverage
+        run: python scripts/streams-coverage.py
       - name: Execute authored preview trace
         run: cargo run --locked --manifest-path crates/mapping/Cargo.toml --example replay -- crates/mapping/fixtures/direct-trace.json
       - name: Upload mapping evidence
@@ -408,3 +410,6 @@ jobs:
             .research/mapping-coverage/summary.json
             .research/mapping-coverage/*-lines.txt
             .research/mapping-coverage/tests.log
+            .research/streams-coverage/summary.json
+            .research/streams-coverage/*-lines.txt
+            .research/streams-coverage/tests.log

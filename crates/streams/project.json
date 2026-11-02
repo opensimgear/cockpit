@@ -1,0 +1,27 @@
+{
+  "name": "native-streams",
+  "projectType": "library",
+  "root": "crates/streams",
+  "sourceRoot": "crates/streams/src",
+  "tags": ["native"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/**/*",
+      "{workspaceRoot}/scripts/streams-coverage.py",
+      "{workspaceRoot}/.github/workflows/**/*",
+      "{workspaceRoot}/tools/ci/**/*",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "parallelism": false,
+      "inputs": ["default"],
+      "options": {"command": "python scripts/streams-coverage.py"}
+    }
+  }
+}
