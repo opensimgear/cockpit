@@ -24,52 +24,7 @@ fn installed_catalogue_fits_native_profile_publication_contract() {
     println!("Installed X-Plane {version}: {} channel ports; {} categories", ports.len(), groups.len());
 }
 
-#[test]
-fn passive_pages_subscribe_only_requested_components_and_never_reuse_old_page_values() {
-    let server = UdpSocket::bind("127.0.0.1:0").unwrap();
-    socket2::SockRef::from(&server).set_recv_buffer_size(1024 * 1024).unwrap();
-    server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    let mut connection = defaults(12);
-    connection["port"] = json!(server.local_addr().unwrap().port());
-    let mut native = legacy_channels()[0].clone();
-    native.id = "sim/flightmodel/forces/g_nrml".into();
-    native.dataref = native.id.clone(); native.minimum = None; native.maximum = None;
-    let catalogue = [(native.id.clone(), native.clone())].into_iter().collect();
-    let mut source = Source::connect_selected(&connection, vec![], vec![true; GUARDS.len()+PATH_BYTES], catalogue, vec![], Box::new(|| Ok(()))).unwrap();
-    assert_eq!(source.pending_subscriptions.len(), GUARDS.len()+PATH_BYTES-100);
-    flush_requested(&mut source);
-    let mut bytes = [0u8; 512];
-    let mut peer = None;
-    for _ in 0..GUARDS.len()+PATH_BYTES {
-        let (_, address) = server.recv_from(&mut bytes).unwrap(); peer = Some(address);
-        assert!(!bytes[13..].starts_with(native.dataref.as_bytes()));
-    }
-    source.set_inspection_channels(&[native.id.clone()]).unwrap();
-    flush_requested(&mut source);
-    for _ in 0..2*(GUARDS.len()+PATH_BYTES)+1 { server.recv_from(&mut bytes).unwrap(); }
-    assert_eq!(source.paths.len(), GUARDS.len()+PATH_BYTES+1);
-    assert_eq!(source.paths.last(), Some(&native.dataref));
-    let now = Instant::now();
-    for clock in [1., 2.] {
-        let mut values = frame(12, clock, "Aircraft/A.acf");
-        values.retain(|(i,_)| *i < GUARDS.len()+PATH_BYTES);
-        values.push((GUARDS.len()+PATH_BYTES, -1.25));
-        server.send_to(&packet(source.base, &values), peer.unwrap()).unwrap();
-        let result = poll_after_delivery(&mut source, now);
-        if clock == 2. { assert_eq!(result.0.values[&native.id], json!(-1.25)); }
-    }
-    let previous_base = source.base;
-    source.set_inspection_channels(&[]).unwrap();
-    flush_requested(&mut source);
-    for _ in 0..2*(GUARDS.len()+PATH_BYTES)+1 { server.recv_from(&mut bytes).unwrap(); }
-    assert!(source.poll(now).0.values.is_empty());
-    let stale = packet(previous_base, &[(GUARDS.len()+PATH_BYTES, 99.)]);
-    server.send_to(&stale, peer.unwrap()).unwrap();
-    assert!(poll_after_delivery(&mut source, now).0.values.is_empty());
-    let base = source.base;
-    assert!(source.set_inspection_channels(&["sim/not/in/catalogue".into()]).is_err());
-    assert_eq!(source.base, base);
-}
+include!("selection_tests.rs");
 
 // send_to only queues a datagram for delivery. In particular, macOS can return
 // WouldBlock when the nonblocking receiver is polled immediately afterwards.
@@ -186,11 +141,11 @@ fn simulated_udp_session_renews_unsubscribes_and_disarms_on_errors_and_exit() {
         (indexes, peer.unwrap())
     };
     let (index, peer) = receive();
-    let base = index["sim/version/xplane_internal_version"].0;
+    let old_packet = packet_for(&source, &frame(11, 500., "Aircraft/A.acf"));
     let now = Instant::now();
     // Deliberately delay the first datagram to exercise asynchronous delivery.
     let sender = server.try_clone().unwrap();
-    let baseline = packet(base, &frame(11, 1., "Aircraft/A.acf"));
+    let baseline = packet_for(&source, &frame(11, 1., "Aircraft/A.acf"));
     let delivery = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(10));
         sender.send_to(&baseline, peer).unwrap();
@@ -200,14 +155,14 @@ fn simulated_udp_session_renews_unsubscribes_and_disarms_on_errors_and_exit() {
     assert!(!baseline.fresh);
     assert_eq!(baseline.aircraft.as_deref(), Some("Aircraft/A.acf"));
     server
-        .send_to(&packet(base, &frame(11, 2., "Aircraft/A.acf")), peer)
+        .send_to(&packet_for(&source, &frame(11, 2., "Aircraft/A.acf")), peer)
         .unwrap();
     assert_eq!(
         poll_after_delivery(&mut source, now).0.values["speed"],
         115.5
     );
     server
-        .send_to(&packet(base, &frame(11, 3., "Aircraft/A.acf")), peer)
+        .send_to(&packet_for(&source, &frame(11, 3., "Aircraft/A.acf")), peer)
         .unwrap();
     let later = now + Duration::from_secs(3);
     poll_after_delivery(&mut source, later);
@@ -224,17 +179,17 @@ fn simulated_udp_session_renews_unsubscribes_and_disarms_on_errors_and_exit() {
     assert_eq!(cancelled["sim/time/paused"].1, 0);
     let (new, _) = receive();
     assert_eq!(new["sim/time/paused"].1, 10);
-    let next = new["sim/version/xplane_internal_version"].0;
+    assert_ne!(index["sim/version/xplane_internal_version"].0, new["sim/version/xplane_internal_version"].0);
     server
-        .send_to(&packet(base, &frame(11, 500., "Aircraft/A.acf")), peer)
+        .send_to(&old_packet, peer)
         .unwrap();
     assert!(!poll_after_delivery(&mut source, later).0.fresh);
     server
-        .send_to(&packet(next, &frame(11, 10., "Aircraft/B.acf")), peer)
+        .send_to(&packet_for(&source, &frame(11, 10., "Aircraft/B.acf")), peer)
         .unwrap();
     assert!(!poll_after_delivery(&mut source, later).0.fresh);
     server
-        .send_to(&packet(next, &frame(11, 11., "Aircraft/B.acf")), peer)
+        .send_to(&packet_for(&source, &frame(11, 11., "Aircraft/B.acf")), peer)
         .unwrap();
     assert!(poll_after_delivery(&mut source, later).0.fresh);
     alive.store(false, Ordering::Release);

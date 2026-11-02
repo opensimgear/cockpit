@@ -63,6 +63,7 @@ def main():
     module_names.extend(['dcs_bios/transport.rs', 'dcs_profile/capture.rs'])
     module_names.extend(['dcs_bios/transport_client.rs', 'dcs_bios/decoded/mod.rs',
                          'dcs_bios/decoded/state.rs', 'dcs_bios/decoded/source.rs', 'dcs_profile/shared.rs'])
+    module_names.append('xplane/subscriptions.rs')
     parser.add_argument('--module', action='append', choices=module_names, help='Focused local coverage; CI measures every module.')
     parser.add_argument('--test-filter', action='append', default=[])
     parser.add_argument('--output-dir', type=Path,

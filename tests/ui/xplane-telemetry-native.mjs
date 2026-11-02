@@ -6,12 +6,13 @@ import assert from 'node:assert/strict';
 import {createSocket} from 'node:dgram';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {mkdir,readFile,writeFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
+import {mkdir,readFile,writeFile,rm} from 'node:fs/promises';
+import {resolve,sep} from 'node:path';
 
 const enabled=process.env.OSG_XPLANE_TELEMETRY_NATIVE==='1',execute=promisify(execFile);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const near=(actual,expected)=>typeof actual==='number'&&Math.abs(actual-expected)<1e-5*Math.max(1,Math.abs(expected));
+const normalizedPath=value=>value.replace(/^\\\\\?\\/,'').replaceAll('/','\\').toLowerCase().replace(/\\+$/,'');
 async function wait(read,label,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){const value=await read();if(value)return value;await sleep(150);}throw Error(label);}
 
 async function connect(){
@@ -113,9 +114,9 @@ test('full installed X-Plane metadata supplies selected physics and canonical ch
       // fixtures retain the full audited installed numeric SDK definitions.
       await writeFile(resolve(working,'Resources/plugins/DataRefs.txt'),installed.replace(/^[^\r\n]*/,`2 ${version}00 Authored native acceptance installation`));
       await execute('C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',['/nologo','/target:winexe',`/out:${executable}`,processSource],{windowsHide:true});
-      const beforeState=await gameState(),before=beforeState.manualInstallations?.[gameId]??null,beforeGame=beforeState.catalogue.find(game=>game.id===gameId);
-      const telemetry=await publisher(version),record={gameId,name,previousExecutable:before,previousConnection:beforeGame.integrationSetup.connection,originallyInstalled:beforeGame.installed,phases:{}};evidence.games.push(record);
-      let child,exited,profile,failed=false;
+      const beforeState=await gameState(),beforeGame=beforeState.catalogue.find(game=>game.id===gameId),before=beforeGame?.selectedInstallationId;
+      const telemetry=await publisher(version),record={gameId,name,previousInstallation:before,previousConnection:beforeGame?.integrationSetup.connection,originallyInstalled:!!beforeGame?.installed,phases:{}};evidence.games.push(record);
+      let child,exited,profile,fixtureInstallation,failed=false;
       const checkpoint=async phase=>{record.lastPhase=phase;console.log(`${name}: ${phase}`);await writeFile(resolve(directory,'progress.json'),JSON.stringify(evidence,null,2)+'\n');};
       const stopFixture=async()=>{if(!child)return;const owned=child;await writeFile(stop,'stop');const timer=setTimeout(()=>owned.kill(),5000);try{await exited;}finally{clearTimeout(timer);child=null;}};
       const inspect=async(query={})=>{const report=(await request({command:'game_telemetry_inspect',gameId,offset:0,limit:128,...query})).gameTelemetry;const game=report.games.find(game=>game.id===gameId);assert.equal(game.name,name);return game;};
@@ -128,7 +129,12 @@ test('full installed X-Plane metadata supplies selected physics and canonical ch
       const live=()=>wait(async()=>{const snapshot=await samples();return snapshot&&Object.entries(expected).every(([id,value])=>known(snapshot,id,value))&&snapshot;},`${name} selected physics/canonical values did not reach processing`);
       const withdrawn=label=>wait(async()=>{const snapshot=await samples();return snapshot&&Object.keys(expected).every(id=>unavailable(snapshot,id))&&snapshot;},`${name} ${label} retained known processing values`);
       try{
-        await request({command:'game_installation',gameId,executable});
+        const registered=(await request({command:'game_add',name:beforeGame?.name??name,installPath:working,executable})).games;
+        assert.equal(registered.addedGameId,gameId);
+        fixtureInstallation=registered.catalogue.find(game=>game.id===gameId).installations.find(item=>normalizedPath(item.installPath)===normalizedPath(working));
+        assert.ok(fixtureInstallation);
+        assert.ok(!beforeGame?.installations.some(item=>item.id===fixtureInstallation.id));
+        await request({command:'game_installation_select',gameId,installationId:fixtureInstallation.id});
         await request({command:'game_integration_setup',gameId,connection:{host:'127.0.0.1',port:telemetry.port,listenPort:0,updateHz:20,freshnessMs:500}});
         record.setup=await wait(async()=>{const game=(await gameState()).catalogue.find(game=>game.id===gameId);return game.integrationSetup?.state==='ready'&&game.integrationSetup;},`${name} installation setup never completed`);
         child=spawn(executable,[stop],{cwd:working,windowsHide:true,stdio:'ignore'});exited=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',error=>resolve({error:String(error)}));});
@@ -138,6 +144,8 @@ test('full installed X-Plane metadata supplies selected physics and canonical ch
         record.passiveVelocity=await passive('sim/flightmodel/position/local_vx',1.25);
         record.passiveAcceleration=await passive('sim/flightmodel/position/local_ax',2.25);
         await wait(()=>!telemetry.subscribed('sim/flightmodel/position/local_vx')&&telemetry.events.some(event=>event.hz===0&&event.path==='sim/flightmodel/position/local_vx'),'Changing the passive page did not cancel its prior dataref');
+        record.selectionGuardCancels=telemetry.events.filter(event=>event.hz===0&&event.path.startsWith('sim/time/')).length;
+        assert.equal(record.selectionGuardCancels,0,'Inspection replacement must preserve existing simulator guards.');
         await checkpoint('full metadata and on-demand passive subscription replacement verified');
         const resources=(await request({command:'profile_resources_list',offset:0,limit:128})).profileResources.resources,resource=resources.find(resource=>resource.attributes.gameId===gameId);assert.ok(resource);
         const pages=new Map();let total;
@@ -169,12 +177,30 @@ test('full installed X-Plane metadata supplies selected physics and canonical ch
       finally{
         const cleanupErrors=[],cleanup=async(label,operation)=>{try{await operation();}catch(error){cleanupErrors.push(`${label}: ${error}`);}};
         await cleanup('stop fixture',stopFixture);if(profile){await cleanup('stop profile',()=>request({command:'profile_stop'}));await cleanup('delete profile',()=>request({command:'profile_delete',id:profile.id,expectedRevision:profile.revision}));}
-        await cleanup('restore installation',()=>request({command:'game_installation',gameId,executable:before}));
         await cleanup('restore provider settings',async()=>{
-          if(!beforeGame.installed){await request({command:'game_integration_remove',gameId});return;}
+          if(!beforeGame?.integrationSetup.installed){await request({command:'game_integration_remove',gameId});return;}
           const current=(await gameState()).catalogue.find(game=>game.id===gameId);
           await request({command:'game_integration_settings_save',gameId,connection:beforeGame.integrationSetup.connection,expectedSetupRevision:current.integrationSetup.providerSetupRevision});
         });
+        if(fixtureInstallation){
+          if(before)await cleanup('restore installation',()=>request({command:'game_installation_select',gameId,installationId:before}));
+          await cleanup('remove only private installation',async()=>{
+            assert.ok(working.startsWith(directory+sep));
+            assert.equal(normalizedPath(fixtureInstallation.installPath),normalizedPath(working));
+            await rm(working,{recursive:true,force:true});
+            await wait(async()=>(await gameState()).discovery?.status!=='scanning','Existing discovery did not finish',90000);
+            const scan=async paths=>{await request({command:'game_discovery_start',paths});return wait(async()=>{const value=(await gameState()).discovery;return value.status==='ready'&&value;},'Fixture removal discovery did not finish',90000);};
+            let discovery=await scan([]);
+            if(!discovery.libraries.some(library=>library.id==='disk')){discovery=await scan([directory]);record.cleanupAddedScanRoot=directory;}
+            const removal=discovery.entries.find(item=>item.action==='remove'&&item.gameId===gameId&&item.installationId===fixtureInstallation.id);
+            assert.ok(removal,'Discovery must offer removal of exactly the missing private installation.');
+            assert.equal(normalizedPath(removal.installPath),normalizedPath(working));
+            await request({command:'game_discovery_apply',scanId:discovery.scanId,actions:discovery.entries.map(item=>({id:item.id,selected:item.id===removal.id}))});
+            const current=(await gameState()).catalogue.find(game=>game.id===gameId);
+            if(beforeGame){assert.equal(current.selectedInstallationId,before);assert.deepEqual(current.installations,beforeGame.installations);}
+            else assert.equal(current,undefined);
+          });
+        }
         record.transport=telemetry.stats();record.subscriptionEvents=telemetry.events;telemetry.close();
         if(cleanupErrors.length){record.cleanupErrors=cleanupErrors;if(!failed)throw Error(cleanupErrors.join('; '));}
       }
