@@ -1,3 +1,5 @@
+mod publish;
+
 use crate::{
     codec::{encode_limited, map_encode_error},
     types::{
@@ -162,106 +164,6 @@ where
             id,
             marker: PhantomData,
         })
-    }
-
-    /// Commit one ordered event and the resulting complete snapshot atomically.
-    pub fn publish(
-        &self,
-        generation: u64,
-        snapshot: S,
-        event: E,
-        captured_us: u64,
-        clock_id: impl Into<String>,
-    ) -> Result<(u64, u64), PublishError> {
-        self.publish_batch(
-            generation,
-            snapshot,
-            vec![(event, captured_us, clock_id.into())],
-        )
-    }
-
-    /// Atomically commit a final snapshot and an ordered event batch.
-    pub fn publish_batch(
-        &self,
-        generation: u64,
-        snapshot: S,
-        events: Vec<(E, u64, String)>,
-    ) -> Result<(u64, u64), PublishError> {
-        if events.is_empty() {
-            return Err(PublishError::EmptyBatch);
-        }
-        if events.len() > self.shared.limits.max_batch_frames {
-            return Err(PublishError::BatchTooLarge);
-        }
-        let snapshot_bytes = encode_limited(&snapshot, self.shared.limits.max_snapshot_bytes)
-            .map_err(|error| map_encode_error(error, PublishError::SnapshotTooLarge))?;
-        let mut encoded_events = Vec::with_capacity(events.len());
-        let mut batch_bytes = 0usize;
-        for (value, captured_us, clock_id) in events {
-            validate_clock(&clock_id)?;
-            let bytes = encode_limited(&value, self.shared.limits.max_frame_bytes)
-                .map_err(|error| map_encode_error(error, PublishError::FrameTooLarge))?;
-            batch_bytes = batch_bytes
-                .checked_add(bytes.len())
-                .ok_or(PublishError::BatchTooLarge)?;
-            if batch_bytes > self.shared.limits.max_batch_bytes {
-                return Err(PublishError::BatchTooLarge);
-            }
-            encoded_events.push((Arc::<[u8]>::from(bytes), captured_us, clock_id));
-        }
-
-        let mut state = self.shared.lock();
-        if state.closed {
-            return Err(PublishError::Closed);
-        }
-        if generation != state.generation {
-            return Err(PublishError::StaleGeneration);
-        }
-        let final_revision = state
-            .revision
-            .checked_add(encoded_events.len() as u64)
-            .ok_or(PublishError::CounterExhausted)?;
-        let final_sequence = state
-            .sequence
-            .checked_add(encoded_events.len() as u64)
-            .ok_or(PublishError::CounterExhausted)?;
-        let generation = state.generation;
-        let first_revision = state.revision + 1;
-        let first_sequence = state.sequence + 1;
-        state.snapshot = EncodedSnapshot {
-            captured_us: encoded_events.last().unwrap().1,
-            clock_id: encoded_events.last().unwrap().2.clone(),
-            bytes: snapshot_bytes.into(),
-        };
-        state.revision = final_revision;
-        state.sequence = final_sequence;
-
-        for subscriber in state.subscribers.values_mut() {
-            if subscriber.blocked {
-                continue;
-            }
-            for (index, (bytes, captured_us, clock_id)) in encoded_events.iter().enumerate() {
-                let next_bytes = subscriber.pending_bytes.saturating_add(bytes.len());
-                if subscriber.events.len() >= self.shared.limits.max_pending_frames
-                    || next_bytes > self.shared.limits.max_pending_bytes
-                {
-                    overflow(subscriber, generation, final_revision);
-                    break;
-                }
-                subscriber.pending_bytes = next_bytes;
-                subscriber.events.push_back(QueuedEvent {
-                    generation,
-                    sequence: first_sequence + index as u64,
-                    revision: first_revision + index as u64,
-                    captured_us: *captured_us,
-                    clock_id: clock_id.clone(),
-                    bytes: bytes.clone(),
-                });
-            }
-        }
-        drop(state);
-        self.shared.wake.notify_all();
-        Ok((final_revision, final_sequence))
     }
 }
 

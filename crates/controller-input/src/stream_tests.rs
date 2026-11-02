@@ -1,6 +1,47 @@
 use super::*;
 use crate::registry::{Kind, Registry};
 use crate::tests::fixture;
+
+#[test]
+fn committed_reports_and_losses_wake_routing_but_speculative_clones_do_not() {
+    use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+    let mut registry=Registry::default();
+    let id=registry.connect(fixture("wake",None)).unwrap();
+    let notifications=Arc::new(AtomicUsize::new(0));
+    let counted=notifications.clone();
+    registry.set_report_wake(Arc::new(move||{counted.fetch_add(1,Ordering::SeqCst);}));
+    registry.report(&id,1,&BTreeMap::from([(0,1),(1,10)])).unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst),0,"Partial baselines cannot drive routing.");
+    registry.report(&id,2,&BTreeMap::from([(2,1)])).unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst),1);
+    registry.report(&id,1,&BTreeMap::from([(0,0),(1,20)])).unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst),2);
+    let page=registry.stream_page(&registry.session,0);
+    assert_eq!(page.events.len(),2,"The awakened receiver can drain every committed frame.");
+    let mut staged=registry.clone();staged.disconnect(&id);
+    assert_eq!(notifications.load(Ordering::SeqCst),2,"Database staging is not source admission.");
+    registry.disconnect(&id);
+    registry.fault(&id,"capture loss");
+    assert_eq!(notifications.load(Ordering::SeqCst),4);
+}
+
+#[test]
+fn clock_correlation_reads_never_renew_a_report_or_advance_its_cursor() {
+    let mut registry=Registry::default();
+    let id=registry.connect(fixture("clock",None)).unwrap();
+    registry.report(&id,1,&BTreeMap::from([(0,1),(1,10)])).unwrap();
+    registry.report(&id,2,&BTreeMap::from([(2,1)])).unwrap();
+    let capture=registry.stream_page(&registry.session,0);
+    let first=registry.list(0)["captureClock"].clone();
+    let second=registry.list(0)["captureClock"].clone();
+    assert_eq!(first["id"],format!("controllers:{}",registry.session));
+    let now=second["nowUs"].as_str().unwrap().parse::<u64>().unwrap();
+    assert!(now>=first["nowUs"].as_str().unwrap().parse::<u64>().unwrap());
+    assert!(now>=capture.events.last().unwrap().captured_us);
+    assert_eq!(registry.stream_page(&registry.session,capture.cursor).events.len(),0);
+    assert_eq!(registry.stream_page(&registry.session,0).events.last().unwrap().captured_us,capture.events.last().unwrap().captured_us);
+}
+
 #[test]
 fn journal_preserves_atomic_edges_and_independent_cursors() {
     let mut registry = Registry::default();

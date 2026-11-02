@@ -337,3 +337,30 @@ fn retirement_is_pointer_safe_idle_only_and_old_owner_cannot_remove_replacement(
     drop(reader);
     assert!(broker.retire_if_idle(&replacement));
 }
+
+#[test]
+fn encoded_publication_fences_counter_exhaustion_without_partial_commit() {
+    let (broker, publisher) = broker();
+    let mut reader = broker.subscribe("client", "ui", "controls").unwrap();
+    reader.recv().unwrap();
+    for (revision, sequence) in [(u64::MAX, 0), (1, u64::MAX)] {
+        {
+            let mut state = publisher.topic.stream.shared.lock();
+            state.revision = revision;
+            state.sequence = sequence;
+        }
+        assert_eq!(
+            publisher.publish(1, json!(42), json!(42), 42, "clock"),
+            Err(RegistryError::Publish(PublishError::CounterExhausted))
+        );
+        let state = publisher.topic.stream.shared.lock();
+        assert_eq!(state.revision, revision);
+        assert_eq!(state.sequence, sequence);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&state.snapshot.bytes).unwrap(),
+            json!({"value":0})
+        );
+        drop(state);
+        assert!(reader.try_recv().unwrap().is_none());
+    }
+}

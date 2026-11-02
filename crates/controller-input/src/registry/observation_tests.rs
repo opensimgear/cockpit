@@ -3,6 +3,26 @@ use crate::tests::fixture;
 use osg_streams::Reader;
 
 #[test]
+fn closed_preview_defers_encoding_and_reopens_with_current_atomic_baseline() {
+    let (mut registry,broker,id,mut reader)=setup();
+    reader.recv().unwrap();baseline(&mut registry,&id);
+    let revision=registry.observations.bindings[&id].publisher.revision();
+    drop(reader);
+    for value in 0..50 {registry.report(&id,1,&BTreeMap::from([(1,value)])).unwrap();}
+    let binding=&registry.observations.bindings[&id];
+    assert!(!binding.publisher.has_readers());assert!(binding.dirty);
+    assert_eq!(binding.publisher.revision(),revision,"No unused JSON read model was published.");
+    let mut reopened=subscribe(&mut registry,&broker,&id);
+    let frame=reopened.recv().unwrap();
+    let payload=frame.payload.unwrap();
+    assert_eq!(payload["controls"][1]["value"]["native"],49);
+    assert_eq!(payload["capturedUs"],registry.sources[&id].captured_us.to_string());
+    assert!(!registry.observations.bindings[&id].dirty);
+    registry.report(&id,1,&BTreeMap::from([(1,50)])).unwrap();
+    assert_eq!(reopened.recv().unwrap().kind,"change");
+}
+
+#[test]
 fn exhausted_native_generation_withdraws_values_without_wrapping_wire_identity() {
     let mut registry=Registry::default();
     let id=registry.connect(fixture("last-generation",None)).unwrap();

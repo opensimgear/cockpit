@@ -6,10 +6,10 @@
   import SystemControllerInputs from './SystemControllerInputs.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { controllerRoles, type ControllerResult, type HostController } from './controllers';
-  import { observeControllerInputs } from './controller-observations';
+  import { observeControllerInputs, type ControllerInputDetail } from './controller-observations';
   let { topology = false, initialSourceId = '', detailsOnly = false }: { topology?: boolean; initialSourceId?: string; detailsOnly?: boolean } = $props();
   let inventory = $state<ControllerResult>({ sources: [], offset: 0, total: 0, limit: 32 });
-  let detail = $state<ControllerResult | null>(null);
+  let detail = $state<ControllerInputDetail | null>(null);
   let selected = $state('');
   let name = $state('');
   let role = $state('controller');

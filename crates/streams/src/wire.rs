@@ -37,6 +37,15 @@ pub(crate) struct Identity {
     pub session: String,
 }
 
+/// JSON bytes produced by the bounded wire validator, never caller-supplied bytes.
+pub(crate) struct EncodedPayload(Vec<u8>);
+
+impl EncodedPayload {
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
 impl Identity {
     pub(crate) fn frame(&self, delivery: Delivery<Value, Value>) -> WireFrame {
         let mut frame = WireFrame {
@@ -100,6 +109,16 @@ impl Identity {
         clock: &str,
         change: bool,
     ) -> Result<(), PublishError> {
+        self.encode(payload, captured_us, clock, change).map(|_| ())
+    }
+
+    pub(crate) fn encode(
+        &self,
+        payload: &Value,
+        captured_us: u64,
+        clock: &str,
+        change: bool,
+    ) -> Result<EncodedPayload, PublishError> {
         crate::journal::validate_clock(clock)?;
         let limit = if change {
             MAX_CHANGE_BYTES
@@ -111,7 +130,7 @@ impl Identity {
         } else {
             PublishError::SnapshotTooLarge
         };
-        encode_limited(payload, limit - ENVELOPE_RESERVE)
+        let bytes = encode_limited(payload, limit - ENVELOPE_RESERVE)
             .map_err(|error| crate::codec::map_encode_error(error, too_large.clone()))?;
         // Validate a worst-counter envelope before entering the producer lock.
         let delivery = if change {
@@ -121,7 +140,7 @@ impl Identity {
                 revision: u64::MAX,
                 captured_us,
                 clock_id: clock.into(),
-                value: payload.clone(),
+                value: Value::Null,
             })
         } else {
             Delivery::Snapshot(crate::Snapshot {
@@ -129,11 +148,128 @@ impl Identity {
                 revision: u64::MAX,
                 captured_us,
                 clock_id: clock.into(),
-                value: payload.clone(),
+                value: Value::Null,
             })
         };
-        encode_limited(&self.frame(delivery), limit)
-            .map_err(|error| crate::codec::map_encode_error(error, too_large))?;
-        Ok(())
+        // Replacing the literal `null` with the encoded payload gives the exact
+        // frame length, including escaped metadata and worst-case counters.
+        let envelope = encode_limited(&self.frame(delivery), limit)
+            .map_err(|error| crate::codec::map_encode_error(error, too_large.clone()))?;
+        if envelope.len() - b"null".len() + bytes.len() > limit {
+            return Err(too_large);
+        }
+        Ok(EncodedPayload(bytes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn identity() -> Identity {
+        Identity {
+            topic: "\\\"".repeat(64),
+            source: "\"\\".repeat(64),
+            session: "\\".repeat(128),
+        }
+    }
+
+    fn worst_delivery(
+        payload: Value,
+        captured_us: u64,
+        clock: &str,
+        change: bool,
+    ) -> Delivery<Value, Value> {
+        if change {
+            Delivery::Event(crate::Event {
+                generation: u64::MAX,
+                sequence: u64::MAX,
+                revision: u64::MAX,
+                captured_us,
+                clock_id: clock.into(),
+                value: payload,
+            })
+        } else {
+            Delivery::Snapshot(crate::Snapshot {
+                generation: u64::MAX,
+                revision: u64::MAX,
+                captured_us,
+                clock_id: clock.into(),
+                value: payload,
+            })
+        }
+    }
+
+    #[test]
+    fn encoded_payload_and_metadata_length_match_full_serialization() {
+        let identity = identity();
+        let clock = "\\\"".repeat(64);
+        for captured_us in [0, 1, u64::MAX] {
+            for change in [false, true] {
+                for payload in [
+                    Value::Null,
+                    json!("\\\"\n☃"),
+                    json!({"nested":[1,true,null,{"x":"y"}]}),
+                ] {
+                    let bytes = identity
+                        .encode(&payload, captured_us, &clock, change)
+                        .unwrap()
+                        .into_bytes();
+                    assert_eq!(bytes, serde_json::to_vec(&payload).unwrap());
+                    let full = serde_json::to_vec(&identity.frame(worst_delivery(
+                        payload,
+                        captured_us,
+                        &clock,
+                        change,
+                    )))
+                    .unwrap();
+                    let metadata = serde_json::to_vec(&identity.frame(worst_delivery(
+                        Value::Null,
+                        captured_us,
+                        &clock,
+                        change,
+                    )))
+                    .unwrap();
+                    assert_eq!(metadata.len() - 4 + bytes.len(), full.len());
+                    assert!(metadata.len() - 4 <= ENVELOPE_RESERVE);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn conservative_payload_thresholds_preserve_full_wire_bounds() {
+        let identity = identity();
+        let clock = "\\".repeat(128);
+        for (change, limit, error) in [
+            (false, MAX_SNAPSHOT_BYTES, PublishError::SnapshotTooLarge),
+            (true, MAX_CHANGE_BYTES, PublishError::FrameTooLarge),
+        ] {
+            // A JSON string adds exactly two quote bytes to its ASCII contents.
+            let payload = json!("x".repeat(limit - ENVELOPE_RESERVE - 2));
+            let bytes = identity
+                .encode(&payload, u64::MAX, &clock, change)
+                .unwrap()
+                .into_bytes();
+            assert_eq!(bytes.len(), limit - ENVELOPE_RESERVE);
+            let full = serde_json::to_vec(&identity.frame(worst_delivery(
+                payload,
+                u64::MAX,
+                &clock,
+                change,
+            )))
+            .unwrap();
+            assert!(full.len() <= limit);
+            let oversized = json!("x".repeat(limit - ENVELOPE_RESERVE - 1));
+            assert_eq!(
+                identity.encode(&oversized, u64::MAX, &clock, change).err(),
+                Some(error)
+            );
+        }
+        assert_eq!(
+            identity.encode(&json!(0), 0, "bad clock", true).err(),
+            Some(PublishError::InvalidClockId)
+        );
     }
 }

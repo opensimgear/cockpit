@@ -294,6 +294,8 @@ impl GatewayManager {
         let retired_recovery = Arc::new(crate::profile_retired_recovery::Recovery::new(root.clone(), native));
         let companion_clock = controllers.clone();
         let profile_wake = Arc::new(ProfileWake::default());
+        let controller_wake = profile_wake.clone();
+        controllers.set_report_wake(Arc::new(move || controller_wake.notify()));
         let companion_wake = profile_wake.clone();
         let companion_provider = Arc::new(osg_mapping_host::companions::CompanionProvider::with_wake(
             Arc::new(move || companion_clock.stream_page("", 0).captured_us),

@@ -13,6 +13,7 @@ export type ControllerControl = {
   value: { native: number; normalized: number | null } | null;
 };
 export type ControllerResult = {
+  captureClock?: { id: string; nowUs: string };
   visibility?: VisibilityStatus;
   selfAccess?: HidHideSelfAccess;
   session?: string; backendStatus?: string; diagnostic?: string; sources?: HostController[];

@@ -9,6 +9,10 @@ pub struct Publisher {
 }
 
 impl Publisher {
+    /// An idle read model can defer encoding until its owner registers a reader.
+    pub fn has_readers(&self) -> bool {
+        !self.topic.stream.shared.lock().subscribers.is_empty()
+    }
     /// Withdraw a topic when its owner cannot publish a coherent read model.
     pub fn close(&self) {
         self.topic.stream.close();
@@ -22,13 +26,15 @@ impl Publisher {
         captured_us: u64,
         clock_id: &str,
     ) -> Result<(u64, u64), RegistryError> {
-        self.topic
+        let snapshot = self
+            .topic
             .identity
-            .validate(&snapshot, captured_us, clock_id, false)?;
-        self.topic
+            .encode(&snapshot, captured_us, clock_id, false)?;
+        let change = self
+            .topic
             .identity
-            .validate(&change, captured_us, clock_id, true)?;
-        Ok(self.topic.stream.publish(
+            .encode(&change, captured_us, clock_id, true)?;
+        Ok(self.topic.stream.publish_encoded(
             expected_generation,
             snapshot,
             change,

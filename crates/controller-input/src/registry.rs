@@ -36,6 +36,11 @@ impl Default for Registry {
     }
 }
 impl Registry {
+    /// Wake-only callback: it must not collect state, perform I/O or take a
+    /// routing lock. The receiver reads committed reports after this lock exits.
+    pub fn set_report_wake(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        self.journal.set_wake(wake);
+    }
     pub fn resource_inventory(&self) -> ResourceInventory {
         ResourceInventory {
             session: self.session.clone(),
@@ -93,6 +98,7 @@ impl Registry {
     }
     pub fn list(&self, offset: usize) -> Value {
         json!({"session":self.session,"backendStatus":self.backend_status,"diagnostic":self.diagnostic,
+            "captureClock":{"id":format!("controllers:{}",self.session),"nowUs":self.journal.now().to_string()},
             "sources":self.sources.values().skip(offset).take(PAGE_SIZE).map(Source::summary).collect::<Vec<_>>(),
             "total":self.sources.len(),"offset":offset,"limit":PAGE_SIZE})
     }

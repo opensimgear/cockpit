@@ -3,6 +3,7 @@ use crate::registry::{Control, Sample};
 use std::{
     collections::{BTreeMap, VecDeque},
     time::Instant,
+    sync::Arc,
 };
 pub const REPORT_LIMIT: usize = 1024;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,11 +44,17 @@ pub struct Page {
     pub gap: bool,
     pub events: Vec<Event>,
 }
-#[derive(Clone)]
 pub(crate) struct Journal {
     origin: Instant,
     cursor: u64,
     events: VecDeque<Event>,
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+impl Clone for Journal {
+    fn clone(&self) -> Self {
+        // Metadata transactions cannot notify the live routing owner.
+        Self {origin:self.origin,cursor:self.cursor,events:self.events.clone(),wake:None}
+    }
 }
 impl Default for Journal {
     fn default() -> Self {
@@ -55,10 +62,12 @@ impl Default for Journal {
             origin: Instant::now(),
             cursor: 0,
             events: VecDeque::new(),
+            wake: None,
         }
     }
 }
 impl Journal {
+    pub(crate) fn set_wake(&mut self, wake: Arc<dyn Fn() + Send + Sync>) { self.wake=Some(wake); }
     pub fn now(&self) -> u64 {
         u64::try_from(self.origin.elapsed().as_micros())
             .unwrap_or(u64::MAX - 1)
@@ -71,6 +80,7 @@ impl Journal {
         // Exhaustion faults consumers permanently; it must never reuse a cursor.
         let Some(next) = self.cursor.checked_add(1) else {
             self.events.clear();
+            if let Some(wake)=&self.wake {wake();}
             return None;
         };
         self.cursor = next;
@@ -80,6 +90,7 @@ impl Journal {
             self.events.pop_front();
         }
         self.events.push_back(event.clone());
+        if let Some(wake)=&self.wake {wake();}
         Some(event)
     }
     pub fn page(&self, session: &str, expected_session: &str, after: u64) -> Page {

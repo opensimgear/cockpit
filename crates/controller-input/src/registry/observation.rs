@@ -16,6 +16,7 @@ struct Binding {
     publisher: Publisher,
     generation: u64,
     snapshot: Value,
+    dirty: bool,
 }
 impl Registry {
     /// Called with the service registry lock held. Registration and the supplied
@@ -73,8 +74,12 @@ impl Registry {
                     publisher,
                     generation: self.sources[id].generation,
                     snapshot,
+                    dirty: false,
                 },
             );
+        }
+        if self.observations.bindings.get(id).is_some_and(|binding|binding.dirty) {
+            self.publish_observation_inner(id,"metadata",None,true,true);
         }
         action()
     }
@@ -102,6 +107,9 @@ impl Registry {
         captured: Option<&Event>,
         descriptors: bool,
     ) {
+        self.publish_observation_inner(id,reason,captured,descriptors,false);
+    }
+    fn publish_observation_inner(&mut self,id:&str,reason:&str,captured:Option<&Event>,descriptors:bool, subscribing:bool) {
         // Capture survives periods without observers; metadata and subscription
         // never make an old sample appear newer.
         if let Some(source) = self.sources.get_mut(id) {
@@ -116,6 +124,14 @@ impl Registry {
         let Some(mut binding) = self.observations.bindings.remove(id) else {
             return;
         };
+        if !subscribing && !binding.publisher.has_readers() {
+            // Native reports remain in the authoritative typed journal. An idle
+            // preview does not serialize them; its next registration refreshes
+            // the baseline under this same owner lock before opening the reader.
+            binding.dirty=true;
+            self.observations.bindings.insert(id.into(),binding);
+            return;
+        }
         let Some(source) = self.sources.get(id) else {
             binding.publisher.close();
             self.observations.bindings.insert(id.into(), binding);
@@ -172,6 +188,7 @@ impl Registry {
                 )
                 .map(|_| ())
         };
+        binding.dirty=false;
         if result.is_err() {
             binding.publisher.close();
         }

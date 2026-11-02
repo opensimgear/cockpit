@@ -1,19 +1,24 @@
 import type { ControllerControl, ControllerResult, HostController } from './controllers.ts';
 import { SharedObservations, type ObservationState } from './streams/shared.ts';
 import { uint64, type WireFrame } from './streams/protocol.ts';
+import type { DeepReadonly } from './profiles.ts';
 
+export type ControllerInputDetail = DeepReadonly<ControllerResult>;
 export interface ControllerInputState {
-  status: 'connecting' | 'ready' | 'lost' | 'error';
-  detail?: ControllerResult;
-  error?: string;
+  readonly status: 'connecting' | 'ready' | 'lost' | 'error';
+  readonly detail?: ControllerInputDetail;
+  readonly error?: string;
 }
 type Listener = (state: ControllerInputState) => void;
 type RecordValue = Record<string, unknown>;
-interface Snapshot extends ControllerResult { cursor: string; capturedUs: string }
+type Snapshot = DeepReadonly<ControllerResult & { cursor: string; capturedUs: string }>;
+type ControlView = DeepReadonly<ControllerControl>;
+const descriptorIndexes = new WeakMap<Snapshot, ReadonlyMap<string, ControlView['capability']>>();
 interface Entry {
   listeners: Set<Listener>;
   state: ControllerInputState;
   baseline?: Snapshot;
+  descriptorBaseline?: Snapshot;
   stop?: () => void;
 }
 const record = (value: unknown): value is RecordValue => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,16 +68,35 @@ function sample(value: unknown, descriptor: ControllerControl['capability']): as
       && value.normalized === low + Math.trunc((value.native - descriptor.min) * span / (descriptor.max - descriptor.min)));
   } else requireValid(false);
 }
-function clear(detail: ControllerResult | undefined): ControllerResult | undefined {
+function frozenCopy<T>(value: T): DeepReadonly<T> {
+  const copy = structuredClone(value);
+  function freeze(item: unknown): void {
+    if (item && typeof item === 'object' && !Object.isFrozen(item)) {
+      // Wire values are JSON records/arrays. Freezing Map/Date wrappers would
+      // leave their internal mutable state exposed to consumers.
+      requireValid(Array.isArray(item) || Object.getPrototypeOf(item) === Object.prototype);
+      for (const child of Object.values(item)) freeze(child);
+      Object.freeze(item);
+    }
+  }
+  freeze(copy);
+  return copy as DeepReadonly<T>;
+}
+function row(descriptor: ControlView['capability'], value: ControllerControl['value'] | ControlView['value'], previous?: ControlView): ControlView {
+  if (previous && previous.capability === descriptor && previous.value?.native === value?.native
+      && previous.value?.normalized === value?.normalized) return previous;
+  return Object.freeze({ capability: descriptor, value: value === null ? null : Object.freeze({ native: value.native, normalized: value.normalized }) });
+}
+function clear(detail: ControllerInputDetail | undefined): ControllerInputDetail | undefined {
   if (!detail) return undefined;
   // Subscriber continuity is not native device presence. Only the owner can
   // declare a disconnect; transport loss withdraws usable samples instead.
-  return { ...detail, source: { ...detail.source!, baselineReady: false },
-    controls: detail.controls!.map(control => ({ ...control, value: null })) };
+  return Object.freeze({ ...detail, source: Object.freeze({ ...detail.source!, baselineReady: false }),
+    controls: Object.freeze(detail.controls!.map(control => row(control.capability, null, control))) });
 }
 
 /** Validate into a new result; an invalid frame can never partially update live values. */
-function reduce(id: string, frame: WireFrame, previous?: Snapshot): Snapshot {
+function reduce(id: string, frame: WireFrame, previous?: Snapshot, descriptorBaseline?: Snapshot): Snapshot {
   const payload = frame.payload;
   requireValid(record(payload) && text(payload.session) && payload.session.length > 0);
   source(payload.source, id);
@@ -91,6 +115,10 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot): Snapshot {
       && Array.isArray(payload.controls) && payload.controls.length === payload.total
       && payload.total === payload.source.controlCount);
     const ids = new Set<string>();
+    const reusable = descriptorBaseline?.session === payload.session && descriptorBaseline.source!.generation === payload.source.generation
+      ? descriptorBaseline : undefined;
+    const oldDescriptors = reusable ? descriptorIndexes.get(reusable) : undefined;
+    requireValid(!reusable || reusable.total === payload.total);
     const controls = payload.controls.map(raw => {
       requireValid(record(raw));
       capability(raw.capability);
@@ -99,12 +127,18 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot): Snapshot {
       requireValid(raw.value === null || !unavailable);
       requireValid(unavailable || raw.capability.kind === 'diagnostic' || raw.value !== null);
       if (raw.value !== null) sample(raw.value, raw.capability);
-      return { capability: raw.capability, value: raw.value } as ControllerControl;
+      const descriptor = raw.capability;
+      const existing = oldDescriptors?.get(descriptor.id);
+      if (oldDescriptors) requireValid(existing && Object.keys(existing).length === Object.keys(descriptor).length
+        && Object.entries(existing).every(([key, value]) => descriptor[key as keyof typeof descriptor] === value));
+      return row(existing ?? frozenCopy(descriptor), raw.value as ControllerControl['value']);
     });
     requireValid(unavailable || controls.some(control => control.capability.kind !== 'diagnostic'));
-    return structuredClone({ session: payload.session, source: payload.source, identity: payload.identity,
-      diagnostics: payload.diagnostics, controls, offset: 0, total: payload.total, limit: 256,
+    const result: Snapshot = Object.freeze({ session: payload.session, source: frozenCopy(payload.source), identity: frozenCopy(payload.identity),
+      diagnostics: Object.freeze([...payload.diagnostics]), controls: Object.freeze(controls), offset: 0, total: payload.total, limit: 256,
       cursor: payload.cursor, capturedUs: payload.capturedUs }) as Snapshot;
+    descriptorIndexes.set(result, oldDescriptors ?? new Map(controls.map(control => [control.capability.id, control.capability])));
+    return result;
   }
   requireValid(frame.kind === 'change' && previous && previous.session === payload.session
     && previous.source!.generation === payload.source.generation && previous.total === payload.source.controlCount
@@ -113,7 +147,7 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot): Snapshot {
     && ['baseline', 'change', 'gap', 'disconnect', 'metadata'].includes(payload.reason as string)
     && record(payload.values));
   const values = payload.values;
-  const ids = new Map(previous.controls!.map(control => [control.capability.id, control.capability]));
+  const ids = descriptorIndexes.get(previous)!;
   for (const [id, value] of Object.entries(values)) {
     requireValid(ids.has(id));
     sample(value, ids.get(id)!);
@@ -124,11 +158,17 @@ function reduce(id: string, frame: WireFrame, previous?: Snapshot): Snapshot {
     && previous.controls!.every(control => control.capability.kind === 'diagnostic' || Object.hasOwn(values, control.capability.id)));
   requireValid(!payload.source.baselineReady || previous.source!.baselineReady || payload.reason === 'baseline');
   if (payload.reason === 'gap' || payload.reason === 'disconnect') requireValid(unavailable);
-  return structuredClone({ ...previous, source: payload.source, cursor: payload.cursor, capturedUs: payload.capturedUs,
-    controls: previous.controls!.map(control => ({
-    capability: control.capability,
-    value: unavailable ? null : Object.hasOwn(values, control.capability.id) ? values[control.capability.id] : control.value,
-  })) }) as Snapshot;
+  let changed = false;
+  const controls = previous.controls!.map(control => {
+    const next = row(control.capability, unavailable ? null : Object.hasOwn(values, control.capability.id)
+      ? values[control.capability.id] as ControllerControl['value'] : control.value, control);
+    changed ||= next !== control;
+    return next;
+  });
+  const result: Snapshot = Object.freeze({ ...previous, source: frozenCopy(payload.source), cursor: payload.cursor, capturedUs: payload.capturedUs,
+    controls: changed ? Object.freeze(controls) : previous.controls });
+  descriptorIndexes.set(result, ids);
+  return result;
 }
 
 /** Shares both the transport subscription and descriptor/value reduction for each exact controller. */
@@ -173,7 +213,7 @@ export class ControllerInputObservations {
   }
 
   private notify(listener: Listener, state: ControllerInputState): void {
-    try { listener(structuredClone(state)); } catch { /* Listener isolation also protects acknowledgments. */ }
+    try { listener(Object.freeze(state)); } catch { /* Frozen views isolate synchronous and delayed consumers without cloning descriptors. */ }
   }
   private accept(id: string, entry: Entry, state: ObservationState): void {
     if (state.status !== 'ready') {
@@ -181,8 +221,9 @@ export class ControllerInputObservations {
       entry.baseline = undefined;
     } else {
       try {
-        const detail = reduce(id, state.frame!, entry.baseline);
+        const detail = reduce(id, state.frame!, entry.baseline, entry.descriptorBaseline);
         entry.baseline = detail;
+        entry.descriptorBaseline = detail;
         entry.state = { status: 'ready', detail };
       } catch (error) {
         entry.state = { status: 'error', detail: clear(entry.baseline ?? entry.state.detail), error: (error as Error).message };

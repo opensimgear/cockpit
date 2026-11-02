@@ -42,13 +42,15 @@ function setup() {
   return { client, observations, opens, states, off, send };
 }
 
-test('shares reduction, late snapshot, clone isolation and reference-counted cancellation', () => {
+test('shares reduction, late snapshot, immutable consumer isolation and reference-counted cancellation', () => {
   const { client, states, opens, off, send } = setup();
   const seen = [];
   const second = client.observe(id, state => { seen.push(state); if (state.detail) state.detail.controls[0].value.native = 999; });
   assert.equal(opens.length, 1);
   assert.equal(opens[0].topic, `controllers.input.${id}`);
   send();
+  assert.equal(seen.at(-1), states.at(-1));
+  assert.ok(Object.isFrozen(states.at(-1)));
   assert.equal(states.at(-1).detail.controls[0].value.native, 0);
   const late = [];
   const third = client.observe(id, state => late.push(state));
@@ -63,6 +65,70 @@ test('shares reduction, late snapshot, clone isolation and reference-counted can
   opens[0].observer.error('late');
   send(change());
   assert.equal(states.length, before);
+});
+
+test('published values, rows and descriptors remain immutable even in delayed consumers', async () => {
+  const { states, send } = setup();
+  const payload = snapshot();
+  send(payload);
+  const first = states.at(-1);
+  payload.source.name = 'Mutable input'; payload.controls[0].capability.max = 1;
+  payload.controls[0].value.native = 99;
+  await Promise.resolve();
+  for (const mutate of [
+    () => { first.status = 'lost'; }, () => { first.detail.source.name = 'Corrupted'; },
+    () => { first.detail.controls[0].value.native = 999; },
+    () => { first.detail.controls[0].capability.max = 999; },
+    () => { first.detail.controls.pop(); }, () => { first.detail.identity.path = 'other'; },
+    () => { first.detail.diagnostics.push('other'); },
+  ]) assert.throws(mutate, TypeError);
+  send(change());
+  assert.equal(first.detail.controls[0].value.native, 0);
+  assert.equal(first.detail.controls[0].capability.max, 100);
+  assert.equal(states.at(-1).detail.controls[0].value.native, 100);
+});
+
+test('137-control reports preserve every unchanged row and descriptor without inventing value changes', () => {
+  const { states, send } = setup();
+  const controls = Array.from({ length: 137 }, (_, index) => control({ id: String(index), dataIndex: index }));
+  send(snapshot({ source: controller({ controlCount: 137 }), controls, total: 137 }));
+  const first = states.at(-1).detail;
+  const values = Object.fromEntries(controls.map(input => [input.capability.id, input.value]));
+  send(change({ source: controller({ controlCount: 137, sequence: '2' }), values }));
+  const unchanged = states.at(-1).detail;
+  assert.equal(unchanged.controls, first.controls);
+  assert.notEqual(unchanged.source, first.source);
+  assert.equal(unchanged.source.sequence, '2');
+  values['68'] = { native: 100, normalized: 32767 };
+  send(change({ source: controller({ controlCount: 137, sequence: '3' }), values, cursor: '3', capturedUs: '12' }));
+  const changed = states.at(-1).detail;
+  assert.notEqual(changed.controls, first.controls);
+  for (let index = 0; index < 137; index++) {
+    assert.equal(changed.controls[index].capability, first.controls[index].capability);
+    if (index === 68) assert.notEqual(changed.controls[index], first.controls[index]);
+    else assert.equal(changed.controls[index], first.controls[index]);
+  }
+  assert.equal(changed.controls[68].value.native, 100);
+  assert.equal(first.controls[68].value.native, 0);
+});
+
+test('same-generation recovery shares descriptors while replacement generation installs fresh descriptors', () => {
+  const { states, send } = setup();
+  send();
+  const original = states.at(-1).detail.controls[0].capability;
+  send(undefined, { kind: 'loss', reason: 'overflow' });
+  send(snapshot(), { kind: 'snapshot' });
+  assert.equal(states.at(-1).detail.controls[0].capability, original);
+  send(snapshot({ controls: [control({ max: 101 })] }), { kind: 'snapshot' });
+  assert.equal(states.at(-1).status, 'error');
+  assert.equal(states.at(-1).detail.controls[0].capability, original);
+  send(undefined, { kind: 'loss', generation: '3', reason: 'replacement' });
+  send(snapshot({ source: controller({ generation: '2' }), controls: [control({ max: 101 })] }), { kind: 'snapshot', generation: '3' });
+  assert.equal(states.at(-1).status, 'ready');
+  const replaced = states.at(-1).detail.controls[0].capability;
+  assert.notEqual(replaced, original);
+  assert.equal(replaced.max, 101);
+  assert.equal(original.max, 100);
 });
 
 test('partial baselines clear all values, complete report restores them and metadata preserves inputs', () => {
@@ -92,10 +158,11 @@ test('valid raw out-of-range samples and unsupported diagnostic descriptors are 
   send(snapshot({ source: controller({ controlCount: 2 }), controls: [raw, control({ id: 'routable' })], total: 2 }));
   assert.equal(states.at(-1).status, 'ready');
   assert.deepEqual(states.at(-1).detail.controls[0], raw);
-  send(snapshot({ controls: [control()] }), { kind: 'snapshot' });
-  send(change({ values: { axis: { native: 101, normalized: null } } }));
-  assert.equal(states.at(-1).status, 'ready');
-  assert.equal(states.at(-1).detail.controls[0].value.normalized, null);
+  const fresh = setup();
+  fresh.send();
+  fresh.send(change({ values: { axis: { native: 101, normalized: null } } }));
+  assert.equal(fresh.states.at(-1).status, 'ready');
+  assert.equal(fresh.states.at(-1).detail.controls[0].value.normalized, null);
 });
 
 test('unsupported diagnostic descriptors do not prevent a complete routable baseline', () => {
@@ -135,7 +202,7 @@ test('malformed update is atomic and cannot recover through deltas', () => {
   send(change({ source: controller({ controlCount: 2 }) }));
   assert.equal(states.at(-1).status, 'error');
   assert.ok(states.at(-1).detail.controls.every(control => control.value === null));
-  send(snapshot(), { kind: 'snapshot' });
+  send(snapshot({ source: controller({ controlCount: 2 }), controls, total: 2 }), { kind: 'snapshot' });
   assert.equal(states.at(-1).status, 'ready');
 });
 

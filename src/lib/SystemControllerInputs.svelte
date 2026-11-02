@@ -2,7 +2,7 @@
   import Axis from './input-visuals/Axis.svelte';
   import Hat from './input-visuals/Hat.svelte';
   import { controlLabel, inputLabel, type ControllerControl } from './controllers';
-  let { controls, online, simple = false }: { controls: ControllerControl[]; online: boolean; simple?: boolean } = $props();
+  let { controls, online, simple = false }: { controls: readonly ControllerControl[]; online: boolean; simple?: boolean } = $props();
   const descriptionId = $props.id();
   let dismissedId = $state('');
   const buttons = $derived(controls.filter(control => control.capability.kind === 'button'));

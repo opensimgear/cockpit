@@ -8,7 +8,7 @@
   import type { ResourceSummary } from './profile-inventory';
 
   let { resource, active = true }: { resource?: DeepReadonly<ResourceSummary>; active?: boolean } = $props();
-  let mounted = $state(false), controls = $state.raw<ControllerControl[]>([]), error = $state(''), ready = $state(false);
+  let mounted = $state(false), controls = $state.raw<readonly ControllerControl[]>([]), error = $state(''), ready = $state(false);
   const sourceId = $derived(controllerSourceId(resource));
   let observedOnline = $state<boolean | undefined>();
   const online = $derived(observedOnline ?? resource?.availability === 'online');

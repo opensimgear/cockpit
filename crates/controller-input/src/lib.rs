@@ -303,6 +303,9 @@ impl ControllerService {
         if self.stop.load(Ordering::Acquire) { return Err("Controller capture has stopped.".into()); }
         self.registry.lock().unwrap_or_else(|p| p.into_inner()).observe(broker,id,action)
     }
+    pub fn set_report_wake(&self, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.registry.lock().unwrap_or_else(|p|p.into_inner()).set_report_wake(wake);
+    }
     pub fn stream_snapshot(&self, ids: &[String]) -> Result<stream::Snapshot, String> {
         if self.stop.load(Ordering::Acquire) {
             return Err("Controller capture has stopped.".into());
