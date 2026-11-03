@@ -32,9 +32,14 @@ fn native_projection_preserves_zero_false_aliases_and_original_capture() {
         json!({"id":"false","channel":"gear_unsafe"}),
     ];
     let (first, status) = snapshot.project(now, &outputs, &["airspeed_kts".into()]);
-    assert_eq!(first.values["alias"], 0.);
-    assert_eq!(first.values["airspeed_kts"], 0.);
-    assert_eq!(first.values["false"], false);
+    assert_eq!(first.values["alias"].value().clone(), 0.);
+    assert_eq!(first.values["airspeed_kts"].value().clone(), 0.);
+    assert_eq!(first.values["false"].value().clone(), false);
+    let proof=first.values["alias"].contributors().unwrap();
+    assert_eq!(proof[0].input,crate::native_capture::InputId::Channel("sim/flightmodel/position/indicated_airspeed".into()));
+    assert_eq!(proof[0].capture.sequence,2);
+    assert_eq!(proof[0].capture.captured_at,now);
+    assert_eq!(first.values["alias"].contributors(),first.values["airspeed_kts"].contributors());
     assert_eq!(status["channels"]["airspeed_kts"]["status"], "ready");
     let later = now + Duration::from_millis(100);
     let (second, _) = snapshot.project(later, &outputs, &[]);
@@ -64,6 +69,11 @@ fn native_component_sequence_changes_only_on_its_own_accepted_capture() {
     assert_eq!(guards.channels["airspeed_kts"].capture_sequence, airspeed.capture_sequence);
     assert_eq!(guards.channels["airspeed_kts"].captured_at, airspeed.captured_at);
     assert_eq!(guards.channels["gear_unsafe"].capture_sequence, 2);
+    let outputs=vec![json!({"id":"kept","channel":"airspeed_kts"})];
+    let projected=guards.project(later,&outputs,&[]).0;
+    assert_eq!(projected.values["kept"].contributors().unwrap()[0].capture.sequence,2);
+    assert_eq!(projected.values["kept"].contributors().unwrap()[0].capture.captured_at,now);
+    assert!(!projected.values["kept"].is_current(now+session.freshness));
 
     // An equal value in a real new packet is new evidence; unrelated values
     // keep their own original acquisition sequence and timestamp.
@@ -181,6 +191,7 @@ fn selected_projection_excludes_other_readers_large_union() {
         union.insert(
             format!("other_reader_{i}"),
             NativeSample {
+                native_input: None,
                 value: Some(NativeValue::Number(i as f64)),
                 captured_at: Some(now),
                 capture_sequence: 2,
@@ -198,9 +209,9 @@ fn selected_projection_excludes_other_readers_large_union() {
     assert_eq!(channels["airspeed_kts"]["value"], 0.);
     assert_eq!(channels["gear_unsafe"]["value"], false);
     assert_eq!(export.values.len(), 3);
-    assert_eq!(export.values["zero"], 0.);
-    assert_eq!(export.values["false"], false);
-    assert_eq!(export.values["airspeed_kts"], 0.);
+    assert_eq!(export.values["zero"].value().clone(), 0.);
+    assert_eq!(export.values["false"].value().clone(), false);
+    assert_eq!(export.values["airspeed_kts"].value().clone(), 0.);
     assert_eq!(export.age_ms, Some(100));
     assert_eq!(status["ageMs"], 100);
     assert_eq!(snapshot.capture_sequence, 2);

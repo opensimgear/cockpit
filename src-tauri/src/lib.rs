@@ -48,6 +48,7 @@ mod game_context;
 mod game_integration_setup;
 mod game_telemetry;
 mod game_channels;
+mod native_capture;
 mod game_telemetry_inspection;
 #[path="games/vehicles/mod.rs"]
 mod game_vehicles;

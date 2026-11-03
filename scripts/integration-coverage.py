@@ -63,6 +63,9 @@ def main():
     module_names.extend(['dcs_bios/transport.rs'])
     module_names.append('game_telemetry/capture.rs')
     module_names.append('game_telemetry/session.rs')
+    module_names.extend(['native_capture/mod.rs','game_channels/captured.rs',
+                         'dcs_profile/captured_values.rs','game_telemetry/project.rs',
+                         'dcs_physics/project.rs','xplane/snapshot.rs'])
     module_names.extend(['dcs_bios/transport_client.rs', 'dcs_bios/decoded/mod.rs',
                          'dcs_bios/parser.rs', 'dcs_bios/decoded/captured_memory.rs', 'dcs_bios/decoded/state.rs', 'dcs_bios/decoded/source.rs', 'dcs_profile/shared.rs'])
     module_names.append('xplane/subscriptions.rs')

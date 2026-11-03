@@ -141,7 +141,7 @@ fn assert_mh6_commondata_only(path: &Path) {
     decoder.feed(&frame("MH-6J", 2), 1);
     assert!(decoder.snapshot(1).fresh);
     assert_eq!(
-        decoder.snapshot(1).values["aircraft/altitude"],
+        decoder.snapshot(1).values["aircraft/altitude"].value().clone(),
         json!(10000)
     );
     for (counter, wrong) in [(3, "AH-6"), (4, "AH-6J"), (5, "BlackHawk")] {
@@ -300,13 +300,13 @@ fn exact_official_reported_values_need_received_bytes_and_selected_aircraft_prog
         .is_none());
     decoder.feed(&frame("A-10C", Some(0), 2), 1);
     assert_eq!(
-        decoder.snapshot(1).values["aircraft/altitude"],
+        decoder.snapshot(1).values["aircraft/altitude"].value().clone(),
         json!(0),
         "Wire zero is a reported value, never guessed absence"
     );
     decoder.feed(&frame("A-10C", Some(12000), 3), 2);
     assert_eq!(
-        decoder.snapshot(2).values["aircraft/altitude"],
+        decoder.snapshot(2).values["aircraft/altitude"].value().clone(),
         json!(12000)
     );
     decoder.tick(103);

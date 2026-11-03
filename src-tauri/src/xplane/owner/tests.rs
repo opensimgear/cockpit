@@ -118,7 +118,7 @@ fn shared_clients_observe_autonomous_capture_and_selection_preserves_profile() {
     assert_eq!(next.epoch, epoch);
     assert_eq!(next.channels["airspeed_kts"].captured_at, captured);
     assert!(next.fresh_at(Instant::now()));
-    assert_eq!(profile.snapshot().unwrap().0.values["speed"], 115.5);
+    assert_eq!(profile.snapshot().unwrap().0.values["speed"].value().clone(), 115.5);
     drop(inspector);
     send(&server, &profile, &indices, 3., 116.);
     observed(&mut profile, |s| s.capture_sequence == 3);

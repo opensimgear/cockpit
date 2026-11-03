@@ -73,9 +73,9 @@ fn authored_aircraft_fixtures_decode_through_production_wire_and_channel_mapping
                 }
             }
             ingest(&mut s, &values, now);
-            s.snapshot(now, &outputs());
+            s.snapshot(now, &outputs(), &[]);
         }
-        let (snapshot, status, _) = s.snapshot(now, &outputs());
+        let (snapshot, status, _) = s.snapshot(now, &outputs(), &[]);
         assert!(snapshot.fresh);
         assert_eq!(snapshot.aircraft.as_deref(), fixture["aircraft"].as_str());
         for (id, value) in fixture["channels"].as_object().unwrap() {
@@ -158,7 +158,7 @@ fn simulated_udp_session_renews_unsubscribes_and_disarms_on_errors_and_exit() {
         .send_to(&packet_for(&source, &frame(11, 2., "Aircraft/A.acf")), peer)
         .unwrap();
     assert_eq!(
-        poll_after_delivery(&mut source, now).0.values["speed"],
+        poll_after_delivery(&mut source, now).0.values["speed"].value().clone(),
         115.5
     );
     server
@@ -279,17 +279,17 @@ fn both_versions_need_baselines_and_missing_channels_stay_unavailable() {
         let now = Instant::now();
         let mut s = Session::new(&defaults(version));
         ingest(&mut s, &frame(version, 1., "Aircraft/Cessna.acf"), now);
-        assert!(!s.snapshot(now, &outputs()).0.fresh);
+        assert!(!s.snapshot(now, &outputs(), &[]).0.fresh);
         ingest(
             &mut s,
             &frame(version, 2., "Aircraft/Cessna.acf"),
             now + Duration::from_millis(100),
         );
-        let (snapshot, status, rotate) = s.snapshot(now + Duration::from_millis(100), &outputs());
+        let (snapshot, status, rotate) = s.snapshot(now + Duration::from_millis(100), &outputs(), &[]);
         assert!(snapshot.fresh);
         assert!(!rotate);
-        assert_eq!(snapshot.values["speed"], json!(115.5));
-        assert_eq!(snapshot.values["unsafe"], json!(true));
+        assert_eq!(snapshot.values["speed"].value().clone(), json!(115.5));
+        assert_eq!(snapshot.values["unsafe"].value().clone(), json!(true));
         assert!(!snapshot.values.contains_key("missing"));
         assert_eq!(status["channels"]["low_fuel"]["status"], "unavailable");
         assert_eq!(status["channels"]["engine_2_rpm"]["status"], "unavailable");
@@ -302,9 +302,9 @@ fn pause_replay_version_aircraft_and_clock_changes_clear_outputs() {
         let now = Instant::now();
         let mut s = Session::new(&defaults(11));
         ingest(&mut s, &frame(11, 10., "Aircraft/A.acf"), now);
-        s.snapshot(now, &outputs());
+        s.snapshot(now, &outputs(), &[]);
         ingest(&mut s, &frame(11, 11., "Aircraft/A.acf"), now);
-        assert!(s.snapshot(now, &outputs()).0.fresh);
+        assert!(s.snapshot(now, &outputs(), &[]).0.fresh);
         let epoch = s.epoch;
         let mut next = frame(
             11,
@@ -323,15 +323,15 @@ fn pause_replay_version_aircraft_and_clock_changes_clear_outputs() {
             _ => (),
         }
         ingest(&mut s, &next, now);
-        let (snapshot, _, rotate) = s.snapshot(now, &outputs());
+        let (snapshot, _, rotate) = s.snapshot(now, &outputs(), &[]);
         assert!(!snapshot.fresh, "{mutation}");
         assert!(snapshot.values.is_empty());
         assert!(rotate);
         assert!(s.epoch > epoch);
         ingest(&mut s, &frame(11, 20., "Aircraft/B.acf"), now);
-        assert!(!s.snapshot(now, &outputs()).0.fresh);
+        assert!(!s.snapshot(now, &outputs(), &[]).0.fresh);
         ingest(&mut s, &frame(11, 21., "Aircraft/B.acf"), now);
-        assert!(s.snapshot(now, &outputs()).0.fresh);
+        assert!(s.snapshot(now, &outputs(), &[]).0.fresh);
     }
 }
 #[test]
@@ -339,28 +339,28 @@ fn individual_channels_and_frozen_clock_expire_while_datagrams_arrive() {
     let now = Instant::now();
     let mut s = Session::new(&defaults(12));
     ingest(&mut s, &frame(12, 1., "A.acf"), now);
-    s.snapshot(now, &outputs());
+    s.snapshot(now, &outputs(), &[]);
     ingest(&mut s, &frame(12, 2., "A.acf"), now);
-    assert!(s.snapshot(now, &outputs()).0.fresh);
+    assert!(s.snapshot(now, &outputs(), &[]).0.fresh);
     let later = now + Duration::from_millis(1600);
     let values: Vec<_> = frame(12, 3., "A.acf")
         .into_iter()
         .filter(|(i, _)| *i < GUARDS.len() + PATH_BYTES)
         .collect();
     ingest(&mut s, &values, later);
-    let (snapshot, status, _) = s.snapshot(later, &outputs());
+    let (snapshot, status, _) = s.snapshot(later, &outputs(), &[]);
     assert!(snapshot.fresh);
     assert!(snapshot.values.is_empty());
     assert_eq!(status["channels"]["airspeed_kts"]["status"], "unavailable");
     let frozen = later + Duration::from_millis(1600);
     ingest(&mut s, &frame(12, 3., "A.acf"), frozen);
-    assert!(!s.snapshot(frozen, &outputs()).0.fresh);
+    assert!(!s.snapshot(frozen, &outputs(), &[]).0.fresh);
     ingest(&mut s, &frame(12, 4., "A.acf"), frozen);
-    assert!(!s.snapshot(frozen, &outputs()).0.fresh);
+    assert!(!s.snapshot(frozen, &outputs(), &[]).0.fresh);
     ingest(&mut s, &frame(12, 5., "A.acf"), frozen);
-    assert!(s.snapshot(frozen, &outputs()).0.fresh);
+    assert!(s.snapshot(frozen, &outputs(), &[]).0.fresh);
     assert!(
-        !s.snapshot(frozen + Duration::from_secs(2), &outputs())
+        !s.snapshot(frozen + Duration::from_secs(2), &outputs(), &[])
             .0
             .fresh
     );
@@ -372,16 +372,16 @@ fn missing_guards_invalid_ranges_and_unterminated_aircraft_paths_fail_closed() {
     let mut values = frame(11, 1., "A.acf");
     values.retain(|(i, _)| *i != 2);
     ingest(&mut s, &values, now);
-    assert!(!s.snapshot(now, &outputs()).0.fresh);
+    assert!(!s.snapshot(now, &outputs(), &[]).0.fresh);
     s.reset("test");
     let mut values = frame(11, 1., "A.acf");
     values.retain(|(i, _)| *i < GUARDS.len() || *i >= GUARDS.len() + PATH_BYTES);
     values.extend((0..PATH_BYTES).map(|i| (GUARDS.len() + i, 65.)));
     ingest(&mut s, &values, now);
-    assert!(!s.snapshot(now, &outputs()).0.fresh);
+    assert!(!s.snapshot(now, &outputs(), &[]).0.fresh);
     s.reset("test");
     ingest(&mut s, &frame(11, 1., "A.acf"), now);
-    s.snapshot(now, &outputs());
+    s.snapshot(now, &outputs(), &[]);
     let mut values = frame(11, 2., "A.acf");
     for (i, n) in &mut values {
         if *i == GUARDS.len() + PATH_BYTES {
@@ -392,7 +392,7 @@ fn missing_guards_invalid_ranges_and_unterminated_aircraft_paths_fail_closed() {
         }
     }
     ingest(&mut s, &values, now);
-    let snapshot = s.snapshot(now, &outputs()).0;
+    let snapshot = s.snapshot(now, &outputs(), &[]).0;
     assert!(snapshot.fresh);
     assert!(snapshot.values.is_empty());
 }

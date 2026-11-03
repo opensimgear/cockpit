@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::OnceLock, time::Instant};
 
 mod parser;
+mod project;
 mod retained;
 mod session;
 mod source;

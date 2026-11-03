@@ -123,7 +123,7 @@ fn expanded_channels_obey_original_packet_progression_live_state_and_stale_withd
     assert!(!session.feed(&source,0).fresh);
     source.physics[..4].copy_from_slice(&1u32.to_le_bytes());
     let fresh=session.feed(&source,1);
-    assert_eq!(fresh.values()["physics.accG.0"],json!(0.0));
+    assert_eq!(fresh.values()["physics.accG.0"].value().clone(),json!(0.0));
     assert!(fresh.values().contains_key("graphics.tyre_lf.tyre_temperature_c"));
     assert!(session.tick(102).values().is_empty());
     assert!(!session.feed(&source,103).fresh);

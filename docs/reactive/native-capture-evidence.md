@@ -96,15 +96,16 @@ records original per-byte receive positions/times through fragmented parsing and
 bounded sparse memory. Counter validity observations retain their original byte
 positions separately from the processed raw cursor and qualification generation.
 
-- BIOS catalogue strings/masks must collect their exact captured byte
-  dependencies from the native sparse memory; accepted equal writes already
-  retain new marks and reset/gap fences clear validity and corresponding marks.
+- Native and canonical values now retain exact contributors through projection
+  and cached inspection; see [paired projection verification](../verification/2026-11-03-native-value-projection.md).
+  BIOS strings/masks collect their actual byte dependencies, including equal
+  writes; reset/gap fences clear validity and corresponding marks.
 - All four Assetto dialects now retain page-specific host acquisition evidence
   before decoding/queuing; see the [page-capture verification](../verification/2026-11-03-assetto-page-captures.md).
-  Exact field/derived contributor selection remains open. This does not resolve
+  Exact field/derived contributor selection is retained in the paired values. This does not resolve
   their upstream notification gate or prove simulator write time/multi-page atomicity.
-- `ExportSnapshot`, canonical conversions and `GameSources` need captured values
-  and independent family state. Current consumer timestamps are not native proof.
+- `GameSources` still needs portable captured-value envelopes and independent
+  per-port family state. Reducer admission timestamps are not native proof.
 - Reducer state, script/timer tickets, desktop observations and adapters need
   contributors and selective per-port baseline semantics.
 

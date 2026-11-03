@@ -307,7 +307,7 @@ pub(super) fn merge_ownship_capture(
         capture.message = Some(format!("DCS ownship telemetry: {error}"));
     }
     let values = if fresh {
-        crate::game_channels::values("dcs", &physics.unwrap().values)
+        physics.unwrap().captured_values(Instant::now())
     } else {
         BTreeMap::new()
     };

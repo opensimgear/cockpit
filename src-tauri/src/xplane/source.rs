@@ -299,7 +299,7 @@ impl Driver {
     #[cfg(test)]
     pub(crate) fn poll(&mut self, now: Instant) -> (ExportSnapshot, Value) {
         if let Some(error) = &self.terminal {
-            let (snapshot, mut status, _) = self.session.snapshot(now, &self.outputs);
+            let (snapshot, mut status, _) = self.session.snapshot(now, &self.outputs, &self.inspection);
             status["status"] = json!(error);
             return (snapshot, status);
         }
@@ -334,7 +334,7 @@ impl Driver {
         if let Err(error) = &result {
             self.session.reset(error);
         }
-        let (mut snapshot, mut status, rotate) = self.session.snapshot(now, &self.outputs);
+        let (mut snapshot, mut status, rotate) = self.session.snapshot(now, &self.outputs, &self.inspection);
         if self.initializing_subscriptions {
             snapshot.fresh = false;
             snapshot.mission_active = false;
@@ -349,15 +349,6 @@ impl Driver {
             {
                 channel["status"] = json!("unavailable");
                 channel["value"] = Value::Null;
-            }
-        }
-        if snapshot.fresh {
-            for id in &self.inspection {
-                if status["channels"][id]["status"] == "ready" {
-                    snapshot
-                        .values
-                        .insert(id.clone(), status["channels"][id]["value"].clone());
-                }
             }
         }
         let failed = result.is_err();

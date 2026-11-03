@@ -13,6 +13,7 @@ pub(crate) struct Session {
     context: Option<Context>,
     packet_id: Option<u32>,
     capture: Option<CaptureSet>,
+    maximum_input: Option<&'static str>,
     last_native_capture: Option<CaptureSet>,
     producer_highwater: Option<(String, u64, u64)>,
     capture_mode: Option<bool>,
@@ -42,6 +43,7 @@ impl Session {
             context: None,
             packet_id: None,
             capture: None,
+            maximum_input: None,
             last_native_capture: None,
             producer_highwater: None,
             capture_mode: None,
@@ -69,6 +71,7 @@ impl Session {
         self.qualified = false;
         self.channels.clear();
         self.capture = None;
+        self.maximum_input = None;
         if self.exhausted {
             self.status = "error".into();
             self.error = Some("Assetto telemetry session generation exhausted.".into());
@@ -209,6 +212,7 @@ impl Session {
             self.live = false;
             self.packet_id = Some(reading.packet_id);
             self.capture = None;
+            self.maximum_input = None;
             self.error = None;
             return self.snapshot_at(now_ms, observed_at);
         }
@@ -220,6 +224,7 @@ impl Session {
             self.live = true;
             self.packet_id = Some(reading.packet_id);
             self.capture = None;
+            self.maximum_input = None;
             self.last_seen = None;
             self.error = None;
             return self.snapshot_at(now_ms, observed_at);
@@ -250,6 +255,7 @@ impl Session {
         self.qualified = true;
         self.ever_fresh = true;
         self.channels = reading.channels;
+        self.maximum_input = reading.maximum_input;
         self.capture = sample.capture.clone();
         self.last_native_capture = sample.capture.clone();
         self.status = "active".into();
@@ -329,6 +335,8 @@ impl Session {
             context: self.context.clone(),
             packet_id: self.packet_id,
             capture: self.capture.clone(),
+            freshness_ms: self.freshness_ms,
+            maximum_input: self.maximum_input,
             channels,
             error: self.error.clone(),
         }

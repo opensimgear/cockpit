@@ -1206,7 +1206,7 @@ pub(crate) struct ExportSnapshot {
     pub fresh: bool,
     pub age_ms: Option<u64>,
     pub counter: Option<u16>,
-    pub values: BTreeMap<String, Value>,
+    pub values: crate::native_capture::CapturedValues,
     pub malformed_frames: u64,
 }
 pub(crate) struct ExportSession {
@@ -1393,10 +1393,10 @@ impl ExportSession {
                         output
                             .source
                             .read(&self.memory)
-                            .map(|v| (output.binding.id.clone(), v))
+                            .map(|v| (output.binding.id.clone(), crate::native_capture::CapturedValue::fixture(v)))
                     })
                     .chain(self.extra_sources.iter().filter_map(|(id, source)| {
-                        source.read(&self.memory).map(|v| (id.clone(), v))
+                        source.read(&self.memory).map(|v| (id.clone(), crate::native_capture::CapturedValue::fixture(v)))
                     }))
                     .collect()
             } else {
@@ -1417,6 +1417,8 @@ impl ExportSession {
 
 #[path = "dcs_profile/shared.rs"]
 mod shared;
+#[path = "dcs_profile/captured_values.rs"]
+mod captured_values;
 
 #[cfg(test)]
 mod tests {
@@ -1565,7 +1567,7 @@ mod tests {
         decoder.feed(&packet, 100);
         let snapshot = decoder.snapshot(100);
         assert!(snapshot.fresh);
-        assert_eq!(snapshot.values["common:CommonData:RAW_RPM:0"], json!(1234));
+        assert_eq!(snapshot.values["common:CommonData:RAW_RPM:0"].value().clone(), json!(1234));
         assert!(!snapshot.values.contains_key("BULK_0:0"));
         decoder.feed(&frame(Some("Other aircraft"), None, 2), 200);
         decoder.feed(&[0x55;4], 200);
@@ -2046,24 +2048,24 @@ mod tests {
         }
         let snapshot = session.snapshot(10);
         assert_eq!(snapshot.aircraft, Some("A-10C".into()));
-        assert_eq!(snapshot.values["frequency"], "123.450");
+        assert_eq!(snapshot.values["frequency"].value().clone(), "123.450");
         assert!(!snapshot.values.contains_key("caution"));
         assert!(!snapshot.values.contains_key("preset"));
         let epoch = snapshot.epoch;
         let mut partial = vec![0x55; 4];
         block(&mut partial, 8208, b"225.");
         session.feed(&partial, 20);
-        assert_eq!(session.snapshot(20).values["frequency"], "123.450");
+        assert_eq!(session.snapshot(20).values["frequency"].value().clone(), "123.450");
         let mut completion = Vec::new();
         block(&mut completion, 8212, b"500 ");
         block(&mut completion, 0xfffe, &[2, 0]);
         session.feed(&completion, 20);
-        assert_eq!(session.snapshot(20).values["frequency"], "225.500");
+        assert_eq!(session.snapshot(20).values["frequency"].value().clone(), "225.500");
         assert_eq!(session.snapshot(20).epoch, epoch);
         let mut frames = frame(None, Some(b"300.000 "), 3);
         frames.extend(frame(None, Some(b"400.000 "), 4));
         session.feed(&frames, 30);
-        assert_eq!(session.snapshot(30).values["frequency"], "400.000");
+        assert_eq!(session.snapshot(30).values["frequency"].value().clone(), "400.000");
     }
     #[test]
     fn duplicates_never_overwrite_refresh_or_reset_a_live_epoch_and_shutdown_names_clear_mission() {
@@ -2072,7 +2074,7 @@ mod tests {
         session.feed(&frame(Some("A-10C"), Some(b"123.450 "), 1), 0);
         let epoch = session.snapshot(0).epoch;
         session.feed(&frame(None, Some(b"999.999 "), 1), 1000);
-        assert_eq!(session.snapshot(1000).values["frequency"], "123.450");
+        assert_eq!(session.snapshot(1000).values["frequency"].value().clone(), "123.450");
         assert_eq!(session.snapshot(1000).age_ms, Some(1000));
         assert_eq!(session.snapshot(1000).epoch, epoch);
         session.feed(&frame(Some(""), None, 1), 1001);
@@ -2103,7 +2105,7 @@ mod tests {
         }
         session.feed(&frame(Some("A-10C"), Some(b"300.000 "), 8), 5001);
         assert!(session.snapshot(5001).fresh);
-        assert_eq!(session.snapshot(5001).values["frequency"], "300.000");
+        assert_eq!(session.snapshot(5001).values["frequency"].value().clone(), "300.000");
         assert_eq!(session.snapshot(5001).epoch, epoch);
     }
     #[test]
@@ -2158,7 +2160,7 @@ mod tests {
         block(&mut bytes, 8212, b"450 ");
         block(&mut bytes, 0xfffe, &[3, 0]);
         session.feed(&bytes, 2);
-        assert_eq!(session.snapshot(2).values["frequency"], "123.450");
+        assert_eq!(session.snapshot(2).values["frequency"].value().clone(), "123.450");
         session.feed(&[0x55, 0x55, 0x55, 0x55, 1, 0, 2, 0], 3);
         assert_eq!(session.snapshot(3).malformed_frames, 1);
         assert!(session.snapshot(3).values.is_empty());

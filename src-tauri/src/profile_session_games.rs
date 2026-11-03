@@ -80,7 +80,7 @@ fn merge_dcs_physics(
         snapshot.values.remove(key);
     }
     if fresh {
-        let values = crate::game_channels::values("dcs", &physics.unwrap().values);
+        let values = physics.unwrap().captured_values(Instant::now());
         for output in outputs {
             if let (Some(id), Some(value)) = (
                 output["id"].as_str(),
@@ -175,7 +175,9 @@ fn compatible_game_route(route: Option<&Route>, game: &PreparedGame) -> bool {
                     module == "CommonData" || Some(module) == game.aircraft_module.as_ref()
                 }))
 }
-fn scalar(value: &Value) -> Option<PortValue> {
+fn scalar(captured: &crate::native_capture::CapturedValue) -> Option<PortValue> {
+    if !captured.is_current(Instant::now()) {return None;}
+    let value=captured.value();
     if let Some(value) = value.as_bool() {
         Some(PortValue::Boolean(value))
     } else if let Some(value) = value.as_f64().filter(|value| value.is_finite()) {

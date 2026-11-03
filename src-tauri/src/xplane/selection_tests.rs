@@ -50,7 +50,7 @@ fn passive_selection_preserves_profile_context_values_and_wire_indices() {
     assert_eq!(source.session.values, before);
     let (snapshot, status) = source.poll(now);
     assert!(snapshot.fresh);
-    assert_eq!(snapshot.values["speed"], 115.5);
+    assert_eq!(snapshot.values["speed"].value().clone(), 115.5);
     assert_eq!(status["channels"][&extra.id]["value"], Value::Null);
     let retired = source.plan.index_for(&extra.dataref).unwrap();
     let mut mixed = b"RREF,".to_vec();
@@ -59,7 +59,7 @@ fn passive_selection_preserves_profile_context_values_and_wire_indices() {
     }
     server.send_to(&mixed, peer.unwrap()).unwrap();
     let (snapshot, status) = poll_after_delivery(&mut source, now);
-    assert_eq!(snapshot.values["speed"], 123.5);
+    assert_eq!(snapshot.values["speed"].value().clone(), 123.5);
     assert_eq!(status["channels"][&extra.id]["value"], -1.25);
     source.set_inspection_channels(&[]).unwrap();
     flush_requested(&mut source);
@@ -67,7 +67,7 @@ fn passive_selection_preserves_profile_context_values_and_wire_indices() {
     assert_eq!(i32::from_le_bytes(bytes[5..9].try_into().unwrap()), 0);
     assert_eq!(i32::from_le_bytes(bytes[9..13].try_into().unwrap()), retired);
     server.send_to(&mixed, peer.unwrap()).unwrap();
-    assert_eq!(poll_after_delivery(&mut source, now).0.values["speed"], 123.5);
+    assert_eq!(poll_after_delivery(&mut source, now).0.values["speed"].value().clone(), 123.5);
     assert_eq!(source.session.epoch, epoch);
     source.set_inspection_channels(&[extra.id.clone()]).unwrap();
     flush_requested(&mut source);

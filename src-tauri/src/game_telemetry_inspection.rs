@@ -12,7 +12,7 @@ pub(crate) struct Capture {
     pub context: Value,
     pub packet: Value,
     pub age_ms: Option<u64>,
-    pub values: BTreeMap<String, Value>,
+    pub values: crate::native_capture::CapturedValues,
     pub ages: BTreeMap<String, Option<u64>>,
     pub stale_ids: BTreeSet<String>,
     pub message: Option<String>,
@@ -55,7 +55,7 @@ impl Capture {
             packet: json!(snapshot.counter),
             age_ms: snapshot.age_ms,
             values: if snapshot.fresh {
-                crate::game_channels::values(game, &snapshot.values)
+                crate::game_channels::captured_values(game, &snapshot.values, Instant::now())
             } else {
                 BTreeMap::new()
             },
@@ -155,9 +155,11 @@ pub(crate) fn page(
         if channel["supported"] != false {
             requested.push(id.to_owned());
         }
-        let value = capture.filter(|c|c.status == "live" && !c.expired()).and_then(|c|c.values.get(id)).filter(|v| v.is_number() || v.is_string() || v.is_boolean());
-        let status = if channel["supported"] == false { "unavailable" } else if capture.is_some_and(|capture|capture.stale_ids.contains(id)){"stale"}else if value.is_some() { "known" } else if capture.is_some_and(|c|c.expired() || matches!(c.status.as_str(),"stale"|"paused")) { "stale" } else { "unknown" };
-        let age = capture.and_then(|c|c.ages.get(id).copied().unwrap_or(c.age_ms).map(|age|age.saturating_add(c.at.elapsed().as_millis() as u64)));
+        let now=Instant::now();
+        let projected = capture.filter(|c|c.status == "live" && !c.expired()).and_then(|c|c.values.get(id));
+        let value = projected.filter(|v|v.is_current(now)).map(|v|v.value()).filter(|v|v.is_number()||v.is_string()||v.is_boolean());
+        let status = if channel["supported"] == false { "unavailable" } else if capture.is_some_and(|capture|capture.stale_ids.contains(id)) || projected.is_some_and(|v|!v.is_current(now)){"stale"}else if value.is_some() { "known" } else if capture.is_some_and(|c|c.expired() || matches!(c.status.as_str(),"stale"|"paused")) { "stale" } else { "unknown" };
+        let age = if let Some(value)=projected.filter(|v|v.contributors().is_some()) {value.authority_age_ms(now)} else {capture.and_then(|c|c.ages.get(id).copied().unwrap_or(c.age_ms).map(|age|age.saturating_add(c.at.elapsed().as_millis() as u64)))};
         json!({"id":id,"label":bounded(&channel["label"],id,256),"category":category(channel),"group":channel["group"].as_str().unwrap_or("telemetry"),"type":channel["type"].as_str().unwrap_or("number"),"unit":channel["unit"].as_str(),"status":status,"value":if status == "known" {value.cloned().unwrap_or(Value::Null)} else {Value::Null},"ageMs":age,"nativeId":channel["nativeId"].as_str().unwrap_or(id),"nativeField":channel["nativeField"].as_str().or_else(||channel["dataref"].as_str()).unwrap_or(id),"description":channel["note"].as_str().or_else(||channel["description"].as_str()),"provider":capture.map(|c|c.source.as_str()).unwrap_or("")})
     }).collect();
     (rows, total, groups, requested)
@@ -166,6 +168,24 @@ pub(crate) fn page(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_native_values_expire_from_original_proof_before_the_cache_timeout() {
+        use crate::native_capture::{CapturedValue,Contribution,InputId,Stamp,Validity};
+        let old=Instant::now()-Duration::from_secs(1);
+        let value=CapturedValue::native(json!(0),vec![std::sync::Arc::new(Contribution {
+            input:InputId::Channel("native-rpm".into()),capture:Stamp {
+                producer_id:"reader".into(),generation:1,sequence:5,byte_offset:None,captured_at:old,
+            },validity:Validity::Sampled {valid_until:old+Duration::from_millis(100)},
+        })],old).unwrap();
+        let capture=Capture {status:"live".into(),source:"fixture-native".into(),context:json!({}),
+            packet:json!(5),age_ms:Some(0),values:BTreeMap::from([("engine.rpm".into(),value)]),
+            ages:BTreeMap::new(),stale_ids:BTreeSet::new(),message:None,at:Instant::now()};
+        let catalogue=vec![json!({"id":"engine.rpm","type":"number"})];
+        let row=&page(&catalogue,Some(&capture),0,1,"","").0[0];
+        assert_eq!(row["status"],"stale");assert_eq!(row["value"],Value::Null);
+        assert!(row["ageMs"].as_u64().unwrap()>=1000);
+        assert!(!capture.expired(),"the expiry must come from native proof");
+    }
     #[test]
     fn paging_preserves_known_zero_and_never_replays_paused_samples() {
         let all = vec![
@@ -178,7 +198,7 @@ mod tests {
             context: Value::Null,
             packet: json!(10),
             age_ms: Some(0),
-            values: BTreeMap::from([("engine.rpm".into(), json!(0))]),
+            values: BTreeMap::from([("engine.rpm".into(), crate::native_capture::CapturedValue::fixture(json!(0)))]),
             ages: BTreeMap::new(),
             stale_ids: BTreeSet::new(),
             message: None,
@@ -213,7 +233,7 @@ mod tests {
         let unsupported = "sim/flightmodel/forces/oversized";
         let capture = Capture {
             status: "live".into(), source: "rref".into(), context: json!({"aircraft":"Aircraft/Test.acf"}), packet: json!(10), age_ms: Some(0),
-            values: BTreeMap::from([(supported.into(), json!(0)), (unsupported.into(), json!(999))]),
+            values: BTreeMap::from([(supported.into(), crate::native_capture::CapturedValue::fixture(json!(0))), (unsupported.into(), crate::native_capture::CapturedValue::fixture(json!(999)))]),
             ages: BTreeMap::new(), stale_ids: BTreeSet::new(), message: None, at: Instant::now(),
         };
         let (rows, total, groups, requested) = page(&all, Some(&capture), 0, 128, "", "physics");

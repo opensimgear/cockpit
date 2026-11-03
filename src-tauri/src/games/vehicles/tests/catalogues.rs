@@ -8,7 +8,7 @@ fn dcs_physics_errors_and_staleness_preserve_live_bios_and_missing_components_st
         fresh: true,
         age_ms: Some(0),
         counter: Some(2),
-        values: BTreeMap::from([("bios-zero".into(), json!(0))]),
+        values: BTreeMap::from([("bios-zero".into(), crate::native_capture::CapturedValue::fixture(json!(0)))]),
         malformed_frames: 0,
     };
     let mut catalogue = json!({"channels":crate::dcs_physics::catalogue()});
@@ -22,7 +22,7 @@ fn dcs_physics_errors_and_staleness_preserve_live_bios_and_missing_components_st
         Some(&format!("Cannot bind port 7781\n{}", "x".repeat(600))),
     );
     assert_eq!(capture.status, "live");
-    assert_eq!(capture.values["bios-zero"], 0);
+    assert_eq!(capture.values["bios-zero"].value().clone(), 0);
     assert_eq!(capture.context["physicsStatus"], "error");
     let error = capture.context["physicsError"].as_str().unwrap();
     assert_eq!(error.chars().count(), 512);
@@ -41,8 +41,8 @@ fn dcs_physics_errors_and_staleness_preserve_live_bios_and_missing_components_st
     );
 
     let physics = crate::dcs_physics::Snapshot {
-        captured_at: None,
-        capture_sequence: 0,
+        captured_at: Some(Instant::now()),
+        capture_sequence: 1,
         producer_id: "producer-1".into(),
         epoch: 1,
         session: Some("mission-1".into()),

@@ -15,6 +15,7 @@ impl NativeValue {
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeSample {
+    pub native_input: Option<String>,
     pub value: Option<NativeValue>,
     pub captured_at: Option<Instant>,
     pub capture_sequence: u64,
@@ -99,28 +100,29 @@ impl NativeSnapshot {
                         .get(id)
                         .and_then(|sample| self.sample_at(sample, now))
                 })
-                .flatten();
-            if let Some(value) = value {
-                ready.insert(id, value);
+                .flatten()
+                .and_then(|value| self.captured_channel(id,value,now));
+            if let Some(value) = &value {
+                ready.insert(id, value.clone());
             }
             channels.insert(
                 id.to_owned(),
                 json!({"status":if value.is_some(){"ready"}else{"unavailable"},
-                "value":value.map(NativeValue::json)}),
+                "value":value.as_ref().map(|value| value.value())}),
             );
         }
-        let mut values: BTreeMap<String, Value> = outputs
+        let mut values: crate::native_capture::CapturedValues = outputs
             .iter()
             .filter_map(|output| {
                 Some((
                     output["id"].as_str()?.to_owned(),
-                    ready.get(output["channel"].as_str()?)?.json(),
+                    ready.get(output["channel"].as_str()?)?.clone(),
                 ))
             })
             .collect();
         for id in inspection {
             if let Some(value) = ready.get(id.as_str()) {
-                values.insert(id.clone(), value.json());
+                values.insert(id.clone(), value.clone());
             }
         }
         let age_ms = self.age_ms(now);
@@ -143,6 +145,18 @@ impl NativeSnapshot {
             json!({"fresh":fresh,"status":status,"ageMs":age_ms,"channels":channels,"verified":false}),
         )
     }
+    fn captured_channel(&self, id: &str, value: NativeValue, now: Instant) -> Option<crate::native_capture::CapturedValue> {
+        use crate::native_capture::{CapturedValue, Contribution, InputId, Stamp, Validity};
+        let sample = self.channels.get(id)?;
+        let captured_at = sample.captured_at?;
+        let valid_until = captured_at.checked_add(self.freshness)?.min(self.valid_until?);
+        CapturedValue::native(value.json(), vec![std::sync::Arc::new(Contribution {
+            input: InputId::Channel(sample.native_input.as_deref().unwrap_or(id).into()), capture: Stamp {
+                producer_id: self.producer_id.as_str().into(), generation: self.epoch,
+                sequence: sample.capture_sequence, byte_offset: None, captured_at,
+            }, validity: Validity::Sampled { valid_until },
+        })],now)
+    }
 }
 impl osg_streams::RetainedBytes for NativeSnapshot {
     fn retained_bytes(&self) -> usize {
@@ -157,7 +171,7 @@ impl osg_streams::RetainedBytes for NativeSnapshot {
             + self
                 .channels
                 .iter()
-                .map(|(id, _)| id.capacity() + std::mem::size_of::<(String, NativeSample)>() + 128)
+                .map(|(id, sample)| id.capacity() + sample.native_input.as_ref().map_or(0,String::capacity) + std::mem::size_of::<(String, NativeSample)>() + 128)
                 .sum::<usize>()
     }
 }

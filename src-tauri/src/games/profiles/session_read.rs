@@ -255,10 +255,11 @@ impl GameSources {
                     return Err("X-Plane aircraft changed from the captured game context; prepare a new reader.".into());
                 }
                 if let Some(game) = &self.game {
-                    crate::game_channels::project_rows(
+                    crate::game_channels::captured_project_rows(
                         &game.integration_key,
                         canonical_outputs,
                         &mut snapshot.values,
+                        Instant::now(),
                     );
                 }
                 Ok(Some(snapshot))

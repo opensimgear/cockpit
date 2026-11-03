@@ -285,8 +285,8 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     };
     let outputs = physics_outputs.clone();
     let mut physics = crate::dcs_physics::Snapshot {
-        captured_at: None,
-        capture_sequence: 0,
+        captured_at: Some(Instant::now()),
+        capture_sequence: 1,
         producer_id: "producer-1".into(),
         epoch: 1,
         session: Some("mission-1".into()),
@@ -311,10 +311,10 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
             counter: Some(counter),
             malformed_frames: 0,
             values: BTreeMap::from([
-                (native_key("game", "channel:MASTER_CAUTION:0"), json!(1)),
+                (native_key("game", "channel:MASTER_CAUTION:0"), crate::native_capture::CapturedValue::fixture(json!(1))),
                 (
                     native_key("bios-only", "channel:MASTER_CAUTION:0"),
-                    json!(1),
+                    crate::native_capture::CapturedValue::fixture(json!(1)),
                 ),
             ]),
         };
@@ -343,6 +343,8 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     let generation = source.sources["game"].generation;
 
     physics.sequence = Some(2);
+    physics.capture_sequence+=1;
+    physics.captured_at=Some(Instant::now());
     physics
         .values
         .insert("flight.airspeed.true".into(), json!(8));
@@ -389,6 +391,8 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     physics.fresh = true;
     physics.status = "live".into();
     physics.sequence = Some(3);
+    physics.capture_sequence+=1;
+    physics.captured_at=Some(Instant::now());
     let resumed = poll(&mut source, 2, &physics);
     assert_eq!(resumed.frames[0].reason, Reason::Baseline);
     assert_eq!(source.sources["game"].generation, generation + 1);
@@ -397,6 +401,8 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     physics.epoch = 2;
     physics.session = Some("mission-2".into());
     physics.sequence = Some(1);
+    physics.capture_sequence+=1;
+    physics.captured_at=Some(Instant::now());
     let respawn = poll(&mut source, 2, &physics);
     assert_eq!(respawn.frames[0].reason, Reason::Baseline);
     assert_eq!(source.sources["game"].generation, generation + 2);
@@ -404,6 +410,8 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
 
     physics.sequence = Some(2);
     physics.values.clear();
+    physics.capture_sequence+=1;
+    physics.captured_at=Some(Instant::now());
     let missing = poll(&mut source, 2, &physics);
     assert_eq!(
         missing.frames[0]

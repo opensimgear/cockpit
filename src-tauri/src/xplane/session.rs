@@ -239,6 +239,7 @@ impl Session {
                 (
                     c.id.clone(),
                     NativeSample {
+                        native_input: (c.id != c.dataref).then(||c.dataref.clone()),
                         value,
                         captured_at: self.values.get(&(offset + i)).map(|sample| sample.captured_at),
                         capture_sequence: self.values.get(&(offset + i)).map_or(0, |sample| sample.capture_sequence),
@@ -279,10 +280,10 @@ impl Session {
         )
     }
     #[cfg(test)]
-    fn snapshot(&mut self, now: Instant, outputs: &[Value]) -> (ExportSnapshot, Value, bool) {
+    fn snapshot(&mut self, now: Instant, outputs: &[Value], inspection: &[String]) -> (ExportSnapshot, Value, bool) {
         let captured_at = self.values.values().map(|sample| sample.captured_at).max();
         let (native, rotate) = self.native_snapshot(now, captured_at, 0, "test", false);
-        let (snapshot, status) = native.project(now, outputs, &[]);
+        let (snapshot, status) = native.project(now, outputs, inspection);
         (snapshot, status, rotate)
     }
 }

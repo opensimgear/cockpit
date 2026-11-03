@@ -3,6 +3,10 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+#[path = "game_channels/captured.rs"]
+mod captured;
+pub(crate) use captured::{captured_values, captured_project_rows};
+
 #[derive(Clone, Copy)]
 pub(crate) struct Projection {
     pub id: &'static str,
