@@ -25,7 +25,8 @@ struct Inner {
     catalogues: Mutex<provider_settings::CatalogueCache>,
     views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
-    ac_cars: Mutex<crate::ac_car_catalogue_cache::Cache>,
+    ac_cars: crate::ac_car_catalogue_cache::Cache,
+    ac_cars_publication: Mutex<Option<Arc<car_publication::Publication>>>,
     #[cfg(test)]
     ac_cars_publication_pause:
         Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
@@ -34,9 +35,11 @@ struct Inner {
     #[cfg(test)]
     inspection_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     #[cfg(test)]
-    settings_commit_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    settings_commit_pause:
+        Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     #[cfg(test)]
-    catalogue_stamp_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    catalogue_stamp_pause:
+        Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     cancel: AtomicBool,
     busy: AtomicBool,
     closed: AtomicBool,
@@ -47,16 +50,17 @@ pub(crate) struct GameIntegrationSetup {
     worker: Mutex<Option<JoinHandle<()>>>,
     admission: Mutex<()>,
 }
-mod setup_cache;
+mod car_publication;
 mod settings;
+mod setup_cache;
 pub(crate) use settings::dcs_connection;
 use settings::*;
+#[path = "../../activity/integration.rs"]
+mod activity_capture;
 mod inspection;
 mod provider_settings;
 mod provision;
 mod requests;
-#[path="../../activity/integration.rs"]
-mod activity_capture;
 /// Resolve a title's explicit binding before entering the adapter's dialect.
 fn bound_game(game: &Value) -> Result<Value, String> {
     let key = crate::game_discovery::integration_binding(game)
@@ -80,9 +84,10 @@ impl GameIntegrationSetup {
                 recovery_needed: AtomicBool::new(crate::dcs_setup::recovery_pending(
                     &path.with_extension("setup-work"),
                 )),
-                ac_cars: Mutex::new(crate::ac_car_catalogue_cache::Cache::new(
+                ac_cars: crate::ac_car_catalogue_cache::Cache::new(
                     path.with_file_name("assetto-corsa-cars-v1.json"),
-                )),
+                ),
+                ac_cars_publication: Mutex::new(None),
                 #[cfg(test)]
                 ac_cars_publication_pause: Mutex::new(None),
                 #[cfg(test)]
@@ -149,11 +154,7 @@ impl GameIntegrationSetup {
         self.inner.busy.load(Ordering::Acquire)
     }
     pub(crate) fn decorate_installed_cars(&self, game: &mut Value) {
-        self.inner
-            .ac_cars
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .decorate(game);
+        self.inner.ac_cars.snapshot().decorate(game);
     }
     pub(crate) fn pending(&self) -> bool {
         crate::dcs_setup::recovery_pending(&self.inner.work)
@@ -206,7 +207,10 @@ impl GameIntegrationSetup {
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
-        self.inner.cancel();
+        // Closing always stops further work; an already reserved durable commit
+        // finishes before the existing worker join returns.
+        let _ = self.inner.cancel();
+        self.inner.cancel.store(true, Ordering::Release);
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }

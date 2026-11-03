@@ -3,12 +3,21 @@ use serde_json::{json, Value};
 #[cfg(test)]
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_CARS: usize = 1024;
 
 pub(crate) struct Cache {
     store: Result<osg_persistence::Repository<Value>, String>,
+    writer: Mutex<()>,
+    snapshot: Mutex<Arc<Snapshot>>,
+    #[cfg(test)]
+    pub(crate) commit_pause:
+        Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+}
+
+pub(crate) struct Snapshot {
     error: Option<String>,
     saved: Option<Value>,
 }
@@ -88,21 +97,40 @@ impl Cache {
             .as_ref()
             .map_err(Clone::clone)
             .and_then(|store| store.load());
-        match loaded {
-            Ok(saved) => Self {
-                store,
-                saved,
-                error: None,
-            },
-            Err(error) => Self {
-                store,
+        let snapshot = match loaded {
+            Ok(saved) => Snapshot { saved, error: None },
+            Err(error) => Snapshot {
                 saved: None,
                 error: Some(error),
             },
+        };
+        Self {
+            store,
+            writer: Mutex::new(()),
+            snapshot: Mutex::new(Arc::new(snapshot)),
+            #[cfg(test)]
+            commit_pause: Mutex::new(None),
         }
     }
 
-    pub(crate) fn replace(&mut self, game: &Value, cars: Vec<Value>) -> Result<(), String> {
+    pub(crate) fn snapshot(&self) -> Arc<Snapshot> {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    #[cfg(test)]
+    fn replace(&self, game: &Value, cars: Vec<Value>) -> Result<(), String> {
+        self.replace_if(game, cars, || Ok(()))
+    }
+
+    pub(crate) fn replace_if(
+        &self,
+        game: &Value,
+        cars: Vec<Value>,
+        before_commit: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
         let installation = scope(game)
             .ok_or("Choose an installed Assetto Corsa installation before scanning cars.")?;
         let cars = json!(cars);
@@ -114,17 +142,43 @@ impl Cache {
         if bytes.len() as u64 > MAX_BYTES {
             return Err("The Assetto Corsa car catalogue exceeds its size limit.".into());
         }
+        let _writer = self.writer.lock().unwrap_or_else(|p| p.into_inner());
+        let previous = self.snapshot();
         let store = self.store.as_ref().map_err(Clone::clone)?;
-        if self.error.is_some() {
+        before_commit()?;
+        #[cfg(test)]
+        if let Some((entered, release)) = self
+            .commit_pause
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            entered
+                .send(())
+                .map_err(|_| "Catalogue persistence test disconnected.")?;
+            release
+                .recv_timeout(std::time::Duration::from_secs(15))
+                .map_err(|_| "Catalogue persistence test timed out.")?;
+        }
+        if previous.error.is_some() {
             store.reset(&saved)?;
         } else {
             store.save(&saved)?;
         }
-        self.error = None;
-        self.saved = Some(saved);
+        *self.snapshot.lock().unwrap_or_else(|p| p.into_inner()) = Arc::new(Snapshot {
+            error: None,
+            saved: Some(saved),
+        });
         Ok(())
     }
 
+    #[cfg(test)]
+    fn decorate(&self, game: &mut Value) {
+        self.snapshot().decorate(game);
+    }
+}
+
+impl Snapshot {
     pub(crate) fn decorate(&self, game: &mut Value) {
         if game["id"] != "assetto-corsa" {
             return;
@@ -171,7 +225,7 @@ mod tests {
     fn persists_names_scopes_installations_and_replaces_removed_cars_without_live_identity() {
         let scratch = crate::test_directory();
         let path = scratch.path().join("cars.json");
-        let mut cache = Cache::new(path.clone());
+        let cache = Cache::new(path.clone());
         let mut selected = game(&scratch.path().join("AC"));
         cache
             .replace(
@@ -225,7 +279,7 @@ mod tests {
     fn failed_replacement_keeps_the_previous_snapshot_and_invalid_cache_is_ignored() {
         let scratch = crate::test_directory();
         let path = scratch.path().join("cars.json");
-        let mut cache = Cache::new(path.clone());
+        let cache = Cache::new(path.clone());
         let mut selected = game(scratch.path());
         cache
             .replace(&selected, vec![json!({"id":"car","name":"Car"})])
@@ -237,19 +291,51 @@ mod tests {
         assert_eq!(selected["vehicleSupport"]["vehicles"][0]["id"], "car");
         fs::write(path.clone(), b"invalid cache").unwrap();
         assert!(
-            Cache::new(path).saved.is_some(),
+            Cache::new(path).snapshot().saved.is_some(),
             "retired files cannot replace SQLite"
         );
         let invalid = scratch.path().join("other/cars.json");
         fs::create_dir_all(invalid.parent().unwrap()).unwrap();
         fs::write(&invalid, b"invalid cache").unwrap();
         crate::persistence::test_support::record(&invalid, "games", "ac-cars", b"invalid cache");
-        let mut broken = Cache::new(invalid.clone());
-        assert!(broken.error.is_some());
+        let broken = Cache::new(invalid.clone());
+        assert!(broken.snapshot().error.is_some());
         broken
             .replace(&selected, vec![json!({"id":"car","name":"Repaired"})])
             .unwrap();
-        assert!(broken.error.is_none());
+        assert!(broken.snapshot().error.is_none());
         assert_eq!(fs::read(invalid).unwrap(), b"invalid cache");
+    }
+
+    #[test]
+    fn persistence_conflict_keeps_the_exact_previous_snapshot_and_external_record() {
+        let scratch = crate::test_directory();
+        let path = scratch.path().join("cars.json");
+        let cache = Cache::new(path.clone());
+        let selected = game(scratch.path());
+        cache
+            .replace(&selected, vec![json!({"id":"car","name":"Original"})])
+            .unwrap();
+        let previous = cache.snapshot();
+        let db = osg_persistence::Database::for_namespace(&path).unwrap();
+        let record = db.read("games", "ac-cars").unwrap().unwrap();
+        let mut external = previous.saved.clone().unwrap();
+        external["cars"][0]["name"] = json!("External writer");
+        let payload = serde_json::to_vec(&external).unwrap();
+        db.commit(&[osg_persistence::Change {
+            domain: "games",
+            key: "ac-cars",
+            expected_revision: record.revision,
+            payload: Some(&payload),
+        }])
+        .unwrap();
+        assert!(cache
+            .replace(&selected, vec![json!({"id":"car","name":"Stale writer"})])
+            .unwrap_err()
+            .contains("revision conflict"));
+        assert!(Arc::ptr_eq(&previous, &cache.snapshot()));
+        let retained = db.read("games", "ac-cars").unwrap().unwrap();
+        assert_eq!(retained.payload, payload);
+        assert_eq!(retained.revision, record.revision + 1);
     }
 }

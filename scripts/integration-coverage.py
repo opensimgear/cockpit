@@ -91,6 +91,9 @@ def main():
                          'games/integration/provision.rs', 'games/integration/settings.rs',
                          'games/integration/catalogues.rs', 'games/integration/inspection.rs',
                          'game_context_runtime.rs'])
+    module_names.extend(['games/artwork/prepared.rs', 'games/prepared_sources/mod.rs',
+                         'games/prepared_sources/watch.rs', 'games/storage/car_catalogue.rs',
+                         'games/integration/car_publication.rs'])
     if os.name == 'nt':
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',

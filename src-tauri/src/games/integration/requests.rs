@@ -14,13 +14,14 @@ impl GameIntegrationSetup {
         }
         let command = request["command"].as_str().unwrap_or("");
         if command == "game_integration_cancel" {
-            self.inner.cancel();
-            return Ok(());
+            return self.inner.cancel();
         }
         if self.busy() {
             return Err("Wait for integration setup or cancel it first.".into());
         }
-        let id = game["id"].as_str().ok_or("Choose an available telemetry integration.")?;
+        let id = game["id"]
+            .as_str()
+            .ok_or("Choose an available telemetry integration.")?;
         if command == "game_integration_settings_save" {
             return self.save_provider_settings(request, game);
         }
@@ -36,9 +37,10 @@ impl GameIntegrationSetup {
             let (record, status) = self.inner.inspect_scoped(game);
             let mut checked_preview = None;
             if id == "dcs" {
-                if let Some(folder) = request.get("userFolder").filter(|folder| {
-                    !folder.is_null() && *folder != &status["userFolder"]
-                }) {
+                if let Some(folder) = request
+                    .get("userFolder")
+                    .filter(|folder| !folder.is_null() && *folder != &status["userFolder"])
+                {
                     let mut preview = self.inner.inspect(game, Some(folder));
                     self.inner.decorate_removal(id, &mut preview);
                     // Keep the checked folder and its actual connection intact.
@@ -46,7 +48,8 @@ impl GameIntegrationSetup {
                     checked_preview = Some(preview);
                 }
             }
-            self.inner.publish_check_preview(game, &record, checked_preview);
+            self.inner
+                .publish_check_preview(game, &record, checked_preview);
             self.inner.publish_setup(game, &record, status);
             return Ok(());
         }

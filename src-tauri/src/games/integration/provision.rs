@@ -6,7 +6,9 @@ impl GameIntegrationSetup {
         game: &Value,
         platform: Arc<dyn Platform>,
     ) -> Result<(), String> {
-        let id = game["id"].as_str().ok_or("Choose an available telemetry integration.")?;
+        let id = game["id"]
+            .as_str()
+            .ok_or("Choose an available telemetry integration.")?;
         if self.pending() {
             return Err(
                 "Recover the interrupted DCS integration operation before removing integration."
@@ -136,6 +138,13 @@ impl GameIntegrationSetup {
             return Err("An integration setup check is already running.".into());
         }
         self.inner.cancel.store(false, Ordering::Release);
+        let publication = (configure && id == "assetto-corsa")
+            .then(|| Arc::new(car_publication::Publication::default()));
+        *self
+            .inner
+            .ac_cars_publication
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = publication.clone();
         self.inner.publish_start(game, json!({"state":"setting-up","message":"Checking Assetto native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
         let inner = self.inner.clone();
         let game = game.clone();
@@ -225,16 +234,18 @@ impl GameIntegrationSetup {
                             .recv_timeout(std::time::Duration::from_secs(5))
                             .map_err(|_| "Catalogue publication test timed out.")?;
                     }
-                    let mut cache = inner.ac_cars.lock().unwrap_or_else(|p| p.into_inner());
-                    // Recheck under the same gate used by cancellation. A cancel
-                    // accepted while publication was waiting must retain the old snapshot.
-                    if inner.cancel.load(Ordering::Acquire) {
-                        return Err("Assetto telemetry check was cancelled.".into());
-                    }
-                    cache.replace(&game, cars)?;
+                    inner.ac_cars.replace_if(&game, cars, || {
+                        publication
+                            .as_ref()
+                            .expect("AC setup owns its publication token")
+                            .begin_commit()
+                    })?;
                 }
                 Ok(proof)
             })();
+            if let Some(publication) = publication {
+                publication.finish();
+            }
             let (record, mut status) = inner.inspect_scoped(&game);
             match result {
                 Ok(proof) => {

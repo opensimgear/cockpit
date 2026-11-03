@@ -1,10 +1,18 @@
 use super::*;
 impl Inner {
-    pub(super) fn cancel(&self) {
-        // Publication that already owns this gate completes before cancellation;
-        // otherwise the worker observes cancellation before replacing the cache.
-        let _publication = self.ac_cars.lock().unwrap_or_else(|p| p.into_inner());
+    pub(super) fn cancel(&self) -> Result<(), String> {
+        let publication = self
+            .ac_cars_publication
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        // Once a durable commit is reserved, cancellation is explicitly too late.
+        // Accepted cancellation never waits for persistence or changes its revision.
+        if let Some(publication) = publication {
+            publication.cancel()?;
+        }
         self.cancel.store(true, Ordering::Release);
+        Ok(())
     }
     pub(super) fn decorate_removal(&self, id: &str, status: &mut Value) {
         status["installed"] = json!(false);

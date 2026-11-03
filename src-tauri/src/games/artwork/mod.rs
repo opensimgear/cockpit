@@ -17,6 +17,8 @@ const MAX_ASSETS: usize = 1024;
 
 mod model;
 mod installation_cache;
+mod prepared;
+pub(crate) use prepared::{local_source_paths, prepare_local, PreparedLocalArtwork};
 pub(crate) use installation_cache::{cache_installation_preview, installation_preview};
 pub(crate) mod steam_online;
 use model::*;

@@ -120,6 +120,7 @@ fn ac_catalogue_choices(runtime: &GameIntegrationSetup, game: &Value) -> Value {
 
 mod assetto;
 mod baseline;
+mod car_publication;
 mod dcs;
 mod passive_views;
 mod writer_readers;

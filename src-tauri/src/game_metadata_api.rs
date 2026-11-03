@@ -157,25 +157,35 @@ impl GamesRuntime {
         let _admission=self.admission.try_lock().map_err(|_|"Game metadata is busy. Retry after the current operation finishes.")?;
         if self.inner.closed.load(Ordering::Acquire) {return Err("The game metadata runtime has closed.".into());}
         self.inner.guard_installation_metadata()?;
-        let mut settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());
+        let settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());
         if settings.saved!=prepared.captured {return Err("Game registrations changed during preparation. Refresh and retry.".into());}
-        let mut scan=prepared.scan_id.as_ref().map(|_|self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()));
+        let scan=prepared.scan_id.as_ref().map(|_|self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()));
         if let Some(review)=scan.as_ref() {
             if Some(&review.scan_id)!=prepared.scan_id.as_ref() || review.status!="ready" || review.revision!=prepared.captured.revision {
                 return Err("Discovery changed during preparation. Review the current scan before applying.".into());
             }
         }
+        drop(settings);drop(scan);
+        #[cfg(test)]
+        if let Some((entered,release))=self.inner.metadata_commit_pause.lock().unwrap_or_else(|p|p.into_inner()).take() {
+            entered.send(()).unwrap();release.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        // The writer admission serializes every production metadata commit.
+        // Readers retain the previous committed memory snapshot during SQLite.
         self.inner.installations.save(&prepared.next)?;
+        let mut settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());
+        let mut scan=prepared.scan_id.as_ref().map(|_|self.inner.discovery.lock().unwrap_or_else(|p|p.into_inner()));
         settings.saved=prepared.next;settings.catalogue=prepared.catalogue;settings.added_game_id=prepared.added_game_id;settings.error=None;
         if let Some(review)=scan.as_mut() {review.status="applied".into();}
-        drop(settings);drop(scan);drop(prepared.staging);drop(_admission);
+        drop(settings);drop(scan);drop(_admission);drop(prepared.staging);
+        self.inner.prepared_sources.request(false,None);
         Ok(())
     }
     pub(crate) fn finish_metadata(&self) {
         // Gateway callers have released profile/game admission before this
         // presentation preparation. Stop cannot wait behind image file I/O.
-        self.inner.prepare_online_artwork();
-        let Ok(_admission)=self.admission.try_lock() else{return;};
+        self.inner.prepare_committed_artwork();
+        if self.inner.closed.load(Ordering::Acquire) {return;}
         let references={let settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());
             settings.saved.backgrounds.values().chain(settings.saved.default_backgrounds.values()).chain(settings.saved.games.values().filter_map(|game|game.default_background.as_ref())).cloned().collect::<Vec<_>>()};
         crate::game_artwork::retain(self.inner.installations.root(),references.iter());

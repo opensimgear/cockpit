@@ -60,8 +60,11 @@ struct Inner {
     online_artwork: bool,
     artwork_owner: Option<crate::game_artwork::steam_online::Owner>,
     artwork_error: Mutex<Option<String>>,
+    prepared_sources: prepared_sources::Source,
     #[cfg(test)]
     artwork_prepare_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    metadata_commit_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     closed: AtomicBool,
 }
 pub(crate) struct GamesRuntime {
@@ -70,6 +73,7 @@ pub(crate) struct GamesRuntime {
     observer: Mutex<Option<JoinHandle<()>>>,
     discovery_worker:Mutex<Option<JoinHandle<()>>>,
     activation_observer: Mutex<Option<JoinHandle<()>>>,
+    prepared_sources_worker: Mutex<Option<JoinHandle<()>>>,
 }
 #[path = "game_activation_runtime.rs"]
 mod activation_runtime;
@@ -84,6 +88,7 @@ mod metadata_api;
 #[path="games/metadata_read.rs"]
 mod metadata_read;
 mod process_monitor;
+mod prepared_sources;
 #[path = "games/artwork_options.rs"]
 mod artwork_options;
 #[path="activity/games.rs"]
@@ -135,8 +140,11 @@ impl GamesRuntime {
             inner: Arc::new(Inner {
                 online_artwork: auto_discovery,
                 artwork_owner, artwork_error: Mutex::new(artwork_error),
+                prepared_sources: Default::default(),
                 #[cfg(test)]
                 artwork_prepare_hook: Mutex::new(None),
+                #[cfg(test)]
+                metadata_commit_pause: Mutex::new(None),
                 setup: crate::game_integration_setup::GameIntegrationSetup::new(
                     paths.provider_setup,
                     platform.integration_setup_supported(),
@@ -162,7 +170,9 @@ impl GamesRuntime {
             observer: Mutex::new(None),
             discovery_worker:Mutex::new(None),
             activation_observer: Mutex::new(None),
+            prepared_sources_worker: Mutex::new(None),
         };
+        runtime.start_prepared_sources();
         runtime.start_context_observer();
         runtime.start_activation_observer();
         if first_start {let _=discovery_review::start(&runtime,&json!({"command":"game_discovery_start"}));}
@@ -220,7 +230,7 @@ impl GamesRuntime {
                 .activation
                 .view(game["id"].as_str().unwrap_or(""));
         }
-        crate::game_artwork::decorate(self.inner.installations.root(), &mut catalogue);
+        self.inner.prepared_sources.snapshot().decorate(&mut catalogue);
         catalogue
     }
     pub(crate) fn current_vehicle_id(&self, game_id: &str) -> Option<String> {
@@ -273,6 +283,7 @@ impl GamesRuntime {
         if let Some(error) = self.inner.artwork_error.lock().unwrap_or_else(|p|p.into_inner()).as_ref() {
             state["artworkError"] = json!(error);
         }
+        if let Some(error) = self.inner.prepared_sources.error() { state["artworkError"] = json!(error); }
         state
     }
     pub(crate) fn recovery_pending(&self)->bool{self.inner.setup.pending()}
@@ -372,12 +383,15 @@ impl GamesRuntime {
     #[cfg(test)]
     pub(crate) fn seed_test_catalogue(&self,catalogue:Vec<Value>) {
         let mut settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());settings.catalogue=catalogue;
+        drop(settings);
+        self.inner.prepare_online_artwork();
     }
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
+        self.inner.prepared_sources.close(None);
         if let Some(owner) = &self.inner.artwork_owner { owner.shutdown(); }
-        for worker in [&self.activation_observer, &self.observer, &self.discovery_worker] {
+        for worker in [&self.activation_observer, &self.observer, &self.discovery_worker, &self.prepared_sources_worker] {
             if let Some(worker) = worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
                 let _ = worker.join();
             }
@@ -392,36 +406,6 @@ impl Drop for GamesRuntime {
 }
 
 impl Inner {
-    /// Enrichment is owned by startup and committed library/discovery work.
-    /// Status readers only consume the Steam service cache.
-    fn prepare_online_artwork(&self) {
-        #[cfg(test)]
-        {
-            let hook = self.artwork_prepare_hook.lock().unwrap_or_else(|p| p.into_inner()).clone();
-            if let Some(hook) = hook { hook(); }
-        }
-        if !self.online_artwork || self.closed.load(Ordering::Acquire) { return; }
-        let Some(owner) = &self.artwork_owner else { return; };
-        let (mut catalogue, revision) = {
-            let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
-            if settings.metadata_error.is_some() { return; }
-            (settings.catalogue.clone(), settings.saved.revision)
-        };
-        // Resolve higher-priority local artwork during owner preparation, so
-        // optional online work does not start for an existing local image.
-        crate::game_artwork::decorate(self.installations.root(), &mut catalogue);
-        let discovery = self.discovery.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let prepared = json!({"catalogue":catalogue,"discovery":discovery});
-        // Keep the prepared target set behind the same commit boundary. Slow
-        // local artwork must not replace a newer library or discovery target set.
-        let settings = self.settings.lock().unwrap_or_else(|p|p.into_inner());
-        let current = self.discovery.lock().unwrap_or_else(|p|p.into_inner());
-        if settings.saved.revision != revision || current.scan_id != discovery.scan_id
-            || current.status != discovery.status || current.revision != discovery.revision { return; }
-        let error = owner.replace(&prepared).err();
-        drop(current); drop(settings);
-        *self.artwork_error.lock().unwrap_or_else(|p|p.into_inner()) = error;
-    }
     fn guard_installation_metadata(&self) -> Result<(), String> {
         let settings = self.settings.lock().unwrap_or_else(|p| p.into_inner());
         match &settings.metadata_error {
