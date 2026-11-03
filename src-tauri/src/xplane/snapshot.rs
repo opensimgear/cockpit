@@ -17,6 +17,7 @@ impl NativeValue {
 pub(crate) struct NativeSample {
     pub value: Option<NativeValue>,
     pub captured_at: Option<Instant>,
+    pub capture_sequence: u64,
 }
 
 #[derive(Clone, Debug)]

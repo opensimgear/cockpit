@@ -139,7 +139,12 @@ test('full installed X-Plane metadata supplies selected physics and canonical ch
         record.setup=await wait(async()=>{const game=(await gameState()).catalogue.find(game=>game.id===gameId);return game.integrationSetup?.state==='ready'&&game.integrationSetup;},`${name} installation setup never completed`);
         child=spawn(executable,[stop],{cwd:working,windowsHide:true,stdio:'ignore'});exited=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',error=>resolve({error:String(error)}));});
         await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
-        await wait(async()=>{const game=(await gameState()).catalogue.find(game=>game.id===gameId);return game.integrationContext.processVerified&&game.currentVehicle?.id==='Aircraft/Authored/Physics.acf';},`${name} native process and advancing aircraft were not observed`);
+        await wait(async()=>{
+          const observed=await gameState(),game=observed.catalogue.find(game=>game.id===gameId);
+          record.processObservation={processMonitor:game.processMonitor??null,integrationContext:game.integrationContext??null,currentVehicle:game.currentVehicle??null,detectionErrors:observed.detectionErrors??[]};
+          if(game.processMonitor?.state==='needs-permission')throw Error(`${name} requires Windows process notification permission: ${game.processMonitor.details??game.processMonitor.message}`);
+          return game.integrationContext.processVerified&&game.currentVehicle?.id==='Aircraft/Authored/Physics.acf';
+        },`${name} native process and advancing aircraft were not observed`);
         record.passiveSummary=await inspect({search:'sim/flightmodel/position/local_vx'});assert.ok(record.passiveSummary.total===1);assert.ok(record.passiveSummary.groups.some(group=>group.id==='physics'&&group.total>1000));
         record.passiveVelocity=await passive('sim/flightmodel/position/local_vx',1.25);
         record.passiveAcceleration=await passive('sim/flightmodel/position/local_ax',2.25);

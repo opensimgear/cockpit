@@ -336,6 +336,8 @@ impl ControllerService {
     /// Runtime admission time in the capture journal's clock domain, without
     /// taking the registry mutex or collecting a report page.
     pub fn monotonic_us(&self) -> u64 { self.clock.now_us() }
+    /// Immutable clock origin and identity for native acquisition conversion.
+    pub fn capture_clock(&self) -> stream::Clock { self.clock }
     pub fn visibility_active(&self) -> bool {
         self.visibility.active()
     }

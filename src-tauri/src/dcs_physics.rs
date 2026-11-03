@@ -3,9 +3,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::{collections::BTreeMap, sync::OnceLock, time::Instant};
 
 mod parser;
+mod retained;
 mod session;
 mod source;
 pub(crate) use session::Session;
@@ -67,9 +68,13 @@ pub(crate) struct Snapshot {
     pub plane_id: Option<u64>,
     pub model_time: Option<f64>,
     pub sequence: Option<u32>,
+    #[serde(skip)]
+    pub capture_sequence: u64,
     pub fresh: bool,
     pub status: String,
     pub age_ms: Option<u64>,
+    #[serde(skip)]
+    pub captured_at: Option<Instant>,
     pub values: BTreeMap<String, Value>,
     pub malformed_frames: u64,
     pub error: Option<String>,

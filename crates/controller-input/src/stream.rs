@@ -71,6 +71,7 @@ pub use clock::Clock;
 
 pub(crate) struct Journal {
     origin: Instant,
+    clock_id: uuid::Uuid,
     cursor: u64,
     events: VecDeque<Event>,
     watches: Vec<Weak<WatchState>>,
@@ -80,6 +81,7 @@ impl Clone for Journal {
         // Metadata transactions cannot notify the live routing owner.
         Self {
             origin: self.origin,
+            clock_id: self.clock_id,
             cursor: self.cursor,
             events: self.events.clone(),
             watches: vec![],
@@ -90,6 +92,7 @@ impl Default for Journal {
     fn default() -> Self {
         Self {
             origin: Instant::now(),
+            clock_id: uuid::Uuid::new_v4(),
             cursor: 0,
             events: VecDeque::new(),
             watches: vec![],
@@ -134,7 +137,7 @@ impl Journal {
         self.clock().now_us()
     }
     pub(crate) fn clock(&self) -> Clock {
-        Clock { origin: self.origin }
+        Clock { origin: self.origin, id: self.clock_id }
     }
     pub fn cursor(&self) -> u64 {
         self.cursor

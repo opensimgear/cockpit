@@ -1,6 +1,6 @@
 //! One cancellable receive owner. Read handles retain only committed state/history.
 use super::{Session, Snapshot, FRESHNESS_MS, MAX_PACKET, PORT};
-use osg_streams::{Stream, StreamError, Subscription};
+use osg_streams::{NativeLimits, NativeStream, NativeSubscription, StreamError};
 #[cfg(test)]
 use std::net::SocketAddr;
 use std::{
@@ -11,8 +11,15 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-type Journal = Stream<Snapshot, Snapshot>;
-pub(crate) type Reader = Subscription<Snapshot, Snapshot>;
+type Journal = NativeStream<Snapshot, Snapshot>;
+pub(crate) type Reader = NativeSubscription<Snapshot, Snapshot>;
+pub(super) const LIMITS: NativeLimits = NativeLimits {
+    max_subscribers: 64,
+    max_snapshot_bytes: 128 * 1024,
+    max_frame_bytes: 128 * 1024,
+    max_pending_frames: 32,
+    max_pending_bytes: 2 * 1024 * 1024,
+};
 struct State {
     session: Session,
     snapshot: Snapshot,
@@ -30,6 +37,9 @@ impl Shared {
     }
     fn now_ms(&self) -> u64 {
         u64::try_from(self.clock.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+    fn elapsed_ms(&self, at: Instant) -> u64 {
+        u64::try_from(at.saturating_duration_since(self.clock).as_millis()).unwrap_or(u64::MAX)
     }
     fn now_us(&self) -> u64 {
         u64::try_from(self.clock.elapsed().as_micros()).unwrap_or(u64::MAX)
@@ -85,10 +95,10 @@ impl SourceView {
     pub(crate) fn snapshot(&self) -> Snapshot {
         let state = self.shared.lock();
         let mut snapshot = state.snapshot.clone();
-        snapshot.age_ms = state
-            .session
-            .received()
-            .map(|at| self.shared.now_ms().saturating_sub(at));
+        snapshot.age_ms = state.session.captured_at().map(|at| {
+            u64::try_from(Instant::now().saturating_duration_since(at).as_millis())
+                .unwrap_or(u64::MAX)
+        });
         // Defend passive readers if the OS has not yet scheduled the owner's
         // deadline wake. This projection never renews or publishes evidence.
         if snapshot.age_ms.is_some_and(|age| age > FRESHNESS_MS) {
@@ -107,8 +117,9 @@ impl SourceView {
         // worker is waiting to acquire this lock for its deadline withdrawal.
         // Wait for that native commit instead of authoring a consumer event.
         while state.snapshot.fresh
-            && state.session.received().is_some_and(|received| {
-                self.shared.now_ms().saturating_sub(received) > FRESHNESS_MS
+            && state.session.captured_at().is_some_and(|captured_at| {
+                Instant::now().saturating_duration_since(captured_at)
+                    > Duration::from_millis(FRESHNESS_MS)
             })
         {
             let Some(remaining) = until.checked_duration_since(Instant::now()) else {
@@ -158,7 +169,7 @@ impl Source {
         let session = Session::new();
         let snapshot = session.snapshot(0);
         let clock_id = format!("dcs-ownship:{}", uuid::Uuid::new_v4());
-        let journal = Journal::new(snapshot.epoch, snapshot.clone(), 0, &clock_id)
+        let journal = Journal::new(snapshot.epoch, snapshot.clone(), 0, &clock_id, LIMITS)
             .map_err(|e| format!("Cannot initialize DCS ownship observations: {e:?}"))?;
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -217,18 +228,13 @@ impl Drop for Source {
 
 async fn receive(socket: tokio::net::UdpSocket, shared: Arc<Shared>, stop: CancellationToken) {
     let mut bytes = [0; MAX_PACKET + 1];
-    let mut deadline = None;
+    let mut deadline: Option<Instant> = None;
     let failure = loop {
         // Idle has no timer. Only a source report authors a freshness deadline;
         // cancellation wakes the executor directly and cannot fail like UDP I/O.
         let expires = async {
             match deadline {
-                Some(at) => {
-                    tokio::time::sleep_until(tokio::time::Instant::from_std(
-                        shared.clock + Duration::from_millis(at),
-                    ))
-                    .await
-                }
+                Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
                 None => std::future::pending::<()>().await,
             }
         };
@@ -248,22 +254,27 @@ async fn receive(socket: tokio::net::UdpSocket, shared: Arc<Shared>, stop: Cance
         };
         match received {
             Ok(_) if stop.is_cancelled() => break None,
-            Ok((count, peer)) if peer.ip().is_loopback() => {
+            Ok((count, peer)) => {
+                // Capture transport arrival before lock contention or parsing.
+                let captured_at = Instant::now();
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
                 let mut state = shared.lock();
-                let now = shared.now_ms();
+                let capture_ms = shared.elapsed_ms(captured_at);
                 // A report can arrive concurrently with expiry. Commit the
                 // withdrawal before admitting its fresh advancing baseline.
-                if deadline.is_some_and(|at| now >= at) {
+                if deadline.is_some_and(|at| captured_at >= at) {
                     state.session.expire();
                     if shared.commit(&mut state).is_err() {
                         return;
                     }
                     deadline = None;
                 }
-                match state.session.feed(&bytes[..count], now) {
+                match state.session.feed(&bytes[..count], captured_at, capture_ms) {
                     Ok(false) => {} // replay/retired sessions never renew a lease
                     Ok(true) => {
-                        deadline = Some(now.saturating_add(FRESHNESS_MS + 1));
+                        deadline = Some(captured_at + Duration::from_millis(FRESHNESS_MS + 1));
                         if shared.commit(&mut state).is_err() {
                             return;
                         }
@@ -275,7 +286,6 @@ async fn receive(socket: tokio::net::UdpSocket, shared: Arc<Shared>, stop: Cance
                     }
                 }
             }
-            Ok(_) => {}
             Err(error) if matches!(error.kind(), std::io::ErrorKind::Interrupted) => {}
             Err(error) => break Some(error.to_string()),
         }
@@ -292,16 +302,19 @@ async fn receive(socket: tokio::net::UdpSocket, shared: Arc<Shared>, stop: Cance
 mod tests {
     use super::*;
     use crate::dcs_physics::tests::packet;
+    use std::sync::Arc;
 
     fn expired_view() -> SourceView {
         let mut session = Session::new();
+        let clock = Instant::now() - Duration::from_millis(FRESHNESS_MS + 1);
         for (sequence, time) in [(1, 1.0), (2, 1.05)] {
             session
-                .feed(packet(sequence, time).to_string().as_bytes(), 0)
+                .feed(packet(sequence, time).to_string().as_bytes(), clock, 0)
                 .unwrap();
         }
         let snapshot = session.snapshot(0);
-        let journal = Journal::new(snapshot.epoch, snapshot.clone(), 0, "test-clock").unwrap();
+        let journal =
+            Journal::new(snapshot.epoch, snapshot.clone(), 0, "test-clock", LIMITS).unwrap();
         SourceView {
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
@@ -310,7 +323,7 @@ mod tests {
                     journal,
                 }),
                 committed: Condvar::new(),
-                clock: Instant::now() - Duration::from_millis(FRESHNESS_MS + 1),
+                clock,
                 clock_id: "test-clock".into(),
             }),
         }
@@ -354,6 +367,60 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2));
         // Waiting did not publish or change the source's capture.
         assert!(view.shared.lock().snapshot.fresh);
+    }
+
+    #[test]
+    fn mutex_contention_does_not_move_the_packet_capture_instant_or_make_it_fresh() {
+        let clock = Instant::now();
+        let mut session = Session::new();
+        session
+            .feed(packet(1, 1.0).to_string().as_bytes(), clock, 0)
+            .unwrap();
+        let snapshot = session.snapshot(0);
+        let journal =
+            Journal::new(snapshot.epoch, snapshot.clone(), 0, "held-lock", LIMITS).unwrap();
+        let shared = Arc::new(Shared {
+            state: Mutex::new(State {
+                session,
+                snapshot,
+                journal,
+            }),
+            committed: Condvar::new(),
+            clock,
+            clock_id: "held-lock".into(),
+        });
+        let held = shared.lock();
+        let worker_shared = shared.clone();
+        let (captured_tx, captured_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let captured_at = Instant::now();
+            captured_tx.send(captured_at).unwrap();
+            let capture_ms = worker_shared.elapsed_ms(captured_at);
+            let mut state = worker_shared.lock();
+            state
+                .session
+                .feed(
+                    packet(2, 1.05).to_string().as_bytes(),
+                    captured_at,
+                    capture_ms,
+                )
+                .unwrap();
+            worker_shared.commit(&mut state).unwrap();
+            captured_at
+        });
+        let captured_at = captured_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(FRESHNESS_MS + 50));
+        drop(held);
+        assert_eq!(worker.join().unwrap(), captured_at);
+
+        let view = SourceView { shared };
+        let delayed = view.snapshot();
+        assert_eq!(delayed.sequence, Some(2));
+        assert_eq!(delayed.captured_at, Some(captured_at));
+        assert!(delayed.age_ms.unwrap() > FRESHNESS_MS);
+        assert!(!delayed.fresh);
+        assert_eq!(delayed.status, "stale");
+        assert!(delayed.values.is_empty());
     }
 
     fn wait_for_exit(source: &Source) {

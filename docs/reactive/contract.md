@@ -2,6 +2,8 @@
 
 Work for #188 / #189. This contract is a qualification target, not a claim that
 current transports implement it. Hardware acceptance is tracked in #199.
+The [native capture evidence contract](native-capture-evidence.md) specifies
+per-port provenance, independent family recovery and remaining integration.
 
 ## Authority and identity
 

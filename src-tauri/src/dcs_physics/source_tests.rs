@@ -4,7 +4,7 @@ use std::{
     net::{Ipv4Addr, UdpSocket},
     time::{Duration, Instant},
 };
-type Reader = osg_streams::Subscription<Snapshot, Snapshot>;
+type Reader = osg_streams::NativeSubscription<Snapshot, Snapshot>;
 fn sender() -> UdpSocket {
     UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap()
 }
@@ -47,11 +47,12 @@ fn live() -> (Source, UdpSocket, Reader) {
 #[test]
 fn independent_worker_commits_every_ordered_datagram_without_consumer_pumps() {
     let (source, sender, mut reader) = live();
-    for sequence in 3..43 {
+    let last_sequence = 2 + (source::LIMITS.max_pending_frames / 2) as u32;
+    for sequence in 3..=last_sequence {
         send(&sender, &source, sequence, sequence as f64 / 20.0 + 1.0);
     }
     let mut last_capture = 0;
-    for sequence in 3..43 {
+    for sequence in 3..=last_sequence {
         let Delivery::Event(event) = delivery(&mut reader) else {
             panic!("ordered report expected")
         };
@@ -61,21 +62,23 @@ fn independent_worker_commits_every_ordered_datagram_without_consumer_pumps() {
         last_capture = event.captured_us;
         assert!(event.clock_id.starts_with("dcs-ownship:"));
     }
-    assert_eq!(source.snapshot().sequence, Some(42));
+    assert_eq!(source.snapshot().sequence, Some(last_sequence));
     for _ in 0..10 {
-        assert_eq!(source.snapshot().sequence, Some(42));
+        assert_eq!(source.snapshot().sequence, Some(last_sequence));
     }
     let mut late = source.view().subscribe().unwrap();
     let Delivery::Snapshot(snapshot) = delivery(&mut late) else {
         panic!("atomic snapshot")
     };
-    assert_eq!(snapshot.value.sequence, Some(42));
+    assert_eq!(snapshot.value.sequence, Some(last_sequence));
     assert_eq!(snapshot.captured_us, last_capture);
+    assert_eq!(snapshot.value.captured_at, source.snapshot().captured_at);
 }
 #[test]
 fn fresh_deadline_is_a_native_event_and_replays_cannot_extend_it() {
     let (source, sender, mut reader) = live();
     let initial = source.snapshot();
+    let capture_instant = initial.captured_at;
     let started = Instant::now();
     assert!(reader
         .recv_timeout(Duration::from_millis(400))
@@ -85,6 +88,7 @@ fn fresh_deadline_is_a_native_event_and_replays_cannot_extend_it() {
     let passive = source.view().snapshot();
     assert_eq!(passive.sequence, initial.sequence);
     assert!(passive.age_ms.unwrap() >= 350);
+    assert_eq!(passive.captured_at, capture_instant);
     let Delivery::Event(expired) = delivery(&mut reader) else {
         panic!("deadline event")
     };
@@ -92,6 +96,7 @@ fn fresh_deadline_is_a_native_event_and_replays_cannot_extend_it() {
     assert!(!expired.value.fresh);
     assert!(expired.value.values.is_empty());
     assert!(expired.value.age_ms.unwrap() > FRESHNESS_MS);
+    assert_eq!(expired.value.captured_at, capture_instant);
     assert!(started.elapsed() < Duration::from_millis(1350));
     assert_eq!(source.snapshot().status, "stale");
     send(&sender, &source, 3, 1.1);
@@ -99,6 +104,7 @@ fn fresh_deadline_is_a_native_event_and_replays_cannot_extend_it() {
     send(&sender, &source, 4, 1.15);
     assert!(captured(&mut reader, 4).fresh);
 }
+
 #[test]
 fn packet_gaps_publish_loss_and_require_an_advancing_baseline() {
     let (source, sender, mut reader) = live();
@@ -121,7 +127,9 @@ fn source_wrap_is_continuous_and_pause_denial_frozen_stop_are_ordered() {
     send(&sender, &source, u32::MAX, 1.0);
     captured(&mut reader, u32::MAX);
     send(&sender, &source, 0, 1.05);
-    assert!(captured(&mut reader, 0).fresh);
+    let wrapped = captured(&mut reader, 0);
+    assert!(wrapped.fresh);
+    assert_eq!(wrapped.capture_sequence, 2);
     for (sequence, field, status) in [
         (1, "paused", "paused"),
         (2, "allowed", "export-denied"),

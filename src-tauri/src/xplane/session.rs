@@ -1,6 +1,13 @@
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CapturedDataref {
+    value: f64,
+    captured_at: Instant,
+    capture_sequence: u64,
+}
 struct Session {
     channels: Vec<std::sync::Arc<datarefs::Channel>>,
-    values: BTreeMap<usize, (f64, Instant)>,
+    values: BTreeMap<usize, CapturedDataref>,
+    capture_sequence: u64,
     freshness: Duration,
     version: u64,
     context: Option<String>,
@@ -20,6 +27,7 @@ impl Session {
                 .map(std::sync::Arc::new)
                 .collect(),
             values: BTreeMap::new(),
+            capture_sequence: 0,
             freshness: Duration::from_millis(v["freshnessMs"].as_u64().unwrap()),
             version: v["version"].as_u64().unwrap(),
             context: None,
@@ -44,17 +52,23 @@ impl Session {
             self.exhausted = true;
         }
         self.status = if self.exhausted {
-            "X-Plane session epoch exhausted; reactivate the reader.".into()
+            "X-Plane capture or session identity exhausted; reactivate the reader.".into()
         } else {
             status.into()
         };
     }
     fn ingest(&mut self, pairs: Vec<(usize, f64)>, now: Instant) {
-        if self.exhausted {
+        if self.exhausted || pairs.is_empty() {
             return;
         }
+        let Some(sequence) = self.capture_sequence.checked_add(1) else {
+            self.reset("X-Plane capture sequence exhausted.");
+            self.exhausted = true;
+            return;
+        };
+        self.capture_sequence = sequence;
         for (index, value) in pairs {
-            self.values.insert(index, (value, now));
+            self.values.insert(index, CapturedDataref { value, captured_at: now, capture_sequence: sequence });
         }
     }
     /// Unchanged datarefs keep their original capture evidence.
@@ -90,18 +104,18 @@ impl Session {
     fn get(&self, index: usize, now: Instant) -> Option<f64> {
         self.values
             .get(&index)
-            .filter(|(_, at)| {
-                now.checked_duration_since(*at)
+            .filter(|sample| {
+                now.checked_duration_since(sample.captured_at)
                     .is_some_and(|age| age < self.freshness)
             })
-            .map(|(v, _)| *v)
+            .map(|sample| sample.value)
             .filter(|v| v.is_finite())
     }
     /// Expired evidence cannot keep waking an otherwise idle producer.
     fn deadline(&self, now: Instant) -> Option<Instant> {
         self.values
             .values()
-            .map(|(_, at)| *at)
+            .map(|sample| sample.captured_at)
             .chain(self.advanced)
             .filter_map(|at| at.checked_add(self.freshness))
             .filter(|at| *at > now)
@@ -163,7 +177,7 @@ impl Session {
         } else {
             if self.clock.is_some_and(|old| clock.unwrap() > old) {
                 self.baseline = true;
-                self.advanced = self.values.get(&3).map(|(_, at)| *at);
+                self.advanced = self.values.get(&3).map(|sample| sample.captured_at);
                 self.counter = self.counter.wrapping_add(1);
             }
             self.context = aircraft;
@@ -180,7 +194,7 @@ impl Session {
         let valid_until = if fresh {
             required
                 .iter()
-                .filter_map(|i| self.values.get(i).map(|(_, at)| *at))
+                .filter_map(|i| self.values.get(i).map(|sample| sample.captured_at))
                 .chain(self.advanced)
                 .filter_map(|at| at.checked_add(self.freshness))
                 .min()
@@ -226,13 +240,14 @@ impl Session {
                     c.id.clone(),
                     NativeSample {
                         value,
-                        captured_at: self.values.get(&(offset + i)).map(|(_, at)| *at),
+                        captured_at: self.values.get(&(offset + i)).map(|sample| sample.captured_at),
+                        capture_sequence: self.values.get(&(offset + i)).map_or(0, |sample| sample.capture_sequence),
                     },
                 )
             })
             .collect();
         if self.exhausted {
-            self.status = "X-Plane session epoch exhausted; reactivate the reader.".into();
+            self.status = "X-Plane capture or session identity exhausted; reactivate the reader.".into();
         } else if initializing {
             self.status = "Subscribing to selected X-Plane datarefs in bounded batches.".into();
         } else if fresh {
@@ -265,7 +280,7 @@ impl Session {
     }
     #[cfg(test)]
     fn snapshot(&mut self, now: Instant, outputs: &[Value]) -> (ExportSnapshot, Value, bool) {
-        let captured_at = self.values.values().map(|(_, at)| *at).max();
+        let captured_at = self.values.values().map(|sample| sample.captured_at).max();
         let (native, rotate) = self.native_snapshot(now, captured_at, 0, "test", false);
         let (snapshot, status) = native.project(now, outputs, &[]);
         (snapshot, status, rotate)

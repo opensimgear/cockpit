@@ -285,6 +285,8 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     };
     let outputs = physics_outputs.clone();
     let mut physics = crate::dcs_physics::Snapshot {
+        captured_at: None,
+        capture_sequence: 0,
         producer_id: "producer-1".into(),
         epoch: 1,
         session: Some("mission-1".into()),

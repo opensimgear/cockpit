@@ -1,10 +1,13 @@
 use super::parser::parse;
 use super::*;
+use std::time::{Duration, Instant};
 pub(super) fn packet(sequence: u32, time: f64) -> Value {
     json!({"schemaVersion":1,"source":"osg-dcs-ownship","session":"fixture-mission","sequence":sequence,"modelTime":time,"planeId":5,"aircraft":"FA-18C_hornet","allowed":true,"paused":false,"activePause":false,"stopped":false,"values":{"flight.airspeed.true":0,"flight.ownship.inAir":false,"flight.engine.left.speedPercent":75.5}})
 }
 fn feed(session: &mut Session, value: Value, now: u64) -> bool {
-    session.feed(value.to_string().as_bytes(), now).unwrap()
+    session
+        .feed(value.to_string().as_bytes(), Instant::now(), now)
+        .unwrap()
 }
 #[test]
 fn local_source_replacement_has_distinct_identity_even_in_the_same_mission() {
@@ -67,6 +70,75 @@ fn late_duplicate_retired_mission_and_model_time_regression_never_replay_values(
         Some("second-mission")
     );
 }
+
+#[test]
+fn rejected_duplicate_and_retired_packets_preserve_the_last_capture_instant() {
+    let mut session = Session::new();
+    let first_capture = Instant::now();
+    session
+        .feed(packet(1, 1.0).to_string().as_bytes(), first_capture, 0)
+        .unwrap();
+    let accepted_capture = first_capture + Duration::from_millis(50);
+    session
+        .feed(packet(2, 1.05).to_string().as_bytes(), accepted_capture, 50)
+        .unwrap();
+    assert!(session.snapshot(50).fresh);
+    assert_eq!(session.snapshot(50).captured_at, Some(accepted_capture));
+    assert_eq!(session.snapshot(50).capture_sequence, 2);
+
+    assert!(!session
+        .feed(
+            packet(2, 1.05).to_string().as_bytes(),
+            accepted_capture + Duration::from_millis(150),
+            200,
+        )
+        .unwrap());
+    assert_eq!(session.snapshot(200).captured_at, Some(accepted_capture));
+    assert_eq!(session.snapshot(200).capture_sequence, 2);
+
+    assert!(session
+        .feed(
+            b"invalid packet",
+            accepted_capture + Duration::from_millis(250),
+            300,
+        )
+        .is_err());
+    assert_eq!(session.snapshot(300).captured_at, Some(accepted_capture));
+    assert_eq!(session.snapshot(300).capture_sequence, 2);
+
+    let mut next_mission = packet(1, 1.0);
+    next_mission["session"] = json!("next-mission");
+    let next_capture = accepted_capture + Duration::from_millis(350);
+    session
+        .feed(next_mission.to_string().as_bytes(), next_capture, 400)
+        .unwrap();
+    assert_eq!(session.snapshot(400).captured_at, Some(next_capture));
+    assert_eq!(session.snapshot(400).capture_sequence, 3);
+    assert!(!session
+        .feed(
+            packet(3, 1.2).to_string().as_bytes(),
+            next_capture + Duration::from_millis(50),
+            450,
+        )
+        .unwrap());
+    assert_eq!(session.snapshot(450).captured_at, Some(next_capture));
+    assert_eq!(session.snapshot(450).capture_sequence, 3);
+}
+
+#[test]
+fn native_capture_sequence_survives_protocol_sequence_wrap() {
+    let mut session = Session::new();
+    feed(&mut session, packet(u32::MAX, 1.0), 0);
+    assert_eq!(session.snapshot(0).sequence, Some(u32::MAX));
+    assert_eq!(session.snapshot(0).capture_sequence, 1);
+
+    feed(&mut session, packet(0, 1.05), 50);
+    let wrapped = session.snapshot(50);
+    assert_eq!(wrapped.sequence, Some(0));
+    assert_eq!(wrapped.capture_sequence, 2);
+    assert!(wrapped.fresh);
+}
+
 #[test]
 fn parser_bounds_frames_drops_invalid_components_and_resets_changed_identity() {
     let mut session = Session::new();
@@ -74,17 +146,23 @@ fn parser_bounds_frames_drops_invalid_components_and_resets_changed_identity() {
     feed(&mut session, packet(2, 1.1), 50);
     let mut wrong = packet(3, 1.2);
     wrong["values"]["flight.airspeed.true"] = json!("fast");
-    assert!(session.feed(wrong.to_string().as_bytes(), 100).unwrap());
+    assert!(session
+        .feed(wrong.to_string().as_bytes(), Instant::now(), 100)
+        .unwrap());
     assert!(session.snapshot(100).fresh);
     assert!(!session
         .snapshot(100)
         .values
         .contains_key("flight.airspeed.true"));
     assert_eq!(session.snapshot(100).values["flight.ownship.inAir"], false);
-    assert!(session.feed(&vec![b' '; MAX_PACKET + 1], 100).is_err());
+    assert!(session
+        .feed(&vec![b' '; MAX_PACKET + 1], Instant::now(), 100)
+        .is_err());
     let mut unknown = packet(4, 1.3);
     unknown["values"]["target.position"] = json!(1);
-    assert!(session.feed(unknown.to_string().as_bytes(), 100).unwrap());
+    assert!(session
+        .feed(unknown.to_string().as_bytes(), Instant::now(), 100)
+        .unwrap());
     assert!(!session.snapshot(100).values.contains_key("target.position"));
     let mut changed = packet(5, 1.4);
     changed["planeId"] = json!(9);

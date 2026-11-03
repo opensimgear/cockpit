@@ -24,13 +24,15 @@ pub struct Registry {
 }
 impl Default for Registry {
     fn default() -> Self {
+        let journal = Journal::default();
+        let session = journal.clock().id().to_string();
         Self {
             sources: BTreeMap::new(),
             observations: observation::Observations::default(),
-            journal: Journal::default(),
+            journal,
             backend_status: "starting".into(),
             diagnostic: String::new(),
-            session: uuid::Uuid::new_v4().to_string(),
+            session,
             dirty: false,
         }
     }

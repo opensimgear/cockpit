@@ -41,6 +41,8 @@ fn dcs_physics_errors_and_staleness_preserve_live_bios_and_missing_components_st
     );
 
     let physics = crate::dcs_physics::Snapshot {
+        captured_at: None,
+        capture_sequence: 0,
         producer_id: "producer-1".into(),
         epoch: 1,
         session: Some("mission-1".into()),

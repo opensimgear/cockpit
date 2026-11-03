@@ -4,9 +4,14 @@ use std::{sync::mpsc, time::Duration};
 #[test]
 fn admission_clock_shares_journal_epoch_without_reading_capture_state() {
     let service = ControllerService::new(None, false);
+    let clock = service.capture_clock();
+    assert_eq!(clock.id().to_string(), service.registry.lock().unwrap().session);
     let before = service.monotonic_us();
+    let acquired = std::time::Instant::now();
     let page = service.stream_page("", 0);
     let after = service.monotonic_us();
+    let captured = clock.captured_us(acquired).unwrap();
+    assert!(before <= captured && captured <= after);
     assert!(before > 0 && before <= page.captured_us && page.captured_us <= after);
     let same = service.stream_page(&page.session, page.cursor);
     assert_eq!(page.cursor, same.cursor, "Clock reads do not publish input evidence.");

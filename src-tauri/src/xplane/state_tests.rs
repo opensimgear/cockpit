@@ -43,6 +43,7 @@ fn native_projection_preserves_zero_false_aliases_and_original_capture() {
     assert_eq!(snapshot.capture_sequence, 2);
     assert_eq!(snapshot.captured_at, Some(now));
     assert_eq!(snapshot.channels["airspeed_kts"].captured_at, Some(now));
+    assert_eq!(snapshot.channels["airspeed_kts"].capture_sequence, 2);
     assert_eq!(session.advanced, Some(now));
     assert_eq!(second.age_ms, Some(100));
     assert!(snapshot
@@ -50,6 +51,52 @@ fn native_projection_preserves_zero_false_aliases_and_original_capture() {
         .0
         .values
         .is_empty());
+}
+
+#[test]
+fn native_component_sequence_changes_only_on_its_own_accepted_capture() {
+    let now = Instant::now();
+    let (mut session, initial) = live(now);
+    let airspeed = initial.channels["airspeed_kts"].clone();
+    let later = now + Duration::from_millis(100);
+    session.ingest(evidence(3.), later);
+    let (guards, _) = session.native_snapshot(later, Some(later), 3, "producer", false);
+    assert_eq!(guards.channels["airspeed_kts"].capture_sequence, airspeed.capture_sequence);
+    assert_eq!(guards.channels["airspeed_kts"].captured_at, airspeed.captured_at);
+    assert_eq!(guards.channels["gear_unsafe"].capture_sequence, 2);
+
+    // An equal value in a real new packet is new evidence; unrelated values
+    // keep their own original acquisition sequence and timestamp.
+    let refreshed = later + Duration::from_millis(100);
+    session.ingest(vec![(GUARDS.len() + PATH_BYTES, 0.)], refreshed);
+    let (fresh, _) = session.native_snapshot(refreshed, Some(refreshed), 4, "producer", false);
+    assert_eq!(fresh.channels["airspeed_kts"].value, airspeed.value);
+    assert_eq!(fresh.channels["airspeed_kts"].capture_sequence, 4);
+    assert_eq!(fresh.channels["airspeed_kts"].captured_at, Some(refreshed));
+    assert_eq!(fresh.channels["gear_unsafe"].captured_at, Some(now));
+    assert_eq!(fresh.channels["gear_unsafe"].capture_sequence, 2);
+
+    let mut channels = session.channels.clone();
+    channels.reverse();
+    session.select_shared_channels(channels);
+    let (selected, _) = session.native_snapshot(refreshed, Some(refreshed), 4, "producer", false);
+    assert_eq!(selected.channels["airspeed_kts"].capture_sequence, 4);
+    assert_eq!(selected.channels["airspeed_kts"].captured_at, Some(refreshed));
+    assert_eq!(selected.channels["gear_unsafe"].capture_sequence, 2);
+}
+
+#[test]
+fn empty_packet_and_capture_sequence_exhaustion_cannot_renew_components() {
+    let now = Instant::now();
+    let (mut session, _) = live(now);
+    session.ingest(vec![], now + Duration::from_millis(10));
+    assert_eq!(session.capture_sequence, 2);
+    session.capture_sequence = u64::MAX;
+    session.ingest(evidence(3.), now + Duration::from_millis(20));
+    let (snapshot, _) = session.native_snapshot(now, Some(now), u64::MAX, "producer", false);
+    assert!(!snapshot.fresh_at(now));
+    assert!(snapshot.status.contains("exhausted"));
+    assert!(snapshot.channels.values().all(|sample| sample.value.is_none() && sample.capture_sequence == 0));
 }
 #[test]
 fn native_deadlines_expire_individual_values_and_then_leave_idle_state() {
@@ -136,6 +183,7 @@ fn selected_projection_excludes_other_readers_large_union() {
             NativeSample {
                 value: Some(NativeValue::Number(i as f64)),
                 captured_at: Some(now),
+                capture_sequence: 2,
             },
         );
     }
