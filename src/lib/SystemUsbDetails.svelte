@@ -6,18 +6,24 @@
   import ActionControl from './ActionControl.svelte';
   import { gatewayRequest, type GatewayCommand } from './gateway';
   import { ModuleUsbClient, usbRoutesEqual, type UsbModule, type UsbActions } from './module-usb';
+  import { observeUsbInputs, type UsbInputObservationState } from './usb-input-observations';
   import { cloneConfig, type RuntimeConfig } from './runtime-config';
   import type { DeepReadonly } from './profiles';
   import type { DeviceAction, ActionValue } from './device-actions';
   let { endpointKey }: { endpointKey: string } = $props();
   const client = new ModuleUsbClient(async request => { const result = (await gatewayRequest(request)).moduleUsb; if (!result) throw Error('USB service unavailable.'); return result; });
   let module = $state.raw<DeepReadonly<UsbModule>>();
+  let inputObservation = $state.raw<UsbInputObservationState>({ status: 'connecting' });
   let draft = $state<RuntimeConfig>();
   let busy = $state(false), editing = $state(false), error = $state('');
   let disposed = false;
   let claimSnapshot: DeepReadonly<UsbModule> | undefined;
   const snapshot = $derived(module?.snapshot.config);
   const actions = $derived(module?.snapshot.actions?.status === 'ready' ? module.snapshot.actions as UsbActions : undefined);
+  const inputs = $derived(inputObservation.status === 'ready' && inputObservation.value?.ready && inputObservation.value.route
+    && module?.snapshot.connected && module.snapshot.route && usbRoutesEqual(inputObservation.value.route, module.snapshot.route) ? inputObservation.value.state : null);
+  const inputUnavailable = $derived(inputObservation.error || inputObservation.value?.error || (inputObservation.status === 'connecting' ? 'Waiting for a USB input baseline.' : 'USB inputs are unavailable for this route.'));
+  $effect(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));
   async function run(operation: () => Promise<DeepReadonly<UsbModule>>, replaceDraft = true, claiming = false, configurationChange = false): Promise<boolean> {
     if (busy) return false;
     busy = true;
@@ -56,8 +62,7 @@
   async function invoke(action: DeviceAction, values: ActionValue[]) { return module ? run(() => client.invoke(module!, action.id, values), false) : false; }
   onMount(() => {
     void run(() => client.status(endpointKey));
-    const timer = setInterval(() => { if (module?.snapshot.connected && !busy && !document.hidden) void run(() => client.eventsState(module!), false); }, 750);
-    return () => { disposed = true; clearInterval(timer); if (claimSnapshot) void client.release(claimSnapshot).catch(() => {}); };
+    return () => { disposed = true; if (claimSnapshot) void client.release(claimSnapshot).catch(() => {}); };
   });
 </script>
 
@@ -79,9 +84,10 @@
     <section class="usb-device-actions" aria-label="USB device actions">
     <div class="actions-heading"><h3>Device actions</h3><button class="secondary-button" disabled={busy} onclick={() => run(() => client.describeActions(module!), false)}><Icon name="search" size={14} />Discover USB actions</button></div>
     {#each actions?.actions ?? [] as action (action.id)}<ActionControl action={action as DeviceAction} snapshot={actions!} ready={!busy} {busy} {invoke} />{/each}
-    {#if module.snapshot.events && !('status' in module.snapshot.events)}<p class="usb-input-status">Live inputs: {module.snapshot.events.held.filter(Boolean).length} pressed · {module.snapshot.events.axes?.join(', ') ?? 'No axes'}</p>{/if}
     </section>
   {/if}
+  {#if inputs}<p class="usb-input-status">Live inputs: {inputs.held.filter(Boolean).length} pressed · {inputs.axes.length ? inputs.axes.map((value, index) => inputs?.axisAvailable[index] ? value : 'Unavailable').join(', ') : 'No axes'}</p>
+  {:else}<p class="usb-input-status" role="status">{inputUnavailable}</p>{/if}
   <p class="field-help">Configuration changes require an explicit setup claim and Apply or Save. Connection inspection does not claim the writer.</p>
   </div>
 </section>

@@ -3506,6 +3506,7 @@ dependencies = [
  "base64 0.22.1",
  "httpdate",
  "image",
+ "libc",
  "notify",
  "osg-companion-serial",
  "osg-companion-service",
@@ -3537,6 +3538,7 @@ dependencies = [
  "ureq",
  "uuid",
  "windows",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

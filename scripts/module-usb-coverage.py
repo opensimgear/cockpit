@@ -104,6 +104,33 @@ for platform in ["windows", "macos", "linux"]:
         MODULE_TEST_SOURCES[f"transport/notifications/{platform}"] = [f"transport/notifications/{platform}/tests"]
 TEST_FILTERS.extend(["gateways::workspace", "stm32::workspace", "workspace_tests", "transport::notifications"])
 
+# Rust `mod` files are independent LLVM sources, unlike include! fragments.
+# Gate each new input-stream implementation instead of measuring its facade.
+USB_STREAM_MODULES = ["module_console/actor", "module_console/push", "module_usb_fleet/input_observations", "observations/service",
+    "module_usb/input_binding", "module_usb/stream/mod", "module_usb/stream/model",
+    "profile_session_panels_inputs/admission", "profile_session_panels_inputs/can",
+    "profile_session_panels_inputs/control", "profile_session_panels_inputs/preparation",
+    "profile_session_panels_inputs/source", "profile_session_panels_inputs/target",
+    "profile_session_panels_inputs/usb", "profile_session_panels_inputs/usb_source",
+    "transport/duplex/mod", "transport/duplex/sockets"]
+USB_STREAM_MODULES.extend(["transport/duplex/windows", "transport/duplex/windows_sockets"]
+    if os.name == "nt" else ["transport/duplex/unix"])
+MODULES.extend(USB_STREAM_MODULES)
+for module in USB_STREAM_MODULES:
+    MODULE_TEST_SOURCES[module] = []
+MODULE_TEST_SOURCES["module_console/actor"] = ["module_console/actor_tests"]
+MODULE_TEST_SOURCES["module_usb_fleet/input_observations"] = ["module_usb_fleet/input_observations_tests"]
+MODULE_TEST_SOURCES["observations/service"] = ["observations/tests"]
+MODULE_TEST_SOURCES["module_console/push"] = ["module_console/push_tests", "module_console/push_vectors_tests"]
+MODULE_TEST_SOURCES["module_usb/stream/mod"] = ["module_usb/stream/tests", "module_usb/test_io", "module_usb/stream_worker_tests"]
+MODULE_TEST_SOURCES["profile_session_panels_inputs/usb"] = ["profile_session_panels_inputs/usb_tests",
+    "profile_session_panels_inputs/usb_clock_tests", "profile_session_panels_inputs/can_tests", "profile_session_panels_inputs/test_support"]
+MODULE_TEST_SOURCES["transport/duplex/mod"] = ["transport/duplex/tests"]
+if os.name == "nt":
+    MODULE_TEST_SOURCES["transport/duplex/windows"] = ["transport/duplex/windows_tests"]
+TEST_FILTERS.append("transport::duplex::")
+TEST_FILTERS.append("observations::")
+
 
 def run(args, root, env=None):
     result = subprocess.run([str(arg) for arg in args], cwd=root, env=env,
@@ -170,6 +197,7 @@ def run_test_filters(binary, filters, root, env, profiles, output, timeout_secon
 
 
 def tracked_source_paths(root, measured, focused):
+    stream_fixtures = [root / "src-tauri/src/module_console/fixtures/events-push.jsonl"]
     workspace_boundary = [root / f"src-tauri/src/{name}" for name in
                           ["gateways.rs", "transport.rs", "local_gateway.rs", "mcp_tools.rs",
                            "mcp_tools/catalogue.rs", "mcp_tools/tests.rs"]]
@@ -222,7 +250,7 @@ def tracked_source_paths(root, measured, focused):
                     "journal", "policy", "runtime", "service", "service_tests"])
     tracked.extend([root / "scripts/native_coverage_sources.py", root / "scripts/test_native_coverage_sources.py",
                     root / "scripts/desktop-output-coverage.py"])
-    return expand_includes([*tracked, *workspace_boundary])
+    return expand_includes([*tracked, *workspace_boundary, *stream_fixtures])
 
 
 def main():

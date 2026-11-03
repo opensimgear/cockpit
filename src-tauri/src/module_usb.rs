@@ -1,7 +1,7 @@
 //! A standalone USB module owns one long-lived CDC worker. Observations never
 //! claim configuration or outputs. USB has no mutation replay/correlation cache.
 use crate::{
-    module_console::{self, Console, Reply, ReplyKind, UsbIdentity},
+    module_console::{self, actor::StreamConsole, Reply, ReplyKind, UsbIdentity},
     transport::{Factory, NativeFactory, PortInfo},
 };
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,8 @@ use std::{
 
 pub(crate) use crate::module_console::{candidate, candidate_for_explicit};
 const CLOSED: &str = "USB module service has stopped.";
+pub(crate) mod stream;
+mod input_binding;
 const STALE: &str =
     "The USB module route changed; refresh the device and establish a fresh session.";
 const UNKNOWN_CONFIG: &str = "The USB configuration reply was lost. Read active and saved settings before another explicit change; the write was not repeated.";
@@ -164,7 +166,10 @@ struct Writer {
 }
 struct Worker {
     factory: Box<dyn Factory>,
-    console: Option<Console>,
+    console: Option<StreamConsole>,
+    inputs:Arc<input_binding::Inputs>,
+    binding:Option<input_binding::Binding>,
+    io_cancel:Arc<Mutex<Option<Arc<dyn crate::transport::duplex::CancelIo>>>>,
     snapshot: UsbSnapshot,
     generation: u64,
     explicit: bool,
@@ -180,6 +185,7 @@ impl Worker {
             timing,
             cancel,
             console: None,
+            inputs:Arc::default(),binding:None,io_cancel:Arc::default(),
             snapshot: UsbSnapshot::default(),
             generation: ((uuid::Uuid::new_v4().as_u128() as u64) & ((1u64 << 52) - 1)).max(1),
             explicit: false,
@@ -188,6 +194,8 @@ impl Worker {
         }
     }
     fn close(&mut self) {
+        self.binding.take();
+        self.io_cancel.lock().unwrap_or_else(|p|p.into_inner()).take();
         self.console = None; // Dropping DTR invalidates USB-scoped firmware access.
         self.writer = None;
         self.baseline = None;
@@ -356,10 +364,10 @@ impl Worker {
             return Ok(());
         }
         self.close();
-        self.console = Some(Console::new(
-            self.factory.open(port, self.timing.read)?,
-            self.cancel.clone(),
-        )?);
+        self.binding=Some(input_binding::Binding::new(self.inputs.clone()));
+        let console=StreamConsole::new(self.factory.open_duplex(port)?,self.binding.as_ref().unwrap().sink())?;
+        *self.io_cancel.lock().unwrap_or_else(|p|p.into_inner())=Some(console.cancel_handle());
+        self.console=Some(console);
         let result = (|| {
             let identity = module_console::identity(&self.text("info")?, port)?;
             let status = module_console::status(&self.text("can status")?)?;
@@ -389,6 +397,20 @@ impl Worker {
             self.snapshot.connected = true;
             self.explicit = explicit;
             self.console.as_mut().unwrap().finish_handshake();
+            // The ordered unsubscribe ACK fences any previous subscriber's
+            // queued frames before binding this verified connection/route.
+            let stopped=self.exchange("events unsubscribe",ReplyKind::Json)?;
+            match stopped {
+                Reply::Json(value) if value["ok"]==true&&value["streaming"]==false=>{
+                    let capture=self.binding.as_ref().unwrap().install(self.snapshot.route.clone().unwrap())?;
+                    match self.exchange("events subscribe",ReplyKind::Json)? {
+                        Reply::Json(value) if value["ok"]==true&&value["streaming"]==true=>{},
+                        _=>capture.accept(module_console::actor::Input::Lost("The module rejected native input streaming.".into())),
+                    }
+                },
+                _=>{let capture=self.binding.as_ref().unwrap().install(self.snapshot.route.clone().unwrap())?;
+                    capture.accept(module_console::actor::Input::Lost("Update the module firmware to enable native input streaming.".into()));},
+            }
             self.snapshot.error = None;
             Ok(())
         })();
@@ -985,6 +1007,8 @@ pub(crate) struct ModuleUsbService {
     sender: mpsc::SyncSender<Message>,
     closed: Arc<AtomicBool>,
     latest: Arc<Mutex<UsbSnapshot>>,
+    inputs:Arc<input_binding::Inputs>,
+    io_cancel:Arc<Mutex<Option<Arc<dyn crate::transport::duplex::CancelIo>>>>,
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -1002,10 +1026,13 @@ impl ModuleUsbService {
         let cancel = closed.clone();
         let latest = Arc::new(Mutex::new(UsbSnapshot::default()));
         let cache = latest.clone();
+        let inputs=Arc::new(input_binding::Inputs::default());let worker_inputs=inputs.clone();
+        let io_cancel=Arc::new(Mutex::new(None));let worker_cancel=io_cancel.clone();
         let worker = thread::Builder::new()
             .name("osg-module-usb".into())
             .spawn(move || {
                 let mut module = Worker::new(factory, timing, cancel.clone());
+                module.inputs=worker_inputs;module.io_cancel=worker_cancel;
                 while !cancel.load(Ordering::Acquire) {
                     match receiver.recv_timeout(module.timing.refresh) {
                         Ok(Message::Request(request, reply)) => {
@@ -1045,17 +1072,30 @@ impl ModuleUsbService {
             sender,
             closed,
             latest,
+            inputs,io_cancel,
             endpoint_activity,
             worker: Mutex::new(worker),
         }
     }
     /// Cached observations only: this never opens a port or claims anything.
     pub fn snapshot(&self) -> UsbSnapshot {
-        self.latest
+        let mut snapshot=self.latest
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .clone()
+            .clone();
+        if let Some(capture)=self.inputs.current(){
+            let input=capture.snapshot();
+            if snapshot.route.as_ref()==Some(&input.route){
+                snapshot.events=Some(if input.ready {
+                    let mut state=input.state.as_ref().map(|state|state.as_ref().clone()).unwrap_or(Value::Null);
+                    state["route"]=json!(input.route);state["boot"]=json!(input.route.boot);state
+                }else{json!({"status":"unavailable","route":input.route,"error":input.error})});
+            }
+        }
+        snapshot
     }
+    pub(crate) fn input_capture(&self)->Option<Arc<stream::Capture>>{self.inputs.current()}
+    pub(crate) fn watch_inputs(&self,wake:Arc<osg_streams::NativeWake>){self.inputs.watch(wake)}
     pub(crate) fn output_activity(&self)->bool{self.endpoint_activity.active()}
     pub fn request(&self, request: UsbRequest) -> Result<UsbSnapshot, String> {
         if self.closed.load(Ordering::Acquire) {
@@ -1086,6 +1126,8 @@ impl ModuleUsbService {
     }
     pub fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        let cancel=self.io_cancel.lock().unwrap_or_else(|p|p.into_inner()).clone();
+        if let Some(cancel)=cancel{cancel.cancel();}
         let _ = self.sender.try_send(Message::Shutdown);
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();

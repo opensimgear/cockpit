@@ -59,6 +59,7 @@ pub(crate) trait Connection: Read + Write + Send {
 }
 
 pub(crate) trait Factory: Send {
+    fn open_duplex(&mut self,_port:&PortInfo)->Result<duplex::DuplexParts,String>{Err("This transport cannot stream standalone USB input.".into())}
     fn ports(&mut self) -> Result<Vec<PortInfo>, String>;
     fn open(
         &mut self,
@@ -97,6 +98,7 @@ impl Connection for NativeConnection {
     }
 }
 impl Factory for NativeFactory {
+    fn open_duplex(&mut self,port:&PortInfo)->Result<duplex::DuplexParts,String>{duplex::open(port)}
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
         let mut local = crate::local_gateway::ports();
         if local_only(std::env::var_os("OSG_LOCAL_GATEWAYS_ONLY").as_deref()) {
@@ -188,3 +190,4 @@ fn local_only_fixture_discovery_is_explicit_and_debug_build_only() {
     }
 }
 pub(crate) mod notifications;
+pub(crate) mod duplex;

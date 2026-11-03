@@ -10,6 +10,10 @@ impl crate::gateways::GatewayManager {
             self.controllers.observe(&self.observations.broker(), id, action)
         } else if topic.starts_with("profiles.samples.") { self.with_profile_samples(topic, action) }
         else if let Some(id)=topic.strip_prefix("games.detail."){self.with_game_detail(id,action)}
+        else if topic.starts_with("usb.inputs.") {
+            self.module_usb.with_input_observation(topic,self.observations.broker(),
+                |wake|self.observations.watch_reader_lifecycle(wake),action)
+        }
         else { action() }
     }
 

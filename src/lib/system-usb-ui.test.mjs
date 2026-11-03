@@ -51,6 +51,7 @@ async function harness() {
       if (name === 'svelte') return { ...svelte, onMount(callback) { mounts.push(callback); } };
       if (name.endsWith('.svelte')) return { default() {} };
       if (name === './gateway') return { gatewayRequest };
+      if (name === './usb-input-observations') return { observeUsbInputs() { return () => {}; } };
       const normalized = name.replace(/\.ts$/, '');
       if (modules.has(normalized)) return modules.get(normalized);
       throw Error('Unexpected component import ' + name);
@@ -175,15 +176,11 @@ test('an Apply completed after navigation releases any returned writer using the
   assert.equal(releases.at(-1).route.configurationGeneration, 2);
 });
 
-test('mounted input polling inspects only while visible and idle and removes its timer on navigation', async () => {
+test('mounted USB details leave input acquisition to the shared subscription without a refresh timer', async () => {
   const h = await harness(); await h.mount(); h.calls.length = 0;
-  const poll = [...h.timers.values()][0]; assert.equal(typeof poll, 'function');
-  poll(); await settle();
-  assert.deepEqual(h.calls.map(request => request.command), ['module_usb_events_state']);
-  h.document.hidden = true; poll(); await settle(); assert.equal(h.calls.length, 1);
-  h.document.hidden = false;
-  const pending = deferred(); h.custom.set('module_usb_events_state', () => pending.promise);
-  poll(); poll(); await settle(); assert.equal(h.calls.length, 2);
-  pending.resolve({ moduleUsb: { module: h.current } }); await settle();
+  assert.equal(h.timers.size, 0);
+  h.document.hidden = true; await settle();
+  h.document.hidden = false; await settle();
+  assert.deepEqual(h.calls, []);
   h.cleanup(); assert.equal(h.timers.size, 0);
 });

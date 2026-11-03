@@ -10,6 +10,10 @@ pub(crate) struct ProfilePanelIo {
     closed: Arc<AtomicBool>,
 }
 impl ProfilePanelIo {
+    pub(crate) fn usb_capture(&self,key:&str)->Result<Arc<crate::module_usb::stream::Capture>,String>{
+        if self.closed.load(Ordering::Acquire){return Err("Native profile transports have closed.".into());}
+        self.usb.input_capture(key)
+    }
     pub(super) fn new(
         sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
         usb: Arc<crate::module_usb_fleet::Fleet>,

@@ -890,6 +890,7 @@ impl Host for NativeProfileHost {
             .take::<NativePreparation>(candidate)?;
         game.set_wake(self.native_wake.clone());
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
+        panels.set_wake(self.native_wake.clone());
         let visibility=visibility.bind(owner)?;
         let actions=crate::profile_session_actions::PanelActions::prepare(&prepared.plan, owner, self.resources.clone(), self.panels.clone())?;
         let publication=crate::profile_session_overrides::Overrides::prepare(&publication,owner,self.panels.clone(),self.admission_epoch.clone(),admission_epoch)?;

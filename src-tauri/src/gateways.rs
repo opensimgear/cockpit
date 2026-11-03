@@ -230,7 +230,7 @@ pub struct GatewayManager {
     profile_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     profile_automatic: automatic::Runtime,
     profile_automatic_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
-    module_usb: Arc<crate::module_usb_fleet::Fleet>,
+    pub(crate) module_usb: Arc<crate::module_usb_fleet::Fleet>,
     provider: Arc<dyn Provider>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,

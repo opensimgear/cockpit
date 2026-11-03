@@ -13,6 +13,12 @@ fn manager_prepares_only_authorized_topics_before_browser_subscription() {
     assert!(invalid["error"].as_str().unwrap().contains("fields"));
     let missing=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev","topic":unknown}),|_|Ok(()));
     assert_eq!(missing["error"],"Unknown controller.");
+    let usb=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev",
+        "topic":format!("usb.inputs.{}","a".repeat(64))}),|_|Ok(()));
+    assert_eq!(usb["error"],"Unknown USB input endpoint topic.");
+    let malformed=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev",
+        "topic":"usb.inputs.not-an-endpoint-hash"}),|_|Ok(()));
+    assert!(malformed["error"].as_str().unwrap().contains("hash"));
     let (send,receive)=mpsc::channel();
     let opened=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev","topic":"preferences.theme"}),move|frame|send.send(frame).map_err(|e|e.to_string()));
     assert_eq!(opened["ok"],true);

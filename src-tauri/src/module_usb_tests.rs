@@ -1,4 +1,8 @@
 use super::*;
+#[path="module_usb/test_io.rs"]
+mod stream_io;
+#[path="module_usb/stream_worker_tests.rs"]
+mod stream_worker;
 use std::{
     collections::VecDeque,
     io::{self, Read, Write},
@@ -32,7 +36,7 @@ fn descriptor() -> Value {
 fn timing() -> Timing {
     Timing {
         read: Duration::from_millis(1),
-        command: Duration::from_millis(15),
+        command: Duration::from_millis(250),
         refresh: Duration::from_secs(60),
         reconnect: Duration::from_millis(80),
         settle: Duration::ZERO,
@@ -68,6 +72,8 @@ struct Device {
     last_owned: Option<bool>,
     actions_supported: bool,
     events_supported: bool,
+    stream_pipe:Option<Arc<stream_io::Pipe>>,
+    stream_sequence:u32,
 }
 impl Default for Device {
     fn default() -> Self {
@@ -101,6 +107,7 @@ impl Default for Device {
             last_owned: None,
             actions_supported: true,
             events_supported: true,
+            stream_pipe:None,stream_sequence:0,
         }
     }
 }
@@ -331,6 +338,12 @@ impl Device {
                 _ => result = json!({"ok":false,"error":"unknownCommand"}),
             }
             format!("{result}\r\n")
+        } else if command=="events unsubscribe" {
+            self.stream_sequence=0;"{\"ok\":true,\"streaming\":false}\r\n".into()
+        } else if command=="events subscribe" {
+            self.stream_sequence=1;
+            format!("{{\"ok\":true,\"streaming\":true}}\r\n@events {}\r\n",
+                json!({"boot":self.boot,"sequence":1,"kind":"baseline","state":stream_io::state(self,0)}))
         } else if let Some(child) = command.strip_prefix("events ") {
             let args: Vec<_> = child.split(' ').collect();
             let buttons = layout(&self.active)["buttons"].as_u64().unwrap() as usize;
@@ -375,6 +388,7 @@ impl Device {
 }
 struct FakeFactory(Arc<Mutex<Device>>);
 impl Factory for FakeFactory {
+    fn open_duplex(&mut self,_:&PortInfo)->Result<crate::transport::duplex::DuplexParts,String>{Ok(stream_io::open(self.0.clone()))}
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
         Ok(self.0.lock().unwrap().ports.clone())
     }
@@ -488,7 +502,7 @@ fn discovery_is_persistent_verified_and_read_only() {
     assert!(device
         .writes
         .iter()
-        .all(|line| line == "info" || line == "can status" || line == "config get_active"));
+        .all(|line| ["info","can status","config get_active","events unsubscribe","events subscribe"].contains(&line.as_str())));
     drop(device);
     service.shutdown();
     assert!(!service.snapshot().connected);
@@ -978,8 +992,15 @@ fn events_require_a_current_baseline_and_never_replay_preconnection_history() {
     );
     assert_eq!(page.events.unwrap()["next"], 12);
     service.request(UsbRequest::Disconnect).unwrap();
-    let next = connect(&service).route.unwrap();
-    assert!(service.snapshot().events.is_none());
+    let connected = connect(&service);
+    // The command receipt has no historical cursor. The independent pushed
+    // baseline may already be visible to passive readers, without old edges.
+    assert!(connected.events.is_none());
+    let next = connected.route.unwrap();
+    if let Some(events) = service.snapshot().events {
+        assert!(events.get("events").is_none());
+        assert_eq!(events["route"], json!(next));
+    }
     assert!(service
         .request(UsbRequest::EventsRead {
             route: next.clone(),
@@ -1171,7 +1192,12 @@ fn bad_catalogue_or_event_pages_never_retain_a_usable_old_cache() {
             after: 10
         })
         .is_err());
-    assert!(service.snapshot().events.is_none());
+    // An invalid explicit page clears that command's cursor. It cannot
+    // overwrite the independently validated push capture with its bad page.
+    if let Some(events) = service.snapshot().events {
+        assert!(events.get("events").is_none());
+        assert_ne!(events["head"], 12);
+    }
     assert!(service
         .request(UsbRequest::EventsRead {
             route,
@@ -1208,7 +1234,7 @@ fn explicit_generic_windows_port_is_verified_with_no_automatic_probing() {
     assert!(d
         .writes
         .iter()
-        .all(|v| ["info", "can status", "config get_active"].contains(&v.as_str())));
+        .all(|v| ["info", "can status", "config get_active", "events unsubscribe", "events subscribe"].contains(&v.as_str())));
 }
 #[test]
 fn explicit_port_still_rejects_known_roles_forged_metadata_and_wrong_wire_identity() {

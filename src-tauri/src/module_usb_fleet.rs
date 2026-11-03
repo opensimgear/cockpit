@@ -8,20 +8,30 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, Weak,
 };
+
+#[path="module_usb_fleet/input_observations.rs"]
+mod input_observations;
+#[cfg(test)]
+#[path="module_usb_fleet/input_observations_tests.rs"]
+mod input_observations_tests;
 
 pub(crate) type SerialPorts = Arc<dyn Fn() -> Result<Vec<PortInfo>, String> + Send + Sync>;
 const MAX_PRESENT: usize = 32;
 const MAX_RETAINED: usize = 128;
 const MAX_REPLY_BYTES: usize = 110_000;
 trait Endpoint: Send + Sync {
+    fn input_capture(&self)->Option<Arc<module_usb::stream::Capture>>{None}
+    fn watch_inputs(&self,_wake:Arc<osg_streams::NativeWake>){}
     fn output_activity(&self)->bool{false}
     fn snapshot(&self) -> UsbSnapshot;
     fn request(&self, request: UsbRequest) -> Result<UsbSnapshot, String>;
     fn shutdown(&self);
 }
 impl Endpoint for ModuleUsbService {
+    fn input_capture(&self)->Option<Arc<module_usb::stream::Capture>>{self.input_capture()}
+    fn watch_inputs(&self,wake:Arc<osg_streams::NativeWake>){self.watch_inputs(wake)}
     fn output_activity(&self)->bool{self.output_activity()}
     fn snapshot(&self) -> UsbSnapshot {
         self.snapshot()
@@ -61,6 +71,8 @@ pub(crate) struct Fleet {
     discovery: Mutex<()>,
     closed: AtomicBool,
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
+    input_bridges: Mutex<BTreeMap<String,input_observations::Entry>>,
+    input_wakes: Arc<Mutex<BTreeMap<String,Vec<Weak<osg_streams::NativeWake>>>>>,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct SlotSnapshot {
@@ -89,6 +101,35 @@ impl Drop for Busy {
 }
 
 impl Fleet {
+    pub(crate) fn input_capture(&self,key:&str)->Result<Arc<module_usb::stream::Capture>,String>{
+        let service={let state=self.state.lock().unwrap_or_else(|p|p.into_inner());
+            let slot=state.slots.get(key).ok_or("Unknown USB input endpoint.")?;
+            if slot.ambiguous||slot.closing.load(Ordering::Acquire){return Err("USB input endpoint is ambiguous or closing.".into());}
+            slot.service.clone().ok_or("The USB input endpoint is not connected.")?};
+        service.input_capture().ok_or_else(||"Native USB input capture is not ready.".into())
+    }
+    pub(crate) fn watch_inputs(&self,key:&str,wake:Arc<osg_streams::NativeWake>)->Result<(),String>{
+        {
+            let mut wakes=self.input_wakes.lock().unwrap_or_else(|p|p.into_inner());
+            let watchers=wakes.entry(key.to_owned()).or_default();
+            watchers.retain(|w|w.strong_count()>0);
+            let weak=Arc::downgrade(&wake);
+            if watchers.len()<8&&!watchers.iter().any(|old|old.ptr_eq(&weak)){watchers.push(weak);}
+        }
+        if let Some(service)=self.state.lock().unwrap_or_else(|p|p.into_inner()).slots.get(key)
+            .and_then(|slot|slot.service.clone()) {service.watch_inputs(wake);}
+        Ok(())
+    }
+    fn notify_input_wakes(&self,key:&str){
+        notify_input_wakes_registry(&self.input_wakes,key);
+    }
+    fn create_input_service(&self,key:&str)->Arc<dyn Endpoint>{
+        let service=(self.create)();
+        let wakes=self.input_wakes.lock().unwrap_or_else(|p|p.into_inner()).get(key)
+            .map(|wakes|wakes.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()).unwrap_or_default();
+        for wake in wakes{service.watch_inputs(wake);}
+        service
+    }
     pub(crate) fn new(serial: SerialPorts, native: bool) -> Self {
         let activity=Arc::new(crate::output_leases::LeaseActivity::default());let services=activity.clone();
         let mut fleet=Self::with_create(
@@ -110,6 +151,8 @@ impl Fleet {
             closed: AtomicBool::new(false),
             endpoint_activity:Arc::default(),
             discovery: Mutex::new(()),
+            input_bridges: Mutex::new(BTreeMap::new()),
+            input_wakes: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
     pub(crate) fn scan(&self) -> Result<Vec<SlotSnapshot>, String> {
@@ -201,7 +244,7 @@ impl Fleet {
                         (*other_serial == serial(&port) || *other_path == alias_path(&port.path))
                             && *other_key != key
                     });
-                let slot = state.slots.entry(key).or_insert_with(|| Slot {
+                let slot = state.slots.entry(key.clone()).or_insert_with(|| Slot {
                     port: port.clone(),
                     present: true,
                     automatic: strict || remembered,
@@ -227,7 +270,7 @@ impl Fleet {
                 {
                     continue;
                 }
-                let service = slot.service.get_or_insert_with(|| (self.create)()).clone();
+                let service = slot.service.get_or_insert_with(|| self.create_input_service(&key)).clone();
                 let snapshot = service.snapshot();
                 let request = if !snapshot.connected {
                     Some(if strict {
@@ -253,7 +296,7 @@ impl Fleet {
                             .as_ref()
                             .is_none_or(|actions| actions["route"] != route));
                 if request.is_some() || needs_caps {
-                    jobs.push((service, slot.busy.clone(), request));
+                    jobs.push((key.clone(),service, slot.busy.clone(), request));
                 } else {
                     slot.busy.store(false, Ordering::Release);
                 }
@@ -265,9 +308,10 @@ impl Fleet {
                 closing.store(false, Ordering::Release);
             });
         }
-        for (service, busy, request) in jobs {
+        for (key,service, busy, request) in jobs {
             let reset = busy.clone();
-            if std::thread::Builder::new()
+            let wakes=self.input_wakes.clone();
+                if std::thread::Builder::new()
                 .name("osg-usb-discovery".into())
                 .spawn(move || {
                     let _busy = Busy(busy);
@@ -285,13 +329,19 @@ impl Fleet {
                             action: ActionRequest::Describe,
                         });
                     }
+                    notify_input_wakes_registry(&wakes,&key);
                 })
                 .is_err()
             {
                 reset.store(false, Ordering::Release);
             }
         }
+        self.notify_all_input_wakes();
         Ok(())
+    }
+    fn notify_all_input_wakes(&self){
+        let keys=self.input_wakes.lock().unwrap_or_else(|p|p.into_inner()).keys().cloned().collect::<Vec<_>>();
+        for key in keys{self.notify_input_wakes(&key);}
     }
     pub(crate) fn snapshots(&self) -> Vec<SlotSnapshot> {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -368,6 +418,8 @@ impl Fleet {
             // An uncertain write must be visible to the next native capture too.
             slot.cached = service.snapshot();
         }
+        drop(state);
+        self.notify_input_wakes(key);
         result
     }
     pub(crate) fn request(&self, request: &Value) -> Result<Value, String> {
@@ -579,6 +631,7 @@ impl Fleet {
                 slot.suppressed = command == "module_usb_disconnect";
             }
         }
+        self.notify_input_wakes(&key);
         result?;
         self.response(&key)
     }
@@ -624,7 +677,7 @@ impl Fleet {
         }
         let busy = Busy(slot.busy.clone());
         let service = if command == "module_usb_connect" {
-            slot.service.get_or_insert_with(|| (self.create)()).clone()
+            slot.service.get_or_insert_with(|| self.create_input_service(&key)).clone()
         } else {
             slot.service
                 .clone()
@@ -654,6 +707,9 @@ impl Fleet {
                 })
                 .collect::<Vec<_>>()
         };
+        self.notify_all_input_wakes();
+        let bridges=std::mem::take(&mut *self.input_bridges.lock().unwrap_or_else(|p|p.into_inner()));
+        for (_,mut entry) in bridges {entry.stop();}
         for service in services {
             service.shutdown();
         }
@@ -663,6 +719,12 @@ impl Drop for Fleet {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+fn notify_input_wakes_registry(wakes:&Mutex<BTreeMap<String,Vec<Weak<osg_streams::NativeWake>>>>,key:&str){
+    let notifications={let mut all=wakes.lock().unwrap_or_else(|p|p.into_inner());
+        let Some(wakes)=all.get_mut(key) else{return;};wakes.retain(|wake|wake.strong_count()>0);
+        wakes.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()};
+    for wake in notifications{wake.notify();}
 }
 fn required<'a>(request: &'a Value, key: &str) -> Result<&'a str, String> {
     request[key]
