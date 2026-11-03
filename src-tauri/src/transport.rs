@@ -187,3 +187,4 @@ fn local_only_fixture_discovery_is_explicit_and_debug_build_only() {
         assert!(!local_only(value));
     }
 }
+pub(crate) mod notifications;

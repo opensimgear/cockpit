@@ -372,6 +372,7 @@ pub fn run() {
                 }));
             }
             gateway.start_automatic();
+            if let Err(error)=gateway.start_workspace(){eprintln!("Workspace initialization failed: {error}");}
             app.manage(mcp::Server::native(gateway.clone()));
             app.manage(NativeGateway(gateway));
             app.manage(profile_activation_window::ActivationWindowState::default());

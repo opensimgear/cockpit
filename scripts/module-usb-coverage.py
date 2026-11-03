@@ -80,6 +80,31 @@ MODULES.append("profile_resources/companion_catalogue")
 TEST_FILTERS.append("profile_resources::companion_catalogue::tests")
 
 
+WORKSPACE_MODULES = ["gateways/workspace/mod", "gateways/workspace/policy",
+                     "gateways/workspace/publisher", "gateways/workspace/worker",
+                     "stm32/workspace", "pico/workspace", "transport/notifications/mod",
+                     "transport/notifications/directory"]
+if os.name == "nt":
+    WORKSPACE_MODULES.append("transport/notifications/windows")
+elif sys.platform == "darwin":
+    WORKSPACE_MODULES.extend(["transport/notifications/macos", "transport/notifications/macos/ffi"])
+else:
+    WORKSPACE_MODULES.append("transport/notifications/linux")
+MODULES.extend(WORKSPACE_MODULES)
+for module in WORKSPACE_MODULES:
+    MODULE_TEST_SOURCES[module] = []
+MODULE_TEST_SOURCES["gateways/workspace/mod"] = [
+    "gateways/workspace/tests", "gateways/workspace/command_tests", "gateways/workspace/lifecycle_tests",
+    "gateways/workspace/renewal_tests"]
+MODULE_TEST_SOURCES["stm32/workspace"] = ["stm32/workspace/tests", "stm32/workspace_tests"]
+MODULE_TEST_SOURCES["pico/workspace"] = ["pico/workspace_tests"]
+MODULE_TEST_SOURCES["transport/notifications/directory"] = ["transport/notifications/directory/tests"]
+for platform in ["windows", "macos", "linux"]:
+    if f"transport/notifications/{platform}" in WORKSPACE_MODULES:
+        MODULE_TEST_SOURCES[f"transport/notifications/{platform}"] = [f"transport/notifications/{platform}/tests"]
+TEST_FILTERS.extend(["gateways::workspace", "stm32::workspace", "workspace_tests", "transport::notifications"])
+
+
 def run(args, root, env=None):
     result = subprocess.run([str(arg) for arg in args], cwd=root, env=env,
                             text=True, encoding="utf-8", stdout=subprocess.PIPE,
@@ -145,6 +170,9 @@ def run_test_filters(binary, filters, root, env, profiles, output, timeout_secon
 
 
 def tracked_source_paths(root, measured, focused):
+    workspace_boundary = [root / f"src-tauri/src/{name}" for name in
+                          ["gateways.rs", "transport.rs", "local_gateway.rs", "mcp_tools.rs",
+                           "mcp_tools/catalogue.rs", "mcp_tools/tests.rs"]]
     tracked = [root / f"src-tauri/src/{name}.rs"
                for module in MODULES
                for name in [module, *MODULE_TEST_SOURCES.get(module, [f"{module}_tests"])]]
@@ -194,7 +222,7 @@ def tracked_source_paths(root, measured, focused):
                     "journal", "policy", "runtime", "service", "service_tests"])
     tracked.extend([root / "scripts/native_coverage_sources.py", root / "scripts/test_native_coverage_sources.py",
                     root / "scripts/desktop-output-coverage.py"])
-    return expand_includes(tracked)
+    return expand_includes([*tracked, *workspace_boundary])
 
 
 def main():

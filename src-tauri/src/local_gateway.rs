@@ -51,7 +51,7 @@ mod unix {
         )))
     }
 
-    fn directory() -> Option<PathBuf> {
+    pub(super) fn directory() -> Option<PathBuf> {
         namespace_directory(std::env::var_os("OSG_SIMULATION_NAMESPACE").as_deref())
     }
 
@@ -569,6 +569,14 @@ mod unix {
             let _server = replacement.accept().unwrap();
         }
     }
+}
+
+/// Notification scope only; it neither creates nor enumerates the directory.
+pub(crate) fn advertisement_directory() -> Option<std::path::PathBuf> {
+    #[cfg(unix)]
+    { unix::directory() }
+    #[cfg(not(unix))]
+    { None }
 }
 
 pub(crate) fn allowed_path(path: &str) -> bool {

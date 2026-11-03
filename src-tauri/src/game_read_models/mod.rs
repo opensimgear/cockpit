@@ -1,6 +1,7 @@
 //! Passive, source-driven game projections and immutable, issued page data.
 pub(crate) mod signals;
 mod pages;
+pub(crate) use pages::Pages as RecordPages;
 mod codec;
 mod runtime;
 mod details;

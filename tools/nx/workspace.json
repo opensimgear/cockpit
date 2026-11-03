@@ -370,6 +370,7 @@
         "src/lib/debug-inputs.*",
         "src/lib/gateway-*.ts",
         "src/lib/gateway-*.mjs",
+        "src/lib/workspace-read-models/**",
         "src/lib/mcp.*",
         "src/lib/notifications.*",
         "src/lib/output-settings-ui.*",
@@ -390,6 +391,26 @@
         "streams:coverage"
       ],
       "coverageTasks": [
+        {
+          "name": "workspace-read-models-coverage",
+          "tests": [
+            "src/lib/workspace-read-models/shared.test.mjs",
+            "src/lib/workspace-read-models/cutover.test.mjs",
+            "src/lib/gateway-workspace.test.mjs"
+          ],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/workspace-read-models/*.ts",
+            "--test-coverage-include=src/lib/gateway-workspace.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/workspace-read-models/shared.test.mjs",
+            "src/lib/workspace-read-models/cutover.test.mjs",
+            "src/lib/gateway-workspace.test.mjs"
+          ]
+        },
         {
           "arguments": [
             "--experimental-test-coverage",

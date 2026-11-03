@@ -5,6 +5,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {loadModules} from './test-module-loader.mjs';
+import {createHash,webcrypto} from 'node:crypto';
 const gameMetadata=(await loadModules(['./games'])).get('./games');
 
 const source = await readFile(new URL('./gateway.ts', import.meta.url), 'utf8');
@@ -15,6 +16,23 @@ const state = { gatewayId: first, backend: 'stm32', running: false, needsReconne
 const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+
+test('workspace ownership hint is a stable digest while renewal and pages remain small explicit requests',async()=>{
+ const api=transport(),expected=`sha256:${createHash('sha256').update('test-client-uuid').digest('hex')}`;
+ const one=api.gatewayClientTag(),two=api.gatewayClientTag();assert.equal(one,two);assert.equal(await one,expected);assert.equal(api.calls.length,0);
+ await api.gatewayRequest({command:'workspace_client_renew',gatewayId:first});await api.gatewayRequest({command:'workspace_read_model_page',id:expected,offset:0});
+ assert.deepEqual(api.calls.map(call=>call.args.request.command),['workspace_client_renew','workspace_read_model_page']);
+ assert.equal(api.calls[0].args.request.clientId,'test-client-uuid');assert.equal(Object.hasOwn(api.calls[0].args.request,'modules'),false);
+});
+
+test('lease renewal and immutable workspace pages bypass a slow foreground gateway command',async()=>{
+ const gate=deferred(),api=transport({invokeResults:async(_command,request)=>{if(request.command==='config_apply_save')await gate.promise;return{ok:true,state};}});
+ const write=api.gatewayRequest({command:'config_apply_save',gatewayId:first,moduleId:'pedals'});await tick();
+ await api.gatewayRequest({command:'workspace_client_renew',gatewayId:first});
+ await api.gatewayRequest({command:'workspace_read_model_page',id:`sha256:${'1'.repeat(64)}`,offset:0});
+ assert.deepEqual(api.calls.map(call=>call.args.request.command),['config_apply_save','workspace_client_renew','workspace_read_model_page']);
+ gate.resolve();await write;
+});
 
 test('shared widget reads and saves bypass slow inventory and retain their own write ordering',async()=>{
  const inventory=deferred(),write=deferred(),api=transport({invokeResults:async(_command,request)=>{
@@ -77,7 +95,7 @@ function transport({ desktop = true, result = { ok: true, state }, invokeResults
       if (name === '@tauri-apps/plugin-opener') return { openUrl: async url => { calls.push({ kind: 'open', url }); } };
       throw new Error(`Unexpected import: ${name}`);
     },
-    crypto: { randomUUID: () => 'test-client-uuid' }, AbortSignal,
+    crypto: { randomUUID: () => 'test-client-uuid', subtle:webcrypto.subtle }, AbortSignal, TextEncoder,
     fetch: async (url, options) => {
       calls.push({ kind: 'fetch', url, options });
       return { ok: responseOK, headers: { get: () => contentType }, json: async () => result };

@@ -54,6 +54,10 @@ mod profile_activation_progress;
 mod activity_controls;
 
 trait Adapter: Send + Sync {
+    fn watch_workspace(&self,_wake:Arc<osg_streams::NativeWake>) {}
+    fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){(Arc::new(self.cached_state()),BTreeMap::new())}
+    fn set_workspace_owned(&self,_owned:bool) {}
+    fn renew_workspace_client(&self,_client:&str)->Result<Vec<String>,String>{Err("Workspace lease renewal is unsupported.".into())}
     fn publication(&self,_request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{Err("This transport does not support native controller publication overrides.".into())}
     fn output_activity(&self)->bool{false}
     fn request(&self, request: Value) -> Value;
@@ -62,6 +66,10 @@ trait Adapter: Send + Sync {
     fn shutdown(&self);
 }
 impl Adapter for PicoService {
+    fn watch_workspace(&self,wake:Arc<osg_streams::NativeWake>){self.watch_workspace(wake)}
+    fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){self.workspace_snapshot()}
+    fn set_workspace_owned(&self,owned:bool){self.set_workspace_owned(owned)}
+    fn renew_workspace_client(&self,client:&str)->Result<Vec<String>,String>{self.renew_workspace_client(client)}
     fn output_activity(&self)->bool{self.output_activity()}
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
     fn cached_state(&self) -> Value { self.cached_state() }
@@ -73,6 +81,10 @@ impl Adapter for PicoService {
     }
 }
 impl Adapter for Stm32Service {
+    fn watch_workspace(&self,wake:Arc<osg_streams::NativeWake>){self.watch_workspace(wake)}
+    fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){self.workspace_snapshot()}
+    fn set_workspace_owned(&self,owned:bool){self.set_workspace_owned(owned)}
+    fn renew_workspace_client(&self,client:&str)->Result<Vec<String>,String>{self.renew_workspace_client(client)}
     fn publication(&self,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{self.publication(request)}
     fn output_activity(&self)->bool{self.output_activity()}
     fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> { self.configuration_claims() }
@@ -189,7 +201,10 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 #[path="persistence/backup/gateway.rs"]
 mod storage_controls;
 mod game_observations;
+#[path="gateways/workspace/mod.rs"]
+mod workspace;
 pub struct GatewayManager {
+    workspace:workspace::Runtime,
     pub(crate) observations: crate::observations::Runtime,
     profile_read_models: crate::profile_read_models::Runtime,
     game_read_models: crate::game_read_models::Runtime,
@@ -406,6 +421,7 @@ impl GatewayManager {
             sample_capture, format!("profile-samples:{}", controllers.capture_clock().id()));
         observations.watch_reader_lifecycle(profile_samples.reader_wake());
         let manager = Self {
+            workspace:workspace::Runtime::new(),
             observations,
             profile_read_models,
             game_read_models,
@@ -605,7 +621,11 @@ impl GatewayManager {
             }
         }
         let ports: Vec<_> = ports.into_values().collect();
-        *self.inventory.lock().unwrap_or_else(|p| p.into_inner()) = ports.clone();
+        if ports.len()>workspace::MAX_GATEWAYS{return Err("Workspace port limit exceeded.".into());}
+        let mut inventory=self.inventory.lock().unwrap_or_else(|p|p.into_inner());
+        let changed=*inventory!=ports;
+        *inventory=ports.clone();drop(inventory);
+        if changed{self.workspace.changed();}
         Ok(ports)
     }
     fn decorate(&self, mut response: Value, id: Option<&str>) -> Value {
@@ -785,18 +805,34 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
-        if matches!(command,"profile_read_model_page"|"game_read_model_page") {
+        if matches!(command,"profile_read_model_page"|"game_read_model_page"|"workspace_read_model_page") {
             if self.closed.load(Ordering::Acquire) || request.to_string().len() > 512
                 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
                 return self.error("Invalid read-model page client or closed Cockpit.", None);
             }
             if let Err(error) = self.check_mcp_authorization(native_authorization.as_ref()) { return self.error(&error, None); }
             let game_page=command=="game_read_model_page";
+            let workspace_page=command=="workspace_read_model_page";
             request.as_object_mut().expect("page request object").remove("clientId");
-            let result=if game_page{self.game_read_models.page(&request)}else{self.profile_read_models.page(&request)};
+            let result=if workspace_page{self.workspace.page(&request)}else if game_page{self.game_read_models.page(&request)}else{self.profile_read_models.page(&request)};
             return match result {
-                Ok(page) => if game_page{json!({"ok":true,"state":{"gameReadModelPage":page}})}else{json!({"ok":true,"state":{"profileReadModelPage":page}})},
+                Ok(page) => if workspace_page{json!({"ok":true,"state":{"workspaceReadModelPage":page}})}else if game_page{json!({"ok":true,"state":{"gameReadModelPage":page}})}else{json!({"ok":true,"state":{"profileReadModelPage":page}})},
                 Err(error) => json!({"ok":false,"error":error}),
+            };
+        }
+        if command=="workspace_client_renew" {
+            if self.closed.load(Ordering::Acquire)||request.to_string().len()>512
+                ||!request.as_object().is_some_and(|o|o.len()==3&&o.keys().all(|key|["command","clientId","gatewayId"].contains(&key.as_str())))
+                ||!request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
+                return json!({"ok":false,"error":"Invalid workspace lease request."});
+            }
+            if let Err(error)=self.check_mcp_authorization(native_authorization.as_ref()){return json!({"ok":false,"error":error});}
+            let id=request["gatewayId"].as_str().unwrap_or("");
+            let adapter=self.sessions.lock().unwrap_or_else(|p|p.into_inner()).get(id).cloned();
+            let Some(adapter)=adapter else{return json!({"ok":false,"error":"Unknown gateway session."});};
+            return match adapter.renew_workspace_client(request["clientId"].as_str().unwrap()){
+                Ok(ids)=>json!({"ok":true,"state":{"workspaceRenewal":{"gatewayId":id,"claimedModules":ids}}}),
+                Err(error)=>json!({"ok":false,"error":error}),
             };
         }
         if matches!(command,"activity_query"|"activity_clear"|"activity_settings_get"|"activity_settings_save") { return self.activity_request(&request,native_authorization.as_ref()); }
@@ -1429,6 +1465,7 @@ impl GatewayManager {
                 return self.error("Gateway identity and backend do not match.", Some(&id));
             }
             let adapter = if command == "connect" {
+                if sessions.len()>=workspace::MAX_GATEWAYS&&!sessions.contains_key(&id){drop(sessions);return self.error("Workspace gateway session limit reached.",Some(&id));}
                 sessions
                     .entry(id.clone())
                     .or_insert_with(|| self.provider.adapter(gateway_backend))
@@ -1445,9 +1482,11 @@ impl GatewayManager {
             };
             (id, adapter)
         };
+        let _workspace_hold=if command=="disconnect" {match self.workspace.hold(&id){Ok(hold)=>Some(hold),Err(error)=>return self.error(&error,Some(&id))}}else{None};
+        adapter.watch_workspace(self.workspace.wake());
         request["gatewayId"] = json!(id);
         request.as_object_mut().unwrap().remove("backend");
-        let mut response = adapter.request(request);
+        let mut response = match &_workspace_hold {Some(hold)=>hold.dispatch(||adapter.request(request)),None=>adapter.request(request)};
         if response["state"]["connected"] == true {
             let backend = id.split_once(':').unwrap().0;
             if response["state"]["gatewaySerial"]
@@ -1469,9 +1508,15 @@ impl GatewayManager {
                 );
             }
         }
+        if command=="connect"&&response["ok"]==true {let _=self.workspace.pause(&id,false);}
+        if command=="disconnect"&&response["ok"]==true {let _=self.workspace.pause(&id,true);}
+        self.workspace.changed();
         self.decorate(response, Some(&id))
     }
     pub fn shutdown(&self) {
+        self.closed.store(true,Ordering::Release);
+        self.workspace.shutdown();
+        for adapter in self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values(){adapter.set_workspace_owned(false);}
         self.profile_read_models.shutdown();
         self.game_read_models.shutdown();
         self.observations.close();

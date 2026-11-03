@@ -75,6 +75,7 @@ fn main() {
     };
     let service = Arc::new(GatewayManager::new());
     service.start_automatic();
+    if let Err(error)=service.start_workspace(){eprintln!("Workspace initialization failed: {error}");}
     let (output, failed_output) = ServiceOutput::stdout();
     let failed_service=service.clone();
     thread::spawn(move||{

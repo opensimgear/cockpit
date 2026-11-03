@@ -3,299 +3,339 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { fileURLToPath } from 'node:url';
 
 const compile = async name => ts.transpileModule(await readFile(new URL(name, import.meta.url), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  fileName:fileURLToPath(new URL(name,import.meta.url)),
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,inlineSourceMap:true,inlineSources:true },
 }).outputText;
-const capabilities = {};
-vm.runInNewContext(await compile('./gateway-capabilities.ts'), { exports: capabilities });
-const requireCapabilities = name => { if (name.replace(/\.ts$/,'') === './gateway-capabilities') return capabilities; throw new Error(`Unexpected import ${name}`); };
-const actions = {};
-vm.runInNewContext(await compile('./device-actions.ts'), { exports: actions, require: requireCapabilities });
-const automation = {};
-vm.runInNewContext(await compile('./gateway-automation.ts'), { exports: automation, require: requireCapabilities });
-class GatewayError extends Error { constructor(message, state) { super(message); this.state = state; } }
+class GatewayError extends Error {}
 const exported = {};
 vm.runInNewContext(await compile('./gateway-workspace.ts'), {
-  exports: exported, require(name) {
-    name=name.replace(/\.ts$/,'');
-    if (name === './gateway-capabilities') return capabilities;
-    if (name === './gateway-automation') return automation;
-    if (name === './device-actions') return actions;
-    if (name === './gateway') return { GatewayError, gatewayRequest: () => { throw new Error('A fake transport is required.'); } };
+  exports: exported, setTimeout, clearTimeout,
+  require(name) {
+    if (name === './gateway-automation') return { candidateBackend: port => port.backend };
+    if (name === './workspace-read-models/shared') return { observeWorkspaceState: () => { throw new Error('Inject observation source.'); } };
+    if (name === './gateway') return { GatewayError, gatewayRequest: () => { throw new Error('Inject transport.'); }, gatewayClientTag: async () => 'sha256:local' };
     throw new Error(`Unexpected import ${name}`);
   },
-});
+},{filename:fileURLToPath(new URL('./gateway-workspace.ts',import.meta.url))});
 const { GatewayWorkspace, gatewayIdentity } = exported;
 const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
-const firstPort = { path: 'tcp:127.0.0.1:1234/00112233445566778899aabb', manufacturer: 'OpenSimGear', friendlyName: 'OpenSimGear CAN gateway', serialNumber: '00112233445566778899aabb', backend: 'stm32' };
-const secondPort = { ...firstPort, path: 'tcp:127.0.0.1:1235/00112233445566778899aacc', serialNumber: '00112233445566778899aacc' };
-const first = gatewayIdentity(firstPort), second = gatewayIdentity(secondPort);
-const module = { id: 'same-module-id', online: true, active: true, registered: true, canConfigure: false, buttons: [1], axes: [42000], hats: [2] };
-function state(port) { return { gatewayId: gatewayIdentity(port), backend: port.backend, gatewaySerial: port.serialNumber,
-  port: port.path, connected: false, running: false, needsReconnect: false, modules: [{ ...module }], claimedModules: [] }; }
-function fixture() {
-  const f = { ports: [firstPort, secondPort], states: new Map([[first, state(firstPort)], [second, state(secondPort)]]),
-    calls: [], changes: [], now: 0, intercept: undefined };
-  f.transport = async request => {
-    f.calls.push(plain(request));
-    if (f.intercept) { const result = await f.intercept(request); if (result !== undefined) return result; }
-    if (request.command === 'ports') return { connected: false, running: false, needsReconnect: false, modules: [], ports: f.ports };
-    const next = plain(f.states.get(request.gatewayId));
-    assert.ok(next, `Unknown scope ${request.gatewayId}`);
-    if (request.command === 'connect') { next.connected = true; next.port = request.port; }
-    if (request.command === 'disconnect') { next.connected = false; next.running = false; }
-    if (request.command === 'claim') next.claimedModules = [request.moduleId];
-    if (request.command === 'release') next.claimedModules = [];
-    if (request.command === 'start') next.running = true;
-    if (request.command === 'config_read') next.moduleConfigs = { ...next.moduleConfigs, [request.moduleId]: { config: { name: request.gatewayId }, generation: 1 } };
-    f.states.set(request.gatewayId, next);
-    return next;
-  };
-  f.workspace = new GatewayWorkspace({ request: f.transport, now: () => f.now, onChange: (entries, error) => f.changes.push({ entries, error }) });
+const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
+const port = { path: 'tcp:localhost:1234', serialNumber: 'AABB', backend: 'stm32' };
+const first = gatewayIdentity(port), second = 'stm32:ccdd';
+const module = { id: 'module', online: true, active: true, registered: true, buttons: [], axes: [] };
+function row(id = first, extra = {}) {
+  return { id, port: { ...port, gatewayId: id }, state: { gatewayId: id, connected: false, running: false, needsReconnect: false,
+    modules: [module], claimedModules: ['public-does-not-grant-ownership'] },
+    session: 'connection-1', claimOwners: {}, error: '', busy: false, present: true, stale: false, ...extra };
+}
+function fixture(options = {}) {
+  const f = { calls: [], changes: [], timers: new Map(), stops: 0, timerId: 0, intercept: undefined };
+  f.workspace = new GatewayWorkspace({
+    observe: listener => { f.emit = listener; return () => f.stops++; },
+    request: async request => { f.calls.push(plain(request)); return f.intercept ? f.intercept(request) : { receipt: request.command }; },
+    getClientTag: async () => 'sha256:local',
+    onChange: (entries, error) => f.changes.push({ entries, error }),
+    setTimer: (callback, delay) => { assert.equal(delay, 1000); f.timers.set(++f.timerId, callback); return f.timerId; },
+    clearTimer: id => f.timers.delete(id), ...options,
+  });
+  f.ready = (entries = [row()], extra = {}) => f.emit({ status: 'ready', value: { ports: [port], inventoryError: '', entries },
+    generation: '1', revision: '1', clockId: 'clock', session: 'broker', ...extra });
+  f.fire = async () => { const [id, callback] = [...f.timers][0] ?? []; assert.ok(callback, 'A lease timer is scheduled.'); f.timers.delete(id); callback(); await tick(); };
   f.entry = id => f.workspace.entries.find(entry => entry.id === id);
+  f.workspace.start();
   return f;
 }
 
-test('explicit disconnect suspends automatic reconnect for only that gateway until explicit connect', async () => {
-  const f=fixture(); await f.workspace.refresh();
-  await f.workspace.disconnect(first);
-  assert.equal(f.entry(first).autoConnectPaused,true); assert.equal(f.entry(first).state.connected,false);
-  f.calls.length=0; await f.workspace.refresh();
-  assert.equal(f.calls.some(c=>c.gatewayId===first),false); assert.ok(f.calls.some(c=>c.gatewayId===second));
-  await f.workspace.retry(first); assert.equal(f.entry(first).autoConnectPaused,false); assert.equal(f.entry(first).state.connected,true);
-});
-
-test('automatic connect and legacy start yield to profile preparation while explicit retry stays foreground', async () => {
-  const f = fixture(), port = { path: '/dev/cu.usbmodemDebug', serialNumber: 'OSG-PICO-0123456789ABCDEF', backend: 'pico', vendorId: 'cafe', productId: '4010' };
-  const id = gatewayIdentity(port);
-  f.ports = [port]; f.states.set(id, state(port));
-  await f.workspace.refresh();
-  assert.deepEqual(f.calls.filter(call => ['connect', 'start'].includes(call.command)).map(call => [call.command, call.background]), [['connect', true], ['start', true]]);
-  f.calls.length = 0;
-  await f.workspace.refresh();
-  assert.ok(f.calls.some(call => call.command === 'status'));
-  assert.ok(f.calls.every(call => call.background === undefined), 'Read-only polling does not need control admission metadata.');
-  await f.workspace.disconnect(id); f.calls.length = 0;
-  await f.workspace.retry(id);
-  assert.deepEqual(f.calls.filter(call => ['connect', 'start'].includes(call.command)).map(call => [call.command, call.background]), [['connect', undefined], ['start', undefined]]);
-  await f.workspace.request(id, { command: 'connect', backend: 'pico', port: port.path });
-  assert.equal(f.calls.at(-1).background, undefined, 'An explicit Connect request remains foreground.');
-});
-
-test('profile preparation can defer automatic connection without preventing a later explicit retry', async () => {
-  const f = fixture(); f.ports = [firstPort];
-  f.intercept = request => {
-    if (request.command === 'connect' && request.background) throw new Error('Profile activation is preparing; automatic connection will retry.');
-  };
-  await f.workspace.refresh();
-  assert.equal(f.entry(first).state, null);
-  assert.match(f.entry(first).error, /Profile activation is preparing/);
-  await f.workspace.refresh();
-  assert.equal(f.calls.filter(call => call.command === 'connect').length, 1, 'Deferred automatic connections respect normal retry backoff.');
-  await f.workspace.retry(first);
-  assert.equal(f.entry(first).state.connected, true);
-  assert.equal(f.entry(first).error, '');
-  assert.equal(f.calls.at(-1).command, 'connect');
-  assert.equal(f.calls.at(-1).background, undefined);
-});
-
-test('background test readbacks remain gateway-ordered without blocking the setup UI with busy state', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  const waiting = deferred();
-  f.intercept = request => request.command === 'events_state' ? waiting.promise : undefined;
-  const read = f.workspace.request(first, { command: 'events_state', moduleId: module.id }, true);
-  await tick();
-  assert.equal(f.entry(first).busy, false);
-  const action = f.workspace.request(first, { command: 'debug_invoke', moduleId: module.id, debugOperation: 'axis', debugArgs: [0,4095] });
-  assert.equal(f.entry(first).busy, true);
-  assert.equal(f.calls.at(-1).command, 'events_state');
-  waiting.resolve(f.states.get(first)); await Promise.all([read,action]); await tick();
-  assert.equal(f.calls.at(-1).command, 'debug_invoke'); assert.equal(f.entry(first).busy, false);
-});
-
-test('Pico device-contract firmware receives runtime hydration without legacy start', async () => {
-  const f = fixture(), serialNumber = 'OSG-PICO-0123456789ABCDEF';
-  const port = { path: '/dev/cu.usbmodemDebug', serialNumber, backend: 'pico', vendorId: 'cafe', productId: '4010' };
-  const id = gatewayIdentity(port);
-  f.ports = [port];
-  f.states.set(id, { ...state(port), protocolVersion: 3, canProtocol: 3, lifecycle: 'automatic', modules: [{ ...module, canConfigure: true }] });
-  await f.workspace.refresh();
-  assert.ok(f.calls.some(request => request.gatewayId === id && request.command === 'config_read'));
-  assert.ok(!f.calls.some(request => request.command === 'start'));
-});
-
-test('two same-backend gateways both connect and retain separate instances of the same module ID', async () => {
-  const f = fixture();
-  f.states.get(first).modules[0].name = 'First pedals';
-  f.states.get(second).modules[0].name = 'Second pedals';
-  await f.workspace.refresh();
+test('start observes once and native changes never trigger queries or automation', async () => {
+  const f = fixture(); f.workspace.start(); await tick();
+  assert.equal(f.timers.size, 0); assert.equal(f.calls.length, 0);
+  f.ready([row(), row(second)]);
   assert.equal(f.workspace.entries.length, 2);
-  assert.ok(f.workspace.entries.every(entry => entry.state.connected));
-  assert.equal(f.entry(first).state.modules[0].name, 'First pedals');
-  assert.equal(f.entry(second).state.modules[0].name, 'Second pedals');
-  assert.deepEqual(f.calls.filter(call => call.command === 'connect').map(call => call.gatewayId).sort(), [first, second]);
-  assert.ok(!f.calls.some(call => call.command === 'disconnect'));
-});
-
-test('identity survives alias and endpoint changes, without creating another connection', async () => {
-  const f = fixture();
-  assert.equal(gatewayIdentity({ ...firstPort, serialNumber: firstPort.serialNumber.toUpperCase() }), first);
-  f.ports = [{ ...firstPort, path: '/dev/tty.usbmodemOSG' }, { ...firstPort, path: '/dev/cu.usbmodemOSG' }];
-  await f.workspace.refresh();
-  assert.equal(f.workspace.entries.length, 1);
-  assert.equal(f.entry(first).port.path, '/dev/cu.usbmodemOSG');
-  f.ports = [{ ...firstPort, path: 'tcp:127.0.0.1:9876/00112233445566778899aabb' }];
-  await f.workspace.refresh();
-  assert.equal(f.workspace.entries.length, 1);
-  assert.equal(f.entry(first).port.path, f.ports[0].path);
-  assert.equal(f.calls.filter(call => call.command === 'connect').length, 1);
-});
-
-test('claims, saves, and releases route to an exact gateway despite identical module IDs', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  await f.workspace.request(second, { command: 'claim', moduleId: module.id });
-  assert.deepEqual(plain(f.entry(second).state.claimedModules), [module.id]);
   assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
-  await f.workspace.request(first, { command: 'config_apply_save', moduleId: module.id, config: { name: 'First only' } });
-  await f.workspace.request(second, { command: 'release', moduleId: module.id });
-  assert.deepEqual(f.calls.filter(call => ['claim', 'config_apply_save', 'release'].includes(call.command)).map(call => [call.gatewayId, call.command]),
-    [[second, 'claim'], [first, 'config_apply_save'], [second, 'release']]);
-  await assert.rejects(f.workspace.request(first, { command: 'claim', gatewayId: second, moduleId: module.id }), /different gateway/);
+  assert.equal(f.entry(first).state.connected, false);
+  f.ready([row(second, { autoConnectPaused: true })], { revision: '2' });
+  assert.equal(f.entry(first), undefined); assert.equal(f.entry(second).autoConnectPaused, true);
+  assert.equal(f.calls.length, 0); assert.equal(f.timers.size, 0);
 });
 
-test('a slow gateway does not block later refreshes or actions for another gateway', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  const blocked = deferred();
-  f.intercept = request => request.gatewayId === first && request.command === 'status' ? blocked.promise : undefined;
-  const slowRefresh = f.workspace.refresh(); await tick();
-  const firstPolls = f.calls.filter(call => call.gatewayId === first && call.command === 'status').length;
-  await f.workspace.refresh();
-  await f.workspace.request(second, { command: 'claim', moduleId: module.id });
-  assert.equal(f.calls.filter(call => call.gatewayId === first && call.command === 'status').length, firstPolls);
-  assert.ok(f.calls.filter(call => call.gatewayId === second && call.command === 'status').length >= 2);
-  assert.equal(f.entry(second).state.claimedModules[0], module.id);
-  blocked.resolve(f.states.get(first)); await slowRefresh;
+test('identity survives aliases, and returned views cannot mutate retained native data', () => {
+  assert.equal(gatewayIdentity({ ...port, serialNumber: 'aabb', path: 'other' }), first);
+  assert.equal(gatewayIdentity({ ...port, serialNumber: '' }), undefined);
+  assert.equal(gatewayIdentity({ ...port, backend: undefined }), undefined);
+  const f = fixture(); f.ready();
+  f.entry(first).state.modules[0].online = false;
+  assert.equal(f.entry(first).state.modules[0].online, true);
 });
 
-test('an action waits for its own poll, blocks further same-gateway polls, and keeps busy until finished', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  const blocked = deferred();
-  f.intercept = request => request.gatewayId === first && request.command === 'status' ? blocked.promise : undefined;
-  const poll = f.workspace.refresh(); await tick();
-  const claim = f.workspace.request(first, { command: 'claim', moduleId: module.id });
-  assert.equal(f.entry(first).busy, true);
-  await f.workspace.refresh();
-  assert.equal(f.calls.some(call => call.command === 'claim'), false);
-  blocked.resolve(f.states.get(first));
-  await Promise.all([poll, claim]); await tick();
+test('source loss retains stale data, labels errors and blocks every request until fresh observation', async () => {
+  const f = fixture(); f.ready();
+  f.emit({ status: 'lost', error: 'Stream disconnected' });
+  assert.equal(f.entry(first).stale, true); assert.equal(f.entry(first).state.modules.length, 1);
+  assert.match(f.entry(first).error, /Stream disconnected/);
+  await assert.rejects(f.workspace.request(first, { command: 'claim' }), /current gateway workspace/);
+  await assert.rejects(f.workspace.retry(first), /current gateway workspace/);
+  assert.equal(f.calls.length, 0);
+  f.ready(); assert.equal(f.entry(first).stale, false); assert.equal(f.entry(first).error, '');
+  f.emit({ status: 'connecting' }); assert.match(f.workspace.inventoryError, /Connecting/);
+  f.emit({ status: 'error', error: 'Invalid frame' }); assert.equal(f.workspace.inventoryError, 'Invalid frame');
+});
+
+test('manual retry and disconnect are foreground commands; only native observations change pause or state', async () => {
+  const f = fixture(); f.ready([row(first, { autoConnectPaused: true })]);
+  await f.workspace.retry(first); await f.workspace.disconnect(first);
+  assert.deepEqual(f.calls, [{ command: 'connect', backend: 'stm32', port: port.path, gatewayId: first }, { command: 'disconnect', gatewayId: first }]);
+  assert.equal(f.entry(first).autoConnectPaused, true); assert.equal(f.entry(first).state.connected, false);
+  f.ready([row(first, { autoConnectPaused: false })], { revision: '2' });
+  assert.equal(f.entry(first).autoConnectPaused, false);
+  await assert.rejects(f.workspace.retry('unknown'), /no longer available/);
+});
+
+test('manual operations serialize per gateway and independent gateways remain responsive', async () => {
+  const f = fixture(); f.ready([row(), row(second)]);
+  const blocked = deferred(); f.intercept = request => request.command === 'config_read' ? blocked.promise : { gatewayId: request.gatewayId };
+  const read = f.workspace.request(first, { command: 'config_read' }, true); await tick();
   assert.equal(f.entry(first).busy, false);
-  assert.equal(f.entry(first).state.claimedModules[0], module.id);
-  assert.equal(f.calls.filter(call => call.gatewayId === first && call.command === 'status').length, 1);
+  const write = f.workspace.request(first, { command: 'config_save' });
+  assert.equal(f.entry(first).busy, true);
+  await f.workspace.request(second, { command: 'claim' });
+  assert.deepEqual(f.calls.map(call => call.command), ['config_read', 'claim']);
+  blocked.resolve({ gatewayId: first }); await Promise.all([read, write]); await tick();
+  assert.equal(f.calls.at(-1).command, 'config_save'); assert.equal(f.entry(first).busy, false);
+  await assert.rejects(f.workspace.request(first, { command: 'claim', gatewayId: second }), /different gateway/);
 });
 
-test('a failed connection backs off individually, while retry restores it immediately', async () => {
-  const f = fixture(); let fail = true;
-  f.intercept = request => { if (fail && request.gatewayId === first) throw new Error('First gateway unavailable.'); };
-  await f.workspace.refresh();
-  assert.equal(f.entry(first).state, null);
-  assert.equal(f.entry(second).state.connected, true);
-  assert.match(f.entry(first).error, /First gateway unavailable/);
-  await f.workspace.refresh();
-  assert.equal(f.calls.filter(call => call.gatewayId === first).length, 1);
-  assert.ok(f.calls.some(call => call.gatewayId === second && call.command === 'status'));
-  fail = false; await f.workspace.retry(first);
-  assert.equal(f.entry(first).state.connected, true);
-  assert.equal(f.entry(first).error, '');
+test('command receipts and errors never replace the observed catalogue', async () => {
+  const f = fixture(); f.ready();
+  const receipt = { gatewayId: first, connected: true, modules: [], moduleConfigs: { private: 'dialog-only' } };
+  f.intercept = () => receipt;
+  assert.equal(await f.workspace.request(first, { command: 'config_read' }), receipt);
+  assert.equal(f.entry(first).state.connected, false); assert.equal(f.entry(first).state.moduleConfigs, undefined);
+  f.intercept = () => { const error = new GatewayError('Denied'); error.state = receipt; throw error; };
+  await assert.rejects(f.workspace.request(first, { command: 'claim' }), /Denied/);
+  assert.equal(f.entry(first).state.modules.length, 1); assert.equal(f.entry(first).error, 'Denied');
 });
 
-test('transport failure clears only that gateway live inputs and preserves its last-known registration', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  f.ports = [secondPort];
-  f.intercept = request => { if (request.gatewayId === first) throw new Error('Closed socket.'); };
-  await f.workspace.refresh();
-  assert.equal(f.entry(first).present, false);
-  assert.equal(f.entry(first).state.connected, false);
-  assert.equal(f.entry(first).state.modules[0].online, false);
-  assert.equal(f.entry(first).state.modules[0].registered, true);
-  assert.deepEqual(plain(f.entry(first).state.modules[0].axes), []);
-  assert.equal(f.entry(second).state.connected, true);
-  assert.deepEqual(plain(f.entry(second).state.modules[0].axes), [42000]);
-  f.intercept = undefined; f.ports = [firstPort, secondPort];
-  await f.workspace.refresh();
-  assert.equal(f.entry(first).state.connected, true);
+test('native busy state combines with local queued actions and survives their settlement', async () => {
+  const f = fixture(); f.ready([row(first, { busy: true })]);
+  assert.equal(f.entry(first).busy, true);
+  await f.workspace.request(first, { command: 'config_read' }); await tick();
+  assert.equal(f.entry(first).busy, true);
+  const blocked = deferred(); f.intercept = () => blocked.promise;
+  const action = f.workspace.request(first, { command: 'config_save' }); await tick();
+  f.ready([row(first, { busy: false })], { revision: '2' });
+  assert.equal(f.entry(first).busy, true);
+  blocked.resolve({}); await action; await tick();
+  assert.equal(f.entry(first).busy, false);
 });
 
-test('new configuration is hydrated independently, while a claim blocks hydration only on its own gateway', async () => {
-  const f = fixture();
-  for (const state of f.states.values()) state.modules[0].canConfigure = true;
-  f.states.get(first).claimedModules = [module.id];
-  await f.workspace.refresh();
+test('paged-tree loading preserves in-flight receipts and busy state while gating new mutations', async () => {
+  const f = fixture(); f.ready(); const blocked = deferred();
+  f.intercept = () => blocked.promise;
+  const receipt = { moduleConfigs: { private: 'dialog-only' } };
+  const active = f.workspace.request(first, { command: 'config_read' }); await tick();
+  f.emit({ status: 'lost', loading: true, error: 'Loading current gateways.' });
+  assert.equal(f.entry(first).stale, true); assert.equal(f.entry(first).busy, true);
+  await assert.rejects(f.workspace.request(first, { command: 'claim' }), /current gateway workspace/);
+  blocked.resolve(receipt); assert.equal(await active, receipt); await tick();
   assert.equal(f.entry(first).state.moduleConfigs, undefined);
-  assert.equal(f.entry(second).state.moduleConfigs[module.id].config.name, second);
-  await f.workspace.request(first, { command: 'release', moduleId: module.id });
-  await f.workspace.refresh();
-  assert.equal(f.entry(first).state.moduleConfigs[module.id].config.name, first);
-  assert.equal(f.entry(second).state.moduleConfigs[module.id].config.name, second);
+  assert.equal(f.entry(first).busy, false); assert.equal(f.entry(first).stale, true);
+  f.ready([row()], { revision: '2' }); assert.equal(f.entry(first).stale, false);
 });
 
-test('a command rejection reconciles only its own returned state and preserves another gateway setup', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  await f.workspace.request(second, { command: 'claim', moduleId: module.id });
-  f.intercept = request => { if (request.command === 'claim' && request.gatewayId === first)
-    throw new GatewayError('Another client owns setup.', { ...f.states.get(first), claimedModules: [] }); };
-  await assert.rejects(f.workspace.request(first, { command: 'claim', moduleId: module.id }), /Another client owns setup/);
-  assert.equal(f.entry(first).state.connected, true);
-  assert.match(f.entry(first).error, /Another client/);
-  assert.equal(f.entry(second).state.claimedModules[0], module.id);
+test('loading allows unchanged-owner renewal withdrawal without replacing the observed catalogue', async () => {
+  const f = fixture(); await tick();
+  const owned = () => row(first, { claimOwners: { module: 'sha256:local' } });
+  f.ready([owned()]); const blocked = deferred(); f.intercept = () => blocked.promise;
+  await f.fire(); f.emit({ status: 'lost', loading: true, error: 'Loading' });
+  blocked.resolve({ workspaceRenewal: { gatewayId: first, claimedModules: [] } }); await tick();
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  assert.equal(f.entry(first).stale, true); assert.equal(f.timers.size, 0);
+  f.ready([owned()]); assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
 });
 
-test('a response from another scope never replaces the requested gateway state', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  f.intercept = request => request.gatewayId === first ? f.states.get(second) : undefined;
-  await assert.rejects(f.workspace.request(first, { command: 'status' }), /different gateway/);
-  assert.equal(f.entry(first).state.gatewayId, first);
-  assert.equal(f.entry(first).state.connected, false);
-  assert.equal(f.entry(second).state.connected, true);
+test('a paged replacement with a changed row session fences the old in-flight receipt', async () => {
+  const f = fixture(); f.ready(); const blocked = deferred(); f.intercept = () => blocked.promise;
+  const active = f.workspace.request(first, { command: 'config_read' });
+  const result = Promise.allSettled([active]); await tick();
+  f.emit({ status: 'lost', loading: true }); f.ready([row(first, { session: 'replacement' })]);
+  blocked.resolve({}); assert.equal((await result)[0].status, 'rejected');
 });
 
-test('inventory failure preserves existing connections and reports a separate discovery error', async () => {
-  const f = fixture(); await f.workspace.refresh();
-  f.intercept = request => { if (request.command === 'ports') throw new Error('Enumeration unavailable.'); };
-  await f.workspace.refresh();
-  assert.equal(f.workspace.entries.length, 2);
-  assert.ok(f.workspace.entries.every(entry => entry.state.connected && !entry.error));
-  assert.match(f.workspace.inventoryError, /Enumeration unavailable/);
-  assert.notEqual(f.changes[0].entries, f.changes.at(-1).entries);
-  assert.notEqual(f.changes.at(-2).entries[0].state, f.changes.at(-1).entries[0].state);
+for (const replacement of ['connection', 'generation', 'broker', 'loss', 'removal', 'dispose']) {
+  test(`late action receipt and queued action are fenced by ${replacement}`, async () => {
+    const f = fixture(); f.ready();
+    const blocked = deferred(); f.intercept = () => blocked.promise;
+    const active = f.workspace.request(first, { command: 'claim' });
+    const queued = f.workspace.request(first, { command: 'config_save' });
+    const outcome = Promise.allSettled([active, queued]); await tick();
+    if (replacement === 'connection') f.ready([row(first, { session: 'new-connection' })]);
+    if (replacement === 'generation') f.ready([row()], { generation: '2' });
+    if (replacement === 'broker') f.ready([row()], { session: 'new-broker' });
+    if (replacement === 'loss') f.emit({ status: 'lost' });
+    if (replacement === 'removal') f.ready([]);
+    if (replacement === 'dispose') f.workspace.dispose();
+    blocked.resolve({ connected: true });
+    assert.deepEqual((await outcome).map(result => result.status), ['rejected', 'rejected']);
+    assert.equal(f.calls.length, 1);
+  });
+}
+
+test('claims map only hashed local ownership and lease timer sends only bounded renewal commands', async () => {
+  const f = fixture(); await tick();
+  f.ready([row(first, { claimOwners: { module: 'sha256:local', other: 'sha256:foreign' } })]);
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module']); assert.equal(f.timers.size, 1);
+  const blocked = deferred(); f.intercept = () => blocked.promise;
+  await f.fire(); assert.equal(f.timers.size, 1);
+  assert.deepEqual(f.calls, [{ command: 'workspace_client_renew', gatewayId: first }]);
+  blocked.resolve({ workspaceRenewal: { gatewayId: first, claimedModules: [] } }); await tick();
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []); assert.equal(f.timers.size, 0);
 });
 
-test('dispose prevents late transport completions from publishing UI updates', async () => {
-  const f = fixture(); const blocked = deferred();
-  f.intercept = request => request.command === 'ports' ? blocked.promise : undefined;
-  const refresh = f.workspace.refresh();
-  f.workspace.dispose(); const count = f.changes.length;
-  blocked.resolve({ ports: f.ports }); await refresh;
-  assert.equal(f.changes.length, count);
-  assert.equal(f.workspace.entries.length, 0);
+test('renewal never adds claims and frequent frames with unchanged owners cannot hide withdrawal', async () => {
+  const f = fixture(); await tick();
+  const owned = () => row(first, { claimOwners: { module: 'sha256:local' } });
+  f.ready([owned()]); f.intercept = () => ({ workspaceRenewal: { gatewayId: first, claimedModules: ['module', 'invented'] } });
+  await f.fire(); assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module']);
+  const blocked = deferred(); f.intercept = () => blocked.promise;
+  await f.fire(); f.ready([owned()], { revision: '2' });
+  blocked.resolve({ workspaceRenewal: { gatewayId: first, claimedModules: [] } }); await tick();
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  assert.equal(f.timers.size, 0);
+  f.ready([owned()], { revision: '2' });
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), [], 'The same frame cannot revive expired ownership.');
+  f.ready([owned()], { revision: '3' });
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), [], 'Newer revisions carrying an unchanged expired hash cannot restore ownership.');
+  f.ready([row()], { revision: '3' }); assert.equal(f.timers.size, 0);
+  assert.equal(f.calls.every(call => call.command === 'workspace_client_renew'), true);
 });
 
-test('automatic controller publication is observed without client registration or Apply and disabled devices remain configurable', async () => {
-  const f = fixture();
-  for (const current of f.states.values()) {
-    Object.assign(current, { protocolVersion: 3, lifecycle: 'automatic', running: true, layoutPending: false });
-    Object.assign(current.modules[0], { enabled: false, published: false, descriptorIndex: -1, canConfigure: true });
+test('all 64 claimed gateways renew each second with at most one pending request per gateway', async () => {
+  const f = fixture(); await tick();
+  const rows = Array.from({ length: 64 }, (_, index) => row(`stm32:${index}`, { claimOwners: { module: 'sha256:local' } }));
+  f.ready(rows);
+  const blocked = deferred(); f.intercept = request => blocked.promise.then(() => ({ workspaceRenewal: { gatewayId: request.gatewayId, claimedModules: ['module'] } }));
+  await f.fire(); assert.equal(f.calls.length, 64);
+  assert.equal(new Set(f.calls.map(call => call.gatewayId)).size, 64);
+  await f.fire(); assert.equal(f.calls.length, 64, 'Pending renewals are never duplicated.');
+  blocked.resolve(); await tick();
+  await f.fire(); assert.equal(f.calls.length, 128);
+  f.workspace.dispose(); assert.equal(f.timers.size, 0);
+});
+
+test('lease errors withdraw ownership conservatively without queries or acquisition', async () => {
+  const f = fixture(); await tick(); f.ready([row(first, { claimOwners: { module: 'sha256:local' } })]);
+  f.intercept = () => { throw new Error('Expired'); }; await f.fire();
+  assert.equal(f.calls.length, 1); assert.equal(f.timers.size, 0);
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  f.emit({ status: 'lost' }); assert.equal(f.timers.size, 0);
+});
+
+test('unknown renewal withdraws ownership and replay after source loss cannot revive it', async () => {
+  const f = fixture(); await tick();
+  const owned = () => row(first, { claimOwners: { module: 'sha256:local' } });
+  f.ready([owned()]);
+  f.intercept = () => ({ workspaceRenewal: { gatewayId: 'retired', claimedModules: ['module'] } });
+  await f.fire(); assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  f.emit({ status: 'lost' }); f.ready([owned()]);
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  f.ready([row()]); f.ready([owned()]);
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module'], 'Absence followed by presence establishes a new claim.');
+});
+
+test('renewal result cannot withdraw a newly changed ownership set or replacement session', async () => {
+  const f = fixture(); await tick();
+  const owned = extra => row(first, { claimOwners: { module: 'sha256:local', ...extra } });
+  f.ready([owned()]); const blocked = deferred(); f.intercept = () => blocked.promise;
+  await f.fire(); f.ready([owned({ new: 'sha256:local' })], { revision: '2' });
+  blocked.resolve({ workspaceRenewal: { gatewayId: first, claimedModules: [] } }); await tick();
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module', 'new']);
+  const old = deferred(); f.intercept = () => old.promise; await f.fire();
+  f.ready([{ ...owned(), session: 'connection-2' }], { revision: '3' });
+  old.resolve({ workspaceRenewal: { gatewayId: first, claimedModules: [] } }); await tick();
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module']);
+});
+
+test('dispose unregisters once, cancels timers and ignores late identity and observation delivery', async () => {
+  const identity = deferred(), f = fixture({ getClientTag: () => identity.promise });
+  f.ready([row(first, { claimOwners: { module: 'sha256:local' } })]);
+  f.workspace.dispose(); f.workspace.dispose(); const changes = f.changes.length;
+  identity.resolve('sha256:local'); f.ready([]); await tick();
+  assert.equal(f.stops, 1); assert.equal(f.changes.length, changes); assert.equal(f.timers.size, 0);
+  await assert.rejects(f.workspace.request(first, { command: 'claim' }), /current gateway workspace/);
+});
+
+test('renewal slots survive disposal and gate a remounted workspace with the same client and gateway', async () => {
+  const owned = () => row(first, { claimOwners: { module: 'sha256:local' } });
+  const old = fixture(); await tick(); old.ready([owned()]);
+  const pending = deferred(); old.intercept = () => pending.promise;
+  await old.fire(); assert.equal(old.calls.length, 1);
+  old.workspace.dispose(); const oldChanges = old.changes.length;
+  const replacement = fixture(); await tick(); replacement.ready([owned()]);
+  await replacement.fire(); assert.equal(replacement.calls.length, 0, 'Old in-flight renewal holds the shared client/gateway slot.');
+  pending.resolve({ workspaceRenewal: { gatewayId: first, claimedModules: [] } }); await tick();
+  assert.equal(old.changes.length, oldChanges); assert.equal(old.timers.size, 0);
+  assert.deepEqual(plain(replacement.entry(first).state.claimedModules), ['module']);
+  replacement.intercept = () => ({ workspaceRenewal: { gatewayId: first, claimedModules: ['module'] } });
+  await replacement.fire(); assert.equal(replacement.calls.length, 1);
+  replacement.workspace.dispose();
+});
+
+test('loading churn and observer loss preserve the original lease deadline for existing claims', async () => {
+  const f = fixture(); await tick();
+  const owned = () => row(first, { claimOwners: { module: 'sha256:local' } });
+  f.ready([owned()]); const scheduled = [...f.timers.keys()][0];
+  for (let revision = 2; revision <= 12; revision++) {
+    f.emit({ status: 'lost', loading: true, error: 'Loading' });
+    assert.equal(f.entry(first).loading, true);
+    assert.equal([...f.timers.keys()][0], scheduled);
+    f.ready([owned()], { revision: String(revision) });
+    assert.equal(f.entry(first).loading, false);
+    assert.equal([...f.timers.keys()][0], scheduled);
   }
-  await f.workspace.refresh();
-  assert.equal(f.entry(first).state.modules[0].enabled, false);
-  assert.ok(f.entry(first).state.moduleConfigs[module.id]);
-  assert.ok(f.calls.some(call => call.command === 'config_read' && call.gatewayId === first));
-  assert.ok(f.calls.every(call => !['register', 'apply', 'reconnect', 'enable'].includes(call.command)));
-  const current = f.states.get(first);
-  current.modules.push({ ...current.modules[0], id: 'new-device', enabled: true, published: true, descriptorIndex: 0 });
-  await f.workspace.refresh();
-  assert.equal(f.entry(first).state.modules.find(item => item.id === 'new-device').enabled, true);
-  assert.equal(f.entry(first).state.modules.find(item => item.id === module.id).enabled, false);
+  f.emit({ status: 'lost', error: 'Offline' });
+  assert.equal(f.entry(first).loading, false); assert.equal([...f.timers.keys()][0], scheduled);
+  f.intercept = () => ({ workspaceRenewal: { gatewayId: first, claimedModules: ['module'] } });
+  await f.fire(); assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].command, 'workspace_client_renew');
+  await assert.rejects(f.workspace.request(first, { command: 'claim', moduleId: 'module' }), /current gateway workspace/);
+  f.workspace.dispose();
+});
+
+test('only an exact verified private claim acknowledgment restores an expired unchanged public owner', async () => {
+  const f = fixture(); await tick();
+  const owned = () => row(first, { claimOwners: { module: 'sha256:local' } });
+  f.ready([owned()]); f.intercept = () => ({ workspaceRenewal: { gatewayId: first, claimedModules: [] } });
+  await f.fire(); f.ready([owned()], { revision: '2' });
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  f.intercept = () => ({ gatewayId: second, claimedModules: ['module'], modules: [] });
+  await f.workspace.request(first, { command: 'claim', moduleId: 'module' });
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  f.intercept = () => ({ gatewayId: first, claimedModules: ['unrequested'], modules: [] });
+  await f.workspace.request(first, { command: 'claim', moduleId: 'module' });
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  f.intercept = () => ({ gatewayId: first, claimedModules: ['module'], modules: [], connected: true });
+  await f.workspace.request(first, { command: 'claim', moduleId: 'module' });
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module']);
+  assert.equal(f.entry(first).state.modules.length, 1); assert.equal(f.entry(first).state.connected, false);
+  f.ready([owned()], { revision: '3' }); assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module']);
+  f.intercept = () => ({ gatewayId: first, claimedModules: [] });
+  await f.workspace.request(first, { command: 'release', moduleId: 'module' });
+  f.ready([owned()], { revision: '4' }); assert.deepEqual(plain(f.entry(first).state.claimedModules), []);
+  f.workspace.dispose();
+});
+
+test('an older renewal cannot withdraw a newly acknowledged claim epoch', async () => {
+  const f = fixture(); await tick();
+  f.ready([row(first, { claimOwners: { module: 'sha256:local' } })]);
+  const blocked = deferred(); f.intercept = request => request.command === 'workspace_client_renew'
+    ? blocked.promise : { gatewayId: first, claimedModules: ['module'] };
+  await f.fire();
+  await f.workspace.request(first, { command: 'claim', moduleId: 'module' });
+  blocked.resolve({ workspaceRenewal: { gatewayId: first, claimedModules: [] } }); await tick();
+  assert.deepEqual(plain(f.entry(first).state.claimedModules), ['module']);
+  f.workspace.dispose();
 });

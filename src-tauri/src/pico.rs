@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 use uuid::Uuid;
+mod workspace;
 
 const CLOSED: &str = "Cockpit native gateway service has closed.";
 const NO_CONNECTION: &str = "Connect the flashed Pico gateway first.";
@@ -77,6 +78,7 @@ pub struct PicoService {
     selected: Mutex<Option<Selected>>,
     closed: AtomicBool,
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
+    workspace: Arc<crate::stm32::workspace::Cache>,
 }
 impl Default for PicoService {
     fn default() -> Self {
@@ -108,6 +110,7 @@ impl PicoService {
             selected: Mutex::new(None),
             closed: AtomicBool::new(false),
             endpoint_activity:Arc::default(),
+            workspace: Arc::new(crate::stm32::workspace::Cache::new(empty_state())),
         }
     }
     fn probe(&self, request: &Value) -> Result<bool, String> {
@@ -218,16 +221,18 @@ impl PicoService {
             }
             match self.probe(&request) {
                 Ok(true) => {
-                    *selected = Some(Selected::Debug(crate::stm32::Stm32Service::pico_debug_with_activity(
+                    *selected = Some(Selected::Debug(crate::stm32::Stm32Service::pico_debug_with_workspace(
                         Box::new(self.factory.clone()),
                         self.endpoint_activity.clone(),
+                        self.workspace.clone(),
                     )))
                 }
                 Ok(false) => {
-                    *selected = Some(Selected::Legacy(LegacyPicoService::with_factory(
+                    *selected = Some(Selected::Legacy(LegacyPicoService::with_workspace(
                         Box::new(self.factory.clone()),
                         Timing::default(),
                         true,
+                        self.workspace.clone(),
                     )))
                 }
                 Err(message) => return error(message),
@@ -252,6 +257,7 @@ impl PicoService {
                         .filter(|port| candidate(port))
                         .map(PortInfo::value)
                         .collect::<Vec<_>>());
+                    self.workspace.commit(state.clone(), Default::default());
                     json!({"ok":true,"state":state})
                 }
                 Err(message) => error(message),
@@ -309,6 +315,7 @@ impl Default for Timing {
 
 enum Message {
     Request(Value, mpsc::Sender<Value>),
+    RenewWorkspace(String, mpsc::SyncSender<Result<Vec<String>, String>>),
     Shutdown,
 }
 
@@ -340,6 +347,9 @@ impl LegacyPicoService {
     }
 
     fn with_factory(factory: Box<dyn Factory>, timing: Timing, naming: bool) -> Self {
+        Self::with_workspace(factory, timing, naming, Arc::new(crate::stm32::workspace::Cache::new(empty_state())))
+    }
+    fn with_workspace(factory: Box<dyn Factory>, timing: Timing, naming: bool, workspace: Arc<crate::stm32::workspace::Cache>) -> Self {
         // Permit normal status/input/control overlaps while bounding renderer backlog.
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
@@ -355,6 +365,7 @@ impl LegacyPicoService {
             .name("osg-pico-cdc".into())
             .spawn(move || {
                 let mut gateway = Gateway::new(factory, timing, cancel.clone(), naming);
+                gateway.workspace = Some(workspace.clone());
                 let mut next_heartbeat = Instant::now() + gateway.timing.heartbeat;
                 let mut ui_seen = Instant::now();
                 while !cancel.load(Ordering::Acquire) {
@@ -366,6 +377,12 @@ impl LegacyPicoService {
                             pending.fetch_sub(1, Ordering::AcqRel);
                             ui_seen = Instant::now();
                             let _ = response.send(result);
+                        }
+                        Ok(Message::RenewWorkspace(client, response)) => {
+                            let result = gateway.renew_workspace(&client);
+                            gateway.cache(&latest);
+                            pending.fetch_sub(1, Ordering::AcqRel);
+                            let _ = response.try_send(result);
                         }
                         Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -379,10 +396,18 @@ impl LegacyPicoService {
                 }
                 gateway.shutdown();
                 gateway.cache(&latest);
-                while let Ok(Message::Request(_, response)) = receiver.try_recv() {
-                    pending.fetch_sub(1, Ordering::AcqRel);
-                    let _ = response
-                        .send(json!({"ok":false,"error":CLOSED,"state":gateway.decorate(None)}));
+                while let Ok(message) = receiver.try_recv() {
+                    match message {
+                        Message::Request(_, response) => {
+                            pending.fetch_sub(1, Ordering::AcqRel);
+                            let _ = response.send(json!({"ok":false,"error":CLOSED,"state":gateway.decorate(None)}));
+                        }
+                        Message::RenewWorkspace(_, response) => {
+                            pending.fetch_sub(1, Ordering::AcqRel);
+                            let _ = response.try_send(Err(CLOSED.into()));
+                        }
+                        Message::Shutdown => {}
+                    }
                 }
             })
             .expect("could not start the Pico CDC worker");
@@ -587,6 +612,7 @@ struct Gateway {
     timing: Timing,
     cancel: Arc<AtomicBool>,
     naming: Naming,
+    workspace: Option<Arc<crate::stm32::workspace::Cache>>,
 }
 impl Gateway {
     fn new(
@@ -606,6 +632,7 @@ impl Gateway {
             timing,
             cancel,
             naming: manager,
+            workspace: None,
         }
     }
 
@@ -919,7 +946,12 @@ impl Gateway {
             .iter()
             .map(|(id, claim)| (id.clone(), claim.client.clone()))
             .collect();
-        *latest.lock().unwrap_or_else(|poison| poison.into_inner()) = Snapshot { state, owners };
+        *latest.lock().unwrap_or_else(|poison| poison.into_inner()) = Snapshot { state: state.clone(), owners };
+        if let Some(workspace) = &self.workspace {
+            let public_owners = self.claims.iter().filter(|(_, claim)| claim.seen.elapsed() <= self.timing.claim_timeout)
+                .map(|(id, claim)| (id.clone(), claim.client.clone())).collect();
+            workspace.commit(state, public_owners);
+        }
     }
 
     fn request(&mut self, request: Value) -> Value {
@@ -1070,7 +1102,7 @@ impl Gateway {
         if self.connection.is_none() {
             return;
         }
-        if ui_seen.elapsed() > self.timing.ui_timeout {
+        if !self.workspace.as_ref().is_some_and(|cache| cache.owned()) && ui_seen.elapsed() > self.timing.ui_timeout {
             self.close_port();
             return;
         }
@@ -1098,6 +1130,7 @@ impl Gateway {
 
 #[cfg(test)]
 mod tests {
+    mod workspace_tests { include!("pico/workspace_tests.rs"); }
     #[test]
     fn cached_endpoint_activity_survives_protocol_worker_retirement(){
         let service=super::PicoService::new();assert!(!service.output_activity());

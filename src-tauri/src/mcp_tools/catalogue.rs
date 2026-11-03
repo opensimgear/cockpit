@@ -83,6 +83,8 @@ pub fn catalogue() -> Vec<Value> {
         tool("profile_status","Inspect selected, saved and applied snapshots, exact native owner, recovery and automatic policy. This never starts outputs.",vec![],&[]),
         tool("profile_read_model_page","Read one immutable UTF-8 chunk of automatic rules by a digest issued in profiles.runtime. Concatenate chunks, verify SHA-256 and parse the exact rules array. Expired identities require a fresh observation baseline. This reads only the process-local cache.",vec![("id",json!({"type":"string","pattern":"^sha256:[0-9a-f]{64}$","minLength":71,"maxLength":71})),("offset",integer(0,3*1024*1024))],&["id","offset"]),
         tool("game_read_model_page","Read an issued immutable UTF-8 game projection or artwork chunk. Verify the digest and byte count before using its paged JSON tree or image. Expired identities require a new observation baseline. This reads only process-local prepared memory.",vec![("id",json!({"type":"string","pattern":"^sha256:[0-9a-f]{64}$","minLength":71,"maxLength":71})),("offset",integer(0,16*1024*1024))],&["id","offset"]),
+        tool("workspace_read_model_page","Read an issued immutable UTF-8 workspace page from the passive process-local cache. Verify the digest and byte count; an expired identity requires a fresh workspace observation.",vec![("id",json!({"type":"string","pattern":"^sha256:[0-9a-f]{64}$","minLength":71,"maxLength":71})),("offset",integer(0,16*1024*1024))],&["id","offset"]),
+        tool("workspace_client_renew","Keep only this client's existing unexpired gateway configuration leases alive. Does not acquire a lease, renew output authority, connect, query a device or fetch display state. Returns current owned module IDs; stop renewal when editing ends.",vec![("gatewayId",string(80))],&["gatewayId"]),
         tool("profile_create","Create an empty saved profile without changing the applied run. Prefer profile_prepare_changes for validated authoring.",vec![("name",string(80))],&["name"]),
         tool("profile_duplicate","Duplicate an exact saved revision to a new identity without activating it. Reconnect retries require the original operationId.",vec![("id",string(36)),("name",string(80)),("expectedRevision",revision())],&["id","name","expectedRevision"]),
         tool("profile_rename","Rename exactly one saved revision. A stale expectedRevision is rejected; no activation is implied.",vec![("id",string(36)),("name",string(80)),("expectedRevision",revision())],&["id","name","expectedRevision"]),
@@ -174,7 +176,7 @@ fn activity_catalogue() -> Vec<Value> {
     ]
 }
 
-pub fn is_streaming(name:&str)->bool {name=="profile_debug_controller_input"}
+pub fn is_streaming(name:&str)->bool {matches!(name,"profile_debug_controller_input"|"workspace_client_renew")}
 
 pub fn is_mutation(name: &str) -> bool {
     if is_streaming(name) { return true; }

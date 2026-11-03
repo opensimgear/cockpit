@@ -39,28 +39,28 @@ function link(id: string, from: string, transport: 'usb' | 'can' | 'network' | '
 }
 export function gatewayObservations(entries: readonly GatewayEntry[], now: number): SystemObservation[] {
   return entries.flatMap(entry => {
-    const id = `gateway:${entry.id}`, state = entry.state, connected = !!state?.connected;
+    const id = `gateway:${entry.id}`, state = entry.state, uncertain = entry.stale === true && entry.loading !== true, connected = !!state?.connected && !uncertain;
     const gateway = observation(id, entry.port.backend === 'stm32' ? 'OpenSimGear CAN gateway' : 'Pico W USB gateway', 'gateway', 'gateways', now, {
-      presence: connected ? 'connected' : entry.present ? 'unavailable' : 'offline',
+      presence: uncertain ? 'unknown' : connected ? 'connected' : entry.present ? 'unavailable' : 'offline', stale: uncertain,
       role: entry.port.serialNumber ?? entry.id, status: entry.autoConnectPaused ? 'Connection paused' : state?.reconnecting ? 'Reconnecting' : entry.busy ? 'Working' : connected && state?.running ? 'USB HID active' : '',
-      connections: [link(id, 'host', 'usb', entry.present, state?.port ?? entry.port.path)], targets: [target('gateway', entry.id)],
+      connections: [link(id, 'host', 'usb', entry.present && !uncertain, state?.port ?? entry.port.path)], targets: [target('gateway', entry.id)],
       evidence: [entry.id], diagnostics: entry.error ? [entry.error] : [],
-      forget: { allowed: !entry.present && !connected && !state?.claimedModules?.length, reason: 'Disconnect the gateway and release its owned modules before forgetting its local observations.', effect: 'Forget local gateway and stale child-route observations. An unavailable gateway cannot confirm removal from its persistent storage. Independently observed USB connections and user bindings remain intact.' },
+      forget: { allowed: !entry.stale && !entry.present && !connected && !state?.claimedModules?.length, reason: 'Disconnect the gateway and release its owned modules before forgetting its local observations.', effect: 'Forget local gateway and stale child-route observations. An unavailable gateway cannot confirm removal from its persistent storage. Independently observed USB connections and user bindings remain intact.' },
     });
     return [gateway, ...(state?.modules ?? []).map(module => {
       const key = `${entry.id}/${module.id}`, id = `module:${key}`, online = connected && module.online;
-      const owned = !!state?.claimedModules?.includes(module.id);
+      const owned = !uncertain && !!state?.claimedModules?.includes(module.id);
       return observation(id, module.settings?.label || module.name, 'osg', 'gateways', now, {
-        role: module.outputOnly ? 'Output device' : module.kind, presence: online ? 'connected' : connected || !entry.present ? 'offline' : 'unknown', enabled: module.enabled ?? module.registered,
+        role: module.outputOnly ? 'Output device' : module.kind, presence: uncertain ? 'unknown' : online ? 'connected' : connected || !entry.present ? 'offline' : 'unknown', stale: uncertain, enabled: module.enabled ?? module.registered,
         owner: owned ? 'Setup session' : module.directUsb ? 'Direct USB input owner' : null,
         inputOwner: online && !module.outputOnly ? module.directUsb ? 'Device USB' : module.active ? `Gateway ${entry.id}` : null : null,
         configurationOwner: owned ? 'Setup session' : null,
         configurationRoute: owned ? `${entry.port.backend === 'stm32' ? 'CAN' : 'Gateway'} · ${entry.id}/${module.id}` : null,
-        capture: module.outputOnly ? 'unavailable' : online && module.active ? 'ready' : 'waiting',
+        capture: uncertain ? 'unknown' : module.outputOnly ? 'unavailable' : online && module.active ? 'ready' : 'waiting',
         status: module.directUsb ? 'Direct USB owns input (local attachment unconfirmed)' : module.published === true && !online ? 'Neutral controller retained' : '',
         connections: [link(id, gateway.id, entry.port.backend === 'stm32' ? 'can' : 'software', online)],
         targets: [target('module', module.id, entry.id)], evidence: [`route:${entry.id}/${module.id}`, ...(module.boot ? [`boot:${module.boot}`] : [])],
-        forget: { allowed: !entry.busy && canChangeController(state, module, 'forget'), reason: online ? 'Device is connected.' : owned ? 'Release the active session first.' : 'Gateway removal is unavailable; only eligible offline records can be removed.', effect: connected ? 'Forget this offline module from the gateway persistent inventory. Published controller layout may change and games may require rebinding. Module settings and user bindings are retained.' : localEffect },
+        forget: { allowed: !entry.stale && !entry.busy && canChangeController(state, module, 'forget'), reason: online ? 'Device is connected.' : owned ? 'Release the active session first.' : 'Gateway removal is unavailable; only eligible offline records can be removed.', effect: connected ? 'Forget this offline module from the gateway persistent inventory. Published controller layout may change and games may require rebinding. Module settings and user bindings are retained.' : localEffect },
       });
     })];
   });

@@ -224,22 +224,22 @@
     inputs: inputSummary(module),
     firmware: `${nameForGateway(entry.port.backend)} ${entry.state?.firmwareVersion ?? ''}`,
   }))));
-  const connectedGateways = $derived(entries.filter(entry => entry.state?.connected));
+  const connectedGateways = $derived(entries.filter(entry => !entry.stale && entry.state?.connected));
   const selected = $derived(devices.find(device => device.key === selectedId)!);
   const selectedEntry = $derived(entries.find(entry => entry.id === selected?.gatewayId));
   const gateway = $derived(selectedEntry?.state ?? null);
-  const gatewayBusy = $derived(!!selectedEntry?.busy);
+  const gatewayBusy = $derived(!!selectedEntry?.busy || !!selectedEntry?.stale);
   const gatewayError = $derived(selectedEntry?.error ?? '');
-  const gatewayConnected = $derived(!!gateway?.connected);
+  const gatewayConnected = $derived(!selectedEntry?.stale && !!gateway?.connected);
   const physicalGateway = $derived(supportsDeviceContracts(gateway));
   const gatewayName = $derived(nameForGateway(gateway?.backend));
   const needsReconnect = $derived(!!gateway?.needsReconnect);
   const sessionDevice = $derived(devices.find(device => device.key === sessionId));
   const removeEntry = $derived(entries.find(entry => entry.id === removeTarget.gatewayId));
-  const canRemove = $derived(!!removeEntry?.state?.connected && !removeEntry.busy && !removeEntry.state.reconnecting && !removeEntry.state.claimedModules?.length && !!removeEntry.state.modules.find(module => module.id === removeTarget.id)?.registered);
+  const canRemove = $derived(!!removeEntry?.state?.connected && !removeEntry.stale && !removeEntry.busy && !removeEntry.state.reconnecting && !removeEntry.state.claimedModules?.length && !!removeEntry.state.modules.find(module => module.id === removeTarget.id)?.registered);
   const controllerEntry = $derived(entries.find(entry => entry.id === controllerTarget.gatewayId));
   const controllerModule = $derived(controllerEntry?.state?.modules.find(module => module.id === controllerTarget.id));
-  const canConfirmController = $derived(!controllerEntry?.busy && canChangeController(controllerEntry?.state, controllerModule, controllerTarget.action));
+  const canConfirmController = $derived(!controllerEntry?.stale && !controllerEntry?.busy && canChangeController(controllerEntry?.state, controllerModule, controllerTarget.action));
   const lifecycle = $derived(automaticControllers(gateway));
   const draft = $derived(drafts[selectedId]);
   const dirty = $derived(!!selected && !!draft && !settingsEqual(draft, selected.settings));
@@ -308,6 +308,7 @@
     catch (error) { notify(error instanceof Error ? error.message : 'Gateway disconnect failed.'); }
   }
   function gatewayStatus(entry: GatewayEntry): string {
+    if (entry.stale) return entry.state ? 'Status unavailable · cached gateway' : 'Loading gateway status';
     if (entry.autoConnectPaused) return 'Connection paused';
     if (entry.state?.reconnecting) return 'Reconnecting USB…';
     if (entry.busy) return 'Working…';
@@ -325,7 +326,7 @@
   async function changeController(device: WorkspaceDevice, action: ControllerAction) {
     const entry = entries.find(entry => entry.id === device.gatewayId);
     const module = entry?.state?.modules.find(module => module.id === device.id);
-    if (entry?.busy || !canChangeController(entry?.state, module, action)) return;
+    if (entry?.stale || entry?.busy || !canChangeController(entry?.state, module, action)) return;
     if (!await sendGateway(device.gatewayId, { command: action, moduleId: device.id })) return;
     modal = null;
     const result = action === 'enable' ? 'Device enabled' : action === 'disable' ? 'Device disabled' : action === 'forget' ? 'Offline device removed' : 'Controller profile updated';
@@ -339,12 +340,11 @@
   onMount(() => {
     disposed = false;
     workspace = new GatewayWorkspace({ onChange: syncWorkspace });
-    void workspace.refresh();
+    workspace.start();
     const unsubscribeProfile = profileRuntime.subscribe(next => { if (!disposed) profileState = next; });
     const stopRuntimeModel = observeProfileRuntime(state => profileRuntime.observe(state));
     const stopLibraryModel = observeProfileLibrary(state => { if (!disposed && state.status === 'ready' && state.value) profileSummaries = state.value.profiles; });
     const stopGamesModel = observeGamesState(state => { if (!disposed) { gamesModel=state; gamesStale=state.status!=='ready'; if(state.value)games=state.value as GamesState; } });
-    const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     const openSettingsEvent = (event: Event) => {
       if (!(event instanceof CustomEvent)) return;
@@ -357,7 +357,7 @@
     window.addEventListener('hashchange', readSettingsHash);
     window.addEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent);
     window.addEventListener('pagehide', release);
-    return () => { navigationHistory?.dispose();release(); disposed = true; clearInterval(timer); stopRuntimeModel(); stopLibraryModel(); unsubscribeProfile(); profileRuntime.dispose(); stopGamesModel(); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
+    return () => { navigationHistory?.dispose();release(); disposed = true; stopRuntimeModel(); stopLibraryModel(); unsubscribeProfile(); profileRuntime.dispose(); stopGamesModel(); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
@@ -372,8 +372,6 @@
     if (!device) return;
     selectedId = key; tab = 'setup'; view = 'device';
     recordRoute();
-    const state = entries.find(entry => entry.id === device.gatewayId)?.state;
-    if (supportsDeviceContracts(state) && state?.connected && device.online && state.modules.find(module => module.id === device.id)?.canConfigure) await sendGateway(device.gatewayId, { command: 'config_read', moduleId: device.id });
   }
   async function toggleSession() {
     if (sessionTransition) return;
@@ -412,7 +410,6 @@
     else if (state?.needsReconnect) notify('Module updated. End setup and apply this older gateway’s layout to publish the changed controls.');
     return true;
   }
-  async function rescan() { await workspace?.refresh(); }
   async function registerDevice(key: string) {
     const device = devices.find(item => item.key === key);
     if (device && await sendGateway(device.gatewayId, { command: 'register', moduleId: device.id })) {
@@ -430,7 +427,6 @@
   async function reconnectGateway(gatewayId: string) {
     if (!await sendGateway(gatewayId, { command: 'reconnect' })) return;
     notify('USB layout updated.');
-    void workspace?.refresh();
   }
 </script>
 
@@ -575,8 +571,8 @@
                     {#if entry.error}<Notification message={String(entry.error)} kind="error" />{/if}
                     {#if state?.hidNaming?.error}<Notification message={'Controller names could not be updated: ' + String(state.hidNaming.error)} kind="error" />{/if}
                   </div>
-                  {#if state?.connected}<button class="secondary-button" aria-label={`Disconnect gateway ${entry.port.serialNumber}`} disabled={entry.busy || state?.reconnecting || setupActive} onclick={() => disconnectGateway(entry.id)}>Disconnect gateway</button>
-                  {:else}<button class="secondary-button" aria-label={`${entry.autoConnectPaused ? 'Connect' : 'Retry'} gateway ${entry.port.serialNumber}`} disabled={entry.busy || state?.reconnecting} onclick={() => retryGateway(entry.id)}>{entry.autoConnectPaused ? 'Connect gateway' : 'Retry gateway'}</button>{/if}
+                  {#if state?.connected}<button class="secondary-button" aria-label={`Disconnect gateway ${entry.port.serialNumber}`} disabled={entry.stale || entry.busy || state?.reconnecting || setupActive} onclick={() => disconnectGateway(entry.id)}>Disconnect gateway</button>
+                  {:else}<button class="secondary-button" aria-label={`${entry.autoConnectPaused ? 'Connect' : 'Retry'} gateway ${entry.port.serialNumber}`} disabled={entry.stale || entry.busy || state?.reconnecting} onclick={() => retryGateway(entry.id)}>{entry.autoConnectPaused ? 'Connect gateway' : 'Retry gateway'}</button>{/if}
                 </div>
                 {#if automatic && state?.layoutError}<Notification message={'The gateway could not update its USB controllers (' + String(state.layoutError) + '). Review the device state before retrying a change.'} kind="error" />{/if}
                 {#if automatic && state?.admissionFailure}<Notification message={'Device ' + String(state.admissionFailure.identity) + ' could not be enabled (' + String(state.admissionFailure.error) + '). Limits: ' + String(state.maxModules) + ' discovered, ' + String(state.maxRemembered ?? state.maxModules) + ' remembered and ' + String(state.maxControllers ?? state.maxModules) + ' enabled devices. Remove an offline remembered device to free inventory capacity.'} kind="error" />{/if}
@@ -589,13 +585,13 @@
                       <li class:ghost={device.ghost} class:device-disabled={device.disabled}>
                         <button class="gateway-device-link" onclick={() => selectDevice(device.key)}><span class="status-dot" class:offline={!device.online}></span><span><strong>{device.settings.label}</strong><small>{device.inputs} · {module?.directUsb ? 'Direct USB' : device.online ? 'Online' : 'Offline'}{#if automatic} · {controllerStatus(module)}{:else if canGateway} · {module?.registered ? module.pendingProfileMatch === false ? 'Profile changed' : module.activeSlot === module.pendingSlot ? 'Registered' : 'Pending apply' : (module?.activeSlot ?? -1) >= 0 ? 'Removal pending' : 'Discovered'}{/if}</small></span><Icon name="chevron" size={13} /></button>
                         {#if automatic}
-                          {#if !module?.outputOnly}{#if module?.enabled}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'disable')} onclick={() => confirmController(device, 'disable')}>Disable</button>
-                          {:else}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'enable')} onclick={() => changeController(device, 'enable')}>Enable</button>{/if}{/if}
-                          {#if module?.enabled && module.profileMatch === false && device.online}<button class="secondary-button" disabled={entry.busy || !canChangeController(state, module, 'update-profile')} onclick={() => confirmController(device, 'update-profile')}>Update profile</button>{/if}
-                          {#if !device.online}<button class="icon-button delete-device" aria-label={`Remove offline ${device.settings.label} from ${entry.port.serialNumber}`} title={`Remove offline ${device.settings.label}`} disabled={entry.busy || !canChangeController(state, module, 'forget')} onclick={() => confirmController(device, 'forget')}><Icon name="trash" size={15} /></button>{/if}
+                          {#if !module?.outputOnly}{#if module?.enabled}<button class="secondary-button" disabled={entry.stale || entry.busy || !canChangeController(state, module, 'disable')} onclick={() => confirmController(device, 'disable')}>Disable</button>
+                          {:else}<button class="secondary-button" disabled={entry.stale || entry.busy || !canChangeController(state, module, 'enable')} onclick={() => changeController(device, 'enable')}>Enable</button>{/if}{/if}
+                          {#if module?.enabled && module.profileMatch === false && device.online}<button class="secondary-button" disabled={entry.stale || entry.busy || !canChangeController(state, module, 'update-profile')} onclick={() => confirmController(device, 'update-profile')}>Update profile</button>{/if}
+                          {#if !device.online}<button class="icon-button delete-device" aria-label={`Remove offline ${device.settings.label} from ${entry.port.serialNumber}`} title={`Remove offline ${device.settings.label}`} disabled={entry.stale || entry.busy || !canChangeController(state, module, 'forget')} onclick={() => confirmController(device, 'forget')}><Icon name="trash" size={15} /></button>{/if}
                         {:else}
-                          {#if canGateway && (!module?.registered || module.pendingProfileMatch === false)}<button class="secondary-button" disabled={entry.busy || setupActive || !device.online || !!module?.directUsb || (!module?.registered && (state?.modules.filter(item => item.registered).length ?? 0) >= (state?.maxModules ?? 10))} onclick={() => registerDevice(device.key)}>{module?.registered ? 'Update profile' : 'Add controller'}</button>{/if}
-                          {#if canGateway && module?.registered}<button class="icon-button delete-device" aria-label={`Remove ${device.settings.label} registration from ${entry.port.serialNumber}`} title={`Remove ${device.settings.label} registration`} disabled={entry.busy || setupActive || !state?.connected} onclick={() => confirmRemove(device)}><Icon name="trash" size={15} /></button>{/if}
+                          {#if canGateway && (!module?.registered || module.pendingProfileMatch === false)}<button class="secondary-button" disabled={entry.stale || entry.busy || setupActive || !device.online || !!module?.directUsb || (!module?.registered && (state?.modules.filter(item => item.registered).length ?? 0) >= (state?.maxModules ?? 10))} onclick={() => registerDevice(device.key)}>{module?.registered ? 'Update profile' : 'Add controller'}</button>{/if}
+                          {#if canGateway && module?.registered}<button class="icon-button delete-device" aria-label={`Remove ${device.settings.label} registration from ${entry.port.serialNumber}`} title={`Remove ${device.settings.label} registration`} disabled={entry.stale || entry.busy || setupActive || !state?.connected} onclick={() => confirmRemove(device)}><Icon name="trash" size={15} /></button>{/if}
                         {/if}
                       </li>
                     {:else}
@@ -604,7 +600,7 @@
                   </ul>
                 </div>
                 {#if automatic && state?.layoutPending}<div class="reconnect-notice" role="status"><Icon name="usb" size={19} /><div><strong>Updating USB controllers…</strong><p>The gateway saves this change and reconnects automatically.</p></div></div>
-                {:else if state?.needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>Controller layout changes pending</strong><p>This older gateway requires layout Apply to reconnect its USB controllers.</p></div><button class="secondary-button" aria-label={`Apply layout on ${entry.port.serialNumber}`} disabled={entry.busy || setupActive || !state.connected} onclick={() => reconnectGateway(entry.id)}><Icon name="usb" size={15} />{canGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}
+                {:else if state?.needsReconnect}<div class="reconnect-notice"><Icon name="alert" size={19} /><div><strong>Controller layout changes pending</strong><p>This older gateway requires layout Apply to reconnect its USB controllers.</p></div><button class="secondary-button" aria-label={`Apply layout on ${entry.port.serialNumber}`} disabled={entry.stale || entry.busy || setupActive || !state.connected} onclick={() => reconnectGateway(entry.id)}><Icon name="usb" size={15} />{canGateway ? 'Apply layout' : 'Reconnect gateway'}</button></div>{/if}
               </section>
             {:else}
               <p class="gateway-discovery" role="status">Connect an OpenSimGear gateway to start. Every compatible gateway will appear here automatically.</p>

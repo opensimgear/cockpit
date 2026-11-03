@@ -133,10 +133,14 @@ fn catalogue_is_explicit_strict_unique_and_annotated_consistently() {
             !is_mutation(tool["name"].as_str().unwrap())
         );
         if definitions::is_streaming(tool["name"].as_str().unwrap()) {
-            assert_eq!(tool["name"],"profile_debug_controller_input");
             assert!(is_mutation(tool["name"].as_str().unwrap()));
             assert!(tool["inputSchema"]["properties"].get("operationId").is_none());
-            for required in ["owner","nodeId","streamId","sequence","changes"] {assert!(tool["inputSchema"]["required"].as_array().unwrap().contains(&json!(required)));}
+            let required:&[&str]=match tool["name"].as_str().unwrap(){
+                "profile_debug_controller_input"=>&["owner","nodeId","streamId","sequence","changes"],
+                "workspace_client_renew"=>&["gatewayId"],
+                name=>panic!("Undocumented non-ledger mutation: {name}"),
+            };
+            for required in required {assert!(tool["inputSchema"]["required"].as_array().unwrap().contains(&json!(required)));}
         } else if is_mutation(tool["name"].as_str().unwrap()) {
             assert!(tool["inputSchema"]["required"]
                 .as_array()

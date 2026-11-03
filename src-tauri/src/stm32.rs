@@ -29,6 +29,7 @@ const CONFIG_ROUTE_CHANGED: &str =
 #[path = "stm32_publication.rs"]
 mod publication;
 pub(crate) use publication::{PublicationOperation, PublicationReply, PublicationRequest};
+pub(crate) mod workspace;
 
 #[derive(Clone)]
 struct Timing {
@@ -578,6 +579,7 @@ struct Gateway {
     events: HashMap<String, ActionCache>,
     events_reply: Option<Value>,
     publication_reply: Option<bool>,
+    workspace: Option<Arc<workspace::Cache>>,
 }
 impl Gateway {
     fn configuration_claims(&self) -> Vec<(Instant, crate::module_configuration_routes::WriterPin)> {
@@ -622,6 +624,7 @@ impl Gateway {
             events: HashMap::new(),
             events_reply: None,
             publication_reply: None,
+            workspace: None,
         }
     }
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
@@ -2217,7 +2220,7 @@ impl Gateway {
         if self.connection.is_none() {
             return;
         }
-        if seen.elapsed() > self.timing.ui_timeout {
+        if !self.workspace.as_ref().is_some_and(|cache| cache.owned()) && seen.elapsed() > self.timing.ui_timeout {
             self.close();
             return;
         }
@@ -2233,6 +2236,7 @@ impl Gateway {
 enum Message {
     Request(Value, mpsc::Sender<Value>),
     Publication(PublicationRequest,mpsc::Sender<Result<PublicationReply,String>>),
+    RenewWorkspace(String, mpsc::SyncSender<Result<Vec<String>, String>>),
     Shutdown,
 }
 pub struct Stm32Service {
@@ -2241,6 +2245,7 @@ pub struct Stm32Service {
     state: Arc<Mutex<Value>>,
     configuration_claims: Arc<Mutex<Vec<(Instant, crate::module_configuration_routes::WriterPin)>>>,
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
+    workspace: Arc<workspace::Cache>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 impl Default for Stm32Service {
@@ -2275,6 +2280,14 @@ impl Stm32Service {
         Self::with_role_activity(factory,timing,role,Arc::default())
     }
     fn with_role_activity(factory:Box<dyn Factory>,timing:Timing,role:Role,endpoint_activity:Arc<crate::output_leases::LeaseActivity>)->Self{
+        let mut initial = empty_state();
+        if role == Role::PicoDebug { initial["backend"] = json!("pico"); }
+        Self::with_role_workspace(factory, timing, role, endpoint_activity, Arc::new(workspace::Cache::new(initial)))
+    }
+    pub(crate) fn pico_debug_with_workspace(factory: Box<dyn Factory>, activity: Arc<crate::output_leases::LeaseActivity>, workspace: Arc<workspace::Cache>) -> Self {
+        Self::with_role_workspace(factory, Timing::default(), Role::PicoDebug, activity, workspace)
+    }
+    fn with_role_workspace(factory: Box<dyn Factory>, timing: Timing, role: Role, endpoint_activity: Arc<crate::output_leases::LeaseActivity>, workspace: Arc<workspace::Cache>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
         let cancel = closed.clone();
@@ -2286,10 +2299,12 @@ impl Stm32Service {
         let latest = state.clone();
         let configuration_claims = Arc::new(Mutex::new(Vec::new()));
         let latest_claims = configuration_claims.clone();
+        let workspace_latest = workspace.clone();
         let worker = thread::Builder::new()
             .name("osg-stm32-cdc".into())
             .spawn(move || {
                 let mut gateway = Gateway::with_role(factory, timing, cancel.clone(), role);
+                gateway.workspace = Some(workspace_latest.clone());
                 let mut seen = Instant::now();
                 let mut heartbeat = Instant::now() + gateway.timing.heartbeat;
                 while !cancel.load(Ordering::Acquire) {
@@ -2298,35 +2313,35 @@ impl Stm32Service {
                         Ok(Message::Request(request, response)) => {
                             seen = Instant::now();
                             let result = gateway.request(request);
-                            *latest_claims.lock().unwrap_or_else(|p|p.into_inner()) = gateway.configuration_claims();
-                            *latest.lock().unwrap_or_else(|p| p.into_inner()) =
-                                gateway.decorated(None);
+                            gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                             let _ = response.send(result);
                         }
                         Ok(Message::Publication(request,response)) => {
                             seen = Instant::now();
                             let result=gateway.publication(request);
-                            *latest_claims.lock().unwrap_or_else(|p|p.into_inner())=gateway.configuration_claims();
-                            *latest.lock().unwrap_or_else(|p|p.into_inner())=gateway.decorated(None);
+                            gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                             let _=response.send(result);
+                        }
+                        Ok(Message::RenewWorkspace(client, response)) => {
+                            let result = gateway.renew_workspace(&client);
+                            gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
+                            let _ = response.try_send(result);
                         }
                         Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             gateway.heartbeat(seen);
-                            *latest_claims.lock().unwrap_or_else(|p|p.into_inner()) = gateway.configuration_claims();
                             heartbeat = Instant::now() + gateway.timing.heartbeat;
-                            *latest.lock().unwrap_or_else(|p| p.into_inner()) =
-                                gateway.decorated(None);
+                            gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                         }
                     }
                 }
                 gateway.close();
-                latest_claims.lock().unwrap_or_else(|p|p.into_inner()).clear();
-                *latest.lock().unwrap_or_else(|p| p.into_inner()) = gateway.decorated(None);
+                gateway.cache_workspace(&latest, &latest_claims, &workspace_latest);
                 while let Ok(message) = receiver.try_recv() {
                     match message {
                         Message::Request(_,response)=>{let _=response.send(json!({"ok":false,"error":CLOSED,"state":gateway.decorated(None)}));}
                         Message::Publication(_,response)=>{let _=response.send(Err(CLOSED.into()));}
+                        Message::RenewWorkspace(_, response)=>{let _=response.try_send(Err(CLOSED.into()));}
                         Message::Shutdown=>{}
                     }
                 }
@@ -2338,6 +2353,7 @@ impl Stm32Service {
             state,
             configuration_claims,
             endpoint_activity,
+            workspace,
             worker: Mutex::new(Some(worker)),
         }
     }
@@ -2380,6 +2396,7 @@ impl Drop for Stm32Service {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod workspace_tests { include!("stm32/workspace_tests.rs"); }
     mod recovery_transport {
         include!("profile_recovery_transport_stm32_tests.rs");
     }

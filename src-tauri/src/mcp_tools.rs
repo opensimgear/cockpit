@@ -313,6 +313,8 @@ impl Tools {
             "profile_status" => forward("profile_status", &[], Some("profiles")),
             "profile_read_model_page" => forward("profile_read_model_page", &["id", "offset"], Some("profileReadModelPage")),
             "game_read_model_page" => forward("game_read_model_page", &["id", "offset"], Some("gameReadModelPage")),
+            "workspace_read_model_page" => forward("workspace_read_model_page", &["id", "offset"], Some("workspaceReadModelPage")),
+            "workspace_client_renew" => forward("workspace_client_renew", &["gatewayId"], Some("workspaceRenewal")),
             "profile_create" => forward("profile_create", &["name"], Some("profiles")),
             "profile_duplicate" => forward(
                 "profile_duplicate",
