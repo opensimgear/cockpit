@@ -54,7 +54,7 @@ impl AppliedSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
     pub selected_profile_id: String,

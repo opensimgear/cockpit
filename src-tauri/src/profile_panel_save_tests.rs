@@ -170,3 +170,20 @@ fn mcp_profile_reads_are_passive_and_changed_panel_drafts_require_another_previe
     assert_eq!(saved["data"]["document"]["name"], "Reviewed current panel");
     assert!(manager.profile_session.lock().unwrap().status().owner.is_none());
 }
+
+#[test]
+fn committed_panel_references_advance_read_model_without_lazy_profile_read() {
+    let (manager, _) = setup();
+    let first = save_panel_upload(&manager, "Read-model original", true);
+    let document = panel_profile_document(first["panelSaved"]["publicationHash"].as_str().unwrap());
+    let id = document.id.clone();
+    assert_eq!(request(&manager, "profile_editor_save", None, json!({"document":document,"expectedRevision":null,"assignments":[]}))["ok"], true);
+    let before = manager.profiles.lock().unwrap().read_model_snapshot();
+    let latest = save_panel_upload(&manager, "Read-model update", true);
+    let profiles = manager.profiles.lock().unwrap();
+    let after = profiles.read_model_snapshot();
+    assert_ne!(before.versions[&id], after.versions[&id]);
+    assert_eq!(after.profiles.iter().find(|row| row.id == id).unwrap().revision, 2);
+    assert_eq!(profiles.compile_source(&id).unwrap().0.companion_assignments[0].publication_hash,
+        latest["panelSaved"]["publicationHash"].as_str().unwrap());
+}

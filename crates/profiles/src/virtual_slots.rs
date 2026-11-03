@@ -107,8 +107,7 @@ impl Service {
             pins.remove(node);
         }
         library.prune_virtual_slots();
-        self.persist(&library)?;
-        self.library = library;
+        self.commit_library(library)?;
         self.virtual_slots_response(id)
     }
 }

@@ -686,3 +686,27 @@ fn visibility_handoff_source_is_passive_exact_active_provenance_and_never_pendin
 
 fn sql_read(path:&std::path::Path)->Result<Vec<u8>,String>{osg_persistence::test_support::read_evidence(path,"recovery-profile")}
 fn sql_write(path:&std::path::Path,data:impl AsRef<[u8]>)->Result<(),String>{osg_persistence::test_support::write_evidence(path,"recovery-profile",Some(data.as_ref()))}
+
+#[test]
+fn cached_status_observation_orders_transitions_and_background_health_without_effects_on_subscribe() {
+    let (mut runtime, probe) = coordinator(None);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let captured = events.clone();
+    runtime.observe_status(Arc::new(move |status| captured.lock().unwrap().push(status)));
+    assert!(probe.lock().unwrap().calls.is_empty());
+    runtime.apply(candidate()).unwrap();
+    let states = events.lock().unwrap().iter().map(|status| status.state).collect::<Vec<_>>();
+    assert_eq!(states, vec![State::Stopped, State::Transitioning, State::Running]);
+    probe.lock().unwrap().health.degraded.push("Native peripheral offline".into());
+    runtime.poll().unwrap();
+    assert_eq!(events.lock().unwrap().last().unwrap().state, State::Degraded);
+    let count = events.lock().unwrap().len();
+    runtime.poll().unwrap();
+    assert_eq!(events.lock().unwrap().len(), count);
+    probe.lock().unwrap().health.stop = Some("Native source stopped".into());
+    runtime.poll().unwrap();
+    let events = events.lock().unwrap();
+    assert_eq!(events.last().unwrap().state, State::Faulted);
+    assert!(events.last().unwrap().owner.is_none());
+    assert_eq!(events[events.len()-2].state, State::Stopped);
+}

@@ -11,6 +11,7 @@ mod retained_game_companions;
 mod config_paths;
 mod persistence;
 pub mod observations;
+mod profile_read_models;
 #[path="mcp/server/mod.rs"]
 mod mcp;
 #[path="mcp/storage/credentials.rs"]

@@ -8,7 +8,7 @@ use osg_profiles::{
     activation::{Decision, Locks, Reconciler, Rule, Target, VerifiedGame},
     session::SelectionMode,
 };
-use std::{path::PathBuf, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::OnceLock};
 
 const PERIPHERAL_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(5);
 const PERIPHERAL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(30);
@@ -65,13 +65,15 @@ struct State {
     last_attempt: Option<Target>,
     last_vehicle_attempt: Option<(crate::profile_session::RunOwner,String,std::time::Instant)>,
     last_peripheral_attempt: Option<PeripheralAttempt>,
+    last_view: Option<crate::profile_read_models::AutomaticSnapshot>,
 }
 
 pub(super) struct Runtime {
     store: Store,
     state: Mutex<State>,
     // Emergency inhibition never waits for a disk write or policy-state mutex.
-    emergency: AtomicBool,
+    emergency: crate::profile_read_models::Emergency,
+    observer: OnceLock<crate::profile_read_models::AutomaticObserver>,
     pending_controls: AtomicUsize,
 }
 pub(super) struct ControlRequest<'a>(&'a AtomicUsize);
@@ -105,10 +107,36 @@ impl Runtime {
                 last_attempt: None,
                 last_vehicle_attempt: None,
                 last_peripheral_attempt: None,
+                last_view: None,
             }),
-            emergency: AtomicBool::new(false),
+            emergency: crate::profile_read_models::Emergency::new(false),
+            observer: OnceLock::new(),
             pending_controls: AtomicUsize::new(0),
         }
+    }
+    pub(crate) fn observe_read_model(&self, observer: crate::profile_read_models::AutomaticObserver) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let snapshot = self.captured_view(&state);
+        state.last_view = Some(snapshot.clone());
+        let _ = self.observer.set(observer.clone());
+        observer(crate::profile_read_models::AutomaticChange::Snapshot(snapshot));
+        self.emergency.observe(observer);
+    }
+    fn captured_view(&self, state: &State) -> crate::profile_read_models::AutomaticSnapshot {
+        crate::profile_read_models::AutomaticSnapshot {
+            schema_version: 1, preferred_profiles: state.settings.preferred_profiles.clone(), mode: state.settings.mode,
+            manual_profile_id: state.settings.manual_profile_id.clone(), rules: state.settings.rules.clone(),
+            status: state.status.into(),
+            message: state.message.clone(),
+            conflicts: state.conflicts.clone(), last_attempt: state.last_attempt.clone(), target: state.target.clone(), read_only: state.read_only,
+        }
+    }
+    fn notify_state(&self, state: &mut State) {
+        let Some(observer) = self.observer.get() else { return; };
+        let next = self.captured_view(&state);
+        if state.last_view.as_ref() == Some(&next) { return; }
+        state.last_view = Some(next.clone());
+        observer(crate::profile_read_models::AutomaticChange::Snapshot(next));
     }
     fn config(&self) -> (Settings, u64, bool) {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -152,6 +180,7 @@ impl Runtime {
         } else {
             "Waiting for verified native game contexts.".into()
         };
+        self.notify_state(&mut state);
         Ok(())
     }
     pub(super) fn control(&self, command: &str) {
@@ -194,13 +223,14 @@ impl Runtime {
             state.status = "blocked";
             state.message = "Automatic profile control epoch exhausted.".into();
         }
+        self.notify_state(&mut state);
     }
     fn note(&self, epoch: u64, decision: &Decision) -> Option<Target> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.epoch != epoch || state.read_only {
             return None;
         }
-        match decision {
+        let result = match decision {
             Decision::Hold(message) => {
                 state.status = if state.settings.mode == SelectionMode::Manual {
                     "manual"
@@ -219,7 +249,10 @@ impl Runtime {
             }
             Decision::Select(target) => {
                 state.conflicts.clear();
-                let next = state.reconciler.next(decision, epoch)?;
+                let Some(next) = state.reconciler.next(decision, epoch) else {
+                    self.notify_state(&mut state);
+                    return None;
+                };
                 state.target = Some(target.clone());
                 state.last_attempt = Some(target.clone());
                 state.status = "preparing";
@@ -227,7 +260,9 @@ impl Runtime {
                     "Preparing the saved profile for activation.".into();
                 Some(next)
             }
-        }
+        };
+        self.notify_state(&mut state);
+        result
     }
     fn finish(
         &self,
@@ -247,6 +282,7 @@ impl Runtime {
         if restart_notice {
             state.message.push_str(" This profile changes controller availability; the running game may need a restart to see it.");
         }
+        self.notify_state(&mut state);
     }
 }
 
@@ -410,6 +446,7 @@ impl GatewayManager {
                     .checked_add(1)
                     .ok_or("Automatic profile control epoch exhausted.")?;
                 state.settings = next;
+                self.profile_automatic.notify_state(&mut state);
                 return Ok(());
             }
         }
@@ -812,3 +849,7 @@ impl GatewayManager {
 #[cfg(test)]
 #[path = "profile_automatic_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "profile_automatic_read_model_tests.rs"]
+mod read_model_tests;

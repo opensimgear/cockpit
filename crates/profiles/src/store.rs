@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 pub use crate::{MAX_LIBRARY_BYTES, MAX_PROFILES};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalAssignment {
     pub resource_id: String,

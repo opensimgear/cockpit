@@ -17,3 +17,10 @@ test('errors remain stale and explicit without retries, while disposal fences la
   h.client.status=async()=>{throw new Error('Native disconnected.');};assert.equal(await h.controller.refresh(),false);assert.match(h.controller.state.error,/disconnected/);h.client.status=async()=>status();await h.controller.refresh();const late=deferred();h.client.removeRule=()=>late.promise;const removing=h.controller.removeRule('dcs');h.controller.dispose();late.resolve(status());assert.equal(await removing,false);
   const read=harness(),pending=deferred();read.client.status=()=>pending.promise;const reading=read.controller.refresh();read.controller.dispose();pending.resolve(status());assert.equal(await reading,false);assert.equal(read.controller.state.status,null);
 });
+
+test('automatic observations preserve pending command fences and require a current baseline after loss',async()=>{
+ const h=harness(),observe=(value=status(),readOnly=false)=>h.controller.observe({status:'ready',value:{automatic:value,readOnly}});observe();
+ const delayed=deferred();h.client.selectionMode=()=>delayed.promise;const choosing=h.controller.selectionMode('automatic');observe({...status(),mode:'automatic'});assert.equal(h.controller.state.pending,'mode');
+ h.controller.observe({status:'lost',error:'lost baseline'});delayed.resolve({...status(),mode:'automatic'});assert.equal(await choosing,true);assert.equal(h.controller.state.stale,true);assert.equal(await h.controller.selectionMode('manual'),false);
+ await h.controller.refresh();assert.equal(h.controller.state.stale,true);observe();assert.equal(h.controller.state.stale,false);observe(status(),true);assert.equal(await h.controller.removeRule('dcs'),false);
+});

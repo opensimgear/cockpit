@@ -233,7 +233,7 @@ pub(crate) enum State {
     Transitioning,
     AwaitingGame,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Status {
     pub state: State,
@@ -252,6 +252,8 @@ pub(crate) struct Coordinator<H: Host> {
     generation: u64,
     active_candidate: Option<Candidate>,
     launch: Option<launch::Held>,
+    status_observer: Option<std::sync::Arc<dyn Fn(Status) + Send + Sync>>,
+    observed_status: Option<Status>,
 }
 
 impl<H: Host> Coordinator<H> {
@@ -274,6 +276,20 @@ impl<H: Host> Coordinator<H> {
             generation: 0,
             active_candidate: None,
             launch: None,
+            status_observer: None,
+            observed_status: None,
+        }
+    }
+    pub(crate) fn observe_status(&mut self, observer: std::sync::Arc<dyn Fn(Status) + Send + Sync>) {
+        self.status_observer = Some(observer);
+        self.observed_status = None;
+        self.notify_status();
+    }
+    fn notify_status(&mut self) {
+        if self.observed_status.as_ref() == Some(&self.status) { return; }
+        if let Some(observer) = &self.status_observer {
+            self.observed_status = Some(self.status.clone());
+            observer(self.status.clone());
         }
     }
     pub(crate) fn status(&self) -> &Status {
@@ -335,6 +351,7 @@ impl<H: Host> Coordinator<H> {
             self.host.vehicle_switch_failed(owner,message);
             self.status.state=State::Degraded;
             self.status.degradation=vec![format!("Vehicle settings could not be applied: {message}")];
+            self.notify_status();
         }
     }
     /// Native-only provenance for off-lock visibility preparation. The adapter
@@ -366,6 +383,11 @@ impl<H: Host> Coordinator<H> {
         self.apply_mode(candidate, false)
     }
     fn apply_mode(&mut self, candidate: Candidate, hold: bool) -> Result<(), String> {
+        let result = self.apply_mode_observed(candidate, hold);
+        self.notify_status();
+        result
+    }
+    fn apply_mode_observed(&mut self, candidate: Candidate, hold: bool) -> Result<(), String> {
         if candidate.launch_preparation!=hold{return Err("Native launch preparation cannot be used as an ordinary active profile.".into())}
         self.check_apply()?;
         if candidate.read_only {
@@ -447,6 +469,7 @@ impl<H: Host> Coordinator<H> {
         self.persist(next)?;
         self.status.state = State::Transitioning;
         self.status.owner = None;
+        self.notify_status();
         let effects = (|| {
             self.host.set_authority(None)?;
             if let Some(previous) = self.manifest.pending.as_ref().unwrap().outgoing.as_ref() {
@@ -563,6 +586,7 @@ impl<H: Host> Coordinator<H> {
         let result = self.compensate(false);
         self.status.state = State::RecoveryNeeded;
         self.status.fault = Some(match neutralize.and(result) { Ok(()) => format!("Profile takeover failed: {error}. Owned effects were compensated; explicitly recover before activating with fresh baselines."), Err(restore) => format!("Profile takeover failed: {error}. Recovery remains necessary: {restore}") });
+        self.notify_status();
         Err(self.status.fault.clone().unwrap())
     }
     fn compensate(&mut self, recovery: bool) -> Result<(), String> {
@@ -608,6 +632,11 @@ impl<H: Host> Coordinator<H> {
         result
     }
     pub(crate) fn stop(&mut self) -> Result<(), String> {
+        let result = self.stop_observed();
+        self.notify_status();
+        result
+    }
+    fn stop_observed(&mut self) -> Result<(), String> {
         self.launch = None;
         self.status.owner = None;
         let revoke = self.host.set_authority(None);
@@ -650,6 +679,11 @@ impl<H: Host> Coordinator<H> {
         }
     }
     pub(crate) fn recover(&mut self) -> Result<(), String> {
+        let result = self.recover_observed();
+        self.notify_status();
+        result
+    }
+    fn recover_observed(&mut self) -> Result<(), String> {
         self.launch = None;
         self.status.owner = None;
         let revoke = self.host.set_authority(None);
@@ -675,6 +709,11 @@ impl<H: Host> Coordinator<H> {
         Ok(())
     }
     pub(crate) fn poll(&mut self) -> Result<(), String> {
+        let result = self.poll_observed();
+        self.notify_status();
+        result
+    }
+    fn poll_observed(&mut self) -> Result<(), String> {
         if self.launch.is_some() { return self.poll_launch(); }
         let Some(active) = self
             .manifest

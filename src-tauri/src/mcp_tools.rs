@@ -311,6 +311,7 @@ impl Tools {
             }
             "profile_export" => forward("profile_export", &["id"], Some("profiles")),
             "profile_status" => forward("profile_status", &[], Some("profiles")),
+            "profile_read_model_page" => forward("profile_read_model_page", &["id", "offset"], Some("profileReadModelPage")),
             "profile_create" => forward("profile_create", &["name"], Some("profiles")),
             "profile_duplicate" => forward(
                 "profile_duplicate",

@@ -175,6 +175,7 @@ impl<H: Host> Coordinator<H> {
             return self.fail_transition(error);
         }
         self.launch = None;
+        self.notify_status();
         Ok(())
     }
     /// Only the exact held owner can be compensated after a late launch error.

@@ -9,6 +9,7 @@
       ],
       "sourcePatterns": [
         "src/lib/profile-*.ts",
+        "src/lib/profile-read-models/**",
         "src/lib/profile-*.mjs",
         "src/lib/profile-*.svelte",
         "src/lib/Profile*.svelte",
@@ -44,6 +45,20 @@
         "desktop:coverage"
       ],
       "coverageTasks": [
+        {
+          "name": "profile-read-models-coverage",
+          "tests": ["src/lib/profile-read-models.test.mjs", "src/lib/profile-rule-pages.test.mjs"],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/profile-read-models/*.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/profile-read-models.test.mjs",
+            "src/lib/profile-rule-pages.test.mjs"
+          ]
+        },
         {
           "name": "profile-connection-draft-coverage",
           "tests": [

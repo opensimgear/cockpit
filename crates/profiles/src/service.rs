@@ -10,6 +10,8 @@ use std::path::PathBuf;
 
 #[path = "virtual_slots.rs"]
 pub mod virtual_slots;
+#[path = "service/read_model.rs"]
+pub mod read_model;
 
 pub struct Service {
     library: Library,
@@ -17,6 +19,7 @@ pub struct Service {
     session: Session,
     diagnostics: Vec<String>,
     read_only: bool,
+    read_model: read_model::Cache,
 }
 
 impl Service {
@@ -39,12 +42,14 @@ impl Service {
             }
         }
         let read_only = !diagnostics.is_empty();
+        let read_model = read_model::Cache::new(&library);
         Self {
             library,
             store,
             session: Session::default(),
             diagnostics,
             read_only,
+            read_model,
         }
     }
 
@@ -93,19 +98,7 @@ impl Service {
         }
         match command {
             "profile_list" => {
-                let profiles = self
-                    .library
-                    .profiles
-                    .iter()
-                    .map(|document| {
-                        Ok(json!({
-                            "id": document.id, "name": document.name, "revision": document.revision,
-                            "isDefault": document.id == DEFAULT_PROFILE_ID,
-                            "semanticHash": semantic_hash(document)?,
-                            "gameIds": document.eligibility.game_ids,
-                        }))
-                    })
-                    .collect::<Result<Vec<Value>, String>>()?;
+                let profiles = &self.read_model.profiles;
                 Ok(json!({"profiles":profiles,"session":self.session.status(),
                     "diagnostics":self.diagnostics,"readOnly":self.read_only}))
             }
@@ -133,11 +126,13 @@ impl Service {
                 self.document(id)?;
                 let source = selection_mode(required_text(request, "selectionSource")?)?;
                 self.session.select(id, source);
+                self.notify_read_model();
                 Ok(self.status())
             }
             "profile_selection_mode" => {
                 self.session
                     .set_mode(selection_mode(required_text(request, "mode")?)?);
+                self.notify_read_model();
                 Ok(self.status())
             }
             "profile_reset" => {
@@ -148,11 +143,15 @@ impl Service {
                     );
                 }
                 let library = Library::default();
+                let summaries = read_model::summaries(&library)?;
+                let generation = self.read_model.generation.checked_add(1).ok_or("Profile generation exhausted.")?;
                 if let Some(store)=&self.store {store.reset(&library)?;}
                 self.library = library;
                 self.session = Session::default();
                 self.read_only = false;
                 self.diagnostics.clear();
+                self.read_model.reset(summaries, generation);
+                self.notify_read_model();
                 Ok(self.status())
             }
             _ => {
@@ -221,8 +220,7 @@ impl Service {
             }
         }
         if !changed.is_empty() {
-            self.persist(&library)?;
-            self.library = library;
+            self.commit_library(library)?;
         }
         Ok(changed)
     }
@@ -276,15 +274,10 @@ impl Service {
                 library
                     .local_assignments
                     .insert(document.id.clone(), assignments.clone());
-                let profiles = library.profiles.iter().map(|profile| {
-                    Ok(json!({"id":profile.id,"name":profile.name,"revision":profile.revision,
-                        "isDefault":profile.id == DEFAULT_PROFILE_ID,"semanticHash":semantic_hash(profile)?,"gameIds":profile.eligibility.game_ids}))
-                }).collect::<Result<Vec<Value>, String>>()?;
                 library.prune_virtual_slots();
-                self.persist(&library)?;
-                self.library = library;
+                self.commit_library(library)?;
                 return Ok(
-                    json!({"document":document,"assignments":assignments,"profiles":profiles,"session":self.session.status()}),
+                    json!({"document":document,"assignments":assignments,"profiles":self.read_model.profiles,"session":self.session.status()}),
                 );
             }
             "profile_create" => {
@@ -356,8 +349,7 @@ impl Service {
                     .local_assignments
                     .insert(id.to_owned(), assignments.clone());
                 library.prune_virtual_slots();
-                self.persist(&library)?;
-                self.library = library;
+                self.commit_library(library)?;
                 return Ok(
                     json!({"document":output,"assignments":assignments,"session":self.session.status()}),
                 );
@@ -400,16 +392,15 @@ impl Service {
                 library.profiles.retain(|p| p.id != id);
                 library.local_assignments.remove(id);
                 library.prune_virtual_slots();
-                self.persist(&library)?;
-                self.library = library;
+                self.install_library(library, false)?;
                 self.session.fallback_if_removed(id);
+                self.notify_read_model();
                 return Ok(json!({"deletedId":id,"session":self.session.status()}));
             }
             _ => return Err("Unknown profile mutation.".into()),
         };
         library.prune_virtual_slots();
-        self.persist(&library)?;
-        self.library = library;
+        self.commit_library(library)?;
         Ok(json!({"document":output,"session":self.session.status()}))
     }
 

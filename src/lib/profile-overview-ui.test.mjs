@@ -1,3 +1,4 @@
+import {readModelFixture} from './profile-read-models/test-fixture.mjs';
 import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -12,6 +13,7 @@ import {loadModules,libModuleName} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./persistence/ui-preferences','./ui-settings-guard','./system-inventory','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./games','./game-provider-settings','./game-settings-navigation','./cockpit-history','./runtime-config','./panel-input-metadata','./gateway-capabilities','./controller-lifecycle','./devices','./device-actions']);
 modules.get('./games').updateGameCatalogue(discoveredGames);
+modules.set('./profile-read-models/shared',readModelFixture());
 const id='11111111-1111-4111-8111-111111111111',other='33333333-3333-4333-8333-333333333333',session='22222222-2222-4222-8222-222222222222',hash=`sha256:${'a'.repeat(64)}`;
 const stopped=()=>({state:'stopped',appliedSnapshot:null,owner:null,degradation:[],fault:null});
 const automatic=(mode='manual')=>({schemaVersion:1,mode,manualProfileId:modules.get('./profiles').DEFAULT_PROFILE_ID,rules:[],status:mode==='manual'?'manual':'waiting',message:'Native profile selection policy.',conflicts:[],lastAttempt:null,target:null,readOnly:false});
@@ -60,33 +62,39 @@ test('device manual actions use the real native ownership block, with no retired
 });
 
 async function mountedApp(send){
- const filename=new URL('../App.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureApp({navigate,refreshProfileStatus,refreshProfileNames,get state(){return{profileState,profileSummaries,view};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),mounts=[],timers=new Map(),listeners=new Map();let handlers,nextTimer=0;
+ const models=readModelFixture();models.emit('library',{status:'connecting'});models.emit('runtime',{status:'connecting'});let oldRuntime,oldLibrary;
+ const observations={...models,observeProfileRuntime(listener){oldRuntime=listener;return models.observeProfileRuntime(listener);},observeProfileLibrary(listener){oldLibrary=listener;return models.observeProfileLibrary(listener);}};
+ const filename=new URL('../App.svelte',import.meta.url),source=(await readFile(filename,'utf8')).replace('</script>','captureApp({navigate,get runtime(){return profileRuntime;},get state(){return{profileState,profileSummaries,view};}});</script>'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),mounts=[],timers=new Map(),listeners=new Map();let handlers,nextTimer=0;
  const document={hidden:false},location=new URL('http://localhost/'),window={location,addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}},history={state:null,replaceState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},pushState(state,_unused,url){this.state=state;if(url)location.href=new URL(url,location).href;},go(){},back(){},forward(){}};window.history=history;
  const App=evaluate(js.code,filename.pathname,name=>{
   if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onMount(fn){mounts.push(fn);}};if(name.endsWith('.svelte'))return{default:()=>{}};
-  const key=name.replace('./lib/','./');if(key==='./cockpit-history'){const actual=modules.get(key);return{...actual,createCockpitHistory:(initial,options)=>actual.createCockpitHistory(initial,{...options,host:window})};}if(modules.has(key))return modules.get(key);
-  if(name.endsWith('/gateway'))return{gatewayRequest:send,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};if(name.endsWith('/gateway-workspace'))return{GatewayWorkspace:class{refresh(){}dispose(){}}};if(name.endsWith('/companion-startup'))return{restoreCompanionPanels:async()=>{}};if(name.endsWith('/notifications'))return{notify:noRequest};throw new Error(`Unexpected App dependency ${name}`);
+  const key=name.replace('./lib/','./');if(key==='./profile-read-models/shared')return observations;if(key==='./cockpit-history'){const actual=modules.get(key);return{...actual,createCockpitHistory:(initial,options)=>actual.createCockpitHistory(initial,{...options,host:window})};}if(modules.has(key))return modules.get(key);
+  if(name.endsWith('/gateway'))return{gatewayRequest:send,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};if(name.endsWith('/gateway-workspace'))return{GatewayWorkspace:class{refresh(){}dispose(){}}};if(name.endsWith('/companion-startup'))return{restoreCompanionPanels:async()=>{}};if(name.endsWith('/notifications'))return{notify:noRequest};throw new Error('Unexpected App dependency '+name);
  },{document,window,history,setInterval(fn){timers.set(++nextTimer,fn);return nextTimer;},clearInterval(id){timers.delete(id);},captureApp(value){handlers=value;}});
- render(App).body;return{handlers,document,timers,mount(){return mounts.map(fn=>fn());}};
+ render(App).body;return{handlers,document,timers,models,mount(){return mounts.map(fn=>fn());},lateRuntime(state){oldRuntime?.(state);},lateLibrary(state){oldLibrary?.(state);}};
 }
 const savedRows=()=>[{id:modules.get('./profiles').DEFAULT_PROFILE_ID,name:'Default',revision:1,isDefault:true,semanticHash:hash},...profiles];
-test('actual mounted App keeps passive header status fresh across views and stops hidden polling without output controls',async()=>{
- const calls=[];let hold;const app=await mountedApp(async request=>{calls.push(plain(request));if(request.command==='profile_status'){if(hold)await hold;return{profiles:{profileSession:running(),automatic:automatic()}};}if(request.command==='profile_list')return{profiles:{profiles:savedRows()}};if(request.command==='game_get_state')return{games:games()};throw new Error(`Unexpected App request ${request.command}`);});
- assert.deepEqual(calls,[]);const cleanup=app.mount();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_list','profile_status']);assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);assert.equal(app.handlers.state.profileSummaries.length,3);assert.ok(!Object.hasOwn(app.handlers.state,'profileMode'));
- calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status']);
- calls.length=0;app.document.hidden=true;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls,[]);app.document.hidden=false;app.handlers.navigate('profiles');for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status']);
- for(const page of ['devices','topology','preferences']){app.handlers.navigate(page);await settle();calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command).sort(),['game_get_state','profile_status'],page);}
- app.handlers.navigate('overview');let release;hold=new Promise(yes=>release=yes);const pending=app.handlers.refreshProfileStatus();await settle();const before=app.handlers.state.profileState;cleanup.forEach(fn=>fn?.());release();await pending;assert.equal(app.handlers.state.profileState,before);assert.equal(app.timers.size,0);assert.ok(calls.every(c=>['profile_status','profile_list','game_get_state'].includes(c.command)));
+test('actual mounted App keeps passive profile streams fresh across views while hidden game polling remains suspended',async()=>{
+ const calls=[],app=await mountedApp(async request=>{calls.push(plain(request));if(request.command==='game_get_state')return{games:games()};throw new Error('Unexpected App request '+request.command);});
+ assert.deepEqual(calls,[]);const cleanup=app.mount();await settle();assert.deepEqual(calls.map(c=>c.command),['game_get_state']);assert.equal(app.handlers.state.profileState.stale,true);assert.equal(app.models.count('runtime'),1);assert.equal(app.models.count('library'),1);
+ app.models.emit('runtime',{status:'ready',generation:'1',revision:'1',value:{profileSession:running(),automatic:automatic(),readOnly:false}});app.models.emit('library',{status:'ready',value:{profiles:savedRows()}});
+ assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);assert.equal(app.handlers.state.profileSummaries.length,3);assert.ok(!Object.hasOwn(app.handlers.state,'profileMode'));
+ calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command),['game_get_state']);
+ calls.length=0;app.document.hidden=true;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls,[]);
+ app.models.emit('runtime',{status:'lost',error:'Native source continuity lost.'});assert.equal(app.handlers.state.profileState.stale,true);app.models.emit('runtime',{status:'ready',generation:'2',revision:'1',value:{profileSession:stopped(),automatic:automatic(),readOnly:false}});assert.equal(app.handlers.state.profileState.status.owner,null);assert.equal(app.handlers.state.profileState.stale,false);
+ app.document.hidden=false;for(const page of ['profiles','devices','topology','preferences']){app.handlers.navigate(page);await settle();calls.length=0;for(const fn of app.timers.values())fn();await settle();assert.deepEqual(calls.map(c=>c.command),['game_get_state'],page);assert.equal(app.models.count('runtime'),1);assert.equal(app.models.count('library'),1);}
+ app.handlers.navigate('overview');const before=plain(app.handlers.state);cleanup.forEach(fn=>fn?.());app.lateRuntime({status:'ready',generation:'1',revision:'999',value:{profileSession:running(),automatic:automatic(),readOnly:false}});app.lateLibrary({status:'ready',value:{profiles:[]}});assert.deepEqual(plain(app.handlers.state),before);assert.equal(app.timers.size,0);assert.equal(app.models.count('runtime'),0);assert.equal(app.models.count('library'),0);assert.ok(calls.every(c=>c.command==='game_get_state'));
 });
 
-test('mounted App runtime polling ignores policy metadata and fences disposed runtime replies',async()=>{
- let mode=automatic(),status=stopped(),failure=null,hold;const calls=[];
- const app=await mountedApp(async request=>{calls.push(request.command);if(request.command==='profile_status'){if(hold)await hold;if(failure)throw failure;return{profiles:{profileSession:status,automatic:mode}};}if(request.command==='profile_list')return{profiles:{profiles:savedRows()}};if(request.command==='game_get_state')return{games:games()};throw new Error('Unexpected App request '+request.command);});
- const cleanup=app.mount();await settle();assert.ok(!Object.hasOwn(app.handlers.state,'profileMode'));
- mode={...automatic(),mode:'guessed'};await app.handlers.refreshProfileStatus();assert.equal(app.handlers.state.profileState.stale,false,'Policy metadata is owned by the header badge.');assert.equal(app.handlers.state.profileState.status.owner,null);
- failure=new Error('Native runtime status unavailable.');await app.handlers.refreshProfileStatus();assert.equal(app.handlers.state.profileState.stale,true);
- failure=null;status=running();await app.handlers.refreshProfileStatus();assert.equal(app.handlers.state.profileState.stale,false);assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);
- let release;hold=new Promise(yes=>release=yes);status=stopped();const pending=app.handlers.refreshProfileStatus();await settle();const before=plain(app.handlers.state);cleanup.forEach(fn=>fn?.());release();await pending;assert.deepEqual(plain(app.handlers.state),before,'Disposed responses cannot update runtime status.');assert.ok(calls.every(command=>['profile_status','profile_list','game_get_state'].includes(command)));
+test('mounted App runtime observations keep policy and library selection separate from native ownership and fence disposed callbacks',async()=>{
+ const calls=[],app=await mountedApp(async request=>{calls.push(request.command);if(request.command==='game_get_state')return{games:games()};throw new Error('Unexpected App request '+request.command);});const cleanup=app.mount();await settle();
+ app.models.emit('runtime',{status:'ready',value:{profileSession:stopped(),automatic:automatic('automatic'),readOnly:false}});assert.equal(app.handlers.state.profileState.stale,false);assert.equal(app.handlers.state.profileState.status.owner,null);assert.ok(!Object.hasOwn(app.handlers.state,'profileMode'));
+ app.models.emit('library',{status:'ready',value:{profiles:savedRows(),session:{selectedProfileId:other,state:'running',selectionMode:'automatic'}}});assert.equal(app.handlers.state.profileState.status.owner,null,'Library selection and automatic policy cannot invent native ownership.');
+ app.models.emit('runtime',{status:'error',error:'Native runtime status unavailable.'});assert.equal(app.handlers.state.profileState.stale,true);assert.match(app.handlers.state.profileState.statusError,/unavailable/);
+ app.models.emit('runtime',{status:'ready',value:{profileSession:running(),automatic:automatic(),readOnly:true}});assert.equal(app.handlers.state.profileState.stale,false);assert.equal(app.handlers.state.profileState.readOnly,true);assert.equal(app.handlers.state.profileState.status.appliedSnapshot.profileId,id);
+ assert.equal(await app.handlers.runtime.apply({id:other,revision:7,baseRevision:7,dirty:false,readOnly:false}),false);assert.ok(calls.every(command=>command==='game_get_state'),'Read-only observations cannot authorize Apply or any output request.');
+ app.models.emit('runtime',{status:'ready',value:{profileSession:running(),automatic:automatic(),readOnly:false}});assert.equal(app.handlers.state.profileState.readOnly,false);
+ const before=plain(app.handlers.state);cleanup.forEach(fn=>fn?.());app.lateRuntime({status:'ready',value:{profileSession:stopped(),automatic:automatic(),readOnly:false}});app.lateRuntime({status:'error',error:'Retired source failed.'});assert.deepEqual(plain(app.handlers.state),before,'Disposed callbacks cannot update runtime status.');assert.ok(calls.every(command=>command==='game_get_state'));
 });
 
 test('header badges show authoritative selection mode and applied ownership without a stopped label or stale inference',async()=>{

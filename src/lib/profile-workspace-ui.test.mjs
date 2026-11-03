@@ -1,8 +1,10 @@
+import {readModelFixture} from './profile-read-models/test-fixture.mjs';
 import {discoveredGames} from './game-test-fixtures.mjs';
 import {webcrypto} from 'node:crypto';
 import assert from 'node:assert/strict';import test from 'node:test';import{readFile}from'node:fs/promises';import vm from'node:vm';import ts from'typescript';import{compile}from'svelte/compiler';import{render}from'svelte/server';import * as server from'svelte/internal/server';import * as svelte from'svelte';import{loadModules,libModuleName}from'./test-module-loader.mjs';
 const modules=await loadModules(['./profile-canvas/device-identity','./profile-block-status','./profile-integration-scope','./profile-game-source','./profile-virtual-slots','./profile-chain-edit','./profile-connection-draft','./profile-overview-routing','./controllers','./controller-inputs','./persistence/ui-preferences','./ui-settings-guard','./profile-discovery','./profile-wire-layout','./profile-input-availability','./canvas-styling','./canvas-navigation','./profile-canvas-render','./profile-overview-layout','./profile-route-endpoints','./profile-signal-overview','./profile-game-context','./profile-retired-recovery','./profile-desktop-preview','./profile-desktop-runtime','./runtime-config','./panel-input-metadata','./games','./game-telemetry','./game-settings-navigation','./cockpit-history','./profiles','./profile-library','./profile-inventory','./profile-graph','./profile-companion-authoring','./profile-debug-graph','./profile-graph-history','./profile-processing','./profile-transform-drafts','./profile-canvas-construction','./profile-learning','./profile-learning-controller','./profile-automatic','./profile-automatic-controller','./profile-compilation','./profile-runtime','./profile-runtime-controller','./profile-inspection','./profile-inspection-controller','./profile-activity','./profile-activity-controller','./profile-editor','./profile-canvas','./profile-port-browser','./profile-vehicle-conflicts']);
 modules.get('./games').updateGameCatalogue(discoveredGames);
+modules.set('./profile-read-models/shared',readModelFixture());
 modules.set('./notifications',{notify:()=>{throw new Error('Rendering must not replay save notifications.');}});
 modules.set('./profile-palette',(await loadModules(['./profile-palette'])).get('./profile-palette'));
 const noRequest=()=>{throw new Error('Rendering/navigation must not send a native request.');};
@@ -238,7 +240,7 @@ async function appHarness() {
     if(name.endsWith('/gateway'))return{gatewayRequest:noRequest,GatewayError:Error,releaseOnExit:noRequest,openCockpitLink:noRequest};
     if(name.endsWith('/gateway-workspace'))return{GatewayWorkspace:class{constructor(){noRequest();}}};
     if(name.endsWith('/companion-startup'))return{restoreCompanionPanels:noRequest};
-    if(name.endsWith('/persistence/ui-preferences'))return modules.get('./persistence/ui-preferences');if(name.endsWith('/notifications'))return{notify:noRequest};throw new Error(`Unexpected App dependency ${name}`);
+    if(name==='./profile-read-models/shared')return modules.get('./profile-read-models/shared');if(name.endsWith('/persistence/ui-preferences'))return modules.get('./persistence/ui-preferences');if(name.endsWith('/notifications'))return{notify:noRequest};throw new Error(`Unexpected App dependency ${name}`);
   }},{filename:filename.pathname});
   const body=render(exports.default).body;
   return{body,navigation,events,setHash(hash){const oldURL=location.href;location.hash=hash;navigation.readSettingsHash({oldURL});},get hash(){return location.hash;}};

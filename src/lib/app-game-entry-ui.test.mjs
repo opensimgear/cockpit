@@ -1,3 +1,4 @@
+import {readModelFixture} from './profile-read-models/test-fixture.mjs';
 import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -12,6 +13,7 @@ import {loadModules} from './test-module-loader.mjs';
 
 const modules=await loadModules(['./game-discovery','./persistence/ui-preferences','./ui-settings-guard','./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-background-crop','./game-telemetry','./game-provider-settings','./game-settings-navigation','./cockpit-history','./gateway-capabilities','./controller-lifecycle','./devices','./system-inventory',]);
 modules.get('./games').updateGameCatalogue(discoveredGames);
+modules.set('./profile-read-models/shared',readModelFixture());
 const noRequest=()=>{throw new Error('Opening Games must not acquire hardware, read configurations or start a runtime.');};
 const components=new Map();
 function evaluate(code,filename,require,extra={}){

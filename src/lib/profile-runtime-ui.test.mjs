@@ -1,3 +1,4 @@
+import {readModelFixture} from './profile-read-models/test-fixture.mjs';
 import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -23,13 +24,13 @@ function harness(){const calls=[];let response=stopped(),progress={};const clien
 
 // Expose the actual Svelte handlers and poll lifecycle; SSR has no DOM or mounted effects.
 async function component({gameContext=''}={}){
-  const filename=new URL('./ProfileRuntimeControls.svelte',import.meta.url);
+  const models=readModelFixture();const filename=new URL('./ProfileRuntimeControls.svelte',import.meta.url);
   const source=(await readFile(filename,'utf8')).replace("gameId = $state('');","gameId = $state(initialGameContext);").replace('</script>',`captureRuntimeControls({apply,stop,recover,cancelPending,watchStatus,mountStatus(){mounted=true;return watchStatus();},setActive(value){active=value;},get view(){return view;}});</script>`);
   const {js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};let handlers;
   const timers=new Map(),events=new Map(),document={hidden:false,addEventListener(name,listener){events.set(name,listener);},removeEventListener(name,listener){if(events.get(name)===listener)events.delete(name);}};
   const window={setInterval(callback){timers.set(1,callback);return 1;},clearInterval(id){timers.delete(id);}};
-  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,window,document,initialGameContext:gameContext,captureRuntimeControls(value){handlers=value;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);throw new Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});
-  return{render(props){const html=render(exports.default,{props}).body;return{html,handlers};},timers,events,document};
+  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,window,document,initialGameContext:gameContext,captureRuntimeControls(value){handlers=value;},require(name){if(name==='./profile-read-models/shared')return models;if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);throw new Error(`Unexpected dependency ${name}`);}},{filename:filename.pathname});
+  return{models,render(props){const html=render(exports.default,{props}).body;return{html,handlers};},timers,events,document};
 }
 const button=(html,label)=>html.match(new RegExp(`<button\\b[^>]*>\\s*${label}[^]*?<\\/button>`))?.[0]??'';
 
@@ -84,9 +85,12 @@ test('cancelled takeover gives one clear recovery message instead of the interna
   const result=view.render({controller:h.controller,profiles,compact:true});assert.equal(result.html.split(message).length-1,1);assert.ok(!result.html.includes('Internal takeover'));assert.ok(button(result.html,'Recover'));assert.ok(!result.html.includes('newer native control'));
 });
 
-test('actual status poll lifecycle is read-only, suspends during game settings or hidden document, and cleanup never stops a native run',async()=>{
-  const view=await component(),h=harness();const result=view.render({controller:h.controller,active:false});assert.equal(result.handlers.mountStatus(),undefined);assert.deepEqual(h.calls,[]);result.handlers.setActive(true);const cleanup=result.handlers.watchStatus();await Promise.resolve();assert.deepEqual(h.calls,[{command:'profile_status'}]);await new Promise(resolve=>setImmediate(resolve));
-  view.document.hidden=true;view.timers.get(1)();assert.equal(h.calls.length,1);view.document.hidden=false;view.events.get('visibilitychange')();await new Promise(resolve=>setImmediate(resolve));assert.equal(h.calls.length,2);cleanup();assert.equal(view.timers.size,0);assert.equal(view.events.size,0);result.handlers.setActive(false);assert.equal(result.handlers.watchStatus(),undefined);assert.ok(h.calls.every(call=>call.command==='profile_status'));
+test('runtime status shares passive stream baselines only while active and cleanup never stops a run',async()=>{
+ const view=await component(),h=harness(),result=view.render({controller:h.controller,active:false});assert.equal(result.handlers.mountStatus(),undefined);assert.deepEqual(h.calls,[]);
+ result.handlers.setActive(true);const cleanup=result.handlers.watchStatus();assert.equal(view.models.count('runtime'),1);assert.equal(h.controller.state.stale,false);
+ view.models.emit('runtime',{status:'ready',value:{profileSession:running(),readOnly:false}});assert.equal(h.controller.state.status.owner.profileId,id);
+ view.models.emit('runtime',{status:'lost',error:'overflow'});assert.equal(h.controller.state.stale,true);assert.equal(view.timers.size,0);assert.equal(view.events.size,0);
+ cleanup();assert.equal(view.models.count('runtime'),0);result.handlers.setActive(false);assert.equal(result.handlers.watchStatus(),undefined);assert.deepEqual(h.calls,[]);
 });
 
 test('waiting launch displays neutral hardware, blocks Apply and keeps Stop available',async()=>{
@@ -94,10 +98,10 @@ test('waiting launch displays neutral hardware, blocks Apply and keeps Stop avai
   const result=view.render({controller:h.controller,profiles,editor:{...editor(),id:other}});assert.ok(result.html.includes('Outputs remain neutral'));assert.ok(result.html.includes('game context is verified'));assert.match(button(result.html,'Activate profile'),/disabled/);assert.ok(!button(result.html,'Deactivate').includes('disabled'));assert.equal(button(result.html,'Pause'),'');await result.handlers.apply();assert.deepEqual(h.calls,[]);await result.handlers.stop();assert.deepEqual(h.calls,[{command:'profile_stop'}]);
 });
 
-test('compact list runtime keeps status polling without repeating healthy profile headings, help or tile actions',async()=>{
+test('compact list runtime shares status streams without repeating healthy profile headings, help or tile actions',async()=>{
   const view=await component(),h=harness();await h.controller.refresh();h.calls.length=0;
   let result=view.render({controller:h.controller,profiles,compact:true});assert.ok(!result.html.includes('No profile active'));assert.ok(!result.html.includes('Activate a saved profile from its tile'));assert.equal(button(result.html,'Activate profile'),'');assert.equal(button(result.html,'Deactivate'),'');assert.deepEqual(h.calls,[]);
-  const cleanup=result.handlers.mountStatus();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(h.calls,[{command:'profile_status'}]);cleanup();assert.equal(view.timers.size,0);assert.equal(view.events.size,0);
+  const cleanup=result.handlers.mountStatus();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(h.calls,[]);assert.equal(view.models.count('runtime'),1);cleanup();assert.equal(view.models.count('runtime'),0);assert.equal(view.timers.size,0);assert.equal(view.events.size,0);
   h.setStatus(running());await h.controller.refresh();h.calls.length=0;
   result=view.render({controller:h.controller,profiles,compact:true});assert.ok(!result.html.includes('Active profile'));assert.equal(button(result.html,'Deactivate'),'');assert.ok(!result.html.includes('Activate a saved profile from its tile'));assert.deepEqual(h.calls,[]);
   result=view.render({controller:h.controller,profiles,editor:editor()});assert.ok(result.html.includes('Active profile · DCS rig'));assert.ok(button(result.html,'Deactivate'));assert.ok(result.html.includes('Saving this profile updates its active configuration'));assert.deepEqual(h.calls,[]);
@@ -114,4 +118,14 @@ test('compact list shows activation target and a dedicated Cancel button while k
   const view=await component(),h=harness();await h.controller.refresh();const pending=deferred();h.client.apply=async()=>pending.promise;
   const applying=h.controller.apply(editor());let result=view.render({controller:h.controller,profiles,compact:true});assert.ok(result.html.includes('Activating DCS rig'));assert.ok(button(result.html,'Cancel activation'));assert.equal(button(result.html,'Deactivate'),'');
   pending.resolve(running());assert.equal(await applying,true);result=view.render({controller:h.controller,profiles,compact:true});assert.equal(button(result.html,'Cancel activation'),'');assert.equal(h.controller.state.status.owner.profileId,id);assert.equal(h.calls.filter(call=>call.command==='profile_stop').length,0);
+});
+
+test('initial unavailable paged runtime keeps independent Deactivate visible and sends Stop once in full and compact views',async()=>{
+ for(const compact of [false,true]){
+ const h=harness(),pending=deferred(),view=await component();h.controller.observe({status:'error',error:'Immutable profile-rule page expired.'});
+ let stops=0;h.client.stop=async()=>{stops++;return pending.promise;};let result=view.render({controller:h.controller,profiles,compact});
+ assert.equal(h.controller.state.status,null);assert.ok(button(result.html,'Deactivate'));assert.ok(!button(result.html,'Deactivate').includes('disabled'));assert.ok(!result.html.includes('Active profile ·'));assert.ok(!result.html.includes('Activate profile'));
+ const stopping=result.handlers.stop();assert.equal(stops,1);result=view.render({controller:h.controller,profiles,compact});assert.match(button(result.html,'Deactivate'),/disabled/);await result.handlers.stop();assert.equal(stops,1);
+ pending.resolve(stopped());await stopping;assert.equal(h.controller.state.stale,true);h.controller.observe({status:'ready',value:{profileSession:stopped(),readOnly:false}});result=view.render({controller:h.controller,profiles,compact});assert.equal(button(result.html,'Deactivate'),'');
+ }
 });

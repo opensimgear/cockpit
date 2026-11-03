@@ -31,7 +31,8 @@
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
   import { gatewayRequest, GatewayError, releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
-  import { ProfilesClient, captureProfileSummaries, type DeepReadonly, type ProfileSummary } from './lib/profiles';
+  import { observeProfileLibrary, observeProfileRuntime } from './lib/profile-read-models/shared';
+  import { type DeepReadonly, type ProfileSummary } from './lib/profiles';
   import { ProfileRuntimeClient } from './lib/profile-runtime';
   import { ProfileRuntimeController, type RuntimeControlState } from './lib/profile-runtime-controller';
   import { GatewayWorkspace, type GatewayEntry } from './lib/gateway-workspace';
@@ -91,7 +92,6 @@
   }
   function commitNavigation(section: View) {
     if (section === 'companions' && companionsPanel && !companionsPanel.showMain()) return;
-    if (view === 'profiles' && section !== 'profiles') void refreshProfileNames();
     if (section === 'devices') devicesPanel?.showInventory();
     settingsVisit = null;
     if (!navigationHistory&&gameSettingsFromHash(window.location.hash)) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
@@ -190,11 +190,8 @@
   const profileRuntime = new ProfileRuntimeController(new ProfileRuntimeClient(async request => {
     return (await gatewayRequest(request)).profiles?.profileSession;
   }));
-  const savedProfiles = new ProfilesClient(async request => (await gatewayRequest(request)).profiles ?? {});
   let profileState = $state.raw<DeepReadonly<RuntimeControlState>>(profileRuntime.state);
   let profileSummaries = $state.raw<DeepReadonly<ProfileSummary[]>>([]);
-  let profileNamesPending = false;
-  let profileNamesEpoch = 0;
   const profileMutationBlock = $derived(profileState.stale || !profileState.status
     ? 'Current native profile ownership is unavailable. Refresh native status before making independent changes.'
     : profileState.status.owner || ['transitioning', 'recovery-needed', 'awaiting-game', 'running', 'degraded'].includes(profileState.status.state)
@@ -295,24 +292,6 @@
   function scopedGatewayRequest(gatewayId: string, quiet = false) {
     return (request: GatewayRequest) => sendGateway(gatewayId, request, quiet);
   }
-  async function refreshProfileNames() {
-    if (disposed || profileNamesPending) return;
-    const epoch = ++profileNamesEpoch; profileNamesPending = true;
-    try {
-      const result = await savedProfiles.list();
-      const summaries = captureProfileSummaries(result.profiles);
-      if (!disposed && epoch === profileNamesEpoch) profileSummaries = summaries;
-    } catch { /* A missing saved label never substitutes for native applied identity. */ }
-    finally { if (epoch === profileNamesEpoch) profileNamesPending = false; }
-  }
-  $effect(() => { if (view === 'games') void refreshProfileNames(); });
-  async function refreshProfileStatus() {
-    if (disposed || document.hidden) return;
-    if (await profileRuntime.refresh()) {
-      const applied = profileRuntime.state.status?.appliedSnapshot;
-      if (applied && !profileSummaries.some(profile => profile.id === applied.profileId && profile.revision >= applied.revision)) void refreshProfileNames();
-    }
-  }
   async function sendGames(request: GameRequest, quiet = request.command === 'game_get_state'): Promise<GamesState | false> {
     if (gamesBusy || quiet && (gamesPolling || document.hidden)) return false;
     if (quiet) gamesPolling = true; else gamesBusy = true;
@@ -372,11 +351,10 @@
     workspace = new GatewayWorkspace({ onChange: syncWorkspace });
     void workspace.refresh();
     const unsubscribeProfile = profileRuntime.subscribe(next => { if (!disposed) profileState = next; });
-    void refreshProfileStatus();
-    void refreshProfileNames();
+    const stopRuntimeModel = observeProfileRuntime(state => profileRuntime.observe(state));
+    const stopLibraryModel = observeProfileLibrary(state => { if (!disposed && state.status === 'ready' && state.value) profileSummaries = state.value.profiles; });
     void sendGames({ command: 'game_get_state' }, true);
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
-    const profileTimer = setInterval(() => { void refreshProfileStatus(); }, 1000);
     const gamesTimer = setInterval(() => { if(view==='games'&&gamesDiscoveryOpen&&games?.discovery?.status!=='scanning'&&!games?.artworkPending)return;void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     const openSettingsEvent = (event: Event) => {
@@ -390,7 +368,7 @@
     window.addEventListener('hashchange', readSettingsHash);
     window.addEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent);
     window.addEventListener('pagehide', release);
-    return () => { navigationHistory?.dispose();release(); disposed = true; clearInterval(timer); clearInterval(profileTimer); unsubscribeProfile(); profileRuntime.dispose(); profileNamesEpoch++; clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
+    return () => { navigationHistory?.dispose();release(); disposed = true; clearInterval(timer); stopRuntimeModel(); stopLibraryModel(); unsubscribeProfile(); profileRuntime.dispose(); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);

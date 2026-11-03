@@ -125,12 +125,8 @@ impl Runtime {
                     value["selection"]=json!({"expectedHostToken":token});
                 }
                 let published=services.hub.command(&value)?;
-                let saved=published.get("panelSaved").cloned();
                 Self::start_saved_listener(services);
-                let mut response=self.status(services)?;
-                if let Some(saved)=saved {response["panelSaved"]=saved;}
-                if published["selectionCommitted"]==true {response["selectionCommitted"]=json!(true);}
-                return Ok(response);
+                return Ok(publication_result(published, self.status(services)));
             }
             _ => {}
         }
@@ -404,4 +400,30 @@ impl Runtime {
         }
     }
 
+}
+
+// A saved head is already durable when enrichment starts. Never hide its
+// identity from Gateway's profile-reference commit because a later read fails.
+fn publication_result(published: Value, status: Result<Value, String>) -> Value {
+    let mut response = status.unwrap_or_else(|error| {
+        let mut response = published.clone();
+        response["statusError"] = json!(error);
+        response
+    });
+    if let Some(saved) = published.get("panelSaved") { response["panelSaved"] = saved.clone(); }
+    if published["selectionCommitted"] == true { response["selectionCommitted"] = json!(true); }
+    response
+}
+
+#[cfg(test)]
+mod publication_result_tests {
+    use super::*;
+    #[test]
+    fn committed_saved_head_survives_status_enrichment_failure() {
+        let committed = json!({"panelSaved":{"panelId":"committed","publicationHash":"sha256:committed"},"selectionCommitted":true});
+        let result = publication_result(committed.clone(), Err("Later metadata write failed".into()));
+        assert_eq!(result["panelSaved"], committed["panelSaved"]);
+        assert_eq!(result["selectionCommitted"], true);
+        assert_eq!(result["statusError"], "Later metadata write failed");
+    }
 }

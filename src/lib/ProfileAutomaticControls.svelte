@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {observeProfileRuntime} from './profile-read-models/shared';
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
   import {guardUiSettings} from './ui-settings-guard';
@@ -20,7 +21,7 @@
   ].filter(Boolean).join(' ')));
   function mountStatus(){mounted=true;const stop=controller.subscribe(next=>view=next);return()=>{mounted=false;stop();};}
   onMount(mountStatus);onDestroy(()=>{if(!provided)controller.dispose();});
-  function watchStatus(){if(!mounted||!active)return;const refresh=()=>{if(!document.hidden)void controller.refresh();};refresh();document.addEventListener('visibilitychange',refresh);const timer=window.setInterval(refresh,1000);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};}
+  function watchStatus(){if(!mounted||!active)return;return observeProfileRuntime(state=>controller.observe(state));}
   $effect(watchStatus);
   async function select(mode:ProfileSelectionMode){if(blocked)return;if(!await controller.selectionMode(mode))notify(controller.state.error,'error');}
   async function toggleMode(){await select(view.status?.mode==='automatic'?'manual':'automatic');}

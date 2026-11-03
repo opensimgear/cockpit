@@ -107,3 +107,12 @@ test('native rejection is never retried; a read-only refresh preserves the error
 test('busy emergency commands do not duplicate and disposal ignores late replies without changing native processing',async()=>{
   const h=harness(),pending=deferred();h.client.stop=()=>{h.calls.push(['stop']);return pending.promise;};const stopping=h.controller.stop();assert.equal(await h.controller.stop(),false);assert.equal(await h.controller.refresh(),false);h.controller.dispose();pending.resolve(stopped());assert.equal(await stopping,false);assert.deepEqual(h.calls,[['stop']]);
 });
+
+test('runtime observations fence pending command replies and status reads without healing stream loss or blocking Stop',async()=>{
+ const h=harness(),observe=status=>h.controller.observe({status:'ready',value:{profileSession:status,readOnly:false}});
+ observe(stopped());const delayed=deferred();h.client.apply=()=>delayed.promise;const applying=h.controller.apply(editor());assert.equal(h.controller.state.pending,'apply');
+ observe(running());assert.equal(h.controller.state.pending,'apply');h.controller.observe({status:'lost',error:'queue overflow'});delayed.resolve(running());assert.equal(await applying,true);assert.equal(h.controller.state.stale,true);
+ assert.equal(await h.controller.apply(editor()),false);await h.controller.stop();assert.equal(h.controller.state.stale,true);assert.equal(h.calls.at(-1)[0],'stop');
+ observe(stopped());assert.equal(h.controller.state.stale,false);const reading=deferred();h.client.status=()=>reading.promise;const refresh=h.controller.refresh();observe(running());reading.resolve(stopped());assert.equal(await refresh,false);assert.equal(h.controller.state.status.state,'running');
+ h.controller.observe({status:'ready',value:{profileSession:stopped(),readOnly:true}});assert.equal(await h.controller.apply(editor()),false);assert.equal(await h.controller.recover(),true);
+});

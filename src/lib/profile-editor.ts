@@ -1,3 +1,4 @@
+import type { LibraryModel, RuntimeModel, ModelState } from './profile-read-models/models';
 import { diagramLayout } from './profile-diagram';
 import { DEFAULT_PROFILE_ID, MAX_PROFILES, captureProfileSession, parseProfileDocument, profileAssignmentsError, profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileLocalAssignment, type ProfileResult, type ProfileSession, type ProfileSummary } from './profiles';
 import type { ProfileInventoryClient, ResourceSummary } from './profile-inventory';
@@ -119,6 +120,11 @@ export function copyProfile(document: ProfileDocument, id: string): ProfileDocum
 export function profileEditorDirty(editor: DeepReadonly<ProfileDraft>): boolean {
     return editor.baseRevision === null || JSON.stringify(editor.document) !== JSON.stringify(editor.baseDocument) || JSON.stringify(editor.assignments) !== JSON.stringify(editor.baseAssignments);
 }
+const structure = (value: unknown) => JSON.stringify(value, (_key,item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))) : item);
+/** Library metadata never changes the editor draft, history or native runtime session. */
+export function mergeProfileLibrary(state: ProfileWorkspaceState, model: DeepReadonly<LibraryModel>): ProfileWorkspaceState {
+    return {...state,profiles:clone(model.profiles) as ProfileSummary[],diagnostics:[...model.diagnostics],readOnly:model.readOnly};
+}
 function draft(document: ProfileDocument, assignments: ProfileLocalAssignment[], baseRevision: number | null): ProfileDraft {
     const checked = parseProfileDocument(JSON.stringify(document));
     const error = profileAssignmentsError(assignments);
@@ -159,6 +165,46 @@ export class ProfileEditorStore {
     private inventoryVersion = 0;
     private inventorySignature = '';
     private savedRefreshing = false;
+    private libraryObservation: ModelState<LibraryModel> | null = null;
+    private observedRequest = '';
+    private observedReading = false;
+    /** Summaries replace atomically. Passive observations never touch a dirty draft. */
+    observeLibrary(state: ModelState<LibraryModel>): void {
+        this.libraryObservation = state;
+        if (state.status !== 'ready' || !state.value) return;
+        this.set(mergeProfileLibrary(this.value,state.value));
+        void this.refreshObserved();
+    }
+    observeRuntime(state: ModelState<RuntimeModel>): void {
+        if (state.status === 'ready' && state.value) this.set({session:state.value.session});
+    }
+    private observationKey(id: string, state = this.libraryObservation): string {
+        const version = state?.status === 'ready' ? state.value?.versions[id] : undefined;
+        return version === undefined ? '' : JSON.stringify([state?.clockId,state?.session,state?.generation,id,version]);
+    }
+    private async refreshObserved(): Promise<void> {
+        const state = this.libraryObservation, captured = this.value.editor;
+        if (this.observedReading || this.value.busy || state?.status !== 'ready' || !state.value || !captured || captured.baseRevision === null || profileEditorDirty(captured)) return;
+        const version = state.value.versions[captured.document.id];
+        if (version === undefined) return;
+        const key = this.observationKey(captured.document.id,state);
+        if (this.observedRequest === key) return;
+        this.observedRequest = key; this.observedReading = true;
+        const epoch = this.epoch;
+        try {
+            const saved = await this.api.getAssignments(captured.document.id);
+            const latest = this.libraryObservation;
+            if (epoch !== this.epoch || this.value.busy || this.value.editor !== captured || profileEditorDirty(captured)
+                || latest?.status !== 'ready' || latest.generation !== state.generation || latest.clockId !== state.clockId || latest.session !== state.session || latest.value?.versions[captured.document.id] !== version) return;
+            if (!saved.document || saved.document.id !== captured.document.id || !saved.assignments) throw new Error('The saved profile and assignments are unavailable.');
+            if (saved.document.revision < captured.baseRevision) return;
+            const refreshed = draft(saved.document,saved.assignments,saved.document.revision);
+            if (structure(refreshed.document) === structure(captured.document) && structure(refreshed.assignments) === structure(captured.assignments)) return;
+            this.epoch++;
+            this.set({editor:refreshed,error:''});
+        } catch (error) { if (epoch === this.epoch && this.value.editor === captured && this.libraryObservation === state) this.set({error:error instanceof Error?error.message:String(error)}); }
+        finally { this.observedReading = false; void this.refreshObserved(); }
+    }
     constructor(private api: ProfileEditorApi, private inventory: Pick<ProfileInventoryClient, 'listAll'>, private newId: () => string = () => globalThis.crypto.randomUUID()) { }
     get state(): DeepReadonly<ProfileWorkspaceState> { return freeze(this.value); }
     get editorEpoch(): number { return this.epoch; }
@@ -167,7 +213,7 @@ export class ProfileEditorStore {
     /** Save completions are events: inventory polling and remounting must never replay one. */
     subscribeSaveNotifications(listener: (notification: ProfileSaveNotification) => void): () => void { this.saveListeners.add(listener); return () => { this.saveListeners.delete(listener); }; }
     private set(patch: Partial<ProfileWorkspaceState>) { this.value = { ...this.value, ...patch }; for (const listener of this.listeners)
-        listener(this.state); }
+        listener(this.state); if (!this.value.busy) void this.refreshObserved(); }
     private session(result: ProfileResult) { return result.session ? captureProfileSession(result.session) : this.value.session; }
     async refresh(): Promise<void> { const epoch = ++this.epoch; this.set({ busy: true, error: '' }); try {
         const result = await this.api.list();
@@ -227,12 +273,13 @@ export class ProfileEditorStore {
         }catch(error){if(epoch===this.epoch&&!this.value.busy)this.set({error:error instanceof Error?error.message:String(error)});}
         finally{this.savedRefreshing=false;}
     }
-    async open(id: string): Promise<void> { const epoch = ++this.epoch; this.set({ busy: true, error: '' }); try {
+    async open(id: string): Promise<void> { const observationKey = this.observationKey(id); const epoch = ++this.epoch; this.set({ busy: true, error: '' }); try {
         const result = await this.api.getAssignments(id);
         if (epoch !== this.epoch)
             return;
         if (!result.document || result.document.id !== id || !result.assignments)
             throw new Error('The requested profile and its local assignments were not returned together.');
+        if (observationKey && observationKey === this.observationKey(id)) this.observedRequest = observationKey;
         this.set({ view: 'editor', editor: draft(result.document, result.assignments, result.document.revision), session: this.session(result) });
     }
     catch (error) {
@@ -309,7 +356,7 @@ export class ProfileEditorStore {
         if (epoch === this.epoch)
             this.set({ busy: false });
     } }
-    dispose(): void { this.epoch++; this.inventoryEpoch++; this.listeners.clear(); this.saveListeners.clear(); }
+    dispose(): void { this.libraryObservation = null; this.epoch++; this.inventoryEpoch++; this.listeners.clear(); this.saveListeners.clear(); }
 }
 
 /** Routes are UI continuations, never runtime selection or activation requests. */

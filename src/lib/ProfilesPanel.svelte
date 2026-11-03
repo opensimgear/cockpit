@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { observeProfileLibrary, observeProfileRuntime } from './profile-read-models/shared';
   import PageHeader from './PageHeader.svelte';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import Icon from './Icon.svelte';
@@ -77,7 +78,7 @@
   const learningIdle=$derived(!!runtimeState.status&&!runtimeState.stale&&runtimeState.status.owner===null&&!['transitioning','recovery-needed'].includes(runtimeState.status.state));
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
-  onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));if(workspace.view==='list')void store.refresh();return()=>{stop();stopSaved();}; });
+  onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));const stopLibrary=observeProfileLibrary(state=>store.observeLibrary(state)),stopRuntime=observeProfileRuntime(state=>store.observeRuntime(state));return()=>{stopRuntime();stopLibrary();stop();stopSaved();}; });
   onDestroy(() => { dcsCatalogueEpoch++;companionCatalogueEpoch++;companionDropEpoch++;navigationCancelled?.();runtime.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
   $effect(()=>{void editorContext;editingName=false;});
@@ -88,7 +89,7 @@
   $effect(()=>{if(paletteDrag&&(!active||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
-    const refresh=()=>{if(!document.hidden){if(!store.state.inventoryBusy)void store.refreshInventory();if(!libraryBusy&&!editingName)void store.refreshSaved();void refreshVehicleCatalogue();}};
+    const refresh=()=>{if(!document.hidden){if(!store.state.inventoryBusy)void store.refreshInventory();void refreshVehicleCatalogue();}};
     refresh();const timer=setInterval(refresh,3000);
     document.addEventListener('visibilitychange',refresh);window.addEventListener('focus',refresh);
     return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',refresh);window.removeEventListener('focus',refresh);};
@@ -219,7 +220,7 @@
   const savedEditor=$derived(editor?workspace.profiles.find(row=>row.id===editor.document.id):undefined);
   function activationDisabled(profile:DeepReadonly<ProfileSummary>):boolean {
     const status=runtimeState.status;
-    return workspace.busy||workspace.readOnly||libraryBusy||!status||runtimeState.stale||!!runtimeState.pending||!!runtimeState.activationConfirmation||['recovery-needed','transitioning','awaiting-game'].includes(status.state)||status.owner?.profileId===profile.id;
+    return workspace.busy||workspace.readOnly||libraryBusy||!status||runtimeState.stale||runtimeState.readOnly||!!runtimeState.pending||!!runtimeState.activationConfirmation||['recovery-needed','transitioning','awaiting-game'].includes(status.state)||status.owner?.profileId===profile.id;
   }
   async function activateProfile(profile:DeepReadonly<ProfileSummary>) {
     if(activationDisabled(profile))return;
@@ -280,7 +281,7 @@
   {/if}
   </div>
   <ProfileLibraryTools bind:this={libraryTools} client={suppliedLibrary??profiles} profileCount={rows.length} readOnly={workspace.readOnly} busy={workspace.busy} prepare={prepareLibrary} resolveProfile={id=>workspace.profiles.find(row=>row.id===id)} onDeleted={libraryDeleted} onImported={libraryImported} onBusy={value=>libraryBusy=value}/>
-  {#if runtimeState.activationConfirmation}<dialog class="editor-confirmation" aria-label="Switch active profile?" oncancel={event=>{event.preventDefault();runtime.cancelActivation();}} {@attach showConfirmation}><h2>Switch active profile?</h2><p>Deactivate {workspace.profiles.find(profile=>profile.id===runtimeState.activationConfirmation?.previousOwner.profileId)?.name??'the active profile'} and activate {workspace.profiles.find(profile=>profile.id===runtimeState.activationConfirmation?.target.id)?.name??'the new profile'}?</p><div><button class="secondary-button" onclick={()=>runtime.cancelActivation()}>Cancel</button><button class="primary-button" disabled={!!runtimeState.pending||runtimeState.stale} onclick={()=>runtime.confirmActivation()}>Switch profile</button></div></dialog>{/if}
+  {#if runtimeState.activationConfirmation}<dialog class="editor-confirmation" aria-label="Switch active profile?" oncancel={event=>{event.preventDefault();runtime.cancelActivation();}} {@attach showConfirmation}><h2>Switch active profile?</h2><p>Deactivate {workspace.profiles.find(profile=>profile.id===runtimeState.activationConfirmation?.previousOwner.profileId)?.name??'the active profile'} and activate {workspace.profiles.find(profile=>profile.id===runtimeState.activationConfirmation?.target.id)?.name??'the new profile'}?</p><div><button class="secondary-button" onclick={()=>runtime.cancelActivation()}>Cancel</button><button class="primary-button" disabled={!!runtimeState.pending||runtimeState.stale||runtimeState.readOnly} onclick={()=>runtime.confirmActivation()}>Switch profile</button></div></dialog>{/if}
   {#if leaveDialog}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="leave-profile-title" onclose={keepEditing} {@attach showConfirmation}><h2 id="leave-profile-title">Keep your unsaved changes?</h2><p>Save this profile before leaving, or discard your changes. Saving updates it immediately if it is active.</p>{#if workspace.error}<p class="workspace-error" role="alert">{workspace.error}</p>{/if}<div><button class="secondary-button" onclick={keepEditing}>Keep editing</button><button class="secondary-button" disabled={workspace.busy} onclick={cancel}>Discard and continue</button><button class="primary-button" disabled={!!error||workspace.readOnly||workspace.busy} onclick={()=>save(true)}>Save and continue</button></div></dialog>{/if}
   {#if replaceSource}<dialog class="editor-confirmation" role="alertdialog" aria-modal="true" aria-labelledby="replace-profile-title" onclose={()=>replaceSource=null} {@attach showConfirmation}><h2 id="replace-profile-title">Replace this new draft?</h2><p>Your unsaved edits will be discarded before starting from {replaceSource==='blank'?'an empty profile':'the selected copy'}.</p><div><button class="secondary-button" onclick={()=>replaceSource=null}>Keep this draft</button><button class="primary-button" onclick={()=>replace(replaceSource!)}>Replace draft</button></div></dialog>{/if}
 </section>

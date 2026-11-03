@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {observeProfileLibrary,observeProfileRuntime} from './profile-read-models/shared';
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
   import {guardUiSettings} from './ui-settings-guard';
@@ -10,25 +11,51 @@
   let{game,active=true,busy=false,client:suppliedClient}:{game:Game;active?:boolean;busy?:boolean;client?:GameProfileContextClient}=$props();
   const settingsRequest=guardUiSettings(gatewayRequest);
   const client=untrack(()=>suppliedClient)??new GameProfileContextClient(async request=>{const result=(await settingsRequest(request)).profiles;if(!result)throw new Error('Matching profiles are unavailable.');return result;});
-  let candidates=$state.raw<DeepReadonly<GameProfileCandidates>|null>(null),profileId=$state(''),loading=$state(false),pending=$state(false),error=$state(''),mounted=$state(false);
+  let candidates=$state.raw<DeepReadonly<GameProfileCandidates>|null>(null),profileId=$state(''),loading=$state(false),pending=$state(false),error=$state(''),mounted=$state(false),stale=$state(true);
+  let libraryEpoch=0,refreshQueued=false,libraryReady=false,runtimeReady=false;
+  let libraryWritable=$state(false),runtimeWritable=$state(false);
   let epoch=0,disposed=false,contextId=untrack(()=>game.id);
   const savedId=$derived(candidates?.preferredProfileId??'');
   const dirty=$derived(!!candidates&&profileId!==savedId);
-  const ready=$derived(active&&!busy&&!pending&&!!candidates);
+  const ready=$derived(active&&!busy&&!pending&&!stale&&libraryWritable&&runtimeWritable&&!!candidates);
   function syncGame(){if(game.id===contextId)return;contextId=game.id;epoch++;candidates=null;profileId='';loading=false;pending=false;error='';}
   $effect(syncGame);
   function accept(value:DeepReadonly<GameProfileCandidates>,preserveDraft=false){const edited=dirty;candidates=value;if(!preserveDraft||!edited)profileId=value.preferredProfileId??'';}
-  async function refresh(){if(disposed||!active||loading||pending)return;const requestEpoch=++epoch,gameId=game.id;loading=true;try{const value=await client.candidates(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId)return;accept(value,true);error='';}catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId)error=cause instanceof Error?cause.message:String(cause);}finally{if(!disposed&&epoch===requestEpoch)loading=false;}}
+  async function refresh(){
+    if(disposed||!active||stale)return;
+    if(loading||pending){refreshQueued=true;return;}
+    refreshQueued=false;const requestEpoch=++epoch,sourceEpoch=libraryEpoch,gameId=game.id;loading=true;
+    try{const value=await client.candidates(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId||!active||stale||sourceEpoch!==libraryEpoch)return;accept(value,true);error='';}
+    catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId&&!stale)error=cause instanceof Error?cause.message:String(cause);}
+    finally{if(!disposed&&epoch===requestEpoch){loading=false;if(refreshQueued)void refresh();}}
+  }
   async function chooseProfile(value:string){
     if(disposed||!ready||value===savedId||value&&!candidates!.profiles.some(profile=>profile.id===value))return;
     const requestEpoch=++epoch,gameId=game.id;profileId=value;loading=false;pending=true;error='';
     try{const result=value?await client.savePreference(gameId,value):await client.removePreference(gameId);if(disposed||epoch!==requestEpoch||game.id!==gameId)return;accept(result);notify(value?'Auto selection saved':'Auto selection cleared');}
     catch(cause){if(!disposed&&epoch===requestEpoch&&game.id===gameId){profileId=savedId;error=cause instanceof Error?cause.message:String(cause);}}
-    finally{if(!disposed&&epoch===requestEpoch)pending=false;}
+    finally{if(!disposed&&epoch===requestEpoch){pending=false;if(refreshQueued)void refresh();}}
   }
   function mountProfiles(){mounted=true;return()=>{mounted=false;epoch++;};}
   onMount(mountProfiles);onDestroy(()=>{disposed=true;epoch++;});
-  function watchProfiles(){syncGame();if(!mounted||!active)return;const read=()=>{if(!document.hidden)untrack(()=>{void refresh();});};read();document.addEventListener('visibilitychange',read);const timer=window.setInterval(read,2000);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',read);};}
+  function watchProfiles(){
+    syncGame();if(!mounted||!active)return;
+    return untrack(()=>{
+    libraryReady=false;runtimeReady=false;stale=true;let preferenceSignature='';
+    const changed=(message?:string)=>{
+      libraryEpoch++;stale=!libraryReady||!runtimeReady;
+      if(stale){error=message??'Waiting for current saved profiles.';return;}
+      untrack(()=>void refresh());
+    };
+    const stopLibrary=observeProfileLibrary(state=>{libraryReady=state.status==='ready';libraryWritable=state.value?.readOnly===false;changed(state.error);});
+    const stopRuntime=observeProfileRuntime(state=>{
+      const streamReady=state.status==='ready',signature=JSON.stringify(state.value?.preferredProfiles??{}),different=streamReady!==runtimeReady||signature!==preferenceSignature;
+      runtimeReady=streamReady;runtimeWritable=state.value?.readOnly===false;preferenceSignature=signature;
+      if(different)changed(state.error);
+    });
+    return()=>{libraryEpoch++;stale=true;stopLibrary();stopRuntime();};
+    });
+  }
   $effect(watchProfiles);
 </script>
 <section class="game-profile-rule panel" aria-label="Matching profiles">

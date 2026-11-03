@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from native_coverage_sources import measure_module
 
 
 def run(args, root, env=None, log=None):
@@ -48,22 +49,16 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
-    sources = [root / f'crates/profiles/src/{module}.rs' for module in ['desktop_blocks', 'debug_controller', 'lib', 'activation', 'model', 'validation', 'session', 'store', 'service', 'resources', 'resources/games', 'resources_companion', 'resources_ports', 'resources_store', 'compiler', 'compiler_models', 'compiler_capture', 'compiler_conflicts', 'compiler_hid_policy']]
+    sources = [root / f'crates/profiles/src/{module}.rs' for module in ['desktop_blocks', 'debug_controller', 'lib', 'activation', 'model', 'validation', 'session', 'store', 'service', 'service/read_model', 'virtual_slots', 'resources', 'resources/games', 'resources_companion', 'resources_ports', 'resources_store', 'compiler', 'compiler_models', 'compiler_capture', 'compiler_conflicts', 'compiler_hid_policy']]
     summary = {}
     for source in sources:
-        annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
-                         '-show-line-counts-or-regions', source], root)
-        (output / f'{source.stem}-lines.txt').write_text(annotated, encoding='utf-8')
-        lines = source.read_text(encoding='utf-8').splitlines()
-        end = next((i + 1 for i, line in enumerate(lines) if line.strip() == '#[cfg(test)]'), len(lines) + 1)
-        counts = {int(match[1]): float(match[2].rstrip("kMGT")) > 0 for line in annotated.splitlines()
-                  if (match := re.match(r'^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\|', line)) and int(match[1]) < end}
-        if not counts:
-            raise RuntimeError(f'No instrumented production lines for {source.name}.')
-        covered = sum(counts.values())
-        percent = 100 * covered / len(counts)
-        summary[source.name] = dict(covered=covered, lines=len(counts), percent=round(percent, 2))
-        print(f'{source.name}: {covered}/{len(counts)} production lines ({percent:.2f}%)', flush=True)
+        result, annotated = measure_module(source, lambda path: run([
+            llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',
+            '-show-line-counts-or-regions', path], root), root)
+        name = str(source.relative_to(root / 'crates/profiles/src'))
+        (output / (name.replace('\\', '-').replace('/', '-') + '-lines.txt')).write_text(annotated, encoding='utf-8')
+        summary[name] = result
+        print(f"{name}: {result['covered']}/{result['lines']} production lines ({result['percent']:.2f}%)", flush=True)
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     if any(item['percent'] < 71 for item in summary.values()):
         raise SystemExit('Each profiles module must meet 71% production line coverage.')

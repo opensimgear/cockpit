@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { loadModules } from './test-module-loader.mjs';
-const modules=await loadModules(['./profiles','./profile-editor','./profile-desktop']);
+const modules=await loadModules(['./profiles','./profile-editor','./profile-desktop','./profile-graph-history']);
 const {DEFAULT_PROFILE_ID,exportProfileDocument}=modules.get('./profiles');
 const {ProfileEditorStore,ProfileNavigationGuard,seedProfile,blankProfile,copyProfile,addProfileResources,profileAutoLayout,profileEditorDirty,profileCategory,PROFILE_BLOCK_HEIGHT}=modules.get('./profile-editor');
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -299,4 +299,34 @@ test('canceling a pending navigation or replacing its editor during Save cannot 
     const retainedId=h.store.state.editor.document.id;pending.resolve({...savedResult(submitted),assignments});assert.equal(await saving,false);assert.equal(navigated,0);assert.equal(h.store.state.view,'editor');assert.equal(h.store.state.editor.document.id,retainedId);
     assert.equal(guard.awaitingChoice,false);
   }
+});
+
+const settleObservation=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
+const libraryState=(h,versions={},generation='1')=>({status:'ready',generation,revision:'1',value:{profiles:[...h.docs.values()].map(summary),session:session(),diagnostics:[],readOnly:false,versions:Object.fromEntries([...h.docs.keys()].map(id=>[id,versions[id]??'1']))}});
+test('stream baselines preserve identical editor references and history, and unrelated profile versions never reload it',async()=>{
+ const h=harness();await h.store.open(DEFAULT_PROFILE_ID);const {ProfileEditorUndo}=modules.get('./profile-graph-history'),history=new ProfileEditorUndo(h.store);
+ const changed=plain(h.store.state.editor.document);changed.name='Draft name';history.edit(changed,undefined,'Name');history.step('undo');assert.equal(history.status.canRedo,true);
+ const original=h.store.state.editor,epoch=h.store.editorEpoch;h.store.observeLibrary(libraryState(h));await settleObservation();assert.equal(h.store.state.editor,original);assert.equal(h.store.editorEpoch,epoch);assert.equal(history.status.canRedo,true);
+ const reads=h.calls.filter(call=>Array.isArray(call)&&call[0]==='get').length;h.docs.set(uid(30),blankProfile(uid(30),'Another'));
+ h.store.observeLibrary(libraryState(h,{[uid(30)]:'9'}));await settleObservation();assert.equal(h.store.state.profiles.length,2);assert.equal(h.calls.filter(call=>Array.isArray(call)&&call[0]==='get').length,reads);assert.equal(h.store.state.editor,original);
+});
+test('local metadata versions and source reset refresh a clean document once even at the same portable revision',async()=>{
+ const h=harness();await h.store.open(DEFAULT_PROFILE_ID);h.store.observeLibrary(libraryState(h));await settleObservation();
+ let pins=[{resourceId:'resource-1',sourceId:'native:second-client',ports:[]}];h.api.getAssignments=async id=>{h.calls.push(['pins',id]);return{document:plain(h.docs.get(id)),assignments:plain(pins)};};
+ h.store.observeLibrary(libraryState(h,{[DEFAULT_PROFILE_ID]:'2'}));await settleObservation();assert.equal(h.store.state.editor.assignments[0].sourceId,'native:second-client');const first=h.store.state.editor;
+ h.store.observeLibrary(libraryState(h,{[DEFAULT_PROFILE_ID]:'2'}));await settleObservation();assert.equal(h.calls.filter(call=>Array.isArray(call)&&call[0]==='pins').length,1);
+ pins=[{...pins[0],sourceId:'native:reset'}];h.store.observeLibrary({status:'lost'});h.store.observeLibrary(libraryState(h,{[DEFAULT_PROFILE_ID]:'2'},'2'));await settleObservation();assert.equal(h.store.state.editor.assignments[0].sourceId,'native:reset');assert.notEqual(h.store.state.editor,first);
+});
+test('stream updates retain dirty drafts and fence old pinned reads after save, editing, replacement and loss',async()=>{
+ const h=harness();await h.store.open(DEFAULT_PROFILE_ID);const old=deferred();h.api.getAssignments=()=>old.promise;
+ h.store.observeLibrary(libraryState(h));const changed=plain(h.store.state.editor.document);changed.name='Keep draft';h.store.update(changed);const draft=h.store.state.editor;
+ h.store.observeLibrary(libraryState(h,{[DEFAULT_PROFILE_ID]:'2'}));old.resolve({document:plain(h.docs.get(DEFAULT_PROFILE_ID)),assignments:[]});await settleObservation();assert.equal(h.store.state.editor,draft);assert.equal(h.store.state.profiles[0].name,'Default');
+ const notifications=[];h.store.subscribeSaveNotifications(n=>notifications.push(n));await h.store.save();await settleObservation();const saved=h.store.state.editor;assert.equal(saved.baseRevision,2);assert.equal(notifications.length,1);
+ h.store.observeLibrary(libraryState(h));await settleObservation();assert.equal(h.store.state.editor,saved);assert.equal(notifications.length,1);
+ h.store.observeLibrary({...libraryState(h),value:{...libraryState(h).value,session:{...session(),state:'stopped'}}});h.store.observeRuntime({status:'ready',value:{session:{...session(),state:'running'}}});
+ h.store.observeLibrary(libraryState(h));assert.equal(h.store.state.session.state,'running');
+});
+
+test('opening under an unchanged library baseline uses its explicit pinned read once',async()=>{
+ const h=harness();h.store.observeLibrary(libraryState(h));await h.store.open(DEFAULT_PROFILE_ID);await settleObservation();assert.equal(h.calls.filter(call=>Array.isArray(call)&&call[0]==='get').length,1);
 });

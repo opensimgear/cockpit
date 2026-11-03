@@ -212,6 +212,7 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 mod storage_controls;
 pub struct GatewayManager {
     pub(crate) observations: crate::observations::Runtime,
+    profile_read_models: crate::profile_read_models::Runtime,
     activity: crate::activity::Runtime,
     storage:crate::persistence::backup::Runtime,
     widget_library: crate::widget_library::Runtime,
@@ -404,8 +405,11 @@ impl GatewayManager {
             let _ = profile_wake.thread.set(worker.thread().clone());
             worker
         });
+        let observations = crate::observations::Runtime::new();
+        let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone());
         let manager = Self {
-            observations: crate::observations::Runtime::new(),
+            observations,
+            profile_read_models,
             activity,
             #[cfg(test)]
             test_namespace:None,
@@ -447,6 +451,18 @@ impl GatewayManager {
             companion_host,
         };
         manager.restore_automatic_selection();
+        // Recover a durable saved-panel head whose previous process stopped
+        // before updating profile references. This is owner bootstrap, never
+        // reader-triggered inventory or periodic reconciliation.
+        if let Err(error) = manager.refresh_saved_panel_references() {
+            eprintln!("Saved panel reference bootstrap failed: {error}");
+        }
+        manager.profiles.lock().unwrap_or_else(|p| p.into_inner()).observe_read_model(manager.profile_read_models.library_observer());
+        manager.profile_session.lock().unwrap_or_else(|p| p.into_inner()).observe_status(manager.profile_read_models.native_observer());
+        manager.profile_automatic.observe_read_model(manager.profile_read_models.automatic_observer());
+        if let Err(error) = manager.profile_read_models.start() {
+            eprintln!("Profile observation topics unavailable: {error}");
+        }
         manager.ui_preferences.bind_observations(&manager.observations);
         if native { manager.start_activity(); }
         manager
@@ -768,6 +784,18 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
+        if command == "profile_read_model_page" {
+            if self.closed.load(Ordering::Acquire) || request.to_string().len() > 512
+                || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
+                return self.error("Invalid read-model page client or closed Cockpit.", None);
+            }
+            if let Err(error) = self.check_mcp_authorization(native_authorization.as_ref()) { return self.error(&error, None); }
+            request.as_object_mut().expect("page request object").remove("clientId");
+            return match self.profile_read_models.page(&request) {
+                Ok(page) => json!({"ok":true,"state":{"profileReadModelPage":page}}),
+                Err(error) => json!({"ok":false,"error":error}),
+            };
+        }
         if matches!(command,"activity_query"|"activity_clear"|"activity_settings_get"|"activity_settings_save") { return self.activity_request(&request,native_authorization.as_ref()); }
         if matches!(command,"storage_status"|"storage_create"|"storage_remove"|"storage_restore"|"storage_restart"){return self.storage_request(&request,native_authorization.as_ref());}
         if matches!(command,"ui_preferences_get"|"ui_preferences_save") {
@@ -1441,6 +1469,7 @@ impl GatewayManager {
         self.decorate(response, Some(&id))
     }
     pub fn shutdown(&self) {
+        self.profile_read_models.shutdown();
         self.observations.close();
         self.closed.store(true, Ordering::Release);
         self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
@@ -2768,3 +2797,7 @@ mod tests {
 #[cfg(test)]
 #[path="profile_debug_controller_gateway_tests.rs"]
 mod debug_controller_tests;
+
+#[cfg(test)]
+#[path="profile_read_model_gateway_tests.rs"]
+mod read_model_tests;

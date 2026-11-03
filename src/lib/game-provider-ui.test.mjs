@@ -1,3 +1,4 @@
+import {readModelFixture} from './profile-read-models/test-fixture.mjs';
 import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -11,6 +12,7 @@ import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 const modules = await loadModules(['./game-discovery','./ui-settings-guard','./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-background-crop','./game-provider-settings','./game-settings-navigation']);
 modules.get('./games').updateGameCatalogue(discoveredGames);
+modules.set('./profile-read-models/shared',readModelFixture());
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
 async function component(name, hook) {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { observeProfileRuntime } from './profile-read-models/shared';
   import { onMount, untrack } from 'svelte';
   import { ProfileRuntimeController, type RuntimeControlState, type RuntimeEditorTarget } from './profile-runtime-controller';
   import type { ProfileGameId } from './profile-runtime';
@@ -22,7 +23,7 @@
   const selectedGame = $derived(choices.some(game=>game.id===gameId)?gameId as ProfileGameId:undefined);
   const invalidGame = $derived(gameId!==''&&!selectedGame);
   const saved = $derived(!!editor&&!editor.readOnly&&!editor.dirty&&editor.baseRevision!==null&&editor.baseRevision===editor.revision);
-  const applyDisabled = $derived(!saved||invalidGame||!native||view.stale||!!view.pending||!!view.activationConfirmation||native.state==='recovery-needed'||native.state==='transitioning'||native.state==='awaiting-game');
+  const applyDisabled = $derived(!saved||invalidGame||!native||view.stale||view.readOnly||!!view.pending||!!view.activationConfirmation||native.state==='recovery-needed'||native.state==='transitioning'||native.state==='awaiting-game');
   const appliedName = $derived(profiles.find(profile=>profile.id===native?.appliedSnapshot?.profileId)?.name??native?.appliedSnapshot?.profileId??'None');
   const activeEditor = $derived(!!editor&&native?.owner?.profileId===editor.id);
   const savedChangesPending = $derived(activeEditor&&native?.appliedSnapshot?.revision!==editor?.baseRevision);
@@ -57,12 +58,7 @@
     const refresh=()=>{elapsed=Math.floor((Date.now()-started)/1000);void runtime.refreshProgress();};
     refresh();const timer=window.setInterval(refresh,400);return()=>window.clearInterval(timer);
   });
-  function watchStatus(){
-    if(!mounted||!active)return;
-    const refresh=()=>{if(!document.hidden)void runtime.refresh();};
-    refresh();const timer=window.setInterval(refresh,1500);document.addEventListener('visibilitychange',refresh);
-    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};
-  }
+  function watchStatus(){ if(!mounted||!active)return; return observeProfileRuntime(state=>runtime.observe(state)); }
   $effect(watchStatus);
   async function apply(){if(!applyDisabled&&editor)await runtime.apply(editor,selectedGame);}
   async function stop(){await runtime.stop();}
@@ -78,9 +74,9 @@
     {#if native.degradation.length}<p class="runtime-notice">Some profile resources are unavailable. Open Debug for details.</p>{/if}
   {/if}
   {#if runtimeErrors.length||recoveryNeeded}<div class="runtime-error runtime-error-banner" role="alert"><div class="runtime-error-copy">{#each runtimeErrors as message (message)}<p>{message}</p>{:else}<p>Recover this profile before activating it again.</p>{/each}</div>{#if recoveryNeeded}<button class="secondary-button recover-runtime" disabled={view.pending==='recover'} onclick={recover}>Recover</button>{/if}</div>{/if}
-  {#if !activating&&(!compact||native?.state==='transitioning')}<div class="runtime-actions">
+  {#if !activating&&(!compact||view.stale||!native||native?.state==='transitioning')}<div class="runtime-actions">
     {#if editor&&!activeEditor}<label>Game context<select aria-label="Game context" bind:value={gameId} disabled={!!view.pending}><option value="">Hardware only</option>{#each choices as game (game.id)}<option value={game.id}>{game.name}</option>{/each}</select></label><button class="primary-button" disabled={applyDisabled} onclick={apply}>Activate profile</button>{:else if savedChangesPending}<button class="primary-button" disabled={applyDisabled} onclick={()=>editor&&runtime.apply(editor,native?.owner?.gameId??undefined)}>Retry saved changes</button>{/if}
-    {#if native?.owner||view.pending==='apply'||native?.state==='transitioning'}<button class="secondary-button stop-runtime" aria-label="Deactivate current profile" disabled={view.pending==='stop'} onclick={stop}>Deactivate</button>{/if}
+    {#if view.stale||!native||native?.owner||view.pending==='apply'||native?.state==='transitioning'}<button class="secondary-button stop-runtime" aria-label="Deactivate current profile" disabled={view.pending==='stop'} onclick={stop}>Deactivate</button>{/if}
   </div>{/if}
   {#if !compact}{#if activeEditor}<p class="runtime-help">Saving this profile updates its active configuration.</p>{:else if editor&&!saved}<p class="runtime-help">Save your changes before activating this profile.</p>{:else if editor}<p class="runtime-help">Activate this profile when ready. Saving it keeps the current active profile.</p>{:else}<p class="runtime-help">Activate a saved profile from its tile for hardware only, or open it to choose a game context.</p>{/if}{/if}
   {#if invalidGame}<p class="runtime-notice">Choose a game context eligible for this profile, or explicitly choose Hardware only.</p>{/if}

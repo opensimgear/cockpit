@@ -38,6 +38,11 @@ impl GatewayManager {
         let result=(||->Result<bool,String>{
             let saved:crate::companion_panels::SavedPanel=serde_json::from_value(state["panelSaved"].clone())
                 .map_err(|_|"The committed panel identity is missing or invalid.".to_owned())?;
+            // The saved reference is durable authoring state even when a newer
+            // Stop cancels applying it. Publish that commit independently of
+            // activation admission; passive readers never reconcile storage.
+            self.profiles.lock().unwrap_or_else(|p|p.into_inner())
+                .refresh_companion_panel(&saved.panel_id,&saved.publication_hash,&saved.previous_hashes.iter().cloned().collect())?;
             let (owner,mut candidate,apply_epoch,_pending,_policy)={
                 let _admission=self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
                 if self.closed.load(Ordering::Acquire)||arrival!=Some(self.profile_admission_epoch.load(Ordering::Acquire)) {
@@ -45,7 +50,6 @@ impl GatewayManager {
                 }
                 let status=self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
                 let mut profiles=self.profiles.lock().unwrap_or_else(|p|p.into_inner());
-                profiles.refresh_companion_panel(&saved.panel_id,&saved.publication_hash,&saved.previous_hashes.iter().cloned().collect())?;
                 let owner=status.owner.filter(|_|matches!(status.state,State::Running|State::Degraded));
                 let candidate=owner.as_ref().map(|owner|{
                     let (document, assignments, read_only, virtual_slots)=profiles.compile_virtual_source(&owner.profile_id)?;
