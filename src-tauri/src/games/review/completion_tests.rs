@@ -41,6 +41,18 @@ fn state() -> Review {
 }
 
 #[test]
+fn review_clones_share_prepared_artwork_and_serialize_the_legacy_string() {
+    let mut review = state();
+    let image: Arc<str> = "data:image/jpeg;base64,prepared".into();
+    let mut prepared = entry("one");
+    prepared.image = Some(image.clone());
+    review.entries.push(prepared);
+    let cloned = review.clone();
+    assert!(Arc::ptr_eq(cloned.entries[0].image.as_ref().unwrap(), &image));
+    assert_eq!(serde_json::to_value(&cloned).unwrap()["entries"][0]["image"], image.as_ref());
+}
+
+#[test]
 fn rows_are_visible_and_status_reads_stay_responsive_while_artwork_is_blocked() {
     let state = Arc::new(Mutex::new(state()));
     assert!(publish_entries(
@@ -182,7 +194,7 @@ fn artwork_budget_does_not_overflow_or_hide_the_discovered_rows() {
             .entries
             .iter()
             .filter_map(|entry| entry.image.as_ref())
-            .map(String::len)
+            .map(|image| image.len())
             .sum::<usize>(),
         ARTWORK_BUDGET
     );

@@ -164,7 +164,7 @@ impl GameIntegrationSetup {
         validate_connection(id, &connection)?;
         self.inner.cancel.store(false, Ordering::Release);
         self.inner.busy.store(true, Ordering::Release);
-        self.inner.publish_start(game, json!({"state":"setting-up","message":"Preparing DCS-BIOS setup.","userFolder":target,"version":crate::dcs_setup::VERSION,"progress":"Preparing"}));
+        let run = self.inner.publish_start(game, json!({"state":"setting-up","message":"Preparing DCS-BIOS setup.","userFolder":target,"version":crate::dcs_setup::VERSION,"progress":"Preparing"}));
         let inner = self.inner.clone();
         let game = game.clone();
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -203,8 +203,10 @@ impl GameIntegrationSetup {
                 status["state"] = json!("needs-attention");
                 status["message"] = json!(error);
             }
-            inner.publish_setup(&game, &record, status);
+            inner.publish_setup(&game, &record, status.clone());
+            inner.finish_job(&run, &status);
             inner.busy.store(false, Ordering::Release);
+            inner.changed();
         }));
         Ok(())
     }

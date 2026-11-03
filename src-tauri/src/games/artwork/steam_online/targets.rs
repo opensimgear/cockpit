@@ -17,6 +17,9 @@ fn path(value: &Value) -> String {
         .map(crate::game_discovery::normalized_path)
         .unwrap_or_default()
 }
+fn resolved(value: &Value) -> bool {
+    value.is_string() || value["$gamePage"]["kind"] == "asset"
+}
 
 /// Only exact installation source IDs may request artwork; title names never identify a store app.
 pub(super) fn collect(state: &Value) -> Vec<Target> {
@@ -41,7 +44,7 @@ pub(super) fn collect(state: &Value) -> Vec<Target> {
         .flatten()
         .enumerate()
     {
-        if game["background"]["image"].is_string() || game["defaultBackground"]["image"].is_string()
+        if resolved(&game["background"]["image"]) || resolved(&game["defaultBackground"]["image"])
         {
             if let Some(title) = game["id"].as_str() {
                 existing_art.insert(title.to_owned());
@@ -62,8 +65,8 @@ pub(super) fn collect(state: &Value) -> Vec<Target> {
             if let Some(title) = game["id"].as_str() {
                 titles.insert(title.to_owned(), id);
             }
-            if !game["background"]["image"].is_string()
-                && !game["defaultBackground"]["image"].is_string()
+            if !resolved(&game["background"]["image"])
+                && !resolved(&game["defaultBackground"]["image"])
             {
                 targets.push(Target {
                     app_id: id,
@@ -79,7 +82,7 @@ pub(super) fn collect(state: &Value) -> Vec<Target> {
         .flatten()
         .enumerate()
     {
-        if entry["image"].is_string()
+        if resolved(&entry["image"])
             || entry["gameId"]
                 .as_str()
                 .is_some_and(|title| existing_art.contains(title))

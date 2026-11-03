@@ -7,6 +7,7 @@ impl crate::gateways::GatewayManager {
         if let Some(id) = topic.strip_prefix("controllers.input.") {
             self.controllers.observe(&self.observations.broker(), id, action)
         } else if topic.starts_with("profiles.samples.") { self.with_profile_samples(topic, action) }
+        else if let Some(id)=topic.strip_prefix("games.detail."){self.with_game_detail(id,action)}
         else { action() }
     }
 

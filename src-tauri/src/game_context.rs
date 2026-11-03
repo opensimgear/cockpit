@@ -63,6 +63,7 @@ struct Record {
 }
 #[derive(Default)]
 pub(crate) struct Broker {
+    changes: Option<std::sync::Arc<crate::game_read_models::signals::Signal>>,
     owner: Option<ProfileOwner>,
     games: BTreeMap<String, Record>,
     observation_epoch: u64,
@@ -81,6 +82,8 @@ fn revision(id: &str) -> bool {
     })
 }
 impl Broker {
+    pub(crate) fn watch_changes(&mut self,changes:std::sync::Arc<crate::game_read_models::signals::Signal>){self.changes=Some(changes);}
+    fn changed(&self){if let Some(changes)=&self.changes {changes.mark(crate::game_read_models::signals::Domain::Runtime);}}
     /// Reserve before observing settings, catalogue or processes. Slow native
     /// I/O must not publish an older snapshot over a newer completed capture.
     pub(crate) fn begin_observation(&mut self) -> Result<u64, String> {
@@ -98,6 +101,7 @@ impl Broker {
             record.observation.catalogue_revision = None;
             record.observation.error = Some("Native game observation counter exhausted.".into());
         }
+        self.changed();
         Err("Native game observation counter exhausted.".into())
     }
     /// Called only by the native applied-profile coordinator, never from IPC.
@@ -119,6 +123,7 @@ impl Broker {
             for (id, record) in &mut self.games {
                 record.token = Self::mint(self.owner.as_ref(), id, &record.observation);
             }
+            self.changed();
         }
         Ok(())
     }
@@ -164,7 +169,7 @@ impl Broker {
                 record.observation.catalogue_revision = None;
                 record.observation.error=Some("Native game observation could not be validated. Reacquire verified identity and provider revisions.".into());
             }
-            return Err("Invalid verified game observation.".into());
+            self.changed();return Err("Invalid verified game observation.".into());
         }
         if self
             .games
@@ -199,6 +204,7 @@ impl Broker {
                 preparation,
             },
         );
+        self.changed();
         Ok(())
     }
     /// Withdrawing a binding also fences captures started before its removal.
@@ -217,6 +223,7 @@ impl Broker {
                 self.observation_commits.insert(id.clone(), epoch);
                 self.games.remove(&id);
             }
+            self.changed();
         }
     }
     pub(crate) fn preparation(&self, id: &str) -> Result<Option<GamePreparation>, String> {
@@ -324,6 +331,18 @@ impl Broker {
             ("ready","The applied profile owns the matching verified game process and current provider revisions.")
         };
         json!({"status":status,"message":message,"processVerified":observation.process.is_some(),"contextSession":record.token.as_ref().map(|token|&token.session),"providerSetupRevision":observation.provider_setup_revision,"catalogueRevision":observation.catalogue_revision})
+    }
+    pub(crate) fn view_for(&self,game:&Value)->Value {
+        let id=game["id"].as_str().unwrap_or("");let mut view=self.view(id);
+        let matches=self.games.get(id).is_none_or(|record|
+            record.observation.provider_setup_revision==game["integrationSetup"]["providerSetupRevision"].as_str().unwrap_or("")
+            &&record.observation.process.as_ref().is_none_or(|process|
+                game["processExecutables"].as_array().is_some_and(|paths|paths.iter().filter_map(Value::as_str)
+                    .any(|path|crate::game_discovery::normalized_path(path)==crate::game_discovery::normalized_path(&process.path)))
+                ||game["executable"].as_str().is_some_and(|path|crate::game_discovery::normalized_path(path)==crate::game_discovery::normalized_path(&process.path))));
+        if !matches {view=json!({"status":"waiting-game","message":"Waiting for the current installation and provider revisions.",
+            "processVerified":false,"contextSession":null,"providerSetupRevision":game["integrationSetup"]["providerSetupRevision"],"catalogueRevision":null});}
+        view
     }
 }
 

@@ -47,6 +47,7 @@ struct Settings {
     added_game_id: Option<String>,
 }
 struct Inner {
+    changes: Arc<crate::game_read_models::signals::Signal>,
     platform: Arc<dyn Platform>,
     installations: crate::game_installations::Store,
     setup: crate::game_integration_setup::GameIntegrationSetup,
@@ -89,6 +90,7 @@ mod metadata_api;
 mod metadata_read;
 mod process_monitor;
 mod prepared_sources;
+mod read_model;
 #[path = "games/artwork_options.rs"]
 mod artwork_options;
 #[path="activity/games.rs"]
@@ -119,9 +121,12 @@ impl GamesRuntime {
     }
     pub(crate) fn new(panel:CleanupIo,paths:Paths,platform:Arc<dyn Platform>)->Self {Self::construct(panel,paths,platform,true)}
     fn construct(_panel: CleanupIo, paths: Paths, platform: Arc<dyn Platform>,auto_discovery:bool) -> Self {
-        let vehicles = crate::game_vehicles::Tracker::new(
+        let changes=Arc::new(crate::game_read_models::signals::Signal::default());
+        let mut vehicles = crate::game_vehicles::Tracker::new(
             paths.installations.with_file_name("game-vehicles-v1.json"),
         );
+        vehicles.watch_changes(changes.clone());
+        crate::xplane::permissions::watch_changes(changes.clone());
         let installations = crate::game_installations::Store::new(paths.installations);
         let (saved, metadata_error) = match installations.load() {
             Ok(saved) => (saved.unwrap_or_default(), None),
@@ -136,8 +141,13 @@ impl GamesRuntime {
                 Err(error) => (None, Some(error)),
             }
         } else { (None, None) };
+        if let Some(owner)=&artwork_owner {owner.watch_changes(changes.clone());}
+        let setup=crate::game_integration_setup::GameIntegrationSetup::new(paths.provider_setup,platform.integration_setup_supported());
+        setup.watch_changes(changes.clone());
+        let activation=crate::game_activation::Observer::default();activation.watch_changes(changes.clone());
         let runtime = Self {
             inner: Arc::new(Inner {
+                changes:changes.clone(),
                 online_artwork: auto_discovery,
                 artwork_owner, artwork_error: Mutex::new(artwork_error),
                 prepared_sources: Default::default(),
@@ -145,17 +155,14 @@ impl GamesRuntime {
                 artwork_prepare_hook: Mutex::new(None),
                 #[cfg(test)]
                 metadata_commit_pause: Mutex::new(None),
-                setup: crate::game_integration_setup::GameIntegrationSetup::new(
-                    paths.provider_setup,
-                    platform.integration_setup_supported(),
-                ),
+                setup,
                 platform,
                 installations,
-                contexts: Mutex::new(Default::default()),
+                contexts: Mutex::new({let mut value=crate::game_context::Broker::default();value.watch_changes(changes.clone());value}),
                 vehicles: Mutex::new(vehicles),
                 dcs_vehicle_catalogues: Mutex::new(Default::default()),
                 context_setup_check: Mutex::new(None),
-                activation: Default::default(),
+                activation,
                 settings: Mutex::new(Settings {
                     saved,
                     metadata_error,
@@ -163,7 +170,7 @@ impl GamesRuntime {
                     error,
                     added_game_id: None,
                 }),
-                discovery:Mutex::new(Default::default()),
+                discovery:Mutex::new(discovery_review::Review::with_changes(changes)),
                 closed: AtomicBool::new(false),
             }),
             admission: Mutex::new(()),
@@ -200,38 +207,47 @@ impl GamesRuntime {
         Ok(self.decorate_resource_catalogue(catalogue))
     }
     fn decorate_resource_catalogue(&self, mut catalogue: Vec<Value>) -> Vec<Value> {
+        self.decorate_resource_fields(&mut catalogue,false);
+        self.inner.prepared_sources.snapshot().decorate(&mut catalogue);
+        catalogue
+    }
+    fn decorate_resource_fields(&self, catalogue:&mut [Value],summary:bool) {
+        if summary {self.inner.setup.decorate_summary(catalogue);} else {self.inner.setup.decorate(catalogue);}
         for game in catalogue.iter_mut().filter(|game| game["provider"].is_string()) {
-            self.inner.setup.decorate(std::slice::from_mut(game));
             if let Some(integration) = crate::game_discovery::integration_binding(game)
                 .filter(|integration| integration.starts_with("x-plane-")) {
                 game["processMonitor"] = crate::xplane::permissions::status(integration);
             }
         }
-        self.decorate_game_contexts(&mut catalogue);
+        self.decorate_game_contexts(catalogue);
         {
             let vehicles = self
                 .inner
                 .vehicles
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
-            for game in &mut catalogue {
+            for game in catalogue.iter_mut() {
                 if !game["provider"].is_string() {
                     continue;
                 }
-                vehicles.decorate(game);
+                if summary {vehicles.decorate_summary(game);} else {vehicles.decorate(game);}
             }
         }
         for game in catalogue.iter_mut().filter(|game| game["provider"].is_string()) {
             self.inner.setup.decorate_installed_cars(game);
+            if summary {
+                if let Some(values)=game["vehicleSupport"].get("vehicles").and_then(Value::as_array) {
+                    let count=values.len();game["vehicleSupport"]["vehicleCount"]=json!(count);
+                    game["vehicleSupport"].as_object_mut().map(|object|object.remove("vehicles"));
+                }
+            }
         }
-        for game in &mut catalogue {
+        for game in catalogue.iter_mut() {
             game["profileContext"] = self
                 .inner
                 .activation
-                .view(game["id"].as_str().unwrap_or(""));
+                .view_for(game);
         }
-        self.inner.prepared_sources.snapshot().decorate(&mut catalogue);
-        catalogue
     }
     pub(crate) fn current_vehicle_id(&self, game_id: &str) -> Option<String> {
         self.inner
@@ -378,12 +394,14 @@ impl GamesRuntime {
         settings.saved.revision+=1;self.inner.installations.save(&settings.saved).unwrap();
         let catalogue=crate::game_discovery::merged_catalogue(self.inner.platform.as_ref(),&settings.saved);
         for game in catalogue {settings.catalogue.retain(|old|old["id"]!=game["id"]);settings.catalogue.push(game);}
-        settings.added_game_id=Some(id.clone());id
+        settings.added_game_id=Some(id.clone());drop(settings);
+        self.inner.changes.mark(crate::game_read_models::signals::Domain::Library);id
     }
     #[cfg(test)]
     pub(crate) fn seed_test_catalogue(&self,catalogue:Vec<Value>) {
         let mut settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());settings.catalogue=catalogue;
         drop(settings);
+        self.inner.changes.mark(crate::game_read_models::signals::Domain::Library);
         self.inner.prepare_online_artwork();
     }
     pub(crate) fn shutdown(&self) {

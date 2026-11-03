@@ -5,7 +5,8 @@ import type { UsbModuleSummary } from './module-usb';
 import { ProfileTopologyClient } from './profile-activity';
 import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory.ts';
 import { canChangeController } from './controller-lifecycle.ts';
-import { gameIntegrationLabel, type GameId } from './games.ts';
+import { gameIntegrationLabel, type Game, type GameId } from './games.ts';
+import { observeGamesState, type GameModelState, type GamesSummaryState } from './game-read-models/shared.ts';
 import { SystemInventoryRegistry, type InventoryStorage, type SystemObservation, type SystemComponent, type SystemSnapshot, type SystemTarget } from './system-inventory.ts';
 
 export type NativeSystemInventory = {
@@ -107,9 +108,12 @@ export class SystemInventoryController {
   private resources: ResourceSummary[] = [];
   private associations: NonNullable<NativeSystemInventory['controllerAssociations']> = [];
   private onChange: (snapshot: SystemSnapshot) => void;
+  private gamesState: GameModelState<GamesSummaryState> = { status: 'connecting' };
+  private stopGamesState: () => void;
   constructor(options: { request: Send; gateways: () => readonly GatewayEntry[]; gatewayError?: () => string; storage?: InventoryStorage; onChange?: (snapshot: SystemSnapshot) => void }) {
     this.send = options.request; this.gateways = options.gateways; this.registry = new SystemInventoryRegistry(options.storage); this.onChange = options.onChange ?? (() => {});
     this.gatewayError = options.gatewayError ?? (() => '');
+    this.stopGamesState = observeGamesState(state => { this.gamesState = state; });
   }
   get snapshot() { return this.registry.snapshot; }
   refresh(): Promise<SystemSnapshot> {
@@ -297,8 +301,8 @@ export class SystemInventoryController {
     return { provider: 'companions', observations, diagnostics: state.listener?.lastError ? [state.listener.lastError] : [] };
   }
   private async integrations(now: number): Promise<Capture> {
-    const state = (await this.send({ command: 'game_get_state' })).games;
-    if (!state?.catalogue) throw Error('Integration inventory unavailable.');
+    const state = this.gamesState;
+    if (state.status !== 'ready' || !state.value?.catalogue) throw Error(state.error || 'Game integration inventory is loading.');
     const runtime = (await this.send({ command: 'profile_status' })).profiles?.profileSession;
     let activeGame: string | undefined;
     if (runtime?.owner?.gameId && runtime.appliedSnapshot && ['running', 'degraded', 'awaiting-game'].includes(runtime.state)) {
@@ -306,15 +310,15 @@ export class SystemInventoryController {
       const gameNodes = new Set(topology.nodes.filter(node => node.kind === 'game').map(node => node.id));
       if (topology.edges.some(edge => gameNodes.has(edge.from.nodeId) || gameNodes.has(edge.to.nodeId))) activeGame = runtime.owner.gameId;
     }
-    return { provider: 'integrations', observations: state.catalogue.filter(game => !!game.provider).map(game => {
+    return { provider: 'integrations', observations: state.value.catalogue.filter(game => !!game.provider).map(game => {
       const id = `integration:${game.id}`, setup = game.integrationSetup;
       const receiving = setup?.live === 'receiving';
       const endpoints = Object.entries(setup?.connection ?? {}).filter(([key, value]) => /host|address|port|endpoint|source/i.test(key) && ['string', 'number'].includes(typeof value)).map(([key, value]) => `${key}: ${value}`).join(', ');
       return observation(id, `${game.name} · ${game.provider}`, 'integration', 'integrations', now, { role: game.provider ?? undefined, presence: receiving ? 'connected' : !game.installed || setup?.state === 'unsupported-platform' ? 'unavailable' : 'unknown',
-        status: gameIntegrationLabel(game), diagnostics: [setup?.message, setup?.liveMessage].filter((x): x is string => !!x), evidence: [`integration:${game.id}`, ...(activeGame === game.id ? ['active-bindings'] : [])], targets: [target('integration', game.id)],
+        status: gameIntegrationLabel(game as unknown as Game), diagnostics: [setup?.message, setup?.liveMessage].filter((x): x is string => !!x), evidence: [`integration:${game.id}`, ...(activeGame === game.id ? ['active-bindings'] : [])], targets: [target('integration', game.id)],
         connections: [{ ...link(id, 'host', 'software', receiving, endpoints || undefined), observed: receiving || this.snapshot.components.find(previous => previous.id === id)?.connections.some(connection => connection.observed !== false && connection.endpoint === (endpoints || undefined)) || false }],
         forget: { allowed: false, reason: 'Manage this telemetry integration in game details.', effect: '' } });
-    }), diagnostics: state.error ? [state.error] : [] };
+    }), diagnostics: state.value.error ? [state.value.error] : [] };
   }
   private async native(now: number): Promise<Capture> {
     const state = (await this.send({ command: 'system_inventory', offset: 0, limit: 32 })).systemInventory;
@@ -399,6 +403,6 @@ export class SystemInventoryController {
     else if (t?.kind === 'companion') { await this.send({ command: 'companion_revoke', companion: { companionId: t.id } }); activityRecorded = true; }
     await this.registry.forget(id, { activityRecorded }); this.onChange(this.snapshot);
   }
-  dispose() { this.disposed = true; this.epoch++; }
+  dispose() { this.disposed = true; this.epoch++; this.stopGamesState(); }
 }
 export const integrationGameId = (component: SystemComponent): GameId | undefined => component.targets.find(t => t.kind === 'integration')?.id as GameId | undefined;

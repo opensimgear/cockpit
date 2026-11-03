@@ -16,6 +16,10 @@ pub(super) struct SetupViews {
     sequence: u64,
 }
 
+#[cfg(test)]
+#[path = "setup_stream_tests.rs"]
+mod stream_tests;
+
 fn source_scope(game: &Value, id: &str) -> String {
     provider_settings::digest(&json!([
         id, game["provider"], game["integrationCompatible"],
@@ -51,6 +55,44 @@ impl SetupViews {
 }
 
 impl Inner {
+    pub(super) fn changed(&self) {
+        if let Some(changes) = self.changes.get() { changes.mark(crate::game_read_models::signals::Domain::Setup); }
+    }
+    pub(super) fn job_progress(&self, phase: &str, message: &str, percent: Option<u8>) {
+        let job = self.job.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        if let (Some(changes), Some((key, run))) = (self.changes.get(), job) {
+            changes.job(crate::game_read_models::signals::Domain::Setup, &key, &run, phase, message, percent, false);
+        }
+    }
+    pub(super) fn finish_job(&self, run: &str, status: &Value) {
+        let mut current = self.job.lock().unwrap_or_else(|p| p.into_inner());
+        let Some((key, active)) = current.as_ref().filter(|(_, active)| active == run) else { return; };
+        let phase = if self.cancel.load(Ordering::Acquire) { "cancelled" }
+            else if status["state"] == "needs-attention" { "failed" } else { "complete" };
+        if let Some(changes) = self.changes.get() {
+            changes.job(crate::game_read_models::signals::Domain::Setup, key, active, phase,
+                status["message"].as_str().unwrap_or("Integration setup finished"), None, true);
+        }
+        *current = None;
+    }
+    pub(super) fn cached_setup_summary(&self, game: &Value, id: &str) -> Value {
+        let key = source_scope(game, id);
+        let (record, revision) = self.provider_snapshot(id);
+        let status = {
+            let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
+            views.entries.get(&key).filter(|(known, _, _, _)| known.as_ref() == &record).map(|(_, status, _, _)| Arc::clone(status))
+        };
+        let Some(status) = status else { return self.cached_setup(game, id); };
+        let mut summary = serde_json::Map::new();
+        for field in ["state", "message", "installed", "removable", "verified", "recoveryNeeded", "repairable", "settingsError", "connection", "version", "aircraftModule", "userFolder", "progress", "percent", "removalMessage"] {
+            if let Some(value) = status.get(field) { summary.insert(field.into(), value.clone()); }
+        }
+        let mut status = Value::Object(summary);
+        status["live"] = json!("waiting");
+        status["liveMessage"] = json!("Setup is configuration metadata. Inspect the applied profile for actual source delivery.");
+        self.decorate_provider_snapshot(id, &record, &revision, &mut status);
+        status
+    }
     pub(super) fn retain_setup_scopes(&self, catalogue: &[Value]) {
         let scopes = catalogue.iter().filter_map(|game| {
             crate::game_discovery::integration_binding(game).map(|id| source_scope(game, id))
@@ -183,6 +225,16 @@ impl Inner {
         if let Some(preview) = preview {
             status["checkPreview"] = preview.as_ref().clone();
         }
+        // Repeated passive inspections keep the same immutable view and avoid
+        // encoding a large identical catalogue every source polling interval.
+        {
+            let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner());
+            if &saved["games"][id] != record { return; }
+            let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
+            let states = self.states.lock().unwrap_or_else(|p| p.into_inner());
+            if views.entries.get(&key).is_some_and(|(known, _, _, _)| known.as_ref() == record)
+                && states.get(id).is_some_and(|old| old.as_ref() == &status) { return; }
+        }
         let raw_status = Arc::new(status.clone());
         let source_state = match status["state"].as_str() {
             Some(state @ ("ready" | "setting-up" | "needs-attention" | "setup-required"
@@ -194,6 +246,16 @@ impl Inner {
         if let Some(object) = status.as_object_mut() {
             object.remove("channels");
             object.remove("optionalMaxRpm");
+        }
+        {
+            let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner());
+            if &saved["games"][id] != record { return; }
+            let views = self.views.lock().unwrap_or_else(|p| p.into_inner());
+            if views.entries.get(&key).is_some_and(|(known, previous, _, _)| known.as_ref() == record && previous.as_ref() == &status)
+                && views.source.get(&key).is_some_and(|(known, previous)| known.as_ref() == record && previous == &source_status) {
+                self.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id.into(), raw_status);
+                return;
+            }
         }
         // Normal configured records are bounded by MAX_SETTINGS (32 KiB),
         // plus small fixed provider diagnostics/exports. Candidate discovery
@@ -223,16 +285,25 @@ impl Inner {
         }
         views.insert(key, record_copy, captured, bytes);
         self.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id.into(), raw_status);
+        drop(views); drop(saved);
+        self.changed();
     }
 
-    pub(super) fn publish_start(&self, game: &Value, mut status: Value) {
+    pub(super) fn publish_start(&self, game: &Value, mut status: Value) -> String {
         let id = game["id"].as_str().unwrap_or("");
+        let run = uuid::Uuid::new_v4().to_string();
+        let key = format!("setup:{id}");
+        *self.job.lock().unwrap_or_else(|p| p.into_inner()) = Some((key.clone(), run.clone()));
+        if let Some(changes) = self.changes.get() { changes.start_job(crate::game_read_models::signals::Domain::Setup,
+            &key, &run, "setting-up", status["progress"].as_str().or_else(|| status["message"].as_str()).unwrap_or("Preparing integration setup"), None); }
         let record = self.provider_snapshot(id).0;
         self.prepare_setup(id, &mut status);
         self.publish_setup(game, &record, status);
+        run
     }
 
     pub(super) fn publish_progress(&self, game: &Value, message: &str, percent: Option<u8>) {
+        self.job_progress("setting-up", message, percent);
         let id = game["id"].as_str().unwrap_or("");
         let record = self.provider_snapshot(id).0;
         let status = self.states.lock().unwrap_or_else(|p| p.into_inner()).get(id).cloned();

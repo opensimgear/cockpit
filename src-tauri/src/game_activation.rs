@@ -5,17 +5,18 @@ use osg_profiles::activation::{GameIdentity, VerifiedGame};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Mutex,
+    sync::{Arc,Mutex,OnceLock},
     time::{Duration, Instant},
 };
 
 const MAX_AGE: Duration = Duration::from_secs(2);
-#[derive(Clone)]
+#[derive(Clone,PartialEq,Eq)]
 struct Proof {
     identity: GameIdentity,
     process: ProcessIdentity,
     session: String,
 }
+#[derive(Clone,PartialEq,Eq)]
 struct Entry {
     pending: Option<(GameIdentity, ProcessIdentity)>,
     confirmed: Option<Proof>,
@@ -28,7 +29,7 @@ struct State {
     entries: BTreeMap<String, Entry>,
 }
 #[derive(Default)]
-pub(crate) struct Observer(Mutex<State>);
+pub(crate) struct Observer(Mutex<State>,OnceLock<Arc<crate::game_read_models::signals::Signal>>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CurrentProcessObservation {
@@ -84,6 +85,10 @@ fn checked_process(
     Ok((identity, process))
 }
 impl Observer {
+    pub(crate) fn watch_changes(&self,changes:Arc<crate::game_read_models::signals::Signal>) {let _=self.1.set(changes);}
+    pub(crate) fn view_deadline(&self)->Option<Instant> {
+        self.0.lock().unwrap_or_else(|p|p.into_inner()).at.and_then(|at|at.checked_add(MAX_AGE)).filter(|at|*at>Instant::now())
+    }
     /// Live desktop scope selection consumes the background process proof.
     /// Missing/contended evidence waits; it never starts a foreground scan on
     /// the mapping heartbeat. The desktop worker still checks exact process
@@ -148,6 +153,7 @@ impl Observer {
             (id, result)
         }).collect::<Vec<_>>();
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let previous=state.entries.clone();
         state.entries.retain(|id, _| seen.contains(id));
         for (id, result) in scans {
             let entry = state.entries.entry(id).or_insert_with(|| Entry {
@@ -204,6 +210,10 @@ impl Observer {
             }
         }
         state.at = Some(Instant::now());
+        let changed=state.entries!=previous;drop(state);
+        if let Some(signal)=self.1.get() {
+            if changed {signal.mark(crate::game_read_models::signals::Domain::Runtime);} else {signal.wake.notify();}
+        }
     }
     pub(crate) fn snapshot(&self) -> Result<Vec<VerifiedGame>, String> {
         let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -278,6 +288,16 @@ impl Observer {
                 json!({"status":"waiting","message":"Waiting for current native process observations.","processSession":null})
             }
         }
+    }
+    pub(crate) fn view_for(&self,game:&Value)->Value {
+        let id=game["id"].as_str().unwrap_or("");
+        let state=self.0.lock().unwrap_or_else(|p|p.into_inner());
+        let known=state.entries.get(id).and_then(|entry|entry.confirmed.as_ref().map(|proof|&proof.identity)
+            .or_else(||entry.pending.as_ref().map(|pending|&pending.0)));
+        let matches=known.is_none_or(|known|game["executable"].as_str().is_some_and(|path|
+            crate::game_discovery::normalized_path(path)==crate::game_discovery::normalized_path(&known.executable)));
+        drop(state);
+        if matches {self.view(id)} else {json!({"status":"waiting","message":"Waiting for observations of this installation.","processSession":null})}
     }
 }
 

@@ -34,9 +34,12 @@ fn start_with_metadata(
     let mut review=runtime.inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
     if review.status=="scanning" {return Err("Game discovery is already running.".into());}
     let scan_id=uuid::Uuid::new_v4().to_string();
-    *review=Review{scan_id:scan_id.clone(),status:"scanning".into(),libraries:clients.iter().map(|(id,name)|Library{id:(*id).into(),name:(*name).into(),status:"queued".into(),found:0,message:None}).collect(),entries:vec![],observations:vec![],diagnostics:vec![],first_start:!saved.discovery_initialized,revision:saved.revision,paths:paths.clone()};
+    let changes=review.changes.clone();
+    *review=Review{scan_id:scan_id.clone(),status:"scanning".into(),libraries:clients.iter().map(|(id,name)|Library{id:(*id).into(),name:(*name).into(),status:"queued".into(),found:0,message:None}).collect(),entries:vec![],observations:vec![],diagnostics:vec![],first_start:!saved.discovery_initialized,revision:saved.revision,paths:paths.clone(),changes};
+    if let Some(changes)=&review.changes { changes.start_job(crate::game_read_models::signals::Domain::Discovery,"discovery",&scan_id,"scanning","Finding installed games",None); }
     drop(review);
     let inner=runtime.inner.clone();
+    let admitted_scan=scan_id.clone();
     let worker=thread::Builder::new().name("game-discovery".into()).spawn(move|| {
         let outcome=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut candidates=vec![];let mut successful=BTreeSet::new();
@@ -47,12 +50,14 @@ fn start_with_metadata(
                     let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
                     if review.scan_id!=scan_id {return;}
                     if let Some(library)=review.libraries.iter_mut().find(|library|library.id==*client) {library.status="scanning".into();}
+                    review.notify_job("library",client,false);
                 }
                 let mut scan=scan_client(client,&roots,&occupied);
                 if *client!="disk" {occupied.extend(scan.candidates.iter().map(|candidate|PathBuf::from(&candidate.install_path)));}
                 for candidate in &mut scan.candidates {super::reconcile::align_saved_root(&saved,candidate);}
                 let failed=scan.diagnostics.iter().any(|message|message.contains("could not be read")||message.contains("inaccessible")||message.contains("malformed")||message.contains("not installed"));
                 let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
+                if review.scan_id!=scan_id || review.status!="scanning" {return;}
                 if let Some(library)=review.libraries.iter_mut().find(|library|library.id==*client) {
                     library.status=if failed{"failed"}else{"preparing"}.into();library.found=scan.candidates.len();
                     library.message=failed.then(||"Some installation records could not be read; removals are withheld.".into());
@@ -61,6 +66,8 @@ fn start_with_metadata(
                 for diagnostic in scan.diagnostics {if review.diagnostics.len()<64 {review.diagnostics.push(diagnostic);}}
                 candidates.extend(scan.candidates);
                 super::observations::publish(&mut review,&candidates);
+                if let Some(changes)=&review.changes {changes.mark(crate::game_read_models::signals::Domain::Discovery);}
+                review.notify_job("library",client,false);
             }
             let mut artwork=std::collections::BTreeMap::new();
             for candidate in &candidates {
@@ -92,9 +99,18 @@ fn start_with_metadata(
             inner.prepare_online_artwork();
         }));
         if outcome.is_err() {
-            let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());review.status="failed".into();review.diagnostics.push("Game discovery failed. Rescan to try again.".into());
+            let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
+            if review.scan_id==scan_id && review.status=="scanning" {
+                review.status="failed".into();review.diagnostics.push("Game discovery failed. Rescan to try again.".into());
+                review.notify_job("failed","Game discovery failed. Rescan to try again.",true);
+            }
         }
-    }).map_err(|error|format!("Cannot start game discovery: {error}"))?;
+    }).map_err(|error| {
+        let message=format!("Cannot start game discovery: {error}");
+        let mut review=runtime.inner.discovery.lock().unwrap_or_else(|p|p.into_inner());
+        if review.scan_id==admitted_scan {review.status="failed".into();review.diagnostics.push(message.clone());review.notify_job("failed",&message,true);}
+        message
+    })?;
     if let Some(previous)=runtime.discovery_worker.lock().unwrap_or_else(|p|p.into_inner()).replace(worker) {let _=previous.join();}
     Ok(())
 }

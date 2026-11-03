@@ -29,6 +29,7 @@
   import {ProfileLearningClient}from'./profile-learning';
   import type {DeepReadonly} from './profiles';
   import { gameCatalogue as registeredGames, isGameId, gameHasIntegration, type Game, type GameId } from './games';
+  import { observeGamesState, observeGameDetails, type GameModelState, type GamesSummaryState } from './game-read-models/shared';
   let { editorStore: suppliedStore, resourceClient: suppliedResources, runtimeClient: suppliedRuntime, libraryClient:suppliedLibrary, companionClient:suppliedCompanion, openGameSettings, active=true, onNavigate }: { editorStore?: ProfileEditorStore; resourceClient?: ProfileInventoryClient; runtimeClient?: ProfileRuntimeClient;libraryClient?:ProfileLibraryClient;companionClient?:Pick<ProfileCompanionAuthoringClient,'catalogue'|'inspect'>; openGameSettings?: (gameId: GameId, returnState?: unknown) => void; active?:boolean; onNavigate?: (profileId:string|null)=>void } = $props();
   const supplied = untrack(() => suppliedStore);
   const resources = untrack(() => suppliedResources) ?? new ProfileInventoryClient(async request => { const result=(await gatewayRequest(request)).profileResources;if(!result)throw new Error('Resource inventory is unavailable. Reconnect the native service.');return result; });
@@ -51,20 +52,22 @@
   let paletteDrag=$state.raw<ProfilePaletteDrag|null>(null);
   let companionCatalogue=$state.raw<DeepReadonly<ProfileCompanionCatalogue>|null>(null),companionPanelsBusy=$state(false),companionPanelsError=$state(''),companionDropBusy=$state(false),companionCatalogueEpoch=0,companionDropEpoch=0;
   let editingName = $state(false), nameDraft = $state('');
-  let gameCatalogue=$state.raw<Game[]>([]),integrationDropBusy=$state(false);
+  let gameState=$state.raw<GameModelState<GamesSummaryState>>({status:'connecting'}),gameDetailState=$state.raw<GameModelState<{gameId:string;scope:string;value:Game}>>({status:'connecting'}),integrationDropBusy=$state(false);
   let dcsCatalogues=$state.raw<Record<string,DeepReadonly<ResourceSummary>>>({}),dcsCatalogueBusy=$state(false),dcsCatalogueError=$state(''),dcsCatalogueRevision=$state(0);
   let requestedDcsCatalogue='',dcsCatalogueEpoch=0;
   const editor = $derived(workspace.editor);
   const editorInventory=$derived([...workspace.inventory,...Object.values(dcsCatalogues).filter(source=>!workspace.inventory.some(current=>current.id===source.id))]);
   const selectedGame=$derived(editor?profileGameContext(editor.document):'');
   const gameSourceChoices=$derived(gameIntegrationSourceChoices($registeredGames,workspace.inventory));
-  const contextGame=$derived($registeredGames.find(game=>game.id===selectedGame)??gameCatalogue.find(game=>game.id===selectedGame));
+  const summaryGame=$derived(gameState.value?.catalogue.find(game=>game.id===selectedGame));
+  const contextDetailReady=$derived(gameState.status==='ready'&&!!summaryGame?.detailsRevision&&gameDetailState.status==='ready'&&gameDetailState.value?.gameId===selectedGame&&gameDetailState.value.scope===summaryGame.detailsRevision);
+  const contextGame=$derived.by(()=>{const registered=$registeredGames.find(game=>game.id===selectedGame);if(gameDetailState.value?.gameId===selectedGame)return gameDetailState.value.value as Game;return registered;});
   const vehicleTabs=$derived(editor?.document.vehicleTabs??[]);
-  const integrationsEnabled=$derived(!!selectedGame&&gameHasIntegration(contextGame)&&(contextGame?.vehicleSupport?.supported??true));
+  const integrationsEnabled=$derived(!!selectedGame&&contextDetailReady&&gameHasIntegration(contextGame)&&(contextGame?.vehicleSupport?.supported??true));
   const dcsCatalogueKey=$derived(active&&selectedGame==='dcs'?`${editor?.document.id}/${vehicleTabs.map(scope=>scope.vehicleId).join('/')}`:'');
   const routingInventory=$derived(editorInventory);
   const inventoryRevision=$derived.by(()=>{void workspace;return store.inventoryRevision+dcsCatalogueRevision;});
-  const vehicleChoices=$derived.by(()=>{const choices=new Map<string,{id:string;name:string}>();for(const vehicle of contextGame?.vehicleSupport?.vehicles??[])choices.set(vehicle.id,vehicle);for(const tab of vehicleTabs)choices.set(tab.vehicleId,{id:tab.vehicleId,name:tab.vehicleName});if(contextGame?.currentVehicle)choices.set(contextGame.currentVehicle.id,contextGame.currentVehicle);return [...choices.values()].sort((a,b)=>a.name.localeCompare(b.name));});
+  const vehicleChoices=$derived.by(()=>{const choices=new Map<string,{id:string;name:string}>();for(const vehicle of (contextDetailReady?contextGame?.vehicleSupport?.vehicles:[])??[])choices.set(vehicle.id,vehicle);for(const tab of vehicleTabs)choices.set(tab.vehicleId,{id:tab.vehicleId,name:tab.vehicleName});if(contextDetailReady&&contextGame?.currentVehicle)choices.set(contextGame.currentVehicle.id,contextGame.currentVehicle);return [...choices.values()].sort((a,b)=>a.name.localeCompare(b.name));});
   const editorIdentity=$derived(editor?.document.id??'');
   const canRename = $derived(!!editor && editor.document.id!==DEFAULT_PROFILE_ID && !workspace.readOnly && !workspace.busy && !libraryBusy);
   const nameChanged = $derived(!!editor && editingName && nameDraft.trim()!==editor.document.name);
@@ -78,9 +81,10 @@
   const learningIdle=$derived(!!runtimeState.status&&!runtimeState.stale&&runtimeState.status.owner===null&&!['transitioning','recovery-needed'].includes(runtimeState.status.state));
   const editorContext=$derived.by(()=>{void workspace;return `${editorIdentity}/${store.editorEpoch}`;});
   const historyStatus=$derived.by(()=>{void workspace;return history.status;});
-  onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));const stopLibrary=observeProfileLibrary(state=>store.observeLibrary(state)),stopRuntime=observeProfileRuntime(state=>store.observeRuntime(state));return()=>{stopRuntime();stopLibrary();stop();stopSaved();}; });
+  onMount(() => { const stop=store.subscribe(next=>workspace=next),stopSaved=store.subscribeSaveNotifications(({message,kind})=>notify(message,kind));const stopLibrary=observeProfileLibrary(state=>store.observeLibrary(state)),stopRuntime=observeProfileRuntime(state=>store.observeRuntime(state)),stopGames=observeGamesState(state=>gameState=state);return()=>{stopRuntime();stopLibrary();stopGames();stop();stopSaved();}; });
   onDestroy(() => { dcsCatalogueEpoch++;companionCatalogueEpoch++;companionDropEpoch++;navigationCancelled?.();runtime.dispose();if(!supplied)store.dispose(); });
   $effect(()=>{void editorIdentity;routingSelection='';});
+  $effect(()=>{const gameId=selectedGame;gameDetailState={status:'connecting'};if(!gameId)return;return observeGameDetails(gameId,state=>gameDetailState=state);});
   $effect(()=>{void editorContext;editingName=false;});
   $effect(()=>{void editorContext;paletteDrag=null;});
   $effect(()=>{void editorContext;companionDropEpoch++;companionDropBusy=false;});
@@ -89,7 +93,7 @@
   $effect(()=>{if(paletteDrag&&(!active||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
-    const refresh=()=>{if(!document.hidden){if(!store.state.inventoryBusy)void store.refreshInventory();void refreshVehicleCatalogue();}};
+    const refresh=()=>{if(!document.hidden&&!store.state.inventoryBusy)void store.refreshInventory();};
     refresh();const timer=setInterval(refresh,3000);
     document.addEventListener('visibilitychange',refresh);window.addEventListener('focus',refresh);
     return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',refresh);window.removeEventListener('focus',refresh);};
@@ -107,8 +111,6 @@
   function add() { notice='';report(()=>store.beginBlank([])); }
   function showConfirmation(node:HTMLDialogElement) { node.showModal();return()=>node.close(); }
   function change(document:ProfileDocument,assignments?:ProfileLocalAssignment[],label='Edit profile graph') { report(()=>history.edit(document,assignments,label)); }
-  let vehicleCatalogueBusy=false;
-  async function refreshVehicleCatalogue(){if(vehicleCatalogueBusy)return;vehicleCatalogueBusy=true;try{const state=await gatewayRequest({command:'game_get_state'});if(state.games?.catalogue)gameCatalogue=state.games.catalogue;}catch{/* Keep saved vehicle choices available when disconnected. */}finally{vehicleCatalogueBusy=false;}}
   async function loadDcsVehicleCatalogue(){
     const current=store.state.editor,profileId=current?.document.id;if(!current||selectedGame!=='dcs')return;
     const scopes=[...(current.document.vehicleTabs??[])],epoch=++dcsCatalogueEpoch,failures:string[]=[];dcsCatalogueBusy=true;dcsCatalogueError='';
@@ -126,7 +128,7 @@
     finally{if(epoch===dcsCatalogueEpoch){dcsCatalogueBusy=false;dcsCatalogueError=failures.join(' ');}}
   }
   async function addIntegration(vehicle:{id:string;name:string},position?:CanvasPoint){
-    const current=store.state.editor,gameId=selectedGame;if(!current||!gameId||!canDropComponent({kind:'integration',gameId,vehicleId:vehicle.id,vehicleName:vehicle.name}))return;
+    const current=store.state.editor,gameId=selectedGame;if(!current||!gameId||!contextDetailReady||!canDropComponent({kind:'integration',gameId,vehicleId:vehicle.id,vehicleName:vehicle.name}))return;
     const context=editorContext,epoch=store.editorEpoch;integrationDropBusy=true;notice='';
     try{
       let source:DeepReadonly<ResourceSummary>|undefined;
@@ -170,7 +172,7 @@
   function source(id:string) { if(!editor)return;if(JSON.stringify(editor.document)!==JSON.stringify(editor.baseDocument)||JSON.stringify(editor.assignments)!==JSON.stringify(editor.baseAssignments)){replaceSource=id;return;}void replace(id); }
   async function replace(id:string) { replaceSource=null;notice='';if(id==='blank')report(()=>store.beginBlank([]));else{const previous=getNavigation();await store.beginCopy(id);workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());} }
   function canDropComponent(component:ProfilePaletteComponent):boolean {
-    return !!editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&!companionDropBusy&&!integrationDropBusy&&profilePaletteCanAdd(component,editor.document,editor.assignments,workspace.inventory)&&(component.kind!=='companion-panel'||!!companionCatalogue?.panels.some(panel=>panel.publicationHash===component.publicationHash&&!profilePalettePanelReason(panel,workspace.inventory.find(source=>source.id===component.sourceId)!)));
+    return !!editor&&!workspace.busy&&!workspace.readOnly&&!libraryBusy&&!companionDropBusy&&!integrationDropBusy&&(component.kind!=='integration'||contextDetailReady)&&profilePaletteCanAdd(component,editor.document,editor.assignments,workspace.inventory)&&(component.kind!=='companion-panel'||!!companionCatalogue?.panels.some(panel=>panel.publicationHash===component.publicationHash&&!profilePalettePanelReason(panel,workspace.inventory.find(source=>source.id===component.sourceId)!)));
   }
   async function refreshCompanionPanels(){
     if(!active||companionPanelsBusy)return;const epoch=++companionCatalogueEpoch;companionPanelsBusy=true;companionPanelsError='';
@@ -267,6 +269,7 @@
     <div class="profile-authoring">
       <div class="profile-components-column">
         <label class="game-context" title="Saved with the profile. Selecting a context makes this profile available for that game. Integrated games also add their telemetry block.">Game context<select aria-label="Game context" value={gameSourceChoices.some(choice=>choice.game.id===selectedGame)?selectedGame:''} disabled={workspace.busy||workspace.readOnly||libraryBusy} onchange={event=>setGameContext(event.currentTarget.value as GameId|'')}><option value="">None</option>{#each gameSourceChoices as choice (choice.game.id)}<option value={choice.game.id}>{choice.game.name} · {choice.status}</option>{/each}</select></label>
+      {#if selectedGame&&gameState.status!=='ready'}<p class="workspace-error" role="status">{gameState.error||'Loading current game catalogue…'} Integration editing is paused until the game catalogue is current.</p>{:else if selectedGame&&!contextDetailReady}<p class="workspace-error" role="status">{gameDetailState.error||(!summaryGame?.detailsRevision?'Waiting for the current integration detail revision…':'Loading current integration details…')} Integration editing is paused until the selected game details match the current catalogue.</p>{/if}
       <ProfileComponentPalette integrationGameId={integrationsEnabled?selectedGame:undefined} integrationGameName={contextGame?.name} integrationVehicles={vehicleChoices} addedIntegrationVehicles={new Set(editor.document.resources.filter(node=>node.kind==='game').map(node=>vehicleTabs.find(scope=>scope.nodeIds.includes(node.id))?.vehicleId??''))} addIntegration={vehicle=>void addIntegration(vehicle)} inventory={workspace.inventory} {assignedIds} editorGroups={editor.document.editor.groups??[]} addGroup={()=>routingEditor?.addGroup()} focusGroup={id=>routingEditor?.focusGroup(id)} renameGroup={(id,name)=>routingEditor?.renameGroup(id,name)} deleteGroup={id=>routingEditor?.deleteGroup(id)} resourceCount={editor.document.resources.length} virtualCount={editor.document.virtualOutputs.length} keyboardAdded={!canDropComponent({kind:'desktop',device:'keyboard'})} mouseAdded={!canDropComponent({kind:'desktop',device:'mouse'})}
         processingCount={editor.document.processingNodes.length+(editor.document.desktopOutputs??[]).reduce((count,node)=>count+node.actions.length,0)}
         {capturedCompanionIds} companionPanelCount={editor.document.companionAssignments.length} companionPanels={companionCatalogue?.panels??[]} companionPanelsLoaded={!!companionCatalogue} companionPanelsBusy={companionPanelsBusy||companionDropBusy||integrationDropBusy} {companionPanelsError} refreshPanels={()=>void refreshCompanionPanels()} addCompanionPanel={(sourceId,publicationHash)=>void addCompanionPanel(sourceId,publicationHash)}

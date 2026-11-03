@@ -102,15 +102,15 @@ impl Tracker {
         Ok(())
     }
     pub(crate) fn decorate(&self, game: &mut Value) {
+        self.decorate_view(game, false);
+    }
+    pub(crate) fn decorate_summary(&self, game: &mut Value) {
+        self.decorate_view(game, true);
+    }
+    fn decorate_view(&self, game: &mut Value, summary: bool) {
         let id = game["id"].as_str().unwrap_or("").to_owned();
         let integration = crate::game_discovery::integration_key(game).unwrap_or("");
         let supported = !integration.is_empty();
-        let mut values = self.seen.get(&id).cloned().unwrap_or_default();
-        if let Some(entry) = self.entries.get(&id) {
-            for value in &entry.vehicles {
-                values.insert(value["id"].as_str().unwrap().into(), value.clone());
-            }
-        }
         let message = if integration.starts_with("assetto-corsa") {
             "Cars are discovered from native telemetry. Load a car once to add it to the vehicle list."
         } else if integration == "dcs" {
@@ -118,7 +118,16 @@ impl Tracker {
         } else {
             "Aircraft come from this installation's Aircraft folder. Current aircraft requires fresh RREF telemetry."
         };
-        game["vehicleSupport"] = json!({"supported":supported,"kind":if integration.starts_with("assetto-corsa"){"car"}else{"aircraft"},"vehicles":values.values().collect::<Vec<_>>(),"message":message});
+        let mut values = BTreeMap::new();
+        if let Some(seen) = self.seen.get(&id) {
+            for (id, value) in seen { values.insert(id.as_str(), value); }
+        }
+        if let Some(entry) = self.entries.get(&id) {
+            for value in &entry.vehicles { values.insert(value["id"].as_str().unwrap(), value); }
+        }
+        game["vehicleSupport"] = json!({"supported":supported,"kind":if integration.starts_with("assetto-corsa"){"car"}else{"aircraft"},"message":message});
+        if summary { game["vehicleSupport"]["vehicleCount"] = json!(values.len()); }
+        else { game["vehicleSupport"]["vehicles"] = json!(values.values().collect::<Vec<_>>()); }
         game["vehicleSupport"]["retentionError"] = json!(self
             .retention_error
             .clone()
@@ -126,7 +135,7 @@ impl Tracker {
         game["currentVehicle"] = self
             .entries
             .get(&id)
-            .filter(|entry| entry.installation == Self::installation(game))
+            .filter(|entry| entry.installation_fields.iter().zip(["installPath", "executable", "installed", "integrationKey", "provider"]).all(|(known, field)| known == &game[field]))
             .and_then(|_| self.current(&id))
             .unwrap_or(Value::Null);
         game["vehicleStatus"] = json!({"status":if game["currentVehicle"].is_object(){"ready"}else if self.entries.get(&id).is_some_and(|entry|entry.error.is_some()){"unavailable"}else{"waiting"},"message":self.entries.get(&id).and_then(|entry|entry.error.as_deref()).unwrap_or("Waiting for a running game and fresh vehicle telemetry.")});

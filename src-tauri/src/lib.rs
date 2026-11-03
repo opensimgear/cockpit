@@ -12,6 +12,7 @@ mod config_paths;
 mod persistence;
 pub mod observations;
 mod profile_read_models;
+mod game_read_models;
 mod profile_samples;
 #[path="mcp/server/mod.rs"]
 mod mcp;

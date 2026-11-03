@@ -26,11 +26,12 @@
   import ManualActions from './lib/ManualActions.svelte';
   import GamesPanel from './lib/GamesPanel.svelte';
   import OverviewPanel from './lib/OverviewPanel.svelte';
+  import {observeGamesState,type GameModelState,type GamesSummaryState} from './lib/game-read-models/shared';
   import { isGameId, type GameId, type GamesState, type GameRequest } from './lib/games';
   import { OPEN_GAME_SETTINGS_EVENT, RETURN_FROM_GAME_SETTINGS_EVENT, gameSettingsFromHash, gameSettingsHref, gameSettingsLink, returnFromGameSettings, visitGameSettings, type GameSettingsVisit } from './lib/game-settings-navigation';
   import { cloneConfig, configEqual, type RuntimeConfig } from './lib/runtime-config';
   import { settingsEqual, type Device, type Settings } from './lib/devices';
-  import { gatewayRequest, GatewayError, releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
+  import { gatewayRequest, releaseOnExit, openCockpitLink, type GatewayRequest, type GatewayModule } from './lib/gateway';
   import { observeProfileLibrary, observeProfileRuntime } from './lib/profile-read-models/shared';
   import { type DeepReadonly, type ProfileSummary } from './lib/profiles';
   import { ProfileRuntimeClient } from './lib/profile-runtime';
@@ -61,6 +62,7 @@
   let view = $state<View>('overview');
   let games = $state<GamesState>();
   let gamesStale = $state(true);
+  let gamesModel = $state<GameModelState<GamesSummaryState>>({status:'connecting'});
   let selectedGameId = $state<GameId | ''>('');
   let selectedCompanionId = $state('');
   let settingsVisit = $state.raw<GameSettingsVisit<SettingsOrigin> | null>(null);
@@ -186,7 +188,6 @@
   let entries = $state<GatewayEntry[]>([]);
   let gamesBusy = $state(false);
   let gamesDiscoveryOpen=$state(false);
-  let gamesPolling = false;
   const profileRuntime = new ProfileRuntimeController(new ProfileRuntimeClient(async request => {
     return (await gatewayRequest(request)).profiles?.profileSession;
   }));
@@ -292,22 +293,11 @@
   function scopedGatewayRequest(gatewayId: string, quiet = false) {
     return (request: GatewayRequest) => sendGateway(gatewayId, request, quiet);
   }
-  async function sendGames(request: GameRequest, quiet = request.command === 'game_get_state'): Promise<GamesState | false> {
-    if (gamesBusy || quiet && (gamesPolling || document.hidden)) return false;
-    if (quiet) gamesPolling = true; else gamesBusy = true;
-    try {
-      const result = await gatewayRequest(request);
-      if (!disposed) {
-        if (result.games) { games = result.games; gamesStale = false; }
-        else if (request.command === 'game_get_state') gamesStale = true;
-      }
-      return result.games ?? false;
-    } catch (error) {
-      if (!disposed) gamesStale = true;
-      if (!disposed && error instanceof GatewayError && error.state?.games) games = error.state.games;
-      if (!quiet) throw error;
-      return false;
-    } finally { if (quiet) gamesPolling = false; else gamesBusy = false; }
+  async function sendGames(request: GameRequest): Promise<GamesState | false> {
+    if (gamesBusy || gamesStale) return false;
+    gamesBusy = true;
+    try { return (await gatewayRequest(request)).games ?? false; }
+    finally { gamesBusy = false; }
   }
   async function retryGateway(gatewayId: string) {
     try { await workspace?.retry(gatewayId); }
@@ -353,9 +343,8 @@
     const unsubscribeProfile = profileRuntime.subscribe(next => { if (!disposed) profileState = next; });
     const stopRuntimeModel = observeProfileRuntime(state => profileRuntime.observe(state));
     const stopLibraryModel = observeProfileLibrary(state => { if (!disposed && state.status === 'ready' && state.value) profileSummaries = state.value.profiles; });
-    void sendGames({ command: 'game_get_state' }, true);
+    const stopGamesModel = observeGamesState(state => { if (!disposed) { gamesModel=state; gamesStale=state.status!=='ready'; if(state.value)games=state.value as GamesState; } });
     const timer = setInterval(() => { void workspace?.refresh(); }, 3000);
-    const gamesTimer = setInterval(() => { if(view==='games'&&gamesDiscoveryOpen&&games?.discovery?.status!=='scanning'&&!games?.artworkPending)return;void sendGames({ command: 'game_get_state' }, true); }, 1000);
     const release = () => { if (sessionDevice) releaseOnExit(sessionDevice.id, sessionDevice.gatewayId); };
     const openSettingsEvent = (event: Event) => {
       if (!(event instanceof CustomEvent)) return;
@@ -368,7 +357,7 @@
     window.addEventListener('hashchange', readSettingsHash);
     window.addEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent);
     window.addEventListener('pagehide', release);
-    return () => { navigationHistory?.dispose();release(); disposed = true; clearInterval(timer); stopRuntimeModel(); stopLibraryModel(); unsubscribeProfile(); profileRuntime.dispose(); clearInterval(gamesTimer); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
+    return () => { navigationHistory?.dispose();release(); disposed = true; clearInterval(timer); stopRuntimeModel(); stopLibraryModel(); unsubscribeProfile(); profileRuntime.dispose(); stopGamesModel(); window.removeEventListener('pagehide', release); window.removeEventListener('hashchange', readSettingsHash); window.removeEventListener(OPEN_GAME_SETTINGS_EVENT, openSettingsEvent); workspace?.dispose(); };
   });
   function openLink(event: MouseEvent) {
     const opening = openCockpitLink(event);
@@ -485,7 +474,7 @@
         {:else if view === 'companions'}
           <!-- Companion editors stay mounted for history navigation. -->
         {:else if view === 'games'}
-          <GamesPanel bind:selectedGameId bind:discoveryView={gamesDiscoveryOpen} onNavigate={gameId=>{selectedGameId=gameId;recordRoute();}} status={games} profiles={profileSummaries} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
+          <GamesPanel bind:selectedGameId bind:discoveryView={gamesDiscoveryOpen} onNavigate={gameId=>{selectedGameId=gameId;recordRoute();}} status={games} modelState={gamesModel} profiles={profileSummaries} profileBlockedReason={profileMutationBlock} busy={gamesBusy} request={sendGames} returnLabel={settingsVisit ? `Return to ${navigation.find(item => item.id === settingsVisit?.origin.view)?.label ?? 'profile'}` : undefined} returnToEditor={settingsVisit ? () => returnToSettingsOrigin() : undefined} />
         {:else if view === 'devices'}
           <!-- Shared inventory stays mounted during configuration. -->
         {:else if view === 'device' && selected}

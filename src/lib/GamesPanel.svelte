@@ -1,7 +1,9 @@
 <script lang="ts">
+  import {gameImage,gameImageSource} from './game-read-models/image';
   import PageHeader from './PageHeader.svelte';
   import Notification from './Notification.svelte';
-  import {onMount} from 'svelte';
+  import {observeGamesState,observeGameDetails,observeGameJobs,type GameModelState,type GamesSummaryState,type GameDetailModel,type GameJobsModel} from './game-read-models/shared';
+  import {gameDetailMatches,selectedGameView,gamesWithJobs} from './game-read-models/views';
   import {pickGameExecutable} from './gateway';
   import Icon from './Icon.svelte';
   import GameProviderSettings from './GameProviderSettings.svelte';
@@ -20,14 +22,15 @@
   import GameListFilters from './GameListFilters.svelte';
   import {emptyGameListFilters,filterGameList,gameLibraryClientName,gameMetadataError,UNTAGGED_TAG_FILTER} from './games';
   import {cropImageStyle} from './game-background-crop';
-  import {gameHasIntegration,gameInstallationRequest,updateGameCatalogue,gameDisplayPath,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,type Game,type GameId,type GameRequest,type GamesState} from './games';
-  let {status,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),discoveryView=$bindable(false),onNavigate}: {
-    status?:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
+  import {gameHasIntegration,gameInstallationRequest,gameDisplayPath,gameIntegrationInstalled,gameIntegrationLabel,gameIntegrationLiveLabel,gameIntegrationNativeVerified,gameIntegrationReady,gameIntegrationSetupBlockedReason,gameIntegrationSetupRequest,gameIntegrationTargetError,gameIntegrationVerificationLabel,gameIntegrationUserFolder,type Game,type GameId,type GameRequest,type GamesState} from './games';
+  let {status,modelState,busy,request,profiles=[],profileBlockedReason='',returnLabel,returnToEditor,selectedGameId=$bindable<GameId|''>(''),discoveryView=$bindable(false),onNavigate}: {
+    status?:GamesState;modelState?:GameModelState<GamesSummaryState>;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;
     profiles?:DeepReadonly<ProfileSummary[]>;
     profileBlockedReason?:string;selectedGameId?:GameId|'';returnLabel?:string;returnToEditor?:()=>void;
     onNavigate?:(gameId:GameId|'')=>void;discoveryView?:boolean;
   }=$props();
-  let response=$state<GamesState>(),initializedGameId=$state<GameId|''>('');
+  let localModel=$state<GameModelState<GamesSummaryState>>({status:'connecting'}),detailModel=$state<GameModelState<GameDetailModel>>({status:'connecting'}),jobsModel=$state<GameModelState<GameJobsModel>>({status:'connecting'});
+  let initializedGameId=$state<GameId|''>('');
   let initializedInstallationId=$state<string|undefined>();
   let pending=$state(false),notice=$state(''),executablePath=$state(''),integrationFolder=$state('');
   let providerBusy=$state(false),removeDialog=$state(false);
@@ -36,40 +39,48 @@
   let tagsDialog=$state(false),filtersOpen=$state(false),filters=$state(emptyGameListFilters());
   const filterPanelId=$props.id();
   let nameDraft=$state(''),nameBase=$state(''),openedFirstScan=$state('');
-  const receivedStatus=$derived(status??response);
-  const gameState:GamesState=$derived(receivedStatus??{catalogue:[]});
+  const currentModel=$derived(modelState??(status?{status:'ready' as const,error:undefined}:localModel));
+  const receivedStatus=$derived(status??localModel.value as GamesState|undefined);
+  const gameState:GamesState=$derived(gamesWithJobs(receivedStatus??{catalogue:[]},jobsModel.status==='ready'?jobsModel.value:undefined));
+  const streamReady=$derived(currentModel.status==='ready');
   const tags=$derived(gameState.tags??{});
   const games=$derived(filterGameList(gameState.catalogue,filters,profiles));
   const filterCount=$derived(Number(!!filters.name.trim())+filters.tags.length+filters.libraries.length+filters.integrations.length+filters.profiles.length);
   $effect(()=>{const valid=filters.tags.filter(tag=>tag===UNTAGGED_TAG_FILTER||!!tags[tag]);if(valid.length!==filters.tags.length)filters.tags=valid;});
-  const selected=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
+  const selectedSummary=$derived(gameState.catalogue.find(game=>game.id===selectedGameId));
+  const detailReady=$derived(streamReady&&gameDetailMatches(selectedSummary,detailModel));
+  const selected=$derived(selectedGameView(selectedSummary,detailModel));
+  const setupJob=$derived(jobsModel.status==='ready'?jobsModel.value?.jobs.find(job=>job.key===`setup:${selected?.integrationKey??selected?.provider??selected?.id}`):undefined);
+  const discoveryJob=$derived(jobsModel.status==='ready'?jobsModel.value?.jobs.find(job=>job.key==='discovery'):undefined);
   const selectedInstallation=$derived(selected?.installations?.find(install=>install.id===selected.selectedInstallationId));
   const selectedInstallationPath=$derived(selectedInstallation?.installPath??selected?.installPath);
   const selectedExecutablePath=$derived(gameExecutableDisplayPath(selected?.executable??selected?.manualPath,selectedInstallationPath));
   const selectedLiveLabel=$derived(selected?gameIntegrationLiveLabel(selected):'');
-  const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up'));
-  const locked=$derived(busy||pending||setupRunning||providerBusy);
+  const setupRunning=$derived(gameState.catalogue.some(game=>game.integrationSetup?.state==='setting-up')||!!jobsModel.value?.jobs.some(job=>job.key.startsWith('setup:')&&!job.terminal));
+  const locked=$derived(busy||pending||setupRunning||providerBusy||!streamReady||!!selectedGameId&&!detailReady);
   const integrationInstalled=$derived(selected?gameIntegrationInstalled(selected):false);
   const setupBlocked=$derived(!receivedStatus?'Loading game status…':selected?gameIntegrationSetupBlockedReason(selected,profileBlockedReason):'');
   const folderError=$derived(selected?gameIntegrationTargetError(selected,integrationFolder):'');
   const setupDisabled=$derived(locked||!!setupBlocked||!!folderError);
-  onMount(()=>{if(!status)void send({command:'game_get_state'});});
+  $effect(()=>{if(status||modelState)return;return observeGamesState(state=>localModel=state);});
+  $effect(()=>{const id=selectedGameId;detailModel={status:'connecting'};if(id)return observeGameDetails(id,state=>detailModel=state);});
+  $effect(()=>observeGameJobs(state=>jobsModel=state));
   $effect(()=>{if(gameState.discovery?.firstStart&&gameState.discovery.status==='ready'&&openedFirstScan!==gameState.discovery.scanId){openedFirstScan=gameState.discovery.scanId;discoveryView=true;}});
-  $effect(()=>{if(!status&&(gameState.discovery?.status==='scanning'||gameState.artworkPending)){const timer=window.setInterval(()=>void send({command:'game_get_state'}),750);return()=>window.clearInterval(timer);}});
-  $effect(()=>{if(selected&&(initializedGameId!==selected.id||initializedInstallationId!==selected.selectedInstallationId))initializeGame(selected);});
+  $effect(()=>{if(selected&&detailReady&&(initializedGameId!==selected.id||initializedInstallationId!==selected.selectedInstallationId))initializeGame(selected);});
   $effect(()=>{if(selected&&selected.id===initializedGameId&&selected.name!==nameBase){if(nameDraft===nameBase)nameDraft=selected.name;nameBase=selected.name;}});
   async function send(command:GameRequest):Promise<GamesState|false>{
-    const passive=command.command==='game_get_state';
-    if(!passive){pending=true;notice='';}
-    try{const result=await request(command);if(result){response=result;updateGameCatalogue(result.catalogue);if(!passive)notice=result.error??'';}else if(!passive)notice='The request did not complete. Check the connection and try again.';return result;}
-    catch(error){if(!passive)notice=error instanceof Error?error.message:String(error);if(['game_add','game_background_preview','game_tag_definitions_save','game_tags_save','game_save','game_background_save','game_discovery_start','game_discovery_apply'].includes(command.command))throw error;return false;}
-    finally{if(!passive)pending=false;}
+    if(!streamReady||selectedGameId&&!detailReady)return false;
+    pending=true;notice='';
+    try{const result=await request(command);if(result)notice=result.error??'';else notice='The request did not complete. Check the connection and try again.';return result;}
+    catch(error){notice=error instanceof Error?error.message:String(error);if(['game_add','game_background_preview','game_tag_definitions_save','game_tags_save','game_save','game_background_save','game_discovery_start','game_discovery_apply'].includes(command.command))throw error;return false;}
+    finally{pending=false;}
   }
   async function saveSettings(command:GameRequest):Promise<GamesState>{
+    if(!streamReady||!detailReady)throw new Error('Wait for current game details before saving settings.');
     const result=await request(command);
     if(!result)throw new Error('Game integration settings were not saved. Check the connection and try again.');
     if(result.error)throw new Error(result.error);
-    response=result;return result;
+    return result;
   }
   function initializeGame(game:Game){initializedGameId=game.id;initializedInstallationId=game.selectedInstallationId;selectedGameId=game.id;integrationFolder=gameIntegrationUserFolder(game);executablePath=game.executable??game.manualPath??'';nameDraft=game.name;nameBase=game.name;notice='';}
   async function saveName(game:Game){
@@ -79,9 +90,9 @@
     catch(error){notice=error instanceof Error?error.message:String(error);}
   }
   async function commitExecutable(game:Game){if(locked)return;const root=game.installations?.find(installation=>installation.id===game.selectedInstallationId)?.installPath??game.installPath;const path=resolveGameExecutablePath(executablePath.trim(),root);if(gameDisplayPath(path)!==gameDisplayPath(game.executable??game.manualPath))await saveExecutable(game,path||null);}
-  function chooseGame(game:Game){initializeGame(game);onNavigate?.(game.id);}
-  function gameAdded(result:GamesState){addDialog=false;response=result;updateGameCatalogue(result.catalogue);filters=emptyGameListFilters();const game=result.catalogue.find(game=>game.id===result.addedGameId);if(game)chooseGame(game);}
-  function tagsSaved(result:GamesState){tagsDialog=false;response=result;updateGameCatalogue(result.catalogue);}
+  function chooseGame(game:Game){selectedGameId=game.id;onNavigate?.(game.id);}
+  function gameAdded(result:GamesState){addDialog=false;filters=emptyGameListFilters();const game=result.catalogue.find(game=>game.id===result.addedGameId);if(game)chooseGame(game);}
+  function tagsSaved(result:GamesState){tagsDialog=false;}
   async function saveTags(game:Game,tagIds:string[]){const result=await send({command:'game_tags_save',gameId:game.id,tagIds,expectedTagIds:game.tagIds??[]});if(!result||result.error)throw Error(result&&result.error||'The game tags were not saved.');}
   async function removeGame(){if(!selected||locked)return;const result=await send({command:'game_remove',gameId:selected.id});if(result&&!result.error){removeDialog=false;allGames();}}
   function showDialog(node:HTMLDialogElement){node.showModal();return()=>node.close();}
@@ -108,11 +119,14 @@
 </script>
 
 <section class="games-workspace" aria-label="Games">
-  {#if !receivedStatus}<p class="game-status-loading" role="status" aria-live="polite">Loading game status…</p>{/if}
+  {#if !streamReady}<p class="game-status-loading" role="status" aria-live="polite">{currentModel.error??'Loading current game status…'}{#if receivedStatus} Showing the last complete catalogue; changes are paused.{/if}</p>{/if}
+  {#if selectedGameId&&!detailReady}<p class="game-status-loading" role="status">{detailModel.error??'Loading current game details…'} Changes are paused until this installation is current.</p>{/if}
+  {#if setupJob&&!setupJob.terminal}<p class="setup-progress" role="status">{setupJob.message}{setupJob.percent===undefined?'':` · ${setupJob.percent}%`}</p>{/if}
+  {#if jobsModel.status==='lost'||jobsModel.status==='error'}<p class="game-status-loading" role="status">{jobsModel.error??'Background job status is unavailable.'}</p>{/if}
   {#if notice || gameState.error}<Notification message={String(notice || gameState.error)} kind="error" />{/if}
 
   {#if discoveryView}
-    <GameDiscoveryView {gameState} busy={locked} request={send} close={()=>discoveryView=false}/>
+    <GameDiscoveryView {gameState} job={discoveryJob} busy={locked} request={send} close={()=>discoveryView=false}/>
   {:else if selected}
     <PageHeader title={selected.name} subtitle={selected.installed?'Installation found':'Installation not found'} onback={allGames} backLabel="All games">
       {#snippet leading()}<div class="game-detail-mark"><Icon name="gamepad" size={32}/></div>{/snippet}
@@ -138,7 +152,7 @@
         </div>
       </div>
       </section>
-        {#key selected.id}<GameProfileRule game={selected} busy={busy||pending}/>{/key}
+        {#key selected.id}<GameProfileRule game={selected} busy={locked}/>{/key}
         {#if gameHasIntegration(selected)}
         <section class="panel setup-panel" id="game-integration-settings" aria-label="Game integration setup">
           <div class="integration-heading">
@@ -146,7 +160,7 @@
             <div class="integration-actions">
               <button class="secondary-button" disabled={locked|| (!!integrationFolder.trim() && !!folderError)} onclick={() => integrationCommand('game_integration_check')}><Icon name="refresh" size={14}/>Refresh state</button>
               {#if selected.integrationSetup?.state === 'setting-up'}
-                <button class="secondary-button" disabled={busy||pending} onclick={()=>integrationCommand('game_integration_cancel')}><Icon name="close" size={14}/>Cancel setup</button>
+                <button class="secondary-button" disabled={busy||pending||!streamReady||!detailReady} onclick={()=>integrationCommand('game_integration_cancel')}><Icon name="close" size={14}/>Cancel setup</button>
               {:else if selected.integrationSetup?.recoveryNeeded}
                 <button class="secondary-button" disabled={locked||!!profileBlockedReason} onclick={()=>integrationCommand('game_integration_recover')}><Icon name="refresh" size={14}/>Recover integration setup</button>
               {:else if integrationInstalled}
@@ -168,7 +182,7 @@
           <dl class="provider-readiness" aria-label="Integration readiness">
             <div><dt><Icon name="gamepad" size={14} />Game context</dt><dd>{gameContextLabel(selected)}<small>{selected.integrationContext?.processVerified ? 'Actual game process verified' : 'No verified matching process'}</small></dd></div>
             {#if selected.vehicleSupport?.supported}
-              <div aria-label="Current vehicle"><dt><Icon name={selected.vehicleSupport.kind === 'car' ? 'wheel' : 'command'} size={14}/>Current {selected.vehicleSupport.kind}</dt><dd><strong role="status" aria-live="polite">{selected.currentVehicle?.name ?? `Waiting for ${selected.vehicleSupport.kind}`}</strong><small>{selected.currentVehicle ? 'Vehicle specific profile tabs follow this selection automatically. The Base tab stays active.' : selected.vehicleStatus?.message ?? selected.vehicleSupport.message}</small><small>{selected.vehicleSupport.vehicles.length} discovered {selected.vehicleSupport.kind === 'car' ? 'cars' : 'aircraft'}. {selected.vehicleSupport.message}</small></dd></div>
+              <div aria-label="Current vehicle"><dt><Icon name={selected.vehicleSupport.kind === 'car' ? 'wheel' : 'command'} size={14}/>Current {selected.vehicleSupport.kind}</dt><dd><strong role="status" aria-live="polite">{selected.currentVehicle?.name ?? `Waiting for ${selected.vehicleSupport.kind}`}</strong><small>{selected.currentVehicle ? 'Vehicle specific profile tabs follow this selection automatically. The Base tab stays active.' : selected.vehicleStatus?.message ?? selected.vehicleSupport.message}</small><small>{selected.vehicleSupport.vehicles?.length??selected.vehicleSupport.vehicleCount??0} discovered {selected.vehicleSupport.kind === 'car' ? 'cars' : 'aircraft'}. {selected.vehicleSupport.message}</small></dd></div>
             {/if}
             {#if selectedLiveLabel}<div><dt><Icon name="activity" size={14} />Telemetry freshness</dt><dd>{selectedLiveLabel}</dd></div>{/if}
           </dl>
@@ -187,7 +201,7 @@
             {/if}
             {#if selected.integrationSetup?.connection?.source === 'shared-memory' && selected.integrationSetup.optionalMaxRpm === false}<p class="field-help">Maximum RPM is unavailable in this game build. Other supported telemetry can still work.</p>{/if}
           {/if}
-          {#key selected.id}<GameProviderSettings game={selected} busy={busy||pending||setupRunning||!!profileBlockedReason} bind:userFolder={integrationFolder} request={saveSettings} onBusyChange={value=>{providerBusy=value;}} />{/key}
+          {#key selected.id}<GameProviderSettings game={selected} busy={locked||!!profileBlockedReason} bind:userFolder={integrationFolder} request={saveSettings} onBusyChange={value=>{providerBusy=value;}} />{/key}
           {#if selectedLiveLabel}<div class="setup-live"><span class={['live-dot', { receiving: selected.integrationSetup?.live === 'receiving', stale: selected.integrationSetup?.live === 'stale' }]}></span><div><strong>{selectedLiveLabel}</strong><p>{selected.integrationSetup?.liveMessage ?? 'Game data arrives when its integration is running and a mission or session is active.'}</p></div></div>{/if}
         </section>
         {:else}<section class="panel game-binding-context"><div class="sidebar-title"><Icon name="gamepad" size={18}/><h3>Bindings and profile activation</h3></div><p>Set this game as a profile’s game context. Context scoped keyboard and mouse bindings work while its verified process is in front. Automatic mode activates a matching saved profile when the game runs.</p><p>{selected.executable?'This game uses process detection. No telemetry integration is needed.':'Choose its executable to enable process detection and scoped bindings.'}</p></section>{/if}
@@ -207,7 +221,7 @@
         {@const gameTags=(game.tagIds??[]).filter(id=>!!tags[id])}
         <article class={['game-tile', { unavailable: !game.installed }]} data-game-id={game.id}>
           <button class="tile-details" aria-label={`Open ${game.name} details${game.installed ? '' : ', installation not found'}`} onclick={() => chooseGame(game)}>
-            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{:else}<span class="game-art-placeholder"><Icon name="gamepad" size={42}/></span>{/if}<div class="art-shade"></div>{#if gameTags.length}<span class="art-tags">{#each gameTags.slice(0,3) as id}<span class="art-tag">{tags[id]}</span>{/each}{#if gameTags.length>3}<span class="art-tag" title={gameTags.map(id=>tags[id]).join(', ')}>+{gameTags.length-3}</span>{/if}</span>{/if}
+            <div class="game-art" aria-hidden="true">{#if art.image}{#key art.image}<img class="game-art-image" src={gameImageSource(art.image)} use:gameImage={art.image} alt="" width="600" height="338" loading="lazy" decoding="async" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`} onerror={event=>{(event.currentTarget as HTMLImageElement).style.display='none';}}/>{/key}{:else}<span class="game-art-placeholder"><Icon name="gamepad" size={42}/></span>{/if}<div class="art-shade"></div>{#if gameTags.length}<span class="art-tags">{#each gameTags.slice(0,3) as id}<span class="art-tag">{tags[id]}</span>{/each}{#if gameTags.length>3}<span class="art-tag" title={gameTags.map(id=>tags[id]).join(', ')}>+{gameTags.length-3}</span>{/if}</span>{/if}
             </div>
             <div class="tile-copy">
               <div class="tile-title"><h2 title={game.name}>{game.name}</h2><Icon name="chevron" size={16} /></div>

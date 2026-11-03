@@ -14,6 +14,8 @@ pub(super) fn publish_entries(state: &Mutex<Review>, scan_id: &str, entries: Vec
         return false;
     }
     review.entries = entries;
+    if let Some(changes) = &review.changes { changes.mark(crate::game_read_models::signals::Domain::Discovery); }
+    review.notify_job("entries", "Discovered games are ready for review", false);
     true
 }
 
@@ -66,6 +68,7 @@ pub(super) fn prepare_artwork_with_sources(
         // File I/O and image decoding never hold the discovery status lock.
         let image = preview(&path).filter(|image| bytes + image.len() <= ARTWORK_BUDGET);
         bytes += image.as_ref().map_or(0, String::len);
+        let image = image.map(Into::into);
         let mut review = state.lock().unwrap_or_else(|p| p.into_inner());
         if review.scan_id != scan_id || review.status != "scanning" {
             return false;
@@ -75,8 +78,9 @@ pub(super) fn prepare_artwork_with_sources(
             .iter_mut()
             .find(|entry| Some(&entry.id) == id.as_ref())
         {
-            entry.image = image;
+            if entry.image != image { entry.image = image; if let Some(changes) = &review.changes { changes.mark(crate::game_read_models::signals::Domain::Discovery); } }
         }
+        review.notify_job("artwork", "Preparing discovered game artwork", false);
     }
     if closed() {
         return false;
@@ -91,6 +95,7 @@ pub(super) fn prepare_artwork_with_sources(
         }
     }
     review.status = "ready".into();
+    review.notify_job("ready", "Review discovered game changes", false);
     true
 }
 

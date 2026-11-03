@@ -1,3 +1,4 @@
+import {installGameReadModelFixture,prepareGameComponentSource} from './game-read-models/ui-fixture.mjs';
 import {readModelFixture} from './profile-read-models/test-fixture.mjs';
 import {discoveredGames} from './game-test-fixtures.mjs';
 import assert from 'node:assert/strict';
@@ -12,6 +13,7 @@ import * as svelte from 'svelte';
 import { loadModules } from './test-module-loader.mjs';
 const modules = await loadModules(['./game-discovery','./ui-settings-guard','./game-profile-context','./profiles','./profile-runtime','./profile-runtime-controller','./profile-automatic','./profile-automatic-controller','./runtime-config','./panel-input-metadata','./games','./game-artwork','./game-background-crop','./game-provider-settings','./game-settings-navigation']);
 modules.get('./games').updateGameCatalogue(discoveredGames);
+const {gameUiState}=await installGameReadModelFixture(modules);
 modules.set('./profile-read-models/shared',readModelFixture());
 const noRequest = () => { throw new Error('Rendering game settings must not send a request.'); };
 const componentModules = new Map();
@@ -19,12 +21,13 @@ async function component(name, hook) {
   if (!hook && componentModules.has(name)) return componentModules.get(name);
   const filename = new URL(name, import.meta.url);
   const source = await readFile(filename,'utf8');
-  const { js } = compile(hook ? hook.source(source) : source, {filename:filename.pathname,generate:'server'});
+  const prepared=prepareGameComponentSource(source);
+  const { js } = compile(hook ? hook.source(prepared) : prepared, {filename:filename.pathname,generate:'server'});
   const dependencies = new Map();
   for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g)) dependencies.set(match[1],{default:await component(match[1])});
   const exports = {};
   const code = ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  vm.runInNewContext(code,{exports,TextEncoder,captureGameRequests:hook?.receive,require(name){
+  vm.runInNewContext(code,{exports,AbortController,TextEncoder,captureGameRequests:hook?.receive,require(name){
     if(name==='svelte/internal/server')return server;
     if(name==='svelte')return svelte;
     if(dependencies.has(name))return dependencies.get(name);
@@ -39,7 +42,7 @@ const GamesPanel = await component('./GamesPanel.svelte');
 const supportedGames = discoveredGames;
 const { defaultProviderConnection } = modules.get('./game-provider-settings');
 const game = id => ({...supportedGames.find(game=>game.id===id),integrationSetup:{state:'setup-required',message:'Configure this provider',providerSetupRevision:`sha256:${'1'.repeat(64)}`,userFolder:'C:\\Users\\Pilot\\Saved Games\\DCS',connection:{...defaultProviderConnection(id),...(id==='dcs'?{cataloguePath:'C:\\DCS-BIOS\\doc\\json'}:{})}},integrationContext:{status:'waiting-profile',message:'An active matching profile is required',processVerified:false,contextSession:null,providerSetupRevision:null,catalogueRevision:null}});
-const state = g => ({catalogue:[g],cleanup:{phase:'idle'}});
+const state = g => gameUiState({catalogue:[g],cleanup:{phase:'idle'}});
 
 test('detail rescan refreshes only its game in place while library rescan stays global',async()=>{
   let handlers,release;const calls=[];
@@ -167,7 +170,7 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
 async function providerView(initial=game('dcs'),options={}){
   let handlers;const destroyers=[],calls=[],notifications=[],busyChanges=[],picks=[];
   const file=new URL('./GameProviderSettings.svelte',import.meta.url),source=(await readFile(file,'utf8')).replace('</script>',`capture({commit,flush,syncSettings,browseFolder,edit(fn){fn(draft);},setGame(value){game=value;syncSettings();},setBusy(value){busy=value;},get fields(){return {draft,base,saving,picking,error:attempted?providerSettingsError(draft):''};}});</script>`),{js}=compile(source,{filename:file.pathname,generate:'server'}),exports={};
-  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Error,TextEncoder,structuredClone,capture(value){handlers=value;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return {...svelte,onDestroy(callback){destroyers.push(callback);}};if(name==='./Icon.svelte')return {default:()=>{}};if(name==='./notifications')return {notify(message,kind){notifications.push({message,kind});}};if(name==='./gateway')return {async pickGameIntegrationFolder(...args){picks.push(args);return options.pick?.(...args)??null;}};if(modules.has(name))return modules.get(name);throw Error(name);}});
+  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,AbortController,Error,TextEncoder,structuredClone,capture(value){handlers=value;},require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return {...svelte,onDestroy(callback){destroyers.push(callback);}};if(name==='./Icon.svelte')return {default:()=>{}};if(name==='./notifications')return {notify(message,kind){notifications.push({message,kind});}};if(name==='./gateway')return {async pickGameIntegrationFolder(...args){picks.push(args);return options.pick?.(...args)??null;}};if(modules.has(name))return modules.get(name);throw Error(name);}});
   let revision=1;
   const props={game:initial,busy:false,onBusyChange(value){busyChanges.push(value);},async request(request){calls.push(plain(request));if(options.request)return options.request(request);const next=plain(initial);next.integrationSetup={...next.integrationSetup,providerSetupRevision:rev(++revision),connection:request.connection,...(request.userFolder?{userFolder:request.userFolder}:{}),...(request.aircraftModule!==undefined?{aircraftModule:request.aircraftModule}:{})};handlers.setGame(next);return {catalogue:[next]};}};
   const html=render(exports.default,{props}).body;

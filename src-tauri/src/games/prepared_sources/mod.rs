@@ -20,10 +20,16 @@ pub(super) struct Source {
     state: Mutex<State>,
     completed: Condvar,
     wake: osg_streams::NativeWake,
+    changes: std::sync::OnceLock<std::sync::Weak<crate::game_read_models::signals::Signal>>,
     #[cfg(test)]
     pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
 }
 impl Source {
+    fn changed(&self) {
+        if let Some(changes) = self.changes.get().and_then(std::sync::Weak::upgrade) {
+            changes.mark(crate::game_read_models::signals::Domain::Artwork);
+        }
+    }
     pub(super) fn request(&self, invalidate: bool, loss: Option<String>) -> Option<u64> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state.closed { return None; }
@@ -33,12 +39,15 @@ impl Source {
             state.error = Some("Artwork source generation exhausted. Reopen Cockpit.".into());
             self.completed.notify_all();
             self.wake.notify();
+            self.changed();
             return None;
         };
         state.requested = next;
         state.invalidated |= invalidate;
+        let changed = loss.is_some() && state.error != loss;
         if loss.is_some() { state.error = loss; }
         drop(state);
+        if changed { self.changed(); }
         self.wake.notify();
         Some(next)
     }
@@ -61,10 +70,12 @@ impl Source {
     }
     pub(super) fn close(&self, error: Option<String>) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let changed = !state.artwork.same_images(&PreparedLocalArtwork::default()) || state.error != error;
         state.closed = true;
         state.artwork = PreparedLocalArtwork::default();
         state.error = error;
         drop(state);
+        if changed { self.changed(); }
         self.completed.notify_all();
         self.wake.notify();
     }
@@ -72,6 +83,7 @@ impl Source {
 
 impl GamesRuntime {
     pub(super) fn start_prepared_sources(&self) {
+        let _ = self.inner.prepared_sources.changes.set(Arc::downgrade(&self.inner.changes));
         let inner = self.inner.clone();
         let failed = inner.clone();
         let worker = thread::Builder::new().name("game-artwork-source".into()).spawn(move || {
@@ -149,11 +161,16 @@ fn prepare(inner: &Inner, generation: u64, watch: &mut Result<watch::Watch, Stri
     }
     // Discovery changes do not invalidate local images; they do invalidate the
     // captured online target set. Its completion source will request another pass.
+    let mut owner_error_changed = false;
     if current.scan_id == discovery.scan_id && current.status == discovery.status && current.revision == discovery.revision {
         if let Some(owner) = &inner.artwork_owner {
-            *inner.artwork_error.lock().unwrap_or_else(|p| p.into_inner()) = owner.replace(&targets).err();
+            let error = owner.replace(&targets).err();
+            let mut previous = inner.artwork_error.lock().unwrap_or_else(|p| p.into_inner());
+            owner_error_changed = *previous != error;
+            *previous = error;
         }
     }
+    let changed = owner_error_changed || !state.artwork.same_images(&artwork) || state.error != error;
     state.artwork = artwork;
     state.error = error;
     state.watch_error = watch_error;
@@ -161,6 +178,7 @@ fn prepare(inner: &Inner, generation: u64, watch: &mut Result<watch::Watch, Stri
     state.invalidated = false;
     state.handled = generation;
     drop(state); drop(current); drop(settings);
+    if changed { inner.prepared_sources.changed(); }
     inner.prepared_sources.completed.notify_all();
 }
 

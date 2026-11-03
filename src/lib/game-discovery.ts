@@ -54,6 +54,7 @@ export function discoveryMatchOptions(catalogue: readonly Pick<Game, 'id' | 'nam
 /** Discovery artwork is supplied by native library readers; never load arbitrary remote URLs. */
 export function discoveryImage(entry: Pick<GameDiscoveryEntry, 'image'>, game?: Pick<Game, 'background' | 'defaultBackground'>): string {
   for (const image of [entry.image, game?.background?.image, game?.defaultBackground?.image]) {
+    if (typeof image === 'string' && /^game-asset:[a-f0-9]{64}:[0-9]{1,8}$/.test(image)) return image;
     if (typeof image === 'string' && /^data:image\/(?:jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/.test(image)) return image;
   }
   return '';

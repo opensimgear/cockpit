@@ -1,9 +1,11 @@
 <script lang="ts">
+  import {gameImage,gameImageSource} from './game-read-models/image';
   import Icon from './Icon.svelte';
   import type {GameCrop} from './games';
   import {boundedCrop,maximumCrop,positionedCrop,moveCrop,resizeCropCorner,type CropCorner} from './game-background-crop';
   let {image,initialCrop,positionX=50,positionY=50,pending=false,error='',save,close}:{image:string;initialCrop?:GameCrop;positionX?:number;positionY?:number;pending?:boolean;error?:string;save:(crop:GameCrop)=>void;close:()=>void}=$props();
   let width=$state(1),height=$state(1),ready=$state(false),loadError=$state('');
+  $effect(()=>{image;ready=false;loadError='';});
   let crop=$state<GameCrop>({x:0,y:0,width:1,height:1});
   const corners:[CropCorner,string][]=[['nw','top left'],['ne','top right'],['sw','bottom left'],['se','bottom right']];
   let drag:{id:number;x:number;y:number;rect:DOMRect;crop:GameCrop;corner:CropCorner|null}|null=null;
@@ -19,7 +21,7 @@
   <p id="crop-help">Drag the tile frame to move it. Drag its corners to scale. The frame keeps the tile’s 16:9 shape and stays inside the full image. Arrow keys move; Shift moves faster.</p>
   <div class="crop-workspace">
     <div class="crop-surface" style:width={`min(100%, 960px, ${45*width/height}vh)`} style:aspect-ratio={`${width}/${height}`}>
-      <img class="full-image" src={image} alt="Complete background" onload={loaded} onerror={()=>loadError='The image preview could not be loaded. Choose the image again.'}/>
+      <img class="full-image" src={gameImageSource(image)} use:gameImage={image} alt="Complete background" onload={loaded} onerror={()=>loadError='The image preview could not be loaded. Choose the image again.'}/>
       {#if ready}<div class="crop-frame" style:left={`${100*crop.x}%`} style:top={`${100*crop.y}%`} style:width={`${100*crop.width}%`} style:height={`${100*crop.height}%`}>
         <button type="button" class="crop-move" aria-label="Move tile crop" aria-describedby="crop-help" disabled={pending} onpointerdown={event=>start(event)} onpointermove={move} onpointerup={end} onpointercancel={end} onlostpointercapture={end} onkeydown={keyboard}><span>Tile</span></button>
         {#each corners as [corner,label]}<button type="button" class={`crop-resize ${corner}`} aria-label={`Resize tile crop ${label}`} aria-describedby="crop-help" disabled={pending} onpointerdown={event=>start(event,corner)} onpointermove={move} onpointerup={end} onpointercancel={end} onlostpointercapture={end} onkeydown={event=>keyboard(event,corner)}></button>{/each}

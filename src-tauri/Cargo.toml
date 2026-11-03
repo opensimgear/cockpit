@@ -34,7 +34,7 @@ tauri-plugin-dialog = "2"
 serde_json = "1"
 serde_json_canonicalizer = "=0.3.2"
 quick-xml = "0.42"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serialport = "4.8"
 uuid = { version = "1", features = ["v4"] }
 socket2 = "0.6"

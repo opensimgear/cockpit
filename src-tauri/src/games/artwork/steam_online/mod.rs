@@ -51,6 +51,7 @@ impl Service {
         let stale = self.states.iter().find(|(_, value)| !matches!(value, State::Pending))
             .map(|(key, _)| key.clone());
         if let Some(stale) = stale {
+            owner::changed_key(self, &stale);
             self.states.remove(&stale);
             self.tickets.remove(&stale);
             true
@@ -61,6 +62,7 @@ impl Service {
     fn cache_ready(&mut self, key: Key, image: Arc<str>) -> bool {
         if !self.make_room(&key) { return false; }
         self.tickets.remove(&key);
+        if !matches!(self.states.get(&key), Some(State::Ready(old)) if old == &image) { owner::changed_key(self, &key); }
         self.states.insert(key.clone(), State::Ready(image));
         owner::refreshed(self, &key);
         true
@@ -83,6 +85,7 @@ impl Service {
         };
         self.next_ticket = ticket;
         self.tickets.insert(key.clone(), ticket);
+        owner::changed_key(self, &key);
         self.states.insert(key.clone(), State::Pending);
         self.jobs.push_back(Job {
             key,
@@ -121,12 +124,13 @@ fn prepare_with(pool: &Mutex<Service>, root: &Path, state: &Value, mut spawn: im
             Instant::now(),
         );
     }
-    if start_workers(&mut jobs, &mut spawn) {
+    let failed = start_workers(&mut jobs, &mut spawn);
+    if failed {
         owner::synchronize(&mut jobs);
-        let wakes = owner::wakes(&jobs);
-        drop(jobs);
-        for inner in wakes { inner.wake.notify(); }
     }
+    let wakes = owner::changed_wakes(&jobs, failed);
+    drop(jobs);
+    for inner in wakes { inner.notify(); }
 }
 
 fn start_workers(jobs: &mut Service, mut spawn: impl FnMut() -> Result<(), String>) -> bool {
@@ -155,7 +159,16 @@ pub(crate) fn decorate(root: &Path, state: &mut Value) {
 }
 
 fn decorate_with(pool: &Mutex<Service>, root: &Path, state: &mut Value) {
-    if state["discovery"]["status"] == "scanning" { return; }
+    decorate_assets_with(pool, root, state, &mut |image| Ok(Value::String(image.to_string())))
+        .expect("String artwork projection is infallible");
+}
+
+pub(crate) fn decorate_assets(root: &Path, state: &mut Value, resolve: &mut impl FnMut(&Arc<str>) -> Result<Value, String>) -> Result<(), String> {
+    decorate_assets_with(service(), root, state, resolve)
+}
+
+fn decorate_assets_with(pool: &Mutex<Service>, root: &Path, state: &mut Value, resolve: &mut impl FnMut(&Arc<str>) -> Result<Value, String>) -> Result<(), String> {
+    if state["discovery"]["status"] == "scanning" { return Ok(()); }
     let targets = targets::collect(state);
     let mut pending = false;
     let cached = {
@@ -172,9 +185,9 @@ fn decorate_with(pool: &Mutex<Service>, root: &Path, state: &mut Value) {
             Some(State::Ready(image)) => {
                 if let Some(index) = target.game {
                     state["catalogue"][index]["defaultBackground"] =
-                        serde_json::json!({"image":image.as_ref(),"positionX":50,"positionY":50});
+                        serde_json::json!({"image":resolve(&image)?,"positionX":50,"positionY":50});
                 } else if let Some(index) = target.entry {
-                    state["discovery"]["entries"][index]["image"] = image.as_ref().into();
+                    state["discovery"]["entries"][index]["image"] = resolve(&image)?;
                 }
             }
             Some(State::Pending) => pending = true,
@@ -183,6 +196,7 @@ fn decorate_with(pool: &Mutex<Service>, root: &Path, state: &mut Value) {
     }
     state["artworkPending"] = pending.into();
     state["discovery"]["artworkPending"] = pending.into();
+    Ok(())
 }
 
 fn worker() {
@@ -217,12 +231,13 @@ fn run_worker(pool: &Mutex<Service>, fetch: impl Fn(&Key) -> Result<String, Stri
             let mut service = pool.lock().unwrap_or_else(|p| p.into_inner());
             if service.tickets.get(&job.key) == Some(&job.ticket)
                 && matches!(service.states.get(&job.key), Some(State::Pending)) {
+                owner::changed_key(&service, &job.key);
                 service.states.insert(job.key, result);
                 owner::synchronize(&mut service);
             }
             owner::wakes(&service)
         };
-        for wake in wakes { wake.wake.notify(); }
+        for wake in wakes { wake.notify(); }
     }
 }
 
@@ -254,7 +269,7 @@ pub(crate) fn refresh(root:&Path,app_id:u32)->Option<PathBuf> {
         service.cache_ready(key, image);
         owner::wakes(&service)
     };
-    for wake in wakes { wake.wake.notify(); }
+    for wake in wakes { wake.notify(); }
     Some(directory(root).ok()?.join(format!("{app_id}.jpg")))
 }
 
@@ -326,3 +341,6 @@ fn cached_or_fetch_using(root:&Path,app_id:u32,fetch:impl FnOnce(u32)->Result<St
 mod tests;
 #[cfg(test)]
 mod read_model_tests;
+#[cfg(test)]
+#[path = "asset_stream_tests.rs"]
+mod asset_stream_tests;

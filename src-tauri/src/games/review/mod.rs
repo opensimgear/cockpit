@@ -34,7 +34,7 @@ pub(super) struct Entry {
     pub name:String,pub library:String,pub install_path:String,pub previous_path:Option<String>,
     pub executable_candidates:Vec<String>,pub executable:Option<String>,pub update_kind:Option<String>,
     pub integration:Option<String>,pub message:Option<String>,
-    pub image:Option<String>,
+    pub image:Option<Arc<str>>,
     #[serde(skip_serializing_if="Vec::is_empty")] pub tag_ids:Vec<String>,
     #[serde(skip_serializing_if="Option::is_none")] pub tag_source:Option<String>,
     #[serde(skip)] pub sources:Vec<LibrarySource>,
@@ -47,9 +47,20 @@ pub(super) struct Review {
     pub diagnostics:Vec<String>,pub first_start:bool,
     #[serde(skip)] pub revision:u64,
     #[serde(skip)] pub paths:Vec<String>,
+    #[serde(skip)] pub changes:Option<Arc<crate::game_read_models::signals::Signal>>,
 }
 impl Default for Review {
-    fn default()->Self {Self{scan_id:String::new(),status:"idle".into(),libraries:vec![],entries:vec![],observations:vec![],diagnostics:vec![],first_start:false,revision:0,paths:vec![]}}
+    fn default()->Self {Self{scan_id:String::new(),status:"idle".into(),libraries:vec![],entries:vec![],observations:vec![],diagnostics:vec![],first_start:false,revision:0,paths:vec![],changes:None}}
+}
+impl Review {
+    pub(super) fn with_changes(changes:Arc<crate::game_read_models::signals::Signal>)->Self {
+        Self{changes:Some(changes),..Self::default()}
+    }
+    pub(super) fn notify_job(&self,phase:&str,message:&str,terminal:bool) {
+        if let Some(changes)=&self.changes {
+            changes.job(crate::game_read_models::signals::Domain::Discovery,"discovery",&self.scan_id,phase,message,None,terminal);
+        }
+    }
 }
 pub(super) fn key(prefix:&str,value:&str)->String {
     use sha2::{Digest,Sha256};

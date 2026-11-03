@@ -8,6 +8,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     time::{Duration, Instant},
+    sync::Arc,
 };
 
 const MAX_VEHICLES: usize = 1024;
@@ -79,6 +80,7 @@ struct Entry {
     signature: String,
     integration: String,
     installation: String,
+    installation_fields: [Value; 5],
     setup_revision: String,
     enabled: bool,
     process: Option<ProcessIdentity>,
@@ -97,7 +99,11 @@ struct Entry {
     polling: bool,
     opening: Option<u64>,
     detached_physics: Option<crate::dcs_physics::SourceView>,
+    inventory_revision: u64,
+    published: Visible,
 }
+#[derive(Default, PartialEq)]
+struct Visible { current: Option<Value>, error: Option<String>, inventory_revision: u64 }
 pub(crate) struct Tracker {
     writer: Option<osg_persistence::ObservationWriter<Value>>,
     retention_error: Option<String>,
@@ -105,9 +111,52 @@ pub(crate) struct Tracker {
     seen: BTreeMap<String, BTreeMap<String, Value>>,
     entries: BTreeMap<String, Entry>,
     retired: Vec<Reader>,
+    changes: Option<Arc<crate::game_read_models::signals::Signal>>,
+    published_deadline: Option<Instant>,
 }
 pub(crate) struct RetiredReaders { _readers: Vec<Reader> }
 impl Tracker {
+    fn installation_fields(game: &Value) -> [Value; 5] {
+        ["installPath", "executable", "installed", "integrationKey", "provider"].map(|field| game[field].clone())
+    }
+    pub(crate) fn watch_changes(&mut self, changes: Arc<crate::game_read_models::signals::Signal>) {
+        let weak = Arc::downgrade(&changes);
+        if let Some(writer) = &self.writer {
+            writer.watch_error(Arc::new(move || {
+                if let Some(changes) = weak.upgrade() { changes.mark(crate::game_read_models::signals::Domain::Runtime); }
+            }));
+        }
+        self.changes = Some(changes);
+    }
+    fn changed(&self) {
+        if let Some(changes) = &self.changes { changes.mark(crate::game_read_models::signals::Domain::Runtime); }
+    }
+    fn publish_visible(&mut self, id: &str) {
+        let current = self.current(id);
+        let Some(entry) = self.entries.get_mut(id) else { return; };
+        let visible = Visible { current, error: entry.error.clone(), inventory_revision: entry.inventory_revision };
+        if entry.published != visible { entry.published = visible; self.changed(); }
+        let deadline = self.view_deadline();
+        if self.published_deadline != deadline {
+            self.published_deadline = deadline;
+            if let Some(changes) = &self.changes { changes.wake.notify(); }
+        }
+    }
+    /// The current cached view expires at its earliest process-observation or
+    /// telemetry-capture fence. An elapsed fence is consumed once, not polled.
+    pub(crate) fn view_deadline(&self) -> Option<Instant> {
+        let now = Instant::now();
+        self.entries.values().filter_map(|entry| {
+            #[cfg(test)]
+            if entry.injected { return None; }
+            entry.current.as_ref()?;
+            let capture = entry.telemetry.as_ref()?;
+            let observed = entry.observed.checked_add(Duration::from_secs(2))?;
+            let captured = capture.at.checked_add(Duration::from_secs(2))?;
+            let deadline = observed.min(captured);
+            (deadline > now).then_some(deadline)
+        }).min()
+    }
     pub(crate) fn take_retired(&mut self) -> RetiredReaders {
         RetiredReaders { _readers: std::mem::take(&mut self.retired) }
     }
@@ -142,6 +191,7 @@ impl Tracker {
             });
             entry.observed = Instant::now();
         }
+        self.publish_visible(id);
     }
     pub(crate) fn new(path: PathBuf) -> Self {
         let loaded = (|| {
@@ -187,6 +237,8 @@ impl Tracker {
             seen,
             entries: BTreeMap::new(),
             retired: vec![],
+            changes: None,
+            published_deadline: None,
         }
     }
 
@@ -195,3 +247,5 @@ impl Tracker {
 #[cfg(test)]
 mod tests;
 mod views;
+#[cfg(test)]
+mod stream_tests;

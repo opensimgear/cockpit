@@ -114,9 +114,11 @@ impl Tracker {
                 self.retired.extend(entry.reader.take());
                 entry.current = None;
                 entry.telemetry = None;
+                self.publish_visible(&qualification.id);
                 continue;
             }
             let Some(reader) = entry.reader.take() else {
+                self.publish_visible(&qualification.id);
                 continue;
             };
             entry.detached_physics = match &reader {
@@ -130,6 +132,7 @@ impl Tracker {
             if entry.inspected.elapsed() > Duration::from_secs(5) {
                 entry.inspection.clear();
             }
+            let id = qualification.id.clone();
             polls.push(VehiclePoll {
                 id: qualification.id.clone(),
                 generation: entry.generation,
@@ -142,12 +145,14 @@ impl Tracker {
                 result: None,
                 qualification,
             });
+            self.publish_visible(&id);
         }
         polls
     }
     pub(crate) fn apply_poll(&mut self, poll: VehiclePoll) {
         let Some(entry) = self.entries.get_mut(&poll.id) else {
             self.retired.push(poll.reader);
+            self.publish_visible(&poll.id);
             return;
         };
         if entry.generation != poll.generation
@@ -155,6 +160,7 @@ impl Tracker {
             || !entry.polling
         {
             self.retired.push(poll.reader);
+            self.publish_visible(&poll.id);
             return;
         }
         entry.polling = false;
@@ -168,8 +174,11 @@ impl Tracker {
             entry.current = None;
             entry.telemetry = None;
             self.retired.push(poll.reader);
+            self.publish_visible(&poll.id);
             return;
         }
+        let id = poll.id.clone();
+        let mut retain = false;
         match poll
             .result
             .expect("Reader work must finish before publication")
@@ -179,11 +188,14 @@ impl Tracker {
                 entry.telemetry = Some(capture);
                 entry.current = current.and_then(|value| vehicle(&entry.integration, &value));
                 if let Some(value) = &entry.current {
-                    let seen = self.seen.entry(poll.id).or_default();
-                    let key = value["id"].as_str().unwrap();
-                    if !seen.contains_key(key) && seen.len() < MAX_VEHICLES {
-                        seen.insert(key.into(), value.clone());
-                        self.retain_seen();
+                    if self.seen.contains_key(&poll.id) || self.seen.len() < 512 {
+                        let seen = self.seen.entry(poll.id).or_default();
+                        let key = value["id"].as_str().unwrap();
+                        if !seen.contains_key(key) && seen.len() < MAX_VEHICLES {
+                            seen.insert(key.into(), value.clone());
+                            entry.inventory_revision = entry.inventory_revision.wrapping_add(1);
+                            retain = true;
+                        }
                     }
                 }
             }
@@ -196,6 +208,8 @@ impl Tracker {
                 entry.retry = Instant::now() + Duration::from_secs(2);
             }
         }
+        if retain { self.retain_seen(); }
+        self.publish_visible(&id);
     }
     fn retain_seen(&mut self) {
         let games = self
@@ -205,7 +219,7 @@ impl Tracker {
             .collect::<serde_json::Map<_, _>>();
         if let Some(writer) = &self.writer {
             if let Err(error) = writer.queue(json!({"schemaVersion":1,"games":games})) {
-                self.retention_error = Some(error);
+                if self.retention_error.as_ref() != Some(&error) { self.retention_error = Some(error); self.changed(); }
             }
         }
     }
@@ -243,3 +257,6 @@ impl Tracker {
 #[cfg(test)]
 #[path = "polling_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "polling_stream_tests.rs"]
+mod stream_tests;

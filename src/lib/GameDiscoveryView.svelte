@@ -1,11 +1,13 @@
 <script lang="ts">
+  import {gameImage,gameImageSource} from './game-read-models/image';
+  import type {GameJob} from './game-read-models/models';
   import PageHeader from './PageHeader.svelte';
   import Icon from './Icon.svelte';
   import GameIntegrationBadge from './GameIntegrationBadge.svelte';
   import {pickGameIntegrationFolder} from './gateway';
   import {gameExecutableDisplayPath,gameHasIntegration,type GamesState,type GameRequest,type GameDiscoveryAction} from './games';
   import {discoveryActions,discoverySelectAll,discoveryOtherInstallations,discoveryPathError,discoveryImage} from './game-discovery';
-  let {gameState,busy,request,close}:{gameState:GamesState;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;close:()=>void}=$props();
+  let {gameState,job,busy,request,close}:{gameState:GamesState;job?:Readonly<GameJob>;busy:boolean;request:(request:GameRequest)=>Promise<GamesState|false>;close:()=>void}=$props();
   let location=$state(''),error=$state(''),scanId=$state(''),drafts=$state<Record<string,Partial<GameDiscoveryAction>>>({}),paths=$state<string[]>([]),openLibraries=$state<Record<string,boolean>>({});
   let failedImages=$state<Record<string,boolean>>({});
   let showLocations=$state(false);
@@ -40,7 +42,7 @@
   </section>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if scanning}<p class="scan-status" role="status">{preparing?(entries.length?'Reading platform metadata and preparing artwork… Discovered games are shown below.':'Matching discovered installations…'):'Scanning libraries…'}</p>{/if}
+  {#if scanning}<p class="scan-status" role="status">{job?.terminal?'Loading the current discovery review…':job?.message??(preparing?(entries.length?'Reading platform metadata and preparing artwork… Discovered games are shown below.':'Matching discovered installations…'):'Scanning libraries…')}{job?.percent===undefined?'':` · ${job.percent}%`}</p>{/if}
   <div class="libraries" aria-label="Library scan progress">
     {#each discovery?.libraries??[] as library (library.id)}
       {@const libraryEntries=entries.filter(entry=>[library.id.toLowerCase(),library.name.toLowerCase()].includes(entry.library.toLowerCase()))}
@@ -64,7 +66,7 @@
                 {@const image=discoveryImage(entry,target)}
                 {@const actionLabel=entry.action==='add'?'Add':entry.action==='update'?'Update':'Remove'}
                 <article class="discovery-entry" data-entry-id={entry.id}>
-                  <div class="entry-art" aria-hidden="true">{#if image&&!failedImages[image]}<img src={image} alt="" loading="lazy" decoding="async" onload={positionArtwork} onerror={()=>{failedImages={...failedImages,[image]:true};}}/>{:else}<Icon name="gamepad" size={38}/>{/if}</div>
+                  <div class="entry-art" aria-hidden="true">{#if image&&!failedImages[image]}<img src={gameImageSource(image)} use:gameImage={image} alt="" loading="lazy" decoding="async" onload={positionArtwork} onerror={()=>{failedImages={...failedImages,[image]:true};}}/>{:else}<Icon name="gamepad" size={38}/>{/if}</div>
                   <div class="entry-details"><div class="entry-heading"><strong>{entry.name}</strong><GameIntegrationBadge available={!!entry.integration||gameHasIntegration(target)}/></div>
                     {#if entry.message}<p class="entry-message">{entry.message}</p>{/if}
                     {#if entry.action!=='remove'}
@@ -81,7 +83,7 @@
             <section class="results" aria-label={library.name+' Other detected installations'}><h3>Other detected installations</h3>
               {#each otherInstallations as installation (installation.id)}
                 <article class="discovery-entry detected-entry" data-detected-id={installation.id}>
-                  <div class="entry-art" aria-hidden="true">{#if installation.image&&!failedImages[installation.image]}<img src={installation.image} alt="" loading="lazy" decoding="async" onload={positionArtwork} onerror={()=>{failedImages={...failedImages,[installation.image]:true};}}/>{:else}<Icon name="gamepad" size={38}/>{/if}</div>
+                  <div class="entry-art" aria-hidden="true">{#if installation.image&&!failedImages[installation.image]}<img src={gameImageSource(installation.image)} use:gameImage={installation.image} alt="" loading="lazy" decoding="async" onload={positionArtwork} onerror={()=>{failedImages={...failedImages,[installation.image]:true};}}/>{:else}<Icon name="gamepad" size={38}/>{/if}</div>
                   <div class="entry-details"><div class="entry-heading"><strong>{installation.name}</strong><GameIntegrationBadge available={installation.integrationAvailable}/></div><div class="entry-controls"><label class="executable-choice"><span class="sr-only">Executable</span><select aria-label={installation.name+' detected executable'} disabled value={installation.executable??''}>{#if !installation.executableCandidates.length}<option value="">No executable found</option>{/if}{#each installation.executableCandidates as executable}<option value={executable}>{gameExecutableDisplayPath(executable,installation.installPath)}</option>{/each}</select></label></div></div>
                   <span class="entry-status">{installation.status}</span>
                 </article>

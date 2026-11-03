@@ -12,8 +12,8 @@ export function libModuleName(specifier, parent) {
 
 /** Load pure TS helpers with their real dependencies and source filenames so
  * Node's built-in coverage reports include the exercised production code. */
-export async function loadModules(names) {
-  const exportsByName = new Map();
+export async function loadModules(names, provided = new Map()) {
+  const exportsByName = new Map(provided);
   async function load(name) {
     name=name.replace(/\.ts$/,'');
     if(exportsByName.has(name))return;

@@ -12,6 +12,7 @@ impl Inner {
             publication.cancel()?;
         }
         self.cancel.store(true, Ordering::Release);
+        self.job_progress("cancelling", "Cancelling integration setup", None);
         Ok(())
     }
     pub(super) fn decorate_removal(&self, id: &str, status: &mut Value) {

@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread::{self, JoinHandle},
 };
@@ -44,6 +44,8 @@ struct Inner {
     busy: AtomicBool,
     closed: AtomicBool,
     recovery_needed: AtomicBool,
+    changes: OnceLock<Arc<crate::game_read_models::signals::Signal>>,
+    job: Mutex<Option<(String, String)>>,
 }
 pub(crate) struct GameIntegrationSetup {
     inner: Arc<Inner>,
@@ -111,10 +113,15 @@ impl GameIntegrationSetup {
                 cancel: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
+                changes: OnceLock::new(),
+                job: Mutex::new(None),
             }),
             worker: Mutex::new(None),
             admission: Mutex::new(()),
         }
+    }
+    pub(crate) fn watch_changes(&self, changes: Arc<crate::game_read_models::signals::Signal>) {
+        let _ = self.inner.changes.set(changes);
     }
     /// New preparation forces a content hash; subsequent native admission checks
     /// metadata immediately, independently of the passive observer's interval.
@@ -169,6 +176,13 @@ impl GameIntegrationSetup {
             };
             let status = self.inner.cached_setup(game, id);
             game["integrationSetup"] = status;
+        }
+    }
+    pub(crate) fn decorate_summary(&self, catalogue: &mut [Value]) {
+        for game in catalogue {
+            if let Some(id) = crate::game_discovery::integration_binding(game) {
+                game["integrationSetup"] = self.inner.cached_setup_summary(game, id);
+            } else if let Some(object) = game.as_object_mut() { object.remove("integrationSetup"); }
         }
     }
     /// Source configuration proofs are independent of display eviction/budgets.

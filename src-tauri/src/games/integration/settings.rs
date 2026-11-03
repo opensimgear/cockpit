@@ -31,6 +31,7 @@ pub(super) fn commit_settings(inner: &Inner, base: &Value, draft: Value) -> Resu
     // Every production mutation shares the writer gate, so the successful CAS
     // and this publication are one serialized writer operation.
     *inner.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
+    inner.changed();
     Ok(())
 }
 pub(crate) fn read_settings(path: &Path) -> Result<Value, String> {

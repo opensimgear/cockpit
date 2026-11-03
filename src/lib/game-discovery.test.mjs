@@ -8,7 +8,9 @@ import {render} from 'svelte/server';
 import * as server from 'svelte/internal/server';
 import * as svelte from 'svelte';
 import {loadModules} from './test-module-loader.mjs';
+import {installGameReadModelFixture} from './game-read-models/ui-fixture.mjs';
 const modules=await loadModules(['./games','./game-discovery']);
+await installGameReadModelFixture(modules);
 const {discoveryActions,discoverySelectAll,discoveryOtherInstallations,discoveryPathError,discoveryMatchOptions,discoveryImage}=modules.get('./game-discovery');
 const plain=value=>JSON.parse(JSON.stringify(value));
 test('discovery defaults to add and update with removal opt in, preserving explicit decisions',()=>{
@@ -64,7 +66,7 @@ async function component(name){
  if(components.has(name))return components.get(name);
  const file=new URL(name,import.meta.url),{js}=compile(await readFile(file,'utf8'),{filename:file.pathname,generate:'server'}),dependencies=new Map();
  for(const match of js.code.matchAll(/from\s+['"]([^'"]+\.svelte)['"]/g))dependencies.set(match[1],{default:await component(match[1])});
- const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){
+ const exports={};vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,AbortController,TextEncoder,require(name){
   if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;
   if(dependencies.has(name))return dependencies.get(name);if(modules.has(name))return modules.get(name);
   if(name==='./gateway')return{pickGameIntegrationFolder(){throw Error('Rendering must not open native dialogs.');}};throw Error(name);

@@ -109,6 +109,7 @@ impl Tracker {
             signature: String::new(),
             integration: String::new(),
             installation: String::new(),
+            installation_fields: Self::installation_fields(game),
             setup_revision: String::new(),
             enabled: false,
             process: None,
@@ -127,6 +128,8 @@ impl Tracker {
             polling: false,
             opening: None,
             detached_physics: None,
+            inventory_revision: 0,
+            published: Visible::default(),
         });
         if observation_epoch <= entry.observation_epoch {
             return None;
@@ -144,6 +147,7 @@ impl Tracker {
             entry.error = None;
             entry.process = process;
             entry.installation = Self::installation(game);
+            entry.installation_fields = Self::installation_fields(game);
             entry.setup_revision = setup_revision.into();
             entry.enabled = enabled;
             entry.signature = signature;
@@ -161,7 +165,7 @@ impl Tracker {
         if process.is_some() {
             entry.opening = Some(observation_epoch);
         }
-        Some(VehicleObservation {
+        let observation = VehicleObservation {
             id: id.into(),
             epoch: observation_epoch,
             generation: entry.generation,
@@ -177,11 +181,14 @@ impl Tracker {
             setup_revision: entry.setup_revision.clone(),
             identity: entry.process.clone(),
             verified: true,
-        })
+        };
+        self.publish_visible(id);
+        Some(observation)
     }
     pub(crate) fn apply_observation(&mut self, observation: VehicleObservation) {
         let Some(entry) = self.entries.get_mut(&observation.id) else {
             self.retired.extend(observation.reader.and_then(Result::ok));
+            self.publish_visible(&observation.id);
             return;
         };
         let owns_opening = entry.opening == Some(observation.epoch);
@@ -193,6 +200,7 @@ impl Tracker {
             || entry.signature != observation.signature
         {
             self.retired.extend(observation.reader.and_then(Result::ok));
+            self.publish_visible(&observation.id);
             return;
         }
         if !observation.verified || entry.observed.elapsed() > Duration::from_secs(2) {
@@ -204,13 +212,17 @@ impl Tracker {
             entry.current = None;
             entry.telemetry = None;
             self.retired.extend(observation.reader.and_then(Result::ok));
+            self.publish_visible(&observation.id);
             return;
         }
         if let Some(catalogue) = observation
             .catalogue
             .filter(|_| entry.observation_epoch == observation.epoch)
         {
-            entry.vehicles = catalogue;
+            if entry.vehicles != catalogue {
+                entry.vehicles = catalogue;
+                entry.inventory_revision = entry.inventory_revision.wrapping_add(1);
+            }
             entry.catalogued = Instant::now();
         }
         if let Some(reader) = observation.reader {
@@ -225,9 +237,13 @@ impl Tracker {
                 }
             }
         }
+        self.publish_visible(&observation.id);
     }
 }
 
 #[cfg(test)]
 #[path = "observation_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "observation_stream_tests.rs"]
+mod stream_tests;

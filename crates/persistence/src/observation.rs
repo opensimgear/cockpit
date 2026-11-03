@@ -17,6 +17,7 @@ struct State<T> {
     closing: bool,
     done: bool,
     error: Option<String>,
+    error_observer: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 pub struct ObservationWriter<T: Serialize + DeserializeOwned + Send + 'static> {
     state: Arc<(Mutex<State<T>>, Condvar)>,
@@ -32,6 +33,7 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> ObservationWriter<T> {
                 closing: false,
                 done: false,
                 error: None,
+                error_observer: None,
             }),
             Condvar::new(),
         ));
@@ -51,6 +53,8 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> ObservationWriter<T> {
                     drop(state);
                     let result = repository.save(&value);
                     let mut state = lock.lock().unwrap_or_else(|p| p.into_inner());
+                    let previous = state.error.clone();
+                    let mut retry = false;
                     match result {
                         Ok(()) => {
                             state.committed = sequence;
@@ -58,36 +62,48 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> ObservationWriter<T> {
                         }
                         Err(error) => {
                             state.error = Some(error);
-                            if state.closing {
-                                break;
-                            }
-                            if state.pending.is_none() {
+                            retry = true;
+                            if !state.closing && state.pending.is_none() {
                                 state.pending = Some((sequence, value));
                             }
-                            let (next, _) = wake
-                                .wait_timeout(state, Duration::from_millis(250))
-                                .unwrap_or_else(|p| p.into_inner());
-                            state = next;
                         }
                     }
+                    let observer = (state.error != previous).then(|| state.error_observer.clone()).flatten();
+                    let finished = state.closing && (retry || state.pending.is_none());
                     wake.notify_all();
-                    if state.closing && state.pending.is_none() {
-                        break;
+                    drop(state);
+                    notify_error(observer);
+                    if finished { break; }
+                    if retry {
+                        let state = lock.lock().unwrap_or_else(|p| p.into_inner());
+                        if !state.closing {
+                            drop(wake.wait_timeout(state, Duration::from_millis(250)).unwrap_or_else(|p| p.into_inner()));
+                        }
                     }
                 }));
                 let (lock, wake) = &*shared;
                 let mut state = lock.lock().unwrap_or_else(|p| p.into_inner());
+                let previous = state.error.clone();
                 if outcome.is_err() {
                     state.error = Some("Observation persistence worker failed.".into());
                 }
                 state.done = true;
                 wake.notify_all();
+                let observer = (state.error != previous).then(|| state.error_observer.clone()).flatten();
+                drop(state);
+                notify_error(observer);
             })
             .map_err(|_| "Cannot start observation persistence worker.")?;
         Ok(Self {
             state,
             worker: Mutex::new(Some(worker)),
         })
+    }
+    /// One source-owned notification for error/recovery transitions. The trusted
+    /// callback runs after state and repository locks are released; successful
+    /// observation commits do not generate status polling notifications.
+    pub fn watch_error(&self, observer: Arc<dyn Fn() + Send + Sync>) {
+        self.state.0.lock().unwrap_or_else(|p| p.into_inner()).error_observer = Some(observer);
     }
     pub fn queue(&self, value: T) -> Result<(), String> {
         let (lock, wake) = &*self.state;
@@ -152,6 +168,11 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> ObservationWriter<T> {
             }
         }
         Ok(())
+    }
+}
+fn notify_error(observer: Option<Arc<dyn Fn() + Send + Sync>>) {
+    if let Some(observer) = observer {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer()));
     }
 }
 impl<T: Serialize + DeserializeOwned + Send + 'static> Drop for ObservationWriter<T> {
@@ -261,3 +282,7 @@ mod tests {
         idle.shutdown().unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "observation_status_tests.rs"]
+mod status_tests;

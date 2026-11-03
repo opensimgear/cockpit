@@ -185,6 +185,7 @@
       "name": "games-fe",
       "testPatterns": [
         "src/lib/game-*.test.mjs",
+        "src/lib/game-read-models/*.test.mjs",
         "src/lib/games.test.mjs",
         "src/lib/custom-games.test.mjs",
         "src/lib/assetto-games.test.mjs",
@@ -195,6 +196,7 @@
       ],
       "sourcePatterns": [
         "src/lib/game-*.ts",
+        "src/lib/game-read-models/**",
         "src/lib/game-*.mjs",
         "src/lib/game-*.svelte",
         "src/lib/Game*.svelte",
@@ -207,6 +209,31 @@
       "coverageScripts": [
         "games:coverage",
         "game-provider:coverage"
+      ],
+      "coverageTasks": [
+        {
+          "name": "game-read-models-coverage",
+          "tests": [
+            "src/lib/game-read-models/cutover.test.mjs",
+            "src/lib/game-read-models/image.test.mjs",
+            "src/lib/game-read-models/pages.test.mjs",
+            "src/lib/game-read-models/shared.test.mjs",
+            "src/lib/game-read-models/views.test.mjs"
+          ],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/game-read-models/*.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/game-read-models/cutover.test.mjs",
+            "src/lib/game-read-models/image.test.mjs",
+            "src/lib/game-read-models/pages.test.mjs",
+            "src/lib/game-read-models/shared.test.mjs",
+            "src/lib/game-read-models/views.test.mjs"
+          ]
+        }
       ]
     },
     {

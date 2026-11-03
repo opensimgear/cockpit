@@ -10,6 +10,18 @@ const MAX_SCAN_BYTES: usize = 128;
 pub(super) struct Inner {
     pub(super) wake: osg_streams::NativeWake,
     closed: AtomicBool,
+    changed: AtomicBool,
+    changes: std::sync::OnceLock<Weak<crate::game_read_models::signals::Signal>>,
+}
+impl Inner {
+    pub(super) fn notify(&self) {
+        if self.changed.swap(false, Ordering::AcqRel) {
+            if let Some(signal) = self.changes.get().and_then(Weak::upgrade) {
+                signal.mark(crate::game_read_models::signals::Domain::Artwork);
+            }
+        }
+        self.wake.notify();
+    }
 }
 pub(super) struct Registration {
     root: PathBuf,
@@ -18,7 +30,7 @@ pub(super) struct Registration {
     inner: Weak<Inner>,
     attempts: BTreeMap<u32, Attempt>,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 enum Attempt { Waiting, Pending(u64, String), Ready, Failed { scan: String, retry: Instant } }
 pub(crate) struct Owner {
     id: u64,
@@ -27,6 +39,9 @@ pub(crate) struct Owner {
 }
 
 impl Owner {
+    pub(crate) fn watch_changes(&self, changes: Arc<crate::game_read_models::signals::Signal>) {
+        let _ = self.inner.changes.set(Arc::downgrade(&changes));
+    }
     pub(crate) fn new(root: &Path) -> Result<Self, String> {
         let (id, inner) = register(service(), root)?;
         let running = inner.clone();
@@ -44,7 +59,7 @@ impl Owner {
     pub(crate) fn replace(&self, state: &Value) -> Result<(), String> {
         if self.inner.closed.load(Ordering::Acquire) { return Err("Steam artwork owner closed.".into()); }
         replace(service(), self.id, state)?;
-        self.inner.wake.notify();
+        self.inner.notify();
         Ok(())
     }
 
@@ -58,7 +73,7 @@ impl Owner {
 impl Drop for Owner { fn drop(&mut self) { self.shutdown(); } }
 
 fn register(pool: &Mutex<Service>, root: &Path) -> Result<(u64, Arc<Inner>), String> {
-    let inner = Arc::new(Inner { wake: Default::default(), closed: AtomicBool::new(false) });
+    let inner = Arc::new(Inner { wake: Default::default(), closed: AtomicBool::new(false), changed: AtomicBool::new(false), changes: Default::default() });
     let mut service = pool.lock().unwrap_or_else(|p| p.into_inner());
     if service.owners.len() >= MAX_OWNERS { return Err("Steam artwork owner limit reached.".into()); }
     let id = service.next_owner.checked_add(1).ok_or("Steam artwork owner identity exhausted.")?;
@@ -77,6 +92,9 @@ fn replace(pool: &Mutex<Service>, id: u64, state: &Value) -> Result<(), String> 
     let mut service = pool.lock().unwrap_or_else(|p| p.into_inner());
     let owner = service.owners.get_mut(&id).ok_or("Steam artwork owner closed.")?;
     let root = owner.root.clone();
+    if owner.targets != targets || owner.scan != scan {
+        if let Some(inner) = owner.inner.upgrade() { inner.changed.store(true, Ordering::Release); }
+    }
     owner.targets = targets;
     let targets = &owner.targets;
     owner.attempts.retain(|app_id, _| targets.contains(app_id));
@@ -101,11 +119,19 @@ fn unregister(pool: &Mutex<Service>, id: u64) {
         if let Some(owner) = service.owners.remove(&id) { retire_orphans(&mut service, &owner.root); }
         wakes(&service)
     };
-    for inner in wakes { inner.wake.notify(); }
+    for inner in wakes { inner.notify(); }
 }
 
 pub(super) fn wakes(service: &Service) -> Vec<Arc<Inner>> {
     service.owners.values().filter_map(|owner| owner.inner.upgrade()).collect()
+}
+pub(super) fn changed_wakes(service: &Service, all: bool) -> Vec<Arc<Inner>> {
+    wakes(service).into_iter().filter(|inner| all || inner.changed.load(Ordering::Acquire)).collect()
+}
+pub(super) fn changed_key(service: &Service, key: &Key) {
+    for owner in service.owners.values().filter(|owner| owner.root == key.root && owner.targets.contains(&key.app_id)) {
+        if let Some(inner) = owner.inner.upgrade() { inner.changed.store(true, Ordering::Release); }
+    }
 }
 
 /// Accepted work intent is visible before the scheduler first requests its job.
@@ -141,7 +167,11 @@ fn step(pool: &Mutex<Service>, id: u64, now: Instant, spawn: impl FnMut() -> Res
                 } else { Attempt::Waiting }
             }
         };
-        service.owners.get_mut(&id)?.attempts.insert(app_id, attempt);
+        let owner = service.owners.get_mut(&id)?;
+        if owner.attempts.get(&app_id) != Some(&attempt) {
+            if let Some(inner) = owner.inner.upgrade() { inner.changed.store(true, Ordering::Release); }
+        }
+        owner.attempts.insert(app_id, attempt);
     }
     let spawn_failed = start_workers(&mut service, spawn);
     // A spawn failure creates real retry deadlines after request() returned Pending.
@@ -152,9 +182,9 @@ fn step(pool: &Mutex<Service>, id: u64, now: Instant, spawn: impl FnMut() -> Res
             deadline = Some(deadline.map_or(*retry, |old| old.min(*retry)));
         }
     }
-    let wakes = if spawn_failed { wakes(&service) } else { Vec::new() };
+    let wakes = changed_wakes(&service, spawn_failed);
     drop(service);
-    for inner in wakes { inner.wake.notify(); }
+    for inner in wakes { inner.notify(); }
     deadline
 }
 
@@ -166,8 +196,8 @@ pub(super) fn synchronize(service: &mut Service) {
             let Attempt::Pending(ticket, attempted_scan) = attempt else { continue; };
             if service.tickets.get(&key) != Some(ticket) { continue; }
             match service.states.get(&key) {
-                Some(State::Ready(_)) => *attempt = Attempt::Ready,
-                Some(State::Failed { retry, .. }) => *attempt = Attempt::Failed { scan: attempted_scan.clone(), retry: *retry },
+                Some(State::Ready(_)) => { *attempt = Attempt::Ready; if let Some(inner) = owner.inner.upgrade() { inner.changed.store(true, Ordering::Release); } },
+                Some(State::Failed { retry, .. }) => { *attempt = Attempt::Failed { scan: attempted_scan.clone(), retry: *retry }; if let Some(inner) = owner.inner.upgrade() { inner.changed.store(true, Ordering::Release); } },
                 _ => {}
             }
         }
@@ -195,3 +225,6 @@ fn run(pool: &Mutex<Service>, id: u64, inner: Arc<Inner>) {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "owner/signal_tests.rs"]
+mod signal_tests;

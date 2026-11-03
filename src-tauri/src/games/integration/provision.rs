@@ -38,7 +38,7 @@ impl GameIntegrationSetup {
         }
         self.inner.cancel.store(false, Ordering::Release);
         self.inner.busy.store(true, Ordering::Release);
-        self.inner.publish_start(game, json!({"state":"setting-up","message":"Removing DCS integration.","progress":"Restoring export scripts and removing owned files","userFolder":target,"version":crate::dcs_setup::VERSION,"installed":true,"removable":true}));
+        let run = self.inner.publish_start(game, json!({"state":"setting-up","message":"Removing DCS integration.","progress":"Restoring export scripts and removing owned files","userFolder":target,"version":crate::dcs_setup::VERSION,"installed":true,"removable":true}));
         let inner = self.inner.clone();
         let game = game.clone();
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -83,8 +83,10 @@ impl GameIntegrationSetup {
                 status["state"] = json!("needs-attention");
                 status["message"] = json!(error);
             }
-            inner.publish_setup(&game, &record, status);
+            inner.publish_setup(&game, &record, status.clone());
+            inner.finish_job(&run, &status);
             inner.busy.store(false, Ordering::Release);
+            inner.changed();
         }));
         Ok(())
     }
@@ -145,7 +147,7 @@ impl GameIntegrationSetup {
             .ac_cars_publication
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = publication.clone();
-        self.inner.publish_start(game, json!({"state":"setting-up","message":"Checking Assetto native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
+        let run = self.inner.publish_start(game, json!({"state":"setting-up","message":"Checking Assetto native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
         let inner = self.inner.clone();
         let game = game.clone();
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -266,8 +268,10 @@ impl GameIntegrationSetup {
                     status["message"] = json!(error);
                 }
             }
-            inner.publish_setup(&game, &record, status);
+            inner.publish_setup(&game, &record, status.clone());
+            inner.finish_job(&run, &status);
             inner.busy.store(false, Ordering::Release);
+            inner.changed();
         }));
         Ok(())
     }

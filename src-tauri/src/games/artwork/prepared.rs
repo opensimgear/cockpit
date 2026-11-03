@@ -119,28 +119,39 @@ pub(crate) fn prepare_local(root: &Path, catalogue: &[Value]) -> Result<Prepared
 }
 
 impl PreparedLocalArtwork {
+    pub(crate) fn same_images(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || (self.0.managed == other.0.managed && self.0.installations == other.0.installations)
+    }
     /// Memory-only projection of the exact captured reference/installation scope.
     pub(crate) fn decorate(&self, catalogue: &mut [Value]) {
+        self.decorate_with(catalogue, &mut |image| Ok(Value::String(image.to_string())))
+            .expect("String artwork projection is infallible");
+    }
+    pub(crate) fn decorate_with(&self, catalogue: &mut [Value], resolve: &mut impl FnMut(&Arc<str>) -> Result<Value, String>) -> Result<(), String> {
         for game in catalogue {
             for key in ["background", "defaultBackground"] {
                 let Some(reference) = game[key]["image"].as_str() else { continue; };
                 if let Some(image) = self.0.managed.get(reference) {
-                    game[key]["image"] = Value::String(image.to_string());
+                    game[key]["image"] = resolve(image)?;
                 } else if let Some(object) = game.as_object_mut() {
                     object.remove(key);
                 }
             }
-            if game["background"]["image"].as_str().is_none() {
+            if game["background"]["image"].is_null() {
                 let image = game["installPath"].as_str().and_then(installation_identity)
                     .and_then(|identity| self.0.installations.get(&identity));
                 if let Some(image) = image {
-                    game["defaultBackground"] = serde_json::json!({"image":image.as_ref(),"positionX":50,"positionY":50});
+                    game["defaultBackground"] = serde_json::json!({"image":resolve(image)?,"positionX":50,"positionY":50});
                 }
             }
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 #[path = "prepared_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "prepared_asset_tests.rs"]
+mod asset_tests;

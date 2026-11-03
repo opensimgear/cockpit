@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {gameImage,gameImageSource,resolveGameImage} from './game-read-models/image';
   import Icon from './Icon.svelte';
   import {gatewayRequest} from './gateway';
   import type {Game, GameCrop, GameArtworkOption} from './games';
@@ -7,6 +8,7 @@
   const gameId=$derived(game.id);
   let disposed=false;
   let generation=0;
+  let imageController=new AbortController();
   async function load(id:string){
     const requestGeneration=++generation;
     loading=true;error='';
@@ -17,24 +19,31 @@
     }catch(cause){if(!disposed&&requestGeneration===generation)error=cause instanceof Error?cause.message:String(cause);}
     finally{if(!disposed&&requestGeneration===generation)loading=false;}
   }
-  $effect(()=>{disposed=false;void load(gameId);return()=>{disposed=true;generation++;};});
+  $effect(()=>{disposed=false;void load(gameId);return()=>{disposed=true;generation++;imageController.abort();selecting(false);pending=false;};});
+  async function selectCurrent(image:string,crop?:GameCrop){
+    if(pending||disabled)return;pending=true;selecting(true);error='';imageController.abort();imageController=new AbortController();const signal=imageController.signal;
+    try{const source=await resolveGameImage(image,signal);if(!disposed&&!signal.aborted){selectedId='';choose(source,crop);}}
+    catch(cause){if(!disposed&&!signal.aborted)error=cause instanceof Error?cause.message:String(cause);}
+    finally{if(!disposed&&!signal.aborted){pending=false;selecting(false);}}
+  }
   async function select(item:GameArtworkOption){
-    if(pending||disabled)return;pending=true;selecting(true);error='';
+    if(pending||disabled)return;pending=true;selecting(true);error='';const requestGeneration=generation;imageController.abort();imageController=new AbortController();const signal=imageController.signal;
     try{
       const result=await gatewayRequest({command:'game_artwork_preview',gameId:game.id,artworkId:item.id});
       if(!result.gameArtwork?.image)throw new Error('This library image could not be loaded.');
-      if(!disposed){selectedId=item.id;choose(result.gameArtwork.image);}
-    }catch(cause){if(!disposed)error=cause instanceof Error?cause.message:String(cause);}
-    finally{if(!disposed){pending=false;selecting(false);}}
+      const image=await resolveGameImage(result.gameArtwork.image,signal);
+      if(!disposed&&!signal.aborted&&generation===requestGeneration){selectedId=item.id;choose(image);}
+    }catch(cause){if(!disposed&&!signal.aborted&&generation===requestGeneration)error=cause instanceof Error?cause.message:String(cause);}
+    finally{if(!disposed&&!signal.aborted&&generation===requestGeneration){pending=false;selecting(false);}}
   }
 </script>
 
 <section class="artwork-picker" aria-label="Library artwork" aria-busy={loading||pending}>
   <p>Choose artwork, then move and scale the tile frame below.</p>
   <div class="artwork-grid">
-    {#if current}<button class="artwork-option" class:selected={selected===current} aria-pressed={selected===current} disabled={disabled||pending} onclick={()=>{selectedId='';choose(current,currentCrop);}}><img src={current} alt=""/><span><Icon name="image" size={14}/>Current image</span></button>{/if}
-    {#if game.background&&game.defaultBackground?.image&&game.defaultBackground.image!==current}<button class="artwork-option" class:selected={selected===game.defaultBackground.image} aria-pressed={selected===game.defaultBackground.image} disabled={disabled||pending} onclick={()=>{selectedId='';choose(game.defaultBackground!.image,game.defaultBackground!.crop);}}><img src={game.defaultBackground.image} alt=""/><span><Icon name="image" size={14}/>Default image</span></button>{/if}
-    {#each items as item (item.id)}<button data-artwork-id={item.id} class="artwork-option" class:selected={selectedId===item.id} aria-pressed={selectedId===item.id} disabled={disabled||pending} onclick={()=>select(item)}><img src={item.image} alt="" loading="lazy"/><span><Icon name="image" size={14}/>{item.label}</span></button>{/each}
+    {#if current}<button class="artwork-option" class:selected={selected===current} aria-pressed={selected===current} disabled={disabled||pending} onclick={()=>selectCurrent(current,currentCrop)}><img src={gameImageSource(current)} use:gameImage={current} alt=""/><span><Icon name="image" size={14}/>Current image</span></button>{/if}
+    {#if game.background&&game.defaultBackground?.image&&game.defaultBackground.image!==current}<button class="artwork-option" class:selected={selected===game.defaultBackground.image} aria-pressed={selected===game.defaultBackground.image} disabled={disabled||pending} onclick={()=>selectCurrent(game.defaultBackground!.image,game.defaultBackground!.crop)}><img src={gameImageSource(game.defaultBackground.image)} use:gameImage={game.defaultBackground.image} alt=""/><span><Icon name="image" size={14}/>Default image</span></button>{/if}
+    {#each items as item (item.id)}<button data-artwork-id={item.id} class="artwork-option" class:selected={selectedId===item.id} aria-pressed={selectedId===item.id} disabled={disabled||pending} onclick={()=>select(item)}><img src={gameImageSource(item.image)} use:gameImage={item.image} alt="" loading="lazy"/><span><Icon name="image" size={14}/>{item.label}</span></button>{/each}
   </div>
   {#if loading}<p role="status">Loading library images…</p>{:else if !items.length&&!error}<p>No additional artwork is available in this library cache. You can also choose an image from disk or a URL.</p>{/if}
   {#if pending}<p role="status">Loading selected image…</p>{/if}

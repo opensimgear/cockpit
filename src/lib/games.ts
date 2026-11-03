@@ -58,9 +58,9 @@ export type GameIntegrationContext = {
   providerSetupRevision: string | null; catalogueRevision: string | null;
 };
 export type GameVehicle = { id: string; name: string };
-export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car'; vehicles: GameVehicle[]; message?: string };
+export type GameVehicleSupport = { supported: boolean; kind: 'aircraft' | 'car'; vehicles?: GameVehicle[]; vehicleCount?: number; message?: string };
 export type ProcessMonitorState = {state:'waiting'|'checking'|'starting'|'ready'|'needs-permission'|'failed'|'disabled';message:string;details?:string|null};
-export type Game = { processMonitor?:ProcessMonitorState; id: GameId; name: string; tagIds?: string[]; provider?: GameProvider | null; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; integrationKey?: string; selectedInstallationId?: string; installations?: GameInstallation[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
+export type Game = { detailsRevision?:string; processMonitor?:ProcessMonitorState; id: GameId; name: string; tagIds?: string[]; provider?: GameProvider | null; background?: GameBackground | null; defaultBackground?: GameBackground | null; installed: boolean; executable?: string | null; manualPath?: string | null; installPath?: string | null; source?: string; integrationKey?: string; selectedInstallationId?: string; installations?: GameInstallation[]; launchSupported: boolean; processMonitoringSupported?: boolean; launchReason?: string | null; launchUnavailableReason?: string | null; integrationSetup?: GameIntegrationSetup; integrationContext?: GameIntegrationContext; vehicleSupport?: GameVehicleSupport; currentVehicle?: GameVehicle | null; vehicleStatus?: { status: 'ready' | 'waiting' | 'unavailable'; message: string } };
 export type DetectedGame = { gameId: GameId; name: string };
 export type GameLibrarySource = { client:string;appId:string;installPath:string;launcher?:string };
 export type GameInstallation = { id: string; executable?: string; installPath: string; source: string; sources?: GameLibrarySource[]; available: boolean; executableCandidates: string[] };
@@ -78,6 +78,10 @@ export function isGameId(value: unknown): value is GameId {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,95}$/.test(value);
 }
 let registeredGames: readonly Game[] = [];
+let observedCatalogueOwners = 0;
+/** Command receipts seed legacy callers only while no observed catalogue owns the view. */
+export function claimObservedGameCatalogue():()=>void { observedCatalogueOwners++;let active=true;return()=>{if(active){active=false;observedCatalogueOwners--;}}; }
+export function updateCommandGameCatalogue(games:readonly Game[]):void { if(!observedCatalogueOwners)updateGameCatalogue(games); }
 const catalogueListeners = new Set<(games: readonly Game[]) => void>();
 const knownNames = new Map<string, string>();
 /** All selectors consume one native catalogue; pure helpers do not depend on Svelte. */

@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadModules } from './test-module-loader.mjs';
 
-const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './profile-inspection', './profile-activity', './system-inventory-providers']);
+let nextGamesModel={status:'connecting'};
+const gameSubscriptions=[];
+const gameReadModels={observeGamesState(listener){const subscription={listener,active:true};gameSubscriptions.push(subscription);listener(nextGamesModel);return()=>subscription.active=false;}};
+const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './profile-inspection', './profile-activity', './system-inventory-providers'],new Map([['./game-read-models/shared',gameReadModels]]));
 const { SystemInventoryController, gatewayObservations, correlateSystem, integrationGameId } = modules.get('./system-inventory-providers');
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -28,14 +31,18 @@ function harness(options = {}) {
     if (input.command === 'profile_resources_list') return { profileResources: { session: 'inventory-1', revision: '1', offset: input.offset, total: state.resources.length, resources: state.resources.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'companion_inventory') return { companions: state.companions };
     if (input.command === 'profile_status') return { profiles: { profileSession: state.runtime ?? { state: 'stopped', owner: null, appliedSnapshot: null } } };
-    if (input.command === 'game_get_state') return { games: state.games };
     if (input.command === 'system_inventory') return { systemInventory: state.native };
     if (input.command === 'profile_list') return { profiles: { profiles: [] } };
     if (['controller_forget', 'forget', 'companion_revoke'].includes(input.command)) return {};
     throw Error('Unexpected provider mutation: ' + input.command);
   };
+  let explicitGamesModel=options.gameModel;
+  nextGamesModel=explicitGamesModel??{status:'ready',value:structuredClone(state.games)};
   const controller = new SystemInventoryController({ request, gateways: () => state.gateways, gatewayError: () => state.gatewayError ?? '', storage: options.storage, onChange: snapshot => changes.push(snapshot) });
-  return { controller, state, requests, failures, custom, changes, component: id => controller.snapshot.components.find(component => component.id === id) };
+  const subscription=gameSubscriptions.at(-1),refresh=controller.refresh.bind(controller);
+  const emitGames=model=>{explicitGamesModel=model;if(subscription.active)subscription.listener(model);};
+  controller.refresh=(...args)=>{if(subscription.active)subscription.listener(explicitGamesModel??{status:'ready',value:structuredClone(state.games)});return refresh(...args);};
+  return { controller, state, requests, failures, custom, changes, emitGames,subscription, component: id => controller.snapshot.components.find(component => component.id === id) };
 }
 
 test('native supplemental pages preserve the exact snapshot and never omit hidden records', async () => {
@@ -481,11 +488,20 @@ test('malformed, changed-session and truncated pages fail one provider without d
 
 test('missing capabilities are surfaced as diagnostics instead of silently treating providers as empty', async () => {
   const h = harness();
-  for (const command of ['controller_list', 'module_usb_list', 'companion_inventory', 'game_get_state', 'system_inventory', 'profile_resources_list']) h.custom.set(command, () => ({}));
+  for (const command of ['controller_list', 'module_usb_list', 'companion_inventory', 'system_inventory', 'profile_resources_list']) h.custom.set(command, () => ({}));
+  h.emitGames({status:'error',error:'Game integration inventory is unavailable.'});
   await h.controller.refresh();
   assert.equal(h.controller.snapshot.components.length, 1);
   assert.equal(h.controller.snapshot.diagnostics.length, 6);
   assert.match(h.controller.snapshot.diagnostics.join(' '), /Identity correlation/);
+});
+
+test('integration inventory waits for a current summary and never polls game state',async()=>{
+  const h=harness({games:{catalogue:[game()]},gameModel:{status:'connecting'}});
+  await h.controller.refresh();assert.equal(h.component('integration:dcs'),undefined);assert.match(h.controller.snapshot.diagnostics.join(' '),/loading/);
+  h.emitGames({status:'ready',value:structuredClone(h.state.games)});await h.controller.refresh();assert.ok(h.component('integration:dcs'));
+  h.emitGames({status:'lost',value:structuredClone(h.state.games),error:'Game stream continuity lost.'});await h.controller.refresh();assert.equal(h.component('integration:dcs').stale,true);
+  assert.equal(h.requests.some(request=>request.command==='game_get_state'),false);h.controller.dispose();assert.equal(h.subscription.active,false);
 });
 
 test('refresh coalesces concurrent reads, publishes once, and ignores late provider responses after disposal', async () => {

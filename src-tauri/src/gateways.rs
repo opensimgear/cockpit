@@ -188,9 +188,11 @@ struct McpClientAuthorization { enabled: bool, epoch: u64 }
 /// The session map is held only while selecting an adapter, never during CDC I/O.
 #[path="persistence/backup/gateway.rs"]
 mod storage_controls;
+mod game_observations;
 pub struct GatewayManager {
     pub(crate) observations: crate::observations::Runtime,
     profile_read_models: crate::profile_read_models::Runtime,
+    game_read_models: crate::game_read_models::Runtime,
     profile_samples: crate::profile_samples::Runtime,
     activity: crate::activity::Runtime,
     storage:crate::persistence::backup::Runtime,
@@ -389,6 +391,8 @@ impl GatewayManager {
         });
         let observations = crate::observations::Runtime::new();
         let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone());
+        let game_read_models=crate::game_read_models::Runtime::new(observations.clone(),games.clone());
+        observations.watch_reader_lifecycle(games.read_model_signal().wake.clone());
         let sample_session = Arc::downgrade(&profile_session);
         let sample_capture = Arc::new(move |plans: &[Arc<crate::profile_session::inspection::samples::NodePlan>]| {
             plans.iter().map(|plan| {
@@ -404,6 +408,7 @@ impl GatewayManager {
         let manager = Self {
             observations,
             profile_read_models,
+            game_read_models,
             profile_samples,
             activity,
             #[cfg(test)]
@@ -458,6 +463,7 @@ impl GatewayManager {
         if let Err(error) = manager.profile_read_models.start() {
             eprintln!("Profile observation topics unavailable: {error}");
         }
+        if let Err(error)=manager.game_read_models.start(){eprintln!("Game observation topics unavailable: {error}");}
         manager.ui_preferences.bind_observations(&manager.observations);
         if native { manager.start_activity(); }
         manager
@@ -779,15 +785,17 @@ impl GatewayManager {
             Ok(captured) => captured.flatten(),
             Err(error) => return self.error(&error, None),
         };
-        if command == "profile_read_model_page" {
+        if matches!(command,"profile_read_model_page"|"game_read_model_page") {
             if self.closed.load(Ordering::Acquire) || request.to_string().len() > 512
                 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
                 return self.error("Invalid read-model page client or closed Cockpit.", None);
             }
             if let Err(error) = self.check_mcp_authorization(native_authorization.as_ref()) { return self.error(&error, None); }
+            let game_page=command=="game_read_model_page";
             request.as_object_mut().expect("page request object").remove("clientId");
-            return match self.profile_read_models.page(&request) {
-                Ok(page) => json!({"ok":true,"state":{"profileReadModelPage":page}}),
+            let result=if game_page{self.game_read_models.page(&request)}else{self.profile_read_models.page(&request)};
+            return match result {
+                Ok(page) => if game_page{json!({"ok":true,"state":{"gameReadModelPage":page}})}else{json!({"ok":true,"state":{"profileReadModelPage":page}})},
                 Err(error) => json!({"ok":false,"error":error}),
             };
         }
@@ -1465,6 +1473,7 @@ impl GatewayManager {
     }
     pub fn shutdown(&self) {
         self.profile_read_models.shutdown();
+        self.game_read_models.shutdown();
         self.observations.close();
         self.closed.store(true, Ordering::Release);
         self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);

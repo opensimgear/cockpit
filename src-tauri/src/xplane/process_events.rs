@@ -90,7 +90,14 @@ impl Monitor {
         }
     }
     pub(super) fn error(&self) -> Option<String> {
-        self.failure.borrow().clone()
+        self.failure
+            .borrow()
+            .clone()
+            .or_else(|| self.failure.has_changed().is_err().then(|| STOPPED.into()))
+    }
+    /// A receiver does not retain the native worker or request permission.
+    pub(super) fn failure_receiver(&self) -> watch::Receiver<Option<String>> {
+        self.failure.clone()
     }
     pub(super) async fn failed(&self) -> String {
         let mut failure = self.failure.clone();
@@ -131,6 +138,17 @@ pub(super) fn test_monitor() -> (Monitor, watch::Receiver<Option<String>>) {
     )
 }
 
+#[cfg(test)]
+pub(super) fn test_monitor_receiver(failure: watch::Receiver<Option<String>>) -> Monitor {
+    // An independent backend sender lets tests model the native worker closing
+    // its notification channel without retaining that sender in the monitor.
+    let (sender, _) = watch::channel(None);
+    Monitor {
+        failure,
+        _worker: Backend::Test(sender),
+    }
+}
+
 pub(crate) fn helper_main() -> Option<i32> {
     #[cfg(windows)]
     {
@@ -141,13 +159,14 @@ pub(crate) fn helper_main() -> Option<i32> {
         None
     }
 }
-async fn wait_failure(failure: &mut watch::Receiver<Option<String>>) -> String {
+const STOPPED: &str = "The X-Plane process event monitor stopped unexpectedly.";
+pub(super) async fn wait_failure(failure: &mut watch::Receiver<Option<String>>) -> String {
     loop {
         if let Some(error) = failure.borrow().clone() {
             return error;
         }
         if failure.changed().await.is_err() {
-            return "The X-Plane process event monitor stopped unexpectedly.".into();
+            return STOPPED.into();
         }
     }
 }
@@ -165,3 +184,7 @@ fn started(selected: u32, observed: u32) -> Result<(), String> {
 #[cfg(test)]
 #[path = "process_events/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "process_events/failure_tests.rs"]
+mod failure_tests;

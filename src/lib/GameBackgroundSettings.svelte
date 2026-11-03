@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {gameImage,gameImageSource,resolveGameImage} from './game-read-models/image';
   import Icon from './Icon.svelte';
   import GameArtworkPicker from './GameArtworkPicker.svelte';
   import {pickGameImage} from './gateway';
@@ -10,6 +11,9 @@
   let formOpen=$state(false),libraryPending=$state(false);
   let path=$state(''),url=$state(''),source=$state<'library'|'disk'|'url'>('library'),pending=$state(false),error=$state(''),editor=$state<{image:string;crop?:GameCrop;positionX?:number;positionY?:number}|null>(null);
   const art=$derived(resolveGameArtwork(game));
+  let previewController=new AbortController();
+  $effect(()=>{game.id;return()=>previewController.abort();});
+  function beginPreview(){previewController.abort();previewController=new AbortController();return previewController.signal;}
   function show(node:HTMLDialogElement){node.showModal();return()=>node.close();}
   async function save(value:GameRequest){
     if(pending||busy||libraryPending)return;pending=true;error='';
@@ -17,9 +21,9 @@
     catch(cause){error=cause instanceof Error?cause.message:String(cause);}finally{pending=false;}
   }
   async function load(){
-    if(pending||busy)return;pending=true;error='';
-    try{const result=await request({command:'game_background_preview',...(source==='disk'?{path:path.trim()}:{url:url.trim()})});if(!result||result.error||!result.backgroundPreview?.image)throw new Error(result&&result.error||'The image could not be loaded.');editor={image:result.backgroundPreview.image};}
-    catch(cause){error=cause instanceof Error?cause.message:String(cause);}finally{pending=false;}
+    if(pending||busy)return;pending=true;error='';const signal=beginPreview();
+    try{const result=await request({command:'game_background_preview',...(source==='disk'?{path:path.trim()}:{url:url.trim()})});if(!result||result.error||!result.backgroundPreview?.image)throw new Error(result&&result.error||'The image could not be loaded.');const image=await resolveGameImage(result.backgroundPreview.image,signal);if(!signal.aborted)editor={image};}
+    catch(cause){if(!signal.aborted)error=cause instanceof Error?cause.message:String(cause);}finally{if(!signal.aborted)pending=false;}
   }
   async function browse(){
     if(pending||busy)return;pending=true;error='';
@@ -29,19 +33,19 @@
   async function selectArtwork(sourceImage:string,crop?:GameCrop){
     if(pending||busy||!sourceImage)return;error='';
     const positionX=sourceImage===art.image?art.positionX:50,positionY=sourceImage===art.image?art.positionY:50;
-    if(sourceImage.startsWith('data:image/jpeg;base64,')){editor={image:sourceImage,crop,positionX,positionY};return;}
-    // Normalize other raster sources to the bounded preview format.
-    pending=true;
+    pending=true;const signal=beginPreview();
     try{
-      const image=new Image();image.src=sourceImage;await image.decode();let size=640,data='';
+      sourceImage=await resolveGameImage(sourceImage,signal);if(signal.aborted)return;
+      if(sourceImage.startsWith('data:image/jpeg;base64,')){editor={image:sourceImage,crop,positionX,positionY};return;}
+      const image=new Image();image.src=sourceImage;await image.decode();if(signal.aborted)return;let size=640,data='';
       do{const ratio=Math.min(1,size/Math.max(image.naturalWidth,image.naturalHeight)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*ratio));canvas.height=Math.max(1,Math.round(image.naturalHeight*ratio));const context=canvas.getContext('2d');if(!context)throw new Error('Image previews are unavailable.');context.drawImage(image,0,0,canvas.width,canvas.height);data=canvas.toDataURL('image/jpeg',.68);size=Math.floor(size*.75);}while(data.length>16407&&size>=48);
       if(data.length>16407)throw new Error('This image cannot fit its preview budget.');editor={image:data,crop,positionX,positionY};
-    }catch(cause){error=cause instanceof Error?cause.message:String(cause);}finally{pending=false;}
+    }catch(cause){if(!signal.aborted)error=cause instanceof Error?cause.message:String(cause);}finally{if(!signal.aborted)pending=false;}
   }
   function position(){return selectArtwork(art.image,art.crop);}
 </script>
 <section class="background-settings" aria-label="Tile background">
-  <div class="background-preview" aria-label="Game tile preview">{#if art.image}{#key art.image}<img src={art.image} alt="" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`}/>{/key}{/if}</div>
+  <div class="background-preview" aria-label="Game tile preview">{#if art.image}{#key art.image}<img src={gameImageSource(art.image)} use:gameImage={art.image} alt="" style={cropImageStyle(art.crop)} style:object-position={`${art.positionX}% ${art.positionY}%`}/>{/key}{/if}</div>
   <button class="secondary-button update-image" disabled={busy||pending||libraryPending} onclick={()=>{formOpen=true;source='library';error='';void position();}}><Icon name="image" size={14}/>Update image</button>
 </section>
 {#if formOpen}

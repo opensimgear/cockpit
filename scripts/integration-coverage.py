@@ -94,6 +94,12 @@ def main():
     module_names.extend(['games/artwork/prepared.rs', 'games/prepared_sources/mod.rs',
                          'games/prepared_sources/watch.rs', 'games/storage/car_catalogue.rs',
                          'games/integration/car_publication.rs'])
+    module_names.extend(['game_read_models/signals.rs', 'game_read_models/pages.rs',
+                         'game_read_models/codec.rs', 'game_read_models/details.rs',
+                         'game_read_models/runtime.rs', 'games/read_model.rs',
+                         'games/vehicles/mod.rs', 'games/vehicles/polling.rs',
+                         'games/vehicles/observation.rs', 'games/review/mod.rs',
+                         'games/review/completion.rs', 'game_activation.rs', 'game_context.rs'])
     if os.name == 'nt':
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',

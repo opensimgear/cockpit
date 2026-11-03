@@ -12,7 +12,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc, Mutex, OnceLock, Weak,
+        mpsc, Arc, Mutex, Weak,
     },
     time::Instant,
 };
@@ -38,14 +38,14 @@ struct Inner {
     origin: Instant,
     closed: AtomicBool,
     workers: Arc<AtomicUsize>,
-    reader_wake: OnceLock<Arc<osg_streams::NativeWake>>,
+    reader_wake: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
 }
 
-struct WorkerSlot(Arc<AtomicUsize>, Option<Arc<osg_streams::NativeWake>>);
+struct WorkerSlot(Arc<AtomicUsize>, Vec<Weak<osg_streams::NativeWake>>);
 impl Drop for WorkerSlot {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
-        if let Some(wake) = &self.1 { wake.notify(); }
+        for wake in self.1.iter().filter_map(Weak::upgrade) {wake.notify();}
     }
 }
 
@@ -76,13 +76,16 @@ impl Runtime {
                 origin: Instant::now(),
                 closed: AtomicBool::new(false),
                 workers: Arc::new(AtomicUsize::new(0)),
-                reader_wake: OnceLock::new(),
+                reader_wake: Mutex::new(Vec::new()),
             }),
         }
     }
 
     pub(crate) fn watch_reader_lifecycle(&self, wake: Arc<osg_streams::NativeWake>) {
-        let _ = self.inner.reader_wake.set(wake);
+        let mut wakes=self.inner.reader_wake.lock().unwrap_or_else(|p|p.into_inner());
+        wakes.retain(|wake|wake.strong_count()>0);
+        let weak=Arc::downgrade(&wake);
+        if wakes.len()<8&&!wakes.iter().any(|old|old.ptr_eq(&weak)){wakes.push(weak);}
     }
     pub(crate) fn broker(&self) -> Broker {
         self.inner.broker.clone()
@@ -110,7 +113,7 @@ impl Runtime {
                 (count < 64).then_some(count + 1)
             })
             .map_err(|_| "Observation delivery worker limit reached.")?;
-        let slot = WorkerSlot(self.inner.workers.clone(), self.inner.reader_wake.get().cloned());
+        let slot = WorkerSlot(self.inner.workers.clone(), self.inner.reader_wake.lock().unwrap_or_else(|p|p.into_inner()).clone());
         let reader = self
             .inner
             .broker

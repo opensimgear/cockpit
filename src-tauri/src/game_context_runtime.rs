@@ -215,7 +215,7 @@ impl GamesRuntime {
             }
             // Provider metadata may scan/parse catalogue files. Only copy the
             // broker view under its mutex; decoration never retains authority.
-            let mut context = self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner()).view(&id);
+            let mut context = self.inner.contexts.lock().unwrap_or_else(|p| p.into_inner()).view_for(game);
             if context["providerSetupRevision"].is_null() {
                 context["providerSetupRevision"] =
                     game["integrationSetup"]["providerSetupRevision"].clone();
