@@ -179,10 +179,11 @@ impl Runtime {
         &mut self,
         token: &RunToken,
         frame: crate::engine::typed::Frame,
+        admitted_now: Counter,
     ) -> Result<(), String> {
         self.check_run(token)?;
         let typed = self.typed.as_mut().ok_or("No typed mapping run.")?;
-        let result = typed.accept(frame);
+        let result = typed.accept(frame, admitted_now);
         self.recording.record(typed.drain_reports());
         result
     }

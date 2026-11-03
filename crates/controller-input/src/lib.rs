@@ -27,6 +27,7 @@ fn validate_saved(saved: &Vec<SavedSource>) -> Result<(), String> {
 }
 pub struct ControllerService {
     registry: Arc<Mutex<Registry>>,
+    clock: stream::Clock,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
     #[cfg(windows)]
@@ -88,6 +89,7 @@ impl ControllerService {
         if let Err(error) = loaded {
             registry.diagnostic=format!("Remembered controllers could not be loaded; settings will not be overwritten: {error}");
         }
+        let clock = registry.capture_clock();
         let registry = Arc::new(Mutex::new(registry));
         let stop = Arc::new(AtomicBool::new(false));
         let suppression = visibility::suppression::Control::default();
@@ -172,6 +174,7 @@ impl ControllerService {
         }
         Self {
             registry,
+            clock,
             stop,
             visibility,
             worker: Mutex::new(worker),
@@ -330,6 +333,9 @@ impl ControllerService {
             .unwrap_or_else(|p| p.into_inner())
             .stream_page(session, after)
     }
+    /// Runtime admission time in the capture journal's clock domain, without
+    /// taking the registry mutex or collecting a report page.
+    pub fn monotonic_us(&self) -> u64 { self.clock.now_us() }
     pub fn visibility_active(&self) -> bool {
         self.visibility.active()
     }
@@ -407,6 +413,8 @@ fn native_run(
 }
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod clock_tests;
 
 #[cfg(test)]
 pub(crate) fn test_directory() -> tempfile::TempDir {

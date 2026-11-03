@@ -161,7 +161,7 @@ impl HidInputs {
             return Err("Native HID liveness belongs to an old capture session or clock.".into());
         }
         for source in &self.sources {
-            if !source.ready { continue; }
+            if !source.ready || !reducer.has_source_baseline(&source.logical, Counter(source.generation)) { continue; }
             let current = snapshot.sources.iter().find(|current| current.id == source.physical)
                 .ok_or("The native HID liveness snapshot is incomplete.")?;
             if current.baseline.reason != stream::Reason::Baseline

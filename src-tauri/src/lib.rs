@@ -83,6 +83,9 @@ mod profile_input_learning;
 mod profile_retired_recovery;
 mod profile_automatic_store;
 mod profile_session;
+#[cfg(test)]
+#[path="profile_session/admission_test_clock.rs"]
+mod profile_admission_test_clock;
 mod profile_session_games;
 mod profile_session_companions;
 mod profile_session_inputs;

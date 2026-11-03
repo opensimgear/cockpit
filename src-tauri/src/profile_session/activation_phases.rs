@@ -14,7 +14,7 @@ impl NativeProfileHost {
             ApplyPhase::Overrides => self.acquire_publication(&run.owner),
             ApplyPhase::Acquire => {
                 let native = self.native;
-                let origin = self.controllers.stream_page("", 0).captured_us;
+                let origin = self.controllers.monotonic_us();
                 if !prepared.plan.sources.is_empty() {
                     self.report_progress(&run.owner, "acquiring-inputs", "Connecting profile inputs");
                 }
@@ -147,7 +147,7 @@ impl NativeProfileHost {
                     let state = host.run(&run.owner)?;
                     state.companions.bind_delivery_plan(&delivery)?;
                     let companion_frames = match companion_hub {
-                        Some(ref hub) => state.companions.baseline(hub, |token|Self::validate_token(&resources,token), controllers.stream_page("",0).captured_us)
+                        Some(ref hub) => state.companions.baseline(hub, |token|Self::validate_token(&resources,token), controllers.monotonic_us())
                             .map_err(|error| format!("Final companion baseline failed. {error}"))?
                             .ok_or("The companion baseline expired before arming the profile.")?,
                         None => vec![],
@@ -157,14 +157,14 @@ impl NativeProfileHost {
                     state.baselines.extend(game_frames);
                     state.baselines.extend(panel_frames);
                     state.baselines.extend(companion_frames);
-                    let (debug,debug_frames)=crate::profile_debug_controller::DebugInputs::capture(&state.document,&delivery,run.owner.generation,state.clock_origin.max(controllers.stream_page("",0).captured_us))?;
+                    let (debug,debug_frames)=crate::profile_debug_controller::DebugInputs::capture(&state.document,&delivery,run.owner.generation,state.clock_origin.max(controllers.monotonic_us()))?;
                     state.debug_inputs=debug;
                     state.baselines.extend(debug_frames);
                     state.delivery = Some(delivery);
                     dcs_hid::validate(state, &resources, &panels_io)?;
                     Self::check_epoch(&admission_epoch,state.admission_epoch)?;
                     let started = Instant::now();
-                    let origin = controllers.stream_page("", 0).captured_us;
+                    let origin = controllers.monotonic_us();
                     let mut reducer = Phase::new_at(
                         prepared.plan.program.clone(),
                         Counter(run.owner.generation),
@@ -172,9 +172,11 @@ impl NativeProfileHost {
                         Counter(origin),
                     )?;
                     state.clock_origin = origin;
+                    // Preserve startup deduplication: an unchanged initial
+                    // Unknown is not a loss of a newly bound physical output.
+                    let admitted_now = Counter(controllers.monotonic_us());
                     for baseline in state.baselines.drain(..) {
-                        state.clock_origin = state.clock_origin.max(baseline.captured_us.0);
-                        reducer.accept(baseline)?;
+                        reducer.accept(baseline, admitted_now)?;
                     }
                     visibility::active(&mut state.visibility)?;
                     publication::active(state)?;

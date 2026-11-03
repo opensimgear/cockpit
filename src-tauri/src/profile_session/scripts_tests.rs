@@ -113,8 +113,7 @@ fn fixture() -> (Scripts, Phase, Arc<Mutex<State>>) {
     (scripts, phase, shared)
 }
 fn feed(phase: &mut Phase, sequence: u64, reason: Reason, value: bool) {
-    phase
-        .accept(Frame {
+    crate::profile_admission_test_clock::frame(phase, Frame {
             source: "physical".into(),
             generation: Counter(1),
             sequence: Counter(sequence),

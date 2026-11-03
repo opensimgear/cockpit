@@ -140,8 +140,7 @@ fn flush_preserves_pointer_and_key_barriers_then_batches_adjacent_motion() {
         shadow: None,
         audit_shadow: 0,
     };
-    phase
-        .accept(Frame {
+    { let admitted_frame = Frame {
             source: "source".into(),
             generation: Counter(7),
             sequence: Counter(1),
@@ -157,7 +156,7 @@ fn flush_preserves_pointer_and_key_barriers_then_batches_adjacent_motion() {
                     sample: SignalSample::scalar(PortValue::Boolean(false)),
                 },
             ],
-        })
+        }; let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }
         .unwrap();
     desktop.start_focused(&phase, true).unwrap();
 

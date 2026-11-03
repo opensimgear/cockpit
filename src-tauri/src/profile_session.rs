@@ -1,5 +1,6 @@
 //! One native owner of an immutable, derived profile run. The durable manifest
 //! contains recovery receipts, never an executable graph or replayable commands.
+pub(crate) mod source_admission;
 use osg_profiles::{
     compiler_models::ExecutionPlan, session::SnapshotSummary, store::LocalAssignment,
     ProfileDocument,

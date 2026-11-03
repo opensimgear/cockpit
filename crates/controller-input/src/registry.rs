@@ -36,6 +36,7 @@ impl Default for Registry {
     }
 }
 impl Registry {
+    pub(crate) fn capture_clock(&self) -> crate::stream::Clock { self.journal.clock() }
     /// Wake-only callback: it must not collect state, perform I/O or take a
     /// routing lock. The receiver reads committed reports after this lock exits.
     pub fn watch_reports(&mut self, ids: &[String], wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Result<crate::stream::ReportWatch, String> {

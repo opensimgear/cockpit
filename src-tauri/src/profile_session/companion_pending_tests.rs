@@ -9,7 +9,7 @@ fn armed() -> (Fixture, CompanionSources, Phase, Value) {
     adapter.bind_delivery_plan(&delivery).unwrap();
     let baseline = adapter.baseline(&fixture.hub, |_| Ok(()), 100).unwrap().unwrap();
     let mut phase = Phase::new(delivery.program, Counter(1), uuid::Uuid::new_v4().to_string()).unwrap();
-    phase.accept_batch(baseline).unwrap();
+    crate::profile_admission_test_clock::batch(&mut phase, baseline).unwrap();
     phase.drain();
     adapter.arm(phase.run_token()).unwrap();
     (fixture, adapter, phase, open)
@@ -50,12 +50,15 @@ fn inventory_pending_pauses_inputs_once_without_clearing_feedback_or_rebinding()
 
 #[test]
 fn resumed_metadata_requires_actual_neutral_and_never_replays_the_unchecked_press() {
-    let (fixture, mut adapter, _, open) = armed();
+    let (fixture, mut adapter, mut phase, open) = armed();
     let receipt = adapter.instances[0].receipt.clone().unwrap();
     let token = fixture.hub.profile_feedback_token(&receipt).unwrap();
     let control = adapter.instances[0].inputs[0].observed.clone();
     let pause = adapter.poll_live(&fixture.hub, |_| Ok(None), 100);
     assert_eq!(pause.frames[0].reason, Reason::Gap);
+    crate::profile_session::source_admission::admit(&mut phase, pause.frames.clone(), Counter(100), [], pause.liveness.clone()).unwrap();
+    phase.advance(Counter(100)).unwrap();
+    assert!(!phase.has_source_baseline(&pause.frames[0].source, pause.frames[0].generation));
     change(&fixture, &open, &control, 1, true, 200);
     let held = adapter.poll_live(&fixture.hub, |_| Ok(Some(())), 200);
     assert!(held.frames.is_empty());
@@ -69,6 +72,11 @@ fn resumed_metadata_requires_actual_neutral_and_never_replays_the_unchecked_pres
     assert_eq!(neutral.frames[0].changes[0].sample, SignalSample::scalar(PortValue::Boolean(false)));
     assert!(neutral.frames[0].sequence.0 > pause.frames[0].sequence.0);
     assert_eq!(neutral.liveness.len(), 1);
+    // The native health path must admit this baseline even though its liveness
+    // accompanies a source that the previous Gap made unavailable.
+    crate::profile_session::source_admission::admit(&mut phase, neutral.frames.clone(), Counter(300), [], neutral.liveness.clone()).unwrap();
+    phase.advance(Counter(300)).unwrap();
+    assert!(phase.has_source_baseline(&neutral.frames[0].source, neutral.frames[0].generation));
     assert!(!adapter.instances[0].metadata_paused);
     assert_eq!(fixture.hub.profile_feedback_token(&receipt).unwrap(), token);
     change(&fixture, &open, &control, 3, true, 400);

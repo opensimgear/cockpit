@@ -121,8 +121,7 @@ fn frame(
     }
 }
 fn feed(engine: &mut Phase, sequence: u64, at: u64, value: SignalSample) {
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             sequence,
@@ -133,7 +132,7 @@ fn feed(engine: &mut Phase, sequence: u64, at: u64, value: SignalSample) {
                 Reason::Change
             },
             vec![("value", value)],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
 }
 fn output(engine: &Phase) -> SignalSample {
@@ -179,25 +178,23 @@ fn desktop_projection_resets_rule_state_prunes_unrelated_scripts_and_keeps_nativ
         kind: SinkKind::Desktop { action },
     });
     let mut canonical = phase(program);
-    canonical
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             1,
             10,
             Reason::Baseline,
             vec![("value", pressed(false)), ("other", pressed(false))],
-        ))
+        ); let admitted_now = Counter(canonical.at_us().0.max(admitted_frame.captured_us.0)); canonical.accept(admitted_frame, admitted_now) }
         .unwrap();
-    canonical
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             2,
             20,
             Reason::Change,
             vec![("value", pressed(true))],
-        ))
+        ); let admitted_now = Counter(canonical.at_us().0.max(admitted_frame.captured_us.0)); canonical.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(output(&canonical), pressed(true));
     let mut desktop = canonical.fork_desktop().unwrap();
@@ -217,8 +214,8 @@ fn desktop_projection_resets_rule_state_prunes_unrelated_scripts_and_keeps_nativ
         Reason::Baseline,
         vec![("value", pressed(false)), ("other", pressed(true))],
     );
-    canonical.accept(original_baseline.clone()).unwrap();
-    desktop.accept_batch([original_baseline]).unwrap();
+    { let admitted_frame = original_baseline.clone(); let admitted_now = Counter(canonical.at_us().0.max(admitted_frame.captured_us.0)); canonical.accept(admitted_frame, admitted_now) }.unwrap();
+    { let admitted_frames: Vec<Frame> = ([original_baseline]).into_iter().collect(); let admitted_now = Counter(desktop.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); desktop.accept_batch(admitted_frames, admitted_now) }.unwrap();
     assert_eq!(
         desktop.sample(&endpoint("source", "other")),
         Some(&pressed(true))
@@ -270,7 +267,7 @@ fn live_constructor_validates_its_clock_before_evaluating_startup() {
             Counter(invalid),
         );
         assert!(
-            matches!(result, Err(error) if error == "A live typed mapping needs a nonzero bounded capture clock.")
+            matches!(result, Err(error) if error == "A live typed mapping needs a nonzero bounded admission clock.")
         );
     }
     for now in [1, u64::MAX - 600_000_000] {
@@ -314,15 +311,14 @@ fn live_constructor_preserves_actual_source_age_including_zero_time() {
         .drain()
         .iter()
         .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             2,
             1_999_990,
             Reason::Baseline,
             vec![("value", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(output(&engine), pressed(false));
     engine.advance(Counter(2_000_005)).unwrap();
@@ -330,18 +326,17 @@ fn live_constructor_preserves_actual_source_age_including_zero_time() {
         engine.inspected_sample(&endpoint("source", "value")),
         Some((&pressed(false), Some(Counter(1_999_990))))
     );
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             3,
             u64::MAX,
             Reason::Change,
             vec![("value", pressed(true))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
     assert_eq!(engine.at_us(), Counter(2_000_005));
-    assert_eq!(output(&engine), SignalSample::Unknown);
+    assert_eq!(output(&engine), pressed(false));
 }
 
 #[test]
@@ -470,8 +465,7 @@ fn unit_conversion_hysteresis_and_missing_status_replay() {
     assert_eq!(output(&engine), SignalSample::Stale);
     feed(&mut engine, 3, 1_000_011, SignalSample::Unknown);
     assert_eq!(output(&engine), SignalSample::Unknown);
-    engine
-        .accept(frame("source", 1, 4, 1_000_012, Reason::Disconnect, vec![]))
+    { let admitted_frame = frame("source", 1, 4, 1_000_012, Reason::Disconnect, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(output(&engine), SignalSample::Unavailable);
 }
@@ -521,8 +515,7 @@ fn clamped_ratio_percentage_conversion_keeps_scale_boundaries_and_missing_status
     assert_eq!(output(&engine), SignalSample::Stale);
     feed(&mut engine, 7, 1_000_007, SignalSample::Unknown);
     assert_eq!(output(&engine), SignalSample::Unknown);
-    engine
-        .accept(frame("source", 1, 8, 1_000_008, Reason::Disconnect, vec![]))
+    { let admitted_frame = frame("source", 1, 8, 1_000_008, Reason::Disconnect, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(output(&engine), SignalSample::Unavailable);
 
@@ -674,8 +667,7 @@ fn declared_raw_quantity_keeps_values_and_missing_status_through_explicit_conver
     }
     feed(&mut engine, 5, 1_000_006, SignalSample::Unknown);
     assert_eq!(output(&engine), SignalSample::Unknown);
-    engine
-        .accept(frame("source", 1, 6, 1_000_007, Reason::Disconnect, vec![]))
+    { let admitted_frame = frame("source", 1, 6, 1_000_007, Reason::Disconnect, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     for id in ["processor", "metres", "threshold"] {
         assert_eq!(
@@ -939,18 +931,16 @@ fn any_and_all_keep_other_source_facts_on_disconnect() {
             .push(input("other", "other", "value", contract));
         let mut engine = phase(program);
         feed(&mut engine, 1, 0, pressed(held));
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 "other",
                 1,
                 1,
                 1,
                 Reason::Baseline,
                 vec![("value", pressed(!held))],
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
-        engine
-            .accept(frame("other", 1, 2, 2, Reason::Disconnect, vec![]))
+        { let admitted_frame = frame("other", 1, 2, 2, Reason::Disconnect, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
         assert_eq!(output(&engine), pressed(expected));
     }
@@ -1138,19 +1128,17 @@ fn priority_is_explicit_and_port_declaration_reorder_does_not_change_hash() {
     assert_eq!(hash, reordered.compile().unwrap().hash);
     let mut engine = phase(reordered);
     feed(&mut engine, 1, 0, sample(2.0));
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "second",
             1,
             1,
             1,
             Reason::Baseline,
             vec![("value", sample(8.0))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(scalar_output(&engine), 8.0);
-    engine
-        .accept(frame("second", 1, 2, 2, Reason::Disconnect, vec![]))
+    { let admitted_frame = frame("second", 1, 2, 2, Reason::Disconnect, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(scalar_output(&engine), 2.0);
     if let Operation::Priority { order } = &mut program.nodes[0].operation {
@@ -1196,15 +1184,14 @@ fn format_has_explicit_rounding_utf8_boundary_and_failure_policy() {
         number_contract(0.0, 100.0, None),
         text,
     ));
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("value", sample(100.0))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
     assert!(!engine.active());
     assert!(engine.fault().unwrap().contains("text budget"));
@@ -1337,8 +1324,7 @@ fn constant_held_edge_does_not_emit_a_startup_one_shot() {
 fn action_pack_is_atomic_named_ordered_and_only_fires_on_event_occurrence() {
     let mut engine = phase(action_program(false, true));
     engine.drain();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             1,
@@ -1349,33 +1335,31 @@ fn action_pack_is_atomic_named_ordered_and_only_fires_on_event_occurrence() {
                 ("number", sample(3.0)),
                 ("enabled", pressed(false)),
             ],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert!(engine
         .drain()
         .iter()
         .all(|e| !matches!(e.sample, SignalSample::Known(_))));
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             2,
             1,
             Reason::Change,
             vec![("number", sample(4.0))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert!(engine.drain().is_empty());
     for sequence in [3, 4] {
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 "source",
                 1,
                 sequence,
                 sequence,
                 Reason::Change,
                 vec![("trigger", pressed(true))],
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
         let effects = engine.drain();
         assert_eq!(effects.len(), 1);
@@ -1387,8 +1371,7 @@ fn action_pack_is_atomic_named_ordered_and_only_fires_on_event_occurrence() {
             ]))
         );
     }
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             5,
@@ -1398,7 +1381,7 @@ fn action_pack_is_atomic_named_ordered_and_only_fires_on_event_occurrence() {
                 ("enabled", SignalSample::Unknown),
                 ("trigger", pressed(true)),
             ],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert!(engine
         .drain()
@@ -1410,61 +1393,56 @@ fn action_pack_is_atomic_named_ordered_and_only_fires_on_event_occurrence() {
 fn zero_argument_one_shot_and_setter_tuple_changes_are_not_replayed() {
     let mut engine = phase(action_program(false, false));
     engine.drain();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("trigger", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert!(engine.drain().is_empty());
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             2,
             1,
             Reason::Change,
             vec![("trigger", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(engine.drain()[0].sample, SignalSample::Known(packed(&[])));
     let mut engine = phase(action_program(true, true));
     engine.drain();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("number", sample(5.0)), ("enabled", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(engine.drain().len(), 1);
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             2,
             1,
             Reason::Change,
             vec![("number", sample(5.0))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert!(engine.drain().is_empty());
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             3,
             2,
             Reason::Change,
             vec![("enabled", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_eq!(engine.drain().len(), 1);
 }
@@ -1477,100 +1455,90 @@ fn source_sequences_gaps_generations_and_old_baselines_fail_closed() {
         boolean_contract(),
     ));
     feed(&mut engine, 1, 10, pressed(true));
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             3,
             11,
             Reason::Change,
             vec![("value", pressed(false))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
     assert_eq!(output(&engine), SignalSample::Unknown);
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             1,
             12,
             Reason::Baseline,
             vec![("value", pressed(true))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             4,
             13,
             Reason::Baseline,
             vec![("value", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    engine
-        .accept(frame("source", 1, 5, 14, Reason::Disconnect, vec![]))
+    { let admitted_frame = frame("source", 1, 5, 14, Reason::Disconnect, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             4,
             15,
             Reason::Baseline,
             vec![("value", pressed(true))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             2,
             1,
             16,
             Reason::Baseline,
             vec![("value", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             10,
             17,
             Reason::Baseline,
             vec![("value", pressed(false))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             2,
             2,
             15,
             Reason::Change,
             vec![("value", pressed(false))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
     assert_eq!(output(&engine), SignalSample::Unknown);
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             2,
             u64::MAX,
             18,
             Reason::Baseline,
             vec![("value", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             2,
             u64::MAX,
             19,
             Reason::Change,
             vec![("value", pressed(false))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
 }
 
@@ -1585,42 +1553,38 @@ fn invalid_frames_are_atomic_and_complete_baselines_are_required() {
         .sources
         .push(source("source", "extra", boolean_contract()));
     let mut engine = phase(program);
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("value", pressed(true))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             1,
             1,
             Reason::Baseline,
             vec![("value", pressed(true)), ("extra", sample(1.0))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
     assert_eq!(
         engine.sample(&endpoint("source", "value")),
         Some(&SignalSample::Unknown)
     );
-    assert!(engine
-        .accept(frame(
+    assert!({ let admitted_frame = frame(
             "source",
             1,
             1,
             2,
             Reason::Baseline,
             vec![("value", pressed(true)), ("value", pressed(false))]
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
-    assert!(engine
-        .accept(frame("not-source", 1, 1, 2, Reason::Baseline, vec![]))
+    assert!({ let admitted_frame = frame("not-source", 1, 1, 2, Reason::Baseline, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
 }
 
@@ -1883,15 +1847,14 @@ fn intermediate_gate_validity_invalidates_script_ticket_and_timer() {
     program.nodes[1].inputs[0].from = endpoint("gate-node", "gated");
     let mut engine = phase(program);
     feed(&mut engine, 1, 0, pressed(true));
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "gate",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("open", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     let request = script_request(&mut engine);
     let token = request.ticket.producer.clone();
@@ -1906,25 +1869,23 @@ fn intermediate_gate_validity_invalidates_script_ticket_and_timer() {
             )]),
         )
         .unwrap();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "gate",
             1,
             2,
             1,
             Reason::Change,
             vec![("open", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "gate",
             1,
             3,
             2,
             Reason::Change,
             vec![("open", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert_ne!(token, engine.token("processor").unwrap());
     assert!(engine
@@ -2018,8 +1979,7 @@ fn script_and_timer_queues_have_shared_bounds_and_stop_invalidates_work() {
     assert!(engine
         .schedule(token, "old".into(), Counter(1), BTreeMap::new())
         .is_err());
-    assert!(engine
-        .accept(frame("source", 1, 2, 1, Reason::Change, vec![]))
+    assert!({ let admitted_frame = frame("source", 1, 2, 1, Reason::Change, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .is_err());
 }
 
@@ -2093,6 +2053,7 @@ fn runtime_candidate_validation_preserves_current_run_and_replacement_cancels_it
                 Reason::Baseline,
                 vec![("value", pressed(true))],
             ),
+            Counter(0),
         )
         .unwrap();
     let mut invalid = program.clone();
@@ -2102,7 +2063,7 @@ fn runtime_candidate_validation_preserves_current_run_and_replacement_cancels_it
     let next = runtime.start_program(program).unwrap();
     assert_ne!(next, old);
     assert!(runtime
-        .accept_signal_for(&old, frame("source", 1, 2, 1, Reason::Change, vec![]))
+        .accept_signal_for(&old, frame("source", 1, 2, 1, Reason::Change, vec![]), Counter(1))
         .is_err());
     assert!(runtime.engine().is_none());
     runtime.advance_for(&next, Counter(1)).unwrap();
@@ -2570,15 +2531,14 @@ fn output_backpressure_faults_and_releases_to_unavailable() {
         if !engine.active() {
             break;
         }
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 "source",
                 1,
                 sequence,
                 sequence,
                 Reason::Change,
                 vec![("value", pressed(true))],
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
     }
     assert!(!engine.active());
@@ -2651,15 +2611,14 @@ fn script_state_scalars_and_rebound_request_budget_are_validated() {
             sample: SignalSample::scalar(PortValue::Text("x".repeat(4000))),
         })
         .collect();
-    engine
-        .accept(Frame {
+    { let admitted_frame = Frame {
             source: "source".into(),
             generation: Counter(1),
             sequence: Counter(1),
             captured_us: Counter(0),
             reason: Reason::Baseline,
             changes,
-        })
+        }; let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     let request = script_request(&mut engine);
     feed(
@@ -2710,8 +2669,7 @@ fn source_loss_and_new_baseline_cancel_due_script_actions_before_advancing_time(
             )
             .unwrap();
         engine.drain();
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 "source",
                 if reason == Reason::Baseline { 2 } else { 1 },
                 3,
@@ -2722,7 +2680,7 @@ fn source_loss_and_new_baseline_cancel_due_script_actions_before_advancing_time(
                 } else {
                     vec![]
                 },
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
         assert!(
             engine
@@ -2954,8 +2912,7 @@ fn native_argument_named_trigger_is_preserved_with_arbitrary_event_port() {
     }
     let mut engine = phase(program);
     engine.drain();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             1,
@@ -2966,32 +2923,30 @@ fn native_argument_named_trigger_is_preserved_with_arbitrary_event_port() {
                 ("trigger", sample(3.0)),
                 ("enabled", pressed(true)),
             ],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert!(engine
         .drain()
         .iter()
         .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             2,
             1,
             Reason::Change,
             vec![("trigger", sample(6.0))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     assert!(engine.drain().is_empty());
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             3,
             2,
             Reason::Change,
             vec![("fire", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     let effects = engine.drain();
     assert_eq!(effects.len(), 1);
@@ -3013,81 +2968,73 @@ fn loss_metadata_fences_late_baseline_time_sequence_and_generation() {
             boolean_contract(),
         ));
         feed(&mut engine, 1, 10, pressed(true));
-        engine
-            .accept(frame("source", 1, 2, 100, reason, vec![]))
+        { let admitted_frame = frame("source", 1, 2, 100, reason, vec![]); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
-        assert!(engine
-            .accept(frame(
+        assert!({ let admitted_frame = frame(
                 "source",
                 1,
                 3,
                 50,
                 Reason::Baseline,
                 vec![("value", pressed(true))]
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .is_err());
         assert_ne!(output(&engine), pressed(true));
-        assert!(engine
-            .accept(frame(
+        assert!({ let admitted_frame = frame(
                 "source",
                 1,
                 2,
                 101,
                 Reason::Baseline,
                 vec![("value", pressed(true))]
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .is_err());
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 "source",
                 1,
                 3,
                 102,
                 Reason::Baseline,
                 vec![("value", pressed(false))],
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
         assert_eq!(output(&engine), pressed(false));
-        assert!(engine
-            .accept(frame(
+        assert!({ let admitted_frame = frame(
                 "source",
                 2,
                 1,
                 103,
                 Reason::Change,
                 vec![("value", pressed(true))]
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .is_err());
         assert_eq!(output(&engine), SignalSample::Unknown);
-        assert!(engine
-            .accept(frame(
+        assert!({ let admitted_frame = frame(
                 "source",
                 1,
                 100,
                 104,
                 Reason::Baseline,
                 vec![("value", pressed(true))]
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .is_err());
-        assert!(engine
-            .accept(frame(
+        assert!({ let admitted_frame = frame(
                 "source",
                 2,
                 1,
                 104,
                 Reason::Baseline,
                 vec![("value", pressed(true))]
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .is_err());
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 "source",
                 2,
                 2,
                 105,
                 Reason::Baseline,
                 vec![("value", pressed(false))],
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
         assert_eq!(output(&engine), pressed(false));
     }
@@ -3256,15 +3203,14 @@ fn mixed_timers() -> Phase {
     }
     let mut engine = phase(program);
     for name in ["hid", "panel", "game"] {
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 name,
                 1,
                 1,
                 0,
                 Reason::Baseline,
                 vec![("value", pressed(false))],
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
     }
     for _ in 0..8 {
@@ -3279,15 +3225,14 @@ fn mixed_timers() -> Phase {
         }
     }
     for name in ["hid", "panel", "game"] {
-        engine
-            .accept(frame(
+        { let admitted_frame = frame(
                 name,
                 1,
                 2,
                 1,
                 Reason::Change,
                 vec![("value", pressed(true))],
-            ))
+            ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
             .unwrap();
     }
     for request in engine.script_requests() {
@@ -3330,7 +3275,7 @@ fn batch_pre_revokes_every_panel_game_loss_before_hid_or_first_loss_can_advance_
             1 => vec![panel, game, hid],
             _ => vec![game, hid, panel],
         };
-        let diagnostics = engine.accept_batch(frames).unwrap();
+        let diagnostics = { let admitted_frames: Vec<Frame> = (frames).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }.unwrap();
         assert_eq!(diagnostics.len(), 2);
         let calls = engine
             .drain()
@@ -3363,11 +3308,10 @@ fn batch_loss_removes_already_queued_dependent_actions_but_keeps_independent_one
             .count(),
         3
     );
-    engine
-        .accept_batch([
+    { let admitted_frames: Vec<Frame> = ([
             frame("panel", 1, 3, 100, Reason::Gap, vec![]),
             frame("game", 1, 3, 100, Reason::Disconnect, vec![]),
-        ])
+        ]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
         .unwrap();
     let calls = engine
         .drain()
@@ -3380,19 +3324,17 @@ fn batch_loss_removes_already_queued_dependent_actions_but_keeps_independent_one
 #[test]
 fn batch_source_gap_discards_earlier_and_unbaselined_events_then_admits_only_fresh_occurrence() {
     let mut engine = phase(action_program(false, false));
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "source",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("trigger", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     engine.drain();
-    let diagnostics = engine
-        .accept_batch([
+    let diagnostics = { let admitted_frames: Vec<Frame> = ([
             frame(
                 "source",
                 1,
@@ -3426,7 +3368,7 @@ fn batch_source_gap_discards_earlier_and_unbaselined_events_then_admits_only_fre
                 Reason::Change,
                 vec![("trigger", pressed(true))],
             ),
-        ])
+        ]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
         .unwrap();
     assert_eq!(diagnostics.len(), 1);
     let calls = engine
@@ -3443,8 +3385,7 @@ fn batch_generation_and_sequence_gaps_fence_recovery_and_do_not_stop_unrelated_t
     for generation_gap in [false, true] {
         let mut engine = mixed_timers();
         let (generation, sequence) = if generation_gap { (2, 1) } else { (1, 9) };
-        engine
-            .accept_batch([
+        { let admitted_frames: Vec<Frame> = ([
                 frame(
                     "panel",
                     generation,
@@ -3462,7 +3403,7 @@ fn batch_generation_and_sequence_gaps_fence_recovery_and_do_not_stop_unrelated_t
                     vec![("value", pressed(false))],
                 ),
                 frame("game", 1, 3, 100, Reason::Gap, vec![]),
-            ])
+            ]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
             .unwrap();
         assert!(!engine.sources["panel"].available);
         assert_eq!(engine.sources["panel"].generation, generation);
@@ -3476,25 +3417,23 @@ fn batch_generation_and_sequence_gaps_fence_recovery_and_do_not_stop_unrelated_t
                 .collect::<Vec<_>>(),
             vec!["hid-sink"]
         );
-        assert!(engine
-            .accept_batch([frame(
+        assert!({ let admitted_frames: Vec<Frame> = ([frame(
                 "panel",
                 generation,
                 sequence + 1,
                 101,
                 Reason::Baseline,
                 vec![("value", pressed(true))]
-            )])
+            )]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
             .is_err());
-        engine
-            .accept_batch([frame(
+        { let admitted_frames: Vec<Frame> = ([frame(
                 "panel",
                 generation,
                 sequence + 2,
                 102,
                 Reason::Baseline,
                 vec![("value", pressed(true))],
-            )])
+            )]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
             .unwrap();
         assert!(engine
             .drain()
@@ -3511,8 +3450,7 @@ fn batch_nonknown_port_samples_cancel_old_tickets_and_suppress_only_that_ports_p
         SignalSample::Unavailable,
     ] {
         let mut engine = mixed_timers();
-        engine
-            .accept_batch([
+        { let admitted_frames: Vec<Frame> = ([
                 frame(
                     "hid",
                     1,
@@ -3537,7 +3475,7 @@ fn batch_nonknown_port_samples_cancel_old_tickets_and_suppress_only_that_ports_p
                     Reason::Change,
                     vec![("value", missing.clone())],
                 ),
-            ])
+            ]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
             .unwrap();
         assert_eq!(
             engine
@@ -3563,19 +3501,17 @@ fn batch_nonknown_port_samples_cancel_old_tickets_and_suppress_only_that_ports_p
         controllers: vec![],
     };
     let mut engine = phase(program.clone());
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "panel",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("left", pressed(false)), ("right", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     engine.drain();
-    engine
-        .accept_batch([
+    { let admitted_frames: Vec<Frame> = ([
             frame(
                 "panel",
                 1,
@@ -3608,7 +3544,7 @@ fn batch_nonknown_port_samples_cancel_old_tickets_and_suppress_only_that_ports_p
                 Reason::Change,
                 vec![("right", pressed(false))],
             ),
-        ])
+        ]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
         .unwrap();
     let known = engine
         .drain()
@@ -3627,8 +3563,7 @@ fn batch_nonknown_port_samples_cancel_old_tickets_and_suppress_only_that_ports_p
     program.sources[0].contract = boolean_contract();
     program.sinks[0].contract = boolean_contract();
     let mut engine = phase(program);
-    engine
-        .accept_batch([
+    { let admitted_frames: Vec<Frame> = ([
             frame(
                 "panel",
                 1,
@@ -3645,7 +3580,7 @@ fn batch_nonknown_port_samples_cancel_old_tickets_and_suppress_only_that_ports_p
                 Reason::Change,
                 vec![("left", SignalSample::Unknown)],
             ),
-        ])
+        ]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
         .unwrap();
     assert_eq!(
         engine.sample(&endpoint("panel", "left")),
@@ -3715,8 +3650,7 @@ fn batch_revokes_virtual_slots_without_erasing_other_controls_queued_pulse() {
         });
     }
     let mut engine = phase(program);
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "panel",
             1,
             1,
@@ -3727,62 +3661,56 @@ fn batch_revokes_virtual_slots_without_erasing_other_controls_queued_pulse() {
                 ("axis", sample(100.0)),
                 ("hat", sample(2.0)),
             ],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "hid",
             1,
             1,
             0,
             Reason::Baseline,
             vec![("button", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
     engine.drain_reports();
     engine.drain();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "panel",
             1,
             2,
             1,
             Reason::Change,
             vec![("button", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "panel",
             1,
             3,
             2,
             Reason::Change,
             vec![("button", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "hid",
             1,
             2,
             3,
             Reason::Change,
             vec![("button", pressed(true))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    engine
-        .accept(frame(
+    { let admitted_frame = frame(
             "hid",
             1,
             3,
             4,
             Reason::Change,
             vec![("button", pressed(false))],
-        ))
+        ); let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
-    engine
-        .accept_batch([frame("panel", 1, 4, 100, Reason::Gap, vec![])])
+    { let admitted_frames: Vec<Frame> = ([frame("panel", 1, 4, 100, Reason::Gap, vec![])]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
         .unwrap();
     let reports = engine.drain_reports();
     assert!(reports.iter().all(|report| !report.state.buttons[0]
@@ -3809,8 +3737,7 @@ fn malformed_and_oversized_batches_cannot_advance_or_replay_queued_source_work()
         Reason::Change,
         vec![("value", sample(1.0))],
     );
-    assert!(engine
-        .accept_batch([
+    assert!({ let admitted_frames: Vec<Frame> = ([
             frame(
                 "hid",
                 1,
@@ -3821,7 +3748,7 @@ fn malformed_and_oversized_batches_cannot_advance_or_replay_queued_source_work()
             ),
             invalid.clone(),
             frame("game", 1, 3, 100, Reason::Gap, vec![])
-        ])
+        ]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
         .is_err());
     assert_eq!(engine.at_us(), Counter(1));
     assert_eq!(engine.timers.len(), 1);
@@ -3830,12 +3757,11 @@ fn malformed_and_oversized_batches_cannot_advance_or_replay_queued_source_work()
         .iter()
         .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
     invalid.source = "unknown".into();
-    assert!(engine.accept_batch([invalid]).is_err());
+    assert!({ let admitted_frames: Vec<Frame> = ([invalid]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }.is_err());
     let mut engine = mixed_timers();
     engine.advance(Counter(50)).unwrap();
     let frame = frame("hid", 1, 3, 100, Reason::Change, vec![]);
-    assert!(engine
-        .accept_batch(std::iter::repeat(frame).take(MAX_REPORTS + 1))
+    assert!({ let admitted_frames: Vec<Frame> = (std::iter::repeat(frame).take(MAX_REPORTS + 1)).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }
         .is_err());
     assert!(!engine.active());
     assert!(engine.fault().unwrap().contains("budget"));
@@ -3843,5 +3769,5 @@ fn malformed_and_oversized_batches_cannot_advance_or_replay_queued_source_work()
         .drain()
         .iter()
         .all(|effect| !matches!(effect.sample, SignalSample::Known(_))));
-    assert!(engine.accept_batch([]).is_err());
+    assert!({ let admitted_frames: Vec<Frame> = ([]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }.is_err());
 }

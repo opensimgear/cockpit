@@ -22,6 +22,8 @@ pub struct Frame {
     pub source: String,
     pub generation: Counter,
     pub sequence: Counter,
+    /// Original source evidence on the host monotonic clock. Admission supplies
+    /// its current processing time separately; dequeuing never renews capture.
     pub captured_us: Counter,
     pub reason: Reason,
     pub changes: Vec<Change>,
@@ -195,7 +197,7 @@ impl Phase {
     pub fn new(program: Program, generation: Counter, session: String) -> Result<Self, String> {
         Self::initialize(program, generation, session, 0)
     }
-    /// Start a live phase on the shared native capture clock before emitting output.
+    /// Start a live phase on the monotonic admission clock before emitting output.
     pub fn new_at(
         program: Program,
         generation: Counter,
@@ -203,7 +205,7 @@ impl Phase {
         now: Counter,
     ) -> Result<Self, String> {
         if now.0 == 0 || now.0 > u64::MAX - 600_000_000 {
-            return Err("A live typed mapping needs a nonzero bounded capture clock.".into());
+            return Err("A live typed mapping needs a nonzero bounded admission clock.".into());
         }
         Self::initialize(program, generation, session, now.0)
     }
@@ -446,6 +448,12 @@ impl Phase {
     pub fn drain_reports(&mut self) -> Vec<Report> {
         self.reports.drain(..).collect()
     }
+    /// Whether this generation has a retained admitted baseline. This is not
+    /// current native connection or authority evidence; liveness still requires
+    /// the provider's independent current-generation validation.
+    pub fn has_source_baseline(&self, source: &str, generation: Counter) -> bool {
+        self.sources.get(source).is_some_and(|state| state.available && state.generation == generation.0)
+    }
     /// A native provider can confirm that a previously admitted latched source
     /// is still connected in this exact generation, even when a stationary HID
     /// control produces no reports. This is a liveness observation, never an
@@ -592,19 +600,33 @@ impl Phase {
             })
             && (!baseline || seen.len() == expected.len())
     }
-    /// Admit one bounded native capture batch. Every known revocation is applied
-    /// before any frame can advance timers. This is required when independent
+    /// Admit one bounded native capture batch at the current monotonic time.
+    /// Every known revocation and expired sample is applied before due timers.
+    /// Retained occurrences keep input order without replaying capture time.
+    /// This is required when independent
     /// providers are drained together, rather than delivered as a causal stream.
     /// Handled continuity losses return bounded diagnostics and keep unrelated
     /// sources running; malformed envelopes fail without advancing their clocks.
     pub fn accept_batch(
         &mut self,
         frames: impl IntoIterator<Item = Frame>,
+        admitted_now: Counter,
+    ) -> Result<Vec<String>, String> {
+        self.admit_batch(frames, admitted_now, true)
+    }
+    fn admit_batch(
+        &mut self,
+        frames: impl IntoIterator<Item = Frame>,
+        admitted_now: Counter,
+        batch_baselines: bool,
     ) -> Result<Vec<String>, String> {
         if !self.active {
             return Err("Typed mapping is stopped.".into());
         }
-        let frames = frames.into_iter().take(MAX_REPORTS + 1).collect::<Vec<_>>();
+        if admitted_now.0 < self.clock || admitted_now.0 > u64::MAX - 600_000_000 {
+            return Err("Invalid typed source admission clock.".into());
+        }
+        let mut frames = frames.into_iter().take(MAX_REPORTS + 1).collect::<Vec<_>>();
         if frames.len() > MAX_REPORTS {
             self.effects.clear();
             self.reports.clear();
@@ -614,6 +636,12 @@ impl Phase {
         }
         if frames.is_empty() {
             return Ok(vec![]);
+        }
+        // Capture evidence never drives the processing clock. Reject future
+        // evidence before touching state, then withdraw expired samples before
+        // advancing any due timer or evaluating a retained input occurrence.
+        if frames.iter().any(|frame| frame.captured_us > admitted_now) {
+            return Err("Typed source capture is later than its admission clock.".into());
         }
         struct Fence {
             first: usize,
@@ -626,8 +654,7 @@ impl Phase {
         let mut invalid_sources = BTreeSet::new();
         let mut invalid = false;
         let mut diagnostics = BTreeSet::new();
-        let mut now = self.clock;
-        for (index, frame) in frames.iter().enumerate() {
+        for (index, frame) in frames.iter_mut().enumerate() {
             let Some(previous) = simulated.get(&frame.source).cloned() else {
                 invalid = true;
                 continue;
@@ -643,7 +670,17 @@ impl Phase {
                 invalid_sources.insert(frame.source.clone());
                 continue;
             }
-            now = now.max(frame.captured_us.0);
+            // Validate the original envelope and Known value first. Otherwise
+            // an expired wrong-type/out-of-range value could hide as Stale.
+            for change in &mut frame.changes {
+                let endpoint = Endpoint { node_id: frame.source.clone(), port_id: change.port_id.clone() };
+                if matches!(self.compiled.contracts.get(&endpoint), Some(PortContract::State { freshness_ms, .. })
+                    if frame.captured_us.0.saturating_add(*freshness_ms as u64 * 1000) <= admitted_now.0)
+                    && matches!(change.sample, SignalSample::Known(_))
+                {
+                    change.sample = SignalSample::Stale;
+                }
+            }
             let gap = previous.available
                 && !baseline
                 && (previous.generation != frame.generation.0
@@ -775,7 +812,11 @@ impl Phase {
         // loss. Preserve queued work from independent branches and targets.
         self.effects
             .retain(|effect| !affected.contains(&effect.sink_id));
-        self.last.retain(|sink, _| !affected.contains(sink));
+        // A single baseline keeps normal output deduplication: replacing its
+        // source validity must not manufacture an Unknown/startup occurrence.
+        if batch_baselines || frames[0].reason != Reason::Baseline {
+            self.last.retain(|sink, _| !affected.contains(sink));
+        }
         for (source, fence) in &fences {
             self.sources.insert(source.clone(), fence.state.clone());
         }
@@ -825,7 +866,11 @@ impl Phase {
         if !self.active {
             return Err("Typed output queue overflow.".into());
         }
-        let mut retained = frames
+        // Known losses above must win against every same-time authored timer.
+        // The entire drain is admitted now; capture history cannot replay old
+        // timer steps or consume a newly authored pulse before it is emitted.
+        self.advance(admitted_now)?;
+        let retained = frames
             .into_iter()
             .enumerate()
             .filter(|(index, frame)| {
@@ -834,7 +879,6 @@ impl Phase {
                     .is_none_or(|fence| *index >= fence.first)
             })
             .collect::<Vec<_>>();
-        retained.sort_by_key(|(_, frame)| frame.captured_us);
         for (index, mut frame) in retained {
             if frame.reason == Reason::Baseline {
                 for change in &mut frame.changes {
@@ -858,12 +902,23 @@ impl Phase {
                         .is_none_or(|(after, _)| index >= *after)
                 });
             }
-            self.accept(frame)?;
+            self.accept_current(frame)?;
         }
-        self.advance(Counter(now.max(self.clock)))?;
         Ok(diagnostics.into_iter().collect())
     }
-    pub fn accept(&mut self, frame: Frame) -> Result<(), String> {
+    pub fn accept(&mut self, frame: Frame, admitted_now: Counter) -> Result<(), String> {
+        let implicit_loss = self.sources.get(&frame.source).is_some_and(|previous|
+            frame.reason == Reason::Change && (!previous.available
+                || previous.generation != frame.generation.0
+                || previous.sequence.checked_add(1) != Some(frame.sequence.0)));
+        self.admit_batch([frame], admitted_now, false)?;
+        if implicit_loss {
+            return Err("Typed source gap or generation change; acquire a complete fresh baseline.".into());
+        }
+        Ok(())
+    }
+    /// Evaluate a frame only after bounded batch validation and revocation.
+    fn accept_current(&mut self, frame: Frame) -> Result<(), String> {
         if !self.active {
             return Err("Typed mapping is stopped.".into());
         }
@@ -907,7 +962,6 @@ impl Phase {
                 },
             );
             self.refresh_all(ReportReason::SourceLost)?;
-            self.advance(Counter(self.clock.max(frame.captured_us.0)))?;
             return if matches!(frame.reason, Reason::Gap | Reason::Disconnect) {
                 Ok(())
             } else {
@@ -928,7 +982,6 @@ impl Phase {
             self.invalidate(&frame.source, SignalSample::Unknown);
             self.refresh_all(ReportReason::SourceLost)?;
         }
-        self.advance(Counter(self.clock.max(frame.captured_us.0)))?;
         let state = self.sources.get_mut(&frame.source).unwrap();
         state.generation = frame.generation.0;
         state.sequence = frame.sequence.0;

@@ -93,7 +93,7 @@ fn verified_panel_reads_keep_latched_buttons_fresh_for_five_seconds_without_inve
         nodes: vec![], sinks: vec![], controllers: vec![],
     };
     let mut phase = Phase::new(program, Counter(1), uuid::Uuid::new_v4().to_string()).unwrap();
-    for frame in baseline { phase.accept(frame).unwrap(); }
+    for frame in baseline { crate::profile_admission_test_clock::frame(&mut phase, frame).unwrap(); }
     phase.drain();
     let button = osg_mapping::program::Endpoint {
         node_id: "logical0".into(), port_id: "button:0".into(),
@@ -131,7 +131,7 @@ fn verified_panel_reads_keep_latched_buttons_fresh_for_five_seconds_without_inve
         poll.frames.iter().any(|frame| frame.reason == Reason::Gap).then_some(poll)
     });
     assert!(loss.liveness.is_empty());
-    phase.accept_batch(loss.frames).unwrap();
+    crate::profile_admission_test_clock::batch(&mut phase, loss.frames).unwrap();
     assert!(!matches!(phase.sample(&button), Some(SignalSample::Known(_))));
     inputs.stop();
 }
@@ -937,34 +937,31 @@ fn actual_panel_frames_feed_typed_reducer_and_baseline_gap_stop_cannot_replay_oc
         node_id: "logical0".into(),
         port_id: "button-event:0".into(),
     };
-    phase
-        .accept(source.baseline(io.as_ref(), 10).unwrap())
+    crate::profile_admission_test_clock::frame(&mut phase, source.baseline(io.as_ref(), 10).unwrap())
         .unwrap();
     assert_eq!(phase.sample(&event), Some(&SignalSample::Unknown));
     io.press(true);
     io.press(false);
     let frames = source.page(io.as_ref(), 20).unwrap();
-    phase.accept(frames[0].clone()).unwrap();
+    crate::profile_admission_test_clock::frame(&mut phase, frames[0].clone()).unwrap();
     assert_eq!(
         phase.sample(&event),
         Some(&SignalSample::scalar(PortValue::Boolean(true)))
     );
-    phase.accept(frames[1].clone()).unwrap();
+    crate::profile_admission_test_clock::frame(&mut phase, frames[1].clone()).unwrap();
     assert_eq!(
         phase.sample(&event),
         Some(&SignalSample::scalar(PortValue::Boolean(false)))
     );
-    phase
-        .accept(source.frame(30, Reason::Gap, vec![]).unwrap())
+    crate::profile_admission_test_clock::frame(&mut phase, source.frame(30, Reason::Gap, vec![]).unwrap())
         .unwrap();
-    phase
-        .accept(source.baseline(io.as_ref(), 40).unwrap())
+    crate::profile_admission_test_clock::frame(&mut phase, source.baseline(io.as_ref(), 40).unwrap())
         .unwrap();
     assert_eq!(phase.sample(&event), Some(&SignalSample::Unknown));
     phase.stop();
     io.press(true);
     for frame in source.page(io.as_ref(), 50).unwrap() {
-        assert!(phase.accept(frame).is_err());
+        assert!(crate::profile_admission_test_clock::frame(&mut phase, frame).is_err());
     }
     assert!(!phase.active());
     assert!(phase.drain().is_empty());

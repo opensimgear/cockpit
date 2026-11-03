@@ -4,6 +4,9 @@ use crate::signal::{Direction, PortDescriptor};
 #[path = "constant_tests.rs"]
 mod constants;
 
+#[path = "clock_tests.rs"]
+mod clocks;
+
 fn endpoint(node: &str) -> Endpoint {
     Endpoint {
         node_id: node.into(),
@@ -85,8 +88,7 @@ fn engine(pulse: bool) -> Phase {
     .unwrap()
 }
 fn feed(engine: &mut Phase, sequence: u64, at: u64, reason: Reason, sample: SignalSample) {
-    engine
-        .accept(Frame {
+    { let admitted_frame = Frame {
             source: "source".into(),
             generation: Counter(1),
             sequence: Counter(sequence),
@@ -100,7 +102,7 @@ fn feed(engine: &mut Phase, sequence: u64, at: u64, reason: Reason, sample: Sign
                 }]
             },
             reason,
-        })
+        }; let admitted_now = Counter(engine.at_us().0.max(admitted_frame.captured_us.0)); engine.accept(admitted_frame, admitted_now) }
         .unwrap();
 }
 fn timer(engine: &mut Phase, node: &str, id: &str, at: u64) {
@@ -254,7 +256,7 @@ fn empty_batch_preserves_clock_provenance_queued_reports_and_pending_work() {
     let reports = serde_json::to_value(&engine.reports).unwrap();
     let effects = serde_json::to_value(&engine.effects).unwrap();
     let deadline = engine.next_deadline_us();
-    assert!(engine.accept_batch([]).unwrap().is_empty());
+    assert!({ let admitted_frames: Vec<Frame> = ([]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }.unwrap().is_empty());
     assert_eq!(engine.at_us(), Counter(1));
     assert_eq!(engine.next_deadline_us(), deadline);
     assert_eq!(engine.timers.len(), 1);
@@ -274,7 +276,7 @@ fn empty_batch_preserves_clock_provenance_queued_reports_and_pending_work() {
     }
     engine.stop();
     assert_eq!(
-        engine.accept_batch([]).unwrap_err(),
+        { let admitted_frames: Vec<Frame> = ([]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }.unwrap_err(),
         "Typed mapping is stopped."
     );
 }
@@ -297,7 +299,7 @@ fn empty_batch_leaves_inflight_and_queued_script_callbacks_untouched() {
     feed(&mut engine, 2, 1, Reason::Change, known(true));
     let pending = serde_json::to_value(&engine.states["processor"].pending).unwrap();
     assert!(!engine.states["processor"].pending.is_empty());
-    assert!(engine.accept_batch([]).unwrap().is_empty());
+    assert!({ let admitted_frames: Vec<Frame> = ([]).into_iter().collect(); let admitted_now = Counter(engine.at_us().0.max(admitted_frames.iter().map(|frame| frame.captured_us.0).max().unwrap_or(0))); engine.accept_batch(admitted_frames, admitted_now) }.unwrap().is_empty());
     assert!(engine.script_ticket_current(&request.ticket));
     assert_eq!(
         serde_json::to_value(&engine.states["processor"].pending).unwrap(),

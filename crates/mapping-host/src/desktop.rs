@@ -258,7 +258,7 @@ impl Desktop {
         let mut shadow = self.shadow.take().ok_or("The isolated desktop reducer is stopped.")?;
         let result = (|| {
             shadow.mirror_source_liveness(reducer)?;
-            let mut diagnostics = shadow.accept_batch(frames.iter().cloned())?;
+            let mut diagnostics = shadow.accept_batch(frames.iter().cloned(), reducer.at_us())?;
             shadow.mirror_source_liveness(reducer)?;
             shadow.advance(reducer.at_us())?;
             let effects = shadow.drain();

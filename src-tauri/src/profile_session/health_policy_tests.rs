@@ -191,19 +191,19 @@ fn unavailable_samples_remain_unhealthy_between_packets_until_known_again() {
         captured_us: Counter(sequence * 100), reason,
         changes: vec![Change { port_id: "value".into(), sample }],
     };
-    phase.accept_batch([frame(1, Reason::Baseline, SignalSample::scalar(PortValue::Boolean(false)))]).unwrap();
+    crate::profile_admission_test_clock::batch(&mut phase, [frame(1, Reason::Baseline, SignalSample::scalar(PortValue::Boolean(false)))]).unwrap();
     assert!(input_degradation(&phase, Some(&plan), &document).is_empty());
-    phase.accept_batch([frame(2, Reason::Change, SignalSample::Unknown)]).unwrap();
+    crate::profile_admission_test_clock::batch(&mut phase, [frame(2, Reason::Change, SignalSample::Unknown)]).unwrap();
     let unavailable = input_degradation(&phase, Some(&plan), &document);
     assert_eq!(unavailable, vec!["required has unavailable input samples; dependent work was revoked."]);
     for _ in 0..5 {
-        assert!(phase.accept_batch([]).unwrap().is_empty(), "No new packet was received");
+        assert!(crate::profile_admission_test_clock::batch(&mut phase, []).unwrap().is_empty(), "No new packet was received");
         assert_eq!(input_degradation(&phase, Some(&plan), &document), unavailable,
             "An idle heartbeat must not fabricate a recovery");
     }
-    phase.accept_batch([frame(3, Reason::Change, SignalSample::Unknown)]).unwrap();
+    crate::profile_admission_test_clock::batch(&mut phase, [frame(3, Reason::Change, SignalSample::Unknown)]).unwrap();
     assert_eq!(input_degradation(&phase, Some(&plan), &document), unavailable);
-    phase.accept_batch([frame(4, Reason::Change, SignalSample::scalar(PortValue::Boolean(true)))]).unwrap();
+    crate::profile_admission_test_clock::batch(&mut phase, [frame(4, Reason::Change, SignalSample::scalar(PortValue::Boolean(true)))]).unwrap();
     assert!(input_degradation(&phase, Some(&plan), &document).is_empty());
     phase.advance(Counter(2_000_000)).unwrap();
     assert_eq!(input_degradation(&phase, Some(&plan), &document), unavailable,

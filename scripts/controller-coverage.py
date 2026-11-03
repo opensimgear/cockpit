@@ -60,6 +60,7 @@ def main():
                        if not any('test' in part for part in path.relative_to(root / 'crates/controller-input/src/windows').parts))
     sources.append(root / 'crates/controller-input/src/capture.rs')
     sources.append(root / 'crates/controller-input/src/stream.rs')
+    sources.append(root / 'crates/controller-input/src/stream/clock.rs')
     if sys.platform.startswith('linux'):
         sources.append(root / 'crates/controller-input/src/linux.rs')
     if sys.platform == 'darwin':

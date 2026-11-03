@@ -280,7 +280,7 @@ impl DebugInputs {
     }
     pub(crate) fn refresh_liveness(&self, reducer: &mut Phase, now: Counter) -> Result<(), String> {
         for (id, source) in &self.sources {
-            if !source.used.is_empty() {
+            if !source.used.is_empty() && reducer.has_source_baseline(id, Counter(self.generation)) {
                 reducer.observe_liveness(id, Counter(self.generation), now)?;
             }
         }

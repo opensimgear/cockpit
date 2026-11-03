@@ -29,7 +29,7 @@ fn armed_with_reconnect(reconnect: bool) -> (Fixture, CompanionSources, Phase, V
     )
     .unwrap();
     for frame in frames {
-        phase.accept(frame).unwrap();
+        crate::profile_admission_test_clock::frame(&mut phase, frame).unwrap();
     }
     phase.drain();
     adapter.arm(phase.run_token()).unwrap();

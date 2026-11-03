@@ -78,7 +78,7 @@ pub(crate) fn record(program: &Program, request: &Value) -> Result<Value, String
             batch.push(frames.next().unwrap());
         }
         if !batch.is_empty() {
-            let diagnostics = phase.accept_batch(batch)?;
+            let diagnostics = phase.accept_batch(batch, at)?;
             if !diagnostics.is_empty() {
                 return Err(format!(
                     "Desktop recording input was rejected: {}",

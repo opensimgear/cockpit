@@ -130,7 +130,7 @@ fn frame(phase: &mut Phase, sequence: u64, at: u64, reason: Reason, value: bool)
             }]
         },
     };
-    phase.accept(frame.clone()).unwrap();
+    { let admitted_frame = frame.clone(); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }.unwrap();
     vec![frame]
 }
 fn prepared_fixture(
@@ -462,8 +462,7 @@ fn waiting_status_keeps_other_armed_actions_eligible_and_stop_releases_them() {
     program.sinks.push(second);
     let (mut desktop, mut phase, focused, events) = prepared_program_fixture(program);
     frame(&mut phase, 1, 1, Reason::Baseline, false);
-    phase
-        .accept(Frame {
+    { let admitted_frame = Frame {
             source: "second".into(),
             generation: Counter(8),
             sequence: Counter(1),
@@ -473,7 +472,7 @@ fn waiting_status_keeps_other_armed_actions_eligible_and_stop_releases_them() {
                 port_id: "button".into(),
                 sample: boolean(false),
             }],
-        })
+        }; let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }
         .unwrap();
     desktop.start_focused(&phase, true).unwrap();
     assert_eq!(desktop.status()["state"], "active");
@@ -889,8 +888,7 @@ fn scope_reset_discards_a_latched_toggle_hidden_behind_a_closed_gate() {
         }],
     };
     frame(&mut phase, 1, 1, Reason::Baseline, false);
-    phase
-        .accept(gate_frame(1, 1, Reason::Baseline, true))
+    { let admitted_frame = gate_frame(1, 1, Reason::Baseline, true); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }
         .unwrap();
     desktop.start_focused(&phase, true).unwrap();
     let frames = frame(&mut phase, 2, 2, Reason::Change, true);
@@ -898,7 +896,7 @@ fn scope_reset_discards_a_latched_toggle_hidden_behind_a_closed_gate() {
     let frames = frame(&mut phase, 3, 3, Reason::Change, false);
     desktop.poll_focused(&frames, &phase, true).unwrap();
     let closed = gate_frame(2, 4, Reason::Change, false);
-    phase.accept(closed.clone()).unwrap();
+    { let admitted_frame = closed.clone(); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }.unwrap();
     desktop.poll_focused(&[closed], &phase, true).unwrap();
     assert_eq!(events.lock().unwrap().len(), 2);
     assert_eq!(
@@ -914,12 +912,12 @@ fn scope_reset_discards_a_latched_toggle_hidden_behind_a_closed_gate() {
     desktop.poll_focused(&[], &phase, true).unwrap();
     let mut frames = frame(&mut phase, 4, 11, Reason::Change, false);
     let closed = gate_frame(3, 11, Reason::Change, false);
-    phase.accept(closed.clone()).unwrap();
+    { let admitted_frame = closed.clone(); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }.unwrap();
     frames.push(closed);
     desktop.poll_focused(&frames, &phase, true).unwrap();
     assert!(!desktop.waiting_neutral.contains("action"));
     let opened = gate_frame(4, 12, Reason::Change, true);
-    phase.accept(opened.clone()).unwrap();
+    { let admitted_frame = opened.clone(); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }.unwrap();
     desktop.poll_focused(&[opened], &phase, true).unwrap();
     assert_eq!(
         phase.sample(&endpoint("fallback", "value")),
@@ -967,12 +965,11 @@ fn stationary_pointer_keeps_native_liveness_without_refreshing_capture_provenanc
             sample: SignalSample::scalar(PortValue::Number(value)),
         }],
     };
-    phase
-        .accept(value_frame(1, 1, Reason::Baseline, 0.0))
+    { let admitted_frame = value_frame(1, 1, Reason::Baseline, 0.0); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }
         .unwrap();
     desktop.start_focused(&phase, true).unwrap();
     let moved = value_frame(2, 2, Reason::Change, 0.5);
-    phase.accept(moved.clone()).unwrap();
+    { let admitted_frame = moved.clone(); let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }.unwrap();
     desktop.poll_focused(&[moved], &phase, true).unwrap();
     for tick in [500_000, 1_000_000, 1_500_000, 2_000_000] {
         phase

@@ -145,7 +145,7 @@ impl NativeProfileHost {
     }
     pub(crate) fn debug_controller_request(&mut self,run:&OwnedRun,request:&crate::profile_debug_controller::Request)->Result<serde_json::Value,String> {
         self.fence(&run.owner)?;
-        let now=self.controllers.stream_page("",0).captured_us;
+        let now=self.controllers.monotonic_us();
         let state=self.run(&run.owner)?;
         if state.vehicle_paused { return Err("Wait for the active vehicle profile variant.".into()); }
         let at=now.max(state.reducer.as_ref().ok_or("The profile reducer is stopped.")?.at_us().0);
@@ -568,7 +568,7 @@ impl NativeProfileHost {
                 dcs_hid::append_diagnostics(&mut diagnostics, loss.diagnostics);
                 Self::withdraw_game(resources, state)?;
                 if let Some(reducer) = state.reducer.as_mut() {
-                    for frame in loss.frames { reducer.accept(frame)?; }
+                    reducer.accept_batch(loss.frames, reducer.at_us())?;
                     state.recording.record(reducer.drain_reports());
                     // Disconnection effects cannot become deferred simulator
                     // commands. Ordinary controller reports still reach feeder.
@@ -1136,9 +1136,9 @@ impl Host for NativeProfileHost {
     fn next_deadline(&self, run: &OwnedRun) -> Option<Instant> {
         let state = self.prepared.get(&key(&run.owner))?;
         let routing = state.reducer.as_ref().and_then(|reducer| reducer.next_deadline_us()).map(|deadline| {
-            // Clock-lock contention can make this early, never postpone it.
+            // Sampling Instant first favors an early wake after preemption.
             let before = Instant::now();
-            let now = self.controllers.stream_page("", 0).captured_us;
+            let now = self.controllers.monotonic_us();
             crate::profile_session::scheduling::host_deadline(before, now, deadline.0)
         });
         [routing, state.scripts.next_deadline(), state.output.as_ref().and_then(|output| output.renewal_deadline())]
@@ -1178,13 +1178,13 @@ impl Host for NativeProfileHost {
         // Native context loss reaches the reducer before timers/scripts can
         // emit effects, withdrawing only branches that depend on that game.
         let game_clock = controllers.clone();
-        let game = Self::game_poll(&resources, &games, state, move || game_clock.stream_page("", 0).captured_us)?;
+        let game = Self::game_poll(&resources, &games, state, move || game_clock.monotonic_us())?;
         degraded.extend(Self::refresh_desktop_context(&games,state)?);
         degraded.extend(dcs_hid::refresh(state, &resources, &panels_io));
         degraded.extend(game.diagnostics);
         let panels = state.panels.poll(|token| resources.validate_live_delivery(token).map(|_| ()))?;
         degraded.extend(panels.diagnostics);
-        let companion = Self::companion_poll(&companions,&resources,state,controllers.stream_page("",0).captured_us);
+        let companion = Self::companion_poll(&companions,&resources,state,controllers.monotonic_us());
         degraded.extend(companion.diagnostics);
         let reducer = state
             .reducer
@@ -1192,22 +1192,14 @@ impl Host for NativeProfileHost {
             .ok_or("The profile reducer is stopped.")?;
         let frames = frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames).chain(state.debug_inputs.poll()).collect::<Vec<_>>();
         degraded.extend(state.scripts.revoke_failed(reducer));
-        let batch_clock=frames.iter().map(|frame|frame.captured_us).max().unwrap_or(reducer.at_us());
-        state.debug_inputs.refresh_liveness(reducer,Counter(batch_clock.0.max(reducer.at_us().0)))?;
-        if !frames.is_empty() {
-            degraded.extend(reducer.accept_batch(frames.iter().cloned())?);
-        }
-        // Use the same journal admission clock as source frames. Pairing an
-        // earlier Instant with a later clock sample can run ahead of capture.
-        let tick = Counter(reducer.at_us().0.max(controllers.stream_page("", 0).captured_us));
+        // Admission time drives mapping timers; source capture stamps remain
+        // evidence. Refresh legitimate quiet-source liveness before advancing.
+        let tick = Counter(controllers.monotonic_us());
         if let Some(inputs) = state.inputs.as_ref() { inputs.refresh_liveness(controllers.as_ref(), reducer, tick)?; }
         state.debug_inputs.refresh_liveness(reducer,tick)?;
-        for (source,generation,ports) in panels.liveness {
-            reducer.observe_port_liveness(&source,generation,tick,&ports)?;
-        }
-        for (source,generation) in companion.liveness {
-            reducer.observe_liveness(&source,generation,tick)?;
-        }
+        degraded.extend(crate::profile_session::source_admission::admit(
+            reducer, frames.iter().cloned(), tick, panels.liveness, companion.liveness,
+        )?);
         reducer.advance(tick)?;
         degraded.extend(health_policy::input_degradation(reducer, state.delivery.as_ref(), &state.document));
         degraded.extend(state.scripts.poll(reducer));

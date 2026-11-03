@@ -66,6 +66,9 @@ impl ReportWatch {
         self.state.read_cursor.fetch_max(cursor, Ordering::Release);
     }
 }
+mod clock;
+pub use clock::Clock;
+
 pub(crate) struct Journal {
     origin: Instant,
     cursor: u64,
@@ -128,9 +131,10 @@ impl Journal {
         });
     }
     pub fn now(&self) -> u64 {
-        u64::try_from(self.origin.elapsed().as_micros())
-            .unwrap_or(u64::MAX - 1)
-            .saturating_add(1)
+        self.clock().now_us()
+    }
+    pub(crate) fn clock(&self) -> Clock {
+        Clock { origin: self.origin }
     }
     pub fn cursor(&self) -> u64 {
         self.cursor

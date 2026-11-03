@@ -112,8 +112,7 @@ fn cached_graph_projection_preserves_real_timestamps_and_never_advances_or_drain
         .ports
         .iter()
         .all(|p| matches!(p.sample, SignalSample::Unknown) && p.observed_us.is_none()));
-    phase
-        .accept(Frame {
+    crate::profile_admission_test_clock::frame(&mut phase, Frame {
             source: "panel".into(),
             generation: Counter(1),
             sequence: Counter(1),

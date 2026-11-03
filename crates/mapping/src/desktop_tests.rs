@@ -440,8 +440,7 @@ fn desktop_only_program_compiles_without_controller_and_captures_source_token() 
     let mut phase = crate::engine::typed::Phase::new(program, Counter(1), run().session).unwrap();
     phase.drain();
     for (sequence, reason, value) in [(1, Reason::Baseline, false), (2, Reason::Change, true)] {
-        phase
-            .accept(crate::engine::typed::Frame {
+        { let admitted_frame = crate::engine::typed::Frame {
                 source: "source".into(),
                 generation: Counter(7),
                 sequence: Counter(sequence),
@@ -451,7 +450,7 @@ fn desktop_only_program_compiles_without_controller_and_captures_source_token() 
                     port_id: "button".into(),
                     sample: boolean(value),
                 }],
-            })
+            }; let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }
             .unwrap();
     }
     let effects = phase.drain();
@@ -605,8 +604,7 @@ fn native_liveness_keeps_stationary_pointer_and_transformed_state_without_rearmi
     phase.drain();
     let mut scheduler = scheduler(action);
     for (sequence, reason, value) in [(1, Reason::Baseline, 0.0), (2, Reason::Change, 1.0)] {
-        phase
-            .accept(crate::engine::typed::Frame {
+        { let admitted_frame = crate::engine::typed::Frame {
                 source: "source".into(),
                 generation: Counter(7),
                 sequence: Counter(sequence),
@@ -616,7 +614,7 @@ fn native_liveness_keeps_stationary_pointer_and_transformed_state_without_rearmi
                     port_id: "axis".into(),
                     sample: SignalSample::scalar(PortValue::Number(value)),
                 }],
-            })
+            }; let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }
             .unwrap();
         for effect in phase.drain() {
             scheduler.accept_effect(&effect).unwrap();
@@ -650,15 +648,14 @@ fn native_liveness_keeps_stationary_pointer_and_transformed_state_without_rearmi
             .sum::<i32>();
     }
     assert_eq!(motion, 500);
-    phase
-        .accept(crate::engine::typed::Frame {
+    { let admitted_frame = crate::engine::typed::Frame {
             source: "source".into(),
             generation: Counter(7),
             sequence: Counter(3),
             captured_us: Counter(5_000_003),
             reason: Reason::Disconnect,
             changes: vec![],
-        })
+        }; let admitted_now = Counter(phase.at_us().0.max(admitted_frame.captured_us.0)); phase.accept(admitted_frame, admitted_now) }
         .unwrap();
     for effect in phase.drain() {
         scheduler.accept_effect(&effect).unwrap();
