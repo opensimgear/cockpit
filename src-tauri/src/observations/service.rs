@@ -6,7 +6,8 @@ impl crate::gateways::GatewayManager {
         action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         if let Some(id) = topic.strip_prefix("controllers.input.") {
             self.controllers.observe(&self.observations.broker(), id, action)
-        } else { action() }
+        } else if topic.starts_with("profiles.samples.") { self.with_profile_samples(topic, action) }
+        else { action() }
     }
 
     pub fn browser_observation_request(&self, request: &Value,

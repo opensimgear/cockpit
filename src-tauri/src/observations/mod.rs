@@ -12,7 +12,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc, Mutex, Weak,
+        mpsc, Arc, Mutex, OnceLock, Weak,
     },
     time::Instant,
 };
@@ -38,12 +38,14 @@ struct Inner {
     origin: Instant,
     closed: AtomicBool,
     workers: Arc<AtomicUsize>,
+    reader_wake: OnceLock<Arc<osg_streams::NativeWake>>,
 }
 
-struct WorkerSlot(Arc<AtomicUsize>);
+struct WorkerSlot(Arc<AtomicUsize>, Option<Arc<osg_streams::NativeWake>>);
 impl Drop for WorkerSlot {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
+        if let Some(wake) = &self.1 { wake.notify(); }
     }
 }
 
@@ -74,10 +76,14 @@ impl Runtime {
                 origin: Instant::now(),
                 closed: AtomicBool::new(false),
                 workers: Arc::new(AtomicUsize::new(0)),
+                reader_wake: OnceLock::new(),
             }),
         }
     }
 
+    pub(crate) fn watch_reader_lifecycle(&self, wake: Arc<osg_streams::NativeWake>) {
+        let _ = self.inner.reader_wake.set(wake);
+    }
     pub(crate) fn broker(&self) -> Broker {
         self.inner.broker.clone()
     }
@@ -104,7 +110,7 @@ impl Runtime {
                 (count < 64).then_some(count + 1)
             })
             .map_err(|_| "Observation delivery worker limit reached.")?;
-        let slot = WorkerSlot(self.inner.workers.clone());
+        let slot = WorkerSlot(self.inner.workers.clone(), self.inner.reader_wake.get().cloned());
         let reader = self
             .inner
             .broker

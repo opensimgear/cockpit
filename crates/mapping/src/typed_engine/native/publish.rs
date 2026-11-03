@@ -79,10 +79,13 @@ impl Phase {
                 state.inflight = None;
                 state.rule = crate::rules::State::default();
             }
+            let mut changed = false;
             for state in self.values.values_mut() {
+                changed |= state.sample != SignalSample::Unavailable;
                 state.sample = SignalSample::Unavailable;
                 state.epoch = state.epoch.saturating_add(1);
             }
+            if changed { self.mark_sample_change(); }
             self.publish(BTreeSet::new(), ReportReason::Overflow, true);
             return;
         }

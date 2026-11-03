@@ -144,3 +144,6 @@ mod liveness;
 mod output_work;
 mod publish;
 mod scripts;
+
+#[cfg(test)]
+mod sample_revision_tests;

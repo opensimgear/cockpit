@@ -82,6 +82,9 @@ def main():
                          'xplane/permissions.rs', 'games/process_monitor.rs', 'gateways/process_monitor.rs', 'mcp_tools.rs',
                          'profile_session/scheduling.rs', 'profile_session_scripts.rs',
                          'profile_session_inputs.rs', 'profile_session/activation_phases.rs'])
+    module_names.extend(['profile_samples/mod.rs', 'profile_samples/registration.rs', 'profile_samples/worker.rs',
+                         'profile_session/samples/schema.rs', 'profile_session/samples/coordinator.rs',
+                         'gateways/profile_samples.rs', 'observations/mod.rs', 'observations/service.rs'])
     if os.name == 'nt':
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',

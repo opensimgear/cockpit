@@ -19,6 +19,9 @@ impl Phase {
         state.sample = sample;
         state.observed = self.clock;
         state.captured = self.clock;
+        if changed {
+            self.mark_sample_change();
+        }
         changed
     }
     pub(in crate::engine::typed) fn invalidate(&mut self, source: &str, status: SignalSample) {

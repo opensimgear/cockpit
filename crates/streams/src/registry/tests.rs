@@ -384,3 +384,49 @@ fn owner_retirement_closes_live_readers_and_fences_late_old_owner() {
     assert_eq!(current.recv().unwrap().payload, Some(json!(42)));
     assert_eq!(replacement.revision(), 1);
 }
+
+#[test]
+fn latest_absolute_states_coalesce_for_slow_wire_readers_without_losing_fast_readers() {
+    let (broker,publisher) = broker();
+    let mut slow = broker.subscribe("slow","ui","controls").unwrap();
+    let mut fast = broker.subscribe("fast","mcp","controls").unwrap();
+    fast.recv().unwrap();
+    for value in 1..=1000 {
+        assert_eq!(publisher.publish_latest_state(1,json!({"value":value}),value,"clock").unwrap(),value+1);
+        let frame = fast.recv().unwrap();
+        assert_eq!(frame.kind,"snapshot");assert_eq!(frame.sequence,None);
+        assert_eq!(frame.topic,"controls");assert_eq!(frame.source,"device:1");
+        assert_eq!(frame.session,"service-session");assert_eq!(frame.generation,"1");
+        assert_eq!(frame.revision,(value+1).to_string());assert_eq!(frame.captured_us,value.to_string());
+        assert_eq!(frame.payload,Some(json!({"value":value})));
+    }
+    let frame = slow.recv().unwrap();
+    assert_eq!(frame.kind,"snapshot");assert_eq!(frame.payload,Some(json!({"value":1000})));
+    assert!(slow.try_recv().unwrap().is_none());
+    let state = publisher.topic.stream.shared.lock();
+    for reader in state.subscribers.values() {assert!(reader.events.is_empty());assert_eq!(reader.pending_bytes,0);}
+}
+
+#[test]
+fn latest_state_wire_path_uses_snapshot_budget_and_preserves_real_boundaries() {
+    let (broker,publisher) = broker();
+    let mut reader = broker.subscribe("client","ui","controls").unwrap();reader.recv().unwrap();
+    let large = json!("x".repeat(MAX_CHANGE_BYTES+1));
+    publisher.publish_latest_state(1,large.clone(),3,"clock").unwrap();
+    assert_eq!(reader.recv().unwrap().payload,Some(large));
+    let revision = publisher.revision();
+    assert_eq!(publisher.publish_latest_state(2,json!(9),4,"clock"),
+        Err(RegistryError::Publish(PublishError::StaleGeneration)));
+    assert_eq!(publisher.publish_latest_state(1,json!("x".repeat(MAX_SNAPSHOT_BYTES)),4,"clock"),
+        Err(RegistryError::Publish(PublishError::SnapshotTooLarge)));
+    assert_eq!(publisher.revision(),revision);assert!(reader.try_recv().unwrap().is_none());
+    publisher.replace_generation(2,json!(4),4,"clock").unwrap();
+    publisher.publish_latest_state(2,json!(5),5,"clock").unwrap();
+    let loss = reader.recv().unwrap();
+    assert_eq!(loss.kind,"loss");assert_eq!(loss.reason.as_deref(),Some("generation-replaced"));
+    let current = reader.recv().unwrap();assert_eq!(current.kind,"snapshot");assert_eq!(current.payload,Some(json!(5)));
+    assert_eq!(current.generation,"2");
+    publisher.close();
+    assert_eq!(publisher.publish_latest_state(2,json!(6),6,"clock"),Err(RegistryError::Publish(PublishError::Closed)));
+    assert_eq!(reader.recv().unwrap().reason.as_deref(),Some("closed"));
+}

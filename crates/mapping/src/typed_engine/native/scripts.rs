@@ -255,11 +255,14 @@ impl Phase {
             state.bindings.clear();
             state.rule_proof = native::NativeProof::default();
         }
+        let mut changed = false;
         for state in self.values.values_mut() {
+            changed |= state.sample != SignalSample::Unavailable;
             state.sample = SignalSample::Unavailable;
             state.epoch = state.epoch.saturating_add(1);
             state.proof = native::NativeProof::default();
         }
+        if changed { self.mark_sample_change(); }
         self.publish(BTreeSet::new(), ReportReason::Stop, true);
     }
 }

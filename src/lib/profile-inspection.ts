@@ -14,7 +14,8 @@ const exact=(value:unknown,keys:string[]):value is Record<string,unknown>=>objec
 const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const integer=(value:unknown,max=Number.MAX_SAFE_INTEGER):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=max;
 const hash=(value:unknown):value is string=>typeof value==='string'&&/^sha256:[a-f0-9]{64}$/.test(value);
-const node=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z][A-Za-z0-9._-]{0,79}$/.test(value);
+export const profileNodeIdAccepts=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z][A-Za-z0-9._-]{0,79}$/.test(value);
+const node=profileNodeIdAccepts;
 const port=(value:unknown):value is string=>typeof value==='string'&&value.length>0&&new TextEncoder().encode(value).length<=80&&!/[\u0000-\u001f\u007f-\u009f]/.test(value);
 const counter=(value:unknown):value is string=>typeof value==='string'&&/^(0|[1-9][0-9]{0,19})$/.test(value)&&BigInt(value)<=18_446_744_073_709_551_615n;
 const ownerFields=['session','generation','profileId','profileRevision','gameId'];
@@ -22,7 +23,7 @@ function owner(value:unknown):value is NativeProfileOwner{return exact(value,own
 export function profileOwnersEqual(left:DeepReadonly<NativeProfileOwner>,right:DeepReadonly<NativeProfileOwner>):boolean{return owner(left)&&owner(right)&&ownerFields.every(key=>left[key as keyof NativeProfileOwner]===right[key as keyof NativeProfileOwner]);}
 function frozen<T>(value:T):DeepReadonly<T>{const copy:T=JSON.parse(JSON.stringify(value));const freeze=(entry:unknown)=>{if(entry&&typeof entry==='object'){Object.values(entry).forEach(freeze);Object.freeze(entry);}};freeze(copy);return copy as DeepReadonly<T>;}
 export function captureProfileOwner(value:DeepReadonly<NativeProfileOwner>):DeepReadonly<NativeProfileOwner>{if(!owner(value))throw new Error('Inspect an exact current native applied owner.');return frozen(value);}
-function sample(value:unknown,contract:ProfilePortContract):value is ProfileSignalSample{
+export function profileSignalSampleAccepts(value:unknown,contract:ProfilePortContract):value is ProfileSignalSample{
   if(!object(value))return false;
   if(value.status!=='known')return exact(value,['status'])&&['unknown','stale','unavailable'].includes(String(value.status));
   if(!exact(value,['status','value'])||!exact(value.value,['kind','value']))return false;
@@ -34,7 +35,7 @@ function sample(value:unknown,contract:ProfilePortContract):value is ProfileSign
 }
 function inspectedPort(value:unknown,capturedUs:string,nodeId?:string):value is ProfileInspectedPort{
   if(!exact(value,['endpoint','direction','contract','sample','observedUs'])||!exact(value.endpoint,['nodeId','portId'])||!node(value.endpoint.nodeId)||!port(value.endpoint.portId)||(nodeId!==undefined&&value.endpoint.nodeId!==nodeId)||(value.direction!=='input'&&value.direction!=='output')||profileContractError(value.contract,value.direction)!=='')return false;
-  if(!sample(value.sample,value.contract as ProfilePortContract)||!(value.observedUs===null||counter(value.observedUs)&&BigInt(value.observedUs)<=BigInt(capturedUs)))return false;
+  if(!profileSignalSampleAccepts(value.sample,value.contract as ProfilePortContract)||!(value.observedUs===null||counter(value.observedUs)&&BigInt(value.observedUs)<=BigInt(capturedUs)))return false;
   return value.sample.status!=='known'||value.observedUs!==null;
 }
 /** A page is one timestamped native capture, not an acknowledgement that a sink executed. */

@@ -10,6 +10,9 @@ use osg_profiles::{
 };
 use serde::{Deserialize, Serialize};
 
+#[path = "profile_session/samples/schema.rs"]
+pub(crate) mod samples;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Request {

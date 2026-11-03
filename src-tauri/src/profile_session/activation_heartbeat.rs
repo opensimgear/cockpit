@@ -50,6 +50,7 @@ impl NativeProfileHost {
         let previous_context = self.effective_context_owner(self.authority.as_ref())?;
         let retained_child = owner.is_none() && self.prepared.values().any(|run| run.child_game_owner.is_some());
         if self.authority.as_ref() == owner && !retained_child { return Ok(()); }
+        if let (Some(signal), Some(previous)) = (&self.sample_signal, &self.authority) { signal.retire(previous); }
         if previous_context.is_none() && context.is_none() && !retained_child {
             self.authority = owner.cloned();
             return Ok(());

@@ -189,6 +189,7 @@ impl NativeProfileHost {
                     state.reducer = Some(reducer);
                     Ok((started, effects))
                 })?;
+                let sample_signal = self.sample_signal.clone();
                 let state = self.run(&run.owner)?;
                 if let Some(desktop) = state.desktop.as_mut() {
                     Self::emit_progress(progress.as_ref(), state.admission_epoch, "activating-desktop-bindings", &format!("Activating {}", Self::desktop_binding_kind(&prepared.plan.program)));
@@ -204,6 +205,7 @@ impl NativeProfileHost {
                 if let Some(output) = state.output.as_mut() {
                     output.poll(&state.recording)?;
                 }
+                Self::notify_samples(state, sample_signal.as_ref());
                 Ok(())
             }
         }

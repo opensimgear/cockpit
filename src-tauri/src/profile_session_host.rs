@@ -44,6 +44,7 @@ use std::{collections::BTreeMap, sync::{Arc, atomic::{AtomicU64, Ordering}}, tim
 type ProgressCallback = Arc<dyn Fn(u64, &str, &str) + Send + Sync>;
 
 struct NativePreparation {
+    sample_templates: Result<Arc<crate::profile_session::inspection::samples::NodeTemplates>, String>,
     document: osg_profiles::ProfileDocument,
     assignments: Vec<osg_profiles::store::LocalAssignment>,
     vehicle_selection: Option<String>,
@@ -64,6 +65,8 @@ struct NativePreparation {
     unavailable_peripherals: BTreeMap<String, String>,
 }
 struct NativeRun {
+    sample_templates: Result<Arc<crate::profile_session::inspection::samples::NodeTemplates>, String>,
+    sample_revision: Option<Option<u64>>,
     owner: RunOwner,
     admission_epoch: u64,
     report: CompilationReport,
@@ -135,6 +138,7 @@ pub(crate) struct NativeProfileHost {
     progress: Option<ProgressCallback>,
     input_wake: Option<crate::profile_session_scripts::Wake>,
     native_wake: Option<Arc<osg_streams::NativeWake>>,
+    sample_signal: Option<crate::profile_samples::Signal>,
     cleanup_epoch: Option<u64>,
 }
 fn key(owner: &RunOwner) -> String {
@@ -195,6 +199,7 @@ impl NativeProfileHost {
             progress: None,
             input_wake: None,
             native_wake: None,
+            sample_signal: None,
             cleanup_epoch: None,
         }
     }
@@ -211,6 +216,17 @@ impl NativeProfileHost {
     pub(crate) fn with_native_wake(mut self, wake: Arc<osg_streams::NativeWake>) -> Self {
         self.native_wake = Some(wake);
         self
+    }
+    pub(crate) fn with_sample_signal(mut self, signal: crate::profile_samples::Signal) -> Self {
+        self.sample_signal = Some(signal);
+        self
+    }
+    fn notify_samples(state: &mut NativeRun, signal: Option<&crate::profile_samples::Signal>) {
+        let current = state.reducer.as_ref().filter(|phase| phase.active()).and_then(Phase::sample_revision);
+        if state.sample_revision != Some(current) {
+            state.sample_revision = Some(current);
+            if let Some(signal) = signal { signal.notify(); }
+        }
     }
     fn report_progress(&self, owner: &RunOwner, step: &str, message: &str) {
         if let Some(epoch) = self.progress_epoch(owner) {
@@ -791,8 +807,9 @@ impl NativeProfileHost {
                 .map_err(|error|format!("{error} [phase=stage sampleAgeUs={}]",captured.observed.elapsed().as_micros()))?;
             Some(captured)
         } else { None };
+        let sample_templates = crate::profile_session::inspection::samples::NodeTemplates::prepare(&candidate.document, &source_candidate.document);
         crate::profile_session::Stage::new(source_candidate, NativePreparation {
-            document:candidate.document.clone(),assignments:candidate.assignments.clone(),vehicle_selection,
+            sample_templates, document:candidate.document.clone(),assignments:candidate.assignments.clone(),vehicle_selection,
             prepared, report, backend: snapshot.backend, bindings, output_handoff, scripts, game, game_preparation,
             companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope, unavailable_peripherals,
         })
@@ -843,6 +860,19 @@ impl Host for NativeProfileHost {
             .ok_or("The applied native reducer is stopped.")?;
         crate::profile_session::topology::capture_variant(&state.document,&state.source_document,reducer,run,request)
     }
+    fn sample_plan(&self, run: &OwnedRun, topic: &str) -> Result<Arc<crate::profile_session::inspection::samples::NodePlan>, String> {
+        self.fence(&run.owner)?;
+        let state = self.prepared.get(&key(&run.owner)).filter(|state| state.owner == run.owner)
+            .ok_or("The applied sample owner retired.")?;
+        if state.reducer.as_ref().is_none_or(|phase| !phase.active()) { return Err("The applied reducer is stopped.".into()); }
+        state.sample_templates.as_ref().map_err(Clone::clone)?.bind(run, topic)
+    }
+    fn sample_capture(&self, run: &OwnedRun, plan: &crate::profile_session::inspection::samples::NodePlan) -> Result<crate::profile_session::inspection::samples::CapturedSamples, String> {
+        self.fence(&run.owner)?;
+        let state = self.prepared.get(&key(&run.owner)).filter(|state| state.owner == run.owner)
+            .ok_or("The applied sample owner retired.")?;
+        plan.capture(state.reducer.as_ref().ok_or("The applied reducer is stopped.")?, run)
+    }
     fn inspect(&self, run: &OwnedRun, request: &crate::profile_session::inspection::Request) -> Result<crate::profile_session::inspection::Page, String> {
         self.fence(&run.owner)?;
         let state = self.prepared.get(&key(&run.owner)).filter(|state| state.owner == run.owner)
@@ -855,7 +885,7 @@ impl Host for NativeProfileHost {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
         Self::emit_progress(self.progress.as_ref(), admission_epoch, "preparing-resources", "Preparing profile resources");
-        let NativePreparation {document, assignments, vehicle_selection, mut prepared, report, backend, bindings, output_handoff, scripts, mut game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope, unavailable_peripherals} = candidate.stage.as_ref()
+        let NativePreparation {sample_templates, document, assignments, vehicle_selection, mut prepared, report, backend, bindings, output_handoff, scripts, mut game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope, unavailable_peripherals} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
         game.set_wake(self.native_wake.clone());
@@ -865,6 +895,7 @@ impl Host for NativeProfileHost {
         let publication=crate::profile_session_overrides::Overrides::prepare(&publication,owner,self.panels.clone(),self.admission_epoch.clone(),admission_epoch)?;
         prepared.admission.optional_unavailable.extend(actions.optional_unavailable().iter().cloned());
         self.prepared.insert(key(owner), NativeRun {
+            sample_templates, sample_revision: None,
             owner: owner.clone(), admission_epoch, report, assignments,
             document, source_document:candidate.document.clone(),source_assignments:candidate.assignments.clone(),vehicle_selection,vehicle_paused:false,vehicle_error:None,
             backend, delivery: None, inputs: None, panels,
@@ -977,6 +1008,7 @@ impl Host for NativeProfileHost {
     }
     fn debug_controller(&mut self,run:&OwnedRun,request:&crate::profile_debug_controller::Request)->Result<serde_json::Value,String> { self.debug_controller_request(run,request) }
     fn neutralize(&mut self, run: &OwnedRun) -> Result<(), String> {
+        if let Some(signal) = &self.sample_signal { signal.retire(&run.owner); }
         if self.prepared.contains_key(&key(&run.owner)) {
             self.report_progress(&run.owner, "neutralizing-outputs", "Stopping profile outputs");
         }
@@ -1154,6 +1186,7 @@ impl Host for NativeProfileHost {
             .into_iter().flatten().min()
     }
     fn health(&mut self, run: &OwnedRun) -> Result<Health, String> {
+        let sample_signal = self.sample_signal.clone();
         self.fence(&run.owner)?;
         if self.vehicle_change(&run.owner).is_some() || self.run(&run.owner)?.vehicle_paused {
             if !self.run(&run.owner)?.vehicle_paused {
@@ -1248,6 +1281,7 @@ impl Host for NativeProfileHost {
         if let Some(output) = state.output.as_mut() {
             output.poll(&state.recording)?;
         }
+        Self::notify_samples(state, sample_signal.as_ref());
         Ok(Health {
             degraded: dcs_hid::unique_diagnostics(degraded),
             stop,
@@ -1310,6 +1344,7 @@ impl Host for NativeProfileHost {
     fn bind_launch_epoch(&mut self, run:&OwnedRun, epoch:u64)->Result<(),String> {self.bind_held_epoch(run,epoch)}
     fn install_launch_context(&mut self, run:&OwnedRun, candidate:&Candidate)->Result<Prepared,String> {self.install_held_context(run,candidate)}
     fn discard_preparation(&mut self, owner: &RunOwner) {
+        if let Some(signal) = &self.sample_signal { signal.retire(owner); }
         if let Some(mut state) = self.prepared.remove(&key(owner)) {
             state.game_publication.cancel();
             state.publication.revoke_renewal();

@@ -1,4 +1,5 @@
 mod publish;
+mod latest;
 
 use crate::{
     codec::{encode_limited, map_encode_error},

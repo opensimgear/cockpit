@@ -1,5 +1,6 @@
 <script lang="ts">
   import{untrack}from'svelte';
+  import ProfileVirtualInputs from './ProfileVirtualInputs.svelte';
   import ProfileVirtualSlot from './ProfileVirtualSlot.svelte';
   import{graphVirtualPorts}from'./profile-graph';
   import type{DeepReadonly,ProfileControllerLayout,ProfileVirtualOutput}from'./profiles';
@@ -26,6 +27,7 @@
   {#each draft.layout.axes as item,index (item.portId)}<fieldset><legend>Axis {index+1} · {item.portId}</legend><label>Native range<select value={item.range} onchange={event=>axis(index,{range:event.currentTarget.value==='unipolar'?'unipolar':'bipolar'})}><option value="bipolar">Bipolar · −32768…32767</option><option value="unipolar">Unipolar · 0…32767</option></select></label><label>Neutral fallback<input type="number" min={item.range==='bipolar'?-32768:0} max="32767" value={item.fallback} oninput={event=>axis(index,{fallback:Number(event.currentTarget.value)})}/></label></fieldset>{/each}
   {#if draft.layout.buttons.length}<details><summary>Button IDs</summary><p>{draft.layout.buttons.join(', ')}</p></details>{/if}{#if draft.layout.hats.length}<details><summary>Hat IDs · −1 neutral, 0…7 directions</summary><p>{draft.layout.hats.join(', ')}</p></details>{/if}
   {#if error}<p class="error" role="status">{error}</p>{/if}<button class="primary-button" disabled={!!error||!draft.name.trim()} onclick={()=>change({id:draft.id,name:draft.name,required:draft.required,layout:copy(draft.layout)})}>Update controller layout</button>
+  <ProfileVirtualInputs {output} {profileId} {revision}/>
 </section>
 <style>
   .virtual-editor{border-top:1px solid var(--line);padding-top:15px;margin-top:16px}h4{font-size:var(--ui-heading-size);color:var(--soft)}p{font-size:var(--ui-text-size);line-height:var(--ui-line-height);color:var(--muted);margin:10px 0;overflow-wrap:anywhere}.virtual-editor label{display:grid;gap:6px;font-size:var(--ui-text-size);color:var(--muted);margin:10px 0}.virtual-editor input:not([type="checkbox"]),select{width:100%;min-width:0;box-sizing:border-box;background:var(--input-bg);border:1px solid var(--line);border-radius:5px;padding:8px;color:var(--text);font-size:var(--ui-text-size);min-height:var(--ui-control-height)}.check{display:flex!important;align-items:center;gap:8px!important}.counts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}fieldset{border:1px solid var(--line);border-radius:6px;padding:10px;margin:12px 0;min-width:0}legend,summary{font-size:var(--ui-text-size);color:var(--soft)}.virtual-editor button{font-size:var(--ui-action-size)}.error{color:#d3a078}

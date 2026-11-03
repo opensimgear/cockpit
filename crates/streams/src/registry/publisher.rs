@@ -43,6 +43,22 @@ impl Publisher {
         )?)
     }
 
+    /// Publish a complete absolute STATE, replacing each reader's pending state
+    /// with the latest snapshot. This deliberately coalesces unread values.
+    /// NEVER use for ordered occurrences, relative changes, edges or commands:
+    /// those must use `publish` so every admitted event retains its order.
+    /// Existing loss/generation boundaries are delivered before the fresh state.
+    pub fn publish_latest_state(
+        &self,
+        expected_generation: u64,
+        snapshot: Value,
+        captured_us: u64,
+        clock_id: &str,
+    ) -> Result<u64, RegistryError> {
+        let snapshot = self.topic.identity.encode(&snapshot, captured_us, clock_id, false)?;
+        Ok(self.topic.stream.update_latest_encoded(expected_generation, snapshot, captured_us, clock_id)?)
+    }
+
     pub fn resynchronize(
         &self,
         expected_generation: u64,

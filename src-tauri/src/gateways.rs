@@ -7,6 +7,8 @@ use crate::{
 use serde_json::{json, Value};
 #[path = "gateways/process_monitor.rs"]
 mod process_monitor;
+#[path = "gateways/profile_samples.rs"]
+mod sample_observations;
 
 /// A metadata write may carry one already-bounded discovery artwork preview
 /// (128 KiB JPEG plus its base64 and JSON envelope).
@@ -189,6 +191,7 @@ mod storage_controls;
 pub struct GatewayManager {
     pub(crate) observations: crate::observations::Runtime,
     profile_read_models: crate::profile_read_models::Runtime,
+    profile_samples: crate::profile_samples::Runtime,
     activity: crate::activity::Runtime,
     storage:crate::persistence::backup::Runtime,
     widget_library: crate::widget_library::Runtime,
@@ -338,12 +341,14 @@ impl GatewayManager {
         let profile_activations=Arc::new(profile_activation_progress::Tracker::default());
         let progress_tracker=profile_activations.clone();
         let profile_learning=crate::profile_input_learning::Runtime::new(profile_resources.clone(),controllers.clone(),profile_admission_epoch.clone());
+        let profile_sample_signal = crate::profile_samples::Signal::default();
         let input_wake = profile_wake.clone();
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone())
                 .with_progress(Arc::new(move|epoch,step,message|progress_tracker.note(epoch,step,message)))
                 .with_input_wake(Arc::new(move || input_wake.notify()))
-                .with_native_wake(profile_wake.clone()),
+                .with_native_wake(profile_wake.clone())
+                .with_sample_signal(profile_sample_signal.clone()),
             native.then(|| crate::config_paths::config_path().with_file_name("profile-session-v1.json")),
         )));
         let prepare_resources = profile_resources.clone();
@@ -384,9 +389,22 @@ impl GatewayManager {
         });
         let observations = crate::observations::Runtime::new();
         let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone());
+        let sample_session = Arc::downgrade(&profile_session);
+        let sample_capture = Arc::new(move |plans: &[Arc<crate::profile_session::inspection::samples::NodePlan>]| {
+            plans.iter().map(|plan| {
+                let session = sample_session.upgrade().ok_or("The applied sample coordinator stopped.")?;
+                // Release between nodes; no encoder or subscriber work holds this guard.
+                let result = session.lock().unwrap_or_else(|error| error.into_inner()).capture_samples(plan);
+                result
+            }).collect()
+        });
+        let profile_samples = crate::profile_samples::Runtime::new(observations.broker(), profile_sample_signal,
+            sample_capture, format!("profile-samples:{}", controllers.capture_clock().id()));
+        observations.watch_reader_lifecycle(profile_samples.reader_wake());
         let manager = Self {
             observations,
             profile_read_models,
+            profile_samples,
             activity,
             #[cfg(test)]
             test_namespace:None,
@@ -1452,6 +1470,7 @@ impl GatewayManager {
         self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel);
         self.profile_closed.store(true,Ordering::Release);
         self.profile_wake.notify();
+        self.profile_samples.shutdown();
         if let Some(worker)=self.profile_automatic_worker.lock().unwrap_or_else(|p|p.into_inner()).take(){if worker.thread().id()!=std::thread::current().id(){let _=worker.join();}}
         self.profile_learning.shutdown();
         self.profile_closed.store(true, Ordering::Release);

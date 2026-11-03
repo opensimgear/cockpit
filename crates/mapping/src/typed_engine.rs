@@ -141,6 +141,8 @@ pub struct Phase {
     compiled: CompiledProgram,
     run: RunToken,
     clock: u64,
+    sample_revision: Option<u64>,
+    sample_revision_us: u64,
     active: bool,
     fault: Option<String>,
     sequence: u64,
@@ -272,6 +274,8 @@ impl Phase {
                 generation,
             },
             clock,
+            sample_revision: Some(1),
+            sample_revision_us: clock,
             active: true,
             fault: None,
             sequence: 0,
@@ -296,6 +300,10 @@ impl Phase {
     pub fn run_token(&self) -> RunToken {
         self.run.clone()
     }
+    /// Borrow immutable run identity for allocation-free native observations.
+    pub fn run_token_ref(&self) -> &RunToken {
+        &self.run
+    }
     pub fn active(&self) -> bool {
         self.active
     }
@@ -307,6 +315,18 @@ impl Phase {
     }
     pub fn at_us(&self) -> Counter {
         Counter(self.clock)
+    }
+    /// Observation continuity only. Exhaustion never affects routing authority.
+    pub fn sample_revision(&self) -> Option<u64> {
+        self.sample_revision
+    }
+    /// Admission-clock time of the last exposed value/quality change.
+    pub fn sample_revision_us(&self) -> Counter {
+        Counter(self.sample_revision_us)
+    }
+    fn mark_sample_change(&mut self) {
+        self.sample_revision = self.sample_revision.and_then(|revision| revision.checked_add(1));
+        self.sample_revision_us = self.clock;
     }
 }
 fn compare(value: f64, threshold: f64, comparison: Comparison) -> bool {

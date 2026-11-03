@@ -1,6 +1,8 @@
 //! One native owner of an immutable, derived profile run. The durable manifest
 //! contains recovery receipts, never an executable graph or replayable commands.
 pub(crate) mod source_admission;
+#[path = "profile_session/samples/coordinator.rs"]
+mod sample_observation;
 use osg_profiles::{
     compiler_models::ExecutionPlan, session::SnapshotSummary, store::LocalAssignment,
     ProfileDocument,
@@ -216,6 +218,12 @@ pub(crate) trait Host: Send {
     }
     fn inspect(&self, _: &OwnedRun, _: &inspection::Request) -> Result<inspection::Page, String> {
         Err("This native profile adapter has no applied-port inspector.".into())
+    }
+    fn sample_plan(&self, _: &OwnedRun, _: &str) -> Result<std::sync::Arc<inspection::samples::NodePlan>, String> {
+        Err("This native adapter has no applied sample stream.".into())
+    }
+    fn sample_capture(&self, _: &OwnedRun, _: &inspection::samples::NodePlan) -> Result<inspection::samples::CapturedSamples, String> {
+        Err("This native adapter has no applied sample stream.".into())
     }
     fn inspect_topology(&self, _: &OwnedRun, _: &topology::Request) -> Result<topology::Page, String> {
         Err("This native profile adapter has no applied topology projection.".into())
