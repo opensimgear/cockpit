@@ -86,6 +86,11 @@ def main():
                          'profile_session/samples/schema.rs', 'profile_session/samples/coordinator.rs',
                          'gateways/profile_samples.rs', 'observations/mod.rs', 'observations/service.rs'])
     module_names.extend(['games/artwork/steam_online/owner.rs', 'games/review/worker.rs'])
+    module_names.extend(['games/integration/mod.rs', 'games/integration/setup_cache.rs',
+                         'games/integration/provider_settings.rs', 'games/integration/requests.rs',
+                         'games/integration/provision.rs', 'games/integration/settings.rs',
+                         'games/integration/catalogues.rs', 'games/integration/inspection.rs',
+                         'game_context_runtime.rs'])
     if os.name == 'nt':
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',

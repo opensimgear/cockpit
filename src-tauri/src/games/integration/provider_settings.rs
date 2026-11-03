@@ -4,7 +4,7 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 pub(super) type CatalogueCache = BTreeMap<String, (Instant, String, Result<Arc<Value>, String>)>;
-fn digest(value: &Value) -> String {
+pub(super) fn digest(value: &Value) -> String {
     format!(
         "sha256:{:x}",
         Sha256::digest(serde_json::to_vec(value).expect("JSON value"))
@@ -126,20 +126,7 @@ fn defaults(id: &str) -> Value {
 }
 impl GameIntegrationSetup {
     fn provider_snapshot(&self, id: &str) -> (Value, String) {
-        let saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());
-        let record = saved["games"][id].clone();
-        let revision = digest(&json!([
-            "game-provider-setup-v1",
-            id,
-            record,
-            if id == "dcs" {
-                Some(crate::dcs_physics::revision())
-            } else {
-                None
-            },
-            self.inner.settings_error
-        ]));
-        (record, revision)
+        self.inner.provider_snapshot(id)
     }
     pub(crate) fn provider_setup_revision(&self, id: &str) -> String {
         self.provider_snapshot(id).1
@@ -199,6 +186,16 @@ impl GameIntegrationSetup {
             .as_str()
             .map(str::to_owned)
     }
+    /// Passive reads never resolve aircraft aliases or load catalogue files.
+    pub(crate) fn cached_integration_catalogue_metadata_for_vehicle(
+        &self,
+        id: &str,
+        vehicle: Option<&str>,
+    ) -> Option<Value> {
+        let setup = self.provider_setup_revision(id);
+        let cache = self.inner.catalogues.lock().unwrap_or_else(|p| p.into_inner());
+        catalogue_metadata(&cache, id, vehicle, &setup)
+    }
     /// Small captured identity only. Source guards and explicit preparation own
     /// file validation; passive status/observation must not reparse an aircraft
     /// catalogue or clone all its controls while holding the context lock.
@@ -222,35 +219,6 @@ impl GameIntegrationSetup {
         Ok(
             json!({"aircraftModule":catalogue["aircraftModule"],"catalogueRevision":catalogue["catalogueRevision"],"providerSetupRevision":catalogue["providerSetupRevision"]}),
         )
-    }
-    pub(super) fn decorate_provider_settings(&self, id: &str, status: &mut Value) {
-        let (saved, setup_revision) = self.provider_snapshot(id);
-        status["providerSetupRevision"] = json!(setup_revision);
-        // Retain editable metadata even while the executable or process is absent.
-        if saved["connection"].is_object() {
-            status["connection"] = saved["connection"].clone();
-        } else if !status["connection"].is_object() {
-            status["connection"] = defaults(id);
-        }
-        if id == "dcs" {
-            status["aircraftModule"] = saved["aircraftModule"].clone();
-            if saved["userFolder"].is_string() {
-                status["userFolder"] = saved["userFolder"].clone();
-            }
-            status["cataloguePath"] = status["connection"]["cataloguePath"].clone();
-        }
-        let revision = self
-            .inner
-            .catalogues
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(if id == "dcs" { "dcs:CommonData" } else { id })
-            .and_then(|(_, setup, result)| {
-                (setup == status["providerSetupRevision"].as_str().unwrap_or("")).then_some(result)
-            })
-            .and_then(|result| result.as_ref().ok())
-            .map(|catalogue| catalogue["catalogueRevision"].clone());
-        status["catalogueRevision"] = revision.unwrap_or(Value::Null);
     }
     pub(super) fn save_provider_settings(
         &self,
@@ -305,11 +273,11 @@ impl GameIntegrationSetup {
         {
             return Err("DCS folder and aircraft settings belong to the DCS game.".into());
         }
-        let mut saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());
+        let base = settings_snapshot(&self.inner);
         let revision = digest(&json!([
             "game-provider-setup-v1",
             id,
-            saved["games"][id],
+            base["games"][id],
             if id == "dcs" {
                 Some(crate::dcs_physics::revision())
             } else {
@@ -323,10 +291,10 @@ impl GameIntegrationSetup {
                     .into(),
             );
         }
-        if read_settings(&self.inner.path)? != *saved {
+        if read_settings(&self.inner.path)? != base {
             return Err("Game provider settings changed on disk. Preserve the file and reopen settings before saving.".into());
         }
-        let mut draft = saved.clone();
+        let mut draft = base.clone();
         let record = &mut draft["games"][id];
         if !record.is_object() {
             *record = json!({});
@@ -347,9 +315,7 @@ impl GameIntegrationSetup {
         if serde_json::to_vec(&draft).map_err(|e| e.to_string())?.len() > MAX_SETTINGS {
             return Err("Game provider settings exceed their bounded library size.".into());
         }
-        write_settings(&self.inner, &draft)?;
-        *saved = draft;
-        drop(saved);
+        commit_settings(&self.inner, &base, draft)?;
         self.inner
             .catalogues
             .lock()
@@ -375,3 +341,56 @@ fn reject_game_install_folder_for_settings(target: &Path, game: &Value) -> Resul
 #[cfg(test)]
 #[path = "provider_tests.rs"]
 mod tests;
+
+impl Inner {
+    pub(super) fn provider_snapshot(&self, id: &str) -> (Value, String) {
+        let saved = self.saved.lock().unwrap_or_else(|p| p.into_inner());
+        let record = saved["games"][id].clone();
+        drop(saved);
+        let revision = digest(&json!([
+            "game-provider-setup-v1",
+            id,
+            record,
+            if id == "dcs" {
+                Some(crate::dcs_physics::revision())
+            } else {
+                None
+            },
+            self.settings_error
+        ]));
+        (record, revision)
+    }
+    pub(super) fn decorate_provider_settings(&self, id: &str, status: &mut Value) {
+        let (saved, setup_revision) = self.provider_snapshot(id);
+        self.decorate_provider_snapshot(id, &saved, &setup_revision, status);
+    }
+    pub(super) fn decorate_provider_snapshot(
+        &self, id: &str, saved: &Value, setup_revision: &str, status: &mut Value,
+    ) {
+        status["providerSetupRevision"] = json!(setup_revision);
+        // Retain editable metadata even while the executable or process is absent.
+        if saved["connection"].is_object() {
+            status["connection"] = saved["connection"].clone();
+        } else if !status["connection"].is_object() {
+            status["connection"] = defaults(id);
+        }
+        if id == "dcs" {
+            status["aircraftModule"] = saved["aircraftModule"].clone();
+            if saved["userFolder"].is_string() {
+                status["userFolder"] = saved["userFolder"].clone();
+            }
+            status["cataloguePath"] = status["connection"]["cataloguePath"].clone();
+        }
+        let revision = self
+            .catalogues
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(if id == "dcs" { "dcs:CommonData" } else { id })
+            .and_then(|(_, setup, result)| {
+                (setup == status["providerSetupRevision"].as_str().unwrap_or("")).then_some(result)
+            })
+            .and_then(|result| result.as_ref().ok())
+            .map(|catalogue| catalogue["catalogueRevision"].clone());
+        status["catalogueRevision"] = revision.unwrap_or(Value::Null);
+    }
+}

@@ -162,6 +162,9 @@
             <div class={['setup-readiness', { ready: gameIntegrationReady(selected), attention: selected.integrationSetup?.state === 'needs-attention' }]} role="status" aria-live="polite"><Icon name={gameIntegrationReady(selected) ? 'check' : selected.integrationSetup?.state === 'needs-attention' ? 'alert' : 'info'} size={14} /><strong>{gameIntegrationLabel(selected)}</strong></div>
           </div>
           <p class="field-help">{selected.provider?.startsWith('assetto-corsa') && selected.integrationSetup?.connection?.source === 'synthetic' ? 'Synthetic test telemetry does not verify the native game connection.' : selected.integrationSetup?.message ?? 'Check whether this game is ready to send data to your hardware.'}</p>
+          {#if selected.integrationSetup?.checkPreview}
+            <p class="field-help" aria-label="Last folder check"><strong>Last folder check:</strong> {selected.integrationSetup.checkPreview.userFolder ?? ''} {selected.integrationSetup.checkPreview.message}</p>
+          {/if}
           <dl class="provider-readiness" aria-label="Integration readiness">
             <div><dt><Icon name="gamepad" size={14} />Game context</dt><dd>{gameContextLabel(selected)}<small>{selected.integrationContext?.processVerified ? 'Actual game process verified' : 'No verified matching process'}</small></dd></div>
             {#if selected.vehicleSupport?.supported}

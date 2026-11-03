@@ -5,8 +5,33 @@ pub(super) fn settings_repository(
     let db = osg_persistence::Database::for_namespace(path)?;
     osg_persistence::Repository::new(db, "games", "setup", MAX_SETTINGS, validate_settings)
 }
-pub(super) fn write_settings(inner: &Inner, value: &Value) -> Result<(), String> {
-    inner.store.as_ref().map_err(Clone::clone)?.save(value)
+pub(super) fn settings_snapshot(inner: &Inner) -> Value {
+    inner.saved.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+/// Writers serialize durable commits, while readers continue to observe the
+/// previous committed snapshot. A draft must still match its captured base.
+pub(super) fn commit_settings(inner: &Inner, base: &Value, draft: Value) -> Result<(), String> {
+    let _writer = inner.settings_writer.lock().unwrap_or_else(|p| p.into_inner());
+    {
+        let saved = inner.saved.lock().unwrap_or_else(|p| p.into_inner());
+        if &*saved != base {
+            return Err("Game provider settings changed while preparing this update. Reload before saving.".into());
+        }
+    }
+    #[cfg(test)]
+    if let Some((entered, release)) = inner.settings_commit_pause.lock()
+        .unwrap_or_else(|p| p.into_inner()).take()
+    {
+        entered.send(()).unwrap();
+        release.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    }
+    // Repository::save validates and uses its last-read durable revision CAS.
+    // No reader mutex is held over validation, SQLite access, or filesystem I/O.
+    inner.store.as_ref().map_err(Clone::clone)?.save(&draft)?;
+    // Every production mutation shares the writer gate, so the successful CAS
+    // and this publication are one serialized writer operation.
+    *inner.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
+    Ok(())
 }
 pub(crate) fn read_settings(path: &Path) -> Result<Value, String> {
     settings_repository(path)?

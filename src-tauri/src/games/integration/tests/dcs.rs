@@ -34,6 +34,7 @@ fn existing_compatible_install_is_configured_without_network_or_profile_writes()
     assert_eq!(runtime.inner.inspect(&game(), None)["state"], "ready");
     runtime.shutdown();
     let restarted = GameIntegrationSetup::new(path, true);
+    restarted.refresh(&catalogue);
     decorate(&restarted, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "ready");
     fs::write(
@@ -131,6 +132,7 @@ fn removed_user_folder_can_be_replaced_without_destroying_saved_configuration() 
     fixture_write_settings(&path, &value);
     let runtime = GameIntegrationSetup::new(path.clone(), true);
     let mut catalogue = vec![game()];
+    runtime.refresh(&catalogue);
     decorate(&runtime, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "setup-required");
     let target = scratch.0.join("DCS");

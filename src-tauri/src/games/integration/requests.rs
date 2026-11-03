@@ -33,12 +33,21 @@ impl GameIntegrationSetup {
             return self.begin_acr(request, game, platform, false);
         }
         if command == "game_integration_check" {
-            let status = self.inner.inspect(game, request.get("userFolder"));
-            self.inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(id.into(), status);
+            let (record, status) = self.inner.inspect_scoped(game);
+            let mut checked_preview = None;
+            if id == "dcs" {
+                if let Some(folder) = request.get("userFolder").filter(|folder| {
+                    !folder.is_null() && *folder != &status["userFolder"]
+                }) {
+                    let mut preview = self.inner.inspect(game, Some(folder));
+                    self.inner.decorate_removal(id, &mut preview);
+                    // Keep the checked folder and its actual connection intact.
+                    // Provider preferences belong to the canonical main status.
+                    checked_preview = Some(preview);
+                }
+            }
+            self.inner.publish_check_preview(game, &record, checked_preview);
+            self.inner.publish_setup(game, &record, status);
             return Ok(());
         }
         if !self.inner.native {
@@ -58,12 +67,8 @@ impl GameIntegrationSetup {
                     restored["conflicts"]
                 ));
             }
-            let status = self.inner.inspect(game, None);
-            self.inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(id.into(), status);
+            let (record, status) = self.inner.inspect_scoped(game);
+            self.inner.publish_setup(game, &record, status);
             return Ok(());
         }
         if let Some(error) = &self.inner.settings_error {
@@ -88,10 +93,10 @@ impl GameIntegrationSetup {
                 .ok_or("Choose the X-Plane executable.")?;
             platform.validate(id, executable)?;
             let version = id.trim_start_matches("x-plane-").parse::<u64>().unwrap();
-            let mut saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());
-            let mut connection = saved["games"][id]["connection"]
+            let base = settings_snapshot(&self.inner);
+            let mut connection = base["games"][id]["connection"]
                 .as_object()
-                .map(|_| saved["games"][id]["connection"].clone())
+                .map(|_| base["games"][id]["connection"].clone())
                 .unwrap_or_else(|| crate::xplane::defaults(version));
             if let Some(overrides) = request.get("connection") {
                 for (k, v) in overrides
@@ -107,11 +112,9 @@ impl GameIntegrationSetup {
                 }
             }
             validate_connection(id, &connection)?;
-            let mut draft = saved.clone();
+            let mut draft = base.clone();
             draft["games"][id] = json!({"connection":connection,"executable":executable});
-            write_settings(&self.inner, &draft)?;
-            *saved = draft;
-            drop(saved);
+            commit_settings(&self.inner, &base, draft)?;
             self.refresh_admitted(std::slice::from_ref(game));
             return Ok(());
         }
@@ -158,7 +161,7 @@ impl GameIntegrationSetup {
         validate_connection(id, &connection)?;
         self.inner.cancel.store(false, Ordering::Release);
         self.inner.busy.store(true, Ordering::Release);
-        self.inner.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id.into(), json!({"state":"setting-up","message":"Preparing DCS-BIOS setup.","userFolder":target,"version":crate::dcs_setup::VERSION,"progress":"Preparing"}));
+        self.inner.publish_start(game, json!({"state":"setting-up","message":"Preparing DCS-BIOS setup.","userFolder":target,"version":crate::dcs_setup::VERSION,"progress":"Preparing"}));
         let inner = self.inner.clone();
         let game = game.clone();
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -172,11 +175,7 @@ impl GameIntegrationSetup {
                 &inner.work,
                 || inner.cancel.load(Ordering::Acquire),
                 |message, percent| {
-                    let mut states = inner.states.lock().unwrap_or_else(|p| p.into_inner());
-                    if let Some(status) = states.get_mut("dcs") {
-                        status["progress"] = json!(message);
-                        status["percent"] = json!(percent);
-                    }
+                    inner.publish_progress(&game, message, Some(percent));
                 },
                 || {
                     if platform.find(&game)?.is_some() {
@@ -187,28 +186,21 @@ impl GameIntegrationSetup {
                 },
             )
             .and_then(|_| {
-                let mut draft = inner
-                    .saved
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .clone();
+                let base = settings_snapshot(&inner);
+                let mut draft = base.clone();
                 let record=&mut draft["games"]["dcs"];
                 if !record.is_object(){*record=json!({});}
                 record["userFolder"]=json!(target);record["connection"]=connection;
-                write_settings(&inner, &draft)?;
-                *inner.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
+                commit_settings(&inner, &base, draft)?;
+                inner.publish_progress(&game, "Finalizing DCS integration setup", None);
                 Ok(())
             });
-            let mut status = inner.inspect(&game, None);
+            let (record, mut status) = inner.inspect_scoped(&game);
             if let Err(error) = result {
                 status["state"] = json!("needs-attention");
                 status["message"] = json!(error);
             }
-            inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert("dcs".into(), status);
+            inner.publish_setup(&game, &record, status);
             inner.busy.store(false, Ordering::Release);
         }));
         Ok(())

@@ -17,6 +17,7 @@ fn remove_native_api_configuration_resets_readiness_without_changing_game_files(
     let bytes = fs::read(executable).unwrap();
     acr_record(&runtime, &acr, true);
     let mut catalogue = vec![xplane.clone(), acr.clone()];
+    runtime.refresh(&catalogue);
     runtime.decorate(&mut catalogue);
     for game in &catalogue {
         assert_eq!(game["integrationSetup"]["installed"], true);

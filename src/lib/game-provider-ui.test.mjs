@@ -273,3 +273,16 @@ test('every supported library uses a distinct monochrome platform glyph',async()
  }
  assert.equal(glyphs.size,8);
 });
+
+
+test('alternate folder check remains a preview while the configured integration stays unavailable',()=>{
+ const g=game('dcs');g.integrationSetup={...g.integrationSetup,state:'needs-attention',message:'Saved folder A needs repair.',
+  checkPreview:{state:'ready',userFolder:'C:/Saved Games/DCS-B',message:'The selected folder is ready.'}};
+ const html=render(GamesPanel,{props:{status:state(g),selectedGameId:g.id,busy:false,request:noRequest}}).body;
+ assert.ok(html.includes('Saved folder A needs repair.'));
+ assert.ok(html.includes('aria-label="Last folder check"'));
+ assert.ok(html.includes('C:/Saved Games/DCS-B'));
+ assert.ok(html.includes('The selected folder is ready.'));
+ assert.equal(modules.get('./games').gameIntegrationReady(g),false);
+ assert.ok(!html.includes('>Integration ready<'));
+});

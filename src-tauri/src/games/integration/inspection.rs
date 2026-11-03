@@ -41,7 +41,8 @@ impl Inner {
         self.accept_assetto_proof("assetto-corsa-rally", proof)
     }
     pub(super) fn accept_assetto_proof(&self, id: &str, proof: &Value) -> Result<(), String> {
-        let mut draft = self.saved.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let base = settings_snapshot(self);
+        let mut draft = base.clone();
         let record = &mut draft["games"][id];
         if !record.is_object() || record["configuredFingerprint"] != proof["fingerprint"] {
             return Ok(());
@@ -60,8 +61,7 @@ impl Inner {
         } else {
             return Ok(());
         }
-        write_settings(self, &draft)?;
-        *self.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
+        commit_settings(self, &base, draft)?;
         Ok(())
     }
 

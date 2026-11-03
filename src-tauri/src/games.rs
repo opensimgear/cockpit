@@ -100,6 +100,13 @@ impl GamesRuntime {
     pub(crate) fn set_artwork_prepare_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
         *self.inner.artwork_prepare_hook.lock().unwrap_or_else(|p| p.into_inner()) = hook;
     }
+    #[cfg(test)]
+    pub(crate) fn committed_metadata_for_test(&self) -> Value {
+        let settings = self.inner.settings.lock().unwrap_or_else(|p| p.into_inner());
+        json!({"saved":settings.saved,"catalogue":settings.catalogue,
+            "metadataError":settings.metadata_error,"error":settings.error,
+            "addedGameId":settings.added_game_id})
+    }
     pub(crate) fn local_provider_settings(&self, id: &str) -> (Value, String) {
         let key=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner()).catalogue.iter().find(|game|game["id"]==id)
             .and_then(|game|game["integrationKey"].as_str()).unwrap_or(id).to_owned();

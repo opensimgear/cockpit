@@ -18,12 +18,10 @@ impl GameIntegrationSetup {
                 return Err("Choose an available telemetry integration to remove.".into());
             }
             // These providers use the game's native APIs and install no game files.
-            let mut saved = self.inner.saved.lock().unwrap_or_else(|p| p.into_inner());
-            let mut draft = saved.clone();
+            let base = settings_snapshot(&self.inner);
+            let mut draft = base.clone();
             draft["games"].as_object_mut().unwrap().remove(id);
-            write_settings(&self.inner, &draft)?;
-            *saved = draft;
-            drop(saved);
+            commit_settings(&self.inner, &base, draft)?;
             self.refresh_admitted(std::slice::from_ref(game));
             return Ok(());
         }
@@ -38,7 +36,7 @@ impl GameIntegrationSetup {
         }
         self.inner.cancel.store(false, Ordering::Release);
         self.inner.busy.store(true, Ordering::Release);
-        self.inner.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id.into(), json!({"state":"setting-up","message":"Removing DCS integration.","progress":"Restoring export scripts and removing owned files","userFolder":target,"version":crate::dcs_setup::VERSION,"installed":true,"removable":true}));
+        self.inner.publish_start(game, json!({"state":"setting-up","message":"Removing DCS integration.","progress":"Restoring export scripts and removing owned files","userFolder":target,"version":crate::dcs_setup::VERSION,"installed":true,"removable":true}));
         let inner = self.inner.clone();
         let game = game.clone();
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -51,15 +49,7 @@ impl GameIntegrationSetup {
                 &inner.work,
                 || inner.cancel.load(Ordering::Acquire),
                 |message, percent| {
-                    if let Some(status) = inner
-                        .states
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .get_mut("dcs")
-                    {
-                        status["progress"] = json!(message);
-                        status["percent"] = json!(percent);
-                    }
+                    inner.publish_progress(&game, message, Some(percent));
                 },
                 || {
                     if platform.find(&game)?.is_some() {
@@ -73,23 +63,25 @@ impl GameIntegrationSetup {
                 },
             )
             .and_then(|_| {
-                let mut saved = inner.saved.lock().unwrap_or_else(|p| p.into_inner());
-                let mut draft = saved.clone();
+                let base = settings_snapshot(&inner);
+                let mut draft = base.clone();
                 draft["games"].as_object_mut().unwrap().remove("dcs");
-                write_settings(&inner, &draft)?;
-                *saved = draft;
+                commit_settings(&inner, &base, draft)?;
+                inner.publish_progress(&game, "Finalizing DCS integration removal", None);
                 Ok(())
             });
-            let mut status = inner.inspect(&game, Some(&json!(target)));
+            let (record, mut status) = inner.inspect_scoped(&game);
+            if status["userFolder"].is_null() {
+                // Preserve post-removal ownership information for the removed
+                // target without using an override folder as a readiness proof.
+                status["userFolder"] = json!(target);
+                inner.decorate_removal("dcs", &mut status);
+            }
             if let Err(error) = result {
                 status["state"] = json!("needs-attention");
                 status["message"] = json!(error);
             }
-            inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert("dcs".into(), status);
+            inner.publish_setup(&game, &record, status);
             inner.busy.store(false, Ordering::Release);
         }));
         Ok(())
@@ -144,7 +136,7 @@ impl GameIntegrationSetup {
             return Err("An integration setup check is already running.".into());
         }
         self.inner.cancel.store(false, Ordering::Release);
-        self.inner.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id.clone(), json!({"state":"setting-up","message":"Checking Assetto native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
+        self.inner.publish_start(game, json!({"state":"setting-up","message":"Checking Assetto native telemetry. No plugin or game-file changes are required.","progress":"Checking executable and native telemetry","connection":connection,"verified":false}));
         let inner = self.inner.clone();
         let game = game.clone();
         let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
@@ -162,11 +154,8 @@ impl GameIntegrationSetup {
                     return Err("Assetto telemetry check was cancelled.".into());
                 }
                 if configure {
-                    let mut draft = inner
-                        .saved
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .clone();
+                    let base = settings_snapshot(&inner);
+                    let mut draft = base.clone();
                     let verified = if previous["verifiedFingerprint"] == identity {
                         identity.clone()
                     } else {
@@ -178,18 +167,11 @@ impl GameIntegrationSetup {
                         Value::Null
                     };
                     draft["games"][&id] = json!({"connection":connection,"configuredFingerprint":identity,"verifiedFingerprint":verified,"verificationIssue":issue});
-                    write_settings(&inner, &draft)?;
-                    *inner.saved.lock().unwrap_or_else(|p| p.into_inner()) = draft;
+                    commit_settings(&inner, &base, draft)?;
+                    inner.publish_progress(&game, "Checking executable and native telemetry", None);
                 }
                 let cars = if configure && id == "assetto-corsa" {
-                    if let Some(status) = inner
-                        .states
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .get_mut(&id)
-                    {
-                        status["progress"] = json!("Scanning installed Assetto Corsa cars");
-                    }
+                    inner.publish_progress(&game, "Scanning installed Assetto Corsa cars", None);
                     let root = game["installPath"]
                         .as_str()
                         .ok_or("Choose the Assetto Corsa installation before scanning cars.")?;
@@ -220,14 +202,11 @@ impl GameIntegrationSetup {
                     platform.as_ref(),
                     || inner.cancel.load(Ordering::Acquire),
                     |message, percent| {
-                        let mut states = inner.states.lock().unwrap_or_else(|p| p.into_inner());
-                        if let Some(status) = states.get_mut(&id) {
-                            status["progress"] = json!(message);
-                            status["percent"] = json!(percent);
-                        }
+                        inner.publish_progress(&game, message, Some(percent));
                     },
                 )?;
                 inner.accept_assetto_proof(&id, &proof)?;
+                inner.publish_progress(&game, "Finalizing native telemetry verification", None);
                 if let Some(cars) = cars {
                     if inner.cancel.load(Ordering::Acquire) {
                         return Err("Assetto telemetry check was cancelled.".into());
@@ -256,7 +235,7 @@ impl GameIntegrationSetup {
                 }
                 Ok(proof)
             })();
-            let mut status = inner.inspect(&game, None);
+            let (record, mut status) = inner.inspect_scoped(&game);
             match result {
                 Ok(proof) => {
                     let channels = proof["channels"].as_object().map(|rows| rows.iter().map(|(name,channel)| (name.clone(),json!({"status":if channel["status"]=="ready" {"available"} else {"unknown"}}))).collect::<serde_json::Map<String,Value>>()).unwrap_or_default();
@@ -276,11 +255,7 @@ impl GameIntegrationSetup {
                     status["message"] = json!(error);
                 }
             }
-            inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(id.clone(), status);
+            inner.publish_setup(&game, &record, status);
             inner.busy.store(false, Ordering::Release);
         }));
         Ok(())

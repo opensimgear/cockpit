@@ -195,8 +195,8 @@ impl GamesRuntime {
     pub(super) fn decorate_game_contexts(&self, games: &mut [Value]) {
         self.decorate_game_contexts_with(games, |id| {
             self.current_vehicle_id(id).and_then(|vehicle| {
-                self.inner.setup.integration_catalogue_metadata_for_vehicle("dcs", Some(&vehicle))
-                    .ok().and_then(|catalogue| catalogue["aircraftModule"].as_str().map(str::to_owned))
+                self.inner.setup.cached_integration_catalogue_metadata_for_vehicle("dcs", Some(&vehicle))
+                    .and_then(|catalogue| catalogue["aircraftModule"].as_str().map(str::to_owned))
             })
         });
     }
@@ -373,7 +373,7 @@ impl Inner {
             *checked = Some(Instant::now());
         }
         drop(checked);
-        self.setup.decorate(&mut games);
+        self.setup.decorate_source(&mut games);
         for game in games {
             let Some(id) = game["id"].as_str() else {
                 continue;

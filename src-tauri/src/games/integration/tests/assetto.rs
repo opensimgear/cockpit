@@ -70,6 +70,7 @@ fn acr_layout_failures_invalidate_build_proof_and_diagnostics_survive_restart() 
     runtime.inner.accept_acr_proof(&json!({"nativeVerified":false,"status":"unsupported-layout","fingerprint":identity,"diagnostics":["Unsupported ACR layout"]})).unwrap();
     let restarted = GameIntegrationSetup::new(path, true);
     let mut catalogue = vec![game.clone()];
+    restarted.refresh(&catalogue);
     decorate(&restarted, &mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["state"], "needs-attention");
     assert_eq!(catalogue[0]["integrationSetup"]["verified"], false);

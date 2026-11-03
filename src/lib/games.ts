@@ -39,7 +39,9 @@ export function gameLibraryClientName(client: string): string {
   return ({steam: 'Steam', epic: 'Epic Games', battlenet: 'Battle.net', ea: 'EA app', ubisoft: 'Ubisoft Connect', gog: 'GOG', xbox: 'Xbox'} as Record<string, string>)[client] ?? client;
 }
 export type GameIntegrationSetup = {
-  state: 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
+  state: 'checking' | 'unavailable' | 'not-installed' | 'setup-required' | 'setting-up' | 'ready' | 'needs-attention' | 'unsupported-platform';
+  checkPreview?: { state: GameIntegrationSetup['state']; message: string; userFolder?: string;
+    connection?: Record<string, unknown>; installed?: boolean; removable?: boolean; removalMessage?: string; repairable?: boolean; verified?: boolean };
   installed?: boolean; removable?: boolean; removalMessage?: string;
   message: string; userFolder?: string; candidates?: string[]; version?: string; cataloguePath?: string;
   connection?: Record<string, unknown>; progress?: string; recoveryNeeded?: boolean; repairable?: boolean;
@@ -159,6 +161,7 @@ export function gameIntegrationLabel(game: Game): string {
   if (sharedMemoryGame(game) && ['ready', 'needs-attention'].includes(game.integrationSetup.state) && game.integrationSetup.connection?.source === 'shared-memory' && !gameIntegrationNativeVerified(game)) return 'Telemetry configured · verification needed';
   if (sharedMemoryGame(game) && game.integrationSetup.state === 'ready' && !gameIntegrationNativeVerified(game)) return 'Native telemetry not verified';
   const labels: Record<GameIntegrationSetup['state'], string> = {
+    checking: 'Checking integration setup', unavailable: 'Integration status unavailable',
     'not-installed': 'Game not installed', 'setup-required': 'Integration setup required',
     'setting-up': 'Setting up integration', ready: 'Integration ready',
     'needs-attention': 'Integration needs attention', 'unsupported-platform': 'Setup unavailable on this platform',
@@ -212,6 +215,8 @@ export function gameIntegrationSetupRequest(game: Game, command: 'game_integrati
 export function gameIntegrationSetupBlockedReason(game: Game, profileBlockedReason: string): string {
   if (!game.installed) return 'Install the game or select its executable first.';
   if (game.integrationSetup?.state === 'unsupported-platform') return game.integrationSetup.message;
+  if (game.integrationSetup?.state === 'checking') return 'Checking saved integration setup for this installation.';
+  if (game.integrationSetup?.state === 'unavailable') return game.integrationSetup.message;
   if (game.integrationSetup?.state === 'setting-up') return 'Integration setup is in progress.';
   if (game.integrationSetup?.recoveryNeeded) return 'Recover the interrupted setup before trying again.';
   if (game.provider === 'dcs-bios' && game.integrationSetup?.repairable === false) return game.integrationSetup.message;

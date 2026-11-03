@@ -20,8 +20,10 @@ struct Inner {
     settings_error: Option<String>,
     store: Result<osg_persistence::Repository<Value>, String>,
     saved: Mutex<Value>,
-    states: Mutex<BTreeMap<String, Value>>,
+    settings_writer: Mutex<()>,
+    states: Mutex<BTreeMap<String, Arc<Value>>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
+    views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
     ac_cars: Mutex<crate::ac_car_catalogue_cache::Cache>,
     #[cfg(test)]
@@ -29,15 +31,23 @@ struct Inner {
         Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     #[cfg(test)]
     native_probe_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    #[cfg(test)]
+    inspection_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    #[cfg(test)]
+    settings_commit_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    #[cfg(test)]
+    catalogue_stamp_pause: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     cancel: AtomicBool,
     busy: AtomicBool,
     closed: AtomicBool,
+    recovery_needed: AtomicBool,
 }
 pub(crate) struct GameIntegrationSetup {
     inner: Arc<Inner>,
     worker: Mutex<Option<JoinHandle<()>>>,
     admission: Mutex<()>,
 }
+mod setup_cache;
 mod settings;
 pub(crate) use settings::dcs_connection;
 use settings::*;
@@ -67,6 +77,9 @@ impl GameIntegrationSetup {
         Self {
             inner: Arc::new(Inner {
                 work: path.with_extension("setup-work"),
+                recovery_needed: AtomicBool::new(crate::dcs_setup::recovery_pending(
+                    &path.with_extension("setup-work"),
+                )),
                 ac_cars: Mutex::new(crate::ac_car_catalogue_cache::Cache::new(
                     path.with_file_name("assetto-corsa-cars-v1.json"),
                 )),
@@ -74,12 +87,20 @@ impl GameIntegrationSetup {
                 ac_cars_publication_pause: Mutex::new(None),
                 #[cfg(test)]
                 native_probe_pause: Mutex::new(None),
+                #[cfg(test)]
+                inspection_pause: Mutex::new(None),
+                #[cfg(test)]
+                settings_commit_pause: Mutex::new(None),
+                #[cfg(test)]
+                catalogue_stamp_pause: Mutex::new(None),
                 path,
                 native,
                 settings_error: loaded.as_ref().err().cloned(),
                 store,
                 saved: Mutex::new(loaded.unwrap_or(json!({"schemaVersion":1,"games":{}}))),
+                settings_writer: Mutex::new(()),
                 states: Mutex::new(states),
+                views: Mutex::new(Default::default()),
                 catalogues: Mutex::new(BTreeMap::new()),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
@@ -138,47 +159,34 @@ impl GameIntegrationSetup {
         crate::dcs_setup::recovery_pending(&self.inner.work)
     }
     pub(crate) fn decorate(&self, catalogue: &mut [Value]) {
-        let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         for game in catalogue {
-            let Ok(bound) = bound_game(game) else {
+            let Some(id) = crate::game_discovery::integration_binding(game) else {
                 if let Some(object) = game.as_object_mut() {
                     object.remove("integrationSetup");
                 }
                 continue;
             };
-            let id = bound["id"].as_str().unwrap_or("");
-            let cached = self
-                .inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .get(id)
-                .cloned();
-            let mut status = cached.unwrap_or_else(|| {
-                let status = self.inner.inspect(&bound, None);
-                self.inner
-                    .states
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .insert(id.into(), status.clone());
-                status
-            });
-            status["live"] = json!("waiting");
-            status["liveMessage"]=json!("Setup is configuration metadata. Inspect the applied profile for actual source delivery.");
-            if let Some(object) = status.as_object_mut() {
-                object.remove("channels");
-                object.remove("optionalMaxRpm");
-            }
-            if id == "dcs" {
-                status["version"] = json!(crate::dcs_setup::VERSION);
-            }
-            self.inner.decorate_removal(id, &mut status);
-            self.decorate_provider_settings(id, &mut status);
+            let status = self.inner.cached_setup(game, id);
+            game["integrationSetup"] = status;
+        }
+    }
+    /// Source configuration proofs are independent of display eviction/budgets.
+    /// Their writers are the existing refresh/command/worker paths.
+    pub(crate) fn decorate_source(&self, catalogue: &mut [Value]) {
+        for game in catalogue {
+            let Some(id) = crate::game_discovery::integration_binding(game) else {
+                if let Some(object) = game.as_object_mut() {
+                    object.remove("integrationSetup");
+                }
+                continue;
+            };
+            let status = self.inner.cached_source_setup(game, id);
             game["integrationSetup"] = status;
         }
     }
     pub(crate) fn refresh(&self, catalogue: &[Value]) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        self.inner.retain_setup_scopes(catalogue);
         self.refresh_admitted(catalogue);
     }
     // Request admission already owns this mutex. Keep passive inspection and
@@ -191,12 +199,8 @@ impl GameIntegrationSetup {
             let Ok(game) = bound_game(game) else {
                 continue;
             };
-            let status = self.inner.inspect(&game, None);
-            self.inner
-                .states
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(game["id"].as_str().unwrap_or("").into(), status);
+            let (record, status) = self.inner.inspect_scoped(&game);
+            self.inner.publish_setup(&game, &record, status);
         }
     }
     pub(crate) fn shutdown(&self) {

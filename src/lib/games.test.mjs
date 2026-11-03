@@ -86,7 +86,7 @@ test('game catalogue exposes every registered game without constructing a profil
 
 test('provider setup, native verification and telemetry freshness remain separate facts',()=>{
  const game=dcs();delete game.integrationSetup;assert.equal(gameIntegrationLabel(game),'Integration not checked');assert.equal(gameIntegrationReady(game),false);
- for(const state of ['not-installed','setup-required','setting-up','ready','needs-attention','unsupported-platform'])assert.ok(gameIntegrationLabel({...game,integrationSetup:{state}}).length>5);
+ for(const state of ['checking','unavailable','not-installed','setup-required','setting-up','ready','needs-attention','unsupported-platform'])assert.ok(gameIntegrationLabel({...game,integrationSetup:{state}}).length>5);
  game.integrationSetup={state:'ready',live:'waiting'};assert.equal(gameIntegrationReady(game),true);assert.equal(gameIntegrationLabel(game),'Integration ready');assert.equal(gameIntegrationNativeVerified(game),false);
  for(const [live,label]of [['waiting',''],['receiving','Receiving game data'],['stale','Game data is stale']]){game.integrationSetup.live=live;assert.equal(gameIntegrationLiveLabel(game),label);assert.equal(gameIntegrationReady(game),true);}
  game.installed=false;assert.equal(gameIntegrationLabel(game),'Game not installed');assert.equal(gameIntegrationReady(game),false);assert.equal(gameIntegrationLiveLabel({}),'');
@@ -143,4 +143,17 @@ test('a real untagged tag ID remains separate from the empty-tag filter',()=>{
   const catalogue=[{id:'tagged',tagIds:['untagged']},{id:'empty',tagIds:[]},{id:'missing'}];
   assert.deepEqual(plain(games.filterGamesByTag(catalogue,'untagged')).map(game=>game.id),['tagged']);
   assert.deepEqual(plain(games.filterGamesByTag(catalogue,games.UNTAGGED_TAG_FILTER)).map(game=>game.id),['empty','missing']);
+});
+
+
+test('uncaptured or unavailable setup metadata does not imply native readiness or enable setup',()=>{
+ const checking={...dcs(),integrationSetup:{state:'checking',message:'Preparing this installation.'}};
+ assert.equal(gameIntegrationReady(checking),false);
+ assert.equal(gameIntegrationInstalled(checking),false);
+ assert.equal(gameIntegrationLabel(checking),'Checking integration setup');
+ assert.match(gameIntegrationSetupBlockedReason(checking,''),/Checking saved integration setup/);
+ const unavailable={...checking,integrationSetup:{state:'unavailable',message:'Cannot display this setup snapshot.'}};
+ assert.equal(gameIntegrationReady(unavailable),false);
+ assert.equal(gameIntegrationLabel(unavailable),'Integration status unavailable');
+ assert.equal(gameIntegrationSetupBlockedReason(unavailable,''),'Cannot display this setup snapshot.');
 });

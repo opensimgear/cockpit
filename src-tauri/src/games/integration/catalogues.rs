@@ -34,6 +34,16 @@ impl GameIntegrationSetup {
             .as_ref()
             .map(|module| format!("dcs:{module}"))
             .unwrap_or_else(|| id.into());
+        #[cfg(test)]
+        if let Some((entered, release)) = self.inner.catalogue_stamp_pause.lock()
+            .unwrap_or_else(|p| p.into_inner()).take()
+        {
+            entered.send(()).unwrap();
+            release.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        // SDK metadata can block on filesystem access. Capture it before taking
+        // the shared cache mutex used by passive catalogue metadata readers.
+        let sdk_source_stamp = sdk_stamp(id, &record);
         let cached = {
             let cache = self
                 .inner
@@ -46,7 +56,7 @@ impl GameIntegrationSetup {
                     known == &revision
                         && if id.starts_with("x-plane-") {
                             result.as_ref().is_ok_and(|value| {
-                                value["sdkSourceStamp"] == sdk_stamp(id, &record)
+                                value["sdkSourceStamp"] == sdk_source_stamp
                             }) || at.elapsed() < Duration::from_secs(2)
                         } else if id.starts_with("assetto-corsa") {
                             result.is_ok() || at.elapsed() < Duration::from_secs(2)
@@ -105,7 +115,7 @@ impl GameIntegrationSetup {
             };
             crate::game_channels::catalogue(id, &mut value);
             if id.starts_with("x-plane-") {
-                value["sdkSourceStamp"] = sdk_stamp(id, &record);
+                value["sdkSourceStamp"] = sdk_source_stamp;
             }
             value["catalogueRevision"] =
                 json!(digest(&json!(["game-provider-catalogue-v1", id, value])));
