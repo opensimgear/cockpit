@@ -91,9 +91,14 @@ The [acquisition prerequisite verification](../verification/2026-11-03-native-ca
 records ownship receive time/counters and X-Plane component time/counters now
 retained at their native owners. Their mapping integration remains below.
 
-- BIOS sparse memory needs evidence for accepted written addresses/words,
-  including equal writes; strings/masks collect their exact byte dependencies.
-  Existing reset/gap fences clear the corresponding evidence.
+The [BIOS byte-capture verification](../verification/2026-11-03-bios-byte-captures.md)
+records original per-byte receive positions/times through fragmented parsing and
+bounded sparse memory. Counter validity observations retain their original byte
+positions separately from the processed raw cursor and qualification generation.
+
+- BIOS catalogue strings/masks must collect their exact captured byte
+  dependencies from the native sparse memory; accepted equal writes already
+  retain new marks and reset/gap fences clear validity and corresponding marks.
 - All four Assetto dialects need page-specific coherent host acquisition evidence
   before decoding/queuing. This does not resolve their separate upstream
   notification gate or prove simulator write time/multi-page atomicity.

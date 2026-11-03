@@ -12,7 +12,6 @@ use std::{
 const COMMAND: &str = "UFC_MASTER_CAUTION";
 const FEEDBACK: &str = "MASTER_CAUTION";
 pub(crate) const MAX_DOCUMENT: u64 = 8 * 1024 * 1024;
-const MAX_FRAME: usize = 131_072;
 const CONFIG_ERROR: &str = "Invalid DCS-BIOS configuration.";
 const CATALOGUE_ERROR: &str = "The installed DCS-BIOS catalogue is incompatible or malformed.";
 
@@ -565,123 +564,11 @@ pub fn validate_led(catalogue: &Value, action_id: &str) -> Result<LedBinding, St
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Block {
-    pub(crate) address: u16,
-    pub(crate) data: Vec<u8>,
-}
-#[derive(Debug)]
-pub(crate) enum ExportEvent {
-    Frame(Vec<Block>),
-    Reset,
-}
-/// Sync detection retains a possible marker across datagram boundaries. No
-/// address-space allocation or block can grow beyond the 16-bit wire bounds.
-pub(crate) struct Parser {
-    counter_address: u16,
-    sync: usize,
-    active: bool,
-    header: Vec<u8>,
-    address: u16,
-    remaining: usize,
-    data: Vec<u8>,
-    blocks: Vec<Block>,
-    frame_bytes: usize,
-}
-impl Parser {
-    pub(crate) fn new(counter_address: u16) -> Self {
-        Self {
-            counter_address,
-            sync: 0,
-            active: false,
-            header: Vec::new(),
-            address: 0,
-            remaining: 0,
-            data: Vec::new(),
-            blocks: Vec::new(),
-            frame_bytes: 0,
-        }
-    }
-    pub(crate) fn discard(&mut self) {
-        self.active = false;
-        self.header.clear();
-        self.remaining = 0;
-        self.data.clear();
-        self.blocks.clear();
-        self.frame_bytes = 0;
-    }
-    fn byte(&mut self, byte: u8, events: &mut Vec<ExportEvent>) {
-        if !self.active {
-            return;
-        }
-        if self.remaining > 0 {
-            self.data.push(byte);
-            self.remaining -= 1;
-            if self.remaining == 0 {
-                let complete = self.address <= self.counter_address
-                    && self.address as usize + self.data.len() >= self.counter_address as usize + 2;
-                self.blocks.push(Block {
-                    address: self.address,
-                    data: std::mem::take(&mut self.data),
-                });
-                if complete {
-                    events.push(ExportEvent::Frame(std::mem::take(&mut self.blocks)));
-                    self.discard();
-                }
-            }
-        } else {
-            self.header.push(byte);
-            if self.header.len() == 4 {
-                self.address = u16::from_le_bytes([self.header[0], self.header[1]]);
-                let length = u16::from_le_bytes([self.header[2], self.header[3]]) as usize;
-                self.header.clear();
-                self.frame_bytes += length + 4;
-                if length == 0
-                    || length % 2 != 0
-                    || self.address % 2 != 0
-                    || self.address as usize + length > 65536
-                    || self.frame_bytes > MAX_FRAME
-                    || self.blocks.len() >= 8192
-                {
-                    self.discard();
-                    events.push(ExportEvent::Reset);
-                } else {
-                    self.remaining = length;
-                }
-            }
-        }
-    }
-    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Vec<ExportEvent> {
-        let mut events = Vec::new();
-        for &byte in bytes {
-            if byte == 0x55 {
-                self.sync = (self.sync + 1).min(8);
-                continue;
-            }
-            let run = std::mem::take(&mut self.sync);
-            if run >= 4 {
-                if run <= 7 {
-                    for _ in 0..run - 4 {
-                        self.byte(0x55, &mut events);
-                    }
-                }
-                if self.active
-                    && (!self.blocks.is_empty() || !self.header.is_empty() || self.remaining > 0)
-                {
-                    events.push(ExportEvent::Reset);
-                }
-                self.discard();
-                self.active = true;
-            } else {
-                for _ in 0..run {
-                    self.byte(0x55, &mut events);
-                }
-            }
-            self.byte(byte, &mut events);
-        }
-        events
-    }
-}
+mod parser;
+pub(crate) use parser::{
+    Block, ByteCapture, CapturePosition, CapturedBlock, CapturedExportEvent, CapturedParser,
+    ExportEvent, Parser,
+};
 #[derive(Clone)]
 pub(crate) struct Memory {
     pub(crate) bytes: Vec<u8>,
@@ -811,8 +698,7 @@ impl Session {
         self.panel_unavailable()
     }
     pub fn reset_stream(&mut self, now_ms: u64) -> Vec<Intent> {
-        self.parser.discard();
-        self.parser.sync = 0;
+        self.parser.reset();
         self.aircraft = None;
         let mut intents = self.invalidate();
         intents.extend(self.update_led(now_ms));
@@ -923,8 +809,7 @@ impl Session {
             let counter = self.counter;
             intents.extend(self.invalidate());
             self.counter = counter;
-            self.parser.discard();
-            self.parser.sync = 0;
+            self.parser.reset();
         }
         intents.extend(self.update_led(now_ms));
         intents

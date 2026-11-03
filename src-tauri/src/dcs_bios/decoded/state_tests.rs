@@ -1,4 +1,5 @@
 use super::*;
+const MAX_FRAME_EVENTS: usize = 16;
 use crate::dcs_bios::IntegerOutput;
 use serde_json::json;
 use std::time::Duration;
@@ -16,8 +17,9 @@ fn decoded_datagram_batch_is_bounded_before_snapshots_can_grow_without_limit() {
     let at = Instant::now();
     for count in [MAX_FRAME_EVENTS, MAX_FRAME_EVENTS + 1] {
         let mut state = State::new(spec(), "bounded".into());
-        let bytes = (1..=count).flat_map(|counter|
-            frame(Some("Jet"), Some(counter as u16), counter as u16)).collect();
+        let bytes = (1..=count)
+            .flat_map(|counter| frame(Some("Jet"), Some(counter as u16), counter as u16))
+            .collect();
         let result = state.feed(&report(bytes, at, "wire", 1), at);
         if count == MAX_FRAME_EVENTS {
             assert_eq!(result.unwrap().len(), MAX_FRAME_EVENTS);
@@ -31,7 +33,8 @@ fn decoded_datagram_batch_is_bounded_before_snapshots_can_grow_without_limit() {
 }
 fn integer(address: u16, mask: u16, maximum: u16) -> IntegerOutput {
     IntegerOutput::parse(&json!({"type":"integer","address":address,"mask":mask,
-        "shift_by":0,"max_value":maximum})).unwrap()
+        "shift_by":0,"max_value":maximum}))
+    .unwrap()
 }
 fn block(bytes: &mut Vec<u8>, address: u16, data: &[u8]) {
     bytes.extend(address.to_le_bytes());
@@ -53,15 +56,25 @@ fn frame(name: Option<&str>, value: Option<u16>, counter: u16) -> Vec<u8> {
     bytes
 }
 fn report(bytes: Vec<u8>, at: Instant, producer: &str, sequence: u64) -> CapturedDatagram {
-    CapturedDatagram { bytes: bytes.into(), captured_at: at, producer_id: producer.into(), sequence }
+    CapturedDatagram {
+        bytes: bytes.into(),
+        captured_at: at,
+        producer_id: producer.into(),
+        sequence,
+    }
 }
 fn feed(state: &mut State, bytes: Vec<u8>, at: Instant, sequence: u64) -> Snapshot {
-    state.feed(&report(bytes, at, "wire", sequence), at).unwrap();
+    state
+        .feed(&report(bytes, at, "wire", sequence), at)
+        .unwrap();
     state.snapshot()
 }
 fn live(at: Instant) -> State {
     let mut state = State::new(spec(), "canonical-owner".into());
-    assert_eq!(feed(&mut state, frame(Some("Jet"), Some(11), 1), at, 1).status, "waiting");
+    assert_eq!(
+        feed(&mut state, frame(Some("Jet"), Some(11), 1), at, 1).status,
+        "waiting"
+    );
     assert_eq!(feed(&mut state, frame(None, None, 2), at, 2).status, "live");
     state
 }
@@ -79,7 +92,13 @@ fn waits_for_identity_and_consecutive_progress_then_preserves_native_values() {
     let current = feed(&mut state, frame(None, None, 0), at, 2);
     assert!(current.fresh_at(at));
     assert_eq!(current.producer_id, "canonical-owner");
-    assert_eq!(current.capture_sequence, 2);
+    assert_eq!(
+        current
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence),
+        Some(2)
+    );
     assert_eq!(value(&current), Some(0));
     assert_eq!(current.counter, Some(0));
     let maximum = feed(&mut state, frame(None, Some(65535), 1), at, 3);
@@ -94,18 +113,42 @@ fn bios_duplicates_never_change_memory_or_renew_native_capture() {
     let mut state = live(at);
     let before = state.snapshot();
     let later = at + Duration::from_millis(50);
-    assert!(state.feed(&report(frame(Some("Other"), Some(99), 2), later, "wire", 3), later).unwrap().is_empty());
-    assert!(state.feed(&report(frame(None, None, 2), later, "wire", 4), later).unwrap().is_empty());
+    assert!(state
+        .feed(
+            &report(frame(Some("Other"), Some(99), 2), later, "wire", 3),
+            later
+        )
+        .unwrap()
+        .is_empty());
+    assert!(state
+        .feed(&report(frame(None, None, 2), later, "wire", 4), later)
+        .unwrap()
+        .is_empty());
     let duplicate = state.snapshot();
     assert_eq!(duplicate.aircraft, before.aircraft);
     assert_eq!(duplicate.epoch, before.epoch);
-    assert_eq!(duplicate.captured_at, before.captured_at);
-    assert_eq!(duplicate.capture_sequence, before.capture_sequence);
+    assert_eq!(duplicate.captured_at(), before.captured_at());
+    assert_eq!(
+        duplicate
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence),
+        before
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence)
+    );
     assert_eq!(value(&duplicate), Some(11));
     // The separate raw transport cursor did accept both reports. A subsequent
     // advancing frame must not look like a transport gap and lose continuity.
     let advancing = feed(&mut state, frame(None, Some(22), 3), later, 5);
-    assert_eq!(advancing.capture_sequence, 5);
+    assert_eq!(
+        advancing
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence),
+        Some(5)
+    );
     assert_eq!(advancing.status, "live");
     assert_eq!(advancing.epoch, before.epoch);
 }
@@ -116,7 +159,9 @@ fn duplicate_shutdown_explicitly_withdraws_aircraft_without_accepting_replay() {
     for name in ["", "NONE"] {
         let mut state = live(at);
         let before = state.snapshot();
-        let published = state.feed(&report(frame(Some(name), None, 2), at, "wire", 3), at).unwrap();
+        let published = state
+            .feed(&report(frame(Some(name), None, 2), at, "wire", 3), at)
+            .unwrap();
         assert_eq!(published.len(), 1);
         let current = &published[0];
         assert_eq!(current.aircraft, None);
@@ -124,7 +169,7 @@ fn duplicate_shutdown_explicitly_withdraws_aircraft_without_accepting_replay() {
         assert!(current.epoch > before.epoch);
         assert_eq!(value(&current), None);
         assert_eq!(current.status, "stopped");
-        assert_eq!(current.captured_at, Some(at));
+        assert_eq!(current.captured_at(), Some(at));
         assert!(!current.fresh_at(at));
         assert!(current.deadline().is_none());
         let replay = feed(&mut state, frame(Some("Jet"), Some(99), 2), at, 4);
@@ -139,10 +184,26 @@ fn duplicate_and_late_transport_reports_are_ignored() {
     let mut state = live(at);
     let before = state.snapshot();
     for sequence in [2, 1] {
-        assert!(state.feed(&report(frame(Some("Other"), Some(99), 3), at, "wire", sequence), at).unwrap().is_empty());
+        assert!(state
+            .feed(
+                &report(frame(Some("Other"), Some(99), 3), at, "wire", sequence),
+                at
+            )
+            .unwrap()
+            .is_empty());
     }
-    assert_eq!(state.snapshot().capture_sequence, before.capture_sequence);
-    assert_eq!(state.snapshot().captured_at, before.captured_at);
+    assert_eq!(
+        state
+            .snapshot()
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence),
+        before
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence)
+    );
+    assert_eq!(state.snapshot().captured_at(), before.captured_at());
     assert_eq!(value(&state.snapshot()), Some(11));
 }
 
@@ -151,14 +212,24 @@ fn transport_gap_and_replacement_require_a_new_baseline() {
     let at = Instant::now();
     for (producer, sequence) in [("wire", 4), ("replacement", 1)] {
         let mut state = live(at);
-        let publications = state.feed(&report(frame(Some("Jet"), Some(33), 3), at, producer, sequence), at).unwrap();
+        let publications = state
+            .feed(
+                &report(frame(Some("Jet"), Some(33), 3), at, producer, sequence),
+                at,
+            )
+            .unwrap();
         assert!(publications.len() >= 2);
         assert_eq!(value(&publications[0]), None);
         let baseline = publications.last().unwrap();
         assert_eq!(baseline.status, "waiting");
         assert_eq!(value(baseline), Some(33));
         assert_eq!(baseline.producer_id, "canonical-owner");
-        let next = state.feed(&report(frame(None, None, 4), at, producer, sequence + 1), at).unwrap();
+        let next = state
+            .feed(
+                &report(frame(None, None, 4), at, producer, sequence + 1),
+                at,
+            )
+            .unwrap();
         assert_eq!(next.last().unwrap().status, "live");
     }
 }
@@ -186,7 +257,10 @@ fn complete_forward_gap_is_baseline_and_cannot_reuse_pre_gap_values() {
     assert_eq!(baseline.status, "waiting");
     assert_eq!(baseline.aircraft.as_deref(), Some("Jet"));
     assert_eq!(value(&baseline), None);
-    assert_eq!(feed(&mut state, frame(None, None, 130), at, 4).status, "live");
+    assert_eq!(
+        feed(&mut state, frame(None, None, 130), at, 4).status,
+        "live"
+    );
 }
 
 #[test]
@@ -197,9 +271,12 @@ fn backward_or_half_range_counter_discards_the_entire_frame() {
         let reset = feed(&mut state, frame(Some("Other"), Some(99), counter), at, 3);
         assert_eq!(reset.aircraft, None);
         assert_eq!(reset.counter, None);
-        assert_eq!(reset.captured_at, None);
+        assert_eq!(reset.captured_at(), None);
         assert_eq!(value(&reset), None);
-        assert_eq!(feed(&mut state, frame(Some("Jet"), None, 3), at, 4).status, "waiting");
+        assert_eq!(
+            feed(&mut state, frame(Some("Jet"), None, 3), at, 4).status,
+            "waiting"
+        );
         assert_eq!(feed(&mut state, frame(None, None, 4), at, 5).status, "live");
     }
 }
@@ -249,14 +326,23 @@ fn datagram_batch_and_fragmented_frames_publish_atomic_immutable_memories() {
     let mut state = State::new(spec(), "owner".into());
     let first = frame(Some("Jet"), Some(1), 1);
     let cut = first.len() - 1;
-    assert!(state.feed(&report(first[..cut].into(), at, "wire", 1), at).unwrap().is_empty());
+    assert!(state
+        .feed(&report(first[..cut].into(), at, "wire", 1), at)
+        .unwrap()
+        .is_empty());
     let mut bytes = first[cut..].to_vec();
     bytes.extend(frame(None, Some(2), 2));
     let snapshots = state.feed(&report(bytes, at, "wire", 2), at).unwrap();
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].status, "waiting");
     assert_eq!(snapshots[1].status, "live");
-    assert_eq!(snapshots[0].capture_sequence, 2);
+    assert_eq!(
+        snapshots[0]
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence),
+        Some(2)
+    );
     assert_eq!(value(&snapshots[0]), Some(1));
     assert_eq!(value(&snapshots[1]), Some(2));
     feed(&mut state, frame(None, Some(3), 3), at, 3);
@@ -269,29 +355,65 @@ fn native_timestamp_defines_exact_once_only_expiry_and_frozen_replay_is_rejected
     let at = Instant::now();
     let mut state = live(at);
     let captured = at;
-    assert_eq!(state.snapshot().deadline(), Some(captured + Duration::from_millis(101)));
-    assert!(state.expire(captured + Duration::from_millis(100)).unwrap().is_none());
-    let stale = state.expire(captured + Duration::from_millis(101)).unwrap().unwrap();
+    assert_eq!(
+        state.snapshot().deadline(),
+        Some(captured + Duration::from_millis(101))
+    );
+    assert!(state
+        .expire(captured + Duration::from_millis(100))
+        .unwrap()
+        .is_none());
+    let stale = state
+        .expire(captured + Duration::from_millis(101))
+        .unwrap()
+        .unwrap();
     assert_eq!(stale.status, "stale");
     assert_eq!(stale.aircraft.as_deref(), Some("Jet"));
     assert_eq!(stale.counter, Some(2));
     assert_eq!(value(&stale), None);
-    assert_eq!(stale.captured_at, Some(captured));
-    assert_eq!(stale.age_ms(captured + Duration::from_millis(101)), Some(101));
+    assert_eq!(stale.captured_at(), Some(captured));
+    assert_eq!(
+        stale.age_ms(captured + Duration::from_millis(101)),
+        Some(101)
+    );
     assert_eq!(stale.deadline(), None);
     assert!(!stale.fresh_at(captured + Duration::from_millis(101)));
-    assert!(state.expire(captured + Duration::from_secs(5)).unwrap().is_none());
+    assert!(state
+        .expire(captured + Duration::from_secs(5))
+        .unwrap()
+        .is_none());
     let later = captured + Duration::from_secs(5);
-    assert!(state.feed(&report(frame(Some("Jet"), Some(88), 2), later, "wire", 3), later).unwrap().is_empty());
+    assert!(state
+        .feed(
+            &report(frame(Some("Jet"), Some(88), 2), later, "wire", 3),
+            later
+        )
+        .unwrap()
+        .is_empty());
     let replay = state.snapshot();
     assert_eq!(replay.status, "stale");
     assert_eq!(replay.epoch, stale.epoch);
-    assert_eq!(replay.captured_at, Some(captured));
-    assert_eq!(replay.capture_sequence, stale.capture_sequence);
+    assert_eq!(replay.captured_at(), Some(captured));
+    assert_eq!(
+        replay
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence),
+        stale
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence)
+    );
     assert_eq!(replay.age_ms(later), Some(5000));
     assert_eq!(value(&replay), None);
-    assert_eq!(feed(&mut state, frame(Some("Jet"), Some(33), 3), later, 4).status, "waiting");
-    assert_eq!(feed(&mut state, frame(None, None, 4), later, 5).status, "live");
+    assert_eq!(
+        feed(&mut state, frame(Some("Jet"), Some(33), 3), later, 4).status,
+        "waiting"
+    );
+    assert_eq!(
+        feed(&mut state, frame(None, None, 4), later, 5).status,
+        "live"
+    );
 }
 
 #[test]
@@ -300,10 +422,15 @@ fn queued_and_future_capture_cannot_revive_or_rebase_frozen_state() {
     for capture in [at, at + Duration::from_secs(2)] {
         let mut state = live(at);
         let now = at + Duration::from_secs(1);
-        state.feed(&report(frame(Some("Jet"), Some(99), 3), capture, "wire", 3), now).unwrap();
+        state
+            .feed(
+                &report(frame(Some("Jet"), Some(99), 3), capture, "wire", 3),
+                now,
+            )
+            .unwrap();
         let rejected = state.snapshot();
         assert!(!rejected.fresh_at(now));
-        assert_eq!(rejected.captured_at, None);
+        assert_eq!(rejected.captured_at(), None);
         assert_eq!(rejected.counter, Some(2));
         assert_eq!(value(&rejected), None);
     }
@@ -315,8 +442,13 @@ fn captured_age_is_not_the_time_a_consumer_reads_the_frame() {
     let mut state = live(at);
     let capture = at + Duration::from_millis(10);
     let observed = at + Duration::from_millis(90);
-    state.feed(&report(frame(None, Some(3), 3), capture, "wire", 3), observed).unwrap();
-    assert_eq!(state.snapshot().captured_at, Some(capture));
+    state
+        .feed(
+            &report(frame(None, Some(3), 3), capture, "wire", 3),
+            observed,
+        )
+        .unwrap();
+    assert_eq!(state.snapshot().captured_at(), Some(capture));
     assert_eq!(state.snapshot().age_ms(observed), Some(80));
     assert!(state.snapshot().fresh_at(observed));
 }
@@ -347,12 +479,14 @@ fn terminal_publication_error_and_epoch_exhaustion_leave_no_fresh_memory() {
     assert_eq!(invalid.status, "error");
     assert_eq!(invalid.error.as_deref(), Some("publication failed"));
     assert_eq!(value(&invalid), None);
-    assert_eq!(invalid.captured_at, None);
-    assert!(state.feed(&report(frame(Some("Jet"), Some(99), 3), at, "wire", 3), at).is_err());
+    assert_eq!(invalid.captured_at(), None);
+    assert!(state
+        .feed(&report(frame(Some("Jet"), Some(99), 3), at, "wire", 3), at)
+        .is_err());
     let mut exhausted = live(at);
     exhausted.snapshot.epoch = u64::MAX;
     assert_eq!(exhausted.invalidate("failed").err().unwrap(), EXHAUSTED);
     assert_eq!(exhausted.snapshot().status, "error");
     assert_eq!(value(&exhausted.snapshot()), None);
-    assert_eq!(exhausted.snapshot().captured_at, None);
+    assert_eq!(exhausted.snapshot().captured_at(), None);
 }

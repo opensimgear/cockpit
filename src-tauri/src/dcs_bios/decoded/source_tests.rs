@@ -142,7 +142,7 @@ fn expiry_publishes_without_reads_and_duplicate_does_not_renew_capture() {
         .unwrap();
     wait_processed(&source, 3);
     let duplicate = source.snapshot().unwrap();
-    assert_eq!(duplicate.captured_at, current.captured_at);
+    assert_eq!(duplicate.captured_at(), current.captured_at());
     assert!(Arc::ptr_eq(&duplicate.memory, &current.memory));
     let stale = until(&mut observer, |snapshot| snapshot.status == "stale");
     assert!(stale.epoch > current.epoch);
@@ -175,7 +175,10 @@ fn subscriber_overflow_revokes_command_before_polling_and_healthy_client_routes_
         healthy.snapshot().unwrap();
     }
     assert!(slow.send_control("TEST", "1").is_err());
-    assert!(healthy.send_control_for_aircraft("TEST", "999", Some("Other")).unwrap_err().contains("aircraft changed"));
+    assert!(healthy
+        .send_control_for_aircraft("TEST", "999", Some("Other"))
+        .unwrap_err()
+        .contains("aircraft changed"));
     healthy.send_control("TEST", "2").unwrap();
     let mut bytes = [0; 128];
     let count = destination_b.recv(&mut bytes).unwrap();
@@ -256,15 +259,27 @@ fn oversized_decoded_batch_retires_without_publishing_any_partial_values() {
     let mut observer = source.subscribe().unwrap();
     live(&source, &mut observer);
     source.snapshot().unwrap();
-    let packet: Vec<u8> = (3..=19).flat_map(|counter| wire(None, Some(counter), counter)).collect();
-    peer().send_to(&packet, source.local_addr().unwrap()).unwrap();
+    let packet: Vec<u8> = (3..=19)
+        .flat_map(|counter| wire(None, Some(counter), counter))
+        .collect();
+    peer()
+        .send_to(&packet, source.local_addr().unwrap())
+        .unwrap();
     match next(&mut observer) {
         Delivery::Loss(loss) => assert_eq!(loss.reason, LossReason::Closed),
         _ => panic!("An oversized atomic batch cannot publish a valid-looking prefix."),
     }
     assert!(source.snapshot().unwrap_err().contains("16-frame bound"));
     assert!(source.send_control("TEST", "1").is_err());
-    assert!(source.owner.shared.lock().snapshot.memory.valid.iter().all(|valid| !valid));
+    assert!(source
+        .owner
+        .shared
+        .lock()
+        .snapshot
+        .memory
+        .valid
+        .iter()
+        .all(|valid| !valid));
 }
 
 #[test]
@@ -327,8 +342,17 @@ fn acquired_uncommitted_reports_block_commands_and_frozen_duplicates_advance_onl
     // yet its completed raw cursor must permit a later healthy submission.
     assert!(observer.try_recv().unwrap().is_none());
     let duplicate = source.snapshot().unwrap();
-    assert_eq!(duplicate.capture_sequence, accepted.capture_sequence);
-    assert_eq!(duplicate.captured_at, accepted.captured_at);
+    assert_eq!(
+        duplicate
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence),
+        accepted
+            .counter_observation
+            .as_ref()
+            .map(|o| o.position.report_sequence)
+    );
+    assert_eq!(duplicate.captured_at(), accepted.captured_at());
     assert_eq!(duplicate.deadline(), accepted.deadline());
     assert!(Arc::ptr_eq(&duplicate.memory, &accepted.memory));
     source.send_control("TEST", "4").unwrap();

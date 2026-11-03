@@ -15,11 +15,15 @@ use std::{
 
 const LIMITS: NativeLimits = NativeLimits {
     max_subscribers: 64,
-    max_snapshot_bytes: 160 * 1024,
-    max_frame_bytes: 160 * 1024,
+    max_snapshot_bytes: 4 * 1024 * 1024,
+    max_frame_bytes: 4 * 1024 * 1024,
     max_pending_frames: 6,
-    max_pending_bytes: 864 * 1024,
+    max_pending_bytes: 24 * 1024 * 1024,
 };
+
+// Includes all 65,536 native byte marks, raw memory and bounded metadata.
+const _: () =
+    assert!(super::CapturedMemory::max_retained_bytes() + 128 * 1024 <= LIMITS.max_frame_bytes);
 
 struct Committed {
     snapshot: Snapshot,
@@ -54,11 +58,14 @@ impl Shared {
         Ok(())
     }
     fn publish_locked(&self, current: &mut Committed, snapshot: Snapshot) -> Result<(), String> {
-        let captured = snapshot.captured_at.unwrap_or_else(Instant::now);
-        let captured_us =
-            u64::try_from(captured.checked_duration_since(self.origin)
-                .ok_or("DCS decode capture predates its native clock.")?.as_micros())
-                .map_err(|_| "DCS decode clock exhausted.")?;
+        let captured = snapshot.captured_at().unwrap_or_else(Instant::now);
+        let captured_us = u64::try_from(
+            captured
+                .checked_duration_since(self.origin)
+                .ok_or("DCS decode capture predates its native clock.")?
+                .as_micros(),
+        )
+        .map_err(|_| "DCS decode clock exhausted.")?;
         if snapshot.epoch != current.snapshot.epoch {
             self.journal.replace_generation(
                 snapshot.epoch,
@@ -308,7 +315,12 @@ impl Source {
     pub fn send_control(&self, command: &str, argument: &str) -> Result<(), String> {
         self.send_control_for_aircraft(command, argument, None)
     }
-    pub fn send_control_for_aircraft(&self, command: &str, argument: &str, expected: Option<&str>) -> Result<(), String> {
+    pub fn send_control_for_aircraft(
+        &self,
+        command: &str,
+        argument: &str,
+        expected: Option<&str>,
+    ) -> Result<(), String> {
         let current = self.owner.shared.lock();
         let client = self.client.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(error) = &current.terminal {
@@ -318,13 +330,15 @@ impl Source {
             return Err(error.clone());
         }
         if expected.is_some_and(|aircraft| current.snapshot.aircraft.as_deref() != Some(aircraft)) {
-            return Err("DCS aircraft changed from the captured game context; command was not submitted.".into());
+            return Err(
+                "DCS aircraft changed from the captured game context; command was not submitted."
+                    .into(),
+            );
         }
         if !client.reader.is_continuous()
-            || !client
-                .last
-                .as_ref()
-                .is_some_and(|last| last.epoch == current.snapshot.epoch && last.fresh_at(Instant::now()))
+            || !client.last.as_ref().is_some_and(|last| {
+                last.epoch == current.snapshot.epoch && last.fresh_at(Instant::now())
+            })
             || !current.snapshot.fresh_at(Instant::now())
         {
             return Err("DCS decode command requires a fresh, continuous baseline.".into());
