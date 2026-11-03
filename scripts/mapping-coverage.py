@@ -38,7 +38,7 @@ def main():
     llvm = sysroot / 'lib/rustlib' / host / 'bin'
     profile = output / 'coverage.profdata'
     run([llvm / f'llvm-profdata{suffix}', 'merge', '-sparse', *profiles.glob('*.profraw'), '-o', profile], root)
-    sources = [root / f'crates/mapping/src/{module}.rs' for module in ['script', 'script_engine', 'rules', 'profile', 'engine', 'runtime', 'store', 'trace', 'documents', 'signal', 'program', 'program_validation', 'typed_engine', 'typed_engine/deadlines', 'desktop']]
+    sources = [root / f'crates/mapping/src/{module}.rs' for module in ['script', 'script_engine', 'rules', 'rules/seed', 'profile', 'engine', 'runtime', 'store', 'trace', 'documents', 'signal', 'program', 'program_validation', 'typed_engine', 'typed_engine/deadlines', 'typed_engine/evaluate', 'desktop']]
     summary = {}
     for source in sources:
         annotated = run([llvm / f'llvm-cov{suffix}', 'show', binaries[0], f'-instr-profile={profile}',

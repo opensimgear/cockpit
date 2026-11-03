@@ -6,6 +6,8 @@ Providers are independent causal streams. Their drain order cannot establish tha
 
 Loss cancels dependent script tickets and timers, removes pending sink effects and suppresses same-source input occurrences captured before the loss. Only later complete baselines restore a lost source; their event levels never count as occurrences. Later genuine changes may produce actions. Port-specific unknown, stale and unavailable samples revoke dependent work while preserving independent ports and branches.
 
+Source loss and recovery reevaluate only the affected source's descendants, alongside any genuinely due work. Another source's baseline cannot enqueue callbacks on an unchanged script branch. Actual baselines explicitly seed synchronous built-in descendants: held buttons cannot start edge-triggered actions, while a neutral baseline arms the next genuine press. Ordinary updates and script transactions that suppress event outputs do not perform this reset.
+
 Virtual reports contain a whole controller. Revocation clamps only affected control slots to the recomputed safe value, preserving queued press/release transitions on independent controls. Independent actions and timers continue after all revocations have been installed.
 
 The single-frame `Phase::accept` API remains available for an already ordered causal stream. Callers draining independent providers must use `accept_batch`; sorting loss frames first does not suffice because the first admitted loss could otherwise advance timers before later losses are revoked.

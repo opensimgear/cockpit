@@ -377,3 +377,7 @@ impl State {
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod tests;
+mod seed;
+#[cfg(test)]
+#[path = "rules/seed_tests.rs"]
+mod seed_tests;
