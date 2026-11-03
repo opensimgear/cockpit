@@ -4,6 +4,7 @@
       "name": "profiles-fe",
       "testPatterns": [
         "src/lib/profile-*.test.mjs",
+        "src/lib/profile-samples/*.test.mjs",
         "src/lib/profiles.test.mjs",
         "src/lib/game-profile-*.test.mjs"
       ],
