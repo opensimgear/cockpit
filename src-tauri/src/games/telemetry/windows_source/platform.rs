@@ -193,6 +193,7 @@ pub(crate) struct WindowsSource {
     expected_image: String,
     process: Option<Process>,
     pages: Option<Pages>,
+    capture_owner: CaptureOwner,
     last_packet: Option<u32>,
     producer_checked_at: Option<std::time::Instant>,
 }
@@ -216,6 +217,7 @@ impl WindowsSource {
             expected_image: expected_image.into(),
             process: Some(process),
             pages: None,
+            capture_owner: CaptureOwner::new(),
             last_packet: None,
             producer_checked_at: Some(std::time::Instant::now()),
         })
@@ -234,6 +236,7 @@ impl WindowsSource {
             return Err("Selected ACR process exited; telemetry was detached.".into());
         }
         if self.pages.is_none() {
+            self.capture_owner.begin_generation()?;
             self.pages = Some(Pages::open(self.game)?);
         }
         let identity = SourceIdentity {
@@ -241,8 +244,12 @@ impl WindowsSource {
             epoch: process.epoch,
         };
         let pages = self.pages.as_ref().unwrap();
-        let sample =
-            consistent_copy_for_game(identity, self.game, &mut |page| Ok(pages.copy(page)))?;
+        let sample = consistent_copy_for_game(
+            &mut self.capture_owner,
+            identity,
+            self.game,
+            &mut |page| Ok(pages.copy(page)),
+        )?;
         if !process.running() {
             return Err("Selected ACR process exited during telemetry capture.".into());
         }

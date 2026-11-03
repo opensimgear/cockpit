@@ -4,6 +4,12 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 #[path = "assetto_schema.rs"]
 mod schema;
+#[path = "game_telemetry/capture.rs"]
+mod capture;
+#[path = "game_telemetry/session.rs"]
+mod session;
+pub(crate) use capture::{CaptureOwner, CaptureSet, Page, PageCapture};
+pub(crate) use session::Session;
 
 pub(crate) const PROVIDER: &str = "assetto-corsa-rally";
 pub(crate) const MAX_PAGE: usize = 4096;
@@ -101,6 +107,8 @@ pub(crate) struct RawSample {
     pub physics: Vec<u8>,
     pub graphics: Vec<u8>,
     pub statics: Vec<u8>,
+    /// Native evidence is present only for pages captured by the live owner.
+    pub capture: Option<CaptureSet>,
 }
 impl RawSample {
     pub fn parse_json(value: &Value) -> Result<Self, String> {
@@ -182,6 +190,7 @@ impl RawSample {
             physics: page(&value["physics"])?,
             graphics: page(&value["graphics"])?,
             statics: page(&value["staticPage"])?,
+            capture: None,
         };
         parse_for_game(&sample, game)?;
         Ok(sample)
@@ -274,6 +283,7 @@ pub(crate) struct Snapshot {
     pub source: Option<SourceIdentity>,
     pub context: Option<Context>,
     pub packet_id: Option<u32>,
+    pub capture: Option<CaptureSet>,
     pub channels: BTreeMap<String, Channel>,
     pub error: Option<String>,
 }
@@ -470,194 +480,6 @@ fn parse_prefix(sample: &RawSample, game: Game) -> Result<Reading, String> {
     })
 }
 
-pub(crate) struct Session {
-    game: Game,
-    freshness_ms: u64,
-    epoch: u64,
-    source: Option<SourceIdentity>,
-    context: Option<Context>,
-    packet_id: Option<u32>,
-    last_seen: Option<u64>,
-    qualified: bool,
-    live: bool,
-    ever_fresh: bool,
-    status: String,
-    channels: BTreeMap<String, Channel>,
-    error: Option<String>,
-}
-impl Session {
-    pub fn new(freshness_ms: u64) -> Result<Self, String> {
-        Self::new_for_game(freshness_ms, Game::Rally)
-    }
-    pub fn new_for_game(freshness_ms: u64, game: Game) -> Result<Self, String> {
-        if !(100..=10000).contains(&freshness_ms) {
-            return Err("Telemetry freshness must be 100..10000 milliseconds.".into());
-        }
-        Ok(Self {
-            game,
-            freshness_ms,
-            epoch: 1,
-            source: None,
-            context: None,
-            packet_id: None,
-            last_seen: None,
-            qualified: false,
-            live: false,
-            ever_fresh: false,
-            status: "waiting".into(),
-            channels: BTreeMap::new(),
-            error: None,
-        })
-    }
-    fn disarm(&mut self, status: &str) {
-        self.epoch = self.epoch.saturating_add(1);
-        self.qualified = false;
-        self.channels.clear();
-        self.status = status.into();
-    }
-    pub fn reset(&mut self) {
-        self.disarm("waiting");
-        self.source = None;
-        self.context = None;
-        self.packet_id = None;
-        self.last_seen = None;
-        self.live = false;
-        self.ever_fresh = false;
-        self.error = None;
-    }
-    pub fn tick(&mut self, now_ms: u64) -> Snapshot {
-        if self.qualified
-            && self
-                .last_seen
-                .is_some_and(|last| now_ms < last || now_ms - last > self.freshness_ms)
-        {
-            self.disarm("stale");
-        }
-        self.snapshot(now_ms)
-    }
-    pub fn feed(&mut self, sample: &RawSample, now_ms: u64) -> Snapshot {
-        self.tick(now_ms);
-        let reading = match parse_for_game(sample, self.game) {
-            Ok(reading) => reading,
-            Err(error) => return self.failed(error, now_ms),
-        };
-        let scope_changed = self.source.as_ref() != Some(&sample.source)
-            || self.context.as_ref() != Some(&reading.context);
-        if scope_changed {
-            self.disarm(if reading.telemetry_active() {
-                "waiting"
-            } else {
-                "inactive"
-            });
-            self.source = Some(sample.source.clone());
-            self.live = reading.telemetry_active();
-            self.context = Some(reading.context);
-            self.packet_id = Some(reading.packet_id);
-            self.last_seen = None;
-            self.ever_fresh = false;
-            self.error = None;
-            return self.snapshot(now_ms);
-        }
-        if !reading.telemetry_active() {
-            if self.live || self.qualified || self.status != "inactive" {
-                self.disarm("inactive");
-            }
-            self.live = false;
-            self.packet_id = Some(reading.packet_id);
-            self.error = None;
-            return self.snapshot(now_ms);
-        }
-        if !self.live {
-            self.disarm("waiting");
-            self.live = true;
-            self.packet_id = Some(reading.packet_id);
-            self.last_seen = None;
-            self.error = None;
-            return self.snapshot(now_ms);
-        }
-        let advance = reading.packet_id.wrapping_sub(self.packet_id.unwrap());
-        if advance == 0 {
-            return self.snapshot(now_ms);
-        }
-        if advance >= 0x80000000 {
-            self.disarm("waiting");
-            self.packet_id = Some(reading.packet_id);
-            self.last_seen = None;
-            self.error = None;
-            return self.snapshot(now_ms);
-        }
-        self.packet_id = Some(reading.packet_id);
-        self.last_seen = Some(now_ms);
-        self.qualified = true;
-        self.ever_fresh = true;
-        self.channels = reading.channels;
-        self.status = "active".into();
-        self.error = None;
-        self.snapshot(now_ms)
-    }
-    fn failed(&mut self, error: String, now_ms: u64) -> Snapshot {
-        if self.status != "error" {
-            self.disarm("error");
-        }
-        self.error = Some(error);
-        self.snapshot(now_ms)
-    }
-    pub fn poll(&mut self, source: &mut dyn Source, now_ms: u64) -> Snapshot {
-        match source.poll() {
-            Ok(Some(sample)) => self.feed(&sample, now_ms),
-            Ok(None) => self.tick(now_ms),
-            Err(error) => {
-                source.close();
-                self.failed(error, now_ms)
-            }
-        }
-    }
-    pub fn snapshot(&self, now_ms: u64) -> Snapshot {
-        let fresh = self.qualified
-            && self.live
-            && self
-                .last_seen
-                .is_some_and(|last| now_ms >= last && now_ms - last <= self.freshness_ms);
-        let channels = CHANNELS.iter().copied().chain(schema::ids(self.game))
-            .map(|id| {
-                let channel = if fresh {
-                    self.channels
-                        .get(id)
-                        .cloned()
-                        .unwrap_or_else(|| Channel::unknown("No current channel value."))
-                } else {
-                    Channel {
-                        value: None,
-                        status: if self.ever_fresh {
-                            ChannelStatus::Stale
-                        } else {
-                            ChannelStatus::Unknown
-                        },
-                        error: None,
-                    }
-                };
-                (id.to_string(), channel)
-            })
-            .collect();
-        Snapshot {
-            game: self.game,
-            epoch: self.epoch,
-            fresh,
-            age_ms: self.last_seen.map(|last| now_ms.saturating_sub(last)),
-            status: if !fresh && self.qualified {
-                "stale".into()
-            } else {
-                self.status.clone()
-            },
-            source: self.source.clone(),
-            context: self.context.clone(),
-            packet_id: self.packet_id,
-            channels,
-            error: self.error.clone(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -667,6 +489,7 @@ mod tests {
             physics: vec![0; PHYSICS_EXTENDED_SIZE],
             graphics: vec![0; EVO_GRAPHICS_SIZE],
             statics: vec![0; EVO_STATIC_SIZE],
+            capture: None,
         };
         advance(&mut sample, packet);
         sample.physics[16..20].copy_from_slice(&3i32.to_le_bytes());
@@ -766,6 +589,7 @@ mod tests {
             physics: include_bytes!("../../tests/fixtures/acr/live.physics.bin").to_vec(),
             graphics: include_bytes!("../../tests/fixtures/acr/live.graphics.bin").to_vec(),
             statics: include_bytes!("../../tests/fixtures/acr/live.static.bin").to_vec(),
+            capture: None,
         }
     }
     fn advance(sample: &mut RawSample, packet: u32) {
@@ -798,6 +622,7 @@ mod tests {
         s.graphics[4..8].fill(0);
         assert!(!parse(&s).unwrap().telemetry_active());
     }
+
     #[test]
     fn authored_prefixes_decode_real_fields_and_typed_catalogue() {
         let reading = parse(&sample()).unwrap();

@@ -2,19 +2,14 @@
 //! Shared names are not a game identity; the caller explicitly selects a PID.
 #[cfg(test)]
 use crate::game_telemetry::{
-    parse, parse_for_game, EVO_CAR_MODEL_OFFSET, EVO_GRAPHICS_SIZE, PHYSICS_CURRENT_MAX_RPM_OFFSET,
-    PHYSICS_EXTENDED_SIZE, STATIC_SIZE,
+    parse, parse_for_game, EVO_CAR_MODEL_OFFSET, EVO_GRAPHICS_SIZE, EVO_TRACK_OFFSET,
+    PHYSICS_CURRENT_MAX_RPM_OFFSET, PHYSICS_EXTENDED_SIZE, STATIC_SIZE,
 };
 use crate::game_telemetry::{
-    validate_for_game, Game, RawSample, Source, SourceIdentity, PHYSICS_SIZE,
+    validate_for_game, CaptureOwner, CaptureSet, Game, Page, RawSample, Source, SourceIdentity,
+    PHYSICS_SIZE,
 };
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Page {
-    Physics,
-    Graphics,
-    Statics,
-}
 fn counter_reset(previous: Option<u32>, current: u32) -> bool {
     previous.is_some_and(|previous| current.wrapping_sub(previous) >= 0x80000000)
 }
@@ -57,22 +52,39 @@ fn selected_game_image_matches(image: &str, expected: &str, game: Game) -> Resul
 /// No public ACR seqlock/transaction guarantee exists. Two equal bounded copies
 /// are a best-effort stability check, not a claim of multi-page atomicity.
 fn consistent_copy(
+    owner: &mut CaptureOwner,
     source: SourceIdentity,
     read: &mut dyn FnMut(Page) -> Result<Vec<u8>, String>,
 ) -> Result<RawSample, String> {
-    consistent_copy_for_game(source, Game::Rally, read)
+    consistent_copy_for_game(owner, source, Game::Rally, read)
 }
 fn consistent_copy_for_game(
+    owner: &mut CaptureOwner,
     source: SourceIdentity,
     game: Game,
     read: &mut dyn FnMut(Page) -> Result<Vec<u8>, String>,
 ) -> Result<RawSample, String> {
     let mut copy = || -> Result<RawSample, String> {
+        let mut capture_page = |page| {
+            let captured_at = std::time::Instant::now();
+            let bytes = read(page)?;
+            let capture = owner.capture(captured_at)?;
+            Ok::<_, String>((bytes, capture))
+        };
+        let (physics, physics_capture) = capture_page(Page::Physics)?;
+        let (graphics, graphics_capture) = capture_page(Page::Graphics)?;
+        let (statics, statics_capture) = capture_page(Page::Statics)?;
         Ok(RawSample {
             source: source.clone(),
-            physics: read(Page::Physics)?,
-            graphics: read(Page::Graphics)?,
-            statics: read(Page::Statics)?,
+            physics,
+            graphics,
+            statics,
+            capture: Some(CaptureSet::new(
+                owner,
+                physics_capture,
+                graphics_capture,
+                statics_capture,
+            )?),
         })
     };
     for _ in 0..3 {

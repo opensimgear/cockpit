@@ -99,12 +99,15 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
         let process = Process::open(pid).unwrap();
         assert!(process.running());
         let epoch = process.epoch;
+        let mut capture_owner = CaptureOwner::new();
+        capture_owner.begin_generation().unwrap();
         let mut source = WindowsSource {
             game,
             pid,
             expected_image: "acr.exe".into(),
             process: Some(process),
             pages: Some(pages),
+            capture_owner,
             last_packet: None,
             producer_checked_at: Some(std::time::Instant::now()),
         };
@@ -117,12 +120,23 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
         assert_eq!(first.source.epoch, epoch);
         assert_eq!(first.source.id, game.source_id(pid));
         assert_eq!(&first.physics[..4], 10u32.to_le_bytes());
+        let first_capture = first.capture.as_ref().unwrap();
+        assert_eq!(first_capture.generation, 1);
+        assert_eq!(
+            [
+                first_capture.physics.sequence,
+                first_capture.graphics.sequence,
+                first_capture.statics.sequence,
+            ],
+            [4, 5, 6]
+        );
         source.producer_checked_at = None;
         physics.packet(11);
-        assert_eq!(
-            &source.poll().unwrap().unwrap().physics[..4],
-            11u32.to_le_bytes()
-        );
+        let second = source.poll().unwrap().unwrap();
+        assert_eq!(&second.physics[..4], 11u32.to_le_bytes());
+        let second_capture = second.capture.as_ref().unwrap();
+        assert_eq!(second_capture.generation, 1);
+        assert!(second_capture.physics.sequence > first_capture.physics.sequence);
         physics.packet(1);
         assert!(source.poll().unwrap().is_some());
         assert!(source.pages.is_none());

@@ -99,9 +99,10 @@ positions separately from the processed raw cursor and qualification generation.
 - BIOS catalogue strings/masks must collect their exact captured byte
   dependencies from the native sparse memory; accepted equal writes already
   retain new marks and reset/gap fences clear validity and corresponding marks.
-- All four Assetto dialects need page-specific coherent host acquisition evidence
-  before decoding/queuing. This does not resolve their separate upstream
-  notification gate or prove simulator write time/multi-page atomicity.
+- All four Assetto dialects now retain page-specific host acquisition evidence
+  before decoding/queuing; see the [page-capture verification](../verification/2026-11-03-assetto-page-captures.md).
+  Exact field/derived contributor selection remains open. This does not resolve
+  their upstream notification gate or prove simulator write time/multi-page atomicity.
 - `ExportSnapshot`, canonical conversions and `GameSources` need captured values
   and independent family state. Current consumer timestamps are not native proof.
 - Reducer state, script/timer tickets, desktop observations and adapters need

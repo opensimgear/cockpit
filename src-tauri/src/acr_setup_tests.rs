@@ -40,6 +40,7 @@ fn sample(packet: u32, status: i32) -> RawSample {
         physics: include_bytes!("../../tests/fixtures/acr/live.physics.bin").to_vec(),
         graphics: include_bytes!("../../tests/fixtures/acr/live.graphics.bin").to_vec(),
         statics: include_bytes!("../../tests/fixtures/acr/live.static.bin").to_vec(),
+        capture: None,
     };
     s.physics[0..4].copy_from_slice(&packet.to_le_bytes());
     s.graphics[4..8].copy_from_slice(&status.to_le_bytes());

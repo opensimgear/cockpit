@@ -1211,7 +1211,6 @@ pub(crate) struct ExportSnapshot {
 }
 pub(crate) struct ExportSession {
     shared: Option<crate::dcs_bios::decoded::Snapshot>,
-    capture_cursor: Option<(String, u64)>,
     catalogue: Catalogue,
     outputs: Vec<CompiledOutput>,
     extra_sources: Vec<(String, OutputSource)>,
@@ -1252,7 +1251,6 @@ impl ExportSession {
         }
         Ok(Self {
             shared: None,
-            capture_cursor: None,
             parser: Parser::new(catalogue.counter.address),
             catalogue,
             outputs: vec![],
@@ -1270,7 +1268,6 @@ impl ExportSession {
     pub fn new(profile: &CompiledProfile) -> Self {
         Self {
             shared: None,
-            capture_cursor: None,
             catalogue: profile.catalogue.clone(),
             outputs: profile.outputs.clone(),
             extra_sources: vec![],
@@ -1315,7 +1312,6 @@ impl ExportSession {
     }
     pub fn reset_stream(&mut self, _now_ms: u64) {
         self.shared = None;
-        self.capture_cursor = None;
         self.aircraft = None;
         self.invalidate();
         self.parser = Parser::new(self.catalogue.counter.address);
@@ -1419,8 +1415,6 @@ impl ExportSession {
     }
 }
 
-#[path = "dcs_profile/capture.rs"]
-mod capture;
 #[path = "dcs_profile/shared.rs"]
 mod shared;
 
@@ -1428,7 +1422,6 @@ mod shared;
 mod tests {
     use super::*;
     use crate::dcs_bios::Block;
-    include!("dcs_profile/capture_tests.rs");
     include!("dcs_profile/shared_tests.rs");
 
     // Authored fixtures use upstream JSON shapes/names from DCS-Skunkworks

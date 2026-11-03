@@ -168,6 +168,7 @@ fn rally_sample(packet: u32, car: &str) -> game_telemetry::RawSample {
         physics: vec![0; game_telemetry::PHYSICS_SIZE],
         graphics: vec![0; game_telemetry::GRAPHICS_SIZE],
         statics: vec![0; game_telemetry::STATIC_SIZE],
+        capture: None,
     };
     sample.physics[0..4].copy_from_slice(&packet.to_le_bytes());
     sample.graphics[4..8].copy_from_slice(&2i32.to_le_bytes());

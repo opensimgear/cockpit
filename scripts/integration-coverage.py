@@ -60,7 +60,9 @@ def main():
     module_names.extend(['persistence/ui/mod.rs', 'persistence/ui/validation.rs', 'persistence/ui/window_writer.rs', 'persistence/ui/commands.rs', 'window_persistence.rs'])
     module_names.extend(['activity/mod.rs', 'activity/capture.rs', 'activity/audit.rs', 'activity/changes.rs', 'activity/context.rs', 'activity/messages.rs', 'activity/diagnostics.rs', 'activity/gateway.rs', 'activity/writer.rs', 'activity/session.rs', 'activity/inventory.rs', 'activity/games.rs', 'activity/integration.rs', 'activity/effects.rs', 'activity/observations.rs', 'activity/reconcile.rs', 'activity/scopes.rs'])
     module_names.extend(['dcs_physics.rs', 'dcs_physics/parser.rs', 'dcs_physics/session.rs', 'dcs_physics/source.rs', 'dcs_physics/retained.rs'])
-    module_names.extend(['dcs_bios/transport.rs', 'dcs_profile/capture.rs'])
+    module_names.extend(['dcs_bios/transport.rs'])
+    module_names.append('game_telemetry/capture.rs')
+    module_names.append('game_telemetry/session.rs')
     module_names.extend(['dcs_bios/transport_client.rs', 'dcs_bios/decoded/mod.rs',
                          'dcs_bios/parser.rs', 'dcs_bios/decoded/captured_memory.rs', 'dcs_bios/decoded/state.rs', 'dcs_bios/decoded/source.rs', 'dcs_profile/shared.rs'])
     module_names.append('xplane/subscriptions.rs')

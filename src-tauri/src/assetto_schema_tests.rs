@@ -7,6 +7,7 @@ fn sample(game: Game) -> RawSample {
     let mut sample = RawSample {
         source: SourceIdentity { id: "authored-schema-fixture".into(), epoch: 1 },
         physics: vec![0; sizes.0], graphics: vec![0; sizes.1], statics: vec![0; sizes.2],
+        capture: None,
     };
     sample.graphics[4..8].copy_from_slice(&2i32.to_le_bytes());
     sample.physics[16..20].copy_from_slice(&3i32.to_le_bytes());

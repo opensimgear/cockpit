@@ -1227,6 +1227,7 @@ fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_
             physics: include_bytes!("../../tests/fixtures/acr/live.physics.bin").to_vec(),
             graphics: include_bytes!("../../tests/fixtures/acr/live.graphics.bin").to_vec(),
             statics: include_bytes!("../../tests/fixtures/acr/live.static.bin").to_vec(),
+            capture: None,
         };
         if game == Game::Evo {
             sample.physics.resize(592, 0);
@@ -1302,6 +1303,7 @@ fn rally_fixture_uses_exact_native_channels_and_preserves_unknown_optional_value
         physics: include_bytes!("../../tests/fixtures/acr/live.physics.bin").to_vec(),
         graphics: include_bytes!("../../tests/fixtures/acr/live.graphics.bin").to_vec(),
         statics: include_bytes!("../../tests/fixtures/acr/live.static.bin").to_vec(),
+        capture: None,
     };
     // Sparse developer-observed status remains acceptable; optional static
     // maximum metadata is unknown rather than inferred from current RPM.
