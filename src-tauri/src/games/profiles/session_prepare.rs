@@ -46,6 +46,7 @@ impl GameSources {
             clock,
             fatal: None,
             bios_retry_at: None,
+            notifications: source_wakes::SourceWakes::default(),
             #[cfg(test)]
             authored_fixture: false,
             game,

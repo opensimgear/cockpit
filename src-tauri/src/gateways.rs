@@ -15,7 +15,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex, OnceLock, RwLock,
+        Arc, Mutex, RwLock,
     },
 };
 
@@ -174,31 +174,7 @@ fn learning_interrupt(request:&Value)->bool{
 struct PendingProfileApply<'a>(&'a AtomicUsize);
 impl Drop for PendingProfileApply<'_>{fn drop(&mut self){self.0.fetch_sub(1,Ordering::AcqRel);}}
 
-#[derive(Default)]
-struct ProfileWake {
-    thread: OnceLock<std::thread::Thread>,
-    epoch: AtomicU64,
-}
-impl ProfileWake {
-    fn notify(&self) {
-        self.epoch.fetch_add(1, Ordering::Release);
-        if let Some(worker) = self.thread.get() { worker.unpark(); }
-    }
-    fn observed(&self) -> u64 { self.epoch.load(Ordering::Acquire) }
-    fn wait(&self, observed: u64, timeout: std::time::Duration) -> bool {
-        self.wait_scheduled(observed, Some(timeout))
-    }
-    fn wait_scheduled(&self, observed: u64, timeout: Option<std::time::Duration>) -> bool {
-        // An IPC wait inside poll may consume an unpark token. The epoch still
-        // requires another drain before the worker may return to its fallback.
-        if self.observed() != observed { return false; }
-        match timeout {
-            Some(timeout) => std::thread::park_timeout(timeout),
-            None => std::thread::park(),
-        }
-        true
-    }
-}
+type ProfileWake = osg_streams::NativeWake;
 struct WakeProfileOnDrop<'a>(&'a ProfileWake);
 impl Drop for WakeProfileOnDrop<'_> { fn drop(&mut self) { self.0.notify(); } }
 
@@ -366,7 +342,8 @@ impl GatewayManager {
         let profile_session = Arc::new(Mutex::new(crate::profile_session::Coordinator::new(
             crate::profile_session_host::NativeProfileHost::new(profile_resources.clone(), controllers.clone(), games.clone(), companion_host.clone(), profile_panels.clone(), native, profile_admission_epoch.clone())
                 .with_progress(Arc::new(move|epoch,step,message|progress_tracker.note(epoch,step,message)))
-                .with_input_wake(Arc::new(move || input_wake.notify())),
+                .with_input_wake(Arc::new(move || input_wake.notify()))
+                .with_native_wake(profile_wake.clone()),
             native.then(|| crate::config_paths::config_path().with_file_name("profile-session-v1.json")),
         )));
         let prepare_resources = profile_resources.clone();
@@ -402,7 +379,7 @@ impl GatewayManager {
                     wake.wait_scheduled(observed, crate::profile_session::scheduling::service_wait(service, deadline, std::time::Instant::now()));
                 }
             });
-            let _ = profile_wake.thread.set(worker.thread().clone());
+            let _ = profile_wake.bind_thread(worker.thread().clone());
             worker
         });
         let observations = crate::observations::Runtime::new();
@@ -1558,7 +1535,7 @@ mod tests {
             }
             done.send(worker_wake.observed()).unwrap();
         });
-        wake.thread.set(worker.thread().clone()).unwrap();
+        wake.bind_thread(worker.thread().clone()).unwrap();
         entered.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(finished.recv_timeout(Duration::from_millis(40)).is_err());
         wake.notify();
@@ -1587,7 +1564,7 @@ mod tests {
                 assert_eq!(wake_values(&mut feed), expected, "{label}");
             }
         });
-        wake.thread.set(worker.thread().clone()).unwrap();
+        wake.bind_thread(worker.thread().clone()).unwrap();
         assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "before-park");
         wake_change(&provider, &token, 1, true);
         wake_change(&provider, &token, 2, false);
@@ -1627,7 +1604,7 @@ mod tests {
             }
             step.send("closed").unwrap();
         });
-        wake.thread.set(worker.thread().clone()).unwrap();
+        wake.bind_thread(worker.thread().clone()).unwrap();
         assert_eq!(steps.recv_timeout(Duration::from_secs(5)).unwrap(), "waiting-for-input");
         // One admission contains both ordered transitions, independent of wake coalescing.
         use osg_companion_service::{InputValue, SourceChange, SourceSink};
@@ -1657,7 +1634,7 @@ mod tests {
             }
             assert_eq!(worker_wake.observed(), initial, "no admission notification was needed for expiry");
         });
-        wake.thread.set(worker.thread().clone()).unwrap();
+        wake.bind_thread(worker.thread().clone()).unwrap();
         waiting.recv_timeout(Duration::from_secs(5)).unwrap();
         clock.store(100 + osg_mapping_host::companions::LEASE_US, Ordering::Release);
         worker.join().unwrap();
@@ -1675,7 +1652,7 @@ mod tests {
             assert_eq!(coordinator.status().state, crate::profile_session::State::Running);
             assert!(coordinator.status().owner.is_some());
         });
-        manager.profile_wake.thread.set(worker.thread().clone()).unwrap();
+        manager.profile_wake.bind_thread(worker.thread().clone()).unwrap();
         waiting.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(request(&manager,"profile_apply",None,json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}))["ok"],true);
         worker.join().unwrap();

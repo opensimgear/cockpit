@@ -134,6 +134,7 @@ pub(crate) struct NativeProfileHost {
     last_desktop_status: serde_json::Value,
     progress: Option<ProgressCallback>,
     input_wake: Option<crate::profile_session_scripts::Wake>,
+    native_wake: Option<Arc<osg_streams::NativeWake>>,
     cleanup_epoch: Option<u64>,
 }
 fn key(owner: &RunOwner) -> String {
@@ -193,6 +194,7 @@ impl NativeProfileHost {
             last_desktop_status: serde_json::Value::Null,
             progress: None,
             input_wake: None,
+            native_wake: None,
             cleanup_epoch: None,
         }
     }
@@ -204,6 +206,10 @@ impl NativeProfileHost {
     }
     pub(crate) fn with_input_wake(mut self, wake: crate::profile_session_scripts::Wake) -> Self {
         self.input_wake = Some(wake);
+        self
+    }
+    pub(crate) fn with_native_wake(mut self, wake: Arc<osg_streams::NativeWake>) -> Self {
+        self.native_wake = Some(wake);
         self
     }
     fn report_progress(&self, owner: &RunOwner, step: &str, message: &str) {
@@ -417,6 +423,7 @@ impl NativeProfileHost {
                     Ok(Some(mut replacement))=>{
                         if state.game.accepts_replacement_from(&replacement.previous, &replacement.proof) {
                             replacement.game.inherit_source_counters(&state.game);
+                            replacement.game.set_wake(state.game.notification_wake());
                             let game_id = &replacement.proof.proof.game_id;
                             let previous = state.game.provider_identity().filter(|(game, _)| *game == game_id.as_str())
                                 .map(|(_, reader)| reader.to_owned()).or_else(|| state.game_predecessor.as_ref()
@@ -848,9 +855,10 @@ impl Host for NativeProfileHost {
         let admission_epoch = candidate.admission_epoch.ok_or("Native profile preparation is missing its captured cancellation fence.")?;
         Self::check_epoch(&self.admission_epoch, admission_epoch)?;
         Self::emit_progress(self.progress.as_ref(), admission_epoch, "preparing-resources", "Preparing profile resources");
-        let NativePreparation {document, assignments, vehicle_selection, mut prepared, report, backend, bindings, output_handoff, scripts, game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope, unavailable_peripherals} = candidate.stage.as_ref()
+        let NativePreparation {document, assignments, vehicle_selection, mut prepared, report, backend, bindings, output_handoff, scripts, mut game, game_preparation, companions, companion_catalogues, visibility, publication, dcs_hid, desktop_scope, unavailable_peripherals} = candidate.stage.as_ref()
             .ok_or("A fresh native profile preparation is required.")?
             .take::<NativePreparation>(candidate)?;
+        game.set_wake(self.native_wake.clone());
         let panels = crate::profile_session_panels_inputs::PanelInputs::prepare(&prepared.plan, self.panels.clone())?;
         let visibility=visibility.bind(owner)?;
         let actions=crate::profile_session_actions::PanelActions::prepare(&prepared.plan, owner, self.resources.clone(), self.panels.clone())?;

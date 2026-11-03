@@ -1738,3 +1738,5 @@ fn direct_frame(admission: &Admission) -> &Frame {
 }
 include!("games/profiles/native_transport_tests.rs");
 include!("games/profiles/native_expiry_recovery_tests.rs");
+
+include!("games/profiles/source_wake_tests.rs");

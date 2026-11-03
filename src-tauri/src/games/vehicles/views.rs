@@ -1,4 +1,6 @@
 use super::*;
+use osg_streams::{NativeWake, NativeWatch};
+use std::sync::Arc;
 impl Tracker {
     pub(crate) fn current(&self, id: &str) -> Option<Value> {
         self.entries
@@ -50,6 +52,42 @@ impl Tracker {
             return None;
         };
         Some(physics.snapshot())
+    }
+    pub(crate) fn dcs_physics_watch(
+        &mut self,
+        process: &ProcessIdentity,
+        wake: Arc<NativeWake>,
+    ) -> Result<
+        Option<NativeWatch<crate::dcs_physics::Snapshot, crate::dcs_physics::Snapshot>>,
+        String,
+    > {
+        let Some(entry) = self.entries.values_mut().find(|entry| {
+            entry.integration == "dcs"
+                && entry.enabled
+                && entry.process.as_ref() == Some(process)
+                && entry.observed.elapsed() <= Duration::from_secs(2)
+        }) else {
+            return Ok(None);
+        };
+        let view = if entry.polling {
+            entry.detached_physics.as_ref()
+        } else {
+            match entry.reader.as_ref() {
+                Some(Reader::Dcs {
+                    physics: Some(physics),
+                    ..
+                }) => {
+                    return physics
+                        .view()
+                        .watch(wake)
+                        .map(Some)
+                        .map_err(|error| format!("{error:?}"));
+                }
+                _ => None,
+            }
+        };
+        view.map(|view| view.watch(wake).map_err(|error| format!("{error:?}")))
+            .transpose()
     }
     pub(crate) fn inspect(&mut self, id: &str, channels: Vec<String>) -> Result<(), String> {
         if let Some(entry) = self.entries.get_mut(id) {

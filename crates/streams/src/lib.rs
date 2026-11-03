@@ -13,6 +13,7 @@ mod lifecycle;
 mod native;
 mod registry;
 mod types;
+mod wake;
 mod wire;
 
 pub use registry::{
@@ -22,10 +23,13 @@ pub use registry::{
 pub use wire::{WireFrame, MAX_CHANGE_BYTES, MAX_SNAPSHOT_BYTES};
 
 pub use journal::{Cancellation, Stream, Subscription};
-pub use native::{NativeCancellation, NativeLimits, NativeStream, NativeSubscription, RetainedBytes};
+pub use native::{
+    NativeCancellation, NativeLimits, NativeStream, NativeSubscription, NativeWatch, RetainedBytes,
+};
 pub use types::{
     Delivery, Event, Limits, Loss, LossReason, PublishError, Snapshot, StreamError, DEFAULT_LIMITS,
 };
+pub use wake::NativeWake;
 
 #[cfg(test)]
 mod tests;

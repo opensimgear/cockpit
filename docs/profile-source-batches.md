@@ -49,3 +49,26 @@ Bounds include 65,536 capture entries, 64 leases, 1,048,576 contributor referenc
 16 MiB per envelope and 32 MiB retained native evidence (including owned map keys,
 samples and shared proof allocations). Native validity intervals are capped at
 11 seconds. The Direct-only path avoids cloning the native ledger.
+
+## Producer commit notifications
+
+Canonical BIOS, shared ownship and X-Plane journals notify the profile worker
+directly on committed reports, generation replacement, expiry and closure.
+`NativeWatch` is a passive notification lease, separate from a data subscription:
+it owns no payload queue, never grants freshness or commands, and cannot retain
+the producer socket. Watches and data readers share the journal's bounded reader
+capacity. Registration atomically requests an initial drain, covering data that
+arrived before the watch was installed. Stop and reader replacement drop leases.
+
+The shared `NativeWake` signal advances an atomic epoch and unparks the bound
+worker. It runs no consumer callback, graph, codec or IPC work. The worker observes
+the epoch before draining and checks it before parking, so a notification remains
+visible if another wait consumed the unpark token. Binding preserves notifications
+that predate the worker handle; epoch exhaustion disables parking instead of
+silently wrapping. Coalescing wake signals does not coalesce ordered input data.
+
+Remaining context, inventory and adapter service timers are explicit fallback
+work; this notification path does not claim the entire profile is tickless.
+Notification admission failure is diagnosed while existing service remains active.
+It neither extends nor withdraws otherwise valid source evidence. Every actual
+read and command still performs the existing owner/continuity/validity checks.

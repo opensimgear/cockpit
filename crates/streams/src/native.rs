@@ -1,9 +1,13 @@
 //! Typed, bounded in-process delivery. Payloads never enter the JSON codec.
 mod receive;
+mod wake;
+pub use wake::NativeWatch;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wake_tests;
 
-use crate::{Delivery, Event, Loss, LossReason, PublishError, Snapshot, StreamError};
+use crate::{Delivery, Event, Loss, LossReason, NativeWake, PublishError, Snapshot, StreamError};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Condvar, Mutex, MutexGuard},
@@ -54,6 +58,7 @@ struct State<S, E> {
     snapshot: Arc<Snapshot<S>>,
     sequence: u64,
     subscribers: BTreeMap<u64, Subscriber<S, E>>,
+    watchers: BTreeMap<u64, Arc<NativeWake>>,
     next_subscriber: u64,
     closed: bool,
 }
@@ -106,6 +111,7 @@ impl<S: Clone + RetainedBytes, E: Clone + RetainedBytes> NativeStream<S, E> {
                     }),
                     sequence: 0,
                     subscribers: BTreeMap::new(),
+                    watchers: BTreeMap::new(),
                     next_subscriber: 0,
                     closed: false,
                 }),
@@ -120,7 +126,7 @@ impl<S: Clone + RetainedBytes, E: Clone + RetainedBytes> NativeStream<S, E> {
         if state.closed {
             return Err(StreamError::Closed);
         }
-        if state.subscribers.len() >= self.shared.limits.max_subscribers {
+        if state.subscribers.len() + state.watchers.len() >= self.shared.limits.max_subscribers {
             return Err(StreamError::SubscriberLimit);
         }
         let id = state
@@ -216,8 +222,12 @@ impl<S: Clone + RetainedBytes, E: Clone + RetainedBytes> NativeStream<S, E> {
                 subscriber.events.push_back((event.clone(), bytes));
             }
         }
+        let watchers = state.watchers.values().cloned().collect::<Vec<_>>();
         drop(state);
         self.shared.wake.notify_all();
+        for wake in watchers {
+            wake.notify();
+        }
         Ok(revision)
     }
 
@@ -270,8 +280,12 @@ impl<S: Clone + RetainedBytes, E: Clone + RetainedBytes> NativeStream<S, E> {
             });
             subscriber.awaiting_baseline = true;
         }
+        let watchers = state.watchers.values().cloned().collect::<Vec<_>>();
         drop(state);
         self.shared.wake.notify_all();
+        for wake in watchers {
+            wake.notify();
+        }
         Ok(revision)
     }
 
@@ -298,8 +312,12 @@ impl<S: Clone + RetainedBytes, E: Clone + RetainedBytes> NativeStream<S, E> {
                 reason: LossReason::Closed,
             });
         }
+        let watchers = state.watchers.values().cloned().collect::<Vec<_>>();
         drop(state);
         self.shared.wake.notify_all();
+        for wake in watchers {
+            wake.notify();
+        }
     }
 }
 

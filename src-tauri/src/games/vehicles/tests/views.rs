@@ -99,6 +99,47 @@ fn physics_view_requires_a_fresh_matching_dcs_reader() {
 }
 
 #[test]
+fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_its_socket() {
+    let scratch = scratch();
+    let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
+    let process = process();
+    let game = json!({"id":"dcs","integrationCompatible":true,"integrationKey":"dcs","provider":"dcs-bios"});
+    tracker.observe(&game, &connection(5010), Some(process.clone()), "setup", true, 1);
+    let physics = crate::dcs_physics::Source::bind_loopback_ephemeral().unwrap();
+    let address = physics.local_addr();
+    let physics_view = physics.view();
+    let mut network = dcs_bios::Network::parse(&connection(5010)).unwrap();
+    network.listen_port = 0;
+    let (decoder, guard, catalogue) = dcs_profile::passive_telemetry_sources(&fixtures(), "A-10C", 1500).unwrap();
+    let bios = dcs_bios::decoded::Source::open(&network, decoder.decode_spec().unwrap()).unwrap();
+    tracker.entries.get_mut("dcs").unwrap().reader = Some(Reader::Dcs {
+        source: bios, decoder, guard, connection: connection(5010), module: "A-10C".into(),
+        catalogue, physics: Some(physics), physics_error: None, physics_retry: Instant::now(),
+    });
+    let wake = std::sync::Arc::new(osg_streams::NativeWake::default());
+    assert!(tracker.dcs_physics_watch(&ProcessIdentity { epoch: 11, ..process.clone() }, wake.clone()).unwrap().is_none());
+    assert_eq!(wake.observed(), 0);
+    let attached = tracker.dcs_physics_watch(&process, wake.clone()).unwrap().unwrap();
+    assert_eq!(wake.observed(), 1);
+    let entry = tracker.entries.get_mut("dcs").unwrap();
+    let owner = entry.reader.take();
+    entry.polling = true;
+    entry.detached_physics = Some(physics_view);
+    let detached = tracker.dcs_physics_watch(&process, wake.clone()).unwrap().unwrap();
+    assert_eq!(wake.observed(), 2);
+    let entry = tracker.entries.get_mut("dcs").unwrap();
+    entry.enabled = false;
+    assert!(tracker.dcs_physics_watch(&process, wake.clone()).unwrap().is_none());
+    let entry = tracker.entries.get_mut("dcs").unwrap();
+    entry.enabled = true;
+    entry.observed -= Duration::from_secs(3);
+    assert!(tracker.dcs_physics_watch(&process, wake).unwrap().is_none());
+    drop(owner);
+    assert!(attached.is_closed() && detached.is_closed());
+    UdpSocket::bind(address).unwrap();
+}
+
+#[test]
 fn decoration_reports_binding_errors_and_merges_catalogue_with_retained_vehicles() {
     let scratch = scratch();
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));

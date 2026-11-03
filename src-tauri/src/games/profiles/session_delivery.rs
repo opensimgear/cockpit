@@ -206,6 +206,7 @@ impl GameSources {
         }
     }
     pub(crate) fn stop(&mut self) {
+        self.notifications.clear();
         self.validation.cancel();
         self.catalogue_validation.cancel();
         if let Some(Reader::Acr {

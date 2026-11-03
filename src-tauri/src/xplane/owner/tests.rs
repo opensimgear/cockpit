@@ -232,3 +232,6 @@ fn retained_faulted_readers_release_journal_capacity_for_replacements() {
     assert!(observed(&mut healthy, |s| s.capture_sequence == 41).fresh);
     assert_eq!(slow.len(), 63); // All faulted handles remain cached throughout.
 }
+
+#[path = "watch_tests.rs"]
+mod watch_tests;

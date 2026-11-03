@@ -413,7 +413,7 @@ impl NativeProfileHost {
         if self.authority.is_some() {
             return Err("Install game context only while delivery is disarmed.".into());
         }
-        let payload = candidate
+        let mut payload = candidate
             .stage
             .as_ref()
             .ok_or("The launched context requires a one-use native capture.")?
@@ -483,6 +483,7 @@ impl NativeProfileHost {
         state.desktop_scope=launched_desktop_scope(state.desktop_scope.as_ref(),payload.prepared.plan.requirements.desktop_input,&payload.started.process);
         state.report = payload.report;
         state.game_publication.cancel();
+        payload.game.set_wake(state.game.notification_wake());
         state.game = payload.game;
         state.game_preparation = payload.proof;
         state.baselines.clear();

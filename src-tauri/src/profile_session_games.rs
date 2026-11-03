@@ -134,6 +134,7 @@ pub(crate) struct GameSources {
     clock: osg_controller_input::stream::Clock,
     fatal: Option<String>,
     bios_retry_at: Option<Instant>,
+    notifications: source_wakes::SourceWakes,
     #[cfg(test)]
     authored_fixture: bool,
     game: Option<PreparedGame>,
@@ -229,6 +230,8 @@ mod live_validation;
 mod native_admission;
 #[path = "games/profiles/native_tables.rs"]
 mod native_tables;
+#[path = "games/profiles/source_wakes.rs"]
+mod source_wakes;
 include!("games/profiles/session_prepare.rs");
 include!("games/profiles/session_read.rs");
 include!("games/profiles/session_delivery.rs");

@@ -1,5 +1,5 @@
 use super::*;
-use osg_streams::{Delivery, LossReason};
+use osg_streams::{Delivery, LossReason, NativeWake, NativeWatch};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) struct Source {
@@ -187,6 +187,27 @@ impl Source {
                 }
             }
         }
+    }
+    pub(crate) fn watch(
+        &self,
+        wake: Arc<NativeWake>,
+    ) -> Result<NativeWatch<NativeSnapshot, NativeSnapshot>, String> {
+        if !self.lease.active.load(Ordering::Acquire) {
+            return Err("X-Plane reader lease retired.".into());
+        }
+        if let Some(error) = self.owner.shared.error().or_else(|| self.error.clone()) {
+            return Err(error);
+        }
+        let watch = self.owner
+            .shared
+            .journal
+            .watch(wake)
+            .map_err(|error| format!("{error:?}"))?;
+        if !self.lease.active.load(Ordering::Acquire) {
+            drop(watch);
+            return Err("X-Plane reader lease retired.".into());
+        }
+        Ok(watch)
     }
     fn retire(&mut self, error: String) -> String {
         self.reader.cancellation_handle().cancel();

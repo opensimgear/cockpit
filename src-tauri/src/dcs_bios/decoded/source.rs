@@ -1,7 +1,9 @@
 //! One canonical decoder owner; client reads only consume its native journal.
 use super::{Snapshot, Spec, State};
 use crate::dcs_bios::{transport::acquisition_key, Network, Transport};
-use osg_streams::{Delivery, LossReason, NativeLimits, NativeStream, NativeSubscription};
+use osg_streams::{
+    Delivery, LossReason, NativeLimits, NativeStream, NativeSubscription, NativeWake, NativeWatch,
+};
 use std::{
     collections::BTreeMap,
     net::SocketAddr,
@@ -310,6 +312,20 @@ impl Source {
             .shared
             .journal
             .subscribe()
+            .map_err(|error| format!("{error:?}"))
+    }
+    pub(crate) fn watch(
+        &self,
+        wake: Arc<NativeWake>,
+    ) -> Result<NativeWatch<Snapshot, Snapshot>, String> {
+        let current = self.owner.shared.lock();
+        if let Some(error) = &current.terminal {
+            return Err(error.clone());
+        }
+        self.owner
+            .shared
+            .journal
+            .watch(wake)
             .map_err(|error| format!("{error:?}"))
     }
     pub fn send_control(&self, command: &str, argument: &str) -> Result<(), String> {

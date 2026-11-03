@@ -48,6 +48,7 @@ impl GameSources {
             None => {}
         }
         self.lost = false;
+        let _ = self.refresh_source_wakes(games);
         Ok(())
     }
     pub(crate) fn admit(&mut self, games: &GamesRuntime) -> Result<(), String> {
@@ -104,6 +105,7 @@ impl GameSources {
                 ..Default::default()
             };
         }
+        let wake_error = self.refresh_source_wakes(games).err();
         if baseline {
             let began = Instant::now();
             if let Err(error) = self.validate(games, true) { return self.lose(clock(), error); }
@@ -125,7 +127,7 @@ impl GameSources {
         // must not become new source evidence when the consumer finally reads.
         let now_us = clock();
         let snapshot = self.read(now_us, baseline);
-        match snapshot {
+        let mut result = match snapshot {
             Ok(Some(mut snapshot)) => {
                 if let (
                     Some(game),
@@ -147,7 +149,11 @@ impl GameSources {
             }
             Ok(None) => GamePoll::default(),
             Err(error) => self.lose(now_us, error),
+        };
+        if let Some(error) = wake_error {
+            result.diagnostics.push(format!("Native source notifications are unavailable; adapter service remains active: {error}"));
         }
+        result
     }
     fn validation_ready(&mut self) -> Result<bool, String> {
         let catalogue = matches!(self.reader, Some(Reader::Dcs { .. }))

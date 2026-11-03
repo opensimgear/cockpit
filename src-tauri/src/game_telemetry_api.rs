@@ -1,6 +1,7 @@
 //! Read-only, bounded pages of passive game telemetry, independent of profiles.
 use super::*;
 use crate::game_telemetry_inspection as inspect;
+use osg_streams::{NativeWake, NativeWatch};
 
 impl GamesRuntime {
     pub(crate) fn dcs_physics_snapshot(
@@ -12,6 +13,20 @@ impl GamesRuntime {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .dcs_physics(process)
+    }
+    pub(crate) fn dcs_physics_watch(
+        &self,
+        process: &crate::game_discovery::ProcessIdentity,
+        wake: std::sync::Arc<NativeWake>,
+    ) -> Result<
+        Option<NativeWatch<crate::dcs_physics::Snapshot, crate::dcs_physics::Snapshot>>,
+        String,
+    > {
+        self.inner
+            .vehicles
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .dcs_physics_watch(process, wake)
     }
     pub(crate) fn inspect_telemetry(&self, request: &Value) -> Result<Value, String> {
         let allowed = [
