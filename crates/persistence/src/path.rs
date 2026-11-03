@@ -1,4 +1,18 @@
 use std::path::{Component, Path, PathBuf};
+mod journal;
+
+/// The caller has checked the database and its ancestors. Only the exact
+/// rollback-journal leaf receives the Windows deletion-race recheck.
+pub(crate) fn check_sidecars(database: &Path) -> Result<(), String> {
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let mut sidecar = database.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        let path = Path::new(&sidecar);
+        if suffix == "-journal" { journal::check(database, path)?; }
+        else { check_leaf(path)?; }
+    }
+    Ok(())
+}
 
 /// Reject symlinks/reparse points for the database and its parents/sidecars.
 pub fn check_path(path: &Path, create: bool) -> Result<(), String> {

@@ -8,11 +8,7 @@ impl Database {
             return Err("Unsupported SQLite runtime. Use the pinned bundled Cockpit build.".into());
         }
         check_path(&self.path, create)?;
-        for suffix in ["-journal", "-wal", "-shm"] {
-            let mut sidecar = self.path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            check_path(Path::new(&sidecar), false)?;
-        }
+        crate::path::check_sidecars(&self.path)?;
         let mut connection = Connection::open_with_flags(
             &self.path,
             OpenFlags::SQLITE_OPEN_READ_WRITE

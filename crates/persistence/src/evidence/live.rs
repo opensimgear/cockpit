@@ -50,11 +50,7 @@ impl Reader {
         {
             return Err("Recovery evidence storage was removed or replaced.".into());
         }
-        for suffix in ["-journal", "-wal", "-shm"] {
-            let mut sidecar = path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            crate::path::check_leaf(Path::new(&sidecar))?;
-        }
+        crate::path::check_sidecars(path)?;
         #[cfg(unix)]
         {
             let mut moved: std::ffi::c_int = 0;
