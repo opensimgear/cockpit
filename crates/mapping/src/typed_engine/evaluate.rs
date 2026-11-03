@@ -37,7 +37,10 @@ impl Phase {
             {
                 continue;
             }
-            let seed = node.inputs.iter().any(|input| rebased.contains(&input.from));
+            let seed = node
+                .inputs
+                .iter()
+                .any(|input| rebased.contains(&input.from));
             let inputs = self.inputs(&node);
             let event_inputs = node
                 .inputs
@@ -46,6 +49,12 @@ impl Phase {
                 .map(|input| input.port_id.clone())
                 .collect::<BTreeSet<_>>();
             let token = self.token(&node.id)?;
+            let input_proof = self.native_inputs(&node);
+            self.causal = if self.states[&node.id].rule.next().is_some() && !seed {
+                self.states[&node.id].rule_proof.clone()
+            } else {
+                input_proof.clone()
+            };
             let state = self.states.get_mut(&node.id).unwrap();
             if state
                 .validity
@@ -75,6 +84,7 @@ impl Phase {
                 self.enqueue_script(&node, inputs, !baseline && !event_inputs.is_empty())?;
                 continue;
             }
+            self.states.get_mut(&node.id).unwrap().rule_proof = self.causal.clone();
             let outputs = match self.evaluate_node(&node, &inputs, &event_inputs, baseline, seed) {
                 Ok(outputs) => outputs,
                 Err(error) => {
@@ -106,6 +116,7 @@ impl Phase {
                 }
             }
         }
+        self.causal = native::NativeProof::default();
         Ok(events)
     }
     fn evaluate_node(
@@ -122,13 +133,20 @@ impl Phase {
             .next()
             .cloned()
             .unwrap_or(SignalSample::Unknown);
-        if let Some(boundary) = self.desktop_rule_boundary.filter(|_| matches!(node.operation,
-            Operation::Builtin { .. } | Operation::Hysteresis { .. }
-                | Operation::EventEdge { .. } | Operation::SetOnChange { .. }))
-        {
+        if let Some(boundary) = self.desktop_rule_boundary.filter(|_| {
+            matches!(
+                node.operation,
+                Operation::Builtin { .. }
+                    | Operation::Hysteresis { .. }
+                    | Operation::EventEdge { .. }
+                    | Operation::SetOnChange { .. }
+            )
+        }) {
             let observations = self.source_observations(&self.token(&node.id)?);
             if observations.is_empty()
-                || observations.iter().any(|observation| observation.at_us <= boundary)
+                || observations
+                    .iter()
+                    .any(|observation| observation.at_us <= boundary)
             {
                 let state = self.states.get_mut(&node.id).unwrap();
                 state.rule = crate::rules::State::default();
@@ -221,12 +239,23 @@ impl Phase {
             Operation::Not {} => {
                 SignalSample::scalar(PortValue::Boolean(!boolean(&first).unwrap()))
             }
-            Operation::HatDirection { direction, diagonals } => {
-                if let Some(value)=number(&first) {
+            Operation::HatDirection {
+                direction,
+                diagonals,
+            } => {
+                if let Some(value) = number(&first) {
                     SignalSample::scalar(PortValue::Boolean(crate::desktop::hat_direction(
-                        (value>=0.0).then_some(value as u8),*direction,
-                        if *diagonals { crate::desktop::HatDiagonal::IncludeAdjacent }else{crate::desktop::HatDiagonal::CardinalOnly})))
-                }else{missing.clone().unwrap_or(SignalSample::Unknown)}
+                        (value >= 0.0).then_some(value as u8),
+                        *direction,
+                        if *diagonals {
+                            crate::desktop::HatDiagonal::IncludeAdjacent
+                        } else {
+                            crate::desktop::HatDiagonal::CardinalOnly
+                        },
+                    )))
+                } else {
+                    missing.clone().unwrap_or(SignalSample::Unknown)
+                }
             }
             Operation::Gate {} => {
                 if boolean(&inputs["gate"]) == Some(true) {
@@ -321,7 +350,8 @@ impl Phase {
                 } else {
                     state.rule.apply(rule, &values, kind, self.clock)
                 };
-                value.map(from_legacy)
+                value
+                    .map(from_legacy)
                     .map(SignalSample::scalar)
                     .unwrap_or(SignalSample::Unknown)
             }
@@ -404,17 +434,20 @@ impl Phase {
                         let span = max - min;
                         let center = min + span * (center_percent / 100.0);
                         let radius = span * (deadzone_percent / 200.0);
-                        rounded(if (value - center).abs() <= radius {
-                            center
-                        } else if value > center {
-                            center
-                                + (value - center - radius) * (max - center)
-                                    / (max - center - radius)
-                        } else {
-                            center
-                                - (center - value - radius) * (center - min)
-                                    / (center - min - radius)
-                        }, *rounding)
+                        rounded(
+                            if (value - center).abs() <= radius {
+                                center
+                            } else if value > center {
+                                center
+                                    + (value - center - radius) * (max - center)
+                                        / (max - center - radius)
+                            } else {
+                                center
+                                    - (center - value - radius) * (center - min)
+                                        / (center - min - radius)
+                            },
+                            *rounding,
+                        )
                     }
                     Operation::Curve { points, rounding } => {
                         let pair = points

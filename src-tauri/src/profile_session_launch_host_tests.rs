@@ -403,8 +403,9 @@ fn newly_opened_game_reader_can_wait_for_a_baseline_before_inventory_publication
     let mut f=Fixture::new();
     let (reader,_address,_catalogue)=crate::profile_session_games::test_baseline_reader();
     let resources=f.host.resources.clone();let games=f.host.games.clone();
+    let native_clock=f.host.controllers.capture_clock();
     let state=f.host.run(&f.run.owner).unwrap();state.game=reader;
-    let pending=NativeProfileHost::game_poll(&resources,&games,state,||1_000_000).unwrap();
+    let pending=NativeProfileHost::game_poll(&resources,&games,state,native_clock,||1_000_000).unwrap();
     assert!(!pending.context_lost,"Waiting for advancing telemetry must not retire the fresh reader: {:?}",pending.diagnostics);
     assert!(!pending.fresh);
     assert!(!state.game.can_command());
@@ -421,10 +422,11 @@ fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_ru
     let process=f.process.0.lock().unwrap().clone().unwrap();
     *f.process.0.lock().unwrap()=None;
     let resources=f.host.resources.clone();let games=f.host.games.clone();
+    let native_clock=f.host.controllers.capture_clock();
     let state=f.host.run(&f.run.owner).unwrap();
     let deadline=Instant::now()+Duration::from_secs(3);
     let closed=loop {
-        let sample=NativeProfileHost::game_poll(&resources,&games,state,||1_000_000).unwrap();
+        let sample=NativeProfileHost::game_poll(&resources,&games,state,native_clock,||1_000_000).unwrap();
         assert!(state.reducer.is_some(),"Pending validation must preserve the hardware reducer");
         assert_eq!(state.owner,f.run.owner);
         if sample.context_lost { break sample; }
@@ -439,7 +441,7 @@ fn closing_and_restarting_game_replaces_context_without_stopping_the_hardware_ru
     let state=f.host.run(&f.run.owner).unwrap();
     let deadline=Instant::now()+Duration::from_secs(3);
     let returned=loop {
-        let sample=NativeProfileHost::game_poll(&resources,&games,state,||2_000_000).unwrap();
+        let sample=NativeProfileHost::game_poll(&resources,&games,state,native_clock,||2_000_000).unwrap();
         let replaced=games.profile_game_context("x-plane-12").ok()
             .is_some_and(|context|context.process==restarted && context.session!=original.session);
         let claiming=state.game.provider_identity().is_some_and(|(game,reader)|

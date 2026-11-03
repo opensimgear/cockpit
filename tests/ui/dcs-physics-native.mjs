@@ -117,7 +117,7 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     }, `Passive ${id} retained a known value`);
   }
   let initialGames, initialProfiles, before, installationBefore, fixtureInstallation, profile, child, producer, timer, fixtureSetup = false;
-  let counter = 0, sequence = 0, modelTime = 0, planeId = 17, mode = 'baseline', emitPhysics = true;
+  let counter = 0, sequence = 0, modelTime = 0, planeId = 17, mode = 'baseline', emitPhysics = true, biosMode = 'full';
   const aircraft = 'A-10C_2', biosId = 'common:CommonData:ALT_MSL_FT:0';
   const nativeValues = {'flight.airspeed.true': 210.25, 'flight.engine.left.speedPercent': 74.5,
     'flight.acceleration.x': 3, 'flight.acceleration.y': 4, 'flight.acceleration.z': 0,
@@ -204,7 +204,11 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     producer.setMulticastInterface('127.0.0.1'); producer.setMulticastLoopback(true);
     timer = setInterval(() => {
       const name = Buffer.alloc(24); name.write(aircraft);
-      producer.send(Buffer.concat([Buffer.from([85, 85, 85, 85]), block(0, name), integerBlock(commonOutput, 1000), integerBlock(aircraftOutput, 1), block(65534, Buffer.from([counter++ % 256, 0]))]), 5010, '239.255.50.10');
+      if (biosMode !== 'off') {
+        const fields = biosMode === 'full' ? [block(0, name), integerBlock(commonOutput, 1000), integerBlock(aircraftOutput, 1)] : [];
+        const tick = Buffer.alloc(2); tick.writeUInt16LE(counter++ % 65536);
+        producer.send(Buffer.concat([Buffer.from([85, 85, 85, 85]), ...fields, block(65534, tick)]), 5010, '239.255.50.10');
+      }
       if (!emitPhysics) return;
       if (!['baseline', 'frozen', 'respawn-wait'].includes(mode)) modelTime += 0.05;
       const packet = {schemaVersion: 1, source: 'osg-dcs-ownship', session: 'native-fixture-mission', sequence: sequence++ >>> 0,
@@ -253,6 +257,24 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     }
     emitPhysics = false; evidence.phases.stale = await withdrawn('stale ownship');
     emitPhysics = true; await live(); await checkpoint('stale ownship withdraws physics while BIOS gauges remain live');
+    biosMode = 'counter-only'; await sleep(1250);
+    evidence.phases.leaseOnly = await live();
+    await checkpoint('BIOS counter-only lease renewal preserves retained values');
+    biosMode = 'off';
+    evidence.phases.biosStale = await until(async () => {
+      const page = await samples();
+      return page && output(page, biosId)?.status !== 'known'
+        && physicsIds.every(id => output(page, id)?.status === 'known' && near(output(page, id).value.value, selected[id])) && page;
+    }, 'BIOS expiry must withdraw its derived output while fresh ownship processing remains live');
+    await request({command: 'profile_stop'});
+    await request({command: 'profile_apply', id: profile.id, expectedRevision: profile.revision, gameId: 'dcs', expectedActiveOwner: null});
+    evidence.phases.ownshipOnlyStart = await until(async () => {
+      const page = await samples();
+      return page && output(page, biosId)?.status !== 'known'
+        && physicsIds.every(id => output(page, id)?.status === 'known' && near(output(page, id).value.value, selected[id])) && page;
+    }, 'Fresh ownship must establish its read baseline while BIOS is unavailable');
+    biosMode = 'full'; await live();
+    await checkpoint('BIOS expiry and recovery preserve the independent ownship family');
     planeId++; modelTime = 0; mode = 'respawn-wait'; evidence.phases.respawn = await withdrawn('respawn baseline');
     mode = 'live'; await live(); await checkpoint('respawn requires advancing ownship baseline');
     mode = 'stopped'; evidence.phases.stopped = await withdrawn('mission stopped');
@@ -261,10 +283,13 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     evidence.phases.exit = await absent('flight.airspeed.true'); await absent(biosId);
     await until(async () => { const page = await samples(); return !page || Object.keys(selected).every(id => output(page, id)?.status !== 'known'); }, 'Process exit retained processing values');
     checks.push('Independent inspection and selected native/canonical profile values preserve zero/false and units; unbound wind and BIOS aircraft gauge remain inspectable.');
+    checks.push('Counter-only BIOS renewals preserve retained values; BIOS expiry withdraws its identity output without withdrawing fresh ownship; a new read-only run can start from ownship alone and BIOS recovers independently.');
     checks.push('Pause, active pause, export denial, frozen model time, stale ownship, respawn baseline and mission stop withdraw physics without withdrawing unrelated fresh BIOS gauges; process exit withdraws both.');
     await checkpoint('process exit withdrawal verified');
   } catch (error) {
-    evidence.failure = String(error); evidence.failureGame = await game().catch(() => null); evidence.failureProfiles = await status().catch(() => null); throw error;
+    evidence.failure = String(error); evidence.failureInspection = await samples().catch(() => null);
+    evidence.failureBios = await inspect(biosId).catch(() => null); evidence.failurePhysics = await inspect('flight.airspeed.true').catch(() => null);
+    evidence.failureGame = await game().catch(() => null); evidence.failureProfiles = await status().catch(() => null); throw error;
   } finally {
     clearInterval(timer); if (producer) producer.close();
     await cleanup('Stop profile', () => request({command: 'profile_stop'}));

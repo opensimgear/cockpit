@@ -110,14 +110,14 @@ fn pending_withdraws_once_and_resumes_only_with_a_fresh_baseline() {
     assert!(feed(&mut source, 2, 20_000).fresh);
     let pending = source.pending(30_000, "validation pending".into());
     assert!(!pending.context_lost && !pending.fresh && !pending.frames.is_empty());
-    assert!(pending.frames.iter().all(|frame| frame.reason == Reason::Gap));
+    assert!(pending.frames.iter().all(|frame| matches!(frame, osg_mapping::engine::typed::native::Admission::Direct(frame) if frame.reason == Reason::Gap)));
     assert!(!source.can_command());
     assert!(source.reader.is_some());
     assert!(source.pending(40_000, "still pending".into()).frames.is_empty());
     assert!(!feed(&mut source, 3, 50_000).fresh);
     let resumed = feed(&mut source, 4, 60_000);
     assert!(resumed.fresh);
-    assert!(resumed.frames.iter().all(|frame| frame.reason == Reason::Baseline));
+    assert!(resumed.frames.iter().all(|frame| matches!(frame, osg_mapping::engine::typed::native::Admission::Direct(frame) if frame.reason == Reason::Baseline)));
 }
 
 #[test]

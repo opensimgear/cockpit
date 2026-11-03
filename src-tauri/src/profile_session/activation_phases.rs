@@ -67,13 +67,13 @@ impl NativeProfileHost {
                 ).map_err(|error| format!("Initial physical input baseline failed. {error}"))?;
                 let state = self.run(&run.owner)?;
                 state.inputs = Some(inputs);
-                state.baselines = baselines;
+                state.baselines = baselines.into_iter().map(Into::into).collect();
                 state.baselines.extend(game_frames);
-                state.baselines.extend(panel_frames);
-                state.baselines.extend(companion_frames);
+                state.baselines.extend(panel_frames.into_iter().map(Into::into));
+                state.baselines.extend(companion_frames.into_iter().map(Into::into));
                 let (debug,debug_frames)=crate::profile_debug_controller::DebugInputs::capture(&state.document,&delivery,run.owner.generation,state.clock_origin)?;
                 state.debug_inputs=debug;
-                state.baselines.extend(debug_frames);
+                state.baselines.extend(debug_frames.into_iter().map(Into::into));
                 state.delivery = Some(delivery);
                 self.refresh_action_binding(&run.owner)
             }
@@ -153,13 +153,13 @@ impl NativeProfileHost {
                         None => vec![],
                     };
                     state.inputs = Some(inputs);
-                    state.baselines = baselines;
+                    state.baselines = baselines.into_iter().map(Into::into).collect();
                     state.baselines.extend(game_frames);
-                    state.baselines.extend(panel_frames);
-                    state.baselines.extend(companion_frames);
+                    state.baselines.extend(panel_frames.into_iter().map(Into::into));
+                    state.baselines.extend(companion_frames.into_iter().map(Into::into));
                     let (debug,debug_frames)=crate::profile_debug_controller::DebugInputs::capture(&state.document,&delivery,run.owner.generation,state.clock_origin.max(controllers.monotonic_us()))?;
                     state.debug_inputs=debug;
-                    state.baselines.extend(debug_frames);
+                    state.baselines.extend(debug_frames.into_iter().map(Into::into));
                     state.delivery = Some(delivery);
                     dcs_hid::validate(state, &resources, &panels_io)?;
                     Self::check_epoch(&admission_epoch,state.admission_epoch)?;
@@ -171,13 +171,15 @@ impl NativeProfileHost {
                         run.owner.session.clone(),
                         Counter(origin),
                     )?;
+                    reducer.pin_native_clock(&controllers.capture_clock().id().to_string())?;
+                    for registration in state.game.native_registrations() {
+                        reducer.register_native_source(registration)?;
+                    }
                     state.clock_origin = origin;
                     // Preserve startup deduplication: an unchanged initial
                     // Unknown is not a loss of a newly bound physical output.
                     let admitted_now = Counter(controllers.monotonic_us());
-                    for baseline in state.baselines.drain(..) {
-                        reducer.accept(baseline, admitted_now)?;
-                    }
+                    reducer.accept_admissions(state.baselines.drain(..), admitted_now)?;
                     visibility::active(&mut state.visibility)?;
                     publication::active(state)?;
                     state.companions.arm(reducer.run_token())?;

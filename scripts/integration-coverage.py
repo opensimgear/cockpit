@@ -69,7 +69,12 @@ def main():
     module_names.extend(['dcs_bios/transport_client.rs', 'dcs_bios/decoded/mod.rs',
                          'dcs_bios/parser.rs', 'dcs_bios/decoded/captured_memory.rs', 'dcs_bios/decoded/state.rs', 'dcs_bios/decoded/source.rs', 'dcs_profile/shared.rs'])
     module_names.append('xplane/subscriptions.rs')
-    module_names.append('profile_session/source_admission.rs')
+    module_names.extend(['profile_session_games.rs', 'games/profiles/session_prepare.rs',
+                         'games/profiles/session_read.rs', 'games/profiles/native_admission.rs',
+                         'games/profiles/native_tables.rs', 'profile_session_host.rs',
+                         'profile_session_launch_host.rs', 'profile_session_desktop.rs',
+                         'profile_session/activation_heartbeat.rs'])
+    module_names.extend(['profile_session/source_admission.rs', 'games/profiles/session_delivery.rs', 'games/vehicles/sources.rs'])
     module_names.extend(['profile_read_models/mod.rs', 'profile_read_models/bounds.rs',
                          'profile_read_models/emergency.rs', 'profile_read_models/pages.rs'])
     module_names.extend(['xplane/owner.rs', 'xplane/owner/client.rs', 'xplane/owner/worker.rs',

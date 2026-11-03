@@ -278,8 +278,11 @@ impl NativeProfileHost {
                 .collect::<Vec<_>>()
                 .join("; "));
         }
-        let mut game =
-            crate::profile_session_games::GameSources::prepare(&prepared.plan, proof.clone())?;
+        let mut game = crate::profile_session_games::GameSources::prepare(
+            &prepared.plan,
+            proof.clone(),
+            controllers.capture_clock(),
+        )?;
         game.acquire(games)?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while game.requires_baseline() {

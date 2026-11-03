@@ -141,7 +141,7 @@ impl NativeProfileHost {
         result
     }
 
-    pub(super) fn game_baseline(&mut self, owner: &RunOwner) -> Result<Vec<osg_mapping::engine::typed::Frame>, String> {
+    pub(super) fn game_baseline(&mut self, owner: &RunOwner) -> Result<Vec<osg_mapping::engine::typed::native::Admission>, String> {
         if !self.run(owner)?.game.requires_baseline() { return Ok(vec![]); }
         self.report_progress(owner, "game-telemetry-baseline", "Waiting for fresh game telemetry");
         self.with_activation_heartbeat(owner, |host| {

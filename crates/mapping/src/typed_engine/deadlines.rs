@@ -3,12 +3,13 @@ use super::*;
 
 pub(super) struct Deadlines {
     pub stale: Option<u64>,
+    pub native: Option<u64>,
     pub internal: Option<u64>,
     pub external: Option<u64>,
 }
 impl Deadlines {
     pub(super) fn next(&self) -> Option<u64> {
-        [self.stale, self.internal, self.external]
+        [self.stale, self.internal, self.external, self.native]
             .into_iter()
             .flatten()
             .min()
@@ -33,6 +34,7 @@ impl Phase {
             .filter_map(|(endpoint, contract)| match contract {
                 PortContract::State { freshness_ms, .. }
                     if matches!(self.values[endpoint].sample, SignalSample::Known(_))
+                        && self.values[endpoint].proof.bindings.is_empty()
                         && !self.compiled.program.nodes.iter().any(|node| {
                             node.id == endpoint.node_id
                                 && matches!(node.operation, Operation::Constant { .. })
@@ -47,6 +49,7 @@ impl Phase {
             .min();
         Deadlines {
             stale,
+            native: self.native_deadline().map(|at| at.max(self.clock)),
             internal: self
                 .states
                 .values()

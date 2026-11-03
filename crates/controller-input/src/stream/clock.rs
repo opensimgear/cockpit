@@ -26,6 +26,15 @@ impl Clock {
         }
         encode(elapsed)
     }
+
+    /// Convert a native validity deadline into this exact journal domain.
+    /// Unlike acquisition evidence, an expiry may lie in the future. This only
+    /// converts its original deadline; it does not observe or renew an input.
+    pub fn deadline_us(self, valid_until: Instant) -> Result<u64, &'static str> {
+        let elapsed = valid_until.checked_duration_since(self.origin)
+            .ok_or("Deadline predates the journal clock.")?;
+        encode(elapsed)
+    }
 }
 
 fn encode(elapsed: Duration) -> Result<u64, &'static str> {
@@ -50,5 +59,17 @@ mod tests {
         assert_eq!(encode(Duration::from_micros(u64::MAX - 1)), Ok(u64::MAX));
         assert!(encode(Duration::from_micros(u64::MAX)).is_err());
         assert!(encode(Duration::MAX).is_err());
+    }
+    #[test]
+    fn validity_deadlines_keep_their_original_clock_offset_and_may_be_future() {
+        let origin = Instant::now() - Duration::from_secs(1);
+        let clock = Clock { origin, id: uuid::Uuid::new_v4() };
+        let deadline = origin + Duration::from_secs(5);
+        assert_eq!(clock.deadline_us(deadline), Ok(5_000_001));
+        assert!(clock.captured_us(deadline).is_err());
+        assert_eq!(clock.deadline_us(origin), Ok(1));
+        assert!(clock.deadline_us(origin - Duration::from_micros(1)).is_err());
+        // Reading the same original deadline later cannot extend authority.
+        assert_eq!(clock.deadline_us(deadline), Ok(5_000_001));
     }
 }

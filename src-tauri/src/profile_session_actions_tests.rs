@@ -253,6 +253,7 @@ fn effect(owner: &RunOwner, n: usize, sequence: u64, value: bool) -> Effect {
             }],
         })),
         reason: ReportReason::Change,
+        native_proof: Default::default(),
     }
 }
 #[test]

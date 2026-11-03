@@ -285,8 +285,9 @@ fn game_baseline_wait_keeps_the_actual_output_lease_and_observes_stop_epoch() {
                 .filter(|(_, message)| matches!(message, Message::Renew { .. })).count() >= required_renewals);
             let frames = result.unwrap();
             assert_eq!(frames.len(), 1);
-            assert_eq!(frames[0].reason, osg_mapping::engine::Reason::Baseline);
-            assert!(frames[0].changes.iter().all(|change| change.sample == osg_mapping::program::SignalSample::scalar(osg_mapping::signal::PortValue::Number(0.0))));
+            let osg_mapping::engine::typed::native::Admission::Direct(frame) = &frames[0] else { panic!("Authored fixture must remain explicit Direct input") };
+            assert_eq!(frame.reason, osg_mapping::engine::Reason::Baseline);
+            assert!(frame.changes.iter().all(|change| change.sample == osg_mapping::program::SignalSample::scalar(osg_mapping::signal::PortValue::Number(0.0))));
         }
         let state = host.run(&owner).unwrap();
         state.output.as_mut().unwrap().keep_alive().unwrap();

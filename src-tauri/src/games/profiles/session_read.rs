@@ -139,7 +139,7 @@ impl GameSources {
                         self.physics = Some(merge_dcs_physics(
                             &mut snapshot,
                             physics_outputs,
-                            physics.as_ref(),
+                            physics.as_ref().filter(|physics| game.proof.vehicle_id.as_ref().is_none_or(|expected| physics.aircraft.as_ref() == Some(expected))),
                         ));
                     }
                 }
@@ -174,6 +174,7 @@ impl GameSources {
     ) -> GamePoll {
         for source in self.sources.values_mut() {
             source.available = false;
+            for family in source.families.values_mut() { family.available = false; }
         }
         self.poll_baseline(games, clock)
     }
@@ -199,19 +200,12 @@ impl GameSources {
         self.witness = None;
         self.witnessed_progress = false;
         let mut result = GamePoll { diagnostics: vec![message], ..Default::default() };
-        for (resource, state) in &mut self.sources {
-            if !state.available { continue; }
-            state.available = false;
-            state.sequence = state.sequence.saturating_add(1);
-            result.frames.push(Frame {
-                source: resource.clone(), generation: Counter(state.generation),
-                sequence: Counter(state.sequence), captured_us: Counter(now_us), reason: Reason::Gap,
-                changes: vec![],
-            });
-        }
+        result.frames = self.withdraw_native(now_us, Reason::Gap);
+        result.fatal = self.fatal.clone();
         result
     }
     fn read(&mut self, now_us: u64, baseline: bool) -> Result<Option<ExportSnapshot>, String> {
+        let authored_fixture = self.authored_transport_fixture();
         match self.reader.as_mut() {
             Some(Reader::Dcs {
                 network,
@@ -219,11 +213,37 @@ impl GameSources {
                 decoder,
                 ..
             }) => {
+                if transport.is_none() && self.bios_retry_at.is_some_and(|at| Instant::now() >= at) {
+                    self.bios_retry_at = Some(Instant::now() + std::time::Duration::from_secs(1));
+                    if let Ok(source) = crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec()?) {
+                        *transport = Some(source);
+                        self.bios_retry_at = None;
+                    }
+                }
                 let Some(receiver) = transport.as_ref() else {
-                    return Ok(None);
+                    return Ok(self.bios_retry_at.map(|_| decoder.snapshot(now_us / 1000)));
                 };
                 let snapshot = match receiver.snapshot() {
                     Ok(snapshot) => snapshot,
+                    Err(_) if !authored_fixture => {
+                        // Subscriber errors are sticky. Reopening subscribes to
+                        // the healthy canonical publisher's current baseline, or
+                        // replaces a terminal publisher. Retain its old owner
+                        // until opening finishes so a healthy socket stays live.
+                        decoder.reset_stream(now_us / 1000);
+                        let replacement = crate::dcs_bios::decoded::Source::open(network, decoder.decode_spec()?);
+                        drop(transport.take());
+                        match replacement {
+                            Ok(source) => { *transport = Some(source); self.bios_retry_at = None; }
+                            Err(_) => self.bios_retry_at = Some(Instant::now() + std::time::Duration::from_secs(1)),
+                        }
+                        self.witness = None;
+                        self.witnessed_progress = false;
+                        self.fresh = false;
+                        // Withdraw BIOS before accepting its new baseline.
+                        // Ownship is merged independently by the caller.
+                        return Ok(Some(decoder.snapshot(now_us / 1000)));
+                    }
                     Err(_) if baseline => {
                         // Recovery registers a new coherent source baseline;
                         // it cannot replay the lost reader's partial history.
@@ -296,7 +316,13 @@ impl GameSources {
             _ => Ok(None),
         }
     }
-    fn frames(&mut self, mut snapshot: ExportSnapshot, now_us: u64) -> GamePoll {
+    fn frames(&mut self, snapshot: ExportSnapshot, now_us: u64) -> GamePoll {
+        #[cfg(test)]
+        if self.authored_fixture { return self.fixture_frames(snapshot, now_us); }
+        self.native_frames(snapshot, now_us)
+    }
+    #[cfg(test)]
+    fn fixture_frames(&mut self, mut snapshot: ExportSnapshot, now_us: u64) -> GamePoll {
         let shared_baseline = matches!(&self.reader, Some(Reader::Dcs { decoder, .. }) if decoder.shared_baseline_ready());
         if snapshot.fresh || snapshot.mission_active && shared_baseline {
             if let Some(counter) = snapshot.counter {
@@ -378,7 +404,7 @@ impl GameSources {
                     Reason::Change
                 },
                 changes,
-            });
+            }.into());
         }
         result
     }
@@ -390,18 +416,8 @@ impl GameSources {
             diagnostics: vec![error],
             ..Default::default()
         };
-        for (resource, state) in &mut self.sources {
-            state.sequence = state.sequence.saturating_add(1);
-            state.available = false;
-            result.frames.push(Frame {
-                source: resource.clone(),
-                generation: Counter(state.generation),
-                sequence: Counter(state.sequence),
-                captured_us: Counter(now_us),
-                reason: Reason::Disconnect,
-                changes: vec![],
-            });
-        }
+        result.frames = self.withdraw_native(now_us, Reason::Disconnect);
+        result.fatal = self.fatal.clone();
         result
     }
 }

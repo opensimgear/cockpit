@@ -7,7 +7,7 @@ use crate::{
 };
 use osg_mapping::{
     engine::{
-        typed::{Change, Effect, Frame},
+        typed::{Change, Effect, Frame, native::*},
         Counter, Reason, ReportReason,
     },
     program::{SignalSample, SignalValue},
@@ -30,6 +30,8 @@ struct SourcePort {
     logical: String,
     native: String,
     contract: PortContract,
+    family: String,
+    policy: NativePolicy,
 }
 #[derive(Default)]
 struct SourceState {
@@ -41,6 +43,8 @@ struct SourceState {
     available: bool,
     physics_witness: Option<PhysicsWitness>,
     physics_epoch: Option<(Option<String>, Option<String>, u64)>,
+    families: BTreeMap<String, native_admission::FamilyState>,
+    replacement: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PhysicsWitness {
@@ -63,8 +67,7 @@ fn merge_dcs_physics(
     outputs: &[Value],
     physics: Option<&crate::dcs_physics::Snapshot>,
 ) -> PhysicsMerge {
-    let fresh = snapshot.fresh
-        && physics.is_some_and(|value| value.fresh && value.aircraft == snapshot.aircraft);
+    let fresh = physics.is_some_and(|value| value.fresh && value.aircraft.is_some() && snapshot.aircraft.as_ref().is_none_or(|aircraft| Some(aircraft) == value.aircraft.as_ref()));
     let witness = PhysicsWitness {
         producer_id: physics.map(|value| value.producer_id.clone()),
         session: physics.and_then(|value| value.session.clone()),
@@ -128,6 +131,11 @@ enum Reader {
     },
 }
 pub(crate) struct GameSources {
+    clock: osg_controller_input::stream::Clock,
+    fatal: Option<String>,
+    bios_retry_at: Option<Instant>,
+    #[cfg(test)]
+    authored_fixture: bool,
     game: Option<PreparedGame>,
     reader: Option<Reader>,
     sources: BTreeMap<String, SourceState>,
@@ -151,10 +159,24 @@ pub(crate) struct GameSources {
 }
 #[derive(Default)]
 pub(crate) struct GamePoll {
-    pub frames: Vec<Frame>,
+    pub frames: Vec<Admission>,
     pub diagnostics: Vec<String>,
+    pub fatal: Option<String>,
     pub context_lost: bool,
     pub fresh: bool,
+}
+impl GamePoll {
+    /// Keep already-numbered native facts in the same atomic drain as their
+    /// later revocation. The reducer installs every loss before replaying work.
+    pub(crate) fn revoked_by(mut self, mut loss: Self) -> Self {
+        self.frames.append(&mut loss.frames);
+        self.diagnostics.append(&mut loss.diagnostics);
+        loss.frames = self.frames;
+        loss.diagnostics = self.diagnostics;
+        loss.fatal = loss.fatal.or(self.fatal);
+        loss.context_lost |= self.context_lost;
+        loss
+    }
 }
 fn native_key(resource: &str, port: &str) -> String {
     format!("{resource}/{port}")
@@ -177,6 +199,11 @@ fn compatible_game_route(route: Option<&Route>, game: &PreparedGame) -> bool {
 }
 fn scalar(captured: &crate::native_capture::CapturedValue) -> Option<PortValue> {
     if !captured.is_current(Instant::now()) {return None;}
+    scalar_current(captured)
+}
+// The native frame builder already checked the paired value's validity. The
+// reducer rechecks original deadlines at admission, without a second proof walk.
+fn scalar_current(captured: &crate::native_capture::CapturedValue) -> Option<PortValue> {
     let value=captured.value();
     if let Some(value) = value.as_bool() {
         Some(PortValue::Boolean(value))
@@ -198,9 +225,22 @@ fn semantic_contract(mut contract: PortContract) -> PortContract {
 }
 #[path = "games/profiles/session_validation.rs"]
 mod live_validation;
+#[path = "games/profiles/native_admission.rs"]
+mod native_admission;
+#[path = "games/profiles/native_tables.rs"]
+mod native_tables;
 include!("games/profiles/session_prepare.rs");
 include!("games/profiles/session_read.rs");
 include!("games/profiles/session_delivery.rs");
+
+impl GameSources {
+    fn authored_transport_fixture(&self) -> bool {
+        #[cfg(test)]
+        { self.authored_fixture }
+        #[cfg(not(test))]
+        { false }
+    }
+}
 
 impl Drop for GameSources {
     fn drop(&mut self) {
@@ -220,3 +260,7 @@ pub(crate) fn test_baseline_export(counter: u8, on: bool) -> Vec<u8> {
 #[cfg(test)]
 #[path = "profile_session_games_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "games/profiles/native_admission_tests.rs"]
+mod native_admission_tests;

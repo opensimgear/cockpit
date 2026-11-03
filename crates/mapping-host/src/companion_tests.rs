@@ -961,13 +961,15 @@ fn captured_game_start_uses_companion_feed_without_relabeling_or_live_output() {
             &[change("trigger", Value::Button(true))],
         )
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(25));
-    let status = service
-        .request(&json!({"command":"mapping_status","inspect":true}))
-        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let status = loop {
+        let status = service.request(&json!({"command":"mapping_status","inspect":true})).unwrap();
+        if status["inspector"]["outputs"]["main"]["buttons"][0] == true { break status; }
+        assert!(std::time::Instant::now() < deadline, "Companion update did not reach recording output: {status}");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    };
     assert_eq!(status["running"], true);
     assert_eq!(status["mode"], "recording");
-    assert_eq!(status["inspector"]["outputs"]["main"]["buttons"][0], true);
     service.game_stop(&journal).unwrap();
     service.shutdown();
     assert!(provider.state.lock().unwrap().subscriptions.is_empty());

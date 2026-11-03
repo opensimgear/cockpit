@@ -1,5 +1,54 @@
 use super::*;
 #[test]
+fn dcs_aircraft_and_passive_ownship_keep_independent_freshness() {
+    for (bios_fresh, ownship_fresh, ownship_aircraft, expected_aircraft, known) in [
+        (true, false, "A-10C", Some("A-10C"), false),
+        (false, true, "A-10C_2", Some("A-10C_2"), true),
+        (false, false, "A-10C", None, false),
+        (true, true, "A-10C_2", Some("A-10C"), false),
+    ] {
+        let bios = dcs_profile::ExportSnapshot {
+            epoch: 1, aircraft: Some("A-10C".into()), mission_active: true,
+            fresh: bios_fresh, age_ms: Some(0), counter: Some(2),
+            values: BTreeMap::from([("bios-zero".into(), crate::native_capture::CapturedValue::fixture(json!(0)))]),
+            malformed_frames: 0,
+        };
+        let physics = crate::dcs_physics::Snapshot {
+            captured_at: Some(Instant::now()), capture_sequence: 1,
+            producer_id: "independent-ownship".into(), epoch: 1,
+            session: Some("mission".into()), aircraft: Some(ownship_aircraft.into()),
+            plane_id: Some(1), model_time: Some(10.0), sequence: Some(2),
+            fresh: ownship_fresh, status: if ownship_fresh { "live" } else { "stale" }.into(),
+            age_ms: Some(0), values: BTreeMap::from([
+                ("flight.airspeed.true".into(), json!(0)),
+                ("flight.ownship.inAir".into(), json!(false)),
+            ]), malformed_frames: 0, error: None,
+        };
+        assert_eq!(dcs_aircraft(&bios, Some(&physics), Instant::now()), (expected_aircraft, known));
+        let mut capture = Capture::export("dcs", &bios);
+        merge_ownship_capture(&mut capture, &bios, Some(&physics), None);
+        let rows = crate::game_telemetry_inspection::page(&[
+            json!({"id":"bios-zero","type":"integer"}),
+            json!({"id":"flight.airspeed.true","type":"number"}),
+            json!({"id":"flight.ownship.inAir","type":"boolean"}),
+        ], Some(&capture), 0, 3, "", "").0;
+        assert_eq!(rows[0]["status"], if bios_fresh { "known" } else { "stale" });
+        assert_eq!(rows[1]["status"], if known { "known" } else { "stale" });
+        assert_eq!(rows[2]["status"], if known { "known" } else { "stale" });
+        if known {
+            assert_eq!(rows[1]["value"], 0);
+            assert_eq!(rows[2]["value"], false);
+            assert_eq!(capture.context["aircraft"], expected_aircraft.unwrap());
+        }
+        let mut expired = physics.clone();
+        expired.fresh = true;
+        expired.captured_at = Some(Instant::now() - Duration::from_secs(2));
+        assert_eq!(dcs_aircraft(&bios, Some(&expired), Instant::now()),
+            (bios_fresh.then_some("A-10C"), false));
+    }
+}
+
+#[test]
 fn dcs_physics_errors_and_staleness_preserve_live_bios_and_missing_components_stay_unknown() {
     let bios = dcs_profile::ExportSnapshot {
         epoch: 1,

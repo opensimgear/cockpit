@@ -20,8 +20,14 @@ impl GameSources {
     pub(crate) fn inherit_source_counters(&mut self, previous: &Self) {
         for (id, source) in &mut self.sources {
             if let Some(old) = previous.sources.get(id) {
-                source.generation = old.generation.saturating_add(1);
+                source.generation = match old.generation.checked_add(1) { Some(next) => next, None => { self.fatal = Some("Native source generation exhausted".into()); old.generation } };
                 source.sequence = old.sequence;
+                source.replacement = true;
+                for (name, previous_family) in &old.families {
+                    if source.ports.iter().any(|port| &port.family == name) {
+                        source.families.entry(name.clone()).or_default().inherit_continuity(previous_family);
+                    }
+                }
             }
         }
     }
@@ -34,8 +40,14 @@ impl GameSources {
     pub(crate) fn prepare(
         plan: &ExecutionPlan,
         game: Option<PreparedGame>,
+        clock: osg_controller_input::stream::Clock,
     ) -> Result<Self, String> {
         let mut result = Self {
+            clock,
+            fatal: None,
+            bios_retry_at: None,
+            #[cfg(test)]
+            authored_fixture: false,
             game,
             reader: None,
             sources: BTreeMap::new(),
@@ -119,6 +131,7 @@ impl GameSources {
                 return Err("The game source contract changed before acquisition.".into());
             }
             let key = native_key(&source.endpoint.node_id, &source.endpoint.port_id);
+            let physics = game.integration_key == "dcs" && game.catalogue["channels"].as_array().is_some_and(|channels| channels.iter().any(|row| native == &format!("channel:{}", row["id"].as_str().unwrap_or(""))));
             if game.integration_key == "dcs" {
                 let channel = native
                     .strip_prefix("channel:")
@@ -156,6 +169,8 @@ impl GameSources {
                     logical: source.endpoint.port_id.clone(),
                     native: key,
                     contract: source.contract.clone(),
+                    family: if physics { "dcs-ownship" } else if game.integration_key == "dcs" { "dcs-bios" } else { &game.integration_key }.into(),
+                    policy: if game.integration_key == "dcs" && !physics { NativePolicy::Latched } else { NativePolicy::Sampled },
                 });
             capture_port(source.route.as_ref(), native, descriptor)?;
         }

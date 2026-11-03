@@ -337,6 +337,7 @@ impl Fixture {
                 }],
             })),
             reason: ReportReason::Change,
+            native_proof: Default::default(),
         }
     }
 }

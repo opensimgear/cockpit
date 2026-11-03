@@ -1,16 +1,17 @@
 impl GameSources {
     pub(crate) fn delivery_batch(&mut self) -> Option<ProviderBatch> {
         let game = self.game.as_ref()?;
+        let readable = self.read_ready();
         if !self.acquired
             || self.lost
             || self.reader.is_none()
-            || (!self.fresh && self.revision == 0)
+            || (!readable && self.revision == 0)
         {
             return None;
         }
         let id = &game.proof.game_id;
         let writable = game.integration_key == "dcs" && self.fresh && self.context.is_some();
-        let publication = (self.epoch, self.fresh, writable);
+        let publication = (self.epoch, readable, writable);
         if self.published == Some(publication) {
             return None;
         }
@@ -56,7 +57,7 @@ impl GameSources {
                         transport: Transport::Integration,
                         provider_generation: format!("{}:{}", self.reader_session, self.epoch),
                         attributes,
-                        baseline_ready: self.fresh,
+                        baseline_ready: readable,
                         writable: writable
                             && catalogue.aircraft_module.as_deref() != Some("CommonData"),
                         priority: 100,

@@ -3,10 +3,7 @@
 use osg_desktop_output::{Coordinator, Scope};
 use osg_mapping::{
     desktop::Scheduler,
-    engine::{
-        typed::{Effect, Frame, Observation, Phase, Token},
-        Counter, RunToken,
-    },
+    engine::{typed::{native::Admission, Effect, Frame, Observation, Phase, Token}, Counter, RunToken},
     program::{Program, SinkKind},
 };
 use serde::Serialize;
@@ -186,32 +183,52 @@ impl Desktop {
         self.flush(reducer.at_us().0)?;
         Ok(())
     }
-    pub fn poll(&mut self, frames: &[Frame], reducer: &Phase) -> Result<Vec<String>, String> {
+    pub fn poll(&mut self, admissions: &[Admission], reducer: &Phase) -> Result<Vec<String>, String> {
         let eligibility = self.scope.as_ref().map_or(Ok(false), eligible);
-        self.poll_checked(frames, reducer, eligibility)
+        self.poll_admissions_checked(admissions, reducer, eligibility)
     }
+    #[cfg(test)]
     fn poll_checked(
         &mut self,
         frames: &[Frame],
         reducer: &Phase,
         eligibility: Result<bool, String>,
     ) -> Result<Vec<String>, String> {
+        let admissions = frames.iter().cloned().map(Into::into).collect::<Vec<Admission>>();
+        self.poll_admissions_checked(&admissions, reducer, eligibility)
+    }
+    fn poll_admissions_checked(
+        &mut self,
+        admissions: &[Admission],
+        reducer: &Phase,
+        eligibility: Result<bool, String>,
+    ) -> Result<Vec<String>, String> {
         match eligibility {
             Ok(focused) => {
                 self.scope_error = None;
-                self.poll_focused(frames, reducer, focused)
+                self.poll_admissions_focused(admissions, reducer, focused)
             }
             Err(error) => {
-                let mut diagnostics = self.poll_focused(frames, reducer, false)?;
+                let mut diagnostics = self.poll_admissions_focused(admissions, reducer, false)?;
                 self.scope_error = Some(error.clone());
                 diagnostics.push(format!("Keyboard and mouse output paused: {error}"));
                 Ok(diagnostics)
             }
         }
     }
+    #[cfg(test)]
     fn poll_focused(
         &mut self,
         frames: &[Frame],
+        reducer: &Phase,
+        focused: bool,
+    ) -> Result<Vec<String>, String> {
+        let admissions = frames.iter().cloned().map(Into::into).collect::<Vec<Admission>>();
+        self.poll_admissions_focused(&admissions, reducer, focused)
+    }
+    fn poll_admissions_focused(
+        &mut self,
+        admissions: &[Admission],
         reducer: &Phase,
         focused: bool,
     ) -> Result<Vec<String>, String> {
@@ -258,7 +275,8 @@ impl Desktop {
         let mut shadow = self.shadow.take().ok_or("The isolated desktop reducer is stopped.")?;
         let result = (|| {
             shadow.mirror_source_liveness(reducer)?;
-            let mut diagnostics = shadow.accept_batch(frames.iter().cloned(), reducer.at_us())?;
+            let mut diagnostics = shadow.accept_admissions(admissions.iter().cloned(), reducer.at_us())?;
+            shadow.mirror_native_state(reducer)?;
             shadow.mirror_source_liveness(reducer)?;
             shadow.advance(reducer.at_us())?;
             let effects = shadow.drain();
@@ -305,6 +323,7 @@ impl Desktop {
                     if self.waiting_neutral.contains(&effect.sink_id) {
                         if !neutral(&effect.sample)
                             || !fresh_observations(&effect.observations, boundary)
+                            || !reducer.effect_has_current_native_level(effect)
                         {
                             continue;
                         }
@@ -327,6 +346,7 @@ impl Desktop {
                         .rearm_evidence
                         .get(&effect.sink_id)
                         .is_none_or(|(_, baseline)| !after_neutral(&effect.observations, baseline))
+                        || !reducer.effect_has_current_native_level(effect)
                     {
                         continue;
                     }
@@ -367,7 +387,9 @@ impl Desktop {
                 };
                 let producer = tokens[&sink.id].clone();
                 let observations = reducer.source_observations(&producer);
-                if fresh_observations(&observations, boundary) {
+                if fresh_observations(&observations, boundary)
+                    && reducer.endpoint_has_current_native_level(&sink.from)
+                {
                     self.scheduler.accept(
                         &sink.id,
                         producer.clone(),

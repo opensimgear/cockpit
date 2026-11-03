@@ -80,7 +80,7 @@ struct NativeRun {
     debug_inputs: crate::profile_debug_controller::DebugInputs,
     panels: crate::profile_session_panels_inputs::PanelInputs,
     actions: crate::profile_session_actions::PanelActions,
-    baselines: Vec<osg_mapping::engine::typed::Frame>,
+    baselines: Vec<osg_mapping::engine::typed::native::Admission>,
     reducer: Option<Phase>,
     recording: RecordingSink,
     started: Instant,
@@ -405,6 +405,7 @@ impl NativeProfileHost {
         resources: &Arc<crate::profile_resources::Runtime>,
         games: &Arc<crate::games::GamesRuntime>,
         state: &mut NativeRun,
+        native_clock: osg_controller_input::stream::Clock,
         clock: impl Fn() -> u64 + Send + Sync + 'static,
     ) -> Result<crate::profile_session_games::GamePoll, String> {
         let clock = Arc::new(clock);
@@ -440,6 +441,7 @@ impl NativeProfileHost {
             if let Some(id)=id {
                 let (sender,receiver)=std::sync::mpsc::channel();
                 let resume_clock = clock.clone();
+                let resume_native_clock = native_clock;
                 let games=games.clone();let resources=resources.clone();
                 let document=state.document.clone();let assignments=state.assignments.clone();let backend=state.backend.clone();
                 let companion_catalogues=state.companion_catalogues.clone();
@@ -455,7 +457,7 @@ impl NativeProfileHost {
                         let report=osg_profiles::compiler::compile(&document,&snapshot);
                         if report.program_hash!=program_hash||matches!(report.readiness,PlanReadiness::Invalid|PlanReadiness::Blocked){return Err("The returning game's mappings changed or are unavailable; save the profile to update them.".into());}
                         let plan=report.plan.ok_or("The returning game has no native delivery plan.")?;
-                        let mut game=crate::profile_session_games::GameSources::prepare(&plan,Some(proof.clone()))?;
+                        let mut game=crate::profile_session_games::GameSources::prepare(&plan,Some(proof.clone()),resume_native_clock)?;
                         game.acquire(&games)?;
                         game.admit(&games)?;
                         let batch = game_publication::resume_batch(&mut game, &games, resume_clock())?;
@@ -472,8 +474,8 @@ impl NativeProfileHost {
         if let Some(result) = state.game_publication.poll(identity.as_ref()) {
             match result {
                 Ok(true) => {},
-                Ok(false) => sample = state.game.fail(clock(), "The native game inventory reader was replaced or withdrawn.".into()),
-                Err(error) => sample = state.game.fail(clock(), error),
+                Ok(false) => sample = sample.revoked_by(state.game.fail(clock(), "The native game inventory reader was replaced or withdrawn.".into())),
+                Err(error) => sample = sample.revoked_by(state.game.fail(clock(), error)),
             }
         }
         if !sample.context_lost && state.game.requires_baseline() && state.game.has_delivery_publication() {
@@ -485,11 +487,9 @@ impl NativeProfileHost {
                 Ok(Some(())) => { if sample.fresh { state.game_publication.deferred = false; } },
                 Ok(None) => {
                     state.game_publication.deferred = true;
-                    let previous = std::mem::take(&mut sample.diagnostics);
-                    sample = state.game.pending(clock(), "Native game inventory is updating; waiting for current reader validation.".into());
-                    sample.diagnostics.extend(previous);
+                    sample = sample.revoked_by(state.game.pending(clock(), "Native game inventory is updating; waiting for current reader validation.".into()));
                 },
-                Err(error) => sample = state.game.fail(clock(), error),
+                Err(error) => sample = sample.revoked_by(state.game.fail(clock(), error)),
             }
         }
         if !sample.context_lost && !state.game_publication.deferred {
@@ -503,7 +503,7 @@ impl NativeProfileHost {
         } else if state.game.requires_baseline() && !sample.fresh {
             sample.diagnostics.push("Game telemetry is stale; its branches await a fresh native baseline.".into());
         }
-        if let Err(error) = state.game_publication.drive(resources.clone()) { sample = state.game.fail(clock(), error); }
+        if let Err(error) = state.game_publication.drive(resources.clone()) { sample = sample.revoked_by(state.game.fail(clock(), error)); }
         Ok(sample)
     }
     fn dispatch_game(
@@ -568,7 +568,7 @@ impl NativeProfileHost {
                 dcs_hid::append_diagnostics(&mut diagnostics, loss.diagnostics);
                 Self::withdraw_game(resources, state)?;
                 if let Some(reducer) = state.reducer.as_mut() {
-                    reducer.accept_batch(loss.frames, reducer.at_us())?;
+                    reducer.accept_admissions(loss.frames, reducer.at_us())?;
                     state.recording.record(reducer.drain_reports());
                     // Disconnection effects cannot become deferred simulator
                     // commands. Ordinary controller reports still reach feeder.
@@ -764,6 +764,7 @@ impl NativeProfileHost {
         let game = crate::profile_session_games::GameSources::prepare(
             &prepared.plan,
             game_preparation.clone(),
+            controllers.capture_clock(),
         )?;
         let companions = crate::profile_session_companions::CompanionSources::prepare(&prepared.plan, companion_bindings)?;
         let visibility=crate::profile_session_visibility::Visibility::stage_with_handoff(&prepared.plan,&snapshot,controllers,outgoing.as_ref())?;
@@ -1178,7 +1179,14 @@ impl Host for NativeProfileHost {
         // Native context loss reaches the reducer before timers/scripts can
         // emit effects, withdrawing only branches that depend on that game.
         let game_clock = controllers.clone();
-        let game = Self::game_poll(&resources, &games, state, move || game_clock.monotonic_us())?;
+        let game = Self::game_poll(&resources, &games, state, controllers.capture_clock(), move || game_clock.monotonic_us())?;
+        if let Some(fatal) = game.fatal.clone() {
+            degraded.extend(game.diagnostics.iter().cloned());
+            return Ok(Health {
+                degraded: dcs_hid::unique_diagnostics(degraded),
+                stop: Some(fatal),
+            });
+        }
         degraded.extend(Self::refresh_desktop_context(&games,state)?);
         degraded.extend(dcs_hid::refresh(state, &resources, &panels_io));
         degraded.extend(game.diagnostics);
@@ -1190,15 +1198,24 @@ impl Host for NativeProfileHost {
             .reducer
             .as_mut()
             .ok_or("The profile reducer is stopped.")?;
-        let frames = frames.into_iter().chain(game.frames).chain(panels.frames).chain(companion.frames).chain(state.debug_inputs.poll()).collect::<Vec<_>>();
+        let admissions = frames.into_iter().map(Into::into)
+            .chain(game.frames)
+            .chain(panels.frames.into_iter().map(Into::into))
+            .chain(companion.frames.into_iter().map(Into::into))
+            .chain(state.debug_inputs.poll().into_iter().map(Into::into))
+            .collect::<Vec<_>>();
         degraded.extend(state.scripts.revoke_failed(reducer));
         // Admission time drives mapping timers; source capture stamps remain
         // evidence. Refresh legitimate quiet-source liveness before advancing.
         let tick = Counter(controllers.monotonic_us());
         if let Some(inputs) = state.inputs.as_ref() { inputs.refresh_liveness(controllers.as_ref(), reducer, tick)?; }
         state.debug_inputs.refresh_liveness(reducer,tick)?;
+        reducer.pin_native_clock(&controllers.capture_clock().id().to_string())?;
+        for registration in state.game.native_registrations() {
+            reducer.register_native_source(registration)?;
+        }
         degraded.extend(crate::profile_session::source_admission::admit(
-            reducer, frames.iter().cloned(), tick, panels.liveness, companion.liveness,
+            reducer, admissions.iter().cloned(), tick, panels.liveness, companion.liveness,
         )?);
         reducer.advance(tick)?;
         degraded.extend(health_policy::input_degradation(reducer, state.delivery.as_ref(), &state.document));
@@ -1210,7 +1227,7 @@ impl Host for NativeProfileHost {
         // simulator dispatch. Never renew an unevaluated previous decision.
         if let Some(output) = state.output.as_mut() { output.poll(&state.recording)?; }
         if let Some(desktop) = state.desktop.as_mut() {
-            degraded.extend(desktop.poll(&frames, reducer)?);
+            degraded.extend(desktop.poll(&admissions, reducer)?);
         }
         if !state.companions.is_empty() {
             match companions.profile_metadata() {

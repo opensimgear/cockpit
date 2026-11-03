@@ -233,16 +233,19 @@ impl Reader {
                 let mut capture = Capture::export("dcs", &snapshot);
                 let ownship = physics.as_ref().map(crate::dcs_physics::Source::snapshot);
                 if let Some(snapshot) = &ownship { *physics_error = snapshot.error.clone(); }
+                if !snapshot.fresh {
+                    capture.stale_ids.extend(crate::game_telemetry_inspection::channels(catalogue)
+                        .into_iter().filter_map(|channel| channel["id"].as_str().map(str::to_owned)));
+                }
+                let current = dcs_aircraft(&snapshot, ownship.as_ref(), Instant::now())
+                    .0.map(str::to_owned);
                 merge_ownship_capture(
                     &mut capture,
                     &snapshot,
                     ownship.as_ref(),
                     physics_error.as_deref(),
                 );
-                Ok((
-                    snapshot.aircraft.clone().filter(|_| snapshot.fresh),
-                    capture,
-                ))
+                Ok((current, capture))
             }
             Self::Rally { source, decoder } => {
                 let snapshot = decoder.poll(source.as_mut(), now_ms);
@@ -270,6 +273,25 @@ impl Reader {
         }
     }
 }
+/// Fresh BIOS identifies aircraft changes; otherwise qualified ownship can
+/// retain its independent identity and telemetry without granting commands.
+pub(super) fn dcs_aircraft<'a>(
+    bios: &'a dcs_profile::ExportSnapshot,
+    physics: Option<&'a crate::dcs_physics::Snapshot>,
+    now: Instant,
+) -> (Option<&'a str>, bool) {
+    let qualified = physics.filter(|physics| {
+        physics.fresh
+            && physics.aircraft.as_deref().and_then(|aircraft| vehicle_id("dcs", aircraft)).is_some()
+            && physics.captured_at.is_some_and(|at| at <= now && at
+                .checked_add(Duration::from_millis(crate::dcs_physics::FRESHNESS_MS + 1))
+                .is_some_and(|until| now < until))
+            && (!bios.fresh || physics.aircraft == bios.aircraft)
+    });
+    let aircraft = if bios.fresh { bios.aircraft.as_deref() }
+        else { qualified.and_then(|physics| physics.aircraft.as_deref()) };
+    (aircraft, qualified.is_some())
+}
 pub(super) fn merge_ownship_capture(
     capture: &mut Capture,
     bios: &dcs_profile::ExportSnapshot,
@@ -287,8 +309,7 @@ pub(super) fn merge_ownship_capture(
             .filter_map(|field| field["id"].as_str().map(str::to_owned))
             .collect()
     });
-    let fresh = bios.fresh
-        && physics.is_some_and(|physics| physics.fresh && physics.aircraft == bios.aircraft);
+    let (aircraft, fresh) = dcs_aircraft(bios, physics, Instant::now());
     capture.context["physicsStatus"] = json!(if error.is_some() {
         "error"
     } else if physics.is_some_and(|physics| physics.fresh) && !fresh {
@@ -328,6 +349,11 @@ pub(super) fn merge_ownship_capture(
     }
     if fresh {
         capture.values.extend(values);
+        if !bios.fresh {
+            capture.stale_ids.extend(bios.values.keys().cloned());
+            capture.context["aircraft"] = json!(aircraft);
+        }
+        capture.status = "live".into();
         capture.source = "dcs-bios + ownship".into();
     }
 }

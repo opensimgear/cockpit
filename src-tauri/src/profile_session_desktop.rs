@@ -2,7 +2,7 @@
 //! send live effects; only the native typed reducer feeds this adapter.
 use crate::{profile_desktop_settings as settings, profile_session::RunOwner};
 use osg_desktop_output::{ProcessIdentity, Scope};
-use osg_mapping::{engine::{typed::{Frame,Phase},Counter,RunToken},program::Program};
+use osg_mapping::{engine::{typed::{native::Admission,Phase},Counter,RunToken},program::Program};
 use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 
@@ -110,7 +110,7 @@ impl Desktop {
         self.inner=replacement.inner.take();self.scope=scope;
         Ok(())
     }
-    pub(crate) fn poll(&mut self,frames:&[Frame],reducer:&Phase)->Result<Vec<String>,String>{
+    pub(crate) fn poll(&mut self,frames:&[Admission],reducer:&Phase)->Result<Vec<String>,String>{
         // An accepted selected-game scope remains dormant until its process
         // exists. Waiting is inspectable state, without output or a health fault.
         if self.started&&self.scope.is_none(){return Ok(vec![]);}
@@ -186,3 +186,7 @@ mod tests{
         assert!(matches!(prepare_scope(None,false,None,&preferences).unwrap(),Some(Scope::Application{..})),"legacy captured applications retain application-only scope");
     }
 }
+
+#[cfg(test)]
+#[path = "profile_session/desktop_lifecycle_tests.rs"]
+mod desktop_lifecycle_tests;

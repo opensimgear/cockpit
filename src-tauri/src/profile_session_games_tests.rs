@@ -141,7 +141,7 @@ impl Dcs {
         }
     }
     fn sources(&self) -> GameSources {
-        let mut source = GameSources::prepare(&self.plan, Some(self.game.clone())).unwrap();
+        let mut source = authored_sources(&self.plan, Some(self.game.clone())).unwrap();
         // These tests inject the real decoder/UDP acquisition below while the
         // separate native-process test verifies production acquisition gates.
         source.acquired = true;
@@ -238,6 +238,7 @@ fn authorize(source: &mut GameSources) {
 fn effect(port: &PortDescriptor, sequence: u64) -> Effect {
     Effect {
         producer: None,
+        native_proof: Default::default(),
         observations: vec![],
         run: RunToken {
             session: "2b78de32-f0bc-40a3-9fd6-22ec3e0bd1cb".into(),
@@ -334,8 +335,8 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     physics.producer_id = "producer-2".into();
     let replacement = poll(&mut source, 2, &physics);
     assert_eq!(replacement.frames.len(), 1);
-    assert_eq!(replacement.frames[0].source, "game");
-    assert_eq!(replacement.frames[0].reason, Reason::Baseline);
+    assert_eq!(direct_frame(&replacement.frames[0]).source, "game");
+    assert_eq!(direct_frame(&replacement.frames[0]).reason, Reason::Baseline);
     assert_eq!(source.sources["game"].generation, generation + 1);
     assert_eq!(source.sources["bios-only"].generation, bios_generation);
     assert!(source.can_command());
@@ -350,10 +351,10 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
         .insert("flight.airspeed.true".into(), json!(8));
     let update = poll(&mut source, 2, &physics);
     assert_eq!(update.frames.len(), 1);
-    assert_eq!(update.frames[0].source, "game");
-    assert_eq!(update.frames[0].reason, Reason::Change);
+    assert_eq!(direct_frame(&update.frames[0]).source, "game");
+    assert_eq!(direct_frame(&update.frames[0]).reason, Reason::Change);
     assert_eq!(
-        update.frames[0]
+        direct_frame(&update.frames[0])
             .changes
             .iter()
             .find(|change| change.port_id == speed)
@@ -367,7 +368,7 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     let paused = poll(&mut source, 2, &physics);
     assert_eq!(paused.frames.len(), 1);
     assert_eq!(
-        paused.frames[0]
+        direct_frame(&paused.frames[0])
             .changes
             .iter()
             .find(|change| change.port_id == speed)
@@ -376,7 +377,7 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
         SignalSample::Stale
     );
     assert_eq!(
-        paused.frames[0]
+        direct_frame(&paused.frames[0])
             .changes
             .iter()
             .find(|change| change.port_id == "channel:MASTER_CAUTION:0")
@@ -394,7 +395,7 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     physics.capture_sequence+=1;
     physics.captured_at=Some(Instant::now());
     let resumed = poll(&mut source, 2, &physics);
-    assert_eq!(resumed.frames[0].reason, Reason::Baseline);
+    assert_eq!(direct_frame(&resumed.frames[0]).reason, Reason::Baseline);
     assert_eq!(source.sources["game"].generation, generation + 1);
     assert_eq!(source.sources["bios-only"].generation, bios_generation);
 
@@ -404,7 +405,7 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     physics.capture_sequence+=1;
     physics.captured_at=Some(Instant::now());
     let respawn = poll(&mut source, 2, &physics);
-    assert_eq!(respawn.frames[0].reason, Reason::Baseline);
+    assert_eq!(direct_frame(&respawn.frames[0]).reason, Reason::Baseline);
     assert_eq!(source.sources["game"].generation, generation + 2);
     assert_eq!(source.sources["bios-only"].generation, bios_generation);
 
@@ -414,7 +415,7 @@ fn dcs_physics_updates_and_withdrawal_do_not_depend_on_the_bios_counter() {
     physics.captured_at=Some(Instant::now());
     let missing = poll(&mut source, 2, &physics);
     assert_eq!(
-        missing.frames[0]
+        direct_frame(&missing.frames[0])
             .changes
             .iter()
             .find(|change| change.port_id == speed)
@@ -434,9 +435,9 @@ fn dcs_uses_actual_catalogue_decoder_and_never_promotes_first_or_frozen_counter(
     assert!(source.delivery_batch().is_none());
     let baseline = feed(&mut source, 2, true, 20_000);
     assert!(baseline.fresh);
-    assert_eq!(baseline.frames[0].reason, Reason::Baseline);
+    assert_eq!(direct_frame(&baseline.frames[0]).reason, Reason::Baseline);
     assert_eq!(
-        baseline.frames[0].changes[0].sample,
+        direct_frame(&baseline.frames[0]).changes[0].sample,
         SignalSample::scalar(PortValue::Number(1.0))
     );
     let batch = source.delivery_batch().unwrap();
@@ -459,7 +460,7 @@ fn dcs_uses_actual_catalogue_decoder_and_never_promotes_first_or_frozen_counter(
     let snapshot = decoder.snapshot(121);
     let loss = source.frames(snapshot, 121_000);
     assert!(!loss.fresh);
-    assert_eq!(loss.frames[0].changes[0].sample, SignalSample::Stale);
+    assert_eq!(direct_frame(&loss.frames[0]).changes[0].sample, SignalSample::Stale);
     assert!(
         !source.delivery_batch().unwrap().observations[0]
             .route
@@ -591,14 +592,14 @@ fn actual_udp_reader_preserves_raw_value_and_context_loss_fences_only_game_frame
     let baseline = source.frames(snapshot, 1_010_000);
     assert!(baseline.fresh);
     assert_eq!(
-        baseline.frames[0].changes[0].sample,
+        direct_frame(&baseline.frames[0]).changes[0].sample,
         SignalSample::scalar(PortValue::Number(1.0))
     );
     let lost = source.lose(1_020_000, "Verified process exited".into());
     assert!(lost.context_lost);
     assert_eq!(lost.frames.len(), 1);
-    assert_eq!(lost.frames[0].source, "game");
-    assert_eq!(lost.frames[0].reason, Reason::Disconnect);
+    assert_eq!(direct_frame(&lost.frames[0]).source, "game");
+    assert_eq!(direct_frame(&lost.frames[0]).reason, Reason::Disconnect);
     assert!(source.delivery_batch().is_none());
     assert!(source.provider_identity().is_some());
 }
@@ -678,7 +679,7 @@ fn publication_command_withdrawal_is_permanent_without_stopping_fresh_telemetry(
 #[test]
 fn missing_wrong_game_and_unadvertised_contracts_never_open_sources() {
     let fixture = Dcs::new();
-    let mut dormant = GameSources::prepare(&fixture.plan, None).unwrap();
+    let mut dormant = authored_sources(&fixture.plan, None).unwrap();
     assert!(dormant.delivery_batch().is_none());
     assert!(dormant.reader.is_none());
     let wrong = prepared(
@@ -686,16 +687,16 @@ fn missing_wrong_game_and_unadvertised_contracts_never_open_sources() {
         crate::xplane::defaults(12),
         crate::xplane::catalogue(),
     );
-    let wrong = GameSources::prepare(&fixture.plan, Some(wrong)).unwrap();
+    let wrong = authored_sources(&fixture.plan, Some(wrong)).unwrap();
     assert!(wrong.reader.is_none());
     let mut invalid = fixture.plan.clone();
     invalid.sources[0].contract = PortContract::Event {
         schema: osg_mapping::signal::ScalarSchema::Boolean {},
     };
-    assert!(GameSources::prepare(&invalid, Some(fixture.game.clone())).is_err());
+    assert!(authored_sources(&invalid, Some(fixture.game.clone())).is_err());
     invalid = fixture.plan.clone();
     invalid.sources[0].observed_port_id = None;
-    assert!(GameSources::prepare(&invalid, Some(fixture.game.clone())).is_err());
+    assert!(authored_sources(&invalid, Some(fixture.game.clone())).is_err());
     dormant.stop();
     assert!(dormant.lost);
 }
@@ -772,7 +773,7 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
         let descriptors = crate::profile_resource_ports::integration(&game.catalogue).unwrap();
         let mut plan = empty_plan();
         source(&mut plan, "assetto-corsa-rally", &descriptors[0]);
-        let mut reader = GameSources::prepare(&plan, Some(game.clone())).unwrap();
+        let mut reader = authored_sources(&plan, Some(game.clone())).unwrap();
         let mut calls = vec![];
         reader
             .acquire_with_acr(&games, |pid, image| {
@@ -789,7 +790,7 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
         reader.stop();
         let mut forged = game;
         forged.proof.process.path = format!("different-directory{separator}acr.exe");
-        let mut changed = GameSources::prepare(&plan, Some(forged)).unwrap();
+        let mut changed = authored_sources(&plan, Some(forged)).unwrap();
         assert!(changed
             .acquire_with_acr(&games, |_, _| panic!(
                 "A changed full process path must fail before opening the reader"
@@ -834,7 +835,7 @@ fn replacement_reader_requires_fresh_native_context_and_advances_source_identity
     next_game.proof.session = uuid::Uuid::new_v4().to_string();
     next_game.proof.process.epoch += 1;
     assert!(old.accepts_replacement(&next_game));
-    let mut replacement = GameSources::prepare(&fixture.plan, Some(next_game)).unwrap();
+    let mut replacement = authored_sources(&fixture.plan, Some(next_game)).unwrap();
     replacement.inherit_source_counters(&old);
     assert!(
         !feed(&mut replacement, 1, true, 30_000).fresh,
@@ -842,9 +843,9 @@ fn replacement_reader_requires_fresh_native_context_and_advances_source_identity
     );
     let baseline = feed(&mut replacement, 2, false, 40_000);
     assert!(baseline.fresh);
-    assert_eq!(baseline.frames[0].reason, Reason::Baseline);
-    assert!(baseline.frames[0].generation > prior.frames[0].generation);
-    assert!(baseline.frames[0].sequence > disconnected.frames[0].sequence);
+    assert_eq!(direct_frame(&baseline.frames[0]).reason, Reason::Baseline);
+    assert!(direct_frame(&baseline.frames[0]).generation > direct_frame(&prior.frames[0]).generation);
+    assert!(direct_frame(&baseline.frames[0]).sequence > direct_frame(&disconnected.frames[0]).sequence);
     assert!(
         !replacement.can_command(),
         "Telemetry alone cannot mint applied command authority"
@@ -862,15 +863,15 @@ fn unchanged_proof_recovers_only_a_lost_reader_with_a_new_advancing_baseline() {
     assert!(prior.fresh);
     let lost = old.lose(20_000, "Transient proof validation failure".into());
     assert!(old.accepts_replacement_from(old.reader_session(), &fixture.game));
-    let mut replacement = GameSources::prepare(&fixture.plan, Some(fixture.game.clone())).unwrap();
+    let mut replacement = authored_sources(&fixture.plan, Some(fixture.game.clone())).unwrap();
     assert_ne!(replacement.provider_identity().unwrap().1, original_reader);
     replacement.inherit_source_counters(&old);
     assert!(!feed(&mut replacement, 3, false, 30_000).fresh);
     let recovered = feed(&mut replacement, 4, false, 40_000);
     assert!(recovered.fresh);
-    assert_eq!(recovered.frames[0].reason, Reason::Baseline);
-    assert!(recovered.frames[0].generation > prior.frames[0].generation);
-    assert!(recovered.frames[0].sequence > lost.frames[0].sequence);
+    assert_eq!(direct_frame(&recovered.frames[0]).reason, Reason::Baseline);
+    assert!(direct_frame(&recovered.frames[0]).generation > direct_frame(&prior.frames[0]).generation);
+    assert!(direct_frame(&recovered.frames[0]).sequence > direct_frame(&lost.frames[0]).sequence);
     assert!(!replacement.can_command(), "A retried proof and telemetry cannot substitute for strict native admission");
 }
 
@@ -892,13 +893,13 @@ fn unchanged_session_requires_exact_proof_and_late_predecessors_are_rejected() {
     }
     let mut next = fixture.game.clone();
     next.proof.session = uuid::Uuid::new_v4().to_string();
-    let mut current = GameSources::prepare(&fixture.plan, Some(next.clone())).unwrap();
+    let mut current = authored_sources(&fixture.plan, Some(next.clone())).unwrap();
     assert!(!current.accepts_replacement(&next), "Healthy readers never accept duplicate workers");
     current.lose(20_000, "Later transient failure".into());
     assert!(!current.accepts_replacement_from(old.reader_session(), &fixture.game),
         "A late worker for the prior reader cannot replace the changed current proof");
     assert!(current.accepts_replacement_from(current.reader_session(), &next));
-    let mut same_proof_reader = GameSources::prepare(&fixture.plan, Some(fixture.game.clone())).unwrap();
+    let mut same_proof_reader = authored_sources(&fixture.plan, Some(fixture.game.clone())).unwrap();
     same_proof_reader.lose(30_000, "A later loss after recovery under the same proof".into());
     assert_ne!(same_proof_reader.reader_session(), old.reader_session());
     assert!(!same_proof_reader.accepts_replacement_from(old.reader_session(), &fixture.game),
@@ -943,7 +944,7 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
     let descriptors = crate::profile_resource_ports::integration(&game.catalogue).unwrap();
     let mut plan = empty_plan();
     source(&mut plan, "x-plane-12", &descriptors[0]);
-    let mut reader = GameSources::prepare(&plan, Some(game)).unwrap();
+    let mut reader = authored_sources(&plan, Some(game)).unwrap();
     assert!(reader.requires_baseline());
     assert!(
         reader.acquire(&games).is_err(),
@@ -976,11 +977,11 @@ fn preparation_alone_cannot_fabricate_native_acquisition_or_a_delivery_baseline(
         std::thread::yield_now();
     };
     assert!(lost.context_lost);
-    assert_eq!(lost.frames[0].reason, Reason::Disconnect);
+    assert_eq!(direct_frame(&lost.frames[0]).reason, Reason::Disconnect);
     assert!(!lost.diagnostics.is_empty());
     assert!(reader.poll(&games, || 3).context_lost);
     assert!(reader.acquire(&games).is_err());
-    let mut dormant = GameSources::prepare(&plan, None).unwrap();
+    let mut dormant = authored_sources(&plan, None).unwrap();
     dormant.acquire(&games).unwrap();
     dormant.admit(&games).unwrap();
     assert!(dormant.poll(&games, || 4).frames.is_empty());
@@ -1110,7 +1111,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
             .find(|p| p.id == "channel:common:CommonData:ALT_MSL_FT:0")
             .unwrap(),
     );
-    let mut reader = GameSources::prepare(&plan, Some(game)).unwrap();
+    let mut reader = authored_sources(&plan, Some(game)).unwrap();
     // Keep the real reader/decoder while isolating test datagrams from the
     // passive observer's socket. Process proof validation remains authoritative;
     // this test transport cannot acquire admitted simulator command authority.
@@ -1163,7 +1164,7 @@ fn acquisition_clock_follows_native_guards_without_refreshing_silent_or_changed_
         baseline = reader.poll_baseline(&games, clock);
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert_eq!(baseline.frames[0].captured_us.0, 2_010_000,
+    assert_eq!(direct_frame(&baseline.frames[0]).captured_us.0, 2_010_000,
         "Reducer admission follows validation; native capture age stays in decoder evidence");
     platform.validation_cost.store(101_000, Ordering::SeqCst);
     assert!(reader.poll_baseline(&games, clock).fresh,
@@ -1224,7 +1225,7 @@ fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_
         for port in descriptors {
             source(&mut plan, id, &port);
         }
-        let mut acquired = GameSources::prepare(&plan, Some(prepared)).unwrap();
+        let mut acquired = authored_sources(&plan, Some(prepared)).unwrap();
         acquired.acquired = true;
         let mut queue = FixtureSource::new_for_game(game);
         let mut sample = RawSample {
@@ -1263,7 +1264,7 @@ fn each_assetto_provider_acquires_its_decoder_and_publishes_advancing_read_only_
         let poll = acquired.frames(snapshot, 20_000);
         assert!(poll.fresh, "{id}");
         assert_eq!(
-            poll.frames[0]
+            direct_frame(&poll.frames[0])
                 .changes
                 .iter()
                 .find(|change| change.port_id == "channel:rpm")
@@ -1300,7 +1301,7 @@ fn rally_fixture_uses_exact_native_channels_and_preserves_unknown_optional_value
     for port in descriptors {
         source(&mut plan, "assetto-corsa-rally", &port);
     }
-    let mut source = GameSources::prepare(&plan, Some(game)).unwrap();
+    let mut source = authored_sources(&plan, Some(game)).unwrap();
     source.acquired = true;
     let mut queue = crate::game_telemetry::FixtureSource::new();
     let mut sample = crate::game_telemetry::RawSample {
@@ -1333,7 +1334,7 @@ fn rally_fixture_uses_exact_native_channels_and_preserves_unknown_optional_value
     let snapshot = source.read(20_000, false).unwrap().unwrap();
     let baseline = source.frames(snapshot, 20_000);
     assert!(baseline.fresh);
-    let changes = &baseline.frames[0].changes;
+    let changes = &direct_frame(&baseline.frames[0]).changes;
     assert_eq!(
         changes
             .iter()
@@ -1426,9 +1427,9 @@ fn sample_changes_do_not_republish_catalogues_but_delivery_authority_changes_do(
             u64::from(counter) * 10_000,
         );
         assert!(sample.fresh);
-        assert_eq!(sample.frames[0].reason, Reason::Change);
+        assert_eq!(direct_frame(&sample.frames[0]).reason, Reason::Change);
         assert_eq!(
-            sample.frames[0].changes[0].sample,
+            direct_frame(&sample.frames[0]).changes[0].sample,
             SignalSample::scalar(PortValue::Number(if counter % 2 == 0 { 1.0 } else { 0.0 }))
         );
         assert!(
@@ -1551,7 +1552,7 @@ fn receive_backlogs_are_disarmed_and_exact_commands_are_sent_once_over_native_ud
     assert!(error.contains("continuity") && error.contains("Overflow"), "{error}");
     let lost = source.fail(30_000, error);
     assert!(lost.context_lost);
-    assert_eq!(lost.frames[0].reason, Reason::Disconnect);
+    assert_eq!(direct_frame(&lost.frames[0]).reason, Reason::Disconnect);
     assert!(source.delivery_batch().is_none());
 }
 
@@ -1585,7 +1586,7 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
             .unwrap();
         let mut plan = empty_plan();
         source(&mut plan, "dcs", &port);
-        let mut reader = GameSources::prepare(&plan, Some(fixture.game.clone())).unwrap();
+        let mut reader = authored_sources(&plan, Some(fixture.game.clone())).unwrap();
         reader.acquired = true;
         for counter in [1u8, 2] {
             let mut frame = vec![0x55; 4];
@@ -1657,7 +1658,7 @@ fn common_catalogue_or_alias_change_after_live_baseline_withdraws_without_rebind
             lost.diagnostics
         );
         assert_eq!(lost.frames.len(), 1);
-        assert_eq!(lost.frames[0].reason, Reason::Disconnect);
+        assert_eq!(direct_frame(&lost.frames[0]).reason, Reason::Disconnect);
         assert!(reader.delivery_batch().is_none());
         assert!(
             reader.reader.is_none(),
@@ -1717,9 +1718,23 @@ fn activation_backlog_requires_new_identity_and_counter_progress_without_replayi
         assert_eq!(sample.fresh, counter == 101);
         if sample.fresh {
             assert_eq!(
-                sample.frames[0].changes[0].sample,
+                direct_frame(&sample.frames[0]).changes[0].sample,
                 SignalSample::scalar(PortValue::Number(0.0))
             );
         }
     }
 }
+
+// Authored transport fixtures deliberately test graph/value behavior without
+// native capture authority. Production acquisition never enables this path.
+fn authored_sources(plan: &ExecutionPlan, game: Option<PreparedGame>) -> Result<GameSources, String> {
+    let clock = osg_controller_input::ControllerService::new(None, false).capture_clock();
+    let mut sources = GameSources::prepare(plan, game, clock)?;
+    sources.authored_fixture = true;
+    Ok(sources)
+}
+fn direct_frame(admission: &Admission) -> &Frame {
+    match admission { Admission::Direct(frame) => frame, Admission::Native(_) => panic!("Authored fixture unexpectedly acquired native authority") }
+}
+include!("games/profiles/native_transport_tests.rs");
+include!("games/profiles/native_expiry_recovery_tests.rs");
