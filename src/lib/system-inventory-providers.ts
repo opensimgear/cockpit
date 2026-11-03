@@ -1,6 +1,6 @@
 import type { GatewayRequest, GatewayState } from './gateway';
 import type { GatewayEntry } from './gateway-workspace';
-import type { HostController } from './controllers';
+import { observeControllerInventory, type ControllerInventoryState } from './controller-read-models/shared.ts';
 import type { UsbModuleSummary } from './module-usb';
 import { ProfileTopologyClient } from './profile-activity';
 import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory.ts';
@@ -110,17 +110,34 @@ export class SystemInventoryController {
   private onChange: (snapshot: SystemSnapshot) => void;
   private gamesState: GameModelState<GamesSummaryState> = { status: 'connecting' };
   private stopGamesState: () => void;
+  private controllerState: ControllerInventoryState = { status: 'connecting' };
+  private stopControllerState: () => void;
+  private projectionBase = { complete: ['host'], diagnostics: [] as string[] };
+  private projectionId = 0;
+  private readyProjection = false;
+  private projectedControllers?: ControllerInventoryState;
+  private projecting?: Promise<SystemSnapshot>;
+  private projectionQueued = false;
   constructor(options: { request: Send; gateways: () => readonly GatewayEntry[]; gatewayError?: () => string; storage?: InventoryStorage; onChange?: (snapshot: SystemSnapshot) => void }) {
     this.send = options.request; this.gateways = options.gateways; this.registry = new SystemInventoryRegistry(options.storage); this.onChange = options.onChange ?? (() => {});
     this.gatewayError = options.gatewayError ?? (() => '');
     this.stopGamesState = observeGamesState(state => { this.gamesState = state; });
+    this.stopControllerState = observeControllerInventory(state => {
+      this.controllerState = state;
+      if (this.readyProjection && !this.pending && !this.disposed) void this.projectCurrent().catch(error => {
+        if (!this.disposed) this.onChange({ ...this.snapshot, diagnostics: [...this.snapshot.diagnostics, message(error)] });
+      });
+    });
   }
   get snapshot() { return this.registry.snapshot; }
   refresh(): Promise<SystemSnapshot> {
     if (this.disposed) return Promise.resolve(this.snapshot);
     if (this.pending) return this.pending;
     const epoch = this.epoch;
-    const pending = this.collect(epoch).finally(() => { if (this.pending === pending) this.pending = null; });
+    const pending = this.collect(epoch).finally(() => {
+      if (this.pending === pending) this.pending = null;
+      if (!this.disposed && this.readyProjection && this.projectedControllers !== this.controllerState) void this.projectCurrent().catch(() => {});
+    });
     this.pending = pending; return pending;
   }
   private async collect(epoch: number): Promise<SystemSnapshot> {
@@ -128,7 +145,7 @@ export class SystemInventoryController {
     const now = Date.now(), diagnostics: string[] = discoveryError ? [`Gateway discovery: ${discoveryError}`] : [], complete: string[] = discoveryError ? ['host'] : ['host', 'gateways'];
     // Native PnP/transport correlation reads the controller and USB inventories.
     // Capture those first so startup does not publish their uncorrelated aliases.
-    const controllers=this.controllers(now),usb=this.usb(now);
+    const controllers=Promise.resolve(this.controllers(now)),usb=this.usb(now);
     const nativeCapture=Promise.allSettled([controllers,usb]).then(()=>this.disposed || epoch!==this.epoch ? {provider:'native',observations:[]} as Capture : this.native(now));
     const providers = [controllers,usb,this.companions(now),this.integrations(now),nativeCapture];
     const results = await Promise.allSettled(providers);
@@ -136,7 +153,7 @@ export class SystemInventoryController {
     const names = ['controllers', 'usb', 'companions', 'integrations', 'native'];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && new Set(result.value.observations.map(c => c.id)).size !== result.value.observations.length) { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: Provider returned duplicate identities; its inspection is incomplete.`); return; }
-      if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (result.value.complete !== false && (names[index] !== 'native' || !result.value.diagnostics?.length)) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); }
+      if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (names[index] !== 'controllers') { if (result.value.complete !== false && (names[index] !== 'native' || !result.value.diagnostics?.length)) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); } }
       else { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: ${message(result.reason)}`); }
     });
     const native = this.captures.get('native');
@@ -148,9 +165,31 @@ export class SystemInventoryController {
       this.resources = JSON.parse(JSON.stringify((await client.listAll()).resources));
     } catch (error) { diagnostics.push(`Identity correlation is stale: ${message(error)}`); }
     if (this.disposed || epoch !== this.epoch) return this.snapshot;
-    let observations = [observation('host', 'Your computer', 'host', 'host', now, { presence: 'connected', role: 'Host', forget: { allowed: false, reason: 'The host cannot be forgotten.', effect: '' } }), ...gatewayObservations(this.gateways(), now), ...[...this.captures.values()].flatMap(c => c.observations)];
+    this.projectionBase = { complete, diagnostics };
+    this.readyProjection = true;
+    return this.projectCurrent();
+  }
+  private projectCurrent(): Promise<SystemSnapshot> {
+    this.projectionQueued = true;
+    if (this.projecting) return this.projecting;
+    const task = (async () => {
+      do { this.projectionQueued = false; await this.projectOnce(); } while (this.projectionQueued && !this.disposed);
+      return this.snapshot;
+    })().finally(() => { if (this.projecting === task) this.projecting = undefined; });
+    this.projecting = task;
+    return task;
+  }
+  private async projectOnce(): Promise<SystemSnapshot> {
+    const projectionId = ++this.projectionId;
+    this.projectedControllers = this.controllerState;
+    const now = Date.now(), complete = [...this.projectionBase.complete], diagnostics = [...this.projectionBase.diagnostics];
+    const controllers = this.controllers(now);
+    this.captures.set('controllers', controllers);
+    if (controllers.complete !== false) complete.push('controllers');
+    diagnostics.push(...(controllers.diagnostics ?? []));
+    let observations = [observation('host', 'Your computer', 'host', 'host', now, { presence: 'connected', role: 'Host', forget: { allowed: false, reason: 'The host cannot be forgotten.', effect: '' } }), ...gatewayObservations(this.gateways(), now), ...structuredClone([...this.captures.values()].flatMap(c => c.observations))];
     // Resolve HidHide PnP collections to the original controller, not duplicate nodes.
-    const hidden = this.captures.get('native')?.observations.filter(c => c.targets.some(t => t.kind === 'visibility')) ?? [];
+    const hidden = observations.filter(c => c.provider === 'native' && c.targets.some(t => t.kind === 'visibility'));
     const visibilityIds = new Map(hidden.map(c => [c, c.id]));
     const consumed = new Set<string>();
     for (const h of hidden) {
@@ -206,22 +245,18 @@ export class SystemInventoryController {
       if (c && visibility) aliases[`visibility:pnp:${visibility.id.toLowerCase()}`] = c.id;
       if (c) aliases[visibilityIds.get(h)!] = c.id;
     }
-    const snapshot = await this.registry.update(observations, complete, diagnostics, now, aliases); this.onChange(snapshot); return snapshot;
+    const snapshot = await this.registry.update(observations, complete, diagnostics, now, aliases); if (!this.disposed && !this.projectionQueued && projectionId === this.projectionId) this.onChange(snapshot); return snapshot;
   }
-  private async controllers(now: number): Promise<Capture> {
-    const sources: HostController[] = []; let offset = 0, session: string | undefined, total: number | undefined, backend = 'ready', diagnostic = '';
+  private controllers(now: number): Capture {
+    const state = this.controllerState, page = state.value;
+    const sources = page?.sources ?? [], backend = page?.backendStatus ?? state.status, diagnostic = state.error || page?.diagnostic || '';
+    if (new Set(sources.map(source => source.id)).size !== sources.length) return { provider: 'controllers', complete: false, observations: [], diagnostics: ['Controller inventory returned duplicate identities; its inspection is incomplete.'] };
     const accessDiagnostics = new Set<string>();
-    do {
-      const page = (await this.send({ command: 'controller_list', offset, limit: 32 })).controllers;
-      if (!page?.sources || page.sources.length > 32 || offset + page.sources.length > page.total || page.offset !== offset || !Number.isSafeInteger(page.total) || page.total < 0 || page.total > 4096 || (offset < page.total && !page.sources.length) || (session !== undefined && page.session !== session) || (total !== undefined && total !== page.total)) throw Error('Controller inventory changed or returned an incomplete page.');
-      session = page.session; total = page.total; sources.push(...page.sources); offset += page.sources.length;
-      if (page.backendStatus && page.backendStatus !== 'ready') backend = page.backendStatus;
-      if (page.diagnostic) diagnostic = page.diagnostic;
-      if (page.selfAccess && ['unsupported', 'blocked', 'error'].includes(page.selfAccess.status)) {
-        accessDiagnostics.add(`Startup HidHide access (${page.selfAccess.status}): ${page.selfAccess.message}${page.selfAccess.changed === null ? ' Its final state could not be verified.' : ''}`);
-      }
-    } while (offset < total!);
-    const healthy = backend === 'ready';
+    if (page?.selfAccess && ['unsupported', 'blocked', 'error'].includes(page.selfAccess.status)) {
+      const access = page.selfAccess;
+      accessDiagnostics.add(`Startup HidHide access (${access.status}): ${access.message}${access.changed === null ? ' Its final state could not be verified.' : ''}`);
+    }
+    const healthy = state.status === 'ready' && backend === 'ready';
     const accessUncertain = accessDiagnostics.size > 0;
     return { provider: 'controllers', complete: healthy && !accessUncertain, diagnostics: [...(diagnostic || !healthy ? [`Controller capture ${backend}${diagnostic ? `: ${diagnostic}` : ''}`] : []), ...accessDiagnostics], observations: sources.map(s => {
       const id = `controller:${s.id}`, uncertain = !healthy || (!s.online && accessUncertain);
@@ -403,6 +438,6 @@ export class SystemInventoryController {
     else if (t?.kind === 'companion') { await this.send({ command: 'companion_revoke', companion: { companionId: t.id } }); activityRecorded = true; }
     await this.registry.forget(id, { activityRecorded }); this.onChange(this.snapshot);
   }
-  dispose() { this.disposed = true; this.epoch++; this.stopGamesState(); }
+  dispose() { this.disposed = true; this.epoch++; this.stopGamesState(); this.stopControllerState(); }
 }
 export const integrationGameId = (component: SystemComponent): GameId | undefined => component.targets.find(t => t.kind === 'integration')?.id as GameId | undefined;

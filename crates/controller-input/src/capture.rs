@@ -105,8 +105,7 @@ impl<P: Platform> Capture<P> {
             }
         }
         let mut r = self.shared.lock().unwrap_or_else(|p| p.into_inner());
-        r.backend_status = "qualification-probe".into();
-        r.diagnostic = diagnostics.join(" ");
+        r.set_backend_state("qualification-probe", diagnostics.join(" "));
         Ok(())
     }
     pub fn tick(&mut self) {

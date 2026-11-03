@@ -9,6 +9,7 @@ pub const MAX_CONTROLS: usize = 256;
 pub const PAGE_SIZE: usize = 32;
 include!("registry/model.rs");
 mod input;
+mod inventory_observation;
 mod metadata;
 mod observation;
 mod snapshots;
@@ -16,6 +17,7 @@ mod snapshots;
 pub struct Registry {
     sources: BTreeMap<String, Source>,
     observations: observation::Observations,
+    inventory_observation: inventory_observation::Inventory,
     journal: Journal,
     pub backend_status: String,
     pub diagnostic: String,
@@ -29,6 +31,7 @@ impl Default for Registry {
         Self {
             sources: BTreeMap::new(),
             observations: observation::Observations::default(),
+            inventory_observation: inventory_observation::Inventory::default(),
             journal,
             backend_status: "starting".into(),
             diagnostic: String::new(),

@@ -101,6 +101,7 @@ impl Registry {
             .collect();
         self.dirty = true;
         self.publish_observation(&id, "metadata", None, true);
+        self.inventory_changed();
         Ok(id)
     }
     pub fn disconnect(&mut self, id: &str) {
@@ -110,6 +111,7 @@ impl Registry {
             s.sequence = s.sequence.saturating_add(1);
             let event = self.journal.publish(s.event(Reason::Disconnect));
             self.publish_observation(id, "disconnect", event.as_ref(), false);
+            self.inventory_changed();
         }
     }
     pub fn disconnect_all(&mut self) {
@@ -129,6 +131,7 @@ impl Registry {
                 else {"Controller generation exhausted; capture requires restart.".into()}];
             let event = self.journal.publish(s.event(if next.is_some() {Reason::Gap} else {Reason::Disconnect}));
             self.publish_observation(id, if next.is_some() {"gap"} else {"disconnect"}, event.as_ref(), false);
+            self.inventory_changed();
         }
     }
     /// Commit a whole report under one registry lock, including implicit button releases.
@@ -177,7 +180,8 @@ impl Registry {
         } else {
             Reason::Baseline
         };
-        let event = if s.ready() {
+        let ready = s.ready();
+        let event = if ready {
             self.journal.publish(s.event(reason.clone()))
         } else {
             None
@@ -192,6 +196,7 @@ impl Registry {
             event.as_ref(),
             false,
         );
+        if !was_ready && ready { self.inventory_readiness(id); }
         Ok(())
     }
 }

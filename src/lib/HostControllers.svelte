@@ -6,9 +6,12 @@
   import SystemControllerInputs from './SystemControllerInputs.svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
   import { controllerRoles, type ControllerResult, type HostController } from './controllers';
+  import { observeControllerInventory, type ControllerInventoryState } from './controller-read-models/shared';
+  import type { DeepReadonly } from './profiles';
   import { observeControllerInputs, type ControllerInputDetail } from './controller-observations';
   let { topology = false, initialSourceId = '', detailsOnly = false }: { topology?: boolean; initialSourceId?: string; detailsOnly?: boolean } = $props();
-  let inventory = $state<ControllerResult>({ sources: [], offset: 0, total: 0, limit: 32 });
+  let inventory = $state<DeepReadonly<ControllerResult>>({ sources: [], offset: 0, total: 0, limit: 256 });
+  let inventoryState = $state<ControllerInventoryState>({ status: 'connecting' });
   let detail = $state<ControllerInputDetail | null>(null);
   let selected = $state('');
   let name = $state('');
@@ -20,7 +23,6 @@
   let busy = $state(false);
   let page = $state(0);
   let disposed = false;
-  let polling = false;
   let mounted = $state(false);
   let initializedSourceId = '';
   async function request(request: GatewayRequest) {
@@ -28,23 +30,19 @@
     if (!state.controllers) throw new Error('Controller discovery is unavailable. Restart the native service after updating Cockpit.');
     return state.controllers;
   }
-  async function refresh() {
-    if (polling || busy || disposed) return;
-    polling = true;
-    try {
-      const next = await request({ command: 'controller_list', offset: page });
-      if (disposed) return;
-      inventory = next;
-      inventoryError = '';
-    } catch (e) { if (!disposed) inventoryError = e instanceof Error ? e.message : String(e); }
-    finally { polling = false; }
-  }
+  let inventoryFresh = $derived(inventoryState.status === 'ready');
+  let visibleSources = $derived((inventory.sources ?? []).slice(page, page + 32));
+  let inventoryLabel = $derived(inventoryState.status === 'ready'
+    ? inventory.backendStatus ?? 'Ready'
+    : inventoryState.status === 'connecting' ? 'Connecting'
+    : inventoryState.status === 'lost' ? (inventory.sources?.length ? 'Connection lost · cached inventory' : 'Connection lost')
+    : (inventory.sources?.length ? 'Inventory error · cached inventory' : 'Inventory error'));
   function select(source: HostController) {
     if (selected !== source.id) detail = null;
     selected = source.id; name = source.name; role = source.role; initializedSourceId = source.id; remembered = '';
-    void refresh();
   }
   async function mutate(command: GatewayRequest) {
+    if (!inventoryFresh) return;
     busy = true;
     const sourceId = selected;
     try {
@@ -60,14 +58,22 @@
       actionError = '';
     } catch (e) { actionError = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
-    void refresh();
   }
   onMount(() => {
     selected = initialSourceId;
     mounted = true;
-    void refresh();
-    const timer = setInterval(() => { void refresh(); }, 250);
-    return () => { disposed = true; mounted = false; clearInterval(timer); };
+    const stop = observeControllerInventory(state => {
+      if (disposed) return;
+      inventoryState = state;
+      inventoryError = state.status === 'error' || state.status === 'lost'
+        ? state.error ?? (state.status === 'lost' ? 'Controller inventory connection was lost.' : 'Controller inventory is unavailable.')
+        : '';
+      if (state.value) {
+        inventory = state.value;
+        if (page >= (inventory.sources?.length ?? 0)) page = Math.max(0, Math.floor(Math.max(0, (inventory.sources?.length ?? 1) - 1) / 32) * 32);
+      }
+    });
+    return () => { disposed = true; mounted = false; stop(); };
   });
   $effect(() => {
     const sourceId = selected;
@@ -87,18 +93,18 @@
 
 <section class="host-controllers" class:embedded={detailsOnly} aria-label="Host controllers">
   {#if !detailsOnly}
-  <div class="panel-heading"><div><h2>{topology ? 'USB controllers connected to this computer' : 'Host controllers'}</h2><p>Physical controller input · {inventory.backendStatus ?? 'Connecting'}</p></div><span class="quiet-tag">Experimental</span></div>
+  <div class="panel-heading"><div><h2>{topology ? 'USB controllers connected to this computer' : 'Host controllers'}</h2><p>Physical controller input · {inventoryLabel}</p></div><span class="quiet-tag">Experimental</span></div>
   <div class="host-grid">
-    {#each inventory.sources ?? [] as source (source.id)}
+    {#each visibleSources as source (source.id)}
       <button class="host-card" class:selected={selected === source.id} class:offline={!source.online} onclick={() => select(source)}>
         <Icon name="usb" size={22} /><strong>{source.name.trim()}</strong>
         <span>{source.osgHid ? 'OpenSimGear HID' : 'Host HID controller'} · {source.role}</span>
         <span>{source.online ? 'Connected' : 'Offline'} · {source.controlCount} controls</span>
         <small>{source.vendorId.toString(16).padStart(4, '0')}:{source.productId.toString(16).padStart(4, '0')}</small>
       </button>
-    {:else}<p>{inventory.backendStatus === 'ready' ? 'Connect a joystick, gamepad, wheel or other HID controller.' : 'Capture requires a supported native platform service.'}</p>{/each}
+    {:else}<p>{inventoryState.status === 'ready' ? 'Connect a joystick, gamepad, wheel or other HID controller.' : inventoryLabel}</p>{/each}
   </div>
-  {#if inventory.total > inventory.limit}<div class="paging"><button class="secondary-button" disabled={page === 0} onclick={() => { page = Math.max(0, page - 32); void refresh(); }}><Icon name="chevron" size={14} class="previous-icon" />Previous controllers</button><span>{page + 1}–{Math.min(page + 32, inventory.total)} / {inventory.total}</span><button class="secondary-button" disabled={page + 32 >= inventory.total} onclick={() => { page += 32; void refresh(); }}><Icon name="chevron" size={14} />Next controllers</button></div>{/if}
+  {#if (inventory.sources?.length ?? 0) > 32}<div class="paging"><button class="secondary-button" disabled={page === 0} onclick={() => { page = Math.max(0, page - 32); }}><Icon name="chevron" size={14} class="previous-icon" />Previous controllers</button><span>{page + 1}–{Math.min(page + 32, inventory.sources?.length ?? 0)} / {inventory.sources?.length ?? 0}</span><button class="secondary-button" disabled={page + 32 >= (inventory.sources?.length ?? 0)} onclick={() => { page += 32; }}><Icon name="chevron" size={14} />Next controllers</button></div>{/if}
   {/if}
   {#if inventory.diagnostic}<Notification message={String(inventory.diagnostic)} kind="error" />{/if}
   {#if error}<Notification message={String(error)} kind="error" />{/if}
@@ -113,17 +119,17 @@
       <div class="metadata">
         <label>Local name<input class="text-input" bind:value={name} maxlength="80" /></label>
         <label>Role<select bind:value={role}>{#each controllerRoles as option}<option value={option}>{option}</option>{/each}</select></label>
-        <button class="secondary-button" disabled={busy || !name.trim()} onclick={() => mutate({ command: 'controller_update', sourceId: source.id, name, role })}><Icon name="save" size={14} />Save local details</button>
+        <button class="secondary-button" disabled={busy || !inventoryFresh || !name.trim()} onclick={() => mutate({ command: 'controller_update', sourceId: source.id, name, role })}><Icon name="save" size={14} />Save local details</button>
       </div>
       {#each detail.diagnostics ?? [] as message}<p class="controller-diagnostic">{message}</p>{/each}
       {#if source.online && (inventory.sources ?? []).some(s => !s.online)}
-        <div class="metadata"><label>Moved to another USB port?<select bind:value={remembered}><option value="">Choose a remembered offline controller</option>{#each (inventory.sources ?? []).filter(s => !s.online) as previous}<option value={previous.id}>{previous.name}</option>{/each}</select></label><button class="secondary-button" disabled={busy || !remembered} onclick={() => mutate({ command: 'controller_reassign', sourceId: remembered, observedId: source.id })}><Icon name="swap" size={14} />Reassign this connection</button></div>
+        <div class="metadata"><label>Moved to another USB port?<select bind:value={remembered}><option value="">Choose a remembered offline controller</option>{#each (inventory.sources ?? []).filter(s => !s.online) as previous}<option value={previous.id}>{previous.name}</option>{/each}</select></label><button class="secondary-button" disabled={busy || !inventoryFresh || !remembered} onclick={() => mutate({ command: 'controller_reassign', sourceId: remembered, observedId: source.id })}><Icon name="swap" size={14} />Reassign this connection</button></div>
       {/if}
       {#key source.id}<DeviceVisibility {source} />{/key}
       <div class="controls-heading"><h3>Live inputs</h3><span class="quiet-tag">{source.controlCount} controls</span></div>
       <SystemControllerInputs controls={detail.controls ?? []} online={source.online} />
       <details class="controller-identity"><summary>Identity and capabilities</summary><dl><div><dt>Local source ID</dt><dd><code>{source.id}</code></dd></div><div><dt>Identity evidence</dt><dd>{source.identityConfidence === 'serial' ? 'Serial and collection; duplicate matches require reassignment' : 'Local path; a port change requires reassignment'}</dd></div><div><dt>Observed path</dt><dd><code>{detail.identity?.path ?? 'Not reported'}</code></dd></div><div><dt>Collection</dt><dd>{detail.identity?.collection ?? 'Not reported'}</dd></div><div><dt>Capability fingerprint</dt><dd><code>{detail.identity?.fingerprint ?? 'Not reported'}</code></dd></div></dl></details>
-      {#if !source.online && !detailsOnly}<button class="secondary-button" disabled={busy} onclick={() => mutate({ command: 'controller_forget', sourceId: source.id })}><Icon name="trash" size={14} />Forget offline controller</button>{/if}
+      {#if !source.online && !detailsOnly}<button class="secondary-button" disabled={busy || !inventoryFresh} onclick={() => mutate({ command: 'controller_forget', sourceId: source.id })}><Icon name="trash" size={14} />Forget offline controller</button>{/if}
       </div>
     </section>
   {:else if selected && !error}

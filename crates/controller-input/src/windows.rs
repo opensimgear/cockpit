@@ -376,11 +376,11 @@ unsafe fn enumerate(
                     Ok(_) => {
                         devices.insert(item.hDevice as usize, device);
                     }
-                    Err(e) => r.diagnostic = e,
+                    Err(e) => r.set_diagnostic(e),
                 }
             }
             Ok(None) => (),
-            Err(e) => shared.lock().unwrap_or_else(|p| p.into_inner()).diagnostic = e,
+            Err(e) => shared.lock().unwrap_or_else(|p| p.into_inner()).set_diagnostic(e),
         }
     }
     Ok(())

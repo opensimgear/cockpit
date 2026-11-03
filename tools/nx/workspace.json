@@ -133,7 +133,8 @@
         "src/lib/controller-inputs.test.mjs",
         "src/lib/module-usb.test.mjs",
         "src/lib/persistence/inventory-storage.test.mjs",
-        "src/lib/controller-observations.test.mjs"
+        "src/lib/controller-observations.test.mjs",
+        "src/lib/controller-read-models/*.test.mjs"
       ],
       "sourcePatterns": [
         "src/lib/device-*.ts",
@@ -154,7 +155,8 @@
         "src/lib/module-usb.*",
         "src/lib/persistence/inventory-storage.*",
         "tests/fixtures/system/**",
-        "src/lib/controller-observations.*"
+        "src/lib/controller-observations.*",
+        "src/lib/controller-read-models/**"
       ],
       "coverageScripts": [
         "system-inventory:coverage",
@@ -164,6 +166,23 @@
         "controller-streams:coverage"
       ],
       "coverageTasks": [
+        {
+          "name": "controller-read-models-coverage",
+          "tests": [
+            "src/lib/controller-read-models/shared.test.mjs",
+            "src/lib/host-controllers-ui.test.mjs"
+          ],
+          "arguments": [
+            "--experimental-test-coverage",
+            "--test-coverage-include=src/lib/controller-read-models/*.ts",
+            "--test-coverage-lines=71",
+            "--test-coverage-branches=71",
+            "--test-coverage-functions=71",
+            "--test",
+            "src/lib/controller-read-models/shared.test.mjs",
+            "src/lib/host-controllers-ui.test.mjs"
+          ]
+        },
         {
           "name": "controller-inputs-coverage",
           "tests": [

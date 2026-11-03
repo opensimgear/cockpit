@@ -14,41 +14,44 @@ const file = new URL('./HostControllers.svelte', import.meta.url);
 const source = await readFile(file, 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
 const settle = () => new Promise(resolve => setImmediate(resolve));
-const controller = () => ({ id: 'physical-pedals', name: 'Desk pedals', role: 'pedals', origin: 'host-controller', backend: 'windows-raw-input',
-  vendorId: 1, productId: 2, osgHid: false, online: true, generation: '1', sequence: '2', controlCount: 0,
-  baselineReady: true, identityConfidence: 'serial' });
-const result = current => ({ source: current, sources: [current], controls: [], offset: 0, total: 0, limit: 32 });
+const controller = (id = 'physical-pedals', name = 'Desk pedals') => ({ id, name, role: 'pedals', origin: 'host-controller', backend: 'windows-raw-input',
+  vendorId: 1, productId: 2, osgHid: false, online: true, generation: '1', sequence: '0', controlCount: 0,
+  baselineReady: false, identityConfidence: 'serial' });
+const result = current => ({ source: current, sources: [current], controls: [], offset: 0, total: 0, limit: 256 });
+const inventory = sources => ({ sources, offset: 0, total: sources.length, limit: 256, backendStatus: 'ready' });
 
 function harness({ seeded = false, detailsOnly = true, error = '', actionError = '' } = {}) {
   let current = controller(), handlers, cleanup, effect, stopEffect, effectKey;
-  const calls = [], mounts = [], timers = new Map(), notices = [], custom = new Map(), observers = [];
+  const calls = [], mounts = [], notices = [], custom = new Map(), inputObservers = [], inventoryObservers = [];
   const injected = source.replace('$effect(() => {', 'registerEffect(() => {').replace('</script>', `
     if (seeded) detail = seededResult;
     error = seededError; actionError = seededActionError;
-    capture({refresh,mutate,select,get selected(){return selected;},get name(){return name;},get role(){return role;},get error(){return error;},get actionError(){return actionError;},get detail(){return detail;},setDraft(nextName,nextRole){name=nextName;role=nextRole;}});
+    capture({mutate,select,get selected(){return selected;},get name(){return name;},get role(){return role;},get error(){return error;},get actionError(){return actionError;},get detail(){return detail;},get inventory(){return inventory;},get inventoryState(){return inventoryState;},get inventoryError(){return inventoryError;},get inventoryFresh(){return inventoryState.status === 'ready';},get visibleSources(){return (inventory.sources ?? []).slice(page,page+32);},setPage(next){page=next;},setDraft(nextName,nextRole){name=nextName;role=nextRole;}});
   </script>`);
   const { js } = compile(injected, { filename: file.pathname, generate: 'server' }), exports = {};
   vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
     exports, seeded, seededResult: result(current), seededError: error, seededActionError: actionError,
     capture(value) { handlers = value; },
     registerEffect(callback) { effect = callback; },
-    setInterval(callback) { const id = timers.size + 1; timers.set(id, callback); return id; },
-    clearInterval(id) { timers.delete(id); },
     require(name) {
       if (name === 'svelte/internal/server') return server;
       if (name === 'svelte') return { ...svelte, onMount(callback) { mounts.push(callback); } };
       if (name === './Notification.svelte') return { default(_payload, props) { notices.push(props.message); } };
       if (name.endsWith('.svelte')) return { default() {} };
       if (name === './controllers') return controllers;
+      if (name === './controller-read-models/shared') return { observeControllerInventory(listener) {
+        const observer = { listener, stopped: false }; inventoryObservers.push(observer); listener({ status: 'connecting' });
+        return () => { observer.stopped = true; };
+      } };
       if (name === './controller-observations') return { observeControllerInputs(id, listener) {
-        const observer = { id, listener, stopped: false }; observers.push(observer);
+        const observer = { id, listener, stopped: false }; inputObservers.push(observer);
         listener({ status: 'connecting' }); return () => { observer.stopped = true; };
       } };
       if (name === './gateway') return { gatewayRequest: async request => {
         calls.push(plain(request));
         if (custom.has(request.command)) return custom.get(request.command)(request);
         if (request.command === 'controller_update') current = { ...current, name: request.name, role: request.role };
-        return { controllers: result(plain(current)) };
+        return { controllers: { ...result(plain(current)), source: plain(current) } };
       } };
       throw Error('Unexpected import ' + name);
     },
@@ -58,45 +61,86 @@ function harness({ seeded = false, detailsOnly = true, error = '', actionError =
     if (effectKey === handlers.selected) return;
     stopEffect?.(); effectKey = handlers.selected; stopEffect = effect();
   }
-  return { html, handlers, calls, timers, custom, notices, observers, flush,
-    emit(state) { observers.at(-1).listener(state); },
+  return { html, handlers, calls, custom, notices, inputObservers, inventoryObservers, flush,
+    emitInput(state) { inputObservers.at(-1).listener(state); },
+    emitInventory(state) { inventoryObservers.at(-1).listener(state); },
     setCurrent(next) { current = next; },
     async mount() { cleanup = mounts[0](); flush(); await settle(); },
     cleanup() { cleanup?.(); stopEffect?.(); },
   };
 }
 
-test('opening a tile observes the selected controller and initializes fields without saving settings', async () => {
+test('mount subscribes to inventory and selected input independently without controller_list queries', async () => {
   const h = harness();
   await h.mount();
-  h.emit({ status: 'ready', detail: result(controller()) });
+  h.emitInventory({ status: 'ready', value: inventory([controller()]), revision: '1' });
+  h.emitInput({ status: 'ready', detail: result(controller()) });
   assert.equal(h.handlers.name, 'Desk pedals');
   assert.equal(h.handlers.role, 'pedals');
-  assert.deepEqual(h.calls.map(call => call.command), ['controller_list']);
-  assert.equal(h.observers[0].id, 'physical-pedals');
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.inventoryObservers.length, 1);
+  assert.equal(h.inputObservers[0].id, 'physical-pedals');
   h.cleanup();
-  assert.equal(h.timers.size, 0);
+  assert.equal(h.inventoryObservers[0].stopped, true);
 });
 
-test('live observations preserve a local draft and successful Save adopts the acknowledged fields', async () => {
-  const h = harness();
+test('inventory metadata replaces catalogue rows while paging locally in 32-row slices', async () => {
+  const h = harness({ detailsOnly: false }), sources = Array.from({ length: 70 }, (_, index) => controller(`controller-${index}`, `Controller ${index}`));
   await h.mount();
-  h.emit({ status: 'ready', detail: result(controller()) });
+  h.emitInventory({ status: 'ready', value: inventory(sources), revision: '1' });
+  assert.equal(h.handlers.visibleSources.length, 32);
+  assert.equal(h.handlers.visibleSources[0].id, 'controller-0');
+  h.handlers.setPage(32);
+  assert.equal(h.handlers.visibleSources.length, 32);
+  assert.equal(h.handlers.visibleSources[0].id, 'controller-32');
+  const replaced = sources.map((source, index) => index === 32 ? { ...source, name: 'Metadata refreshed' } : source);
+  h.emitInventory({ status: 'ready', value: inventory(replaced), revision: '2' });
+  assert.equal(h.handlers.visibleSources[0].name, 'Metadata refreshed');
+  h.handlers.setPage(64);
+  assert.equal(h.handlers.visibleSources.length, 6);
+  assert.deepEqual(h.calls, []);
+  h.cleanup();
+});
+
+test('inventory loss retains and labels cached rows, and freshness gates mutations', async () => {
+  const h = harness(); await h.mount();
+  h.emitInventory({ status: 'ready', value: inventory([controller()]), revision: '1' });
+  h.emitInventory({ status: 'lost', value: inventory([controller()]), revision: '1', error: 'Continuity lost' });
+  assert.equal(h.handlers.inventory.sources[0].id, 'physical-pedals');
+  assert.equal(h.handlers.inventoryFresh, false);
+  assert.match(h.handlers.inventoryState.error, /Continuity lost/);
+  await h.handlers.mutate({ command: 'controller_update', sourceId: 'physical-pedals', name: 'Draft', role: 'pedals' });
+  assert.deepEqual(h.calls, []);
+  h.cleanup();
+});
+
+test('opening a tile initializes fields from input observation without saving settings', async () => {
+  const h = harness(); await h.mount();
+  h.emitInventory({ status: 'ready', value: inventory([controller()]), revision: '1' });
+  h.emitInput({ status: 'ready', detail: result(controller()) });
+  assert.equal(h.handlers.name, 'Desk pedals');
+  assert.equal(h.handlers.role, 'pedals');
+  assert.deepEqual(h.calls, []);
+});
+
+test('live input preserves a local draft and Save adopts acknowledged fields without replacing inventory', async () => {
+  const h = harness(); await h.mount();
+  h.emitInventory({ status: 'ready', value: inventory([controller()]), revision: '1' });
+  h.emitInput({ status: 'ready', detail: result(controller()) });
   h.handlers.setDraft('Unsaved local name', 'throttle');
   h.setCurrent({ ...controller(), name: 'Provider name', role: 'wheelbase' });
-  h.emit({ status: 'ready', detail: result(controller()) });
-  await h.handlers.refresh();
-  assert.equal(h.handlers.name, 'Unsaved local name');
-  assert.equal(h.handlers.role, 'throttle');
+  h.emitInput({ status: 'ready', detail: result(controller()) });
+  h.handlers.setDraft('Unsaved local name', 'throttle');
   await h.handlers.mutate({ command: 'controller_update', sourceId: 'physical-pedals', name: h.handlers.name, role: h.handlers.role });
   await settle();
   assert.equal(h.handlers.name, 'Unsaved local name');
   assert.equal(h.handlers.role, 'throttle');
+  assert.equal(h.handlers.inventory.sources[0].name, 'Desk pedals');
   assert.equal(h.calls.filter(call => call.command === 'controller_update').length, 1);
   h.cleanup();
 });
 
-test('embedded controller settings keep the outer device title and navigation in charge', () => {
+test('embedded settings keep outer title and navigation in charge', () => {
   const embedded = harness({ seeded: true });
   assert.match(embedded.html, /Controller settings/);
   assert.doesNotMatch(embedded.html, />Close<\/button>/);
@@ -107,10 +151,11 @@ test('embedded controller settings keep the outer device title and navigation in
   assert.match(standalone.html, />Desk pedals<\/h2>/);
 });
 
-test('embedded provider and Save failures reach notifications and keep the existing draft', async () => {
+test('Save failures notify and preserve the current draft', async () => {
   const seeded = harness({ error: 'Inspection unavailable', actionError: 'Save rejected' });
   assert.deepEqual(seeded.notices, ['Inspection unavailable', 'Save rejected']);
   const h = harness(); await h.mount();
+  h.emitInventory({ status: 'ready', value: inventory([controller()]), revision: '1' });
   h.handlers.setDraft('Draft survives', 'pedals');
   h.custom.set('controller_update', () => { throw Error('Save rejected'); });
   await h.handlers.mutate({ command: 'controller_update', sourceId: 'physical-pedals', name: 'Draft survives', role: 'pedals' });
@@ -121,47 +166,26 @@ test('embedded provider and Save failures reach notifications and keep the exist
   h.cleanup();
 });
 
-test('one complete stream update supplies all controls and metadata Save cannot replace newer input', async () => {
-  const h = harness(), controls = Array.from({ length: 70 }, (_, id) => ({ capability: { id: String(id), kind: 'button' }, value: null }));
-  await h.mount();
-  h.emit({ status: 'ready', detail: { ...result(controller()), controls, total: controls.length } });
-  assert.equal(h.handlers.detail.controls.length, 70);
-  assert.equal(h.handlers.detail.controls.at(-1).capability.id, '69');
-  assert.doesNotMatch(h.html, /Previous controls|Next controls/);
-  let resolve;
-  h.custom.set('controller_update', () => new Promise(done => { resolve = done; }));
-  const save = h.handlers.mutate({ command: 'controller_update', sourceId: controller().id, name: 'Updated', role: 'panel' });
-  const newer = { ...result(controller()), controls: [{ ...controls[0], value: { native: 1, normalized: 1 } }], total: 1 };
-  h.emit({ status: 'ready', detail: newer });
-  resolve({ controllers: result(controller()) });
-  await save;
-  assert.equal(h.handlers.detail, newer);
-  assert.equal(h.handlers.detail.controls[0].value.native, 1);
-  assert.ok(h.calls.every(call => call.command !== 'controller_inspect'));
-  h.cleanup();
-});
-
-test('selection change disposes the stream, fences late events and loss removes available values', async () => {
+test('input stream remains separate from inventory and late selected-source events are cancelled', async () => {
   const h = harness(); await h.mount();
-  const first = h.observers[0];
-  h.emit({ status: 'ready', detail: result(controller()) });
-  const quietDetail = h.handlers.detail;
+  h.emitInventory({ status: 'ready', value: inventory([controller(), controller('other-controller', 'Other')]), revision: '1' });
+  h.emitInput({ status: 'ready', detail: result(controller()) });
+  const oldObserver = h.inputObservers[0], originalDetail = h.handlers.detail;
   h.handlers.select(controller()); h.flush();
-  assert.equal(h.handlers.detail, quietDetail);
-  assert.equal(h.observers.length, 1);
-  const next = { ...controller(), id: 'other-controller', name: 'Other' };
+  assert.equal(h.handlers.detail, originalDetail);
+  assert.equal(h.inputObservers.length, 1);
+  const next = controller('other-controller', 'Other');
   h.handlers.select(next); h.flush();
-  assert.equal(first.stopped, true);
+  assert.equal(oldObserver.stopped, true);
   assert.equal(h.handlers.detail, null);
-  first.listener({ status: 'ready', detail: result(controller()) });
+  oldObserver.listener({ status: 'ready', detail: result(controller()) });
   assert.equal(h.handlers.detail, null);
-  h.emit({ status: 'ready', detail: result(next) });
+  h.emitInput({ status: 'ready', detail: result(next) });
   assert.equal(h.handlers.detail.source.id, next.id);
-  h.emit({ status: 'lost', error: 'Continuity lost', detail: result({ ...next, online: false, baselineReady: false }) });
+  h.emitInput({ status: 'lost', error: 'Continuity lost', detail: result({ ...next, online: false, baselineReady: false }) });
   assert.equal(h.handlers.detail.source.online, false);
   assert.equal(h.handlers.error, 'Continuity lost');
-  await h.handlers.refresh();
-  assert.equal(h.handlers.error, 'Continuity lost');
   h.cleanup();
-  assert.equal(h.observers.at(-1).stopped, true);
+  assert.equal(h.inputObservers.at(-1).stopped, true);
+  assert.equal(h.inventoryObservers[0].stopped, true);
 });

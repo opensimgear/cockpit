@@ -5,12 +5,16 @@ import { loadModules } from './test-module-loader.mjs';
 let nextGamesModel={status:'connecting'};
 const gameSubscriptions=[];
 const gameReadModels={observeGamesState(listener){const subscription={listener,active:true};gameSubscriptions.push(subscription);listener(nextGamesModel);return()=>subscription.active=false;}};
-const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './profile-inspection', './profile-activity', './system-inventory-providers'],new Map([['./game-read-models/shared',gameReadModels]]));
+let nextControllerModel={status:'connecting'};
+const controllerSubscriptions=[];
+const controllerReadModels={observeControllerInventory(listener){const subscription={listener,active:true};controllerSubscriptions.push(subscription);listener(nextControllerModel);return()=>subscription.active=false;}};
+const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './profile-inspection', './profile-activity', './system-inventory-providers'],new Map([['./game-read-models/shared',gameReadModels],['./controller-read-models/shared',controllerReadModels]]));
 const { SystemInventoryController, gatewayObservations, correlateSystem, integrationGameId } = modules.get('./system-inventory-providers');
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const storage = () => { const values = new Map(); return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }; };
-const source = (id = 'wheel', extra = {}) => ({ id, name: 'Controller ' + id, role: 'Joystick', backend: 'windows-raw-input', online: true, osgHid: false, baselineReady: true, controlCount: 12, identityConfidence: 'local-path', ...extra });
+const source = (id = 'wheel', extra = {}) => ({ id, name: 'Controller ' + id, role: 'Joystick', origin: 'host-controller', backend: 'windows-raw-input', vendorId: 1, productId: 2, online: true, osgHid: false, generation: '1', sequence: '0', baselineReady: true, controlCount: 12, identityConfidence: 'local-path', ...extra });
+const controllerInventory = (sources, extra = {}) => ({ session: 'controllers-1', backendStatus: 'ready', diagnostic: '', selfAccess: { status: 'not-requested', ready: false, changed: false, message: 'Startup access was not requested.' }, sources, offset: 0, total: sources.length, limit: 256, ...extra });
 const usb = (key = 'serial', extra = {}) => ({ key, port: { path: 'COM7', friendlyName: 'USB panel' }, present: true, automatic: true, admissible: true, diagnostics: [], snapshot: { connected: true, port: 'COM7', identity: { moduleId: 'verified-panel', serial: 'serial', profile: 'USB panel', board: 'RP2040' }, claimedBy: null, error: null }, ...extra });
 const module = (id = 'panel', extra = {}) => ({ id, name: 'CAN panel', kind: 'Button panel', online: true, active: true, enabled: true, registered: true, published: true, settings: {}, ...extra });
 const gateway = (extra = {}) => ({ id: 'gateway-one', port: { backend: 'stm32', serialNumber: 'GW-1', path: 'COM2' }, present: true, busy: false, error: '', state: { backend: 'stm32', protocolVersion: 3, canProtocol: 3, lifecycle: 'automatic', connected: true, running: true, claimedModules: [], modules: [module()] }, ...extra });
@@ -26,7 +30,6 @@ function harness(options = {}) {
     requests.push(plain(input));
     if (failures.has(input.command)) throw failures.get(input.command);
     if (custom.has(input.command)) return custom.get(input.command)(input);
-    if (input.command === 'controller_list') return { controllers: { session: 'controllers-1', offset: input.offset, total: state.controllers.length, sources: state.controllers.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'module_usb_list') return { moduleUsb: { offset: input.offset, total: state.usb.length, modules: state.usb.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'profile_resources_list') return { profileResources: { session: 'inventory-1', revision: '1', offset: input.offset, total: state.resources.length, resources: state.resources.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'companion_inventory') return { companions: state.companions };
@@ -38,11 +41,15 @@ function harness(options = {}) {
   };
   let explicitGamesModel=options.gameModel;
   nextGamesModel=explicitGamesModel??{status:'ready',value:structuredClone(state.games)};
+  let controllerModel={status:'ready',value:controllerInventory(state.controllers)};
+  nextControllerModel=controllerModel;
   const controller = new SystemInventoryController({ request, gateways: () => state.gateways, gatewayError: () => state.gatewayError ?? '', storage: options.storage, onChange: snapshot => changes.push(snapshot) });
-  const subscription=gameSubscriptions.at(-1),refresh=controller.refresh.bind(controller);
+  const subscription=gameSubscriptions.at(-1),controllerSubscription=controllerSubscriptions.at(-1),refresh=controller.refresh.bind(controller);
+  let lastFixtureSources=state.controllers;
   const emitGames=model=>{explicitGamesModel=model;if(subscription.active)subscription.listener(model);};
-  controller.refresh=(...args)=>{if(subscription.active)subscription.listener(explicitGamesModel??{status:'ready',value:structuredClone(state.games)});return refresh(...args);};
-  return { controller, state, requests, failures, custom, changes, emitGames,subscription, component: id => controller.snapshot.components.find(component => component.id === id) };
+  const emitControllers=model=>{controllerModel=model;if(controllerSubscription.active)controllerSubscription.listener(model);};
+  controller.refresh=(...args)=>{if(subscription.active)subscription.listener(explicitGamesModel??{status:'ready',value:structuredClone(state.games)});if(controllerSubscription.active&&controllerModel.status==='ready'&&state.controllers!==lastFixtureSources){lastFixtureSources=state.controllers;emitControllers({status:'ready',value:controllerInventory(state.controllers)});}return refresh(...args);};
+  return { controller, state, requests, failures, custom, changes, emitGames,emitControllers,subscription,controllerSubscription, component: id => controller.snapshot.components.find(component => component.id === id) };
 }
 
 test('native supplemental pages preserve the exact snapshot and never omit hidden records', async () => {
@@ -67,13 +74,23 @@ test('native association-only pages fold published HID into its actual gateway o
 test('hidden controller discovery survives capture outage and recovery without retaining stale aliases', async () => {
  const h=harness({controllers:[source('pedals')],native:{virtualDevices:[],hiddenDevices:[{id:'pnp-pedals',name:'PnP pedals',instanceId:'HID/pedals',controllerIds:['pedals'],present:true,hidden:true,diagnostics:[]}],diagnostics:[]}});
  await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);
- h.failures.set('controller_list',Error('Capture unavailable'));await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('controller:pedals').presence,'connected');
- h.failures.delete('controller_list');await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('visibility:pnp-pedals'),undefined);
+ h.emitControllers({status:'error',value:controllerInventory(h.state.controllers),error:'Capture unavailable'});await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('controller:pedals').presence,'connected');
+ h.emitControllers({status:'ready',value:controllerInventory(h.state.controllers)});await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('visibility:pnp-pedals'),undefined);
+});
+
+test('controller inventory events immediately update projections without a second provider query', async () => {
+ const h=harness({controllers:[source('wheel')]});await h.controller.refresh();
+ const before=h.requests.length;
+ h.emitControllers({status:'ready',value:controllerInventory([source('wheel',{name:'Renamed wheel'})])});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.component('controller:wheel').name,'Renamed wheel');
+ assert.equal(h.requests.length,before);
+ assert.equal(h.requests.some(request=>request.command==='controller_list'),false);
 });
 
 test('native hidden fallback retains the known OSG physical identity/type when capture fails', async () => {
  const h=harness({controllers:[source('osg-panel',{osgHid:true})],native:{virtualDevices:[],hiddenDevices:[{id:'pnp-osg',name:'OS PnP label',instanceId:'HID\\OSG',controllerIds:['osg-panel'],present:true,hidden:true,diagnostics:[]}],diagnostics:[]}});
- await h.controller.refresh();h.failures.set('controller_list',Error('Capture unavailable'));await h.controller.refresh();
+ await h.controller.refresh();h.emitControllers({status:'error',value:controllerInventory(h.state.controllers),error:'Capture unavailable'});await h.controller.refresh();
  assert.equal(h.component('controller:osg-panel').type,'osg');assert.equal(h.component('controller:osg-panel').name,'Controller osg-panel');assert.equal(h.component('controller:osg-panel').presence,'connected');
 });
 
@@ -101,7 +118,7 @@ test('nearest native parent bus proves USB or Bluetooth without guessing from HI
 test('verified multiple HID collections are capabilities of one physical node across capture outage', async () => {
  const h=harness({controllers:[source('col-a'),source('col-b')],native:{virtualDevices:[],diagnostics:[],hiddenDevices:[{id:'same-pnp',name:'Same device',instanceId:'HID\\COMPOSITE',controllerIds:['col-a','col-b'],present:true,hidden:false,diagnostics:[]}]}});
  await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);assert.equal(h.component('controller:col-a').targets.filter(t=>t.kind==='controller').length,2);
- h.failures.set('controller_list',Error('Capture failed'));await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);
+ h.emitControllers({status:'error',value:controllerInventory(h.state.controllers),error:'Capture failed'});await h.controller.refresh();assert.equal(h.controller.snapshot.components.filter(c=>c.type==='controller').length,1);
 });
 
 test('exact physical USB parent folds sibling HID collections and rules while an unproved orphan remains separate', async () => {
@@ -118,7 +135,7 @@ test('exact physical USB parent folds sibling HID collections and rules while an
  assert.deepEqual(plain([...new Set(physical.targets.filter(target=>target.kind==='controller').map(target=>target.id))].sort()),['col-a','col-b']);
  assert.equal(h.component('controller:col-b'),undefined);assert.equal(h.component('visibility:parent'),undefined);
  assert.ok(h.component('visibility:orphan'),'VID/PID similarity cannot absorb an unproved orphan rule');
- h.failures.set('controller_list',Error('Capture lost'));
+ h.emitControllers({status:'lost',value:controllerInventory(h.state.controllers),error:'Capture lost'});
  await h.controller.refresh();
  assert.equal(h.controller.snapshot.components.filter(component=>component.type==='controller').length,2);
 });
@@ -127,7 +144,7 @@ test('an unavailable or stopped controller backend cannot turn remembered presen
  for(const backendStatus of ['unavailable','starting','stopped']){
   const h=harness({controllers:[source()],usb:[usb()]});await h.controller.refresh();
   const lastConnected=h.component('controller:wheel').lastSeen;
-  h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:1,sources:[source('wheel',{online:false})],backendStatus,diagnostic:'Capture access unavailable'}}));
+  h.emitControllers({status:'ready',value:controllerInventory([source('wheel',{online:false})],{backendStatus,diagnostic:'Capture access unavailable'})});
   await h.controller.refresh();
   assert.equal(h.component('controller:wheel').presence,'unknown',backendStatus);
   assert.equal(h.component('controller:wheel').stale,true);
@@ -138,7 +155,7 @@ test('an unavailable or stopped controller backend cannot turn remembered presen
   assert.match(h.controller.snapshot.diagnostics.join(' '),/Capture access unavailable/);
   await assert.rejects(h.controller.forget('controller:wheel'),/cannot confirm|offline|eligible/i);
   assert.equal(h.requests.some(request=>request.command==='controller_forget'),false);
-  h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:0,sources:[],backendStatus,diagnostic:'Capture access unavailable'}}));
+  h.emitControllers({status:'ready',value:controllerInventory([],{backendStatus,diagnostic:'Capture access unavailable'})});
   await h.controller.refresh();assert.equal(h.component('controller:wheel').presence,'unknown','partial empty capture cannot prove absence');
  }
 });
@@ -148,7 +165,7 @@ test('startup HidHide attention remains diagnostic without replacing current cap
  const h=harness({controllers:sources,usb:[usb()],native:{virtualDevices:[],hiddenDevices:[{id:'pedals',name:'Hidden pedals',instanceId:'HID\\PEDALS',controllerIds:['pedals'],present:true,hidden:true,diagnostics:[]}],diagnostics:[]}});
  const outcomes=['configured','unchanged','absent','not-requested','unsupported','blocked','error'];
  for(const outcome of outcomes){
-  h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:sources.length,sources,backendStatus:'ready',selfAccess:{status:outcome,ready:['configured','unchanged'].includes(outcome),changed:outcome==='error'?null:outcome==='configured',message:'Startup evidence '+outcome}}}));
+  h.emitControllers({status:'ready',value:controllerInventory(sources,{selfAccess:{status:outcome,ready:['configured','unchanged'].includes(outcome),changed:outcome==='error'?null:outcome==='configured',message:'Startup evidence '+outcome}})});
   await h.controller.refresh();
   const diagnostics=h.controller.snapshot.diagnostics.join(' '),wheel=h.component('controller:wheel'),pedals=h.component('controller:pedals');
   const attention=['unsupported','blocked','error'].includes(outcome);
@@ -162,11 +179,11 @@ test('startup HidHide attention remains diagnostic without replacing current cap
  assert.ok(h.requests.every(request=>!request.command.startsWith('controller_visibility_')),'Inventory only reads the retained startup result.');
 });
 
-test('startup access diagnostics include later controller pages and are deduplicated', async () => {
+test('full controller stream catalogue preserves startup access diagnostics without paged native reads', async () => {
  const sources=Array.from({length:65},(_,index)=>source('page-'+index)),h=harness({controllers:sources});
- h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:sources.length,sources:sources.slice(request.offset,request.offset+32),backendStatus:'ready',selfAccess:request.offset?{status:'blocked',ready:false,changed:false,message:'Driver control is busy.'}:undefined}}));
+ h.emitControllers({status:'ready',value:controllerInventory(sources,{selfAccess:{status:'blocked',ready:false,changed:false,message:'Driver control is busy.'}})});
  await h.controller.refresh();
- assert.equal(h.requests.filter(request=>request.command==='controller_list').length,3);
+ assert.equal(h.requests.some(request=>request.command==='controller_list'),false);
  assert.equal(h.controller.snapshot.components.filter(component=>component.type==='controller').length,65);
  assert.deepEqual(plain(h.controller.snapshot.diagnostics),['Startup HidHide access (blocked): Driver control is busy.']);
  assert.equal(h.component('controller:page-64').diagnostics.filter(d=>d.startsWith('Startup HidHide access')).length,1);
@@ -180,8 +197,8 @@ test('unverified startup access cannot prove an uncaptured controller offline wh
  ]}});
  await h.controller.refresh();const lastConnected=h.component('controller:masked').lastSeen;
  let reported=initial.map(s=>s.id==='masked'?{...s,online:false}:s),outcome='blocked';
- h.custom.set('controller_list',request=>({controllers:{session:'controllers-1',offset:request.offset,total:reported.length,sources:reported,backendStatus:'ready',selfAccess:{status:outcome,ready:false,changed:outcome==='error'?null:false,message:'Startup access was not verified.'}}}));
  for(outcome of ['blocked','error','unsupported']){
+  h.emitControllers({status:'ready',value:controllerInventory(reported,{selfAccess:{status:outcome,ready:false,changed:outcome==='error'?null:false,message:'Startup access was not verified.'}})});
   await h.controller.refresh();const masked=h.component('controller:masked'),live=h.component('controller:live'),present=h.component('controller:pnp-present'),absent=h.component('controller:pnp-absent');
   assert.equal(masked.presence,'unknown',outcome);assert.equal(masked.capture,'unavailable');assert.equal(masked.stale,true);assert.equal(masked.forget.allowed,false);assert.equal(masked.lastSeen,lastConnected);
   assert.equal(live.presence,'connected');assert.equal(live.capture,'ready');assert.equal(live.stale,false);
@@ -191,8 +208,12 @@ test('unverified startup access cannot prove an uncaptured controller offline wh
  }
  await assert.rejects(h.controller.forget('controller:masked'),/cannot confirm.*offline/);
  assert.equal(h.requests.some(request=>request.command==='controller_forget'),false);
- reported=reported.filter(s=>s.id!=='masked');await h.controller.refresh();assert.equal(h.component('controller:masked').presence,'unknown','Incomplete capture cannot confirm absence when the record is omitted.');
- reported=[...reported,source('masked')];await h.controller.refresh();
+ reported=reported.filter(s=>s.id!=='masked');
+ h.emitControllers({status:'ready',value:controllerInventory(reported,{selfAccess:{status:outcome,ready:false,changed:outcome==='error'?null:false,message:'Startup access was not verified.'}})});
+ await h.controller.refresh();assert.equal(h.component('controller:masked').presence,'unknown','Incomplete capture cannot confirm absence when the record is omitted.');
+ reported=[...reported,source('masked')];
+ h.emitControllers({status:'ready',value:controllerInventory(reported,{selfAccess:{status:outcome,ready:false,changed:outcome==='error'?null:false,message:'Startup access was not verified.'}})});
+ await h.controller.refresh();
  assert.equal(h.component('controller:masked').presence,'connected','Current capture overrides a historical startup warning.');assert.equal(h.component('controller:masked').capture,'ready');assert.equal(h.component('controller:masked').stale,false);
 });
 
@@ -348,10 +369,11 @@ test('current inventory includes every category, current transport, diagnostics 
   assert.equal(h.requests.some(request => /claim|apply|activate|session|arm|profile_(?!resources|status)/.test(request.command)), false);
 });
 
-test('providers traverse every controller, USB and verified-identity resource page', async () => {
+test('providers use the full controller stream catalogue and traverse USB and verified-identity resource pages', async () => {
   const h = harness({ controllers: Array.from({ length: 67 }, (_, index) => source('wheel-' + index)), usb: Array.from({ length: 35 }, (_, index) => usb('usb-' + index)), resources: Array.from({ length: 65 }, (_, index) => resource('resource-' + index)) });
   await h.controller.refresh();
-  for (const [command, expected] of [['controller_list', [0, 32, 64]], ['module_usb_list', [0, 32]], ['profile_resources_list', [0, 32, 64]]]) assert.deepEqual(h.requests.filter(request => request.command === command).map(request => request.offset), expected);
+  assert.equal(h.requests.some(request => request.command === 'controller_list'), false);
+  for (const [command, expected] of [['module_usb_list', [0, 32]], ['profile_resources_list', [0, 32, 64]]]) assert.deepEqual(h.requests.filter(request => request.command === command).map(request => request.offset), expected);
   assert.equal(h.controller.snapshot.components.filter(component => component.type === 'controller').length, 67);
   assert.equal(h.controller.snapshot.components.filter(component => component.type === 'osg').length, 35);
 });
@@ -417,7 +439,7 @@ test('gateway states keep presence, input ownership, availability and conservati
 test('failed providers retain stale unknown records while successful empty providers prove absence', async () => {
   const h = harness({ controllers: [source()], usb: [usb()], games: { catalogue: [game()] } });
   await h.controller.refresh();
-  h.failures.set('controller_list', Error('Controller service disconnected'));
+  h.emitControllers({status:'error',value:controllerInventory(h.state.controllers),error:'Controller service disconnected'});
   h.failures.set('system_inventory', 'Native inspection unavailable');
   h.state.usb = [];
   await h.controller.refresh();
@@ -429,6 +451,7 @@ test('failed providers retain stale unknown records while successful empty provi
   assert.equal(h.component('usb:serial').stale, false);
   assert.equal(h.component('integration:dcs').presence, 'connected');
   assert.match(h.controller.snapshot.diagnostics.join(' '), /Controller service disconnected/);
+  h.emitControllers({status:'ready',value:controllerInventory(h.state.controllers)});
   h.failures.clear();
   await h.controller.refresh();
   assert.equal(h.component('controller:wheel').presence, 'connected');
@@ -465,21 +488,13 @@ test('partial native inspection keeps omitted devices unknown while retaining af
   assert.equal(h.component('visibility:hidden').presence, 'offline');
 });
 
-test('malformed, changed-session and truncated pages fail one provider without discarding other categories', async () => {
-  const badPages = [
-    request => ({ controllers: { session: 'a', offset: request.offset + 1, total: 1, sources: [source()] } }),
-    request => ({ controllers: { session: 'a', offset: request.offset, total: 1, sources: [] } }),
-    request => ({ controllers: { session: 'a', offset: request.offset, total: 5000, sources: [source()] } }),
-    request => ({ controllers: { session: request.offset ? 'changed' : 'first', offset: request.offset, total: 2, sources: [source('at-' + request.offset)] } }),
-    request => ({ controllers: { session: 'a', offset: request.offset, total: 1, sources: [source('first'), source('overflow')] } }),
-  ];
-  for (const bad of badPages) {
-    const h = harness({ usb: [usb()] }); h.custom.set('controller_list', bad);
-    await h.controller.refresh();
-    assert.equal(h.controller.snapshot.components.filter(component => component.type === 'controller').length, 0);
-    assert.ok(h.component('usb:serial'));
-    assert.match(h.controller.snapshot.diagnostics.join(' '), /Controller inventory/);
-  }
+test('a controller stream validation error degrades only that provider while preserving other categories', async () => {
+  const malformed = harness({ usb: [usb()] });
+  malformed.emitControllers({status:'error',error:'Controller inventory rejected a malformed native observation.'});
+  await malformed.controller.refresh();
+  assert.equal(malformed.controller.snapshot.components.filter(component => component.type === 'controller').length, 0);
+  assert.ok(malformed.component('usb:serial'));
+  assert.match(malformed.controller.snapshot.diagnostics.join(' '), /Controller inventory/);
   const h = harness();
   h.custom.set('module_usb_list', request => ({ moduleUsb: { offset: request.offset, total: 2, modules: request.offset ? [] : [usb()] } }));
   await h.controller.refresh();
@@ -488,7 +503,8 @@ test('malformed, changed-session and truncated pages fail one provider without d
 
 test('missing capabilities are surfaced as diagnostics instead of silently treating providers as empty', async () => {
   const h = harness();
-  for (const command of ['controller_list', 'module_usb_list', 'companion_inventory', 'system_inventory', 'profile_resources_list']) h.custom.set(command, () => ({}));
+  h.emitControllers({status:'error',error:'Controller inventory unavailable.'});
+  for (const command of ['module_usb_list', 'companion_inventory', 'system_inventory', 'profile_resources_list']) h.custom.set(command, () => ({}));
   h.emitGames({status:'error',error:'Game integration inventory is unavailable.'});
   await h.controller.refresh();
   assert.equal(h.controller.snapshot.components.length, 1);
@@ -506,11 +522,11 @@ test('integration inventory waits for a current summary and never polls game sta
 
 test('refresh coalesces concurrent reads, publishes once, and ignores late provider responses after disposal', async () => {
   const h = harness({ controllers: [source()] }), gate = deferred();
-  h.custom.set('controller_list', () => gate.promise);
+  h.custom.set('system_inventory', () => gate.promise);
   const first = h.controller.refresh(), second = h.controller.refresh();
   assert.equal(first, second);
   h.controller.dispose();
-  gate.resolve({ controllers: { session: 'one', offset: 0, total: 1, sources: [source()] } });
+  gate.resolve({ systemInventory: { virtualDevices: [], hiddenDevices: [], diagnostics: [] } });
   await first;
   assert.equal(h.changes.length, 0);
   assert.equal(h.controller.snapshot.components.length, 0);
@@ -655,11 +671,11 @@ test('offline companions expose configured transports on first load and retain t
 });
 
 test('startup native correlation waits for controller and USB captures before publishing a single count',async()=>{
-  const h=harness({controllers:[source('wheel')]}),controllerGate=deferred(),usbGate=deferred();
-  h.custom.set('controller_list',()=>controllerGate.promise);h.custom.set('module_usb_list',()=>usbGate.promise);
+  const h=harness({controllers:[source('wheel')]}),usbGate=deferred();
+  h.custom.set('module_usb_list',()=>usbGate.promise);
   h.custom.set('system_inventory',()=>({systemInventory:{virtualDevices:[],diagnostics:[],hiddenDevices:[{id:'pnp-wheel',name:'Wheel collection',instanceId:'HID/wheel',present:true,hidden:false,controllerIds:['wheel'],diagnostics:[]}]}}));
   const pending=h.controller.refresh();await Promise.resolve();assert.equal(h.requests.some(r=>r.command==='system_inventory'),false);
-  controllerGate.resolve({controllers:{session:'ready',offset:0,total:1,sources:[source('wheel')]}});await new Promise(resolve=>setImmediate(resolve));assert.equal(h.requests.some(r=>r.command==='system_inventory'),false);
+  assert.equal(h.requests.some(r=>r.command==='controller_list'),false);
   usbGate.resolve({moduleUsb:{offset:0,total:0,modules:[]}});await pending;
   assert.equal(h.changes.length,1);assert.equal(h.controller.snapshot.components.filter(c=>c.type!=='host').length,1);assert.ok(h.component('controller:wheel'));assert.equal(h.component('visibility:pnp-wheel'),undefined);
 });

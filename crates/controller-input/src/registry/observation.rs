@@ -118,6 +118,7 @@ impl Registry {
         }
     }
     pub(super) fn observation_metadata(&mut self) {
+        self.inventory_changed();
         let ids = self
             .observations
             .actor

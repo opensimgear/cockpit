@@ -87,7 +87,7 @@ impl ControllerService {
             .and_then(|saved| registry.restore(saved));
         let storage_valid = loaded.is_ok();
         if let Err(error) = loaded {
-            registry.diagnostic=format!("Remembered controllers could not be loaded; settings will not be overwritten: {error}");
+            registry.set_diagnostic(format!("Remembered controllers could not be loaded; settings will not be overwritten: {error}"));
         }
         let clock = registry.capture_clock();
         let registry = Arc::new(Mutex::new(registry));
@@ -101,8 +101,7 @@ impl ControllerService {
                 Ok(wake) => Some(Arc::new(wake)),
                 Err(error) => {
                     let mut r = registry.lock().unwrap_or_else(|p| p.into_inner());
-                    r.backend_status = "unavailable".into();
-                    r.diagnostic = error;
+                    r.set_backend_state("unavailable", error);
                     None
                 }
             }
@@ -119,6 +118,8 @@ impl ControllerService {
         if native && !probe && !cfg!(test) {
             visibility.startup_self_access();
         }
+        registry.lock().unwrap_or_else(|p| p.into_inner())
+            .set_inventory_self_access(visibility.self_access_status().clone());
         #[cfg(windows)]
         let enabled = enabled && capture_wake.is_some();
         let worker = if enabled {
@@ -146,18 +147,16 @@ impl ControllerService {
                     let mut r = shared.lock().unwrap_or_else(|p| p.into_inner());
                     r.disconnect_all();
                     match result {
-                        Ok(()) => r.backend_status = "stopped".into(),
+                        Ok(()) => r.set_backend_status("stopped"),
                         Err(e) => {
-                            r.backend_status = "unavailable".into();
-                            r.diagnostic = e;
+                            r.set_backend_state("unavailable", e);
                         }
                     }
                 }) {
                 Ok(worker) => Some(worker),
                 Err(error) => {
                     let mut r = registry.lock().unwrap_or_else(|p| p.into_inner());
-                    r.backend_status = "unavailable".into();
-                    r.diagnostic = format!("Cannot start controller capture: {error}");
+                    r.set_backend_state("unavailable", format!("Cannot start controller capture: {error}"));
                     None
                 }
             }
@@ -166,11 +165,10 @@ impl ControllerService {
         };
         if !enabled {
             let mut r = registry.lock().unwrap_or_else(|p| p.into_inner());
-            r.backend_status = "unavailable".into();
-            if r.diagnostic.is_empty() {
-                r.diagnostic =
-                    "Native controller capture is not qualified on this platform yet. The read-only qualification probe is available separately; ordinary capture stays disabled.".into();
-            }
+            let diagnostic = if r.diagnostic.is_empty() {
+                "Native controller capture is not qualified on this platform yet. The read-only qualification probe is available separately; ordinary capture stays disabled.".into()
+            } else { r.diagnostic.clone() };
+            r.set_backend_state("unavailable", diagnostic);
         }
         Self {
             registry,
@@ -292,7 +290,7 @@ impl ControllerService {
             self.registry
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .diagnostic = format!("Controller metadata is not saved: {error}");
+                .set_diagnostic(format!("Controller metadata is not saved: {error}"));
             if !["controller_list", "controller_inspect"].contains(&command) {
                 return Err(error);
             }
@@ -308,6 +306,18 @@ impl ControllerService {
             let mut registry = self.registry.lock().unwrap_or_else(|p| p.into_inner());
             if self.stop.load(Ordering::Acquire) { return Err("Controller capture has stopped.".into()); }
             registry.prepare_observation(broker, id)?
+        };
+        observation.with_subscription(action)
+    }
+    /// Prepare one cached inventory boundary under capture ownership, then wait
+    /// and subscribe after releasing it. Reports never rebuild this read model.
+    pub fn observe_inventory<T>(&self, broker: &osg_streams::Broker,
+        action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        if self.stop.load(Ordering::Acquire) { return Err("Controller capture has stopped.".into()); }
+        let observation = {
+            let mut registry = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            if self.stop.load(Ordering::Acquire) { return Err("Controller capture has stopped.".into()); }
+            registry.prepare_inventory_observation(broker)?
         };
         observation.with_subscription(action)
     }
@@ -362,15 +372,18 @@ impl ControllerService {
                 self.registry
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .diagnostic = error;
+                    .set_diagnostic(error);
             }
         }
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
-        let observations = self.registry.lock().unwrap_or_else(|p| p.into_inner())
-            .take_observation_shutdown();
+        let (observations, inventory) = {
+            let mut registry = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            (registry.take_observation_shutdown(), registry.take_inventory_shutdown())
+        };
         observations.shutdown();
+        inventory.shutdown();
         let _ = self.save();
     }
     pub fn status(&self) -> Value {

@@ -119,9 +119,9 @@ pub(super) fn run(shared: Shared, stop: Arc<AtomicBool>, wake: Arc<Wake>) -> Res
         shared
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .backend_status = "ready".into();
+            .set_backend_status("ready");
         if let Err(error) = enumerate(&api, &mut devices, &shared) {
-            shared.lock().unwrap_or_else(|p| p.into_inner()).diagnostic = error;
+            shared.lock().unwrap_or_else(|p| p.into_inner()).set_diagnostic(error);
         }
         let mut result = Ok(());
         while !stop.load(Ordering::Acquire) {
@@ -144,7 +144,7 @@ pub(super) fn run(shared: Shared, stop: Arc<AtomicBool>, wake: Arc<Wake>) -> Res
                     // next report, including a device that only emits changes.
                     if rescan {
                         if let Err(error) = enumerate(&api, &mut devices, &shared) {
-                            shared.lock().unwrap_or_else(|p| p.into_inner()).diagnostic = error;
+                            shared.lock().unwrap_or_else(|p| p.into_inner()).set_diagnostic(error);
                         }
                         rescan = false;
                     }
@@ -175,7 +175,7 @@ pub(super) fn run(shared: Shared, stop: Arc<AtomicBool>, wake: Arc<Wake>) -> Res
             }
             if rescan {
                 if let Err(error) = enumerate(&api, &mut devices, &shared) {
-                    shared.lock().unwrap_or_else(|p| p.into_inner()).diagnostic = error;
+                    shared.lock().unwrap_or_else(|p| p.into_inner()).set_diagnostic(error);
                 }
             }
         }
