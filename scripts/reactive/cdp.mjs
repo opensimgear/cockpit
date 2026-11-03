@@ -1,8 +1,20 @@
+// Activation progress has its own restricted WebView at the same origin.
+// Always select the main entry, independently of DevTools target ordering.
+export function nativeMainTarget(pages) {
+  return pages.find(value=>{
+    try {
+      const url=new URL(value.url);
+      const local=(['127.0.0.1','localhost'].includes(url.hostname)&&url.port==='1420')||url.hostname==='tauri.localhost';
+      return local&&['/','/index.html'].includes(url.pathname)&&!url.searchParams.has('profile-activation-window');
+    } catch { return false; }
+  });
+}
+
 // Test-only connection to the actual running native WebView, with bounded calls.
 export async function nativePage() {
   const endpoint=process.env.OSG_NATIVE_CDP_URL??'http://127.0.0.1:9222';
   const pages=await(await fetch(`${endpoint}/json`)).json();
-  const page=pages.find(value=>/127\.0\.0\.1:1420|localhost:1420|tauri\.localhost/.test(value.url));
+  const page=nativeMainTarget(pages);
   if(!page)throw new Error('Start the native dev Cockpit before running acceptance.');
   const socket=new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});

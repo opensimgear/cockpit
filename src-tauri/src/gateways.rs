@@ -2797,3 +2797,7 @@ mod debug_controller_tests;
 #[cfg(test)]
 #[path="profile_read_model_gateway_tests.rs"]
 mod read_model_tests;
+
+#[cfg(test)]
+#[path="gateways/game_cache_tests.rs"]
+mod game_cache_tests;

@@ -89,6 +89,7 @@ fn start_with_metadata(
                 }
                 Some(image)
             });
+            inner.prepare_online_artwork();
         }));
         if outcome.is_err() {
             let mut review=inner.discovery.lock().unwrap_or_else(|p|p.into_inner());review.status="failed".into();review.diagnostics.push("Game discovery failed. Rescan to try again.".into());

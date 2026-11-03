@@ -222,7 +222,7 @@ fn slow_network_keeps_status_responsive_and_does_not_reopen_scan_completion() {
     release.send(()).unwrap();
     worker.join().unwrap();
     assert!(
-        matches!(pool.lock().unwrap().states.get(&key),Some(State::Ready(image)) if image=="downloaded")
+        matches!(pool.lock().unwrap().states.get(&key),Some(State::Ready(image)) if image.as_ref()=="downloaded")
     );
     assert_eq!(pool.lock().unwrap().workers, 0);
     let mut review = state();
@@ -231,7 +231,7 @@ fn slow_network_keeps_status_responsive_and_does_not_reopen_scan_completion() {
         .lock()
         .unwrap()
         .states
-        .insert(key, State::Ready(image.clone()));
+        .insert(key, State::Ready(image.clone().into()));
     decorate(root.path(), &mut review);
     assert_eq!(review["discovery"]["status"], "ready");
     assert_eq!(review["discovery"]["libraries"][0]["status"], "complete");
@@ -309,6 +309,7 @@ fn live_steam_artwork_download_is_cached_and_works_offline() {
     let mut review = state();
     review["catalogue"][0]["installations"][0]["sources"][0]["appId"] = json!("1808500");
     review["discovery"]["observations"][0]["appId"] = json!("1808500");
+    prepare(root.path(), &review);
     decorate(root.path(), &mut review);
     assert_eq!(review["discovery"]["status"], "ready");
     assert_eq!(review["artworkPending"], true);

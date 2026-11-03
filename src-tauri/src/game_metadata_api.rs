@@ -168,9 +168,13 @@ impl GamesRuntime {
         self.inner.installations.save(&prepared.next)?;
         settings.saved=prepared.next;settings.catalogue=prepared.catalogue;settings.added_game_id=prepared.added_game_id;settings.error=None;
         if let Some(review)=scan.as_mut() {review.status="applied".into();}
-        drop(settings);drop(prepared.staging);Ok(())
+        drop(settings);drop(scan);drop(prepared.staging);drop(_admission);
+        Ok(())
     }
     pub(crate) fn finish_metadata(&self) {
+        // Gateway callers have released profile/game admission before this
+        // presentation preparation. Stop cannot wait behind image file I/O.
+        self.inner.prepare_online_artwork();
         let Ok(_admission)=self.admission.try_lock() else{return;};
         let references={let settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());
             settings.saved.backgrounds.values().chain(settings.saved.default_backgrounds.values()).chain(settings.saved.games.values().filter_map(|game|game.default_background.as_ref())).cloned().collect::<Vec<_>>()};

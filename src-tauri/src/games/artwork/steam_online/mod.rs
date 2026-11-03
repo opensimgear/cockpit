@@ -2,10 +2,13 @@
 use super::*;
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, Instant},
 };
 mod http;
 mod targets;
+mod owner;
+pub(crate) use owner::Owner;
 
 const MAX_ENTRIES: usize = 512;
 const WORKERS: usize = 4;
@@ -18,18 +21,23 @@ struct Key {
 #[derive(Clone)]
 enum State {
     Pending,
-    Ready(String),
+    Ready(Arc<str>),
     Failed { scan: String, retry: Instant },
 }
 struct Job {
     key: Key,
     scan: String,
+    ticket: u64,
 }
 #[derive(Default)]
 struct Service {
     states: BTreeMap<Key, State>,
     jobs: VecDeque<Job>,
     workers: usize,
+    tickets: BTreeMap<Key, u64>,
+    next_ticket: u64,
+    owners: BTreeMap<u64, owner::Registration>,
+    next_owner: u64,
 }
 
 fn service() -> &'static Mutex<Service> {
@@ -38,6 +46,26 @@ fn service() -> &'static Mutex<Service> {
 }
 
 impl Service {
+    fn make_room(&mut self, key: &Key) -> bool {
+        if self.states.contains_key(key) || self.states.len() < MAX_ENTRIES { return true; }
+        let stale = self.states.iter().find(|(_, value)| !matches!(value, State::Pending))
+            .map(|(key, _)| key.clone());
+        if let Some(stale) = stale {
+            self.states.remove(&stale);
+            self.tickets.remove(&stale);
+            true
+        } else { false }
+    }
+
+    /// Explicit disk refresh can succeed even when the optional memory cache is full.
+    fn cache_ready(&mut self, key: Key, image: Arc<str>) -> bool {
+        if !self.make_room(&key) { return false; }
+        self.tickets.remove(&key);
+        self.states.insert(key.clone(), State::Ready(image));
+        owner::refreshed(self, &key);
+        true
+    }
+
     fn request(&mut self, key: Key, scan: &str, now: Instant) -> State {
         if let Some(state) = self.states.get(&key) {
             if !matches!(state, State::Failed { scan: previous, retry } if previous != scan || *retry <= now)
@@ -45,32 +73,35 @@ impl Service {
                 return state.clone();
             }
         }
-        if self.states.len() >= MAX_ENTRIES && !self.states.contains_key(&key) {
-            let stale = self
-                .states
-                .iter()
-                .find(|(_, value)| !matches!(value, State::Pending))
-                .map(|(key, _)| key.clone());
-            if let Some(stale) = stale {
-                self.states.remove(&stale);
-            } else {
-                return State::Failed {
-                    scan: scan.into(),
-                    retry: now + Duration::from_secs(300),
-                };
-            }
+        if !self.make_room(&key) {
+            return State::Failed {
+                scan: scan.into(), retry: now + Duration::from_secs(300),
+            };
         }
+        let Some(ticket) = self.next_ticket.checked_add(1) else {
+            return State::Failed { scan: scan.into(), retry: now + Duration::from_secs(300) };
+        };
+        self.next_ticket = ticket;
+        self.tickets.insert(key.clone(), ticket);
         self.states.insert(key.clone(), State::Pending);
         self.jobs.push_back(Job {
             key,
             scan: scan.into(),
+            ticket,
         });
         State::Pending
     }
 }
 
-/// Called only for native UI/MCP status snapshots, never as part of game identification or Apply.
-pub(crate) fn decorate(root: &Path, state: &mut Value) {
+/// Schedule optional enrichment from an authoritative prepared snapshot.
+pub(crate) fn prepare(root: &Path, state: &Value) {
+    prepare_with(service(), root, state, || {
+        std::thread::Builder::new().name("steam-artwork".into())
+            .spawn(worker).map(|_| ()).map_err(|error| error.to_string())
+    });
+}
+
+fn prepare_with(pool: &Mutex<Service>, root: &Path, state: &Value, mut spawn: impl FnMut() -> Result<(), String>) {
     if state["discovery"]["status"] == "scanning" {
         return;
     }
@@ -79,38 +110,29 @@ pub(crate) fn decorate(root: &Path, state: &mut Value) {
         .as_str()
         .unwrap_or("")
         .to_owned();
-    let mut pending = false;
-    let mut jobs = service().lock().unwrap_or_else(|p| p.into_inner());
+    let mut jobs = pool.lock().unwrap_or_else(|p| p.into_inner());
     for target in targets {
-        match jobs.request(
+        jobs.request(
             Key {
                 root: root.into(),
                 app_id: target.app_id,
             },
             &scan,
             Instant::now(),
-        ) {
-            State::Ready(image) => {
-                if let Some(index) = target.game {
-                    state["catalogue"][index]["defaultBackground"] =
-                        serde_json::json!({"image":image,"positionX":50,"positionY":50});
-                } else if let Some(index) = target.entry {
-                    state["discovery"]["entries"][index]["image"] = image.into();
-                }
-            }
-            State::Pending => pending = true,
-            State::Failed { .. } => {}
-        }
+        );
     }
-    state["artworkPending"] = pending.into();
-    state["discovery"]["artworkPending"] = pending.into();
+    if start_workers(&mut jobs, &mut spawn) {
+        owner::synchronize(&mut jobs);
+        let wakes = owner::wakes(&jobs);
+        drop(jobs);
+        for inner in wakes { inner.wake.notify(); }
+    }
+}
+
+fn start_workers(jobs: &mut Service, mut spawn: impl FnMut() -> Result<(), String>) -> bool {
     while jobs.workers < WORKERS && jobs.workers < jobs.jobs.len() {
         jobs.workers += 1;
-        if std::thread::Builder::new()
-            .name("steam-artwork".into())
-            .spawn(worker)
-            .is_err()
-        {
+        if spawn().is_err() {
             jobs.workers -= 1;
             while let Some(job) = jobs.jobs.pop_front() {
                 jobs.states.insert(
@@ -121,9 +143,46 @@ pub(crate) fn decorate(root: &Path, state: &mut Value) {
                     },
                 );
             }
-            break;
+            return true;
         }
     }
+    false
+}
+
+/// Passive projection of already prepared in-memory artwork; never schedules work.
+pub(crate) fn decorate(root: &Path, state: &mut Value) {
+    decorate_with(service(), root, state);
+}
+
+fn decorate_with(pool: &Mutex<Service>, root: &Path, state: &mut Value) {
+    if state["discovery"]["status"] == "scanning" { return; }
+    let targets = targets::collect(state);
+    let mut pending = false;
+    let cached = {
+        let jobs = pool.lock().unwrap_or_else(|p| p.into_inner());
+        targets.into_iter().map(|target| {
+            let key = Key { root: root.into(), app_id: target.app_id };
+            let cached = jobs.states.get(&key).cloned();
+            let accepted = owner::pending(&jobs, &key);
+            (target, cached, accepted)
+        }).collect::<Vec<_>>()
+    };
+    for (target, cached, accepted) in cached {
+        match cached {
+            Some(State::Ready(image)) => {
+                if let Some(index) = target.game {
+                    state["catalogue"][index]["defaultBackground"] =
+                        serde_json::json!({"image":image.as_ref(),"positionX":50,"positionY":50});
+                } else if let Some(index) = target.entry {
+                    state["discovery"]["entries"][index]["image"] = image.as_ref().into();
+                }
+            }
+            Some(State::Pending) => pending = true,
+            Some(State::Failed { .. }) | None => pending |= accepted,
+        }
+    }
+    state["artworkPending"] = pending.into();
+    state["discovery"]["artworkPending"] = pending.into();
 }
 
 fn worker() {
@@ -136,26 +195,34 @@ fn run_worker(pool: &Mutex<Service>, fetch: impl Fn(&Key) -> Result<String, Stri
     loop {
         let job = {
             let mut service = pool.lock().unwrap_or_else(|p| p.into_inner());
-            match service.jobs.pop_front() {
-                Some(job) => job,
+            loop { match service.jobs.pop_front() {
+                Some(job) if service.tickets.get(&job.key) == Some(&job.ticket)
+                    && matches!(service.states.get(&job.key), Some(State::Pending)) => break job,
+                Some(_) => continue,
                 None => {
                     service.workers -= 1;
                     return;
                 }
-            }
+            } }
         };
         let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fetch(&job.key)));
         let result = match image {
-            Ok(Ok(image)) => State::Ready(image),
+            Ok(Ok(image)) => State::Ready(image.into()),
             _ => State::Failed {
                 scan: job.scan,
                 retry: Instant::now() + Duration::from_secs(300),
             },
         };
-        pool.lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .states
-            .insert(job.key, result);
+        let wakes = {
+            let mut service = pool.lock().unwrap_or_else(|p| p.into_inner());
+            if service.tickets.get(&job.key) == Some(&job.ticket)
+                && matches!(service.states.get(&job.key), Some(State::Pending)) {
+                service.states.insert(job.key, result);
+                owner::synchronize(&mut service);
+            }
+            owner::wakes(&service)
+        };
+        for wake in wakes { wake.wake.notify(); }
     }
 }
 
@@ -180,8 +247,14 @@ fn cached_or_fetch(
 
 /// Explicit refresh for the exact application attached to one game.
 pub(crate) fn refresh(root:&Path,app_id:u32)->Option<PathBuf> {
-    let image=cached_or_fetch_using(root,app_id,http::download,true).ok()?;
-    service().lock().unwrap_or_else(|p|p.into_inner()).states.insert(Key{root:root.into(),app_id},State::Ready(image));
+    let image: Arc<str> = cached_or_fetch_using(root,app_id,http::download,true).ok()?.into();
+    let wakes = {
+        let mut service = service().lock().unwrap_or_else(|p|p.into_inner());
+        let key = Key{root:root.into(),app_id};
+        service.cache_ready(key, image);
+        owner::wakes(&service)
+    };
+    for wake in wakes { wake.wake.notify(); }
     Some(directory(root).ok()?.join(format!("{app_id}.jpg")))
 }
 
@@ -251,3 +324,5 @@ fn cached_or_fetch_using(root:&Path,app_id:u32,fetch:impl FnOnce(u32)->Result<St
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod read_model_tests;

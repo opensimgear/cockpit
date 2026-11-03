@@ -85,6 +85,7 @@ def main():
     module_names.extend(['profile_samples/mod.rs', 'profile_samples/registration.rs', 'profile_samples/worker.rs',
                          'profile_session/samples/schema.rs', 'profile_session/samples/coordinator.rs',
                          'gateways/profile_samples.rs', 'observations/mod.rs', 'observations/service.rs'])
+    module_names.extend(['games/artwork/steam_online/owner.rs', 'games/review/worker.rs'])
     if os.name == 'nt':
         module_names.extend(['xplane/process_events.rs', 'xplane/process_events/native.rs',
                              'xplane/process_events/windows.rs', 'xplane/process_events/sink.rs',
