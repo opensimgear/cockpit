@@ -11,8 +11,11 @@ pub(super) fn usb_panel_snapshot(companion: &str, devices: &[Value]) -> Option<P
     if operation["attemptId"].as_u64().is_none_or(|attempt|attempt == 0)
         || operation.get("sessionId").is_some_and(|session|session != &usb["device"]["sessionId"])
         || operation.get("generation").is_some_and(|generation|generation != &usb["device"]["generation"]) { return None; }
-    Some(ProfilePanelOperation { operation, live_session:false,
-        fresh:usb["statusAgeMs"].as_u64().is_some_and(|age|age < 1500) })
+    let age=usb["statusAgeMs"].as_u64();
+    let fresh=age.is_some_and(|age|age < 1500);
+    let fallback_expires_at=age.filter(|age|*age<1500).and_then(|age|
+        Instant::now().checked_add(Duration::from_millis(1500-age)));
+    Some(ProfilePanelOperation { operation, live_session:false, fresh, fallback_expires_at })
 }
 pub(super) fn usb_panel_operation(assignment: &Value, devices: &[Value]) -> Option<ProfilePanelOperation> {
     let report=usb_panel_snapshot(assignment["companionId"].as_str()?,devices)?;

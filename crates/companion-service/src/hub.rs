@@ -168,6 +168,7 @@ pub struct Hub {
     runtime_identity: Arc<String>,
     record_revision: Arc<std::sync::atomic::AtomicU64>,
     confirmed_assignments: Arc<Mutex<BTreeMap<String, u64>>>,
+    panel_operation_wakes: Arc<Mutex<Vec<std::sync::Weak<osg_streams::NativeWake>>>>,
 }
 pub struct NullSourceSink;
 impl SourceSink for NullSourceSink {
@@ -373,6 +374,7 @@ impl Hub {
             runtime_identity: Arc::new(uuid::Uuid::new_v4().to_string()),
             record_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             confirmed_assignments: Arc::new(Mutex::new(BTreeMap::new())),
+            panel_operation_wakes: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -540,10 +542,15 @@ impl Hub {
     }
     pub fn tick(&self, now_ms: u64) {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let sessions = inner.sessions.len();
         let _ = self.expire(&mut inner, now_ms);
+        let removed = inner.sessions.len() < sessions;
+        drop(inner);
+        if removed { self.notify_panel_operations(); }
     }
     pub fn disconnect_connection(&self, connection_id: &str, now_ms: u64) {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let sessions = inner.sessions.len();
         let _ = self.expire(&mut inner, now_ms);
         inner.connections.remove(connection_id);
         inner.display_reports.remove(connection_id);
@@ -557,6 +564,9 @@ impl Hub {
         for id in ids {
             self.disarm(&mut inner, &id, "connection-lost", true);
         }
+        let removed = inner.sessions.len() < sessions;
+        drop(inner);
+        if removed { self.notify_panel_operations(); }
     }
     pub fn disconnect_all(&self) {
         let ids: Vec<_> = self
@@ -692,7 +702,8 @@ impl Hub {
         if let Some(expected)=request.get("expectedHostToken") {
             ensure(expected.as_str()==Some(self.snapshot_token().as_str()),"Companion assignments changed. Refresh before saving.")?;
         }
-        match request["command"].as_str().unwrap_or("") {
+        let command = request["command"].as_str().unwrap_or("");
+        let result = match command {
             "companion_status" => Ok(self.status(&inner)),
             "companion_pair_offer" => {
                 let secret = random_secret()?;
@@ -893,7 +904,12 @@ impl Hub {
             }
             "companion_feedback" => Err("Raw feedback commands cannot assert output or simulator truth; use the configured native integration sink.".into()),
             _ => Err("Unknown local companion command.".into()),
+        };
+        drop(inner);
+        if result.is_ok() && matches!(command, "companion_assign" | "companion_unassign" | "companion_revoke" | "companion_disconnect") {
+            self.notify_panel_operations();
         }
+        result
     }
     fn status(&self, inner: &Inner) -> Value {
         json!({"hostId":inner.record.host_id,"snapshotToken":self.snapshot_token(),"diagnostic":inner.diagnostic,
@@ -941,6 +957,20 @@ impl Hub {
         inner.sessions.values().find(|s|s.token.source_id == instance && s.token.publication_hash == publication)
             .and_then(|s|s.operation.clone())
     }
+    /// Register a native observer for trusted panel-operation commits.
+    pub fn observe_panel_operations(&self, wake: Arc<osg_streams::NativeWake>) {
+        let mut wakes = self.panel_operation_wakes.lock().unwrap_or_else(|p| p.into_inner());
+        wakes.retain(|current| current.strong_count() > 0);
+        if !wakes.iter().filter_map(std::sync::Weak::upgrade).any(|current| Arc::ptr_eq(&current, &wake)) {
+            wakes.push(Arc::downgrade(&wake));
+        }
+    }
+    pub fn notify_panel_operations(&self) {
+        let mut wakes = self.panel_operation_wakes.lock().unwrap_or_else(|p| p.into_inner());
+        wakes.retain(|wake| {
+            if let Some(wake) = wake.upgrade() { wake.notify(); true } else { false }
+        });
+    }
     pub fn serial_panel_preparing(&self, companion: &str, connection: &str) -> bool {
         let inner=self.inner.lock().unwrap_or_else(|p|p.into_inner());
         inner.sessions.values().any(|session| session.transport == SourceTransport::Usb
@@ -951,17 +981,24 @@ impl Hub {
     /// Only nonce-verified local serial status may enter here. Session and
     /// assignment comparisons discard delayed reports from a previous switch.
     pub fn record_serial_panel_operation(&self, companion: &str, session_id: &str, generation: &str, operation: &Value) -> Result<(), String> {
-        let mut inner = self.inner.lock().unwrap_or_else(|p|p.into_inner());
-        let session = inner.sessions.get(session_id).ok_or("Obsolete serial panel operation.")?;
-        ensure(session.transport == SourceTransport::Usb && session.companion_id == companion
-            && session.token.generation.to_string() == generation
-            && inner.record.instances.iter().any(|a|a.instance_id == session.token.source_id && a.publication_hash == session.token.publication_hash), "Serial panel operation identity changed.")?;
-        let operation = operation_for_session(&json!({"operation":operation}), session)?.unwrap();
-        inner.sessions.get_mut(session_id).unwrap().operation = Some(operation);
+        {
+            let mut inner = self.inner.lock().unwrap_or_else(|p|p.into_inner());
+            let session = inner.sessions.get(session_id).ok_or("Obsolete serial panel operation.")?;
+            ensure(session.transport == SourceTransport::Usb && session.companion_id == companion
+                && session.token.generation.to_string() == generation
+                && inner.record.instances.iter().any(|a|a.instance_id == session.token.source_id && a.publication_hash == session.token.publication_hash), "Serial panel operation identity changed.")?;
+            let operation = operation_for_session(&json!({"operation":operation}), session)?.unwrap();
+            inner.sessions.get_mut(session_id).unwrap().operation = Some(operation);
+        }
+        self.notify_panel_operations();
         Ok(())
     }
     fn handle_native_wire(&self, frame: Value, connection_id: &str, now_ms: u64, transport: SourceTransport) -> Value {
         let result = self.wire(&frame, connection_id, now_ms, transport);
+        if result.is_ok() && (frame.get("operation").is_some()
+            || matches!(frame["type"].as_str(), Some("image-chunk" | "close"))) {
+            self.notify_panel_operations();
+        }
         match result {
             Ok(value) => value,
             Err(error) => json!({"ok":false,"type":"error","error":error}),

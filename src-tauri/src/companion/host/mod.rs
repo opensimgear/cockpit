@@ -7,7 +7,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::{Duration, Instant},
 };
 
@@ -18,6 +18,7 @@ pub(crate) struct ProfilePanelOperation {
     pub operation: Value,
     pub live_session: bool,
     pub fresh: bool,
+    pub fallback_expires_at: Option<Instant>,
 }
 mod presentation;
 use presentation::*;
@@ -53,6 +54,7 @@ pub struct Runtime {
     metadata_init: Mutex<()>,
     services: OnceLock<Result<Services, String>>,
     upload: Mutex<Option<Upload>>,
+    panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
 }
@@ -81,6 +83,7 @@ impl Runtime {
             metadata_init: Mutex::new(()),
             services: OnceLock::new(),
             upload: Mutex::new(None),
+            panel_operation_wakes: Mutex::new(Vec::new()),
             #[cfg(test)]
             profile_wire_fixture: false,
         }
@@ -132,7 +135,18 @@ impl Runtime {
                 std::env::temp_dir().canonicalize().map_err(|error|error.to_string())?.join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
         let _ = self.metadata.set(Metadata {hub, directory});
+        self.register_panel_operation_wakes(&self.metadata.get().expect("metadata initialized under its gate").hub);
         Ok(self.metadata.get().expect("metadata initialized under its gate"))
+    }
+    fn register_panel_operation_wakes(&self, hub: &Hub) {
+        let mut wakes = self.panel_operation_wakes.lock().unwrap_or_else(|p| p.into_inner());
+        wakes.retain(|wake| {
+            if let Some(wake) = wake.upgrade() { hub.observe_panel_operations(wake); true } else { false }
+        });
+    }
+    pub(crate) fn observe_panel_operations(&self, wake: Arc<osg_streams::NativeWake>) {
+        self.panel_operation_wakes.lock().unwrap_or_else(|p| p.into_inner()).push(Arc::downgrade(&wake));
+        if let Some(metadata) = self.metadata.get() { metadata.hub.observe_panel_operations(wake); }
     }
     fn services(&self) -> Result<&Services, String> {
         self.services
@@ -242,7 +256,7 @@ impl Runtime {
     pub(crate) fn profile_panel_operation(&self, instance: &str, publication: &str) -> Option<ProfilePanelOperation> {
         let hub = &self.metadata.get()?.hub;
         if let Some(operation) = hub.panel_operation(instance,publication) {
-            return Some(ProfilePanelOperation { operation, live_session:true, fresh:true });
+            return Some(ProfilePanelOperation { operation, live_session:true, fresh:true, fallback_expires_at:None });
         }
         let services = self.services.get()?.as_ref().ok()?;
         let snapshot = hub.assignment_snapshot(&[instance.into()]).ok()?;

@@ -419,6 +419,9 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        if let Err(error) = profile_activations.observe(&observations.broker(), companion_host.clone(), profile_admission_epoch.clone()) {
+            eprintln!("Cannot start profile activation observations: {error}");
+        }
         let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone());
         let game_read_models=crate::game_read_models::Runtime::new(observations.clone(),games.clone());
         observations.watch_reader_lifecycle(games.read_model_signal().wake.clone());
@@ -661,7 +664,7 @@ impl GatewayManager {
     fn error(&self, message: &str, id: Option<&str>) -> Value {
         self.decorate(json!({"ok":false,"error":message}), id)
     }
-    fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
+    fn invalidate_learning(&self)->u64{let epoch=self.profile_admission_epoch.fetch_add(1,Ordering::AcqRel).wrapping_add(1);self.profile_activations.admission_changed();self.profile_learning.invalidate("A native control/output request cancelled input learning. Restart explicitly when outputs are idle.");epoch}
     fn guard_learning(&self)->Result<(),String>{
         if self.profile_pending.load(Ordering::Acquire)!=0||self.profile_automatic.pending(){return Err("Wait for pending profile activation or mode changes to finish before input learning.".into());}
         self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).guard_request("claim")?;
@@ -1560,6 +1563,7 @@ impl GatewayManager {
         self.closed.store(true,Ordering::Release);
         self.workspace.shutdown();
         for adapter in self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values(){adapter.set_workspace_owned(false);}
+        self.profile_activations.stop_observation();
         self.profile_read_models.shutdown();
         self.game_read_models.shutdown();
         self.observations.close();

@@ -1,10 +1,13 @@
 <script lang="ts">
   import {onMount} from 'svelte';
   import {gatewayRequest,subscribeProfileCleanup} from './gateway';
-  import {nativeProfileActivation} from './profile-runtime';
+  import {nativeProfileActivation,type NativeProfileActivation} from './profile-runtime';
+  import type {DeepReadonly} from './profiles';
+  import {SharedObservations} from './streams/shared';
   import {NativeProfileActivationWindow,type ActivationWindowProgress} from './profile-activation-window';
   import {observeActivationWindow} from './activation-window-observation';
   import {ActivationProgressPresenter,ApplicationProfileProgress} from './activation-progress-presenter';
+  const observations=new SharedObservations();
   let fallback=$state<ActivationWindowProgress|null>(null);
   async function cancel(activationId:string){
     try{return !!(await gatewayRequest({command:'profile_activation_cancel',activationId})).profileActivation?.cancelRequested;}
@@ -15,24 +18,41 @@
   // One application-wide owner also sees native automatic selection and game
   // launch while the Profiles page has never been opened.
   onMount(()=>{
-    if(!('__TAURI_INTERNALS__' in window))return;
-    let reading=false,disposed=false;
+    let applying=false,disposed=false;
+    let pending:DeepReadonly<NativeProfileActivation>|null|undefined;
     const presenter=new ActivationProgressPresenter(new NativeProfileActivationWindow({observe:observeActivationWindow}),cancel,progress=>fallback=progress);
     const progress=new ApplicationProfileProgress(presenter,async activationId=>{
       const result=(await gatewayRequest({command:'profile_activation_status',activationId})).profileActivation;
       return result?nativeProfileActivation(result,activationId):null;
     });
     const unsubscribe=subscribeProfileCleanup(event=>{void progress.cleanup(event);});
-    const refresh=async()=>{
-      if(reading||disposed)return;reading=true;
+    const apply=async()=>{
+      if(applying||disposed)return;
+      applying=true;
       try{
-        const result=(await gatewayRequest({command:'profile_activation_current'})).profileActivation;
-        if(!disposed)await progress.sync(result?nativeProfileActivation(result,result.activationId):null);
-      }catch{/* Retain the current operation across a transient progress read failure. */}
-      finally{reading=false;}
+        while(!disposed&&pending!==undefined){
+          const next=pending;
+          pending=undefined;
+          await progress.sync(next);
+        }
+      }finally{applying=false;}
     };
-    void refresh();const timer=window.setInterval(()=>{void refresh();},150);
-    return()=>{disposed=true;window.clearInterval(timer);unsubscribe();progress.dispose();};
+    const stop=observations.subscribe('profiles.activation',state=>{
+      if(state.status==='connecting')return;
+      if(state.status!=='ready'||state.frame?.source!=='profile-activation'){
+        pending=null;
+        void apply().catch(()=>{});
+        return;
+      }
+      const value=state.frame.payload;
+      if(value===null){pending=null;}
+      else{
+        if(!value||typeof value!=='object'||!('activationId' in value)||typeof value.activationId!=='string')return;
+        try{pending=nativeProfileActivation(value,value.activationId);}catch{return;}
+      }
+      void apply().catch(()=>{});
+    });
+    return()=>{disposed=true;stop();unsubscribe();progress.dispose();};
   });
 </script>
 

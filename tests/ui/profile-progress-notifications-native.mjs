@@ -88,18 +88,19 @@ test('native progress uses system delivery or fallback, preserves controls and r
   evidence.window=await invoke('profile_activation_window_state');assertGeometry(evidence.window,'bottom-right');
   const observeReads=`(async()=>{
     const bridge=window.__TAURI_INTERNALS__,original=bridge.invoke;
-    let reads=0;
+    let reads=0,discovery=0;
     bridge.invoke=function(command,...args){
       if(command==='profile_activation_window_state')reads++;
+      if(command==='gateway_request'&&args[0]?.request?.command==='profile_activation_current')discovery++;
       return original.call(this,command,...args);
     };
     try{
       await new Promise(resolve=>setTimeout(resolve,550));
-      return reads;
+      return {reads,discovery};
     }finally{bridge.invoke=original;}
   })()`;
   evidence.periodicPopupStateReads=await Promise.all([main.evaluate(observeReads),child.evaluate(observeReads)]);
-  assert.deepEqual(evidence.periodicPopupStateReads,[0,0]);
+  assert.deepEqual(evidence.periodicPopupStateReads,[{reads:0,discovery:0},{reads:0,discovery:0}]);
   const cancel=await child.evaluate(`(()=>{const button=document.querySelector('button');if(!button||button.disabled)return null;const label=button.textContent.trim();button.click();return label;})()`);assert.equal(cancel,'Cancel');
   await until(()=>main.evaluate('window.__popupCancelCount===1'),'The popup cancellation did not reach the parent observer');
   assert.equal((await invoke('profile_activation_window_state')).cancelRequested,true);

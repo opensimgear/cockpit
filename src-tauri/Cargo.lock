@@ -3568,6 +3568,7 @@ dependencies = [
  "keyring",
  "mdns-sd",
  "osg-persistence",
+ "osg-streams",
  "qrcode",
  "rcgen",
  "ring",

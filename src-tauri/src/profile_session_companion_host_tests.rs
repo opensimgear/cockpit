@@ -861,7 +861,7 @@ fn native_activation_reports_the_devices_exact_load_failure_without_waiting_for_
 #[test]
 fn pre_open_failure_feedback_waits_for_a_new_report_and_never_rejects_a_retry_from_retained_error() {
     let initial=json!({"instanceId":"instance","publicationHash":"hash","attemptId":1,"phase":"failed","errorCode":"open-panel-rejected","retryable":true});
-    let mut report=crate::companion_host::ProfilePanelOperation { operation:initial.clone(),live_session:false,fresh:true };
+    let mut report=crate::companion_host::ProfilePanelOperation { operation:initial.clone(),live_session:false,fresh:true,fallback_expires_at:None };
     assert!(diagnostic_failure(&report,None).is_none(),"The first status on a newly detected link may still describe a prior failure");
     assert!(diagnostic_failure(&report,Some(&initial)).is_none(),"Retained failure cannot reject an explicit retry");
     report.operation["attemptId"]=json!(2);

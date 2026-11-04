@@ -7,6 +7,29 @@ fn operation(open: &Value, phase: &str) -> Value {
 }
 
 #[test]
+fn trusted_operation_commits_wake_observers_after_validation() {
+    let hub = Hub::new("host".into(), Arc::new(NullSourceSink));
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    hub.observe_panel_operations(wake.clone());
+    let secret = paired(&hub, "screen");
+    let publication = publish(&hub, fixture());
+    assign(&hub, "screen", "instance", &publication.publication_hash);
+    let open = connect(&hub, "connection", &secret, "instance");
+    let before = wake.observed();
+
+    let mut report = frame(&open, "heartbeat", "1");
+    report["operation"] = operation(&open, "downloading");
+    assert_eq!(wire(&hub, "connection", report.clone())["ok"], true);
+    assert!(wake.observed() > before, "a committed operation must notify observers");
+    let committed = wake.observed();
+
+    report["sequence"] = json!("2");
+    report["operation"]["sessionId"] = json!("obsolete-session");
+    assert_eq!(wire(&hub, "connection", report)["ok"], false);
+    assert_eq!(wake.observed(), committed, "rejected stale operations must not notify observers");
+}
+
+#[test]
 fn operation_progress_is_metadata_and_never_arms_the_source() {
     let sink = Arc::new(Sink::default());
     let hub = Hub::new("host".into(), sink.clone());

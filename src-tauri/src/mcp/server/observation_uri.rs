@@ -19,6 +19,7 @@ pub(super) fn topic(uri: &str) -> Option<&str> {
     let allowed = matches!(topic,
         "profiles.library"
             | "profiles.runtime"
+            | "profiles.activation"
             | "workspace.state"
             | "games.state"
             | "games.jobs"
@@ -68,6 +69,7 @@ mod tests {
         for expected in [
             "profiles.library",
             "profiles.runtime",
+            "profiles.activation",
             "workspace.state",
             "games.state",
             "games.jobs",

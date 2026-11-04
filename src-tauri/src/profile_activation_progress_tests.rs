@@ -5,6 +5,80 @@ const NEXT:&str="22222222-2222-4222-8222-222222222222";
 const PROFILE:&str="33333333-3333-4333-8333-333333333333";
 
 #[test]
+fn native_progress_observation_follows_committed_attempt_changes() {
+    let manager=GatewayManager::mcp_test_manager();
+    let broker=manager.observations.broker();
+    let mut reader=broker.subscribe("activation-test","mcp","profiles.activation").unwrap();
+    assert!(reader.try_recv().unwrap().unwrap().payload.unwrap().is_null());
+    let tracker=&manager.profile_activations;
+    manager.profile_admission_epoch.store(7,Ordering::Release);
+    tracker.begin(OP,PROFILE,||7).unwrap();
+
+    let mut next=|| {
+        let deadline=Instant::now()+Duration::from_secs(2);
+        loop {
+            if let Some(frame)=reader.try_recv().unwrap(){return frame.payload.unwrap();}
+            assert!(Instant::now()<deadline,"Activation observation did not wake.");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    assert_eq!(next()["phase"],"preparing");
+    tracker.note(7,"launching","Launching simulator");
+    assert_eq!(next()["step"],"launching");
+    tracker.cancel(OP,&manager.profile_admission_epoch).unwrap();
+    assert_eq!(next()["cancelRequested"],true);
+    manager.finish_profile_activation(OP,&json!({"ok":false}));
+    assert!(next().is_null());
+
+    let mut cleanup=json!({"command":"profile_stop","activationId":NEXT});
+    assert_eq!(manager.begin_profile_cleanup(&mut cleanup,9).as_deref(),Some(NEXT));
+    assert_eq!(next()["phase"],"deactivating");
+    manager.finish_profile_activation(NEXT,&json!({"ok":true}));
+    assert!(next().is_null());
+
+    let switch=uuid::Uuid::new_v4().to_string();
+    tracker.begin_with(&switch,PROFILE,||10,|entry| {
+        entry.origin="vehicle-switch".into();
+        entry.cancellable=false;
+    }).unwrap();
+    assert_eq!(next()["origin"],"vehicle-switch");
+    manager.finish_profile_activation(&switch,&json!({"ok":true}));
+    assert_eq!(next()["phase"],"succeeded");
+    assert!(next().is_null(),"The deadline withdraws the confirmation without another request.");
+}
+
+#[test]
+fn committed_progress_wakes_consumers_without_replaying_ignored_updates() {
+    let tracker=Tracker::default();
+    let epoch=AtomicU64::new(7);
+    let before=tracker.changes.observed();
+    tracker.begin(OP,PROFILE,||7).unwrap();
+    let started=tracker.changes.observed();
+    assert!(started>before);
+    tracker.note(6,"preparing","Late old attempt");
+    assert_eq!(tracker.changes.observed(),started);
+    tracker.note(7,"preparing","Preparing outputs");
+    let noted=tracker.changes.observed();
+    assert!(noted>started);
+    tracker.note(7,"preparing","Preparing outputs");
+    assert_eq!(tracker.changes.observed(),noted);
+    tracker.cancel(OP,&epoch).unwrap();
+    assert!(tracker.changes.observed()>noted);
+    assert_eq!(tracker.current_entry(Instant::now()).unwrap().0.phase,"cancelling");
+}
+
+#[test]
+fn vehicle_confirmation_ends_at_its_exact_deadline() {
+    let tracker=Tracker::default();
+    tracker.begin_with(OP,PROFILE,||7,|entry|entry.origin="vehicle-switch".into()).unwrap();
+    let finished=Instant::now();
+    tracker.entries.lock().unwrap().get_mut(OP).unwrap().completed=Some(finished);
+    let end=finished+VEHICLE_SWITCH_CONFIRMATION;
+    assert_eq!(tracker.current_entry(finished).unwrap().1,Some(end));
+    assert!(tracker.current_entry(end).is_none());
+}
+
+#[test]
 fn quick_vehicle_completion_is_visible_but_never_resurrected_after_a_newer_operation() {
     let tracker=Tracker::default();tracker.begin(OP,PROFILE,||7).unwrap();
     {

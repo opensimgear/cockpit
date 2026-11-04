@@ -823,6 +823,7 @@ fn worker(
                                                 // status, never for an unverified progress event.
                                                 state["_statusObservedMs"] = json!(status_clock_ms());
                                             }
+                                            hub.notify_panel_operations();
                                             set(
                                                 public,
                                                 "stage",

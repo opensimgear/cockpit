@@ -12,6 +12,7 @@ legacy-test-fixtures = []
 
 [dependencies]
 osg-persistence = { path = "../persistence" }
+osg-streams = { path = "../streams" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
