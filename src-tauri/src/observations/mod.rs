@@ -27,6 +27,7 @@ pub struct Delivery {
 
 struct Session {
     client: String,
+    telemetry: Option<Arc<()>>,
     cancel: ReaderCancellation,
     acknowledge: mpsc::SyncSender<()>,
     awaiting: Option<String>,
@@ -93,6 +94,12 @@ impl Runtime {
         self.inner.broker.clone()
     }
 
+    pub(crate) fn telemetry_lease(&self, id: &str) -> Result<Weak<()>, String> {
+        self.inner.sessions.lock().unwrap_or_else(|p| p.into_inner())
+            .get(id).and_then(|session| session.telemetry.as_ref()).map(Arc::downgrade)
+            .ok_or_else(|| "The telemetry observation has closed.".into())
+    }
+
     pub(crate) fn captured_us(&self) -> u64 {
         u64::try_from(self.inner.origin.elapsed().as_micros()).unwrap_or(u64::MAX)
     }
@@ -136,6 +143,7 @@ impl Runtime {
             token.clone(),
             Session {
                 client: client.into(),
+                telemetry: (topic == "games.telemetry").then(|| Arc::new(())),
                 cancel,
                 acknowledge,
                 awaiting: None,

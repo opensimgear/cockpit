@@ -37,6 +37,7 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
       });
     })`);
     const telemetryRevision=()=>page.evaluate('window.__assettoTelemetryObservation.revision');
+    const telemetryLease=()=>page.evaluate("window.__assettoTelemetryObservation.observations.subscriptionId('games.telemetry')");
     await until(telemetryRevision,revision=>revision!=='0');
     const initial=await games();
     assert.ok(!initial.detectedGames?.some(game=>game.gameId.startsWith('assetto-corsa')),
@@ -116,12 +117,27 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
         },Boolean,25000);
         const mode=async value=>{await writeFile(stop+'.mode',value);await until(()=>readFile(stop+'.ack','utf8').then(actual=>actual===value,()=>false));};
         const inspectRpm=async()=>{
-          const report=(await native({command:'game_telemetry_inspect',gameId,search:'engine.rpm',offset:0,limit:16})).gameTelemetry;
+          const report=(await native({command:'game_telemetry_inspect',gameId,search:'engine.rpm',offset:0,limit:16,observationId:await telemetryLease()})).gameTelemetry;
           return report.games.find(game=>game.id===gameId)?.channels.find(channel=>channel.id==='engine.rpm');
         };
         record.phases.live=await live();
         const revision=await telemetryRevision();
         record.phases.inspectorRevision=await until(telemetryRevision,value=>BigInt(value)>BigInt(revision));
+        if(gameId==='assetto-corsa'){
+          const nav='document.querySelector(\'[aria-label="Main navigation"]\')';
+          const previous=await page.evaluate(`${nav}.querySelector('.current')?.title??''`);
+          try{
+            await page.evaluate(`${nav}.querySelector('[title="Debug"]').click()`);
+            const input='document.querySelector(\'[aria-label="Search game telemetry"]\')';
+            const select='document.querySelector(\'[aria-label="Telemetry game"]\')';
+            await until(()=>page.evaluate(`!!${select}?.querySelector('[value="assetto-corsa"]')`));
+            await page.evaluate(`(()=>{const select=${select};select.value='assetto-corsa';select.dispatchEvent(new Event('change',{bubbles:true}));const input=${input};input.value='engine.rpm';input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+            await until(()=>page.evaluate(`[...document.querySelectorAll('table[aria-label="Incoming telemetry channel values"] tbody tr')].some(row=>row.querySelector('code')?.textContent==='engine.rpm'&&Number(row.querySelector('.channel-value')?.textContent)===4500)`));
+            record.phases.inspectorUi=true;
+          }finally{
+            if(previous!=='Debug')await page.evaluate(`${nav}.querySelector('[title="'+CSS.escape(${JSON.stringify(previous)})+'"]')?.click()`);
+          }
+        }
         record.phases.inspectorLive=await until(async()=>{
           const channel=await inspectRpm();
           return channel?.status==='known'&&channel.value===expected['engine.rpm']&&channel;

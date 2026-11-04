@@ -987,7 +987,7 @@ impl GatewayManager {
             if request.to_string().len()>65_536 || !request["clientId"].as_str().is_some_and(|id|crate::protocol::identifier(id,16,80)) {
                 return self.error("Invalid telemetry inspection client or request.",None);
             }
-            return match self.games.inspect_telemetry(&request) {
+            return match self.inspect_game_telemetry(&request) {
                 Ok(telemetry)=>json!({"ok":true,"state":{"gameTelemetry":telemetry}}),
                 Err(error)=>json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
             };
@@ -1384,7 +1384,7 @@ impl GatewayManager {
             };
         }
         if command == "game_telemetry_inspect" {
-            return match self.games.inspect_telemetry(&request) {
+            return match self.inspect_game_telemetry(&request) {
                 Ok(telemetry) => json!({"ok":true,"state":{"gameTelemetry":telemetry}}),
                 Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
             };
@@ -2527,6 +2527,13 @@ mod tests {
         let response=request(&manager,"game_telemetry_inspect",None,json!({"gameId":"assetto-corsa-evo","search":"engine.rpm","limit":8}));
         assert_eq!(response["ok"],true,"{response}");
         assert_eq!(response["state"]["gameTelemetry"]["games"].as_array().unwrap().len(),1);
+        let observation = manager.observations.subscribe("telemetry-test", "ui", "games.telemetry", |_| Ok(())).unwrap();
+        let selected = json!({"gameId":"assetto-corsa-evo","observationId":observation});
+        assert_eq!(request(&manager,"game_telemetry_inspect",None,selected.clone())["ok"],true);
+        manager.observations.unsubscribe("telemetry-test", &observation).unwrap();
+        let closed = request(&manager,"game_telemetry_inspect",None,selected);
+        assert_eq!(closed["ok"],false);
+        assert!(closed["error"].as_str().unwrap().contains("observation has closed"));
         assert_eq!(manager.profile_admission_epoch.load(Ordering::Acquire),epoch);
         assert!(provider.adapters.lock().unwrap().is_empty());
         assert_eq!(manager.request(json!({"command":"game_telemetry_inspect"}))["ok"],false);

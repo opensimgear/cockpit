@@ -73,6 +73,11 @@ export class SharedObservations {
     };
   }
 
+  subscriptionId(topic: string): string | undefined {
+    const entry = this.entries.get(topic);
+    return entry?.state.status === 'ready' ? entry.token : undefined;
+  }
+
   close(): void {
     this.closed = true;
     for (const entry of this.entries.values()) {

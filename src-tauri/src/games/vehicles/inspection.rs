@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    sync::Weak,
     time::{Duration, Instant},
 };
 
@@ -9,7 +10,14 @@ const LEASE: Duration = Duration::from_secs(5);
 
 struct Lease {
     expires: Instant,
+    observation: Option<Weak<()>>,
     channels: Vec<String>,
+}
+
+impl Lease {
+    fn active(&self, now: Instant) -> bool {
+        self.observation.as_ref().map_or(self.expires > now, |lease| lease.strong_count() > 0)
+    }
 }
 
 #[cfg(test)]
@@ -20,14 +28,29 @@ mod tests {
     fn renewal_and_rejection_preserve_independent_demands() {
         let now = Instant::now();
         let mut demand = Demand::default();
-        demand.update("first", vec!["one".into()], now, |_| Ok(())).unwrap();
-        demand.update("second", vec!["two".into()], now, |_| Ok(())).unwrap();
+        demand.update("first", vec!["one".into()], now, None, |_| Ok(())).unwrap();
+        demand.update("second", vec!["two".into()], now, None, |_| Ok(())).unwrap();
         let renewed = now + Duration::from_secs(1);
-        demand.update("second", vec!["two".into()], renewed, |_| panic!("same selection")).unwrap();
-        assert!(demand.update("second", vec!["three".into()], renewed, |_| Err("rejected".into())).is_err());
+        demand.update("second", vec!["two".into()], renewed, None, |_| panic!("same selection")).unwrap();
+        assert!(demand.update("second", vec!["three".into()], renewed, None, |_| Err("rejected".into())).is_err());
         assert_eq!(demand.selection(renewed), ["one", "two"]);
         assert_eq!(demand.selection(now + LEASE), ["two"]);
         assert!(demand.selection(renewed + LEASE).is_empty());
+    }
+
+    #[test]
+    fn observation_selection_survives_quiet_capture_and_releases_on_close() {
+        let now = Instant::now();
+        let observation = std::sync::Arc::new(());
+        let lease = std::sync::Arc::downgrade(&observation);
+        let mut demand = Demand::default();
+        demand.update("observer", vec!["observed".into()], now, Some(lease.clone()), |_| Ok(())).unwrap();
+        let later = now + LEASE;
+        demand.update("explicit", vec!["explicit".into()], later, None, |_| Ok(())).unwrap();
+        assert_eq!(demand.selection(later), ["explicit", "observed"]);
+        drop(observation);
+        assert_eq!(demand.selection(later), ["explicit"]);
+        assert!(demand.update("observer", vec!["late".into()], later, Some(lease), |_| panic!("closed observation")).is_err());
     }
 
     #[test]
@@ -35,15 +58,15 @@ mod tests {
         let now = Instant::now();
         let mut demand = Demand::default();
         let full = (0..MAX_CHANNELS).map(|index| index.to_string()).collect();
-        demand.update("first", full, now, |_| Ok(())).unwrap();
-        assert!(demand.update("second", vec!["overflow".into()], now, |_| panic!("over channel limit")).is_err());
+        demand.update("first", full, now, None, |_| Ok(())).unwrap();
+        assert!(demand.update("second", vec!["overflow".into()], now, None, |_| panic!("over channel limit")).is_err());
         for index in 1..MAX_CLIENTS {
-            demand.update(&format!("client-{index}"), vec!["0".into()], now, |_| panic!("same union")).unwrap();
+            demand.update(&format!("client-{index}"), vec!["0".into()], now, None, |_| panic!("same union")).unwrap();
         }
-        assert!(demand.update("overflow", vec!["0".into()], now, |_| panic!("over client limit")).is_err());
-        assert!(demand.update("", vec!["0".into()], now, |_| panic!("invalid identity")).is_err());
+        assert!(demand.update("overflow", vec!["0".into()], now, None, |_| panic!("over client limit")).is_err());
+        assert!(demand.update("", vec!["0".into()], now, None, |_| panic!("invalid identity")).is_err());
         assert_eq!(demand.selection(now).len(), MAX_CHANNELS);
-        demand.update("replacement", vec!["new".into()], now + LEASE, |_| Ok(())).unwrap();
+        demand.update("replacement", vec!["new".into()], now + LEASE, None, |_| Ok(())).unwrap();
         assert_eq!(demand.selection(now + LEASE), ["new"]);
     }
 }
@@ -60,13 +83,17 @@ impl Demand {
         client: &str,
         channels: Vec<String>,
         now: Instant,
+        observation: Option<Weak<()>>,
         apply: impl FnOnce(&[String]) -> Result<(), String>,
     ) -> Result<(), String> {
         if client.is_empty() || client.len() > 128 || client.chars().any(char::is_control) {
             return Err("Invalid telemetry inspection client.".into());
         }
+        if observation.as_ref().is_some_and(|lease| lease.strong_count() == 0) {
+            return Err("The telemetry observation has closed.".into());
+        }
         let others = self.clients.iter()
-            .filter(|(id, lease)| id.as_str() != client && lease.expires > now);
+            .filter(|(id, lease)| id.as_str() != client && lease.active(now));
         if !channels.is_empty() && others.clone().count() >= MAX_CLIENTS {
             return Err("Too many telemetry inspection clients for this game.".into());
         }
@@ -83,18 +110,18 @@ impl Demand {
             apply(&selected)?;
             self.selection = selected;
         }
-        self.clients.retain(|_, lease| lease.expires > now);
+        self.clients.retain(|_, lease| lease.active(now));
         if channels.is_empty() {
             self.clients.remove(client);
         } else {
-            self.clients.insert(client.into(), Lease { expires: now + LEASE, channels });
+            self.clients.insert(client.into(), Lease { expires: now + LEASE, observation, channels });
         }
         Ok(())
     }
 
     pub(super) fn selection(&mut self, now: Instant) -> &[String] {
         let count = self.clients.len();
-        self.clients.retain(|_, lease| lease.expires > now);
+        self.clients.retain(|_, lease| lease.active(now));
         if count != self.clients.len() {
             self.selection.retain(|id| self.clients.values().any(|lease| lease.channels.contains(id)));
         }

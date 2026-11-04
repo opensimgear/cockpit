@@ -6,7 +6,7 @@ export type GameTelemetryChannel={id:string;label:string;category:string;type:st
 export type GameTelemetryGroup={id:string;label:string;total:number};
 export type GameTelemetryGame={id:GameId;name:string;status:string;source:string;message?:string|null;packet?:number|string|null;ageMs?:number|null;context:Record<string,GameTelemetryScalar>|null;groups:GameTelemetryGroup[];total:number;offset:number;limit:number;channels:GameTelemetryChannel[]};
 export type GameTelemetryReport={schemaVersion:1;games:GameTelemetryGame[];capturedAt?:string};
-export type GameTelemetryRequest={command:'game_telemetry_inspect';gameId?:GameId;offset:number;limit:number;search?:string;group?:string};
+export type GameTelemetryRequest={command:'game_telemetry_inspect';gameId?:GameId;offset:number;limit:number;search?:string;group?:string;observationId?:string};
 export type GameTelemetryQuery=Omit<GameTelemetryRequest,'command'>;
 export type GameTelemetryState={query:GameTelemetryQuery;report:DeepReadonly<GameTelemetryReport>|null;active:boolean;loading:boolean;stale:boolean;error:string;updatedAt:number|null};
 
@@ -66,6 +66,11 @@ export class GameTelemetryController{
   setActive(active:boolean):void{
     if(this.disposed||active===this.value.active)return;
     this.epoch++;this.queued=active&&this.inFlight;this.set({active,loading:false,stale:true});
+  }
+  invalidate():void{
+    if(this.disposed||!this.value.active)return;
+    if(this.inFlight){this.queued=true;return;}
+    void this.refresh();
   }
   async refresh():Promise<boolean>{
     if(this.disposed||!this.value.active||this.inFlight)return false;

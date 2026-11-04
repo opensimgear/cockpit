@@ -18,7 +18,7 @@ const processMonitor=(await loadProcessMonitor(modules,noRequest)).exports;
 const channel=(overrides={})=>({id:'vehicle.speed',label:'Vehicle speed',category:'physics',type:'number',unit:'m/s',status:'known',value:0,ageMs:50,nativeField:'speedKmh',provider:'shared-memory',description:'Speed in common SI units.',...overrides});
 const fixture=(overrides={})=>({schemaVersion:1,games:[{id:'assetto-corsa',name:'Assetto Corsa',status:'live',source:'Native shared memory · acpmf_physics',packet:42,ageMs:50,context:{car:'Abarth 500',track:'Imola'},groups:[{id:'physics',label:'Physics',total:2},{id:'engine',label:'Engine',total:1}],total:3,offset:0,limit:64,channels:[channel(),channel({id:'engine.rpm',label:'Engine speed',category:'engine',unit:'rpm',status:'unknown',value:null,ageMs:null}),channel({id:'vehicle.brake',label:'Brake',unit:'ratio',value:0.25})],...overrides}]});
 const filename=new URL('./GameTelemetryInspector.svelte',import.meta.url),source=await readFile(filename,'utf8'),{js}=compile(source,{filename:filename.pathname,generate:'server'}),exports={};
-vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);if(name==='./GameProcessMonitor.svelte')return processMonitor;if(name==='./gateway')return{gatewayRequest:noRequest};throw Error(`Unexpected telemetry dependency ${name}`);}},{filename:filename.pathname});
+vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,TextEncoder,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);if(name==='./GameProcessMonitor.svelte')return processMonitor;if(name==='./gateway')return{gatewayRequest:noRequest};if(name==='./streams/shared')return{};throw Error(`Unexpected telemetry dependency ${name}`);}},{filename:filename.pathname});
 async function body(reply=fixture(),query={gameId:'assetto-corsa',offset:0,limit:64},stale=false){const controller=new GameTelemetryController({inspect:async()=>reply});controller.configure(query);controller.setActive(true);await controller.refresh();if(stale)controller.setActive(false);return render(exports.default,{props:{controller}}).body;}
 
 test('incoming telemetry is organized by game, source, canonical channel and category without a profile',async()=>{
@@ -45,17 +45,28 @@ test('filtered pages expose exact returned counts and accessible previous/next c
   const empty=await body(fixture({total:0,channels:[]}),{gameId:'assetto-corsa',offset:0,limit:64,search:'missing'});assert.ok(empty.includes('No incoming channels match this selection.'));assert.ok(empty.includes('0–0 of 0'));
 });
 
-test('the mounted telemetry view polls only its visible active section and cleans up its timer and visibility listener',async()=>{
-  let handlers,resolveFirst;const calls=[],timers=new Map(),listeners=new Map(),document={hidden:false,addEventListener:(name,listener)=>listeners.set(name,listener),removeEventListener:(name,listener)=>{if(listeners.get(name)===listener)listeners.delete(name);}};
+test('visible telemetry follows native revisions and releases the observation when hidden',async()=>{
+  let handlers,resolveFirst;const calls=[],observations=[],listeners=new Map(),document={hidden:false,addEventListener:(name,listener)=>listeners.set(name,listener),removeEventListener:(name,listener)=>{if(listeners.get(name)===listener)listeners.delete(name);}};
+  class SharedObservations {
+    constructor(){observations.push(this);this.id=String(observations.length);}
+    subscribe(topic,listener){assert.equal(topic,'games.telemetry');this.listener=listener;listener({status:'connecting'});}
+    subscriptionId(){return this.ready?this.id:undefined;}
+    deliver(){this.ready=true;this.listener({status:'ready'});}
+    close(){this.closed=true;}
+  }
   const controller=new GameTelemetryController({inspect:query=>{calls.push(query);return calls.length===1?new Promise(resolve=>resolveFirst=resolve):Promise.resolve(fixture());}});
   const instrumented=source.replace('</script>',"captureTelemetry({watchTelemetry,mount(value){mounted=value;},activate(value){active=value;}});</script>");
   const built=compile(instrumented,{filename:filename.pathname,generate:'server'}),local={};
-  vm.runInNewContext(ts.transpileModule(built.js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:local,TextEncoder,document,window:{setInterval:callback=>{timers.set(1,callback);return 1;},clearInterval:id=>timers.delete(id)},captureTelemetry:value=>handlers=value,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);if(name==='./GameProcessMonitor.svelte')return processMonitor;if(name==='./gateway')return{gatewayRequest:noRequest};throw Error(`Unexpected telemetry dependency ${name}`);}});
+  vm.runInNewContext(ts.transpileModule(built.js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:local,TextEncoder,document,captureTelemetry:value=>handlers=value,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);if(name==='./GameProcessMonitor.svelte')return processMonitor;if(name==='./gateway')return{gatewayRequest:noRequest};if(name==='./streams/shared')return{SharedObservations};throw Error(`Unexpected telemetry dependency ${name}`);}});
   const rendered=render(local.default,{props:{controller}}).body;assert.ok(rendered.includes('Incoming game telemetry'));assert.equal(handlers.watchTelemetry(),undefined);assert.equal(calls.length,0);
-  handlers.mount(true);const cleanup=handlers.watchTelemetry();assert.equal(calls.length,1);assert.equal(timers.size,1);assert.equal(listeners.size,1);
-  document.hidden=true;listeners.get('visibilitychange')();timers.get(1)();assert.equal(controller.state.active,false);assert.equal(calls.length,1);
+  handlers.mount(true);const cleanup=handlers.watchTelemetry();assert.equal(calls.length,0);assert.equal(listeners.size,1);
+  observations[0].deliver();assert.equal(calls.length,1);assert.equal(calls[0].observationId,'1');
+  observations[0].deliver();assert.equal(calls.length,1);
+  document.hidden=true;listeners.get('visibilitychange')();assert.equal(observations[0].closed,true);
   resolveFirst(fixture());await new Promise(resolve=>setImmediate(resolve));assert.equal(controller.state.report,null);
-  document.hidden=false;listeners.get('visibilitychange')();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls.length,2);assert.equal(controller.state.stale,false);
-  cleanup();assert.equal(timers.size,0);assert.equal(listeners.size,0);assert.equal(controller.state.active,false);
-  handlers.activate(false);assert.equal(handlers.watchTelemetry(),undefined);assert.equal(calls.length,2);assert.equal(timers.size,0);controller.dispose();
+  document.hidden=false;listeners.get('visibilitychange')();assert.equal(calls.length,1);
+  observations[1].deliver();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls.length,2);assert.equal(calls[1].observationId,'2');assert.equal(controller.state.stale,false);
+  cleanup();assert.equal(observations[1].closed,true);assert.equal(listeners.size,0);assert.equal(controller.state.active,false);
+  handlers.activate(false);assert.equal(handlers.watchTelemetry(),undefined);assert.equal(calls.length,2);controller.dispose();
 });

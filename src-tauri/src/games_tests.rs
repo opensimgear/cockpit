@@ -185,7 +185,7 @@ fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
         "processMonitoringSupported":true
     })]);
     let before = runtime.status();
-    let report = runtime.inspect_telemetry(&json!({"command":"game_telemetry_inspect","gameId":GAME,"search":"engine.rpm","limit":16})).unwrap();
+    let report = runtime.inspect_telemetry(&json!({"command":"game_telemetry_inspect","gameId":GAME,"search":"engine.rpm","limit":16}), None).unwrap();
     assert_eq!(report["schemaVersion"], 1);
     assert_eq!(report["games"].as_array().unwrap().len(), 1);
     let game = &report["games"][0];
@@ -200,7 +200,7 @@ fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
     runtime.seed_test_catalogue(games.clone());
     let inspect_automatic = || runtime.inspect_telemetry(&json!({
         "command":"game_telemetry_inspect","search":"engine.rpm","limit":16
-    })).unwrap();
+    }), None).unwrap();
     let automatic = inspect_automatic();
     assert_eq!(automatic["games"][0]["total"], 0);
     assert_eq!(automatic["games"][1]["channels"][0]["id"], "engine.rpm");
@@ -225,7 +225,7 @@ fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        assert!(runtime.inspect_telemetry(&request).is_err(), "{request}");
+        assert!(runtime.inspect_telemetry(&request, None).is_err(), "{request}");
     }
     runtime.shutdown();
 }

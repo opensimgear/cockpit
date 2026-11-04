@@ -28,7 +28,7 @@ impl GamesRuntime {
             .unwrap_or_else(|p| p.into_inner())
             .dcs_physics_watch(process, wake)
     }
-    pub(crate) fn inspect_telemetry(&self, request: &Value) -> Result<Value, String> {
+    pub(crate) fn inspect_telemetry(&self, request: &Value, observation: Option<std::sync::Weak<()>>) -> Result<Value, String> {
         let allowed = [
             "command",
             "clientId",
@@ -38,6 +38,7 @@ impl GamesRuntime {
             "search",
             "group",
             "background",
+            "observationId",
         ];
         if request
             .as_object()
@@ -45,6 +46,8 @@ impl GamesRuntime {
         {
             return Err("Unsupported telemetry inspection field.".into());
         }
+        let demand_owner = request["observationId"].as_str()
+            .or_else(|| request["clientId"].as_str()).unwrap_or("default");
         let index = |field: &str, default: u64, max: u64| -> Result<usize, String> {
             match request.get(field) {
                 None => Ok(default as usize),
@@ -165,7 +168,7 @@ impl GamesRuntime {
                     .vehicles
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .inspect(id, request["clientId"].as_str().unwrap_or("default"), page.requested.clone())?;
+                    .inspect(id, demand_owner, page.requested.clone(), observation.clone())?;
             }
             let message = if selected_game {
                 catalogue_error.as_deref().or_else(|| {

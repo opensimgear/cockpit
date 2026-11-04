@@ -63,13 +63,13 @@ fn view_inspection_is_idempotent_and_missing_titles_are_harmless() {
         "integrationKey":"x-plane-12","provider":"x-plane"});
     tracker.observe(&game, &json!({}), None, "setup", true, 1);
 
-    tracker.inspect("missing-title", "first", vec!["one".into()]).unwrap();
-    tracker.inspect("x-plane-12", "first", vec!["one".into()]).unwrap();
-    tracker.inspect("x-plane-12", "second", vec!["two".into()]).unwrap();
+    tracker.inspect("missing-title", "first", vec!["one".into()], None).unwrap();
+    tracker.inspect("x-plane-12", "first", vec!["one".into()], None).unwrap();
+    tracker.inspect("x-plane-12", "second", vec!["two".into()], None).unwrap();
     let selected = |tracker: &mut Tracker| tracker.entries.get_mut("x-plane-12")
         .unwrap().inspection.selection(Instant::now()).to_vec();
     assert_eq!(selected(&mut tracker), ["one", "two"]);
-    tracker.inspect("x-plane-12", "first", vec![]).unwrap();
+    tracker.inspect("x-plane-12", "first", vec![], None).unwrap();
     assert_eq!(selected(&mut tracker), ["two"]);
     tracker.observe(&game, &json!({}), None, "replacement", true, 2);
     assert!(selected(&mut tracker).is_empty());

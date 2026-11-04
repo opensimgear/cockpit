@@ -90,11 +90,11 @@ impl Tracker {
         view.map(|view| view.watch(wake).map_err(|error| format!("{error:?}")))
             .transpose()
     }
-    pub(crate) fn inspect(&mut self, id: &str, client: &str, channels: Vec<String>) -> Result<(), String> {
+    pub(crate) fn inspect(&mut self, id: &str, client: &str, channels: Vec<String>, observation: Option<std::sync::Weak<()>>) -> Result<(), String> {
         let Some(entry) = self.entries.get_mut(id).filter(|entry| entry.integration.starts_with("x-plane-")) else {
             return Ok(());
         };
-        entry.inspection.update(client, channels, Instant::now(), |selected| {
+        entry.inspection.update(client, channels, Instant::now(), observation, |selected| {
             if let Some(reader) = &mut entry.reader {
                 reader.inspect(&entry.integration, selected)?;
             }

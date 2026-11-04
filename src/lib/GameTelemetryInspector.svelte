@@ -1,6 +1,7 @@
 <script lang="ts">
   import {onDestroy,onMount,untrack} from 'svelte';
   import {gatewayRequest} from './gateway';
+  import {SharedObservations} from './streams/shared';
   import GameProcessMonitor from './GameProcessMonitor.svelte';
   import {gameCatalogue,type GameId} from './games';
   import {GameTelemetryClient,GameTelemetryController,preferredTelemetryGame,telemetryAge,telemetryContext,telemetryStatus,telemetryValue} from './game-telemetry';
@@ -8,6 +9,8 @@
   const provided=untrack(()=>supplied),inspector=provided??new GameTelemetryController(new GameTelemetryClient(async request=>(await gatewayRequest(request)).gameTelemetry));
   let view=$state.raw(inspector.state),mounted=$state(false),gameId=$state<GameId|''>(untrack(()=>inspector.state.query.gameId??''));
   let search=$state(untrack(()=>inspector.state.query.search??'')),group=$state(untrack(()=>inspector.state.query.group??'')),offset=$state(untrack(()=>inspector.state.query.offset));
+  let observationError=$state('');
+  const topic='games.telemetry';
   const limit=64;
   const game=$derived(view.report?.games.find(game=>game.id===(gameId||preferredTelemetryGame(view.report?.games??[]))));
   const context=$derived(telemetryContext(game?.context??null));
@@ -22,9 +25,37 @@
     if(!mounted)return;
     inspector.configure(query);
     if(!enabled){inspector.setActive(false);return;}
-    const refresh=()=>{inspector.setActive(enabled&&!document.hidden);if(inspector.state.active)void inspector.refresh();};
-    refresh();const timer=window.setInterval(refresh,1000);document.addEventListener('visibilitychange',refresh);
-    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);inspector.setActive(false);};
+    let observations:SharedObservations|undefined;
+    const stop=()=>{
+      observations?.close();
+      observations=undefined;
+      inspector.setActive(false);
+    };
+    const syncVisibility=()=>{
+      if(document.hidden){stop();return;}
+      if(observations)return;
+      observationError='';
+      const current=new SharedObservations();
+      observations=current;
+      current.subscribe(topic,state=>{
+        if(observations!==current)return;
+        untrack(()=>{
+          const observationId=current.subscriptionId(topic);
+          if(!observationId){
+            inspector.setActive(false);
+            observationError=state.error??'';
+            return;
+          }
+          observationError='';
+          inspector.configure({...query,observationId});
+          inspector.setActive(true);
+          inspector.invalidate();
+        });
+      });
+    };
+    syncVisibility();
+    document.addEventListener('visibilitychange',syncVisibility);
+    return()=>{document.removeEventListener('visibilitychange',syncVisibility);stop();};
   }
   $effect(watchTelemetry);
   function chooseGame(value:string){gameId=value as GameId;group='';search='';offset=0;}
@@ -38,8 +69,8 @@
     <label class="telemetry-search">Find a channel<input type="search" aria-label="Search game telemetry" placeholder="Channel, label, or native field" maxlength="200" bind:value={search} oninput={()=>offset=0}/></label>
     <button class="secondary-button" disabled={!canRead||view.loading} onclick={()=>inspector.refresh()}>{view.loading?'Reading…':'Refresh telemetry'}</button>
   </div>
-  <p class="telemetry-help">Incoming channels from the game integration, including channels outside your profile. Common channels use shared names and units; native fields retain their documented units. This view updates once a second while visible.</p>
-  {#if view.error}<p class="telemetry-error" role="alert">{view.error} Last captured values are unavailable until a fresh reply arrives.</p>{/if}
+  <p class="telemetry-help">Incoming channels from the game integration, including channels outside your profile. Common channels use shared names and units; native fields retain their documented units. This view follows native telemetry changes while visible.</p>
+  {#if view.error||observationError}<p class="telemetry-error" role="alert">{view.error||observationError} Last captured values are unavailable until a fresh reply arrives.</p>{/if}
   {#if game}
     <section class="telemetry-summary panel" aria-label="Game telemetry source">
       <div class="source-heading"><div><h2>{game.name}</h2><p>{game.source||'Source not available'}</p></div><span class="source-status" class:live={!view.stale&&['live','ready','receiving'].includes(game.status)} class:paused={!view.stale&&game.status==='paused'}>{view.stale?'Stale capture':telemetryStatus(game.status)}</span></div>
