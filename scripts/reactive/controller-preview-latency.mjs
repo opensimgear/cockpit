@@ -36,15 +36,23 @@ try{
       if(dom.size>5000)dom.delete(dom.keys().next().value);
     });
     mutation.observe(detail,{subtree:true,childList:true,characterData:true});
-    const started=performance.now(),visibility=document.visibilityState;
+    const visibility=document.visibilityState;
+    let started;
     let lastSequence;
     const stop=observeControllerInputs(sourceId,state=>{
       const received=performance.now(),current=state.detail;
-      if(state.status!=='ready'||!current?.source?.baselineReady||
-          'controllers:'+current.session!==best.id||current.source.generation!==selected.generation){
-        errors.push('The inspector lost its existing baseline or changed identity.');
+      if(state.status==='connecting'&&started===undefined)return;
+      if(state.status!=='ready'||!current?.source?.baselineReady){
+        if(started!==undefined||state.status==='error'||state.status==='lost'){
+          errors.push('Controller observation was not ready: '+(state.error??state.status));
+        }
         return;
       }
+      if('controllers:'+current.session!==best.id||current.source.id!==sourceId||current.source.generation!==selected.generation){
+        errors.push('Controller observation changed capture clock or source identity.');
+        return;
+      }
+      started??=received;
       const sequence=current.source.generation+':'+current.source.sequence;
       if(lastSequence&&sequence!==lastSequence&&samples.length<5000){
         const captured=Number(BigInt(current.capturedUs))/1000+offset;
@@ -63,7 +71,7 @@ try{
       const p=f=>data.length?data[Math.min(data.length-1,Math.floor((data.length-1)*f))]:null;
       return {count:data.length,p50:p(.5),p95:p(.95),p99:p(.99),max:p(1)};
     };
-    return {at:new Date().toISOString(),durationMs:performance.now()-started,visibility,
+    return {at:new Date().toISOString(),durationMs:started===undefined?0:performance.now()-started,visibility,
       observer:'shared-inspector',
       source:{name:selected.name,backend:selected.backend,controls:selected.controlCount},
       clockUncertaintyMs:best.rtt/2,clockRoundTripMs:best.rtt,
