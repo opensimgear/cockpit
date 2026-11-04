@@ -55,7 +55,7 @@ test('visible telemetry follows native revisions and releases the observation wh
     close(){this.closed=true;}
   }
   const controller=new GameTelemetryController({inspect:query=>{calls.push(query);return calls.length===1?new Promise(resolve=>resolveFirst=resolve):Promise.resolve(fixture());}});
-  const instrumented=source.replace('</script>',"captureTelemetry({watchTelemetry,mount(value){mounted=value;},activate(value){active=value;}});</script>");
+  const instrumented=source.replace('</script>',"captureTelemetry({watchTelemetry,mount(value){mounted=value;},activate(value){active=value;},searchFor(value){search=value;configureTelemetry();}});</script>");
   const built=compile(instrumented,{filename:filename.pathname,generate:'server'}),local={};
   vm.runInNewContext(ts.transpileModule(built.js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:local,TextEncoder,document,captureTelemetry:value=>handlers=value,require(name){if(name==='svelte/internal/server')return server;if(name==='svelte')return svelte;if(modules.has(name))return modules.get(name);if(name==='./GameProcessMonitor.svelte')return processMonitor;if(name==='./gateway')return{gatewayRequest:noRequest};if(name==='./streams/shared')return{SharedObservations};throw Error(`Unexpected telemetry dependency ${name}`);}});
   const rendered=render(local.default,{props:{controller}}).body;assert.ok(rendered.includes('Incoming game telemetry'));assert.equal(handlers.watchTelemetry(),undefined);assert.equal(calls.length,0);
@@ -67,6 +67,9 @@ test('visible telemetry follows native revisions and releases the observation wh
   document.hidden=false;listeners.get('visibilitychange')();assert.equal(calls.length,1);
   observations[1].deliver();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(calls.length,2);assert.equal(calls[1].observationId,'2');assert.equal(controller.state.stale,false);
+  handlers.searchFor('speed');await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls.length,3);assert.equal(calls[2].search,'speed');assert.equal(calls[2].observationId,'2');
+  assert.equal(observations.length,2);assert.equal(observations[1].closed,undefined);
   cleanup();assert.equal(observations[1].closed,true);assert.equal(listeners.size,0);assert.equal(controller.state.active,false);
-  handlers.activate(false);assert.equal(handlers.watchTelemetry(),undefined);assert.equal(calls.length,2);controller.dispose();
+  handlers.activate(false);assert.equal(handlers.watchTelemetry(),undefined);assert.equal(calls.length,3);controller.dispose();
 });

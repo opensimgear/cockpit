@@ -10,6 +10,7 @@
   let view=$state.raw(inspector.state),mounted=$state(false),gameId=$state<GameId|''>(untrack(()=>inspector.state.query.gameId??''));
   let search=$state(untrack(()=>inspector.state.query.search??'')),group=$state(untrack(()=>inspector.state.query.group??'')),offset=$state(untrack(()=>inspector.state.query.offset));
   let observationError=$state('');
+  let observationId: string | undefined;
   const topic='games.telemetry';
   const limit=64;
   const game=$derived(view.report?.games.find(game=>game.id===(gameId||preferredTelemetryGame(view.report?.games??[]))));
@@ -20,15 +21,19 @@
   onDestroy(()=>{if(!provided)inspector.dispose();});
   $effect(()=>{if(!gameId&&view.report){const preferred=preferredTelemetryGame(view.report.games);if(preferred)gameId=preferred;}});
   $effect(()=>{if(game&&game.offset>0&&game.offset>=game.total)offset=0;});
+  function configureTelemetry(){
+    if(!mounted||!active)return;
+    inspector.configure({gameId:gameId||undefined,offset,limit,search,group,observationId});
+    if(observationId){inspector.setActive(true);inspector.invalidate();}
+  }
+  $effect(configureTelemetry);
   function watchTelemetry(){
-    const enabled=mounted&&active,query={gameId:gameId||undefined,offset,limit,search,group};
-    if(!mounted)return;
-    inspector.configure(query);
-    if(!enabled){inspector.setActive(false);return;}
+    if(!mounted||!active)return;
     let observations:SharedObservations|undefined;
     const stop=()=>{
       observations?.close();
       observations=undefined;
+      observationId=undefined;
       inspector.setActive(false);
     };
     const syncVisibility=()=>{
@@ -40,16 +45,16 @@
       current.subscribe(topic,state=>{
         if(observations!==current)return;
         untrack(()=>{
-          const observationId=current.subscriptionId(topic);
-          if(!observationId){
+          const next=current.subscriptionId(topic);
+          if(!next){
+            observationId=undefined;
             inspector.setActive(false);
             observationError=state.error??'';
             return;
           }
           observationError='';
-          inspector.configure({...query,observationId});
-          inspector.setActive(true);
-          inspector.invalidate();
+          if(next===observationId)inspector.invalidate();
+          else{observationId=next;configureTelemetry();}
         });
       });
     };
