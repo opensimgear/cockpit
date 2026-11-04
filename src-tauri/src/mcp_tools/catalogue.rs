@@ -67,6 +67,7 @@ fn tool(name: &str, description: &str, properties: Vec<(&str, Value)>, required:
 /// gateway command passthrough, even for an authenticated write-enabled client.
 pub fn catalogue() -> Vec<Value> {
     let mut tools=vec![
+        tool("controller_update","Set the saved local name and role of a host controller. Discover its source ID in the controllers.inventory observation.",vec![("sourceId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36})),("name",string(80)),("role",choice(&["controller","joystick","wheelbase","pedals","throttle","panel"]))],&["sourceId","name","role"]),
         tool("storage_status","List native SQLite backups and the exact catalogue revision. Backup paths and arbitrary SQL are never accepted.",vec![],&[]),
         tool("storage_create","Create an online SQLite backup with hash-checked immutable assets. One backup slot is reserved for restore rollback.",vec![("expectedRevision",integer(0,9007199254740990))],&["expectedRevision"]),
         tool("storage_remove","Retire one exact saved backup then clean up its private immutable bundle.",vec![("id",string(36)),("expectedRevision",integer(0,9007199254740990))],&["id","expectedRevision"]),
@@ -185,6 +186,7 @@ pub fn is_mutation(name: &str) -> bool {
         || matches!(
             name,
             "storage_create"
+                | "controller_update"
                 | "storage_remove"
                 | "storage_restore"
                 | "storage_restart"

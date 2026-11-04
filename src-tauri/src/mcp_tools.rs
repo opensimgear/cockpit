@@ -253,6 +253,11 @@ impl Tools {
             self.native(command, selected(keys), client, section)
         };
         match name {
+            "controller_update" => {
+                let updated = forward(name, &["sourceId", "name", "role"], Some("controllers"))?;
+                let source = &updated["source"];
+                Ok(json!({"source":{"id":source["id"],"name":source["name"],"role":source["role"]}}))
+            }
             "activity_list" => self.native("activity_query",json!({"activityFilter":selected(&["search","categories","levels","eventTypes","entityId","since","until","throughId","offset","limit"])}),client,Some("activity")),
             "activity_clear" => forward("activity_clear",&[],Some("activityDeleted")),
             "activity_settings_get" => forward("activity_settings_get",&[],Some("activitySettings")),

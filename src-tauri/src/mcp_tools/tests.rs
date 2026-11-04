@@ -28,6 +28,12 @@ impl Backend for Fake {
         self.calls.lock().unwrap().push(request.clone());
         request.as_object_mut().unwrap().remove("clientId");
         let command = request["command"].as_str().unwrap().to_owned();
+        if command == "controller_update" {
+            return json!({"ok":true,"state":{"controllers":{
+                "source":{"id":request["sourceId"],"name":request["name"],"role":request["role"]},
+                "identity":{"path":"private-device-path"},"controls":[{"sample":"private"}]
+            }}});
+        }
         if command == "profile_virtual_slots_get" || command == "profile_virtual_slot_set" {
             return json!({"ok":true,"state":{"profiles":{"profileId":request["id"],"profileRevision":4,"readOnly":false,"virtualSlots":[{"nodeId":"virtual-1","slot":request.get("slot").cloned().unwrap_or(Value::Null)}]}}});
         }
@@ -84,6 +90,22 @@ impl Backend for Fake {
         self.guarded_calls.lock().unwrap().push((request, owner));
         json!({"ok":true,"state":{"guarded":true}})
     }
+}
+
+#[test]
+fn controller_metadata_tool_replays_the_native_edit_and_returns_only_saved_fields() {
+    let (tools, fake) = setup();
+    let source_id = "11111111-1111-4111-8111-111111111111";
+    let args = json!({"sourceId":source_id,"name":"Left stick","role":"joystick","operationId":operation()});
+    let result = tools.call("controller_update", args.clone(), CLIENT);
+    assert_eq!(result["data"], json!({"source":{"id":source_id,"name":"Left stick","role":"joystick"}}));
+    assert_eq!(tools.call("controller_update", args, CLIENT), result);
+    let invalid = json!({"sourceId":source_id,"name":"Left stick","role":"unknown","operationId":operation()});
+    assert_eq!(tools.call("controller_update", invalid, CLIENT)["error"]["code"], "invalid_arguments");
+    let calls = fake.calls.lock().unwrap();
+    assert_eq!(calls.as_slice(), &[json!({
+        "command":"controller_update","sourceId":source_id,"name":"Left stick","role":"joystick","clientId":native_client(CLIENT)
+    })]);
 }
 fn setup() -> (Tools, Arc<Fake>) {
     let backend = Arc::new(Fake::default());

@@ -94,6 +94,8 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const writeTools = (await writer.listTools()).tools, readTools = (await reader.listTools()).tools;
     assert.ok(writeTools.some(tool => tool.name === 'profile_save_prepared')); assert.ok(!readTools.some(tool => tool.name === 'profile_create'));
     assert.ok(readTools.every(tool => tool.annotations.readOnlyHint));
+    assert.ok(writeTools.some(tool => tool.name === 'controller_update'));
+    assert.ok(!readTools.some(tool => tool.name === 'controller_update'));
     evidence.tools = { write: writeTools.length, read: readTools.length };
     const integration=await ok(writer,'mcp_settings_get');assert.ok(Number.isSafeInteger(integration.settingsRevision));assert.doesNotMatch(JSON.stringify(integration),/osg_mcp_/);
     const temporary=await ok(writer,'mcp_credential_create',mutation({name:'SDK-managed reader',scope:'read',expectedSettingsRevision:integration.settingsRevision}));credentials.push(temporary.credential.id);
@@ -121,7 +123,10 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const fixedResources = (await reader.listResources()).resources;
     assert.ok(fixedResources.some(resource => resource.uri === observationUri));
     assert.ok(fixedResources.some(resource => resource.uri === 'cockpit://observations/profiles.resources'));
-    const observation = await modern('subscriptions/listen', { notifications: { resourceSubscriptions: [observationUri] } });
+    const controllerUri = 'cockpit://observations/controllers.inventory';
+    const observeController = process.env.OSG_MCP_CONTROLLER_OBSERVATION === '1';
+    const uris = observeController ? [observationUri, controllerUri] : [observationUri];
+    const observation = await modern('subscriptions/listen', { notifications: { resourceSubscriptions: uris } });
     assert.equal(observation.status, 200);
     assert.match(observation.headers.get('content-type'), /text\/event-stream/);
     const observationReader = observation.body.getReader();
@@ -142,19 +147,25 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       }
       return messages.shift();
     };
+    let originalController;
     try {
       assert.equal((await nextObservation()).method, 'notifications/subscriptions/acknowledged');
-      const baseline = await nextObservation();
-      assert.equal(baseline.params.uri, observationUri);
-      assert.equal(baseline.params._meta['opensimgear.com/observation'].kind, 'snapshot');
+      const baselines = new Map();
+      while (baselines.size < uris.length) {
+        const baseline = await nextObservation();
+        assert.equal(baseline.method, 'notifications/resources/updated');
+        if (baseline.params._meta['opensimgear.com/observation'].kind === 'snapshot') {
+          baselines.set(baseline.params.uri, baseline.params._meta['opensimgear.com/observation']);
+        }
+      }
+      assert.ok(uris.every(uri => baselines.has(uri)));
       const observedName = `MCP observation ${randomUUID()}`;
       const created = await page.native({ command: 'profile_create', name: observedName });
       profiles.add(created.profiles.document.id);
       for (;;) {
         const update = await nextObservation();
         assert.equal(update.method, 'notifications/resources/updated');
-        assert.equal(update.params.uri, observationUri);
-        if (JSON.stringify(update.params._meta['opensimgear.com/observation']).includes(observedName)) break;
+        if (update.params.uri === observationUri && JSON.stringify(update.params._meta['opensimgear.com/observation']).includes(observedName)) break;
       }
       const mcpName = `MCP to native observation ${randomUUID()}`;
       await page.evaluate(async () => {
@@ -169,13 +180,43 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
         'Native library observer did not receive the MCP commit');
       evidence.modernObservation = { topic: observationUri, discovered: true, acknowledged: true,
         baseline: true, observedNativeChange: true, observedMcpCommitInNative: true };
+      if (observeController) {
+        const source = baselines.get(controllerUri).payload.sources.find(row => row.online);
+        assert.ok(source, 'A connected host controller is required for this optional check');
+        originalController = { sourceId: source.id, name: source.name.trim(), role: source.role };
+        await page.evaluate(async () => {
+          const { observeControllerInventory } = await import('/src/lib/controller-read-models/shared.ts');
+          window.__mcpControllerStop = observeControllerInventory(state => { window.__mcpControllerState = state; });
+        });
+        const row = () => page.evaluate(id => window.__mcpControllerState?.value?.sources.find(item => item.id === id), source.id);
+        await until(row, 'Native controller observer did not receive its baseline');
+        const name = `MCP controller ${randomUUID()}`;
+        const renamed = await ok(writer, 'controller_update', mutation({ ...originalController, name }));
+        assert.deepEqual(renamed, { source: { id: source.id, name, role: source.role } });
+        await until(async () => (await row())?.name === name, 'Native controller observer missed the MCP rename');
+        for (;;) {
+          const frame = await nextObservation();
+          assert.equal(frame.method, 'notifications/resources/updated');
+          if (frame.params.uri !== controllerUri) continue;
+          const current = frame.params._meta['opensimgear.com/observation'].payload?.sources?.find(item => item.id === source.id);
+          if (current?.name === name) { assert.equal(current.generation, source.generation); break; }
+        }
+        evidence.modernObservation.controllerRename = { sourceId: source.id, sameGeneration: true };
+      }
     } finally {
-      await observationReader.cancel();
-      await page.evaluate(() => {
-        window.__mcpLibraryStop?.();
-        delete window.__mcpLibraryStop;
-        delete window.__mcpLibraryState;
-      });
+      try {
+        if (originalController) await page.native({ command: 'controller_update', ...originalController });
+      } finally {
+        await observationReader.cancel();
+        await page.evaluate(() => {
+          window.__mcpLibraryStop?.();
+          delete window.__mcpLibraryStop;
+          delete window.__mcpLibraryState;
+          window.__mcpControllerStop?.();
+          delete window.__mcpControllerStop;
+          delete window.__mcpControllerState;
+        });
+      }
     }
     if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
       const games = await ok(reader, 'games_list', { limit: 1 });
