@@ -403,18 +403,19 @@ impl GamesRuntime {
         let catalogue=crate::game_discovery::merged_catalogue(self.inner.platform.as_ref(),&settings.saved);
         for game in catalogue {settings.catalogue.retain(|old|old["id"]!=game["id"]);settings.catalogue.push(game);}
         settings.added_game_id=Some(id.clone());drop(settings);
-        self.inner.changes.mark(crate::game_read_models::signals::Domain::Library);id
+        self.inner.changes.mark_library_commit();id
     }
     #[cfg(test)]
     pub(crate) fn seed_test_catalogue(&self,catalogue:Vec<Value>) {
         let mut settings=self.inner.settings.lock().unwrap_or_else(|p|p.into_inner());settings.catalogue=catalogue;
         drop(settings);
-        self.inner.changes.mark(crate::game_read_models::signals::Domain::Library);
+        self.inner.changes.mark_library_commit();
         self.inner.prepare_online_artwork();
     }
     pub(crate) fn shutdown(&self) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.closed.store(true, Ordering::Release);
+        self.inner.changes.context_wake.notify();
         self.inner.prepared_sources.close(None);
         if let Some(owner) = &self.inner.artwork_owner { owner.shutdown(); }
         for worker in [&self.activation_observer, &self.observer, &self.discovery_worker, &self.prepared_sources_worker] {

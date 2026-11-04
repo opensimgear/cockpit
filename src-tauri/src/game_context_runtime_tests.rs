@@ -45,6 +45,31 @@ fn capture_and_context_workers_recover_after_a_locked_worker_panics() {
     runtime.shutdown();
 }
 
+#[test]
+fn game_context_observer_parks_without_a_configured_integration_and_wakes_on_registration() {
+    let scratch = Scratch::new();
+    let (runtime, platform, _) = runtime(&scratch);
+    let checked = &runtime.inner.context_setup_check;
+    let wait_for_setup = || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while checked.lock().unwrap().is_none() {
+            assert!(Instant::now() < deadline, "Game context worker did not refresh setup");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+
+    *checked.lock().unwrap() = None;
+    runtime.seed_test_catalogue(Vec::new());
+    wait_for_setup();
+    *checked.lock().unwrap() = None;
+    thread::sleep(Duration::from_millis(650));
+    assert!(checked.lock().unwrap().is_none(), "Idle context worker ran a timed refresh");
+
+    runtime.seed_test_catalogue(platform.catalogue(&BTreeMap::new()));
+    wait_for_setup();
+    runtime.shutdown();
+}
+
 struct Scratch {
     path: PathBuf,
     _directory: tempfile::TempDir,

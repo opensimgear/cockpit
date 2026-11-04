@@ -32,13 +32,13 @@ struct State {
     revision:u64,dirty:u32,jobs:BTreeMap<String,Job>,events:VecDeque<Job>,bytes:usize,
     overflow:bool,closed:bool,error:Option<String>,
 }
-pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake> }
+pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake>, pub(crate) context_wake:osg_streams::NativeWake }
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
 }
 impl Default for Signal {
     fn default()->Self {Self{state:Mutex::new(State{revision:0,dirty:ALL,jobs:BTreeMap::new(),events:VecDeque::new(),
-        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default())}}
+        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default()),context_wake:Default::default()}}
 }
 impl std::fmt::Debug for Signal {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("GameChanges").finish_non_exhaustive()}
@@ -51,6 +51,10 @@ impl Signal {
     pub(crate) fn mark(&self,domain:Domain) {
         let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
         if state.closed{return;}Self::tick(&mut state,domain);drop(state);self.wake.notify();
+    }
+    pub(crate) fn mark_library_commit(&self) {
+        self.mark(Domain::Library);
+        self.context_wake.notify();
     }
     pub(crate) fn mark_telemetry(&self) {
         if !self.telemetry.swap(true, Ordering::AcqRel) { self.wake.notify(); }
@@ -104,6 +108,19 @@ impl Signal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_library_commits_wake_the_parked_game_context_owner() {
+        let signal = Signal::default();
+        let before = signal.context_wake.observed();
+        for domain in [Domain::Library, Domain::Discovery, Domain::Runtime, Domain::Artwork, Domain::Setup, Domain::Permissions] {
+            signal.mark(domain);
+        }
+        signal.mark_telemetry();
+        assert_eq!(signal.context_wake.observed(), before);
+        signal.mark_library_commit();
+        assert_ne!(signal.context_wake.observed(), before);
+    }
+
     #[test]
     fn telemetry_changes_wake_once_without_dirtying_the_game_catalogue() {
         let signal = Signal::default();

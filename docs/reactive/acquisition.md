@@ -25,6 +25,13 @@ The one-second aggregate still applies cached USB topology, retries endpoint
 connections, and reads other provider models. Host-controller metadata wakes its
 own resource worker on commits and first readiness.
 
+The game-context owner parks after its initial pass when the library has no
+configured integration. A committed library replacement wakes the owner after
+the new catalogue is visible. Configured integrations still use the 500 ms
+process pass and the two-second provider setup recheck. The vehicle capture
+worker and explicit launch and setup checks are separate. Removing the
+configured-integration recheck requires native invalidations for provider files.
+
 | Surface / owner | Current boundary | Required replacement and qualification |
 | --- | --- | --- |
 | App/workspace/gateway | App.svelte 3 s workspace refresh | Gateway worker publishes committed status/module changes; platform serial arrival/removal notifications invalidate inventory |

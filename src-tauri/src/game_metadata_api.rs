@@ -178,7 +178,7 @@ impl GamesRuntime {
         settings.saved=prepared.next;settings.catalogue=prepared.catalogue;settings.added_game_id=prepared.added_game_id;settings.error=None;
         if let Some(review)=scan.as_mut() {review.status="applied".into();review.notify_job("applied","Discovery changes applied.",true);}
         drop(settings);drop(scan);drop(_admission);drop(prepared.staging);
-        self.inner.changes.mark(crate::game_read_models::signals::Domain::Library);
+        self.inner.changes.mark_library_commit();
         self.inner.prepared_sources.request(false,None);
         Ok(())
     }

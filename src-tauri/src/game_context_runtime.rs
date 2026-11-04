@@ -193,14 +193,26 @@ impl GamesRuntime {
                     worker_wake.wait_scheduled(observed, Some(next_maintenance.saturating_duration_since(Instant::now())));
                 }
             });
+            let context_wake = &inner.changes.context_wake;
+            let _ = context_wake.bind_thread(thread::current());
+            let mut last_library = context_wake.observed();
             while !inner.closed.load(Ordering::Acquire) {
-                inner.refresh_game_contexts(false);
-                for _ in 0..5 {
-                    if inner.closed.load(Ordering::Acquire) {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(100));
+                let library = context_wake.observed();
+                inner.refresh_game_contexts(library != last_library);
+                last_library = library;
+                let has_configured_integration = inner.settings.lock().unwrap_or_else(|p| p.into_inner())
+                    .catalogue.iter().any(|game| {
+                        crate::game_discovery::integration_key(game).is_some()
+                            && (game["installed"] == true || game["executable"].is_string()
+                                || game["installPath"].is_string())
+                    });
+                if inner.closed.load(Ordering::Acquire) {
+                    break;
                 }
+                context_wake.wait_scheduled(
+                    library,
+                    has_configured_integration.then_some(Duration::from_millis(500)),
+                );
             }
             polling_closed.store(true, Ordering::Release);
             capture_wake.notify();
