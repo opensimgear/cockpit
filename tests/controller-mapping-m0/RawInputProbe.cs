@@ -10,7 +10,8 @@ using System.Web.Script.Serialization;
 using Microsoft.Win32.SafeHandles;
 
 class RawInputProbe {
-    const uint RID_INPUT = 0x10000003, RIDI_DEVICENAME = 0x20000007, RIDI_DEVICEINFO = 0x2000000b;
+    const uint RID_INPUT = 0x10000003, RIDI_PREPARSEDDATA = 0x20000005,
+        RIDI_DEVICENAME = 0x20000007, RIDI_DEVICEINFO = 0x2000000b;
     [StructLayout(LayoutKind.Sequential)] struct Device { public IntPtr handle; public uint type; }
     [StructLayout(LayoutKind.Sequential)] struct Registration { public ushort page, usage; public uint flags; public IntPtr target; }
     [StructLayout(LayoutKind.Sequential)] struct Message {
@@ -26,6 +27,8 @@ class RawInputProbe {
     [DllImport("user32.dll")] static extern uint GetRawInputDeviceList([In,Out] Device[] list, ref uint count, uint size);
     [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="GetRawInputDeviceInfoW")] static extern uint DeviceName(IntPtr device, uint command, StringBuilder name, ref uint size);
     [DllImport("user32.dll", EntryPoint="GetRawInputDeviceInfoW")] static extern uint DeviceInfo(IntPtr device, uint command, IntPtr info, ref uint size);
+    [DllImport("hid.dll")] static extern int HidP_GetUsages(int type, ushort page, ushort collection,
+        [Out] ushort[] usages, ref uint count, IntPtr data, byte[] report, uint size);
     [DllImport("user32.dll")] static extern uint GetRawInputData(IntPtr input, uint command, IntPtr data, ref uint size, uint headerSize);
     [DllImport("user32.dll", SetLastError=true)] static extern bool RegisterRawInputDevices(Registration[] devices, uint count, uint size);
     [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern ushort RegisterClassEx(ref WindowClass cls);
@@ -41,9 +44,35 @@ class RawInputProbe {
     static Dictionary<IntPtr,string> names = new Dictionary<IntPtr,string>();
     static Dictionary<string,int> reports = new Dictionary<string,int>();
     static HashSet<string> changes = new HashSet<string>();
+    static HashSet<IntPtr> vjoyDevices = new HashSet<IntPtr>();
+    static List<object> vjoyButtons = new List<object>();
+    static Dictionary<IntPtr,bool> lastButton = new Dictionary<IntPtr,bool>();
     static WndProc callback = Handle;
     static uint HeaderSize { get { return (uint)(8 + IntPtr.Size * 2); } }
     static string Hash(byte[] bytes) { using(var hash=SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(bytes)).Replace("-","").Substring(0,16); }
+
+    static void ObserveVjoyButton(IntPtr device, string name, IntPtr bytes, uint item, uint count) {
+        uint size = 0;
+        if (DeviceInfo(device, RIDI_PREPARSEDDATA, IntPtr.Zero, ref size) == uint.MaxValue
+            || size == 0 || size > 65536) return;
+        var descriptor = Marshal.AllocHGlobal((int)size);
+        try {
+            if (DeviceInfo(device, RIDI_PREPARSEDDATA, descriptor, ref size) == uint.MaxValue) return;
+            var usages = new ushort[128];
+            var report = new byte[item];
+            for (uint index = 0; index < count && vjoyButtons.Count < 256; index++) {
+                Marshal.Copy(IntPtr.Add(bytes, (int)(index * item)), report, 0, report.Length);
+                uint length = (uint)usages.Length;
+                int status = HidP_GetUsages(0, 9, 0, usages, ref length, descriptor, report, item);
+                bool pressed = status == 0x00110000 && Array.IndexOf(usages, (ushort)1, 0, (int)length) >= 0;
+                bool previous;
+                if (status != 0x00110000 || !lastButton.TryGetValue(device, out previous) || previous != pressed) {
+                    vjoyButtons.Add(new { device=name, report=report[0], pressed=pressed, status=status });
+                    lastButton[device] = pressed;
+                }
+            }
+        } finally { Marshal.FreeHGlobal(descriptor); }
+    }
 
     static IntPtr Handle(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam) {
         if (message == 0xff) {
@@ -61,6 +90,9 @@ class RawInputProbe {
                             uint count = (uint)Marshal.ReadInt32(buffer, (int)HeaderSize + 4);
                             if (item > 0 && (ulong)item * count <= size - HeaderSize - 8) {
                                 reports[name] += (int)count;
+                                if (vjoyButtons.Count < 256 && vjoyDevices.Contains(device)) {
+                                    ObserveVjoyButton(device, name, IntPtr.Add(buffer, (int)HeaderSize + 8), item, count);
+                                }
                                 if (changes.Count < 256) {
                                     byte[] bytes = new byte[item * count];
                                     Marshal.Copy(IntPtr.Add(buffer, (int)HeaderSize + 8), bytes, 0, bytes.Length);
@@ -118,7 +150,9 @@ class RawInputProbe {
     }
 
 
-    static int Main() {
+    static int Main(string[] args) {
+        bool observeVjoy = args.Length == 1 && args[0] == "--vjoy-button";
+        if (args.Length > 0 && !observeVjoy) throw new ArgumentException("Expected --vjoy-button or no arguments.");
         var devices = new List<object>();
         uint count = 0;
         if (GetRawInputDeviceList(null, ref count, (uint)Marshal.SizeOf(typeof(Device))) == uint.MaxValue || count > 256)
@@ -144,6 +178,7 @@ class RawInputProbe {
                 uint vendor=(uint)Marshal.ReadInt32(info,8), product=(uint)Marshal.ReadInt32(info,12);
                 names[list[i].handle] = id;
                 reports[id] = 0;
+                if (observeVjoy && vendor == 0x1234 && product == 0xbead) vjoyDevices.Add(list[i].handle);
                 bool readable;
                 int openError;
                 using(var file=CreateFile(path.ToString(),0x80000000,3,IntPtr.Zero,3,0x40000000,IntPtr.Zero)) {
@@ -165,6 +200,7 @@ class RawInputProbe {
         try {
             if(!RegisterRawInputDevices(registrations,3,(uint)Marshal.SizeOf(typeof(Registration))))
                 throw new Exception("Background controller registration failed: "+Marshal.GetLastWin32Error());
+            if (observeVjoy) { Console.WriteLine("ready"); Console.Out.Flush(); }
             uint foregroundPid;
             GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);
             string foreground = "unavailable";
@@ -176,10 +212,15 @@ class RawInputProbe {
                 for(int i=0;i<256 && PeekMessage(out message,IntPtr.Zero,0,0,1);++i) DispatchMessage(ref message);
                 Thread.Sleep(1);
             }
-            Console.WriteLine(new JavaScriptSerializer().Serialize(new {
-                devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,
-                backgroundRegistration=true, foregroundProcess=foreground, durationMs=clock.ElapsedMilliseconds
-            }));
+            var serializer = new JavaScriptSerializer();
+            if (observeVjoy) {
+                Console.WriteLine(serializer.Serialize(new {devices=devices, reports=reports, buttonEvents=vjoyButtons}));
+            } else {
+                Console.WriteLine(serializer.Serialize(new {
+                    devices=devices, directInputDevices=DirectInputDevices(), reports=reports, distinctReportHashes=changes.Count,
+                    backgroundRegistration=true, foregroundProcess=foreground, durationMs=clock.ElapsedMilliseconds
+                }));
+            }
         } finally {
             for(int i=0;i<3;++i) { registrations[i].flags=1; registrations[i].target=IntPtr.Zero; }
             RegisterRawInputDevices(registrations,3,(uint)Marshal.SizeOf(typeof(Registration)));

@@ -98,3 +98,19 @@ two authored input commands, and released the slot on Stop. An independent
 WinMM read did not see the button press even while the mapped virtual input
 sample reported true. This verifies the feeder lifecycle and mapped input
 sample. Game-visible button output and raw-input-to-vJoy latency remain open.
+
+### Independent Raw Input check
+
+The same Windows dev build at `dbbb4ad` drove button 1 on slot 1 through two
+authored press/release cycles. A separate Raw Input process decoded HID button
+usage 1 from report ID 1 on a single vJoy device. The other two enumerated vJoy
+devices received no reports. Stop returned the slot to free and the temporary
+profile was deleted. The earlier WinMM zero did not reflect the report seen by
+the Raw Input client.
+
+Compile `tests/controller-mapping-m0/RawInputProbe.cs` as described in its
+directory README. Set `OSG_VJOY_RAW_PROBE` to the compiled executable's absolute
+path, leave the running Cockpit stopped with a compatible free vJoy slot, and
+run `node --test tests/ui/vjoy-raw-output-native.mjs`. The fixture uses
+authored debug input. Physical timing and simulator-specific behavior remain
+open in #199.
