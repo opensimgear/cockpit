@@ -83,6 +83,7 @@ pub(crate) struct Fleet {
     input_bridges: Mutex<BTreeMap<String,input_observations::Entry>>,
     metadata_bridges: Mutex<BTreeMap<String,metadata_observations::Entry>>,
     inventory_wake: Arc<osg_streams::NativeWake>,
+    inventory_revision: Arc<std::sync::atomic::AtomicU64>,
     inventory_observation: Mutex<Option<inventory_observation::Observation>>,
     input_wakes: Arc<Mutex<BTreeMap<String,Vec<Weak<osg_streams::NativeWake>>>>>,
 }
@@ -173,6 +174,7 @@ impl Fleet {
             input_bridges: Mutex::new(BTreeMap::new()),
             metadata_bridges: Mutex::new(BTreeMap::new()),
             inventory_wake: Arc::default(),
+            inventory_revision: Arc::default(),
             inventory_observation: Mutex::new(None),
             input_wakes: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -382,6 +384,7 @@ impl Fleet {
         let keys=self.input_wakes.lock().unwrap_or_else(|p|p.into_inner()).keys().cloned().collect::<Vec<_>>();
         for key in keys{self.notify_input_wakes(&key);}
     }
+    pub(crate) fn inventory_revision(&self) -> u64 { self.inventory_revision.load(Ordering::Acquire) }
     pub(crate) fn snapshots(&self) -> Vec<SlotSnapshot> {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state

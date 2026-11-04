@@ -28,6 +28,7 @@ impl Fleet {
         let wake = self.inventory_wake.clone();
         let cancelled = stop.clone();
         let signal = wake.clone();
+        let revision = self.inventory_revision.clone();
         let initial = inventory_signature(self);
         let fleet = Arc::downgrade(self);
         let runtime = runtime.clone();
@@ -42,6 +43,7 @@ impl Fleet {
                 let rows = inventory_signature(&fleet);
                 drop(fleet);
                 if previous != rows {
+                    revision.fetch_add(1, Ordering::AcqRel);
                     if active.publish_latest_state(active.generation(), json!({}), runtime.captured_us(), TOPIC).is_err() { break; }
                     previous = rows;
                 }

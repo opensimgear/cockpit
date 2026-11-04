@@ -238,6 +238,7 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
     let broker = runtime.broker();
     let mut subscription = broker.subscribe("usb-inventory-test", "mcp", "usb.inventory").unwrap();
     assert_eq!(subscription.try_recv().unwrap().unwrap().revision, "1");
+    assert_eq!(fleet.inventory_revision(), 0);
 
     ports.lock().unwrap().push(port("COM8", false));
     fleet.scan().unwrap();
@@ -250,6 +251,7 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
         assert!(Instant::now() < deadline, "USB presence change did not wake the observer");
         std::thread::sleep(Duration::from_millis(1));
     }
+    assert_eq!(fleet.inventory_revision(), 1);
     ports.lock().unwrap().clear();
     fleet.scan().unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -261,6 +263,7 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
         assert!(Instant::now() < deadline, "USB removal did not wake the observer");
         std::thread::sleep(Duration::from_millis(1));
     }
+    assert_eq!(fleet.inventory_revision(), 2);
     fleet.shutdown();
     assert!(!broker.available_to("usb.inventory", "mcp"));
     assert!(fleet.observe_inventory(&runtime).is_err());
