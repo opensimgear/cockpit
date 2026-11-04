@@ -228,6 +228,43 @@ fn wait(test: impl Fn() -> bool) {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+#[test]
+fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
+    let (fleet, ports, _) = fixture(vec![], false);
+    let fleet = Arc::new(fleet);
+    let runtime = crate::observations::Runtime::new();
+    fleet.observe_inventory(&runtime).unwrap();
+    assert!(fleet.observe_inventory(&runtime).is_err());
+    let broker = runtime.broker();
+    let mut subscription = broker.subscribe("usb-inventory-test", "mcp", "usb.inventory").unwrap();
+    assert_eq!(subscription.try_recv().unwrap().unwrap().revision, "1");
+
+    ports.lock().unwrap().push(port("COM8", false));
+    fleet.scan().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(frame) = subscription.try_recv().unwrap() {
+            assert_eq!(frame.revision, "2");
+            break;
+        }
+        assert!(Instant::now() < deadline, "USB presence change did not wake the observer");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    ports.lock().unwrap().clear();
+    fleet.scan().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(frame) = subscription.try_recv().unwrap() {
+            assert_eq!(frame.revision, "3");
+            break;
+        }
+        assert!(Instant::now() < deadline, "USB removal did not wake the observer");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    fleet.shutdown();
+    assert!(!broker.available_to("usb.inventory", "mcp"));
+    assert!(fleet.observe_inventory(&runtime).is_err());
+}
 fn connect(fleet: &Fleet, path: &str) -> Value {
     fleet
         .request(&json!({"command":"module_usb_connect","port":path}))

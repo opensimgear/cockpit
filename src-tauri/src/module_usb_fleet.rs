@@ -13,6 +13,7 @@ use std::sync::{
 
 #[path="module_usb_fleet/input_observations.rs"]
 mod input_observations;
+mod inventory_observation;
 #[path="module_usb_fleet/metadata_observations.rs"]
 pub(crate) mod metadata_observations;
 #[cfg(test)]
@@ -81,6 +82,8 @@ pub(crate) struct Fleet {
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     input_bridges: Mutex<BTreeMap<String,input_observations::Entry>>,
     metadata_bridges: Mutex<BTreeMap<String,metadata_observations::Entry>>,
+    inventory_wake: Arc<osg_streams::NativeWake>,
+    inventory_observation: Mutex<Option<inventory_observation::Observation>>,
     input_wakes: Arc<Mutex<BTreeMap<String,Vec<Weak<osg_streams::NativeWake>>>>>,
 }
 #[derive(Clone, Debug)]
@@ -130,6 +133,7 @@ impl Fleet {
         Ok(())
     }
     fn notify_input_wakes(&self,key:&str){
+        self.inventory_wake.notify();
         notify_input_wakes_registry(&self.input_wakes,key);
     }
     fn create_input_service(&self,key:&str)->Arc<dyn Endpoint>{
@@ -141,11 +145,16 @@ impl Fleet {
     }
     pub(crate) fn new(serial: SerialPorts, native: bool) -> Self {
         let activity=Arc::new(crate::output_leases::LeaseActivity::default());let services=activity.clone();
+        let inventory_wake = Arc::new(osg_streams::NativeWake::default());
+        let service_wake = inventory_wake.clone();
         let mut fleet=Self::with_create(
             serial,
             native,
-            Arc::new(move|| Arc::new(ModuleUsbService::with_activity(services.clone()))),
-        );fleet.endpoint_activity=activity;fleet
+            Arc::new(move|| Arc::new(ModuleUsbService::with_activity(services.clone(), service_wake.clone()))),
+        );
+        fleet.endpoint_activity=activity;
+        fleet.inventory_wake=inventory_wake;
+        fleet
     }
     fn with_create(serial: SerialPorts, native: bool, create: Create) -> Self {
         Self {
@@ -163,6 +172,8 @@ impl Fleet {
             discovery: Mutex::new(()),
             input_bridges: Mutex::new(BTreeMap::new()),
             metadata_bridges: Mutex::new(BTreeMap::new()),
+            inventory_wake: Arc::default(),
+            inventory_observation: Mutex::new(None),
             input_wakes: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -202,6 +213,7 @@ impl Fleet {
                 for slot in state.slots.values_mut() {
                     slot.present = false;
                 }
+                self.inventory_wake.notify();
                 return Err(error);
             }
         };
@@ -223,6 +235,7 @@ impl Fleet {
                 for slot in state.slots.values_mut() {
                     slot.present = false;
                 }
+                self.inventory_wake.notify();
                 return Err(error.into());
             }
             let mut serial_counts = BTreeMap::<String, usize>::new();
@@ -365,6 +378,7 @@ impl Fleet {
         Ok(())
     }
     fn notify_all_input_wakes(&self){
+        self.inventory_wake.notify();
         let keys=self.input_wakes.lock().unwrap_or_else(|p|p.into_inner()).keys().cloned().collect::<Vec<_>>();
         for key in keys{self.notify_input_wakes(&key);}
     }
@@ -735,6 +749,8 @@ impl Fleet {
         self.notify_all_input_wakes();
         let bridges=std::mem::take(&mut *self.input_bridges.lock().unwrap_or_else(|p|p.into_inner()));
         for (_,mut entry) in bridges {entry.stop();}
+        let observation = self.inventory_observation.lock().unwrap_or_else(|p| p.into_inner()).take();
+        drop(observation);
         let metadata=std::mem::take(&mut *self.metadata_bridges.lock().unwrap_or_else(|p|p.into_inner()));
         for (_,mut entry) in metadata {entry.stop();}
         for service in services {

@@ -1058,11 +1058,13 @@ impl ModuleUsbService {
     pub fn new() -> Self {
         Self::with_factory(Box::new(NativeFactory), Timing::default())
     }
-    pub(crate) fn with_activity(activity:Arc<crate::output_leases::LeaseActivity>)->Self{Self::with_factory_activity(Box::new(NativeFactory),Timing::default(),activity)}
-    fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
-        Self::with_factory_activity(factory,timing,Arc::default())
+    pub(crate) fn with_activity(activity:Arc<crate::output_leases::LeaseActivity>, inventory:Arc<osg_streams::NativeWake>)->Self{
+        Self::with_factory_activity(Box::new(NativeFactory),Timing::default(),activity,Some(inventory))
     }
-    fn with_factory_activity(factory:Box<dyn Factory>,timing:Timing,endpoint_activity:Arc<crate::output_leases::LeaseActivity>)->Self{
+    fn with_factory(factory: Box<dyn Factory>, timing: Timing) -> Self {
+        Self::with_factory_activity(factory,timing,Arc::default(),None)
+    }
+    fn with_factory_activity(factory:Box<dyn Factory>,timing:Timing,endpoint_activity:Arc<crate::output_leases::LeaseActivity>,inventory:Option<Arc<osg_streams::NativeWake>>)->Self{
         let (sender, receiver) = mpsc::sync_channel(8);
         let closed = Arc::new(AtomicBool::new(false));
         let cancel = closed.clone();
@@ -1080,6 +1082,7 @@ impl ModuleUsbService {
                 let publish=|module:&Worker|{
                     *cache.lock().unwrap_or_else(|p|p.into_inner())=module.snapshot.clone();
                     module.inputs.changed();
+                    if let Some(inventory) = &inventory { inventory.notify(); }
                 };
                 while !cancel.load(Ordering::Acquire) {
                     let observed=worker_wake.observed();

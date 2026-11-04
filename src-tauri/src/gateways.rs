@@ -440,6 +440,9 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        if let Err(error) = module_usb.observe_inventory(&observations) {
+            eprintln!("Cannot start USB inventory observations: {error}");
+        }
         if let Err(error) = companion_host.observe_presence(&observations) {
             eprintln!("Cannot start companion presence observations: {error}");
         }
@@ -1358,6 +1361,9 @@ impl GatewayManager {
                     Ok(profiles) => json!({"ok":true,"state":{"profiles":profiles}}),
                     Err(error) => json!({"ok":false,"error":error.chars().take(512).collect::<String>()}),
                 };
+            }
+            if matches!(command.as_str(),"profile_save"|"profile_assignments_save") {
+                if let Err(error)=self.validate_profile_save_request(&request) { return json!({"ok":false,"error":error}); }
             }
             let result = Self::activity_profile_mutation(&mut self.profiles.lock().unwrap_or_else(|p|p.into_inner()),&request);
             return match result {
@@ -2419,6 +2425,7 @@ mod tests {
         let (manager, provider) = setup();
         let mut payload = editor_boundary_request();
         payload["clientId"] = json!(CLIENT);
+        manager.profile_resources.retain_fixture_assignments(&mut payload);
         assert!(payload.to_string().len() > PROFILE_REQUEST_LIMIT);
         assert!(payload.to_string().len() < PROFILE_EDITOR_REQUEST_LIMIT);
         let result = manager.request(payload.clone());
