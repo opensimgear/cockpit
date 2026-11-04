@@ -100,3 +100,26 @@ This measures the Windows journal through the WebView. The workload was
 background reports, with no deliberate physical sweep or active virtual
 output. Physical movement-to-display timing, the source of the pre-observer
 delay, and capture-to-vJoy submission remain open under #188 and #199.
+
+### Preview publication cost
+
+A temporary diagnostic stamped the controller journal clock just before Tauri
+channel send. The dev WebView recorded receipt in Tauri's callback. The baseline
+showed that most of the measured delay accumulated before send. The publisher
+was scanning all controls to validate readiness inside the loop that builds
+the snapshot. Computing readiness once per snapshot preserves the existing
+baseline and change payloads.
+
+| Background VKB workload, 125 reports per run | Before p95 | After p95 |
+| --- | ---: | ---: |
+| Journal to native channel send | 10.85 ms | 4.24 ms |
+| Send to WebView callback | 2.65 ms | 2.54 ms |
+| Journal to shared inspector DOM | 13.16 ms | 7.34 ms |
+
+The first row uses one native clock. The other rows use WebView correlation
+with about 2.1 ms uncertainty. The callback trace counted no Tauri channel
+fetches, and the serialized change envelopes stayed below 8,192 bytes.
+After removing the stage diagnostic, the rebuilt dev Cockpit measured 7.63 ms
+journal-to-DOM p95 over 125 reports and passed the live subscription regression.
+No deliberate physical sweep, vJoy routing, or simulator output was part of
+the workload.

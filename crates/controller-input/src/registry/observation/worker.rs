@@ -153,9 +153,10 @@ fn prune(shared: &Shared, bindings: &mut BTreeMap<u64, Binding>) {
     });
 }
 fn snapshot(update: &Update, source: &Captured) -> Value {
+    let ready = source.ready();
     let snapshot = json!({"session":update.session,"source":source.summary(),"identity":source.saved.identity,
         "diagnostics":source.diagnostics,"controls":source.controls.iter().map(|control| {
-            json!({"capability":control,"value":if source.ready() {source.values.get(&control.id)} else {None}})
+            json!({"capability":control,"value":if ready {source.values.get(&control.id)} else {None}})
         }).collect::<Vec<_>>(),"offset":0,"total":source.controls.len(),"limit":MAX_CONTROLS,
         "cursor":source.cursor.to_string(),"capturedUs":source.captured_us.to_string()});
     #[cfg(test)]
