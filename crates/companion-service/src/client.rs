@@ -135,6 +135,7 @@ struct QueuedInput {
 struct Shared {
     state: Mutex<State>,
     status_wake: Arc<osg_streams::NativeWake>,
+    presence_wake: Arc<osg_streams::NativeWake>,
     cancel: AtomicBool,
     running: AtomicBool,
     epoch: AtomicU64,
@@ -195,6 +196,7 @@ impl ClientRuntime {
                     feedback_received_ms: 0,
                 }),
                 status_wake: Arc::new(osg_streams::NativeWake::default()),
+                presence_wake: Arc::new(osg_streams::NativeWake::default()),
                 cancel: AtomicBool::new(false),
                 running: AtomicBool::new(false),
                 epoch: AtomicU64::new(0),
@@ -204,7 +206,7 @@ impl ClientRuntime {
                 storage,
             }),
         };
-        start_presence(Arc::downgrade(&runtime.shared));
+        start_presence(Arc::downgrade(&runtime.shared), runtime.shared.presence_wake.clone());
         Ok(runtime)
     }
     /// A coalescing invalidation for one passive renderer bridge.
@@ -254,6 +256,7 @@ impl ClientRuntime {
             if let Some(input) = state.sender.take() { input.wake.notify(); }
         }
         self.shared.status_wake.notify();
+        self.shared.presence_wake.notify();
     }
     pub fn command(&self, request: Value) -> Result<Value, String> {
         let command = request["type"]
@@ -296,6 +299,7 @@ impl ClientRuntime {
             }
             set_storage_status(&mut state.status, availability);
             self.shared.status_wake.notify();
+            self.shared.presence_wake.notify();
             if command != "storage-status"
                 && !(if matches!(command, "pair-start" | "pair-code-start") {
                     state.status.protected_store_available && state.status.storage_error.is_none()
@@ -520,6 +524,7 @@ impl ClientRuntime {
                 };
                 set_storage_status(&mut state.status, availability);
                 self.shared.status_wake.notify();
+                self.shared.presence_wake.notify();
                 Ok(json!({"ok":true}))
             }
             "discover" => discover(Duration::from_millis(
@@ -563,6 +568,7 @@ impl ClientRuntime {
             state.publication = None;
         }
         self.shared.status_wake.notify();
+        self.shared.presence_wake.notify();
         let shared = self.shared.clone();
         thread::spawn(move || {
             let result = work(shared.clone(), epoch);
@@ -576,6 +582,7 @@ impl ClientRuntime {
             }
             shared.running.store(false, Ordering::SeqCst);
             shared.status_wake.notify();
+            shared.presence_wake.notify();
         });
         Ok(())
     }
@@ -914,79 +921,9 @@ fn refresh_worker(
     let _ = socket.close(None);
     Ok(())
 }
-// Credential-only presence never creates an input source or renews its lease.
-fn start_presence(owner: std::sync::Weak<Shared>) {
-    thread::spawn(move || {
-        let mut socket: Option<Socket> = None;
-        let mut identity = Zeroizing::new(String::new());
-        loop {
-            let Some(shared) = owner.upgrade() else {
-                break;
-            };
-            let credential = shared.state.lock().ok().and_then(|s| {
-                if s.status.protected_store_available {
-                    s.credential.clone()
-                } else {
-                    None
-                }
-            });
-            if let Some(credential) = credential {
-                if identity.as_str() != credential.token {
-                    socket = None;
-                    *identity = credential.token.clone();
-                }
-                if socket.is_none() {
-                    socket = connect(
-                        &credential.endpoint,
-                        &credential.ca_certificate,
-                        &credential.ca_spki_sha256,
-                    )
-                    .ok()
-                    .and_then(|mut link| {
-                        let reply = request(
-                            &mut link,
-                            json!({"type":"auth","token":credential.token}),
-                            Duration::from_secs(2),
-                        )
-                        .ok()?;
-                        if reply["hostId"] != credential.host_id
-                            || reply["companionId"] != credential.companion_id
-                        {
-                            return None;
-                        }
-                        Some(link)
-                    });
-                }
-                if let Some(link) = socket.as_mut() {
-                    match request(link, json!({"type":"presence"}), Duration::from_secs(2)) {
-                        Ok(reply) => {
-                            if let Ok(mut state) = shared.state.lock() {
-                                if state
-                                    .credential
-                                    .as_ref()
-                                    .is_some_and(|c| c.token == credential.token)
-                                    && !shared.running.load(Ordering::SeqCst)
-                                    && state.status.assignments != reply["assignments"]
-                                {
-                                    state.status.assignments = reply["assignments"].clone();
-                                    shared.status_wake.notify();
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            socket = None;
-                        }
-                    }
-                }
-            } else {
-                socket = None;
-                identity.clear();
-            }
-            drop(shared);
-            thread::sleep(Duration::from_secs(1));
-        }
-    });
-}
+#[path = "client_presence.rs"]
+mod presence;
+use presence::start_presence;
 fn session_request(socket: &mut Socket, frame: Value, budget: Duration) -> Result<Value, String> {
     let reply = request(socket, frame.clone(), budget)?;
     for key in ["clientId", "sessionId", "generation"] {

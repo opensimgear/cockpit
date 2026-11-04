@@ -190,13 +190,19 @@ pub fn receive_json<S: Read + Write>(
     socket: &mut WebSocket<S>,
     budget: Duration,
 ) -> Result<Value, String> {
+    receive_json_from(socket, budget, None)
+}
+
+pub(crate) fn receive_json_from<S: Read + Write>(
+    socket: &mut WebSocket<S>, budget: Duration, mut first: Option<Message>,
+) -> Result<Value, String> {
     let deadline = Instant::now() + budget;
     let mut transfer: Option<(String, usize, String, Vec<u8>, usize)> = None;
     loop {
         if Instant::now() > deadline {
             return Err("Companion reply timed out".into());
         }
-        let message = match socket.read() {
+        let message = match first.take().map_or_else(|| socket.read(), Ok) {
             Ok(message) => message,
             Err(error) if timed_out(&error) => continue,
             Err(error) => return Err(error.to_string()),
@@ -652,7 +658,7 @@ pub(crate) fn serve_messages<S: Read + Write>(
                     )?;
                     return Err("Pre-authentication attempt budget exceeded".into());
                 }
-                if browser_socket && frame["type"] == "assignments-subscribe" {
+                if frame["type"] == "assignments-subscribe" {
                     return feedback_socket::serve_assignments(socket, hub, id, stop, attempts, peer, &frame);
                 }
                 if browser_socket && frame["type"] == "feedback-subscribe" {
@@ -660,7 +666,7 @@ pub(crate) fn serve_messages<S: Read + Write>(
                 }
                 let is_auth = frame["type"] == "auth";
                 let mut response = hub.handle_wire(frame, id, hub.now_ms());
-                if browser_socket && is_auth && response["ok"] == true {
+                if is_auth && response["ok"] == true {
                     response["connectionId"] = json!(id);
                 }
                 if is_auth
