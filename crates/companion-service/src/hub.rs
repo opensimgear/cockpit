@@ -996,7 +996,7 @@ impl Hub {
     fn handle_native_wire(&self, frame: Value, connection_id: &str, now_ms: u64, transport: SourceTransport) -> Value {
         let result = self.wire(&frame, connection_id, now_ms, transport);
         if result.is_ok() && (frame.get("operation").is_some()
-            || matches!(frame["type"].as_str(), Some("image-chunk" | "close"))) {
+            || matches!(frame["type"].as_str(), Some("image-chunk" | "close" | "cancel"))) {
             self.notify_panel_operations();
         }
         match result {

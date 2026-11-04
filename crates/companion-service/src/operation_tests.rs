@@ -27,6 +27,12 @@ fn trusted_operation_commits_wake_observers_after_validation() {
     report["operation"]["sessionId"] = json!("obsolete-session");
     assert_eq!(wire(&hub, "connection", report)["ok"], false);
     assert_eq!(wake.observed(), committed, "rejected stale operations must not notify observers");
+
+    let mut cancel = frame(&open, "cancel", "3");
+    cancel.as_object_mut().unwrap().remove("sequence");
+    assert_eq!(wire(&hub, "connection", cancel)["ok"], true);
+    assert!(wake.observed() > committed, "cancel must notify observers of withdrawal");
+    assert!(hub.panel_operation("instance", &publication.publication_hash).is_none());
 }
 
 #[test]
