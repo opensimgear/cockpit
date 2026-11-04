@@ -1138,6 +1138,25 @@ impl GatewayManager {
                 return self.error(&error, None);
             }
         }
+        if request["command"] == "controller_visibility_restore" && expected_owner.is_some() {
+            let visibility = match self.controllers.request(&json!({
+                "command":"controller_visibility_status","sourceId":request["sourceId"]
+            })) {
+                Ok(status) => status["visibility"].clone(),
+                Err(error) => return self.error(&error, None),
+            };
+            let active_job = [&visibility["launch"]["job"], &visibility["job"]]
+                .into_iter().find(|job| job["active"] == true);
+            let matches_target = if let Some(job) = active_job {
+                request["jobId"].is_string() && request["jobId"] == job["jobId"]
+            } else {
+                request["sessionId"].is_string() && request["sessionId"] == visibility["recovery"]["id"]
+                    && visibility["recovery"]["required"] == true
+            };
+            if !matches_target {
+                return self.error("The visibility job or recovery session changed. Inspect its exact current identity before restoring.", None);
+            }
+        }
         if interrupt&&!staging{self.invalidate_learning();}
         // Slow read-only staging holds neither admission lock. Final takeover
         // acquires profile then game admission together in the established order.
@@ -2298,7 +2317,30 @@ mod tests {
         assert_eq!(call("profile_input_learn_status", json!({"learnId":id}))["data"]["candidates"], json!([]));
         assert_eq!(call("profile_retired_recovery_status", json!({}))["data"]["required"], false);
         assert_eq!(call("controller_visibility_status", json!({"sourceId":"test-source"}))["ok"], true);
+        let missing_target = call("controller_visibility_restore", json!({
+            "sourceId":"test-source", "expectedActiveOwner":null, "operationId":uuid::Uuid::new_v4()
+        }));
+        assert_eq!(missing_target["error"]["code"], "invalid_arguments");
+        let forged_reference = call("profile_retired_recovery_acknowledge", json!({
+            "reference":{"id":{"kind":"companion","file":"../forged"},"owner":{"session":uuid::Uuid::new_v4(),"generation":"1"},"recordHash":format!("sha256:{}", "0".repeat(64))},
+            "operationId":uuid::Uuid::new_v4()
+        }));
+        assert_eq!(forged_reference["error"]["code"], "native_rejected");
+        let unqualified = call("profile_retired_recovery_provision_recover", json!({
+            "reference":{"operation":uuid::Uuid::new_v4(),"recordHash":format!("sha256:{}", "0".repeat(64)),"target":1,"refreshUncertain":false},
+            "operationId":uuid::Uuid::new_v4()
+        }));
+        assert_eq!(unqualified["ok"], false);
         assert!(request(&manager, "profile_status", None, json!({}))["state"]["profiles"]["profileSession"]["owner"].is_null());
+        let applied = request(&manager, "profile_apply", None, json!({"id":osg_profiles::DEFAULT_PROFILE_ID,"expectedRevision":1}));
+        let owner = &applied["state"]["profiles"]["profileSession"]["owner"];
+        assert!(owner.is_object());
+        let stale = call("controller_visibility_restore", json!({
+            "sourceId":"test-source", "sessionId":uuid::Uuid::new_v4(), "expectedActiveOwner":owner, "operationId":uuid::Uuid::new_v4()
+        }));
+        assert_eq!(stale["ok"], false);
+        assert_eq!(request(&manager, "profile_status", None, json!({}))["state"]["profiles"]["profileSession"]["owner"], *owner);
+        request(&manager, "profile_stop", None, json!({}));
     }
     #[test]
     fn input_learning_manager_start_is_strict_passive_and_controls_invalidate_before_effects(){

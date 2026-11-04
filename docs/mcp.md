@@ -327,6 +327,21 @@ Several other topics carry a revision and leave the exact read to a tool.
 | `profiles.retired-recovery` | `profile_retired_recovery_status` for retained output and provisioning cleanup state. |
 | `system.inventory` | `system_inventory` for the bounded inventory, or `controller_visibility_status` with a physical source ID. |
 
+For retained cleanup, pass the exact inspected `reference` to
+`profile_retired_recovery_recover`,
+`profile_retired_recovery_acknowledge` or
+`profile_retired_recovery_provision_recover`. Provisioning cancellation
+uses the observed `jobId`. Only acknowledge uncertain ownership after
+explicit confirmation.
+
+For Device Visibility, use `controller_visibility_inspect` for a fresh
+native inspection and `controller_visibility_processes` for a bounded list
+of executables. `controller_visibility_save` persists local intent.
+`controller_visibility_restore` requires the observed job or recovery
+session ID and the exact observed profile owner, or explicit null while
+stopped. Restore can stop profile output. These actions share the native
+qualification and ownership checks.
+
 The opt-in Windows dev Cockpit test `tests/ui/mcp-native.mjs` also verifies
 integration context. Set `OSG_MCP_OBSERVATION_ONLY=1` and
 `OSG_MCP_INTEGRATION_OBSERVATION=1` in a dev Cockpit with no registered DCS

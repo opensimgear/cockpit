@@ -469,7 +469,17 @@ impl Tools {
             "profile_input_learn_start" => forward(name, &["resourceId","generation","capabilityRevision"], Some("profileLearning")),
             "profile_input_learn_status" | "profile_input_learn_cancel" => forward(name, &["learnId"], Some("profileLearning")),
             "profile_retired_recovery_status" => forward(name, &[], Some("retiredRecovery")),
-            "controller_visibility_status" => Ok(forward(name, &["sourceId"], Some("controllers"))?["visibility"].clone()),
+            "profile_retired_recovery_recover" | "profile_retired_recovery_acknowledge" | "profile_retired_recovery_provision_recover" =>
+                forward(name, &["reference"], Some("retiredRecovery")),
+            "profile_retired_recovery_provision_cancel" => forward(name, &["jobId"], Some("retiredRecovery")),
+            "controller_visibility_status" | "controller_visibility_inspect" | "controller_visibility_processes" | "controller_visibility_save" =>
+                Ok(forward(name, &["sourceId","offset","intent"], Some("controllers"))?["visibility"].clone()),
+            "controller_visibility_restore" => {
+                if args["jobId"].is_null() && args["sessionId"].is_null() {
+                    return Err(failure("invalid_arguments", "Choose the observed visibility job or recovery session.", false));
+                }
+                Ok(self.guarded(name, selected(&["sourceId","jobId","sessionId"]), client, &args["expectedActiveOwner"], Some("controllers"))?["visibility"].clone())
+            }
             "profile_debug_controller_status" => forward("profile_debug_controller_status", &["owner","nodeId"],Some("debugController")),
             "profile_debug_controller_input" => forward("profile_debug_controller_input", &["owner","nodeId","streamId","sequence","changes"],Some("debugController")),
             "applied_ports_inspect" => forward(

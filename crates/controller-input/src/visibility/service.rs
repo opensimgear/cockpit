@@ -354,7 +354,8 @@ impl Service {
                 if self.platform != super::capabilities::Platform::Windows {
                     let launch = self.launch.lock().unwrap_or_else(|p| p.into_inner());
                     if launch.active() {
-                        launch.stop(request["jobId"].as_str())?;
+                        let job = request["jobId"].as_str().ok_or("Choose the exact active visibility launch job.")?;
+                        launch.stop(Some(job))?;
                         drop(launch);
                         return Ok(self.status(id));
                     }
@@ -364,7 +365,8 @@ impl Service {
                 }
                 let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
                 if worker.active() {
-                    worker.stop(request["jobId"].as_str())?;
+                    let job = request["jobId"].as_str().ok_or("Choose the exact active visibility job.")?;
+                    worker.stop(Some(job))?;
                 } else {
                     if !self.qualified {
                         return Err("Persistent HidHide recovery is not qualified on this platform; no driver settings changed.".into());

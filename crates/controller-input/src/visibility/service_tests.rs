@@ -228,6 +228,9 @@ fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
     ] {
         assert!(service.request(&json!({"command":command,"sourceId":id,"enabled":false,"intent":{"mode":"visible"}})).is_err());
     }
+    let missing = service.request(&json!({"command":"controller_visibility_restore","sessionId":"previous-session"}));
+    assert!(missing.unwrap_err().contains("exact active visibility job"));
+    assert!(service.active());
     let status=service.request(&json!({"command":"controller_visibility_restore","jobId":started["visibility"]["job"]["jobId"]})).unwrap();
     assert!(status["visibility"]["recovery"]["required"].is_boolean());
     for _ in 0..200 {

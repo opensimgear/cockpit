@@ -255,14 +255,22 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       evidence.modernObservation.integration = await integrationObservation({ page, modern, ok, writer, mutation, artifacts, until });
     }
     if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
-      for (const name of ['profile_input_learn_status', 'profile_retired_recovery_status', 'controller_visibility_status']) {
+      for (const name of ['profile_input_learn_status', 'profile_retired_recovery_status', 'controller_visibility_status',
+        'controller_visibility_inspect', 'controller_visibility_processes']) {
         assert.ok(readTools.some(tool => tool.name === name), `Missing MCP observation read tool ${name}`);
       }
-      for (const name of ['profile_input_learn_start', 'profile_input_learn_cancel']) {
+      for (const name of ['profile_input_learn_start', 'profile_input_learn_cancel', 'profile_retired_recovery_recover',
+        'profile_retired_recovery_acknowledge', 'profile_retired_recovery_provision_recover',
+        'profile_retired_recovery_provision_cancel', 'controller_visibility_save', 'controller_visibility_restore']) {
         assert.ok(writeTools.some(tool => tool.name === name));
         assert.ok(!readTools.some(tool => tool.name === name));
       }
       assert.equal(typeof (await ok(reader, 'profile_retired_recovery_status')).required, 'boolean');
+      const staleRestore = await call(writer, 'controller_visibility_restore', mutation({
+        sourceId: randomUUID(), sessionId: randomUUID(), expectedActiveOwner: null,
+      }));
+      assert.equal(staleRestore.ok, false);
+      assert.equal((await ok(reader, 'profile_status')).profileSession.owner, null);
       const games = await ok(reader, 'games_list', { limit: 1 });
       assert.equal(games.catalogue.length, Math.min(games.total, 1));
       assert.equal(games.discovery?.entries, undefined);

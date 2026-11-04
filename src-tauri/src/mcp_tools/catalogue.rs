@@ -35,6 +35,27 @@ fn scope() -> Value {
         "game-preference",
     ])
 }
+fn recovery_reference(provision: bool) -> Value {
+    let hash = json!({"type":"string","pattern":"^sha256:[a-f0-9]{64}$"});
+    if provision {
+        return json!({"type":"object","additionalProperties":false,
+            "properties":{"operation":string(36),"recordHash":hash,"target":integer(1,16),"refreshUncertain":{"type":"boolean"}},
+            "required":["operation","recordHash","target","refreshUncertain"]});
+    }
+    let id = json!({"oneOf":[
+        {"type":"object","additionalProperties":false,"properties":{"kind":choice(&["manual"])},"required":["kind"]},
+        {"type":"object","additionalProperties":false,"properties":{"kind":choice(&["companion"]),"file":{"type":"string","pattern":"^instance-[a-f0-9]{32}$"}},"required":["kind","file"]}
+    ]});
+    json!({"type":"object","additionalProperties":false,"properties":{"id":id,"recordHash":hash,
+        "owner":{"type":"object","additionalProperties":false,"properties":{"session":string(36),"generation":{"type":"string","maxLength":20,"pattern":"^[1-9][0-9]*$"}},"required":["session","generation"]}},
+        "required":["id","owner","recordHash"]})
+}
+fn visibility_intent() -> Value {
+    json!({"oneOf":[
+        {"type":"object","additionalProperties":false,"properties":{"mode":choice(&["visible","hide-all","block-original-input"])},"required":["mode"]},
+        {"type":"object","additionalProperties":false,"properties":{"mode":choice(&["hide-from-process"]),"executable":string(4096)},"required":["mode","executable"]}
+    ]})
+}
 fn page() -> Vec<(&'static str, Value)> {
     vec![("offset", integer(0, 262_144)), ("limit", integer(1, 64))]
 }
@@ -148,6 +169,14 @@ pub fn catalogue() -> Vec<Value> {
         tool("profile_input_learn_status","Read the exact passive input-learning capture after a profiles.learning update.",vec![("learnId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36}))],&["learnId"]),
         tool("profile_input_learn_cancel","Cancel the exact passive input-learning capture and withdraw its candidates.",vec![("learnId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36}))],&["learnId"]),
         tool("profile_retired_recovery_status","Read retained output and provisioning cleanup status without starting recovery.",vec![],&[]),
+        tool("profile_retired_recovery_recover","Recover one exact confirmed retained output reference from profile_retired_recovery_status.",vec![("reference",recovery_reference(false))],&["reference"]),
+        tool("profile_retired_recovery_acknowledge","Acknowledge one exact uncertain output record without sending output. Use only after explicit confirmation.",vec![("reference",recovery_reference(false))],&["reference"]),
+        tool("profile_retired_recovery_provision_recover","Start native provisioning recovery for one exact retained reference.",vec![("reference",recovery_reference(true))],&["reference"]),
+        tool("profile_retired_recovery_provision_cancel","Cancel the exact native provisioning recovery job.",vec![("jobId",string(36))],&["jobId"]),
+        tool("controller_visibility_processes","Page running executables for a physical controller visibility preference.",vec![("sourceId",string(80)),("offset",integer(0,256))],&["sourceId"]),
+        tool("controller_visibility_inspect","Inspect native visibility capability and current HidHide rules for the source.",vec![("sourceId",string(80))],&["sourceId"]),
+        tool("controller_visibility_save","Save one physical controller's local visibility preference without applying hiding.",vec![("sourceId",string(80)),("intent",visibility_intent())],&["sourceId","intent"]),
+        tool("controller_visibility_restore","Restore the exact recorded visibility session or stop its exact active job. This can stop profile output. Supply the observed profile owner or explicit null.",vec![("sourceId",string(80)),("jobId",string(36)),("sessionId",string(36)),("expectedActiveOwner",owner())],&["sourceId","expectedActiveOwner"]),
         tool("controller_visibility_status","Read saved visibility and inspected HidHide evidence for the exact physical controller without changing policy.",vec![("sourceId",string(80))],&["sourceId"]),
         tool("profile_debug_controller_status","Read volatile values of a debug controller for the exact applied profile owner.",vec![("owner",owner()),("nodeId",string(80))],&["owner","nodeId"]),
         tool("profile_debug_controller_input","Atomically drive authored debug controls in the exact running profile. Values persist until another update or Stop. Each stream uses strictly increasing canonical decimal sequences; exact retries are harmless. This streaming mutation uses streamId/sequence instead of operationId, with sixteen streams per controller and bounded backpressure.",vec![("owner",owner()),("nodeId",string(80)),("streamId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36})),("sequence",json!({"type":"string","minLength":1,"maxLength":20,"pattern":"^[1-9][0-9]*$"})),("changes",json!({"type":"array","minItems":1,"maxItems":128,"items":{"type":"object","additionalProperties":false,"properties":{"portId":string(80),"value":{"type":["boolean","integer"]}},"required":["portId","value"]}}))],&["owner","nodeId","streamId","sequence","changes"]),
@@ -219,6 +248,12 @@ pub fn is_mutation(name: &str) -> bool {
                 | "profile_recover"
                 | "profile_input_learn_start"
                 | "profile_input_learn_cancel"
+                | "profile_retired_recovery_recover"
+                | "profile_retired_recovery_acknowledge"
+                | "profile_retired_recovery_provision_recover"
+                | "profile_retired_recovery_provision_cancel"
+                | "controller_visibility_save"
+                | "controller_visibility_restore"
                 | "game_discovery_apply"
                 | "game_discovery_start"
                 | "game_background_save"
