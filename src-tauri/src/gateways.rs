@@ -419,6 +419,9 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        if let Err(error) = profile_resources.observe_catalogue(&observations.broker()) {
+            eprintln!("Cannot start profile resource observations: {error}");
+        }
         if let Err(error) = profile_activations.observe(&observations.broker(), companion_host.clone(), profile_admission_epoch.clone()) {
             eprintln!("Cannot start profile activation observations: {error}");
         }

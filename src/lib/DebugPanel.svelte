@@ -5,6 +5,8 @@
   import { ProfilesClient, type DeepReadonly, type ProfileSummary } from './profiles';
   import { observeProfileLibrary } from './profile-read-models/shared';
   import { ProfileInventoryClient, type ResourceSummary } from './profile-inventory';
+  import { followProfileResources } from './profile-resource-observation';
+  import { SharedObservations } from './streams/shared';
   import { ProfileCompilerClient } from './profile-compilation';
   import type { ProfileRuntimeController, RuntimeControlState } from './profile-runtime-controller';
   import { ProfileInspectorClient } from './profile-inspection';
@@ -46,23 +48,9 @@
   let savedProfiles = $state.raw<readonly DeepReadonly<ProfileSummary>[]>([]);
   let inventory = $state.raw<readonly DeepReadonly<ResourceSummary>[]>([]);
   let inventoryRevision = $state(0), profileError = $state(''), inventoryError = $state('');
-  let inventorySignature = '', refreshing = false, disposed = false;
+  let inventorySignature = '';
   const profileName = $derived(savedProfiles.find(profile => profile.id === runtimeState.status?.appliedSnapshot?.profileId)?.name);
 
-  async function refresh() {
-    if (refreshing || disposed || document.hidden) return;
-    refreshing = true;
-    try {
-      const result = await resources.listAll();
-      if (disposed) return;
-      const signature = JSON.stringify([result.session, result.revision, result.resources]);
-      if (signature !== inventorySignature) { inventorySignature = signature; inventoryRevision++; }
-      inventory = result.resources;
-      inventoryError = result.inventoryDiagnostics?.join(' ') ?? '';
-    } catch(error) {
-      if (!disposed) inventoryError = error instanceof Error ? error.message : String(error);
-    } finally { refreshing = false; }
-  }
   onMount(() => {
     const stopLibrary = observeProfileLibrary(state => {
       if (state.status === 'ready' && state.value) {
@@ -72,19 +60,33 @@
         profileError = state.error ?? 'Waiting for the current profile library.';
       }
     });
-    const update = () => { void refresh(); };
-    update();
-    const timer = window.setInterval(update, 3000);
-    document.addEventListener('visibilitychange', update);
-    window.addEventListener('focus', update);
+    const observations = new SharedObservations();
+    const resourceSubscription = followProfileResources(
+      listener => observations.subscribe('profiles.resources', listener),
+      resources,
+      (page, error) => {
+        if (!page) {
+          inventoryError = error ?? 'Waiting for the current resource inventory.';
+          return;
+        }
+        const signature = JSON.stringify([page.session, page.revision]);
+        if (signature !== inventorySignature) {
+          inventorySignature = signature;
+          inventoryRevision++;
+          inventory = page.resources;
+        }
+        inventoryError = page.inventoryDiagnostics?.join(' ') ?? '';
+      },
+      () => !document.hidden,
+    );
+    document.addEventListener('visibilitychange', resourceSubscription.refreshVisible);
     return () => {
+      document.removeEventListener('visibilitychange', resourceSubscription.refreshVisible);
+      resourceSubscription.dispose();
       stopLibrary();
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', update);
-      window.removeEventListener('focus', update);
     };
   });
-  onDestroy(() => { disposed = true; inspection.dispose(); activity.dispose(); });
+  onDestroy(() => { inspection.dispose(); activity.dispose(); });
 </script>
 
 {#if profileError || inventoryError}<p class="debug-context-error" role="alert">{[profileError, inventoryError].filter(Boolean).join(' ')}</p>{/if}

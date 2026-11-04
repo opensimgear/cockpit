@@ -20,6 +20,7 @@ pub(super) fn topic(uri: &str) -> Option<&str> {
         "profiles.library"
             | "profiles.runtime"
             | "profiles.activation"
+            | "profiles.resources"
             | "workspace.state"
             | "games.state"
             | "games.jobs"
@@ -70,6 +71,7 @@ mod tests {
             "profiles.library",
             "profiles.runtime",
             "profiles.activation",
+            "profiles.resources",
             "workspace.state",
             "games.state",
             "games.jobs",

@@ -48,6 +48,7 @@ pub(crate) struct Runtime {
     state: Arc<live_validation::StateMutex>,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    observation_worker: Mutex<Option<JoinHandle<()>>>,
     collect: Collect,
     local_revision: Arc<AtomicU64>,
     /// Serializes discovery revisions without excluding live delivery adoption.
@@ -63,6 +64,8 @@ mod live_validation;
 mod health;
 #[path = "profile_resources/companion_catalogue.rs"]
 mod companion_catalogue;
+#[path = "profile_resources/observation.rs"]
+mod observation;
 
 impl Runtime {
     pub(crate) fn project_offline_companion_catalogues(snapshot: &mut osg_profiles::compiler_models::CompileSnapshot, catalogues: &[CompanionCatalogue]) -> Result<(), String> {
@@ -502,6 +505,7 @@ impl Runtime {
             state,
             stop,
             worker: Mutex::new(worker),
+            observation_worker: Mutex::new(None),
             collect,
             local_revision,
             collector_gate,
@@ -758,6 +762,7 @@ impl Runtime {
     }
     pub(crate) fn shutdown(&self) {
         self.stop.store(true, Ordering::Release);
+        self.stop_observing_catalogue();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }

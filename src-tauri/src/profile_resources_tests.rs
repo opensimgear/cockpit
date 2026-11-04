@@ -4,6 +4,38 @@ use osg_profiles::resources_ports::{
     ActionParameter, ActionSemantics, PortContract, PortDescriptor, PortUpdate, ScalarSchema,
 };
 use osg_profiles::{Direction, PortValue};
+#[path = "profile_resources/authoring_tests.rs"]
+mod authoring_tests;
+#[test]
+fn resource_catalogue_observation_uses_commits_without_acquisition() {
+    let runtime = Runtime::new(None, Arc::new(|_| panic!("Observation must not discover sources")), false);
+    let broker = osg_streams::Broker::new("resource-catalogue-test".into()).unwrap();
+    runtime.observe_catalogue(&broker).unwrap();
+    assert!(runtime.observe_catalogue(&broker).is_err());
+    let mut reader = broker.subscribe("resource-reader", "mcp", "profiles.resources").unwrap();
+    let initial = reader.try_recv().unwrap().unwrap().payload.unwrap();
+    assert_eq!(initial["revision"], "0");
+
+    runtime.state.lock().unwrap().registry
+        .reconcile(batch("host", "provider", 1, vec![observed(1)])).unwrap();
+    let mut next = || {
+        let end = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(frame) = reader.try_recv().unwrap() { return frame.payload.unwrap(); }
+            assert!(std::time::Instant::now() < end, "Committed catalogue was not published");
+            thread::sleep(Duration::from_millis(1));
+        }
+    };
+    let committed = next();
+    assert_eq!(committed["session"], initial["session"]);
+    assert_eq!(committed["revision"], "1");
+    runtime.state.lock().unwrap().diagnostics.push("New diagnostic".into());
+    let diagnostic = next();
+    assert_eq!(diagnostic["revision"], committed["revision"]);
+    assert_eq!(diagnostic["inventoryDiagnostics"], json!(["New diagnostic"]));
+    runtime.shutdown();
+}
+
 #[test]
 fn preparation_state_checks_do_not_recapture_catalogues_or_replace_exact_port_pins() {
     use osg_profiles::{resources::PortExpectation, store::LocalAssignment};

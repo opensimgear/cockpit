@@ -86,20 +86,26 @@ test('native progress uses system delivery or fallback, preserves controls and r
   child=await childWindow();
   await until(()=>child.evaluate(`document.body.innerText.includes('Checking the native Cancel action')`),'The native activation probe did not render');
   evidence.window=await invoke('profile_activation_window_state');assertGeometry(evidence.window,'bottom-right');
-  const observeReads=`(async()=>{
-    const bridge=window.__TAURI_INTERNALS__,original=bridge.invoke;
-    let reads=0,discovery=0;
-    bridge.invoke=function(command,...args){
-      if(command==='profile_activation_window_state')reads++;
-      if(command==='gateway_request'&&args[0]?.request?.command==='profile_activation_current')discovery++;
-      return original.call(this,command,...args);
-    };
-    try{
-      await new Promise(resolve=>setTimeout(resolve,550));
-      return {reads,discovery};
-    }finally{bridge.invoke=original;}
-  })()`;
-  evidence.periodicPopupStateReads=await Promise.all([main.evaluate(observeReads),child.evaluate(observeReads)]);
+  const observeReads=async surface=>{
+   let breakpoint;
+   await surface.evaluate('window.__activationReadProbe={reads:0,discovery:0}');
+   await surface.send('Debugger.enable');
+   try{
+    const target=await surface.send('Runtime.evaluate',{expression:'window.__TAURI_INTERNALS__.invoke'});
+    const condition="(cmd==='profile_activation_window_state'&&++window.__activationReadProbe.reads,cmd==='gateway_request'&&payload?.request?.command==='profile_activation_current'&&++window.__activationReadProbe.discovery,false)";
+    ({breakpointId:breakpoint}=await surface.send('Debugger.setBreakpointOnFunctionCall',{objectId:target.result.objectId,condition}));
+    await surface.evaluate("window.__TAURI_INTERNALS__.invoke('profile_activation_window_state')");
+    assert.equal(await surface.evaluate('window.__activationReadProbe.reads'),1,'The IPC trace must count a known request');
+    await surface.evaluate('window.__activationReadProbe.reads=0');
+    await delay(550);
+    return await surface.evaluate('window.__activationReadProbe');
+   }finally{
+    if(breakpoint)await surface.send('Debugger.removeBreakpoint',{breakpointId:breakpoint});
+    await surface.send('Debugger.disable');
+    await surface.evaluate('delete window.__activationReadProbe');
+   }
+  };
+  evidence.periodicPopupStateReads=await Promise.all([observeReads(main),observeReads(child)]);
   assert.deepEqual(evidence.periodicPopupStateReads,[{reads:0,discovery:0},{reads:0,discovery:0}]);
   const cancel=await child.evaluate(`(()=>{const button=document.querySelector('button');if(!button||button.disabled)return null;const label=button.textContent.trim();button.click();return label;})()`);assert.equal(cancel,'Cancel');
   await until(()=>main.evaluate('window.__popupCancelCount===1'),'The popup cancellation did not reach the parent observer');

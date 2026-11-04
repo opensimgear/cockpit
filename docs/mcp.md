@@ -285,7 +285,8 @@ document, catalogue, and native limits.
 Clients using MCP `2026-07-28` can open `subscriptions/listen` with
 `notifications.resourceSubscriptions` containing up to eight exact Cockpit
 observation URIs. Use `cockpit://observations/` followed by a topic such as
-`profiles.library`, `profiles.runtime`, `profiles.activation`, `workspace.state`, `games.state`,
+`profiles.library`, `profiles.runtime`, `profiles.activation`, `profiles.resources`,
+`workspace.state`, `games.state`,
 `games.jobs` or `controllers.inventory`. Exact native CAN, USB, controller
 and game detail topics use the same names as the Cockpit observation broker.
 For a node of the exact applied profile, use `profiles.samples.<digest>`.
