@@ -128,6 +128,8 @@ impl GamesRuntime {
             .as_ref()
             .map(inspect::channels)
             .unwrap_or_default();
+        let page = inspect::Page::prepare(&all, offset, limit, &search, &group);
+        let now = Instant::now();
         let mut result = vec![];
         for game in games {
             let id = game["id"].as_str().unwrap_or("");
@@ -141,7 +143,7 @@ impl GamesRuntime {
             };
             let status = capture
                 .map(|capture| {
-                    if capture.expired() {
+                    if capture.expired_at(now) {
                         "stale"
                     } else {
                         match capture.status.as_str() {
@@ -153,17 +155,17 @@ impl GamesRuntime {
                 })
                 .unwrap_or(fallback_status);
             let selected_game = id == selected;
-            let (channels, total, groups, requested) = if selected_game {
-                inspect::page(&all, capture, offset, limit, &search, &group)
+            let (channels, total, groups) = if selected_game {
+                (page.project(capture, now), page.total, page.groups.as_slice())
             } else {
-                (vec![], 0, vec![], vec![])
+                (vec![], 0, &[][..])
             };
             if selected_game {
                 self.inner
                     .vehicles
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .inspect(id, requested)?;
+                    .inspect(id, page.requested.clone())?;
             }
             let message = if selected_game {
                 catalogue_error.as_deref().or_else(|| {
@@ -177,7 +179,7 @@ impl GamesRuntime {
             }
             .or_else(|| capture.and_then(|capture| capture.message.as_deref()))
             .or_else(|| game["vehicleStatus"]["message"].as_str());
-            result.push(json!({"id":id,"name":game["name"].as_str().unwrap_or(id),"status":status,"source":capture.map(|capture|capture.source.as_str()).unwrap_or(if crate::game_discovery::integration_key(&game)==Some("dcs") {"dcs-bios"} else if game["provider"]=="x-plane" {"rref"} else if crate::game_discovery::integration_key(&game).is_some() {"shared-memory"} else {"none"}),"message":message,"packet":capture.map(|capture|capture.packet.clone()).unwrap_or(Value::Null),"ageMs":capture.and_then(|capture|capture.age_ms.map(|age|age.saturating_add(capture.at.elapsed().as_millis() as u64))),"context":capture.map(|capture|capture.context.clone()).unwrap_or(Value::Null),"groups":groups,"total":total,"offset":if selected_game {offset} else {0},"limit":limit,"channels":channels}));
+            result.push(json!({"id":id,"name":game["name"].as_str().unwrap_or(id),"status":status,"source":capture.map(|capture|capture.source.as_str()).unwrap_or(if crate::game_discovery::integration_key(&game)==Some("dcs") {"dcs-bios"} else if game["provider"]=="x-plane" {"rref"} else if crate::game_discovery::integration_key(&game).is_some() {"shared-memory"} else {"none"}),"message":message,"packet":capture.map(|capture|capture.packet.clone()).unwrap_or(Value::Null),"ageMs":capture.and_then(|capture|capture.age_ms.map(|age|age.saturating_add(now.saturating_duration_since(capture.at).as_millis() as u64))),"context":capture.map(|capture|capture.context.clone()).unwrap_or(Value::Null),"groups":groups,"total":total,"offset":if selected_game {offset} else {0},"limit":limit,"channels":channels}));
         }
         Ok(json!({"schemaVersion":1,"games":result}))
     }

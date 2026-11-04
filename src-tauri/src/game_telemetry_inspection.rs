@@ -66,7 +66,11 @@ impl Capture {
         }
     }
     pub(crate) fn expired(&self) -> bool {
-        self.at.elapsed() > Duration::from_secs(2)
+        self.expired_at(Instant::now())
+    }
+
+    pub(crate) fn expired_at(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.at) > Duration::from_secs(2)
     }
 }
 fn bounded(value: &Value, fallback: &str, max: usize) -> String {
@@ -118,6 +122,103 @@ pub(crate) fn group_label(id: &str) -> String {
     }
     result
 }
+/// Prepared channel metadata and demand for one exact inspector page.
+/// Source updates can project this selection without filtering the catalogue again.
+pub(crate) struct Page {
+    channels: Vec<Value>,
+    pub total: usize,
+    pub groups: Vec<Value>,
+    pub requested: Vec<String>,
+}
+
+impl Page {
+    pub(crate) fn prepare(
+        all: &[Value],
+        offset: usize,
+        limit: usize,
+        search: &str,
+        group: &str,
+    ) -> Self {
+        let mut groups = BTreeMap::<String, usize>::new();
+        let mut channels = Vec::new();
+        let mut total = 0;
+        for channel in all {
+            let category = category(channel);
+            *groups.entry(category.clone()).or_default() += 1;
+            if !group.is_empty() && category != group {
+                continue;
+            }
+            if !search.is_empty()
+                && !["id", "label", "nativeField", "description"].iter().any(|key| {
+                    channel[key].as_str().is_some_and(|value| value.to_lowercase().contains(search))
+                })
+            {
+                continue;
+            }
+            if total >= offset && channels.len() < limit {
+                channels.push(channel.clone());
+            }
+            total += 1;
+        }
+        let groups = groups.into_iter()
+            .map(|(id, total)| json!({"label":group_label(&id),"id":id,"total":total}))
+            .collect();
+        let requested = channels.iter()
+            .filter(|channel| channel["supported"] != false)
+            .map(|channel| channel["id"].as_str().unwrap_or("").to_owned())
+            .collect();
+        Self { channels, total, groups, requested }
+    }
+
+    pub(crate) fn project(&self, capture: Option<&Capture>, now: Instant) -> Vec<Value> {
+        let capture_expired = capture.is_some_and(|capture| capture.expired_at(now));
+        let live = capture.filter(|capture| capture.status == "live" && !capture_expired);
+        let age = capture.map(|capture| now.saturating_duration_since(capture.at).as_millis() as u64);
+        self.channels.iter().map(|channel| {
+            let id = channel["id"].as_str().unwrap_or("");
+            let projected = live.and_then(|capture| capture.values.get(id));
+            let current = projected.filter(|value| value.is_current(now));
+            let value = current.map(|value| value.value())
+                .filter(|value| value.is_number() || value.is_string() || value.is_boolean());
+            let status = if channel["supported"] == false {
+                "unavailable"
+            } else if capture.is_some_and(|capture| capture.stale_ids.contains(id))
+                || projected.is_some() && current.is_none()
+            {
+                "stale"
+            } else if value.is_some() {
+                "known"
+            } else if capture.is_some_and(|capture| capture_expired || matches!(capture.status.as_str(), "stale" | "paused")) {
+                "stale"
+            } else {
+                "unknown"
+            };
+            let age = if let Some(value) = projected.filter(|value| value.contributors().is_some()) {
+                value.authority_age_ms(now)
+            } else {
+                capture.and_then(|capture| capture.ages.get(id).copied().unwrap_or(capture.age_ms))
+                    .zip(age).map(|(source, elapsed)| source.saturating_add(elapsed))
+            };
+            json!({
+                "id": id,
+                "label": bounded(&channel["label"], id, 256),
+                "category": category(channel),
+                "group": channel["group"].as_str().unwrap_or("telemetry"),
+                "type": channel["type"].as_str().unwrap_or("number"),
+                "unit": channel["unit"].as_str(),
+                "status": status,
+                "value": if status == "known" { value.cloned().unwrap_or(Value::Null) } else { Value::Null },
+                "ageMs": age,
+                "nativeId": channel["nativeId"].as_str().unwrap_or(id),
+                "nativeField": channel["nativeField"].as_str().or_else(|| channel["dataref"].as_str()),
+                "description": channel["note"].as_str().or_else(|| channel["description"].as_str()),
+                "provider": capture.map(|capture| capture.source.as_str()).unwrap_or(""),
+            })
+        }).collect()
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn page(
     all: &[Value],
     capture: Option<&Capture>,
@@ -126,43 +227,8 @@ pub(crate) fn page(
     search: &str,
     group: &str,
 ) -> (Vec<Value>, usize, Vec<Value>, Vec<String>) {
-    let mut groups = BTreeMap::<String, usize>::new();
-    for channel in all {
-        *groups.entry(category(channel)).or_default() += 1;
-    }
-    let groups = groups
-        .into_iter()
-        .map(|(id, total)| json!({"label":group_label(&id),"id":id,"total":total}))
-        .collect();
-    let filtered = all
-        .iter()
-        .filter(|channel| {
-            (group.is_empty() || category(channel) == group)
-                && (search.is_empty()
-                    || ["id", "label", "nativeField", "description"]
-                        .iter()
-                        .any(|key| {
-                            channel[key]
-                                .as_str()
-                                .is_some_and(|value| value.to_lowercase().contains(search))
-                        }))
-        })
-        .collect::<Vec<_>>();
-    let total = filtered.len();
-    let mut requested = vec![];
-    let rows = filtered.into_iter().skip(offset).take(limit).map(|channel| {
-        let id = channel["id"].as_str().unwrap_or("");
-        if channel["supported"] != false {
-            requested.push(id.to_owned());
-        }
-        let now=Instant::now();
-        let projected = capture.filter(|c|c.status == "live" && !c.expired()).and_then(|c|c.values.get(id));
-        let value = projected.filter(|v|v.is_current(now)).map(|v|v.value()).filter(|v|v.is_number()||v.is_string()||v.is_boolean());
-        let status = if channel["supported"] == false { "unavailable" } else if capture.is_some_and(|capture|capture.stale_ids.contains(id)) || projected.is_some_and(|v|!v.is_current(now)){"stale"}else if value.is_some() { "known" } else if capture.is_some_and(|c|c.expired() || matches!(c.status.as_str(),"stale"|"paused")) { "stale" } else { "unknown" };
-        let age = if let Some(value)=projected.filter(|v|v.contributors().is_some()) {value.authority_age_ms(now)} else {capture.and_then(|c|c.ages.get(id).copied().unwrap_or(c.age_ms).map(|age|age.saturating_add(c.at.elapsed().as_millis() as u64)))};
-        json!({"id":id,"label":bounded(&channel["label"],id,256),"category":category(channel),"group":channel["group"].as_str().unwrap_or("telemetry"),"type":channel["type"].as_str().unwrap_or("number"),"unit":channel["unit"].as_str(),"status":status,"value":if status == "known" {value.cloned().unwrap_or(Value::Null)} else {Value::Null},"ageMs":age,"nativeId":channel["nativeId"].as_str().unwrap_or(id),"nativeField":channel["nativeField"].as_str().or_else(||channel["dataref"].as_str()).unwrap_or(id),"description":channel["note"].as_str().or_else(||channel["description"].as_str()),"provider":capture.map(|c|c.source.as_str()).unwrap_or("")})
-    }).collect();
-    (rows, total, groups, requested)
+    let page = Page::prepare(all, offset, limit, search, group);
+    (page.project(capture, Instant::now()), page.total, page.groups, page.requested)
 }
 
 #[cfg(test)]
@@ -172,19 +238,25 @@ mod tests {
     fn cached_native_values_expire_from_original_proof_before_the_cache_timeout() {
         use crate::native_capture::{CapturedValue,Contribution,InputId,Stamp,Validity};
         let old=Instant::now()-Duration::from_secs(1);
+        let expires=old+Duration::from_millis(100);
         let value=CapturedValue::native(json!(0),vec![std::sync::Arc::new(Contribution {
             input:InputId::Channel("native-rpm".into()),capture:Stamp {
                 producer_id:"reader".into(),generation:1,sequence:5,byte_offset:None,captured_at:old,
-            },validity:Validity::Sampled {valid_until:old+Duration::from_millis(100)},
+            },validity:Validity::Sampled {valid_until:expires},
         })],old).unwrap();
         let capture=Capture {status:"live".into(),source:"fixture-native".into(),context:json!({}),
             packet:json!(5),age_ms:Some(0),values:BTreeMap::from([("engine.rpm".into(),value)]),
-            ages:BTreeMap::new(),stale_ids:BTreeSet::new(),message:None,at:Instant::now()};
+            ages:BTreeMap::new(),stale_ids:BTreeSet::new(),message:None,at:old};
         let catalogue=vec![json!({"id":"engine.rpm","type":"number"})];
-        let row=&page(&catalogue,Some(&capture),0,1,"","").0[0];
-        assert_eq!(row["status"],"stale");assert_eq!(row["value"],Value::Null);
-        assert!(row["ageMs"].as_u64().unwrap()>=1000);
-        assert!(!capture.expired(),"the expiry must come from native proof");
+        let prepared=Page::prepare(&catalogue,0,1,"","");
+        let live=prepared.project(Some(&capture),expires-Duration::from_nanos(1));
+        assert_eq!(live[0]["status"],"known");
+        assert_eq!(live[0]["value"],0);
+        let stale=prepared.project(Some(&capture),expires);
+        assert_eq!(stale[0]["status"],"stale");
+        assert_eq!(stale[0]["value"],Value::Null);
+        assert_eq!(stale[0]["ageMs"],100);
+        assert!(!capture.expired_at(expires),"the expiry must come from native proof");
     }
     #[test]
     fn paging_preserves_known_zero_and_never_replays_paused_samples() {
