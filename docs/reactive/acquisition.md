@@ -54,12 +54,18 @@ The currently supported telemetry adapters are Assetto Corsa, Assetto Corsa
 Competizione, Assetto Corsa EVO, Assetto Corsa Rally, DCS-BIOS, managed DCS ownship,
 and X-Plane 11/12 (see ../telemetry.md). The user approved one native
 shared-memory sampler per active Assetto game for all four dialects. The sampler
-owns the mapping and publishes each newly detected coherent packet with its
-original packet identity, mapping generation and capture times. Inspector,
+owns the mapping and publishes detected physics packet and graphics/static page
+changes with the original packet identity, mapping generation and capture times. Inspector,
 profile and MCP consumers share committed updates and have independent delivery
 limits. The exception applies to acquisition only. Live qualification remains
 separate for each simulator.
-[Approval record](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6631711574)
+
+The reader targets a 2 ms sample period. A page overwritten between reads
+cannot be recovered. The separate 250 ms competing-process enumeration still
+needs event-backed replacement to keep the shared mapping namespace exclusive.
+Physical controller acquisition is outside this exception.
+
+[Approval record](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6640472899)
 
 DCS export's existing up-to-20 Hz frame callback is source-defined cadence. Its
 one-second freshness lease expires on the original deadline.
