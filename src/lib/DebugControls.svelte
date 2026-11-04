@@ -4,6 +4,7 @@
   import { onMount, untrack } from 'svelte';
   import { DebugInputQueue, debugReady, debugDefinition, rawAxisValue, type DebugOperation } from './debug-inputs';
   import { resetDebugOnExit } from './gateway';
+  import { canInputTopic, observeCanPanel, type CanPanelPreview } from './can-input-observations';
   import { panelInputMetadata } from './panel-input-metadata';
   import type { GatewayRequest, GatewayState, GatewayModule } from './gateway';
   let { state: gateway, module, request, read }: { state: GatewayState; module: GatewayModule; request: (request: GatewayRequest) => Promise<boolean>; read: (request: GatewayRequest) => Promise<boolean> } = $props();
@@ -13,16 +14,36 @@
   const inputReady = $derived(ready && !!device?.online);
   const outputs = $derived(gateway.moduleActions?.[module.id]);
   const inputMetadata = $derived(panelInputMetadata(gateway.moduleEvents?.[module.id]));
+  const inputTopic = $derived(inputReady && gateway.panelStreamSupported && gateway.gatewayId ? canInputTopic(gateway.gatewayId, module.id) : undefined);
+  let preview = $state<CanPanelPreview>();
+  const exactPreview = $derived(preview && preview.route.epoch === gateway.epoch
+    && preview.route.node === module.node && preview.route.sourceNode === module.sourceNode
+    && preview.route.boot === module.boot && preview.route.lease === module.lease
+    && preview.route.configurationGeneration === module.configurationGeneration ? preview : undefined);
+  $effect(() => {
+    preview = undefined;
+    if (inputTopic) return observeCanPanel(inputTopic, sample => { preview = sample; });
+  });
+  function calibratedAxis(index: number) {
+    if (inputTopic) return exactPreview?.axisAvailable[index] ? exactPreview.axes[index] : '—';
+    return (inputMetadata?.boot === module.boot ? inputMetadata?.axes?.[index] : undefined) ?? module.axes[index] ?? '—';
+  }
   let rawDraft = $state<Record<number, number>>({});
   let failure = $state('');
   let refreshing = false;
+  let inputsPending = false, outputsPending = false;
+  let mounted = $state(false);
   let resetRevision = 0;
   let disposed = false;
   // App keys this component by gateway, device and boot; queued commands keep
   // their original target even if a new inventory snapshot arrives.
   const target = untrack(() => ({ moduleId: module.id,
     boot: gateway.debug?.devices.find(device => device.id === module.id)?.boot ?? module.boot!, gatewayId: gateway.gatewayId }));
-  const queue = untrack(() => new DebugInputQueue(target, request));
+  const queue = untrack(() => new DebugInputQueue(target, async command => {
+    const accepted = await request(command);
+    if (accepted && !inputTopic) void refreshReadback(true, false);
+    return accepted;
+  }));
   async function run(operation: DebugOperation, args: number[] = []) {
     if (!ready) return;
     failure = '';
@@ -53,17 +74,29 @@
     event.preventDefault(); void queue.release(contact);
   }
   async function reset() { resetRevision++; rawDraft = {}; failure = ''; if (!await queue.reset()) failure = 'Reset did not complete. Reconnect and reset the device before continuing.'; }
-  async function refreshInputs(outputsToo = false) {
-    if (disposed || !inputReady || refreshing) return;
+  async function refreshReadback(inputs: boolean, output: boolean) {
+    if (disposed || !inputReady || document.hidden) return;
+    inputsPending ||= inputs;
+    outputsPending ||= output;
+    if (refreshing) return;
     refreshing = true;
-    const moduleId = module.id;
     try {
-      await read({ command: 'events_state', moduleId });
-      if (disposed) return;
-      if (outputsToo && (!outputs || outputs.boot !== module.boot)) await read({ command: 'action_describe', moduleId });
-      else if (outputsToo && outputs?.catalogueRevision) await read({ command: 'action_state', moduleId });
+      while (!disposed && inputReady && !document.hidden && (inputsPending || outputsPending)) {
+        const readInputs = inputsPending && !inputTopic, readOutputs = outputsPending;
+        inputsPending = false;
+        outputsPending = false;
+        const moduleId = module.id, boot = module.boot;
+        if (readInputs) await read({ command: 'events_state', moduleId, boot });
+        if (!readOutputs || disposed || !inputReady || module.boot !== boot) continue;
+        if ((!outputs || outputs.boot !== boot || !outputs.catalogueRevision) && !await read({ command: 'action_describe', moduleId, boot })) continue;
+        if (!disposed && inputReady && module.boot === boot) await read({ command: 'action_state', moduleId, boot });
+      }
     } finally { refreshing = false; }
   }
+  const readbackRoute = $derived(inputReady ? `${module.boot}/${module.configurationGeneration}/${inputTopic ?? ''}` : '');
+  $effect(() => {
+    if (mounted && readbackRoute) untrack(() => void refreshReadback(true, true));
+  });
   $effect(() => { if (!inputReady && device?.online && device.boot === target.boot && gateway.connected) void queue.releaseHeld(); });
   onMount(() => {
     const release = () => { void queue.releaseHeld(); };
@@ -71,16 +104,14 @@
       if (!gateway.connected || device?.boot !== target.boot) return;
       void queue.reset(); if (target.gatewayId) resetDebugOnExit(target.moduleId, target.boot, target.gatewayId);
     };
-    const visibility = () => { if (document.hidden) release(); };
+    const visibility = () => { if (document.hidden) release(); else void refreshReadback(true, true); };
+    mounted = true;
     window.addEventListener('blur', release); window.addEventListener('pagehide', exit);
     document.addEventListener('visibilitychange', visibility);
-    let tick = 0;
-    void refreshInputs(true);
-    const timer = setInterval(() => { void refreshInputs(++tick % 2 === 0); }, 500);
     return () => {
       disposed = true;
       window.removeEventListener('blur', release); window.removeEventListener('pagehide', exit);
-      document.removeEventListener('visibilitychange', visibility); clearInterval(timer);
+      document.removeEventListener('visibilitychange', visibility);
       const current = gateway.debug?.devices.find(device => device.id === target.moduleId);
       void queue.close(!!gateway.connected && current?.boot === target.boot && !!current.online);
     };
@@ -99,11 +130,12 @@
         {:else}<button class={{ pressed: device.contacts.includes(mapping[0]) }} onpointerdown={event => down(mapping[0], event)} onpointerup={() => queue.release(mapping[0])} onpointercancel={() => queue.release(mapping[0])} onlostpointercapture={() => queue.release(mapping[0])} onkeydown={event => keyDown(mapping[0], event)} onkeyup={event => keyUp(mapping[0], event)} onblur={() => queue.release(mapping[0])} aria-label={`Hold button ${index + 1}, contact ${mapping[0]}`}>Hold button {index + 1}<small>Contact {mapping[0]}</small></button>{/if}
       {:else}<p class="help">No mapped contacts.</p>{/each}
     </div></fieldset>
-    {#if definition.axes.length}<fieldset disabled={!inputReady}><legend>Raw axes · 12-bit ADC</legend>{#each definition.axes as mapping, index (index)}<div class="axis"><label for={`raw-axis-${module.id}-${index}`}>Axis {index + 1} · ADC {mapping[0]}</label><input id={`raw-axis-${module.id}-${index}`} aria-label={`Raw axis ${index + 1} slider`} type="range" min="0" max="4095" step="1" value={rawDraft[mapping[0]] ?? device.axes[mapping[0]] ?? 0} oninput={event => axis(mapping[0], event.currentTarget.value)} /><input aria-label={`Raw axis ${index + 1} value`} type="number" min="0" max="4095" step="1" value={rawDraft[mapping[0]] ?? device.axes[mapping[0]] ?? 0} oninput={event => axis(mapping[0], event.currentTarget.value)} /><span>Calibrated: {inputMetadata?.axes?.[index] ?? module.axes[index] ?? '—'}</span></div>{/each}<p class="help">Move an axis to its limits while adjusting the raw minimum and maximum in Setup.</p></fieldset>{/if}
+    {#if definition.axes.length}<fieldset disabled={!inputReady}><legend>Raw axes · 12-bit ADC</legend>{#each definition.axes as mapping, index (index)}<div class="axis"><label for={`raw-axis-${module.id}-${index}`}>Axis {index + 1} · ADC {mapping[0]}</label><input id={`raw-axis-${module.id}-${index}`} aria-label={`Raw axis ${index + 1} slider`} type="range" min="0" max="4095" step="1" value={rawDraft[mapping[0]] ?? device.axes[mapping[0]] ?? 0} oninput={event => axis(mapping[0], event.currentTarget.value)} /><input aria-label={`Raw axis ${index + 1} value`} type="number" min="0" max="4095" step="1" value={rawDraft[mapping[0]] ?? device.axes[mapping[0]] ?? 0} oninput={event => axis(mapping[0], event.currentTarget.value)} /><span>Calibrated: {calibratedAxis(index)}</span></div>{/each}<p class="help">Move an axis to its limits while adjusting the raw minimum and maximum in Setup.</p></fieldset>{/if}
     {#if definition.encoders.length}<fieldset disabled={!inputReady}><legend>Encoders</legend>{#each definition.encoders as _, index (index)}<div class="row"><span>Encoder {index + 1}</span><button aria-label={`Encoder ${index + 1} decrement`} onclick={() => run('turn', [index, -1])}>−1 detent</button><button aria-label={`Encoder ${index + 1} increment`} onclick={() => run('turn', [index, 1])}>+1 detent</button></div>{/each}</fieldset>{/if}
     {#if definition.selectors.length}<fieldset disabled={!inputReady}><legend>Three-position selectors</legend>{#each definition.selectors as mapping, index (index)}<label class="row">Selector {index + 1}<select aria-label={`Selector ${index + 1}`} value={String(device.contacts.includes(mapping[0]) ? 0 : device.contacts.includes(mapping[1]) ? 2 : 1)} onchange={event => run('selector', [index, Number(event.currentTarget.value)])}><option value="0">Low</option><option value="1">Center</option><option value="2">High</option></select></label>{/each}</fieldset>{/if}
     {#if definition.hats.length}<fieldset disabled={!inputReady}><legend>Hat directions</legend>{#each definition.hats as _, index (index)}<div class="row"><span>Hat {index + 1}</span>{#each ['Neutral', 'N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as label, direction (direction)}<button aria-label={`Hat ${index + 1} ${label}`} onclick={() => run('hat', [index, direction - 1])}>{label}</button>{/each}</div>{/each}</fieldset>{/if}
     <details><summary>Expansion bank availability</summary><p class="help">Simulate an attached or missing expansion bank separately from its configuration mapping.</p><div class="banks">{#each Array.from({ length: 8 }, (_, i) => i) as bank (bank)}<label><input type="checkbox" checked={!!(device.expansionMask & (1 << bank))} disabled={!inputReady} onchange={event => run('expansion', [bank, event.currentTarget.checked ? 1 : 0])} /> Bank {bank + 1}</label>{/each}</div></details>
+    <button disabled={!inputReady} onclick={() => refreshReadback(true, true)}><Icon name="refresh" size={14}/>Refresh readback</button>
     {#if outputs?.states.length}<div class="outputs" aria-label="Virtual output readback"><h3>Device output readback</h3>{#each outputs.states as output (output.id)}{@const action = outputs.actions.find(action => action.id === output.id)}<div class="output"><span>{action?.label ?? output.id}</span>{#if action?.display}<output class="display" aria-label={`${action.label} display`}>{outputs.status === 'ready' ? output.values.join(' ') : 'Unknown'}</output>{:else if action?.parameters[0]?.type === 'boolean' || action?.parameters[0]?.type === 'enum'}<span class={['led', { lit: outputs.status === 'ready' && (output.values[0] === true || output.values[0] === 'on') }]} aria-label={`${action?.label ?? output.id} ${outputs.status !== 'ready' ? 'unknown' : output.values[0] === true || output.values[0] === 'on' ? 'on' : 'off'}`}></span><span>{outputs.status === 'ready' ? String(output.values[0]) : 'Unknown'}</span>{:else}<output>{outputs.status === 'ready' ? output.values.join(' · ') : 'Unknown'}</output>{/if}</div>{/each}</div>{/if}
   {:else}<p class="help">Refresh debug state to discover this virtual device’s input mappings.</p>{/if}
   <button aria-label="Refresh debug state" disabled={!gateway.connected || gateway.reconnecting} onclick={() => request({ command: 'debug_describe' })}><Icon name="refresh" size={14}/>Refresh</button>

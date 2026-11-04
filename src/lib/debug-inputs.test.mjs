@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadModules } from './test-module-loader.mjs';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+import ts from 'typescript';
+import { compile } from 'svelte/compiler';
+import { render } from 'svelte/server';
+import * as server from 'svelte/internal/server';
+import * as svelte from 'svelte';
 const modules = await loadModules(['./gateway-capabilities', './debug-inputs']);
 const { supportsDeviceContracts } = modules.get('./gateway-capabilities');
 const { DebugInputQueue, debugReady, debugDefinition, rawAxisValue, debugPresetLabels } = modules.get('./debug-inputs');
@@ -11,6 +18,52 @@ const definition = { name: 'Panel', buttons: [[0,0,0],[1,1,0]], axes: [[0,48,0,4
 const device = { id: 'panel', boot: 9, online: true, definition };
 const module = { id: 'panel', boot: 9, online: true, enabled: false, published: false };
 const state = { backend: 'pico', protocolVersion: 3, canProtocol: 3, connected: true, debug: { devices: [device] } };
+
+test('Pico debug readback uses the CAN stream and coalesces fallback reads', async () => {
+  const source = await readFile(new URL('./DebugControls.svelte', import.meta.url), 'utf8');
+  const { js } = compile(source.replace('</script>', 'capture(refreshReadback);</script>'), { generate: 'server' });
+  const code = ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  function fixture(streamed) {
+    let refresh;
+    const calls = [], first = deferred(), exports = {};
+    vm.runInNewContext(code, {
+      exports, capture(fn) { refresh = fn; }, document: { hidden: false },
+      require(name) {
+        if (name === 'svelte/internal/server') return server;
+        if (name === 'svelte') return svelte;
+        if (name.endsWith('.svelte')) return { default() {} };
+        if (name === './debug-inputs') return { DebugInputQueue, debugReady, debugDefinition, rawAxisValue };
+        if (name === './panel-input-metadata') return { panelInputMetadata: () => null };
+        if (name === './gateway') return { resetDebugOnExit() {} };
+        if (name === './can-input-observations') return { canInputTopic: () => 'can.inputs.fixture' };
+        throw Error(name);
+      },
+    });
+    const rendered = render(exports.default, { props: {
+      state: { ...state, gatewayId: 'fixture', panelStreamSupported: streamed,
+        debug: { devices: [{ ...device, contacts: [], axes: [] }] } },
+      module: { ...module, axes: [] },
+      request: async () => true,
+      read: async request => { calls.push(plain(request)); if (calls.length === 1) await first.promise; return true; },
+    } });
+    assert.ok(rendered.body.includes("Refresh readback"));
+    return { refresh, calls, release: first.done };
+  }
+  const fallback = fixture(false);
+  const pending = fallback.refresh(true, true);
+  await fallback.refresh(true, false);
+  await fallback.refresh(true, false);
+  fallback.release();
+  await pending;
+  assert.deepEqual(fallback.calls.map(call => call.command), ['events_state', 'action_describe', 'action_state', 'events_state']);
+  assert.ok(fallback.calls.every(call => call.moduleId === 'panel' && call.boot === 9));
+
+  const streamed = fixture(true);
+  const streamedRead = streamed.refresh(true, true);
+  streamed.release();
+  await streamedRead;
+  assert.deepEqual(streamed.calls.map(call => call.command), ['action_describe', 'action_state']);
+});
 
 test('only negotiated device contracts enable the production path on Pico', () => {
   assert.equal(supportsDeviceContracts(state), true);
