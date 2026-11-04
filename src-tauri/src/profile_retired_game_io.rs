@@ -55,7 +55,7 @@ pub(super) fn panel(
             })(),
             "_retired_mapping_visibility_cleanup" => owner(&request).and_then(|owner| restore_visibility(
                 owner, |request| controllers.game_visibility("stop", request),
-                || controllers.wait_game_visibility_restoration(owner, Duration::from_secs(3)),
+                || controllers.wait_game_visibility_phase(owner, true, Duration::from_secs(3)),
             )),
             "_game_companion_restore" if request["recovery"] != true => Err("Retained companion cleanup cannot resume an old runtime.".into()),
             "_game_companion_restore" | "_game_companion_abandon" => companions.game_command(command, &request),

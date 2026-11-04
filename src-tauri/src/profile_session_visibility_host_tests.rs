@@ -10,6 +10,22 @@ fn visibility(io: Arc<Fake>) -> Visibility {
 }
 
 #[test]
+fn activation_maintenance_does_not_poll_visibility_before_the_native_signal() {
+    let io = Fake::new();
+    *io.start_pending.lock().unwrap() = true;
+    *io.maintenance_waits.lock().unwrap() = 2;
+    let mut visibility = visibility(io.clone());
+    let mut renewals = 0;
+    wait(&mut visibility, false, Duration::from_secs(3), || Ok(()), || {
+        renewals += 1;
+        Ok(())
+    }).unwrap();
+    assert_eq!(renewals, 4);
+    assert_eq!(io.calls.lock().unwrap().iter().filter(|(op, _)| op == "poll").count(), 1);
+    visibility.stop().unwrap();
+}
+
+#[test]
 fn actual_journal_start_and_async_restore_renew_without_restarting_worker() {
     let io = Fake::new();
     let before = io.driver.lock().unwrap().clone();

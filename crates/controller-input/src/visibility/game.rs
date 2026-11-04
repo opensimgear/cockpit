@@ -280,16 +280,16 @@ impl Service {
             self.suppression.snapshot()
         }
     }
-    pub(crate) fn wait_game_restoration(&self, owner: &str, budget: std::time::Duration) -> Result<bool, String> {
+    pub(crate) fn wait_game_phase(&self, owner: &str, restoring: bool, budget: std::time::Duration) -> Result<bool, String> {
         let job = self.game_owner.lock().unwrap_or_else(|p| p.into_inner())
             .as_ref().filter(|owned| owned.owner == owner)
             .map(|owned| owned.job.clone())
             .ok_or("Game visibility ownership changed.")?;
         if self.platform == Platform::Windows {
             let completion = self.worker.lock().unwrap_or_else(|p| p.into_inner()).completion();
-            completion.wait(&job, budget)
+            completion.wait(&job, restoring, budget)
         } else {
-            self.suppression.wait_restored(&job, budget)
+            self.suppression.wait_phase(&job, restoring, budget)
         }
     }
     pub(crate) fn game_request(&self, operation: &str, value: &Value) -> Result<Value, String> {

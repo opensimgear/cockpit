@@ -57,15 +57,16 @@ impl Control {
         s.reason = reason.into();
         self.1.notify_all();
     }
-    pub(super) fn wait_restored(&self, job: &str, budget: Duration) -> Result<bool, String> {
+    pub(super) fn wait_phase(&self, job: &str, restoring: bool, budget: Duration) -> Result<bool, String> {
+        let pending = |state: &State| busy(&state.phase) && (restoring || state.phase != "active");
         let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         let (state, _) = self.1.wait_timeout_while(state, budget, |state| {
-            state.id == job && busy(&state.phase)
+            state.id == job && pending(state)
         }).unwrap_or_else(|p| p.into_inner());
         if state.id != job {
-            return Err("Suppression session changed while waiting for restoration.".into());
+            return Err("Suppression session changed while waiting for its phase.".into());
         }
-        Ok(!busy(&state.phase))
+        Ok(!pending(&state))
     }
     pub fn active(&self) -> bool {
         busy(&self.0.lock().unwrap_or_else(|p| p.into_inner()).phase)
@@ -89,14 +90,14 @@ mod tests {
         let control = Control::default();
         let job = control.apply(vec![source()]).unwrap();
         control.stop(Some(&job)).unwrap();
-        assert!(!control.wait_restored(&job, Duration::ZERO).unwrap());
+        assert!(!control.wait_phase(&job, true, Duration::ZERO).unwrap());
         let reader = control.clone();
         let exact = job.clone();
-        let waiter = std::thread::spawn(move || reader.wait_restored(&exact, Duration::from_secs(2)));
+        let waiter = std::thread::spawn(move || reader.wait_phase(&exact, true, Duration::from_secs(2)));
         control.update("restored", "Done");
         assert!(waiter.join().unwrap().unwrap());
         control.apply(vec![source()]).unwrap();
-        assert!(control.wait_restored(&job, Duration::ZERO).is_err());
+        assert!(control.wait_phase(&job, true, Duration::ZERO).is_err());
     }
     fn source() -> Source {
         Source {

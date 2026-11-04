@@ -127,6 +127,7 @@ pub(crate) struct Fake {
     ambiguous: Mutex<bool>,
     pub(crate) asynchronous: Mutex<bool>,
     pub(crate) start_pending: Mutex<bool>,
+    pub(crate) maintenance_waits: Mutex<usize>,
     ambiguous_stop: Mutex<bool>,
     restoring: Mutex<bool>,
     malformed: Mutex<Option<Value>>,
@@ -144,6 +145,7 @@ impl Fake {
             ambiguous: Mutex::new(false),
             asynchronous: Mutex::new(false),
             start_pending: Mutex::new(false),
+            maintenance_waits: Mutex::new(0),
             ambiguous_stop: Mutex::new(false),
             restoring: Mutex::new(false),
             malformed: Mutex::new(None),
@@ -168,6 +170,12 @@ impl Fake {
     }
 }
 impl VisibilityIo for Fake {
+    fn wait_phase(&self, _: &str, _: bool, _: std::time::Duration) -> Result<bool, String> {
+        let mut pending = self.maintenance_waits.lock().unwrap();
+        if *pending == 0 { return Ok(true); }
+        *pending -= 1;
+        Ok(false)
+    }
     fn request(&self, operation: &str, value: &Value) -> Result<Value, String> {
         self.calls
             .lock()

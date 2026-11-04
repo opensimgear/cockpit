@@ -49,12 +49,13 @@ fn wait(
         }
         guard()?;
         renew()?;
-        std::thread::sleep(Duration::from_millis(5));
-        progress = if restoring {
-            visibility.stop()?
-        } else {
-            visibility.poll()?
-        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        // Apply still checks cancellation and services outputs at its original
+        // cadence. A maintenance wake does not inspect visibility status.
+        let budget = if restoring { remaining } else { remaining.min(Duration::from_millis(5)) };
+        if visibility.wait_phase(restoring, budget)? {
+            progress = if restoring { visibility.stop()? } else { visibility.poll()? };
+        }
     }
 }
 impl NativeProfileHost {

@@ -219,6 +219,7 @@ impl Worker {
         let spawned=std::thread::Builder::new().name("device-visibility".into()).spawn(move||{
             let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||run(task,path,factory,observe,cancel,|id|{
                 if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.phase="active".into();status.message="Persistent visibility session active; restore before changing device assignments.".into();status.session_id=Some(id);}
+                completed.notify_all();
                 if let Some(changed) = &changed { changed(); }
             },reads,job))).unwrap_or_else(|_|Err("Visibility worker failed; inspect the durable recovery journal.".into()));
             if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.active=false;status.phase=if result.is_ok(){"restored"}else{"attention"}.into();status.message=result.err().unwrap_or("Owned visibility changes restored and verified.".into()).chars().take(512).collect();}
@@ -271,13 +272,14 @@ pub(super) struct Completion {
     completed: Arc<Condvar>,
 }
 impl Completion {
-    pub(super) fn wait(&self, job: &str, budget: Duration) -> Result<bool, String> {
+    pub(super) fn wait(&self, job: &str, restoring: bool, budget: Duration) -> Result<bool, String> {
+        let pending = |status: &Status| status.active && (restoring || status.phase != "active");
         let status = self.status.lock().unwrap_or_else(|p| p.into_inner());
         let (status, _) = self.completed.wait_timeout_while(status, budget, |status| {
-            status.as_ref().is_some_and(|status| status.job_id == job && status.active)
+            status.as_ref().is_some_and(|status| status.job_id == job && pending(status))
         }).unwrap_or_else(|p| p.into_inner());
-        status.as_ref().filter(|status| status.job_id == job).map(|status| !status.active)
-            .ok_or_else(|| "Native visibility job changed while waiting for restoration.".into())
+        status.as_ref().filter(|status| status.job_id == job).map(|status| !pending(status))
+            .ok_or_else(|| "Native visibility job changed while waiting for its phase.".into())
     }
 }
 impl Drop for Worker {

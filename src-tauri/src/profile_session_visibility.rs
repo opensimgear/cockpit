@@ -19,10 +19,14 @@ const KIND: &str = "controller-visibility";
 const RESOURCE: &str = "controller-visibility";
 pub(crate) trait VisibilityIo: Send + Sync {
     fn request(&self, operation: &str, value: &Value) -> Result<Value, String>;
+    fn wait_phase(&self, owner: &str, restoring: bool, budget: std::time::Duration) -> Result<bool, String>;
 }
 impl VisibilityIo for osg_controller_input::ControllerService {
     fn request(&self, operation: &str, value: &Value) -> Result<Value, String> {
         self.game_visibility(operation, value)
+    }
+    fn wait_phase(&self, owner: &str, restoring: bool, budget: std::time::Duration) -> Result<bool, String> {
+        self.wait_game_visibility_phase(owner, restoring, budget)
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -507,6 +511,10 @@ impl Visibility {
             return Err("Owned visibility ended; disarm profile delivery before cleanup.".into());
         }
         Ok(progress)
+    }
+    pub(crate) fn wait_phase(&self, restoring: bool, budget: std::time::Duration) -> Result<bool, String> {
+        let receipt = self.receipt.as_ref().ok_or("No visibility receipt to wait for.")?;
+        self.io.wait_phase(&receipt.visibility_owner, restoring, budget)
     }
     /// Poll asynchronous restore without repeatedly cancelling its recovery
     /// worker. A final guarded Stop releases the native owner after restoration.
