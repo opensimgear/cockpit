@@ -8,7 +8,7 @@ struct Snapshot {
     visible: Arc<Value>,
     owners: BTreeMap<String, String>,
     wakes: Vec<Weak<osg_streams::NativeWake>>,
-    inventory_wake: Weak<osg_streams::NativeWake>,
+    inventory_wakes: Vec<Weak<osg_streams::NativeWake>>,
 }
 pub(crate) struct Cache { snapshot: Mutex<Snapshot>, owned: AtomicBool }
 impl Cache {
@@ -16,7 +16,7 @@ impl Cache {
         let state = public_state(state);
         let visible = visible_state(&state);
         Self { snapshot: Mutex::new(Snapshot { state: Arc::new(state), visible: Arc::new(visible),
-            owners: BTreeMap::new(), wakes: vec![], inventory_wake: Weak::new() }), owned: AtomicBool::new(false) }
+            owners: BTreeMap::new(), wakes: vec![], inventory_wakes: vec![] }), owned: AtomicBool::new(false) }
     }
     pub(crate) fn watch(&self, wake: Arc<osg_streams::NativeWake>) {
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
@@ -31,7 +31,12 @@ impl Cache {
         (snapshot.state.clone(), snapshot.owners.clone())
     }
     fn watch_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
-        self.snapshot.lock().unwrap_or_else(|p| p.into_inner()).inventory_wake = Arc::downgrade(wake);
+        let mut snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
+        let weak = Arc::downgrade(wake);
+        snapshot.inventory_wakes.retain(|watch| watch.strong_count() > 0);
+        if snapshot.inventory_wakes.len() < MAX_WATCHERS && !snapshot.inventory_wakes.iter().any(|watch| watch.ptr_eq(&weak)) {
+            snapshot.inventory_wakes.push(weak);
+        }
     }
     pub(crate) fn visible_snapshot(&self) -> (Arc<Value>, BTreeMap<String, String>) {
         let snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
@@ -46,14 +51,14 @@ impl Cache {
             let mut snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
             let visible_changed = snapshot.visible.as_ref() != &visible;
             let changed = visible_changed || snapshot.owners != owners;
-            let inventory = snapshot.inventory_wake.upgrade().filter(|_| {
+            let inventory = (!snapshot.inventory_wakes.is_empty() && (
                 visible_changed && inventory_changed(&snapshot.state, &state)
                     || state["connected"] == true && crate::profile_resource_sources::hid_publication::freshness_restored(
                         snapshot.state["nativeSnapshotAtMs"].as_u64(),
                         state["nativeSnapshotAtMs"].as_u64(),
                         crate::profile_resource_sources::hid_publication::now_ms(),
                     )
-            });
+            )).then(|| snapshot.inventory_wakes.iter().filter_map(Weak::upgrade).collect::<Vec<_>>());
             if snapshot.state.as_ref() != &state { snapshot.state = Arc::new(state); }
             if visible_changed { snapshot.visible = Arc::new(visible); }
             snapshot.owners = owners;
@@ -62,7 +67,7 @@ impl Cache {
             (wakes, inventory)
         };
         for wake in wakes { wake.notify(); }
-        if let Some(wake) = inventory { wake.notify(); }
+        for wake in inventory.into_iter().flatten() { wake.notify(); }
     }
 }
 

@@ -235,8 +235,8 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
     let runtime = crate::observations::Runtime::new();
     let profile_wake = Arc::new(osg_streams::NativeWake::default());
     let initial = profile_wake.observed();
-    fleet.observe_inventory(&runtime, Some(&profile_wake)).unwrap();
-    assert!(fleet.observe_inventory(&runtime, None).is_err());
+    fleet.observe_inventory(&runtime, Some(&profile_wake), || {}).unwrap();
+    assert!(fleet.observe_inventory(&runtime, None, || {}).is_err());
     let broker = runtime.broker();
     let mut subscription = broker.subscribe("usb-inventory-test", "mcp", "usb.inventory").unwrap();
     assert_eq!(subscription.try_recv().unwrap().unwrap().revision, "1");
@@ -271,7 +271,7 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
     assert_ne!(profile_wake.observed(), present);
     fleet.shutdown();
     assert!(!broker.available_to("usb.inventory", "mcp"));
-    assert!(fleet.observe_inventory(&runtime, None).is_err());
+    assert!(fleet.observe_inventory(&runtime, None, || {}).is_err());
 }
 fn connect(fleet: &Fleet, path: &str) -> Value {
     fleet

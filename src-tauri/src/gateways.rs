@@ -377,6 +377,7 @@ impl GatewayManager {
         let configuration_gate = Arc::new(Mutex::new(()));
         let closed = Arc::new(AtomicBool::new(false));
         let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
+        let system_inventory = Arc::new(crate::system_inventory::Runtime::new(native));
         let host_inventory_wake = Arc::new(osg_streams::NativeWake::default());
         let (collect, project, collect_host, schedule) = crate::profile_resource_sources::collector(
             controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
@@ -404,7 +405,8 @@ impl GatewayManager {
             games.read_model_signal().watch_resources(profile_resources.projection_wake());
             controllers.watch_resource_inventory(&host_inventory_wake)
                 .expect("profile inventory owns the controller resource watch");
-            profile_resources.start_host_inventory(collect_host, host_inventory_wake)
+            let controller_system_inventory = system_inventory.clone();
+            profile_resources.start_host_inventory(collect_host, host_inventory_wake, move || controller_system_inventory.changed())
                 .expect("controller resource inventory worker");
         }
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
@@ -468,7 +470,8 @@ impl GatewayManager {
         if let Err(error) = profile_learning.observe(&observations) {
             eprintln!("Cannot start input learning observations: {error}");
         }
-        if let Err(error) = module_usb.observe_inventory(&observations, native.then(|| profile_resources.projection_wake())) {
+        let usb_system_inventory = system_inventory.clone();
+        if let Err(error) = module_usb.observe_inventory(&observations, native.then(|| profile_resources.projection_wake()), move || usb_system_inventory.changed()) {
             eprintln!("Cannot start USB inventory observations: {error}");
         }
         if let Err(error) = companion_host.observe_presence(&observations) {
@@ -489,7 +492,6 @@ impl GatewayManager {
         if let Err(error) = profile_activations.observe(&observations.broker(), companion_host.clone(), profile_admission_epoch.clone()) {
             eprintln!("Cannot start profile activation observations: {error}");
         }
-        let system_inventory = Arc::new(crate::system_inventory::Runtime::new(native));
         if let Err(error) = system_inventory.observe(&observations) {
             eprintln!("Cannot start supplemental inventory observations: {error}");
         }
@@ -1048,9 +1050,8 @@ impl GatewayManager {
         // learning and game admission. It only opens read-only native handles.
         if command == "system_inventory" {
             if self.closed.load(Ordering::Acquire) { return self.error("Cockpit gateway manager has closed.",None); }
-            return match self.system_inventory.request(&request, &self.controllers, self.module_usb.inventory_revision(), |sources| {
-                crate::system_inventory::controller_associations(sources,&self.cached_gateways(),
-                    &self.inventory.lock().unwrap_or_else(|p|p.into_inner()),&self.module_usb.snapshots())
+            return match self.system_inventory.request(&request, &self.controllers, |sources| {
+                self.system_controller_associations(sources)
             }) {
                 Ok(inventory) => json!({"ok":true,"state":{"systemInventory":inventory}}),
                 Err(error) => json!({"ok":false,"error":error}),
@@ -1644,6 +1645,7 @@ impl GatewayManager {
         adapter.watch_workspace(self.workspace.wake());
         if command == "connect" && self.profile_native {
             adapter.watch_resource_inventory(self.profile_resources.projection_wake());
+            adapter.watch_resource_inventory(self.system_inventory.wake());
         }
         request["gatewayId"] = json!(id);
         request.as_object_mut().unwrap().remove("backend");
@@ -1672,15 +1674,22 @@ impl GatewayManager {
         }
         if command=="connect"&&response["ok"]==true {let _=self.workspace.pause(&id,false);}
         if command=="disconnect"&&response["ok"]==true {let _=self.workspace.pause(&id,true);}
+        if matches!(command.as_str(), "connect" | "disconnect") { self.system_inventory.changed(); }
         self.workspace.changed();
         self.decorate(response, Some(&id))
     }
     pub(crate) fn system_inventory_changed(&self) { self.system_inventory.changed(); }
+    fn system_controller_associations(&self, sources: &osg_controller_input::registry::ResourceInventory) -> Vec<Value> {
+        let gateways = self.cached_gateways();
+        let ports = self.inventory.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        crate::system_inventory::controller_associations(sources, &gateways, &ports, &self.module_usb.snapshots())
+    }
 
     pub fn shutdown(&self) {
         if let Some(publisher) = &self.debug_inputs_observation { self.observations.broker().retire(publisher); }
         self.closed.store(true,Ordering::Release);
         self.workspace.shutdown();
+        self.system_inventory.shutdown();
         for adapter in self.sessions.lock().unwrap_or_else(|p|p.into_inner()).values(){adapter.set_workspace_owned(false);}
         self.profile_activations.stop_observation();
         self.profile_read_models.shutdown();

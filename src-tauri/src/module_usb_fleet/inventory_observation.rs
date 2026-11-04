@@ -20,6 +20,7 @@ impl Fleet {
         self: &Arc<Self>,
         runtime: &observations::Runtime,
         profile_wake: Option<&Arc<NativeWake>>,
+        system_changed: impl Fn() + Send + 'static,
     ) -> Result<(), String> {
         let mut slot = self.inventory_observation.lock().unwrap_or_else(|p| p.into_inner());
         if self.closed.load(Ordering::Acquire) { return Err("USB module fleet has stopped.".into()); }
@@ -67,6 +68,7 @@ impl Fleet {
                 }
                 if previous != rows {
                     revision.fetch_add(1, Ordering::AcqRel);
+                    system_changed();
                     if active.publish_latest_state(active.generation(), json!({}), runtime.captured_us(), TOPIC).is_err() { break; }
                     previous = rows;
                 }

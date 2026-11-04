@@ -41,6 +41,7 @@ async function harness(send, { nativeApp = true, overrides = {} } = {}) {
       if (name === '@tauri-apps/api/core') return { isTauri: () => nativeApp, invoke: async command => { invocations.push(command); } };
       if (modules.has(name)) return modules.get(name);
       if (name === './gateway') return { gatewayRequest: async request => { requests.push(plain(request));return native(request); } };
+      if (name === './streams/shared') return { SharedObservations: class { subscribe() {} close() {} } };
       throw Error(name);
     },
   });
@@ -60,6 +61,8 @@ test('Settings owns driver tools and machine enablement while application scope 
   assert.deepEqual(h.requests, []);
   await h.handlers.refresh();
   assert.deepEqual(h.requests.map(request=>request.command),['system_inventory','controller_visibility_status','profile_local_settings_get','profile_desktop_status']);h.requests.length=0;
+  await h.handlers.refresh(true);
+  assert.deepEqual(h.requests[0], { command:'system_inventory', refresh:true });h.requests.length=0;
   await h.handlers.enableDesktop(true);
   assert.deepEqual(h.requests, [
     { command: 'profile_local_settings_save',scope:'desktop',expectedSettingsRevision:`sha256:${'1'.padStart(64,'0')}`,expectedActiveOwner:null,settings:{enabled:true,scope:{kind:'application'}} },

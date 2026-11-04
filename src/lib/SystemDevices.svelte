@@ -64,10 +64,13 @@
     const target = mode === 'topology' ? '.topology-viewport' : `[data-component-id="${CSS.escape(selectedId)}"]`;
     inventoryElement?.querySelector<HTMLElement>(target)?.focus();
   }
-  async function refresh() {
+  async function refresh(inspect = false) {
     if (!controller || busy) return;
     busy = true;
-    const task = controller.refresh();
+    const task = (async () => {
+      if (inspect) await gatewayRequest({ command: 'system_inventory', refresh: true, limit: 1 });
+      return controller.refresh();
+    })();
     refreshTask = task;
     try { await task; error = ''; }
     catch (e) { error = String(e); }
@@ -161,7 +164,7 @@
 </script>
 
 {#snippet refreshButton()}
-  <button class="secondary-button" disabled={busy} onclick={refresh}><Icon name="refresh" size={14}/>Refresh</button>
+  <button class="secondary-button" disabled={busy} onclick={() => refresh(true)}><Icon name="refresh" size={14}/>Refresh</button>
 {/snippet}
 
 <section aria-label="System devices">

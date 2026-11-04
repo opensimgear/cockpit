@@ -87,5 +87,17 @@ impl Runtime {
 }
 impl Drop for Runtime {fn drop(&mut self){self.shutdown();}}
 impl GatewayManager {
-    pub fn start_workspace(self:&Arc<Self>)->Result<(),String>{self.workspace.start(Arc::downgrade(self),self.profile_native)}
+    pub fn start_workspace(self:&Arc<Self>)->Result<(),String>{
+        self.workspace.start(Arc::downgrade(self),self.profile_native)?;
+        if self.profile_native {
+            let manager = Arc::downgrade(self);
+            self.system_inventory.start(move || {
+                let Some(manager) = manager.upgrade() else { return false; };
+                manager.system_inventory.refresh(&manager.controllers,
+                    |sources| manager.system_controller_associations(sources));
+                true
+            })?;
+        }
+        Ok(())
+    }
 }

@@ -13,6 +13,7 @@ impl Runtime {
         &self,
         collect: Collect,
         wake: Arc<NativeWake>,
+        inventory_changed: impl Fn() + Send + 'static,
     ) -> Result<(), String> {
         let mut worker = self.host_worker.lock().unwrap_or_else(|p| p.into_inner());
         if worker.is_some() || self.stop.load(Ordering::Acquire) {
@@ -48,6 +49,7 @@ impl Runtime {
                         Self::adopt_prepared(&state, batches);
                     }
                     Self::persist(&state, &persistence);
+                    inventory_changed();
                     while !stopped.load(Ordering::Acquire) && signal.wait_scheduled(observed, None)
                     {
                     }
@@ -135,9 +137,9 @@ mod tests {
             Vec::new()
         });
         runtime
-            .start_host_inventory(collect.clone(), wake.clone())
+            .start_host_inventory(collect.clone(), wake.clone(), || {})
             .unwrap();
-        assert!(runtime.start_host_inventory(collect, wake.clone()).is_err());
+        assert!(runtime.start_host_inventory(collect, wake.clone(), || {}).is_err());
         assert_eq!(received.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
         assert_eq!(
             received.recv_timeout(Duration::from_millis(80)),

@@ -8,6 +8,7 @@
   import { desktopStatus, type DesktopStatus } from './profile-desktop-runtime';
   import type { VisibilityStatus } from './visibility';
   import type { NativeSystemInventory } from './system-inventory-providers';
+  import { SharedObservations } from './streams/shared';
 
   const settingsRequest=guardUiSettings(gatewayRequest);
   let visibility = $state.raw<VisibilityStatus | null>(null);
@@ -31,14 +32,16 @@
     input.checked = current();
   }
 
-  async function refresh() {
+  async function loadInventory(inspect = false) {
+    const result = await gatewayRequest({ command: 'system_inventory', ...(inspect ? { refresh: true } : {}) });
+    if (!result.systemInventory) throw new Error('Virtual controller inspection is unavailable.');
+    if (!disposed) inventory = result.systemInventory;
+  }
+  async function refresh(inspect = false) {
     if (busy) return;
     busy = 'refresh'; error = '';
     const results = await Promise.allSettled([
-      gatewayRequest({ command: 'system_inventory' }).then(result => {
-        if (!result.systemInventory) throw new Error('Virtual controller inspection is unavailable.');
-        if (!disposed) inventory = result.systemInventory;
-      }),
+      loadInventory(inspect),
       gatewayRequest({ command: 'controller_visibility_status' }).then(result => {
         if (!result.controllers?.visibility) throw new Error('Device hiding settings are unavailable.');
         if (!disposed) visibility = result.controllers.visibility;
@@ -68,13 +71,20 @@
     catch (reason) { if (!disposed) error = reason instanceof Error ? reason.message : String(reason); }
     finally { if (!disposed) busy = ''; }
   }
-  onMount(() => { void refresh(); return () => { disposed = true; }; });
+  onMount(() => {
+    const observations = new SharedObservations();
+    observations.subscribe('system.inventory', state => {
+      if (state.status === 'ready') void loadInventory().catch(reason => { if (!disposed) error = String(reason); });
+    });
+    void refresh();
+    return () => { disposed = true; observations.close(); };
+  });
 </script>
 
 <section class="output-settings" aria-label="Controller and desktop output settings">
   <header class="output-header">
     <div><h2>Device management</h2><p>Set up this computer once. Choose mappings and device hiding in Profiles.</p></div>
-    <button class="secondary-button" disabled={!!busy} onclick={refresh}><Icon name="refresh" size={14} />{busy === 'refresh' ? 'Refreshing…' : 'Refresh'}</button>
+    <button class="secondary-button" disabled={!!busy} onclick={() => refresh(true)}><Icon name="refresh" size={14} />{busy === 'refresh' ? 'Refreshing…' : 'Refresh'}</button>
   </header>
   {#if error}<p class="setup-error" role="alert"><Icon name="alert" size={16} /><span>{error}</span></p>{/if}
   <section class="panel output-card" aria-label="Virtual controllers">

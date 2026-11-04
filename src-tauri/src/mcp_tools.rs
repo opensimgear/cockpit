@@ -494,7 +494,7 @@ impl Tools {
             ),
             "system_inventory" => forward(
                 "system_inventory",
-                &["offset", "limit", "observedAt"],
+                &["offset", "limit", "observedAt", "refresh"],
                 Some("systemInventory"),
             ),
             "gateways_list" => {
