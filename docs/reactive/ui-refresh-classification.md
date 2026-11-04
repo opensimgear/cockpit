@@ -54,8 +54,13 @@ Run the idle trace against the running native Cockpit with
 `node --test tests/ui/reactive-idle-native.mjs`. By default it visits each main
 view sequentially. Set `OSG_IDLE_VIEWS` to a comma-separated list of view names
 for a focused run. The trace records gateway commands and observation
-transport requests separately. Browser development, companion applications,
-modal workflows and physical deadlines need their own evidence.
+transport requests separately. For browser development, start `pnpm web:dev`
+with the native gateway service and set
+`OSG_IDLE_BROWSER_URL=http://127.0.0.1:5173/`. The browser trace verifies the
+workspace observation baseline and allows startup discovery to settle for
+45 seconds by default. Set `OSG_IDLE_BROWSER_WARMUP_MS` to override that wait.
+Companion applications, modal workflows and physical deadlines need their
+own evidence.
 
 An initial 60,104 ms run in the Windows development Cockpit recorded zero
 `system_inventory` reads, 23 `companion_inventory` reads, 23
@@ -90,3 +95,12 @@ observation requests.
 | Activity | 60,105 ms |
 | Debug | 60,115 ms |
 | Settings | 60,108 ms |
+
+The same eight main views were sampled through the browser development
+bridge on Windows using Edge and an isolated Cockpit database. The first
+Overview sample overlapped cold discovery and recorded 361 gateway requests
+and 41 observation requests, with the last gateway call at 36,915 ms.
+Devices, Profiles, Games, Companions, Activity, Debug and Settings each
+recorded zero requests after startup. A second Overview sample confirmed
+the workspace observation baseline and recorded zero requests in 60,112 ms
+against the warmed gateway service.
