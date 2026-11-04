@@ -58,6 +58,25 @@ function harness(options = {}) {
   return { controller, state, requests, failures, custom, changes, emitGames,emitControllers,emitResources,emitRuntime,runtimeSubscription,subscription,controllerSubscription, component: id => controller.snapshot.components.find(component => component.id === id) };
 }
 
+test('workspace updates reproject gateways and discovery loss without provider requests', async () => {
+ const h = harness({gateways:[gateway()]});
+ await h.controller.workspaceChanged();
+ assert.equal(h.requests.length, 0);
+ await h.controller.refresh();
+ assert.equal(h.component('gateway:gateway-one').presence, 'connected');
+ h.requests.length = 0;
+ h.state.gateways = [];
+ h.state.gatewayError = 'Discovery unavailable';
+ await h.controller.workspaceChanged();
+ assert.equal(h.component('gateway:gateway-one').presence, 'unknown');
+ assert.match(h.controller.snapshot.diagnostics.join(' '), /Discovery unavailable/);
+ h.state.gatewayError = '';
+ await h.controller.workspaceChanged();
+ assert.equal(h.component('gateway:gateway-one').presence, 'offline');
+ assert.equal(h.requests.length, 0);
+ h.controller.dispose();
+});
+
 test('native supplemental pages preserve the exact snapshot and never omit hidden records', async () => {
  const h=harness();
  const hidden=Array.from({length:35},(_,i)=>({id:'pn-'+i,name:'Hidden '+i,instanceId:'HID/'+i,present:true,hidden:true,diagnostics:[]}));

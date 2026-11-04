@@ -163,6 +163,10 @@ export class SystemInventoryController {
       return snapshot;
     });
   }
+  workspaceChanged(): Promise<SystemSnapshot> {
+    if (this.disposed || !this.readyProjection) return Promise.resolve(this.snapshot);
+    return this.projectCurrent();
+  }
   async refreshCompanions(): Promise<void> {
     if (this.disposed) return;
     this.companionVersion++;
@@ -205,8 +209,7 @@ export class SystemInventoryController {
     this.pending = pending; return pending;
   }
   private async collect(epoch: number, includeCompanions: boolean): Promise<SystemSnapshot> {
-    const discoveryError = this.gatewayError();
-    const now = Date.now(), diagnostics: string[] = discoveryError ? [`Gateway discovery: ${discoveryError}`] : [], complete: string[] = discoveryError ? ['host'] : ['host', 'gateways'];
+    const now = Date.now(), diagnostics: string[] = [], complete = ['host'];
     // Native PnP/transport correlation reads the controller and USB inventories.
     // Capture those first so startup does not publish their uncorrelated aliases.
     const controllers=Promise.resolve(this.controllers(now)),usb=this.usb(now);
@@ -255,6 +258,9 @@ export class SystemInventoryController {
     catch (error) { integrationError = 'integrations: ' + message(error); }
     if (this.disposed || games !== this.gamesState || runtime !== this.runtimeState) return this.snapshot;
     const complete = [...this.projectionBase.complete], diagnostics = [...this.projectionBase.diagnostics];
+    const discoveryError = this.gatewayError();
+    if (discoveryError) diagnostics.push(`Gateway discovery: ${discoveryError}`);
+    else complete.push('gateways');
     const companions = this.companionResult;
     if (companions?.status === 'fulfilled' && new Set(companions.value.observations.map(row => row.id)).size === companions.value.observations.length) {
       this.captures.set('companions', companions.value);

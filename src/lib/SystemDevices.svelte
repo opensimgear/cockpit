@@ -4,7 +4,7 @@
   const devicesMode = uiPreference('devices-mode');
   import PageHeader from './PageHeader.svelte';
 
-  import { onMount, tick, type Snippet } from 'svelte';
+  import { onMount, tick, untrack, type Snippet } from 'svelte';
   import { companionObservations } from './companion-observations';
   import { observeProfileResources } from './profile-resources-shared';
   import { slide } from 'svelte/transition';
@@ -75,6 +75,13 @@
       if (!quiet) busy = false;
     }
   }
+  $effect(() => {
+    void entries;
+    void gatewayError;
+    untrack(() => {
+      void controller?.workspaceChanged().catch(reason => { error = String(reason); });
+    });
+  });
   function setMode(value: string) { if(value === 'list' || value === 'topology') void devicesMode.save(value).catch(reason => { error = String(reason); }); }
   function canCleanup(component: SystemComponent) {
     const current = snapshot.components.find(item => item.id === component.id);
