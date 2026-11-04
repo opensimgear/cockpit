@@ -51,13 +51,34 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].id, "x-plane-12");
     let checked = candidates.pop().unwrap()
-        .verify(&[game], |_| "setup".into(), |_| true).without_renewal();
+        .verify(std::slice::from_ref(&game), |_| "setup".into(), |_| true).without_renewal();
     let poll = tracker.begin_polls(vec![checked]).pop().unwrap();
     tracker.apply_poll(poll.read());
     let entry = &tracker.entries["x-plane-12"];
     assert_eq!(entry.observed, observed);
     assert_eq!(entry.telemetry.as_ref().unwrap().packet, json!(42));
     assert!(tracker.entries["x-plane-11"].telemetry.is_none());
+    let games = [game, other];
+    let maintenance = tracker.poll_candidates().into_iter()
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| true)).collect();
+    assert!(tracker.begin_polls(maintenance).is_empty(), "Quiet X-Plane readers need no maintenance projection");
+    assert!(tracker.entries["x-plane-12"].observed >= observed);
+    let receipt = Arc::new(());
+    tracker.inspect("x-plane-11", "quiet-inspector", vec!["engine_1_rpm".into()], Some(Arc::downgrade(&receipt))).unwrap();
+    let _ = tracker.capture_candidates();
+    drop(receipt);
+    let release = tracker.poll_candidates().into_iter()
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| true)).collect();
+    let mut release = tracker.begin_polls(release);
+    assert_eq!(release.len(), 1, "Closing a quiet inspection must still update native demand");
+    let poll = release.pop().unwrap();
+    assert_eq!(poll.id, "x-plane-11");
+    assert!(poll.inspection.is_empty());
+    tracker.apply_poll(poll.read());
+    let exited = tracker.poll_candidates().into_iter()
+        .map(|candidate| candidate.verify(&games, |_| "setup".into(), |_| false)).collect();
+    assert!(tracker.begin_polls(exited).is_empty());
+    assert!(tracker.entries["x-plane-12"].telemetry.is_none());
 }
 
 #[test]

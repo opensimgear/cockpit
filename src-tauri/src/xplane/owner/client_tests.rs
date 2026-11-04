@@ -32,13 +32,14 @@ fn open(connection: &Value, outputs: Vec<Value>) -> Result<Source, String> {
 }
 
 impl Source {
-    pub(crate) fn inspector_fixture() -> (Self, impl FnOnce(u16)) {
+    pub(crate) fn inspector_fixture() -> (Self, impl Fn(u16)) {
         let (socket, connection) = connection();
         let mut source = open(&connection, vec![]).unwrap();
-        let mut snapshot = source.native_snapshot().unwrap();
+        let snapshot = source.native_snapshot().unwrap();
         let shared = source.owner.shared.clone();
         (source, move |counter| {
-            let _socket = socket;
+            let _socket = &socket;
+            let mut snapshot = snapshot.clone();
             snapshot.counter = counter;
             shared.publish(snapshot, Instant::now()).unwrap();
         })

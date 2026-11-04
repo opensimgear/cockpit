@@ -10,6 +10,7 @@ pub(crate) struct Qualification {
     enabled: bool,
     process: Option<ProcessIdentity>,
     qualified: Option<bool>,
+    capture_changed: bool,
 }
 impl Qualification {
     pub(crate) fn without_renewal(mut self) -> Self {
@@ -109,6 +110,7 @@ impl Tracker {
                     enabled: entry.enabled,
                     process: entry.process.clone(),
                     qualified: None,
+                    capture_changed: changed,
                 })
             })
             .collect()
@@ -142,6 +144,18 @@ impl Tracker {
                 self.publish_visible(&qualification.id);
                 continue;
             }
+            let inspection = entry.inspection.selection(Instant::now()).to_vec();
+            if !qualification.capture_changed && entry.capture_watch.is_some() {
+                if let Some(Reader::Xplane(source)) = &entry.reader {
+                    // The native owner publishes expiry and terminal changes.
+                    // Maintenance still applies inspection lease changes.
+                    let ids = crate::game_channels::native_ids(&entry.integration, &inspection);
+                    if source.inspection_matches(&ids) {
+                        self.publish_visible(&qualification.id);
+                        continue;
+                    }
+                }
+            }
             let Some(reader) = entry.reader.take() else {
                 self.publish_visible(&qualification.id);
                 continue;
@@ -160,7 +174,7 @@ impl Tracker {
                 generation: entry.generation,
                 signature: entry.signature.clone(),
                 integration: entry.integration.clone(),
-                inspection: entry.inspection.selection(Instant::now()).to_vec(),
+                inspection,
                 now_ms,
                 at: Instant::now(),
                 reader,

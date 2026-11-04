@@ -131,6 +131,9 @@ impl Source {
         self.inspection = inspection;
         Ok(())
     }
+    pub(crate) fn inspection_matches(&self, sorted_ids: &[String]) -> bool {
+        self.inspection == sorted_ids
+    }
     fn selected_ids(
         catalogue: &Catalogue,
         outputs: &[Value],
