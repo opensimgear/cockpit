@@ -50,6 +50,7 @@ pub(crate) struct Runtime {
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
     inventory_wake: Arc<NativeWake>,
+    usb_projection_wake: Arc<NativeWake>,
     observation_worker: Mutex<Option<JoinHandle<()>>>,
     host_worker: Mutex<Option<host_observation::Worker>>,
     collect: Collect,
@@ -425,7 +426,17 @@ impl Runtime {
         Ok(state.registry.validate_preparation(preparation)?.route)
     }
 
+    #[cfg(test)]
     pub(crate) fn new(root: Option<PathBuf>, collect: Collect, native: bool) -> Self {
+        Self::new_with_usb_projection(root, collect.clone(), collect, native)
+    }
+
+    pub(crate) fn new_with_usb_projection(
+        root: Option<PathBuf>,
+        collect: Collect,
+        project_usb: Collect,
+        native: bool,
+    ) -> Self {
         let store = root.map(Store::new);
         let loaded = store
             .as_ref()
@@ -464,6 +475,7 @@ impl Runtime {
         let capture_gate = Arc::new(Mutex::new(()));
         let persistence_gate = Arc::new(Mutex::new(()));
         let inventory_wake = Arc::new(NativeWake::default());
+        let usb_projection_wake = Arc::new(NativeWake::default());
         let worker = if native {
             let state = state.clone();
             let stopped = stop.clone();
@@ -473,14 +485,21 @@ impl Runtime {
             let gate = capture_gate.clone();
             let persistence = persistence_gate.clone();
             let wake = inventory_wake.clone();
+            let usb_wake = usb_projection_wake.clone();
             Some(
                 thread::Builder::new()
                     .name("profile-resource-inventory".into())
                     .spawn(move || {
                         wake.bind_thread(thread::current())
                             .expect("resource inventory wake has one owner");
+                        usb_wake.bind_thread(thread::current())
+                            .expect("USB projection wake has one owner");
+                        let mut seen_discovery = wake.observed();
+                        let mut deadline = Instant::now();
                         while !stopped.load(Ordering::Acquire) {
                             let observed = wake.observed();
+                            let usb_observed = usb_wake.observed();
+                            let discover = observed != seen_discovery || Instant::now() >= deadline;
                             {
                                 let _collector =
                                     collectors.lock().unwrap_or_else(|p| p.into_inner());
@@ -488,7 +507,8 @@ impl Runtime {
                                     break;
                                 }
                                 let revision = revisions.fetch_add(1, Ordering::AcqRel) + 1;
-                                let batches = Self::prepare_batches(collect(revision));
+                                let source = if discover { &collect } else { &project_usb };
+                                let batches = Self::prepare_batches(source(revision));
                                 // Discovery may block; the live reader must keep
                                 // publishing and renewing while it is in flight.
                                 let _capture = gate.lock().unwrap_or_else(|p| p.into_inner());
@@ -500,8 +520,11 @@ impl Runtime {
                             Self::persist(&state, &persistence);
                             // Providers that still lack notifications share the
                             // existing recovery interval.
-                            let deadline = Instant::now() + Duration::from_secs(1);
-                            while !stopped.load(Ordering::Acquire) {
+                            if discover {
+                                seen_discovery = observed;
+                                deadline = Instant::now() + Duration::from_secs(1);
+                            }
+                            while !stopped.load(Ordering::Acquire) && usb_wake.observed() == usb_observed {
                                 let remaining = deadline.saturating_duration_since(Instant::now());
                                 if remaining.is_zero() || !wake.wait(observed, remaining) {
                                     break;
@@ -519,6 +542,7 @@ impl Runtime {
             stop,
             worker: Mutex::new(worker),
             inventory_wake,
+            usb_projection_wake,
             observation_worker: Mutex::new(None),
             host_worker: Mutex::new(None),
             collect,
@@ -530,6 +554,9 @@ impl Runtime {
     }
     pub(crate) fn inventory_wake(&self) -> &Arc<NativeWake> {
         &self.inventory_wake
+    }
+    pub(crate) fn usb_projection_wake(&self) -> &Arc<NativeWake> {
+        &self.usb_projection_wake
     }
     /// Explicit native coordinator refresh. Cached capture/validation and native
     /// browser reads never call this; acquisitions opt into bounded provider I/O.

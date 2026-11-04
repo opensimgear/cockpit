@@ -393,6 +393,13 @@ impl Fleet {
             .map(|(key, slot)| snapshot(key, slot, state.diagnostic.as_deref()))
             .collect()
     }
+    pub(crate) fn cached_inventory(&self) -> Result<Vec<SlotSnapshot>, String> {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(error) = &state.diagnostic {
+            return Err(error.clone());
+        }
+        Ok(state.slots.iter().map(|(key, slot)| snapshot(key, slot, None)).collect())
+    }
     pub(crate) fn output_activity(&self)->bool{
         if self.endpoint_activity.active(){return true;}
         self.state.lock().unwrap_or_else(|p|p.into_inner()).slots.values().any(|slot|slot.service.as_ref().is_some_and(|service|service.output_activity())||slot.retiring_service.as_ref().is_some_and(|service|service.output_activity()))

@@ -76,10 +76,10 @@ pub(crate) fn collector(
     panel: Panel,
     usb: Arc<crate::module_usb_fleet::Fleet>,
     native: bool,
-) -> (Collect, Collect) {
+) -> (Collect, Collect, Collect) {
     let host_usb_evidence = Arc::new(Mutex::new(HostUsbEvidence::default()));
     let host_controllers = controllers.clone();
-    let sources = Mutex::new(Sources {
+    let sources = Arc::new(Mutex::new(Sources {
         session: uuid::Uuid::new_v4().to_string(),
         controllers,
         companions,
@@ -94,18 +94,25 @@ pub(crate) fn collector(
         can_retained: BTreeMap::new(),
         refreshing: Arc::new(Mutex::new(BTreeSet::new())),
         catalogues: BTreeMap::new(),
-    });
+    }));
+    let cached_sources = sources.clone();
     let aggregate = Arc::new(move |revision| {
         sources
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .collect(revision)
     });
+    let project_usb = Arc::new(move |revision| {
+        cached_sources
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .collect_with_usb(revision, false)
+    });
     let host = Arc::new(move |revision| {
         let evidence = host_usb_evidence.lock().unwrap_or_else(|p| p.into_inner());
         vec![("host-controllers".into(), collect_host(&host_controllers, &evidence, revision))]
     });
-    (aggregate, host)
+    (aggregate, project_usb, host)
 }
 fn evidence(kind: EvidenceKind, value: String) -> IdentityEvidence {
     IdentityEvidence { kind, value }
@@ -126,6 +133,10 @@ include!("games/profiles/inventory_collection.rs");
 include!("games/profiles/inventory_devices.rs");
 include!("games/profiles/inventory_host.rs");
 include!("games/profiles/inventory_can.rs");
+
+pub(crate) fn usb_inventory_entry(slot: crate::module_usb_fleet::SlotSnapshot) -> Value {
+    json!(Sources::usb_observation(slot))
+}
 
 fn hex(value: &Option<String>) -> Option<u16> {
     value

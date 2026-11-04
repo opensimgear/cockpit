@@ -252,7 +252,11 @@ impl Sources {
     }
 
     fn collect(&mut self, revision: u64) -> Vec<(String, Result<ProviderBatch, String>)> {
-        let usb_result = self.usb_observations();
+        self.collect_with_usb(revision, true)
+    }
+
+    fn collect_with_usb(&mut self, revision: u64, discover_usb: bool) -> Vec<(String, Result<ProviderBatch, String>)> {
+        let usb_result = self.usb_observations(discover_usb);
         let usb_slots = self.usb.snapshots();
         let verified = usb_slots
             .iter()

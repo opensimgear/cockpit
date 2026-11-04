@@ -1,7 +1,11 @@
 impl Sources {
-    fn usb_observations(&mut self) -> Result<Vec<Observation>, String> {
+    fn usb_observations(&mut self, discover: bool) -> Result<Vec<Observation>, String> {
         let slots = if self.native {
-            self.usb.scan_for_inventory()?
+            if discover {
+                self.usb.scan_for_inventory()?
+            } else {
+                self.usb.cached_inventory()?
+            }
         } else {
             self.usb.snapshots()
         };

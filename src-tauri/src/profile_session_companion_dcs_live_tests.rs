@@ -287,7 +287,7 @@ impl DcsLive {
             Arc::new(|| panic!("No physical serial enumeration")),
             false,
         ));
-        let (collect, _) = crate::profile_resource_sources::collector(
+        let (collect, _, _) = crate::profile_resource_sources::collector(
             controllers.clone(),
             provider,
             companions.clone(),

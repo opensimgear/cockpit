@@ -1,4 +1,4 @@
-use super::Fleet;
+use super::{Fleet, SlotSnapshot};
 use crate::observations;
 use osg_streams::{NativeWake, TopicSpec};
 use serde_json::{json, Value};
@@ -16,7 +16,11 @@ pub(super) struct Observation {
 }
 
 impl Fleet {
-    pub(crate) fn observe_inventory(self: &Arc<Self>, runtime: &observations::Runtime) -> Result<(), String> {
+    pub(crate) fn observe_inventory(
+        self: &Arc<Self>,
+        runtime: &observations::Runtime,
+        profile_wake: Option<&Arc<NativeWake>>,
+    ) -> Result<(), String> {
         let mut slot = self.inventory_observation.lock().unwrap_or_else(|p| p.into_inner());
         if self.closed.load(Ordering::Acquire) { return Err("USB module fleet has stopped.".into()); }
         let broker = runtime.broker();
@@ -29,19 +33,29 @@ impl Fleet {
         let cancelled = stop.clone();
         let signal = wake.clone();
         let revision = self.inventory_revision.clone();
-        let initial = inventory_signature(self);
+        let profile_wake = profile_wake.map(Arc::downgrade);
+        let initial = self.snapshots();
+        let mut previous = inventory_signature(&initial);
+        let mut previous_profiles = profile_wake.as_ref().map(|_| profile_signature(&initial));
         let fleet = Arc::downgrade(self);
         let runtime = runtime.clone();
         let active = publisher.clone();
         let worker_broker = broker.clone();
         let worker = thread::Builder::new().name("usb-inventory-observation".into()).spawn(move || {
             let _ = signal.bind_thread(thread::current());
-            let mut previous = initial;
             while !cancelled.load(Ordering::Acquire) {
                 let observed = signal.observed();
                 let Some(fleet) = fleet.upgrade() else { break; };
-                let rows = inventory_signature(&fleet);
+                let slots = fleet.snapshots();
                 drop(fleet);
+                let rows = inventory_signature(&slots);
+                if let Some(wake) = profile_wake.as_ref().and_then(|wake| wake.upgrade()) {
+                    let profiles = profile_signature(&slots);
+                    if previous != rows || previous_profiles.as_ref() != Some(&profiles) {
+                        previous_profiles = Some(profiles);
+                        wake.notify();
+                    }
+                }
                 if previous != rows {
                     revision.fetch_add(1, Ordering::AcqRel);
                     if active.publish_latest_state(active.generation(), json!({}), runtime.captured_us(), TOPIC).is_err() { break; }
@@ -59,13 +73,17 @@ impl Fleet {
     }
 }
 
-fn inventory_signature(fleet: &Fleet) -> Vec<Value> {
-    fleet.snapshots().iter().map(|slot| {
+fn inventory_signature(slots: &[SlotSnapshot]) -> Vec<Value> {
+    slots.iter().map(|slot| {
         let mut row = slot.summary_value();
         // A timestamp alone must not wake every Devices consumer.
         row["snapshot"].as_object_mut().expect("summary snapshot").remove("observedAtMs");
         row
     }).collect()
+}
+
+fn profile_signature(slots: &[SlotSnapshot]) -> Vec<Value> {
+    slots.iter().cloned().map(crate::profile_resource_sources::usb_inventory_entry).collect()
 }
 
 impl Drop for Observation {

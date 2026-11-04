@@ -233,8 +233,10 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
     let (fleet, ports, _) = fixture(vec![], false);
     let fleet = Arc::new(fleet);
     let runtime = crate::observations::Runtime::new();
-    fleet.observe_inventory(&runtime).unwrap();
-    assert!(fleet.observe_inventory(&runtime).is_err());
+    let profile_wake = Arc::new(osg_streams::NativeWake::default());
+    let initial = profile_wake.observed();
+    fleet.observe_inventory(&runtime, Some(&profile_wake)).unwrap();
+    assert!(fleet.observe_inventory(&runtime, None).is_err());
     let broker = runtime.broker();
     let mut subscription = broker.subscribe("usb-inventory-test", "mcp", "usb.inventory").unwrap();
     assert_eq!(subscription.try_recv().unwrap().unwrap().revision, "1");
@@ -252,6 +254,8 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(fleet.inventory_revision(), 1);
+    let present = profile_wake.observed();
+    assert_ne!(present, initial);
     ports.lock().unwrap().clear();
     fleet.scan().unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -264,9 +268,10 @@ fn usb_inventory_observation_reports_presence_changes_without_repeated_scans() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(fleet.inventory_revision(), 2);
+    assert_ne!(profile_wake.observed(), present);
     fleet.shutdown();
     assert!(!broker.available_to("usb.inventory", "mcp"));
-    assert!(fleet.observe_inventory(&runtime).is_err());
+    assert!(fleet.observe_inventory(&runtime, None).is_err());
 }
 fn connect(fleet: &Fleet, path: &str) -> Value {
     fleet
