@@ -79,10 +79,12 @@ pub(super) enum Reader {
         guard: dcs_profile::DcsCatalogueGuard,
         connection: Value,
         module: String,
+        resolved_aircraft: Option<String>,
         catalogue: Value,
         physics: Option<crate::dcs_physics::Source>,
         physics_retry: Instant,
         physics_error: Option<String>,
+        capture_dirty: bool,
     },
     Rally {
         source: Box<dyn game_telemetry::Source>,
@@ -95,6 +97,10 @@ pub(super) enum CaptureWatch {
     Assetto { _watch: crate::acr_windows::Watch },
     Xplane {
         _watch: osg_streams::NativeWatch<crate::xplane::NativeSnapshot, crate::xplane::NativeSnapshot>,
+    },
+    Dcs {
+        _bios: osg_streams::NativeWatch<dcs_bios::decoded::Snapshot, dcs_bios::decoded::Snapshot>,
+        _ownship: Option<osg_streams::NativeWatch<crate::dcs_physics::Snapshot, crate::dcs_physics::Snapshot>>,
     },
 }
 impl Reader {
@@ -132,9 +138,11 @@ impl Reader {
                     guard,
                     connection: connection.clone(),
                     module: module.clone(),
+                    resolved_aircraft: None,
                     catalogue,
                     physics,
                     physics_error,
+                    capture_dirty: false,
                     physics_retry: Instant::now() + Duration::from_secs(2),
                 })
             }
@@ -172,7 +180,16 @@ impl Reader {
                 .map(|watch| watch.map(|watch| CaptureWatch::Assetto { _watch: watch })),
             Self::Xplane(source) => source.watch(wake)
                 .map(|watch| Some(CaptureWatch::Xplane { _watch: watch })),
-            Self::Dcs { .. } => Ok(None),
+            Self::Dcs { source, physics, .. } => Ok(Some(CaptureWatch::Dcs {
+                _bios: source.watch(wake.clone())?,
+                _ownship: physics.as_ref().and_then(|physics| physics.view().watch(wake).ok()),
+            })),
+        }
+    }
+    pub(super) fn take_capture_change(&mut self) -> bool {
+        match self {
+            Self::Dcs { capture_dirty, .. } => std::mem::take(capture_dirty),
+            _ => false,
         }
     }
     pub(super) fn inspect(&mut self, game: &str, ids: &[String]) -> Result<(), String> {
@@ -192,17 +209,22 @@ impl Reader {
                 guard,
                 connection,
                 module,
+                resolved_aircraft,
                 catalogue,
                 physics,
                 physics_retry,
                 physics_error,
+                capture_dirty,
             } => {
                 guard.validate(false)?;
                 decoder.accept_shared(source.snapshot()?)?;
                 let snapshot = decoder.snapshot(now_ms);
-                if let Some(aircraft) = snapshot.aircraft.as_ref().filter(|_| snapshot.fresh) {
+                if let Some(aircraft) = snapshot.aircraft.as_ref()
+                    .filter(|aircraft| snapshot.fresh && resolved_aircraft.as_ref() != Some(*aircraft))
+                {
                     let path = Path::new(connection["cataloguePath"].as_str().unwrap());
                     let current = dcs_profile::resolve_aircraft_module(path, aircraft)?;
+                    *resolved_aircraft = Some(aircraft.clone());
                     if current != *module {
                         let next = dcs_profile::passive_telemetry_sources(
                             path,
@@ -214,6 +236,7 @@ impl Reader {
                         *guard = next.1;
                         *catalogue = next.2;
                         *module = current;
+                        *capture_dirty = true;
                         let mut capture = Capture::export("dcs", &snapshot);
                         capture.status = "waiting".into();
                         capture.values.clear();
@@ -225,12 +248,14 @@ impl Reader {
                     // The completed worker has already released its socket.
                     // Preserve BIOS while retrying this independent failed owner.
                     *physics = None;
+                    *capture_dirty = true;
                     *physics_retry = Instant::now() + Duration::from_secs(2);
                 }
                 if physics.is_none() && Instant::now() >= *physics_retry {
                     match crate::dcs_physics::Source::open() {
                         Ok(source) => {
                             *physics = Some(source);
+                            *capture_dirty = true;
                             *physics_error = None;
                         }
                         Err(error) => *physics_error = Some(error),

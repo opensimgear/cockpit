@@ -304,7 +304,7 @@ impl Inner {
                 .iter()
                 .filter(|game| crate::game_discovery::integration_key(game)
                     .is_some_and(|key| !capture_only || key.starts_with("assetto-corsa")
-                        || matches!(key, "x-plane-11" | "x-plane-12")))
+                        || matches!(key, "dcs" | "x-plane-11" | "x-plane-12")))
                 .cloned()
                 .collect()
         } else {
@@ -317,9 +317,9 @@ impl Inner {
             let vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
             if capture_only { vehicles.capture_candidates() } else { vehicles.poll_candidates() }
         };
-        // The Assetto reader and X-Plane monitor guard their exact process
-        // identity. Capture wakes check configuration without renewing the
-        // process observation or querying Windows for each update.
+        // Capture wakes check configuration without renewing the process
+        // observation or querying Windows for each packet. The independent
+        // maintenance pass still checks process identity.
         let alive = |process: &crate::game_discovery::ProcessIdentity| {
             capture_only || self.platform.alive(process).unwrap_or(false)
         };

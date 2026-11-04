@@ -20,7 +20,7 @@ fn capture_wakes_select_only_verified_streaming_providers() {
     runtime.inner.settings.lock().unwrap().catalogue = catalogue;
     let ids = |capture_only| runtime.inner.vehicle_telemetry_games(capture_only)
         .iter().map(|game| game["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
-    assert_eq!(ids(true), ["x-plane-11", "x-plane-12", "assetto-corsa"]);
+    assert_eq!(ids(true), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
     assert_eq!(ids(false), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
     runtime.shutdown();
 }

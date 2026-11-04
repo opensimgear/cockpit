@@ -54,6 +54,11 @@ impl VehiclePoll {
         // Inspection requests made while the reader was detached are picked up
         // on its next poll. No reader may hold the state mutex during provider I/O.
         let _ = self.reader.inspect(&self.integration, &self.inspection);
+        if self.qualification.qualified == Some(true) {
+            if let Reader::Dcs { resolved_aircraft, .. } = &mut self.reader {
+                *resolved_aircraft = None;
+            }
+        }
         let read_ms = self.now_ms.saturating_add(u64::try_from(self.at.elapsed().as_millis()).unwrap_or(u64::MAX));
         self.result = Some(self.reader.poll_telemetry(read_ms).map(
             |(current, mut capture)| {
@@ -166,7 +171,7 @@ impl Tracker {
         }
         polls
     }
-    pub(crate) fn apply_poll(&mut self, poll: VehiclePoll) {
+    pub(crate) fn apply_poll(&mut self, mut poll: VehiclePoll) {
         let Some(entry) = self.entries.get_mut(&poll.id) else {
             self.retired.push(poll.reader);
             self.publish_visible(&poll.id);
@@ -202,6 +207,10 @@ impl Tracker {
             .expect("Reader work must finish before publication")
         {
             Ok((current, capture)) => {
+                if poll.reader.take_capture_change() {
+                    entry.capture_watch = self.capture_wake.as_ref()
+                        .and_then(|wake| poll.reader.capture_watch(wake.clone()).ok().flatten());
+                }
                 self.retired.extend(entry.reader.replace(poll.reader));
                 let capture = Arc::new(capture);
                 if !poll.capture_changed {

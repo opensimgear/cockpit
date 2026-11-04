@@ -224,6 +224,22 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     assert.ok(!(await inspect('engine.rpm')).channels.some(row => row.id === 'engine.rpm'), 'Native engine percentage must not claim absolute RPM.');
     evidence.magnitude = await passive('vehicle.g_force.magnitude', 5);
     await passive('AAP_CDUPWR:0', 1); await checkpoint('independent native, canonical and unbound BIOS inspection live');
+    await cdp.evaluate(`import('/src/lib/streams/shared.ts').then(({SharedObservations})=>{
+      const observations=new SharedObservations(), activity={frames:0,close:()=>observations.close()};
+      window.__dcsTelemetryWake=activity;
+      observations.subscribe('games.telemetry',state=>{if(state.status==='ready')activity.frames++;});
+    })`);
+    try {
+      const frames = () => cdp.evaluate('window.__dcsTelemetryWake.frames');
+      await until(async () => (await frames()) > 0, 'Telemetry subscription did not get a baseline');
+      const before = await frames();
+      await sleep(1250);
+      evidence.phases.inspectorNotifications = await frames() - before;
+      assert.ok(evidence.phases.inspectorNotifications >= 16,
+        `Expected DCS source wakes beyond the maintenance cadence, got ${evidence.phases.inspectorNotifications}`);
+    } finally {
+      await cdp.evaluate('window.__dcsTelemetryWake.close(); delete window.__dcsTelemetryWake');
+    }
     const setupRevision = (await game()).integrationSetup.providerSetupRevision;
     const resource = await until(async () => {
       const resources = []; let total = 1;

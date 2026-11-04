@@ -119,7 +119,22 @@ fn physics_watches_reuse_the_exact_attached_or_detached_owner_without_retaining_
     tracker.entries.get_mut("dcs").unwrap().reader = Some(Reader::Dcs {
         source: bios, decoder, guard, connection: connection(5010), module: "A-10C".into(),
         catalogue, physics: Some(physics), physics_error: None, physics_retry: Instant::now(),
+        resolved_aircraft: None, capture_dirty: false,
     });
+    let capture_wake = Arc::new(osg_streams::NativeWake::default());
+    capture_wake.bind_thread(std::thread::current()).unwrap();
+    tracker.watch_captures(capture_wake.clone());
+    let before = capture_wake.observed();
+    let packet = json!({"schemaVersion":1,"source":"osg-dcs-ownship","session":"tracker-fixture",
+        "sequence":1,"modelTime":1.0,"planeId":5,"aircraft":"A-10C","allowed":true,
+        "paused":false,"activePause":false,"stopped":false,"values":{"flight.airspeed.true":20}});
+    UdpSocket::bind("127.0.0.1:0").unwrap().send_to(packet.to_string().as_bytes(), address).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while capture_wake.observed() == before {
+        assert!(Instant::now() < deadline, "Ownship capture must wake the vehicle tracker");
+        capture_wake.wait(before, deadline.saturating_duration_since(Instant::now()));
+    }
+    assert_eq!(tracker.dcs_physics(&process).unwrap().sequence, Some(1));
     let wake = std::sync::Arc::new(osg_streams::NativeWake::default());
     assert!(tracker.dcs_physics_watch(&ProcessIdentity { epoch: 11, ..process.clone() }, wake.clone()).unwrap().is_none());
     assert_eq!(wake.observed(), 0);

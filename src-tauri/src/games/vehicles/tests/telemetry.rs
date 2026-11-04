@@ -27,16 +27,27 @@ fn observed_vehicle_is_remembered_but_never_restored_as_current_or_accepted_from
         guard,
         connection: query,
         module: "A-10C".into(),
+        resolved_aircraft: None,
         catalogue: ports,
         physics: None,
         physics_error: None,
         physics_retry: Instant::now() + Duration::from_secs(60),
+        capture_dirty: false,
     });
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(std::thread::current()).unwrap();
+    tracker.watch_captures(wake.clone());
+    let before = wake.observed();
     UdpSocket::bind("127.0.0.1:0")
         .unwrap()
         .send_to(&frame("A-10C", 1), address)
         .unwrap();
     UdpSocket::bind("127.0.0.1:0").unwrap().send_to(&frame("A-10C", 2), address).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while wake.observed() == before {
+        assert!(Instant::now() < deadline, "BIOS capture must wake the vehicle tracker");
+        wake.wait(before, deadline.saturating_duration_since(Instant::now()));
+    }
     for _ in 0..100 {
         tracker.poll();
         if tracker.current("flight-title").is_some() {
