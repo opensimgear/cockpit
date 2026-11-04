@@ -5,6 +5,18 @@ use std::{
 };
 
 #[test]
+fn child_wake_notifies_shared_worker_without_advancing_siblings() {
+    let worker = Arc::new(NativeWake::default());
+    let first = NativeWake::child(worker.clone());
+    let second = NativeWake::child(worker.clone());
+    first.notify();
+    assert_eq!((first.observed(), second.observed(), worker.observed()), (1, 0, 1));
+    assert!(!worker.wait(0, Duration::ZERO));
+    second.notify();
+    assert_eq!((first.observed(), second.observed(), worker.observed()), (1, 1, 2));
+}
+
+#[test]
 fn notify_without_binding_and_saturation_never_lose_pending_work() {
     let wake = NativeWake::default();
     assert_eq!(wake.observed(), 0);

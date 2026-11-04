@@ -235,7 +235,7 @@ impl Tracker {
             match reader {
                 Ok(reader) => {
                     entry.capture_watch = self.capture_wake.as_ref()
-                        .and_then(|wake| reader.capture_watch(wake.clone()).ok().flatten());
+                        .and_then(|wake| CaptureBinding::open(&reader, wake));
                     self.retired.extend(entry.reader.replace(reader));
                     entry.error = None;
                 }

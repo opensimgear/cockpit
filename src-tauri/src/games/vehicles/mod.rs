@@ -100,10 +100,27 @@ struct Entry {
     polling: bool,
     opening: Option<u64>,
     detached_physics: Option<crate::dcs_physics::SourceView>,
-    capture_watch: Option<sources::CaptureWatch>,
+    capture_watch: Option<CaptureBinding>,
     inventory_revision: u64,
     published: Visible,
     published_capture: Option<std::sync::Weak<Capture>>,
+}
+struct CaptureBinding {
+    _watch: sources::CaptureWatch,
+    wake: Arc<osg_streams::NativeWake>,
+    drained: u64,
+}
+impl CaptureBinding {
+    fn open(reader: &Reader, worker: &Arc<osg_streams::NativeWake>) -> Option<Self> {
+        let wake = Arc::new(osg_streams::NativeWake::child(worker.clone()));
+        let watch = reader.capture_watch(wake.clone()).ok().flatten()?;
+        Some(Self { _watch: watch, wake, drained: 0 })
+    }
+
+    fn begin_drain(&mut self) -> bool {
+        let epoch = self.wake.observed();
+        std::mem::replace(&mut self.drained, epoch) != epoch || epoch == u64::MAX
+    }
 }
 #[derive(Default, PartialEq)]
 struct Visible { current: Option<Value>, error: Option<String>, inventory_revision: u64 }
@@ -126,7 +143,7 @@ impl Tracker {
     pub(crate) fn watch_captures(&mut self, wake: Arc<osg_streams::NativeWake>) {
         for entry in self.entries.values_mut() {
             entry.capture_watch = entry.reader.as_ref()
-                .and_then(|reader| reader.capture_watch(wake.clone()).ok().flatten());
+                .and_then(|reader| CaptureBinding::open(reader, &wake));
         }
         self.capture_wake = Some(wake);
     }

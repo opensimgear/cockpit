@@ -314,7 +314,7 @@ impl Inner {
     fn poll_vehicle_telemetry(&self, capture_only: bool) {
         let games = self.vehicle_telemetry_games(capture_only);
         let candidates = {
-            let vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
+            let mut vehicles = self.vehicles.lock().unwrap_or_else(|p| p.into_inner());
             if capture_only { vehicles.capture_candidates() } else { vehicles.poll_candidates() }
         };
         // Capture wakes check configuration without renewing the process

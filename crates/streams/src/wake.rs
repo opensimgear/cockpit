@@ -2,7 +2,7 @@
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
-        OnceLock,
+        Arc, OnceLock,
     },
     thread::Thread,
     time::Duration,
@@ -16,9 +16,15 @@ use std::{
 pub struct NativeWake {
     thread: OnceLock<Thread>,
     epoch: AtomicU64,
+    parent: Option<Arc<NativeWake>>,
 }
 
 impl NativeWake {
+    /// Track one source's progress while also waking its shared worker.
+    pub fn child(parent: Arc<Self>) -> Self {
+        Self { parent: Some(parent), ..Self::default() }
+    }
+
     pub fn bind_thread(&self, thread: Thread) -> Result<(), Thread> {
         self.thread.set(thread)?;
         // A notification can precede binding after the worker's epoch check.
@@ -42,6 +48,9 @@ impl NativeWake {
             });
         if let Some(thread) = self.thread.get() {
             thread.unpark();
+        }
+        if let Some(parent) = &self.parent {
+            parent.notify();
         }
     }
 

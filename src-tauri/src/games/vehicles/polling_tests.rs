@@ -34,18 +34,30 @@ fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
     let entry = tracker.entries.get_mut("x-plane-12").unwrap();
     entry.reader = Some(Reader::Xplane(source));
     let observed = entry.observed;
+    let mut other = game.clone();
+    other["id"] = json!("x-plane-11");
+    other["integrationKey"] = json!("x-plane-11");
+    let process = tracker.entries["x-plane-12"].process.clone();
+    tracker.observe(&other, &crate::xplane::defaults(11), process, "setup", true, 1);
+    let (quiet, _publish_quiet) = crate::xplane::Source::inspector_fixture();
+    tracker.entries.get_mut("x-plane-11").unwrap().reader = Some(Reader::Xplane(quiet));
     let wake = Arc::new(osg_streams::NativeWake::default());
     tracker.watch_captures(wake.clone());
+    assert_eq!(tracker.capture_candidates().len(), 2);
     let baseline = wake.observed();
     publish(42);
     assert_ne!(wake.observed(), baseline);
-    let checked = tracker.capture_candidates().pop().unwrap()
+    let mut candidates = tracker.capture_candidates();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].id, "x-plane-12");
+    let checked = candidates.pop().unwrap()
         .verify(&[game], |_| "setup".into(), |_| true).without_renewal();
     let poll = tracker.begin_polls(vec![checked]).pop().unwrap();
     tracker.apply_poll(poll.read());
     let entry = &tracker.entries["x-plane-12"];
     assert_eq!(entry.observed, observed);
     assert_eq!(entry.telemetry.as_ref().unwrap().packet, json!(42));
+    assert!(tracker.entries["x-plane-11"].telemetry.is_none());
 }
 
 #[test]

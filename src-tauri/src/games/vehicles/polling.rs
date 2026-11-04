@@ -81,21 +81,23 @@ impl VehiclePoll {
     }
 }
 impl Tracker {
-    pub(crate) fn poll_candidates(&self) -> Vec<Qualification> {
+    pub(crate) fn poll_candidates(&mut self) -> Vec<Qualification> {
         self.candidates(false)
     }
-    pub(crate) fn capture_candidates(&self) -> Vec<Qualification> {
+    pub(crate) fn capture_candidates(&mut self) -> Vec<Qualification> {
         self.candidates(true)
     }
-    fn candidates(&self, capture_only: bool) -> Vec<Qualification> {
+    fn candidates(&mut self, capture_only: bool) -> Vec<Qualification> {
         self.entries
-            .iter()
+            .iter_mut()
             .filter_map(|(id, entry)| {
                 #[cfg(test)]
                 if entry.injected {
                     return None;
                 }
-                if capture_only && entry.capture_watch.is_none() {
+                let changed = entry.reader.is_some()
+                    && entry.capture_watch.as_mut().is_some_and(CaptureBinding::begin_drain);
+                if capture_only && !changed {
                     return None;
                 }
                 Some(Qualification {
@@ -209,7 +211,7 @@ impl Tracker {
             Ok((current, capture)) => {
                 if poll.reader.take_capture_change() {
                     entry.capture_watch = self.capture_wake.as_ref()
-                        .and_then(|wake| poll.reader.capture_watch(wake.clone()).ok().flatten());
+                        .and_then(|wake| CaptureBinding::open(&poll.reader, wake));
                 }
                 self.retired.extend(entry.reader.replace(poll.reader));
                 let capture = Arc::new(capture);
