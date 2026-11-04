@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Condvar, Mutex,
+        Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -51,7 +51,10 @@ struct Pin {
     ports: BTreeMap<String, Candidate>,
 }
 type Inventory = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
+type ReportLease = Box<dyn Fn(u64) + Send>;
+type Watch = Arc<dyn Fn(&str, Arc<osg_streams::NativeWake>) -> Result<ReportLease, String> + Send + Sync>;
 struct Capture {
+    watch: Watch,
     inventory: Inventory,
     snapshot: Arc<dyn Fn(&[String]) -> Result<stream::Snapshot, String> + Send + Sync>,
     page: Arc<dyn Fn(&str, u64) -> stream::Page + Send + Sync>,
@@ -64,7 +67,12 @@ impl Capture {
     ) -> Self {
         let inventory = resources.clone();
         let snapshots = controllers.clone();
+        let reports = controllers.clone();
         Self {
+            watch: Arc::new(move |id, wake| {
+                let lease = reports.watch_reports(&[id.to_owned()], Arc::new(move || wake.notify()))?;
+                Ok(Box::new(move |cursor| lease.advance(cursor)))
+            }),
             inventory: Arc::new(move |request| inventory.request(&request)),
             snapshot: Arc::new(move |ids| snapshots.stream_snapshot(ids)),
             page: Arc::new(move |session, cursor| controllers.stream_page(session, cursor)),
@@ -258,6 +266,7 @@ fn counter(value: &str) -> bool {
 }
 struct Entry {
     pin: Pin,
+    report_lease: Option<ReportLease>,
     learner: Option<osg_mapping_host::Learn>,
     status: Status,
     epoch: u64,
@@ -266,6 +275,7 @@ struct Entry {
 impl Entry {
     fn stop(&mut self, reason: &str) {
         self.learner = None;
+        self.report_lease = None;
         self.status.phase = "stopped".into();
         self.status.reason = reason.into();
         self.status.candidates.clear();
@@ -284,7 +294,7 @@ impl State {
         }
     }
 }
-type Shared = Arc<(Mutex<State>, Condvar)>;
+type Shared = Arc<(Mutex<State>, Arc<osg_streams::NativeWake>)>;
 pub(crate) struct Runtime {
     shared: Shared,
     capture: Arc<Capture>,
@@ -298,10 +308,12 @@ impl Runtime {
         controllers: Arc<osg_controller_input::ControllerService>,
         epoch: Arc<AtomicU64>,
     ) -> Self {
-        Self::with_capture(Capture::native(resources, controllers), epoch)
+        let runtime = Self::with_capture(Capture::native(resources.clone(), controllers), epoch);
+        resources.watch_learning_catalogue(&runtime.shared.1);
+        runtime
     }
     fn with_capture(capture: Capture, epoch: Arc<AtomicU64>) -> Self {
-        let shared = Arc::new((Mutex::new(State::default()), Condvar::new()));
+        let shared = Arc::new((Mutex::new(State::default()), Arc::default()));
         let stopped = Arc::new(AtomicBool::new(false));
         let capture = Arc::new(capture);
         let args = (
@@ -391,6 +403,7 @@ impl Runtime {
         let (pin, snapshot) = self
             .capture
             .prepare(resource_id, generation, capability_revision)?;
+        let lease = (self.capture.watch)(&pin.physical_id, self.shared.1.clone())?;
         let until = snapshot
             .captured_us
             .checked_add(WINDOW_US)
@@ -408,6 +421,7 @@ impl Runtime {
         }
         state.entry = Some(Entry {
             pin,
+            report_lease: Some(lease),
             learner: Some(learner),
             status,
             epoch,
@@ -415,7 +429,7 @@ impl Runtime {
         });
         state.publish();
         drop(state);
-        self.shared.1.notify_one();
+        self.shared.1.notify();
         Ok(result)
     }
     pub(crate) fn status(&self, learn_id: &str) -> Result<Value, String> {
@@ -445,7 +459,7 @@ impl Runtime {
         let result = serde_json::to_value(&entry.status).map_err(|error| error.to_string());
         state.publish();
         drop(state);
-        self.shared.1.notify_one();
+        self.shared.1.notify();
         result
     }
     pub(crate) fn invalidate(&self, reason: &str) {
@@ -456,7 +470,7 @@ impl Runtime {
             state.publish();
         }
         drop(state);
-        self.shared.1.notify_one();
+        self.shared.1.notify();
     }
     pub(crate) fn shutdown(&self) {
         self.stopped.store(true, Ordering::Release);
@@ -474,7 +488,9 @@ impl Drop for Runtime {
     }
 }
 fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped: Arc<AtomicBool>) {
+    shared.1.bind_thread(thread::current()).expect("one input learning worker");
     while !stopped.load(Ordering::Acquire) {
+        let observed = shared.1.observed();
         let mut state = shared.0.lock().unwrap_or_else(|p| p.into_inner());
         if stopped.load(Ordering::Acquire) { break; }
         let serial = state.serial;
@@ -483,12 +499,8 @@ fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped:
             .as_mut()
             .filter(|entry| entry.status.phase != "stopped")
         else {
-            drop(
-                shared
-                    .1
-                    .wait(state)
-                    .unwrap_or_else(|p| p.into_inner()),
-            );
+            drop(state);
+            shared.1.wait_scheduled(observed, None);
             continue;
         };
         let pin = entry.pin.clone();
@@ -555,10 +567,16 @@ fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped:
                             } else {
                                 entry.stop("The learned controls no longer match the exact native catalogue.");
                             }
+                            if let (Some(lease), Some(learner)) = (&entry.report_lease, &learner) {
+                                lease(learner.cursor);
+                            }
                             if entry.status.phase == "listening" {
                                 entry.learner = learner;
-                            } else if entry.status.phase == "stopped" {
-                                entry.status.candidates.clear();
+                            } else {
+                                entry.report_lease = None;
+                                if entry.status.phase == "stopped" {
+                                    entry.status.candidates.clear();
+                                }
                             }
                         }
                         Ok(None) => {}
@@ -568,12 +586,11 @@ fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped:
             }
         }
         if changed { state.publish(); }
-        drop(
-            shared
-                .1
-                .wait_timeout(state, Duration::from_millis(20))
-                .unwrap_or_else(|p| p.into_inner()),
-        );
+        let timeout = state.entry.as_ref()
+            .filter(|entry| entry.status.phase != "stopped")
+            .map(|entry| Duration::from_secs(30).saturating_sub(entry.started.elapsed()));
+        drop(state);
+        shared.1.wait_scheduled(observed, timeout);
     }
 }
 

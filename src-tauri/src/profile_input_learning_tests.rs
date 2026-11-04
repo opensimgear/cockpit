@@ -123,6 +123,7 @@ fn fixture() -> Fixture {
     let pages = journal.clone();
     let page_calls = calls.clone();
     let capture = Capture {
+        watch: Arc::new(|_, _| Ok(Box::new(|_| {}))),
         inventory: Arc::new(move |request| {
             let registry = inventory.lock().unwrap();
             match request["command"].as_str().unwrap() {
@@ -218,6 +219,7 @@ fn worker_learns_from_native_journal_without_status_pumping_or_profile_effects()
     let started = start(&fixture);
     assert_eq!(next().revision, "2");
     fixture.journal.lock().unwrap().push(changed(&[0]));
+    fixture.runtime.shared.1.notify();
     let id = started["learnId"].as_str().unwrap();
     assert_eq!(started["phase"], "listening");
     assert_eq!(started["untilUs"], "30000100");
@@ -290,6 +292,7 @@ fn gaps_disconnect_generation_changes_native_timeout_and_control_epoch_stop_with
     let fixture = fixture();
     let status = start(&fixture);
     fixture.epoch.fetch_add(1, Ordering::AcqRel);
+    fixture.runtime.shared.1.notify();
     let status = wait(&fixture, status["learnId"].as_str().unwrap(), "stopped");
     assert!(status["reason"]
         .as_str()
@@ -339,6 +342,7 @@ fn stale_inventory_missing_baselines_and_nonphysical_or_remembered_ports_are_rej
         assert!(fixture.runtime.start(id, generation, hash).is_err());
     }
     let mut capture = Capture {
+        watch: fixture.runtime.capture.watch.clone(),
         inventory: fixture.runtime.capture.inventory.clone(),
         snapshot: Arc::new(|_| {
             let mut snapshot = snapshot();
@@ -399,6 +403,7 @@ fn stale_inventory_missing_baselines_and_nonphysical_or_remembered_ports_are_rej
 
 fn capture_clone(capture: &Capture) -> Capture {
     Capture {
+        watch: capture.watch.clone(),
         inventory: capture.inventory.clone(),
         snapshot: capture.snapshot.clone(),
         page: capture.page.clone(),
@@ -493,6 +498,7 @@ fn learned_candidates_are_withdrawn_after_catalogue_loss_and_wall_clock_expiry()
                 })
                 .unwrap();
         }
+        fixture.runtime.shared.1.notify();
         let status = wait(&fixture, id, "stopped");
         assert!(status["candidates"].as_array().unwrap().is_empty());
     }

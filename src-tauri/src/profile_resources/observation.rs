@@ -16,6 +16,10 @@ fn capture(state: &live_validation::StateMutex) -> Value {
 }
 
 impl Runtime {
+    pub(crate) fn watch_learning_catalogue(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.state.learning_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+    }
+
     pub(crate) fn observe_catalogue(&self, broker: &osg_streams::Broker) -> Result<(), String> {
         let mut running = self.observation_worker.lock().unwrap_or_else(|error| error.into_inner());
         if running.is_some() || self.stop.load(Ordering::Acquire) {
