@@ -102,6 +102,9 @@ fn consistent_copy_for_game(
     Err("Assetto telemetry changed during all bounded snapshot attempts.".into())
 }
 
+mod shared;
+pub(crate) use shared::{SharedSource, Watch};
+
 #[cfg(windows)]
 mod platform;
 #[cfg(windows)]
@@ -123,6 +126,10 @@ impl WindowsSource {
         }
         selected_game_image_matches(expected_image, expected_image, game)?;
         Err("Live ACR shared memory is available on Windows; use a fixture source on this platform.".into())
+    }
+    pub(super) fn exact(identity: &crate::game_discovery::ProcessIdentity, game: Game) -> Result<Self, String> {
+        let image = identity.path.rsplit(['\\', '/']).next().unwrap_or(&identity.path);
+        Self::new_for_game(identity.pid, image, game)
     }
     pub fn process_image(&self) -> Option<&str> {
         None

@@ -775,8 +775,10 @@ fn acr_acquisition_passes_only_verified_basename_to_reader_and_keeps_full_path_f
         source(&mut plan, "assetto-corsa-rally", &descriptors[0]);
         let mut reader = authored_sources(&plan, Some(game.clone())).unwrap();
         let mut calls = vec![];
+        reader.set_wake(Some(std::sync::Arc::new(osg_streams::NativeWake::default())));
         reader
-            .acquire_with_acr(&games, |pid, image| {
+            .acquire_with_acr(&games, |process, image| {
+                let pid = process.pid;
                 calls.push((pid, image.to_owned()));
                 Ok(Box::new(crate::game_telemetry::FixtureSource::new()))
             })

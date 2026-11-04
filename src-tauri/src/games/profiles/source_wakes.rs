@@ -14,12 +14,14 @@ pub(super) struct SourceWakes {
     bios: Option<BiosWatch>,
     physics: Option<PhysicsWatch>,
     xplane: Option<XplaneWatch>,
+    assetto: Option<crate::acr_windows::Watch>,
 }
 impl SourceWakes {
     pub(super) fn clear(&mut self) {
         self.bios = None;
         self.physics = None;
         self.xplane = None;
+        self.assetto = None;
     }
 }
 impl GameSources {
@@ -60,6 +62,11 @@ impl GameSources {
             Some(Reader::Xplane { source: Some(source), .. }) => {
                 if self.notifications.xplane.as_ref().is_none_or(NativeWatch::is_closed) {
                     self.notifications.xplane = Some(source.watch(wake)?);
+                }
+            }
+            Some(Reader::Acr { source: Some(source), .. }) => {
+                if self.notifications.assetto.as_ref().is_none_or(crate::acr_windows::Watch::is_closed) {
+                    self.notifications.assetto = source.watch(wake)?;
                 }
             }
             _ => {}

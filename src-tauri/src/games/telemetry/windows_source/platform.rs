@@ -192,6 +192,7 @@ pub(crate) struct WindowsSource {
     pid: u32,
     expected_image: String,
     process: Option<Process>,
+    identity: Option<crate::game_discovery::ProcessIdentity>,
     pages: Option<Pages>,
     capture_owner: CaptureOwner,
     last_packet: Option<u32>,
@@ -216,11 +217,28 @@ impl WindowsSource {
             pid: process_id,
             expected_image: expected_image.into(),
             process: Some(process),
+            identity: None,
             pages: None,
             capture_owner: CaptureOwner::new(),
             last_packet: None,
             producer_checked_at: Some(std::time::Instant::now()),
         })
+    }
+    pub(super) fn exact(identity: &crate::game_discovery::ProcessIdentity, game: Game) -> Result<Self, String> {
+        let image = identity.path.rsplit(['\\', '/']).next().unwrap_or(&identity.path);
+        let mut source = Self::new_for_game(identity.pid, image, game)?;
+        source.identity = Some(identity.clone());
+        source.verify_identity(source.process.as_ref().unwrap())?;
+        Ok(source)
+    }
+    fn verify_identity(&self, process: &Process) -> Result<(), String> {
+        use crate::game_discovery::normalized_path;
+        if self.identity.as_ref().is_some_and(|identity| {
+            process.epoch != identity.epoch || normalized_path(&process.image) != normalized_path(&identity.path)
+        }) {
+            return Err("Assetto process identity changed; acquire the replacement explicitly.".into());
+        }
+        Ok(())
     }
     pub fn process_image(&self) -> Option<&str> {
         self.process.as_ref().map(|p| p.image.as_str())
@@ -229,6 +247,7 @@ impl WindowsSource {
         if self.process.is_none() {
             let process = Process::open(self.pid)?;
             selected_game_image_matches(&process.image, &self.expected_image, self.game)?;
+            self.verify_identity(&process)?;
             self.process = Some(process);
         }
         let process = self.process.as_ref().unwrap();

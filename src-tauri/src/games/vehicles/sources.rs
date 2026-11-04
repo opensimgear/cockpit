@@ -135,18 +135,9 @@ impl Reader {
             | "assetto-corsa"
             | "assetto-corsa-competizione"
             | "assetto-corsa-evo" => {
-                let image = process
-                    .path
-                    .rsplit(['/', '\\'])
-                    .next()
-                    .unwrap_or(&process.path);
                 let game = game_telemetry::Game::from_id(id)?;
                 Ok(Self::Rally {
-                    source: Box::new(crate::acr_windows::WindowsSource::new_for_game(
-                        process.pid,
-                        image,
-                        game,
-                    )?),
+                    source: Box::new(crate::acr_windows::SharedSource::open_latest(process, game)?),
                     decoder: game_telemetry::Session::new_for_game(
                         connection["freshnessMs"].as_u64().unwrap_or(1500),
                         game,

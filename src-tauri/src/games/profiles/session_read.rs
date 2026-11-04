@@ -5,15 +5,15 @@ impl GameSources {
             .as_ref()
             .and_then(|game| crate::game_telemetry::Game::from_id(&game.integration_key).ok())
             .unwrap_or(crate::game_telemetry::Game::Rally);
-        self.acquire_with_acr(games, |pid, image| {
-            crate::acr_windows::WindowsSource::new_for_game(pid, image, game)
+        self.acquire_with_acr(games, |identity, _| {
+            crate::acr_windows::SharedSource::open(identity, game)
                 .map(|source| Box::new(source) as Box<dyn crate::game_telemetry::Source>)
         })
     }
     fn acquire_with_acr(
         &mut self,
         games: &GamesRuntime,
-        mut open_acr: impl FnMut(u32, &str) -> Result<Box<dyn crate::game_telemetry::Source>, String>,
+        mut open_acr: impl FnMut(&crate::game_discovery::ProcessIdentity, &str) -> Result<Box<dyn crate::game_telemetry::Source>, String>,
     ) -> Result<(), String> {
         self.validate_catalogue(true)?;
         let Some(game) = &self.game else {
@@ -43,7 +43,7 @@ impl GameSources {
             Some(Reader::Acr { source, .. }) => {
                 let path = &game.proof.process.path;
                 let image = path.rsplit(['\\', '/']).next().unwrap_or(path);
-                *source = Some(open_acr(game.proof.process.pid, image)?);
+                *source = Some(open_acr(&game.proof.process, image)?);
             }
             None => {}
         }

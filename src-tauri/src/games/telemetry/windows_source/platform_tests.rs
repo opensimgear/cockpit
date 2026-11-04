@@ -106,6 +106,7 @@ fn real_process_and_owned_pages_preserve_identity_packet_resets_and_close_on_err
             pid,
             expected_image: "acr.exe".into(),
             process: Some(process),
+            identity: None,
             pages: Some(pages),
             capture_owner,
             last_packet: None,

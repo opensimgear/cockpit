@@ -639,8 +639,8 @@ pub(crate) fn probe(
         &progress,
         |process| {
             // This is the sole acquisition boundary allowed to establish native evidence.
-            let source = crate::acr_windows::WindowsSource::new_for_game(process.pid, basename(&process.path), telemetry_game)?;
-            let image = source.process_image().map(str::to_owned);
+            let source = crate::acr_windows::SharedSource::open_latest(process, telemetry_game)?;
+            let image = Some(process.path.clone());
             Ok(AttachedSource {
                 source: Box::new(source),
                 image,

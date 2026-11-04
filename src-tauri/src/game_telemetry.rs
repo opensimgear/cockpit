@@ -202,6 +202,9 @@ impl RawSample {
 pub(crate) trait Source: Send {
     fn poll(&mut self) -> Result<Option<RawSample>, String>;
     fn close(&mut self);
+    fn watch(&self, _wake: std::sync::Arc<osg_streams::NativeWake>) -> Result<Option<crate::acr_windows::Watch>, String> {
+        Ok(None)
+    }
 }
 pub(crate) struct FixtureSource {
     queue: VecDeque<RawSample>,
