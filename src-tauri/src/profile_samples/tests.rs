@@ -179,7 +179,8 @@ fn slow_preview_keeps_the_latest_state_and_does_not_backlog_or_fault_routing() {
 
 #[test]
 fn topic_pin_topic_count_and_total_port_quotas_are_enforced() {
-    let (plans, phase, run) = plans_with_ports(33, 1);
+    let (plans, phase, run) = plans_with_ports(MAX_TOPICS, 1);
+    let (overflow, _, _) = plans_with_ports(1, 1);
     let broker = Broker::new(uuid::Uuid::new_v4().to_string()).unwrap();
     let signal = Signal::default();
     let capture_phase = phase.clone(); let capture_run = run.clone();
@@ -188,8 +189,8 @@ fn topic_pin_topic_count_and_total_port_quotas_are_enforced() {
     let topic_pins = (0..64).map(|_| runtime.pin(plans[0].clone()).unwrap()).collect::<Vec<_>>();
     assert!(runtime.pin(plans[0].clone()).err().unwrap().contains("subscription capacity"));
     drop(topic_pins);
-    let topic_pins = (0..32).map(|index| runtime.pin(plans[index].clone()).unwrap()).collect::<Vec<_>>();
-    assert!(runtime.pin(plans[32].clone()).err().unwrap().contains("capacity is full"));
+    let topic_pins = plans.iter().map(|plan| runtime.pin(plan.clone()).unwrap()).collect::<Vec<_>>();
+    assert!(runtime.pin(overflow[0].clone()).err().unwrap().contains("capacity is full"));
     drop(topic_pins);
     runtime.shutdown();
 

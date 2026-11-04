@@ -41,7 +41,7 @@
     const result = (await gatewayRequest(request)).profileTopology;
     if (!result) throw new Error('Native applied topology is unavailable. Reconnect the service.');
     return result;
-  }), inspectionClient);
+  }), observeProfileNodeSamples);
   let savedProfiles = $state.raw<readonly DeepReadonly<ProfileSummary>[]>([]);
   let inventory = $state.raw<readonly DeepReadonly<ResourceSummary>[]>([]);
   let inventoryRevision = $state(0), profileError = $state(''), inventoryError = $state('');

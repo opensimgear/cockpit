@@ -15,8 +15,10 @@ use std::{
 
 pub const KNOWN_AUDIENCES: &[&str] = &["ui", "browser", "panel", "mcp"];
 pub const MAX_TOPICS: usize = 128;
-pub const MAX_READERS: usize = 64;
+pub const MAX_READERS: usize = 128;
 pub const MAX_CLIENT_READERS: usize = 16;
+// A visible path (32 nodes) can coexist with the inspector (16) and shell subscriptions.
+const MAX_COCKPIT_READERS: usize = 64;
 
 #[derive(Clone, Debug)]
 pub struct TopicSpec {
@@ -184,12 +186,16 @@ impl Broker {
         if state.readers.len() >= MAX_READERS {
             return Err(RegistryError::SubscriberLimit);
         }
+        let client_limit = match audience {
+            "ui" | "browser" => MAX_COCKPIT_READERS,
+            _ => MAX_CLIENT_READERS,
+        };
         if state
             .readers
             .values()
             .filter(|(owner, _)| owner == client)
             .count()
-            >= MAX_CLIENT_READERS
+            >= client_limit
         {
             return Err(RegistryError::ClientLimit);
         }

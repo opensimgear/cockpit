@@ -23,10 +23,10 @@
   onMount(()=>{mounted=true;const stop=activity.subscribe(next=>view=next);return()=>{mounted=false;stop();};});
   function watchActivity(){
     const key=ownerKey;if(!mounted||!active||!key){activity.clear();return;}
-    const captured=untrack(()=>owner)!,selection=untrack(()=>filter);
-    const refresh=()=>{if(!document.hidden){if(!activity.state.topology)void activity.open(captured,selection);else void activity.refresh();}};
-    refresh();const timer=window.setInterval(refresh,2000);document.addEventListener('visibilitychange',refresh);
-    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);activity.clear();};
+    const captured=untrack(()=>owner)!;
+    const visibility=()=>{if(document.hidden)activity.clear();else if(!activity.state.owner)void activity.open(captured,untrack(()=>filter));};
+    visibility();document.addEventListener('visibilitychange',visibility);
+    return()=>{document.removeEventListener('visibilitychange',visibility);activity.clear();};
   }
   $effect(watchActivity);
   function refreshActivity(){if(!owner)return;if(!activity.state.topology)void activity.open(owner,filter);else void activity.refresh();}

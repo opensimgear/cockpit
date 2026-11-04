@@ -7,5 +7,30 @@ export const plain=value=>JSON.parse(JSON.stringify(value));
 export function topologyPage(request,topology=graph(),size=request.limit){const items=topology[request.section];return{schemaVersion:1,owner:request.owner,appliedSnapshot:{...topology.appliedSnapshot,profileId:request.owner.profileId,revision:request.owner.profileRevision},programHash:topology.programHash,capturedUs:'100',section:request.section,offset:request.offset,total:items.length,items:items.slice(request.offset,request.offset+size)};}
 export const port=(nodeId,portId,direction='output',sample={status:'unknown'})=>({endpoint:{nodeId,portId},direction,contract:{delivery:'state',schema:{type:'boolean'},freshnessMs:1000,fallback:null},sample,observedUs:sample.status==='known'?'101':null});
 export const known=value=>({status:'known',value:{kind:'scalar',value}});
-export const samplePage=(request,ports=[port(request.nodeId,'button:0')])=>({schemaVersion:1,owner:request.owner,appliedSnapshot:{profileId:request.owner.profileId,revision:request.owner.profileRevision,semanticHash:hash},programHash:hash,capturedUs:'101',offset:request.offset,total:ports.length,ports:ports.slice(request.offset,request.offset+request.limit)});
 export const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
+export function pathSamples(topology){
+  const active=new Map(),opened=[];
+  const value=(run,nodeId,ports,at='101')=>Object.freeze({
+    owner:run,nodeId,appliedSnapshot:topology.appliedSnapshot,programHash:topology.programHash,capturedUs:at,
+    ports:Object.freeze(ports.map(port=>Object.freeze({...port,sample:Object.freeze(port.sample)}))),
+  });
+  const fixture={
+    active,opened,value,
+    initial(run,nodeId){
+      const ports=topology.edges.flatMap(edge=>[
+        edge.from.nodeId===nodeId?port(nodeId,edge.from.portId,'output',known(false)):null,
+        edge.to.nodeId===nodeId?port(nodeId,edge.to.portId,'input',known(true)):null,
+      ]).filter(Boolean);
+      return {status:'ready',value:value(run,nodeId,[...new Map(ports.map(port=>[JSON.stringify(port.endpoint),port])).values()])};
+    },
+    observe(run,nodeId,listener){
+      const entry={run,nodeId,listener};
+      active.set(nodeId,entry);
+      opened.push(entry);
+      listener(fixture.initial(run,nodeId));
+      return ()=>{if(active.get(nodeId)===entry)active.delete(nodeId);};
+    },
+    emit(nodeId,state){active.get(nodeId).listener(state);},
+  };
+  return fixture;
+}

@@ -2,7 +2,7 @@ import {captureProfileOwner,profileOwnersEqual,type ProfileInspectionPage,type P
 import type {NativeProfileOwner} from './profile-runtime';
 import type {DeepReadonly} from './profiles';
 import type {ProfileNodeSamplesState} from './profile-samples/models';
-type ObserveNode=(owner:DeepReadonly<NativeProfileOwner>,nodeId:string,listener:(state:ProfileNodeSamplesState)=>void)=>()=>void;
+export type ObserveNode=(owner:DeepReadonly<NativeProfileOwner>,nodeId:string,listener:(state:ProfileNodeSamplesState)=>void)=>()=>void;
 export type ProfileInspectionState={owner:DeepReadonly<NativeProfileOwner>|null;nodeId:string|undefined;page:DeepReadonly<ProfileInspectionPage>|null;loading:boolean;stale:boolean;error:string;hasPrevious:boolean;hasNext:boolean};
 /** Selection/page epochs keep an old run's samples out of a newer editor selection. */
 export class ProfileInspectionController{

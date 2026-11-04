@@ -10,7 +10,7 @@ use osg_streams::{Broker, NativeWake, Publisher};
 use std::{collections::BTreeMap, sync::{Arc, Condvar, Mutex, OnceLock,
     atomic::{AtomicBool, AtomicUsize, Ordering}}, thread::JoinHandle};
 
-pub(crate) const MAX_TOPICS: usize = 32;
+pub(crate) const MAX_TOPICS: usize = 64;
 pub(crate) const MAX_PORTS: usize = 1024;
 type Capture = dyn Fn(&[Arc<NodePlan>]) -> Vec<Result<CapturedSamples, String>> + Send + Sync;
 

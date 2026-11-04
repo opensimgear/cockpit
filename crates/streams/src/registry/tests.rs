@@ -121,7 +121,7 @@ fn cap_admission_is_atomic_across_topics_and_clients() {
                 barrier.wait();
                 broker.subscribe(
                     "same-client",
-                    "ui",
+                    "mcp",
                     if n % 2 == 0 { "controls" } else { "other" },
                 )
             })
@@ -144,10 +144,16 @@ fn cap_admission_is_atomic_across_topics_and_clients() {
         16
     );
     let mut retained: Vec<_> = readers.into_iter().filter_map(Result::ok).collect();
-    for n in 0..48 {
+    for n in 0..MAX_COCKPIT_READERS {
+        let topic = if n % 2 == 0 { "controls" } else { "other" };
+        retained.push(broker.subscribe("cockpit", "ui", topic).unwrap());
+    }
+    assert!(matches!(broker.subscribe("cockpit", "ui", "other"), Err(RegistryError::ClientLimit)));
+    broker.register(spec("bulk"), json!(0), 0, "clock".into()).unwrap();
+    for n in retained.len()..MAX_READERS {
         retained.push(
             broker
-                .subscribe(&format!("client-{n}"), "mcp", "other")
+                .subscribe(&format!("client-{n}"), "mcp", "bulk")
                 .unwrap(),
         );
     }
