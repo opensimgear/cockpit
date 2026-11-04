@@ -192,6 +192,8 @@ fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
         .request(&json!({"command":"controller_visibility_inspect", "sourceId":id}))
         .unwrap();
     assert_eq!(inspected["visibility"]["effective"]["hidden"], false);
+    let (sent, received) = std::sync::mpsc::channel();
+    service.watch_changes(Arc::new(move || { let _ = sent.send(()); }));
     let started = service
         .request(&json!({"command":"controller_visibility_apply","sourceIds":[id]}))
         .unwrap();
@@ -218,6 +220,7 @@ fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
         "active"
     );
     assert!(state.lock().unwrap().active);
+    received.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
     for command in [
         "controller_visibility_inspect",
         "controller_visibility_save",
@@ -235,6 +238,7 @@ fn explicit_worker_admission_guards_edits_and_restore_remains_available() {
     }
     assert!(!service.active());
     assert!(!state.lock().unwrap().active);
+    received.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
     assert!(service
         .request(&json!({"command":"controller_visibility_restore"}))
         .is_err());
@@ -370,6 +374,8 @@ fn isolated_launch_is_independent_gated_and_owned_by_the_service() {
     let mut invalid = request.clone();
     invalid["sourceIds"] = json!([]);
     assert!(service.request(&invalid).is_err());
+    let (sent, received) = std::sync::mpsc::channel();
+    service.watch_changes(Arc::new(move || { let _ = sent.send(()); }));
     let status = service.request(&request).unwrap();
     assert_eq!(status["visibility"]["launch"]["job"]["active"], true);
     assert!(!service.suppression.active());
@@ -390,6 +396,7 @@ fn isolated_launch_is_independent_gated_and_owned_by_the_service() {
         assert!(Instant::now() < until);
         std::thread::sleep(Duration::from_millis(5));
     }
+    for _ in 0..2 { received.recv_timeout(Duration::from_secs(1)).unwrap(); }
     assert_eq!(stops.load(Ordering::SeqCst), 1);
     service.request(&request).unwrap();
     registry.lock().unwrap().disconnect(&id);

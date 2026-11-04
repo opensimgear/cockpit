@@ -471,6 +471,8 @@ impl GatewayManager {
         if let Err(error) = system_inventory.observe(&observations) {
             eprintln!("Cannot start supplemental inventory observations: {error}");
         }
+        let visibility_inventory = system_inventory.clone();
+        controllers.watch_visibility_changes(Arc::new(move || visibility_inventory.changed()));
         let profile_inventory = system_inventory.clone();
         let profile_read_models = crate::profile_read_models::Runtime::new(observations.clone())
             .with_inventory_change(Arc::new(move || profile_inventory.changed()));
@@ -1446,7 +1448,7 @@ impl GatewayManager {
                     let mut response =
                         self.decorate(json!({"ok":true,"state":empty_state()}), None);
                     response["state"]["controllers"] = state;
-                    if matches!(command.as_str(), "controller_visibility_enable" | "controller_visibility_inspect" | "controller_visibility_restore") {
+                    if matches!(command.as_str(), "controller_visibility_enable" | "controller_visibility_inspect" | "controller_visibility_restore" | "controller_visibility_save") {
                         self.system_inventory_changed();
                     }
                     response

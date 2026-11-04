@@ -60,6 +60,10 @@ impl Service {
             qualified: super::capabilities::WINDOWS_NATIVE_OUTPUTS,
         }
     }
+    pub(crate) fn watch_changes(&self, changed: Arc<dyn Fn() + Send + Sync>) {
+        self.worker.lock().unwrap_or_else(|p| p.into_inner()).changed = Some(changed.clone());
+        self.launch.lock().unwrap_or_else(|p| p.into_inner()).changed = Some(changed);
+    }
     pub fn with_suppression(mut self, control: super::suppression::Control) -> Self {
         self.suppression = control;
         self

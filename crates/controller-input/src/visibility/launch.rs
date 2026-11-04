@@ -92,6 +92,7 @@ pub struct Worker {
     cancel: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     factory: Factory,
+    pub(super) changed: Option<Arc<dyn Fn() + Send + Sync>>,
     qualified: bool,
 }
 impl Default for Worker {
@@ -101,6 +102,7 @@ impl Default for Worker {
             cancel: Default::default(),
             thread: None,
             factory: Arc::new(native),
+            changed: None,
             qualified: QUALIFIED,
         }
     }
@@ -149,6 +151,7 @@ impl Worker {
         let cancel = self.cancel.clone();
         let status = self.status.clone();
         let factory = self.factory.clone();
+        let changed = self.changed.clone();
         *status.lock().unwrap_or_else(|p| p.into_inner()) = Some(Status {
             job_id: uuid::Uuid::new_v4().to_string(),
             active: true,
@@ -177,9 +180,16 @@ impl Worker {
                         match child.poll() {
                             Ok(Poll::Starting) => {}
                             Ok(Poll::Running) => {
-                                if let Some(s) = status.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
-                                    s.phase = "running".into();
-                                    s.message = "Owned child in a fixed device namespace; host clients are unchanged.".into();
+                                let transitioned = {
+                                    let mut status = status.lock().unwrap_or_else(|p| p.into_inner());
+                                    if let Some(s) = status.as_mut().filter(|s| s.phase != "running") {
+                                        s.phase = "running".into();
+                                        s.message = "Owned child in a fixed device namespace; host clients are unchanged.".into();
+                                        true
+                                    } else { false }
+                                };
+                                if transitioned {
+                                    if let Some(changed) = &changed { changed(); }
                                 }
                             }
                             Ok(Poll::Exited(0)) => break Ok("Owned child exited successfully.".into()),
@@ -198,6 +208,7 @@ impl Worker {
                     s.phase = if result.is_ok() { "stopped" } else { "attention" }.into();
                     s.message = result.unwrap_or_else(|e| e).chars().take(512).collect();
                 }
+                if let Some(changed) = &changed { changed(); }
             });
         match spawned {
             Ok(thread) => {

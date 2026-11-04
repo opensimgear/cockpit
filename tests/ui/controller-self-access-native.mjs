@@ -51,9 +51,13 @@ test('native startup grants HidHide self-access and Devices displays the same pa
     await expect(status).toContainText(access.executable);
     await expect(status).toContainText('Access was verified at startup.');
     await expect(devices.locator('.system-list')).not.toBeVisible();
-    // Wait for actual timer-driven status requests, rather than clicking refresh.
+    // The native baseline can arrive after the initial read. Once settled, the
+    // panel must stay idle across more than two of its former refresh periods.
+    await expect.poll(() => commands.filter(command => command === 'controller_visibility_status').length).toBeGreaterThan(1);
+    await page.waitForTimeout(400);
     const observed = commands.filter(command => command === 'controller_visibility_status').length;
-    await expect.poll(() => commands.filter(command => command === 'controller_visibility_status').length).toBeGreaterThan(observed);
+    await page.waitForTimeout(2200);
+    assert.equal(commands.filter(command => command === 'controller_visibility_status').length, observed);
     const repeated = await native({ command: 'controller_visibility_status', sourceId: source.id });
     assert.deepEqual(repeated.visibility.selfAccess, access);
     assert.deepEqual(repeated.visibility.effective, initial.visibility.effective);

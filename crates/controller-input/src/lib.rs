@@ -353,6 +353,9 @@ impl ControllerService {
     pub fn monotonic_us(&self) -> u64 { self.clock.now_us() }
     /// Immutable clock origin and identity for native acquisition conversion.
     pub fn capture_clock(&self) -> stream::Clock { self.clock }
+    pub fn watch_visibility_changes(&self, changed: Arc<dyn Fn() + Send + Sync>) {
+        self.visibility.watch_changes(changed);
+    }
     pub fn visibility_active(&self) -> bool {
         self.visibility.active()
     }

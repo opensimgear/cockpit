@@ -3,6 +3,7 @@
   import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import { gatewayRequest, type GatewayRequest } from './gateway';
+  import { SharedObservations } from './streams/shared';
   import type { HostController } from './controllers';
   import type { HidHideSelfAccess, VisibilityIntent, VisibilityStatus } from './visibility';
   const startupAccessLabels: Record<HidHideSelfAccess['status'], string> = {
@@ -18,7 +19,8 @@
   let busy = $state(false);
   let error = $state('');
   let disposed = false;
-  let polling = false;
+  let refreshing = false;
+  let refreshPending = false;
   let loaded = false;
   async function request(value: GatewayRequest, updateIntent = false) {
     const result = (await gatewayRequest({ ...value, sourceId: source.id })).controllers?.visibility;
@@ -32,16 +34,32 @@
     busy = true;
     try { await request(value, value.command === 'controller_visibility_save'); error = ''; }
     catch (e) { if (!disposed) error = e instanceof Error ? e.message : String(e); }
-    finally { busy = false; }
+    finally { busy = false; if (refreshPending) void refresh(); }
   }
   async function refresh() {
-    if (busy || polling || disposed) return;
-    polling = true;
-    try { await request({ command: 'controller_visibility_status' }); }
-    catch (e) { if (!disposed) error = e instanceof Error ? e.message : String(e); }
-    finally { polling = false; }
+    if (disposed || document.hidden) return;
+    refreshPending = true;
+    if (busy || refreshing) return;
+    refreshing = true;
+    try {
+      while (refreshPending && !busy && !disposed && !document.hidden) {
+        refreshPending = false;
+        try { await request({ command: 'controller_visibility_status' }); }
+        catch (e) { if (!disposed) error = e instanceof Error ? e.message : String(e); }
+      }
+    } finally { refreshing = false; }
   }
-  onMount(() => { void refresh(); const timer = setInterval(refresh, 1000); return () => { disposed = true; clearInterval(timer); }; });
+  onMount(() => {
+    const observations = new SharedObservations();
+    observations.subscribe('system.inventory', state => { if (state.status === 'ready') void refresh(); });
+    document.addEventListener('visibilitychange', refresh);
+    void refresh();
+    return () => {
+      disposed = true;
+      observations.close();
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  });
 </script>
 <section class="visibility" aria-label="Device visibility">
   <h3>Device visibility</h3>
