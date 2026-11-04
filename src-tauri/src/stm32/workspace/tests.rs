@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn resource_wake_tracks_can_capabilities_without_following_input_values() {
+    let mut state = json!({
+        "connected":true, "modules":[{"id":"panel","online":true,"boot":1}],
+        "moduleEvents":{"panel":{"ok":true,"stream":1,"head":0,"axisNeutral":[10]}},
+        "moduleActions":{"panel":{"status":"ready","catalogueRevision":1,"lastLease":{"leaseId":1}}}
+    });
+    let cache = Cache::new(state.clone());
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    cache.watch_inventory(&wake);
+    state["moduleEvents"]["panel"]["head"] = json!(3);
+    state["moduleActions"]["panel"]["lastLease"]["leaseId"] = json!(2);
+    state["nativeSnapshotAtMs"] = json!(42);
+    cache.commit(state.clone(), BTreeMap::new());
+    assert_eq!(wake.observed(), 0);
+    state["moduleEvents"]["panel"]["axisNeutral"] = json!([20]);
+    cache.commit(state.clone(), BTreeMap::new());
+    assert_eq!(wake.observed(), 1);
+    state["moduleActions"]["panel"]["catalogueRevision"] = json!(2);
+    cache.commit(state.clone(), BTreeMap::new());
+    assert_eq!(wake.observed(), 2);
+    state["modules"][0]["boot"] = json!(2);
+    cache.commit(state.clone(), BTreeMap::new());
+    assert_eq!(wake.observed(), 3);
+    cache.commit(json!({"connected":false}), BTreeMap::new());
+    assert_eq!(wake.observed(), 4);
+}
+
+#[test]
 fn cache_is_atomic_private_and_notifies_only_after_visible_or_owner_changes() {
     let cache = Cache::new(json!({"connected":false}));
     let first = Arc::new(osg_streams::NativeWake::default());let second = Arc::new(osg_streams::NativeWake::default());

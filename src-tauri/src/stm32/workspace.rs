@@ -8,6 +8,7 @@ struct Snapshot {
     visible: Arc<Value>,
     owners: BTreeMap<String, String>,
     wakes: Vec<Weak<osg_streams::NativeWake>>,
+    inventory_wake: Weak<osg_streams::NativeWake>,
 }
 pub(crate) struct Cache { snapshot: Mutex<Snapshot>, owned: AtomicBool }
 impl Cache {
@@ -15,7 +16,7 @@ impl Cache {
         let state = public_state(state);
         let visible = visible_state(&state);
         Self { snapshot: Mutex::new(Snapshot { state: Arc::new(state), visible: Arc::new(visible),
-            owners: BTreeMap::new(), wakes: vec![] }), owned: AtomicBool::new(false) }
+            owners: BTreeMap::new(), wakes: vec![], inventory_wake: Weak::new() }), owned: AtomicBool::new(false) }
     }
     pub(crate) fn watch(&self, wake: Arc<osg_streams::NativeWake>) {
         let mut snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
@@ -29,6 +30,9 @@ impl Cache {
         let snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
         (snapshot.state.clone(), snapshot.owners.clone())
     }
+    fn watch_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
+        self.snapshot.lock().unwrap_or_else(|p| p.into_inner()).inventory_wake = Arc::downgrade(wake);
+    }
     pub(crate) fn visible_snapshot(&self) -> (Arc<Value>, BTreeMap<String, String>) {
         let snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
         (snapshot.visible.clone(), snapshot.owners.clone())
@@ -38,19 +42,28 @@ impl Cache {
     pub(crate) fn commit(&self, state: Value, owners: BTreeMap<String, String>) {
         let state = public_state(state);
         let visible = visible_state(&state);
-        let wakes = {
+        let (wakes, inventory) = {
             let mut snapshot = self.snapshot.lock().unwrap_or_else(|p| p.into_inner());
             let visible_changed = snapshot.visible.as_ref() != &visible;
             let changed = visible_changed || snapshot.owners != owners;
+            let inventory = snapshot.inventory_wake.upgrade().filter(|_| {
+                visible_changed && inventory_changed(&snapshot.state, &state)
+            });
             if snapshot.state.as_ref() != &state { snapshot.state = Arc::new(state); }
             if visible_changed { snapshot.visible = Arc::new(visible); }
             snapshot.owners = owners;
             snapshot.wakes.retain(|wake| wake.strong_count() > 0);
-            if changed { snapshot.wakes.iter().filter_map(Weak::upgrade).collect::<Vec<_>>() } else { vec![] }
+            let wakes = if changed { snapshot.wakes.iter().filter_map(Weak::upgrade).collect::<Vec<_>>() } else { vec![] };
+            (wakes, inventory)
         };
         for wake in wakes { wake.notify(); }
+        if let Some(wake) = inventory { wake.notify(); }
     }
 }
+
+#[path = "workspace/inventory.rs"]
+mod inventory;
+use inventory::inventory_changed;
 fn public_state(mut state: Value) -> Value {
     fn scrub(value: &mut Value) {
         match value {
@@ -74,6 +87,7 @@ fn visible_state(state: &Value) -> Value {
 }
 
 impl Stm32Service {
+    pub(crate) fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) { self.workspace.watch_inventory(wake); }
     pub(crate) fn watch_workspace(&self, wake: Arc<osg_streams::NativeWake>) { self.workspace.watch(wake); }
     pub(crate) fn workspace_snapshot(&self) -> (Arc<Value>, BTreeMap<String, String>) { self.workspace.visible_snapshot() }
     pub(crate) fn set_workspace_owned(&self, owned: bool) { self.workspace.set_owned(owned); }

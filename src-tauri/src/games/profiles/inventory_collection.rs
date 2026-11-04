@@ -252,11 +252,11 @@ impl Sources {
     }
 
     fn collect(&mut self, revision: u64) -> Vec<(String, Result<ProviderBatch, String>)> {
-        self.collect_with_usb(revision, true)
+        self.collect_with_discovery(revision, true)
     }
 
-    fn collect_with_usb(&mut self, revision: u64, discover_usb: bool) -> Vec<(String, Result<ProviderBatch, String>)> {
-        let usb_result = self.usb_observations(discover_usb);
+    fn collect_with_discovery(&mut self, revision: u64, discover: bool) -> Vec<(String, Result<ProviderBatch, String>)> {
+        let usb_result = self.usb_observations(discover);
         let usb_slots = self.usb.snapshots();
         let verified = usb_slots
             .iter()
@@ -379,7 +379,9 @@ impl Sources {
                 Some(false) => Ok(self.disconnected_can_batch(&scope, revision)),
                 None => Err("Gateway connection state is unavailable; remembered module inventory is retained.".into()),
             };
-            self.refresh_can_capabilities(id, state);
+            if discover {
+                self.refresh_can_capabilities(id, state);
+            }
             batches.push((scope, observed));
         }
         for scope in &self.can_scopes {

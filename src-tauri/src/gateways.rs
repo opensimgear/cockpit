@@ -58,6 +58,7 @@ trait Adapter: Send + Sync {
         Err("This gateway has no native panel stream.".into())
     }
     fn watch_workspace(&self,_wake:Arc<osg_streams::NativeWake>) {}
+    fn watch_resource_inventory(&self, _wake: &Arc<osg_streams::NativeWake>) {}
     fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){(Arc::new(self.cached_state()),BTreeMap::new())}
     fn set_workspace_owned(&self,_owned:bool) {}
     fn renew_workspace_client(&self,_client:&str)->Result<Vec<String>,String>{Err("Workspace lease renewal is unsupported.".into())}
@@ -84,6 +85,9 @@ impl Adapter for PicoService {
     }
 }
 impl Adapter for Stm32Service {
+    fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
+        self.watch_resource_inventory(wake);
+    }
     fn panel_capture(&self, module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
         Stm32Service::panel_capture(self, module)
     }
@@ -376,7 +380,17 @@ impl GatewayManager {
         let host_inventory_wake = Arc::new(osg_streams::NativeWake::default());
         let (collect, project, collect_host) = crate::profile_resource_sources::collector(
             controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
-            Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.cached_state())).collect()),
+            Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().filter_map(|(id, adapter)| {
+                let state = adapter.cached_state();
+                if native && state["connected"] == true {
+                    let backend = id.split_once(':')?.0;
+                    let serial = state["gatewaySerial"].as_str()?;
+                    if canonical_id(backend, serial).as_deref() != Some(id.as_str()) {
+                        return None;
+                    }
+                }
+                Some((id.clone(), state))
+            }).collect()),
             Arc::new(move |request| {
                 let adapter = resource_requests.lock().unwrap_or_else(|p| p.into_inner()).get(request["gatewayId"].as_str().unwrap_or("")).cloned();
                 adapter.map_or_else(|| json!({"ok":false,"error":"The inventory gateway is disconnected."}), |adapter| adapter.request(request))
@@ -1627,6 +1641,9 @@ impl GatewayManager {
         };
         let _workspace_hold=if command=="disconnect" {match self.workspace.hold(&id){Ok(hold)=>Some(hold),Err(error)=>return self.error(&error,Some(&id))}}else{None};
         adapter.watch_workspace(self.workspace.wake());
+        if command == "connect" && self.profile_native {
+            adapter.watch_resource_inventory(self.profile_resources.projection_wake());
+        }
         request["gatewayId"] = json!(id);
         request.as_object_mut().unwrap().remove("backend");
         let mut response = match &_workspace_hold {Some(hold)=>hold.dispatch(||adapter.request(request)),None=>adapter.request(request)};
@@ -1643,6 +1660,7 @@ impl GatewayManager {
                 let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
                 if sessions.get(&id).is_some_and(|a| Arc::ptr_eq(a, &adapter)) {
                     sessions.remove(&id);
+                    self.profile_resources.projection_wake().notify();
                 }
                 drop(sessions);
                 return self.error(

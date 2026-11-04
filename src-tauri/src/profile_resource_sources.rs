@@ -106,7 +106,7 @@ pub(crate) fn collector(
         cached_sources
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .collect_with_usb(revision, false)
+            .collect_with_discovery(revision, false)
     });
     let host = Arc::new(move |revision| {
         let evidence = host_usb_evidence.lock().unwrap_or_else(|p| p.into_inner());
