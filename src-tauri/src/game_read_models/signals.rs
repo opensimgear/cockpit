@@ -1,7 +1,7 @@
 //! Cheap typed source invalidations and ordered job transitions. No callbacks,
 //! snapshot construction, serialization, filesystem or transport runs here.
 use serde::Serialize;
-use std::{collections::{BTreeMap,VecDeque},sync::{Arc,Mutex}};
+use std::{collections::{BTreeMap,VecDeque},sync::{atomic::{AtomicBool, Ordering},Arc,Mutex}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub(crate) enum Domain { Library, Discovery, Runtime, Artwork, Setup, Permissions }
@@ -32,13 +32,13 @@ struct State {
     revision:u64,dirty:u32,jobs:BTreeMap<String,Job>,events:VecDeque<Job>,bytes:usize,
     overflow:bool,closed:bool,error:Option<String>,
 }
-pub(crate) struct Signal { state:Mutex<State>,pub(crate) wake:Arc<osg_streams::NativeWake> }
+pub(crate) struct Signal { state:Mutex<State>, telemetry:AtomicBool,pub(crate) wake:Arc<osg_streams::NativeWake> }
 pub(super) struct Batch {
     pub revision:u64,pub dirty:u32,pub events:Vec<Job>,pub jobs:Vec<Job>,pub lost:bool,
 }
 impl Default for Signal {
     fn default()->Self {Self{state:Mutex::new(State{revision:0,dirty:ALL,jobs:BTreeMap::new(),events:VecDeque::new(),
-        bytes:0,overflow:false,closed:false,error:None}),wake:Arc::new(Default::default())}}
+        bytes:0,overflow:false,closed:false,error:None}),telemetry:AtomicBool::new(false),wake:Arc::new(Default::default())}}
 }
 impl std::fmt::Debug for Signal {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.debug_struct("GameChanges").finish_non_exhaustive()}
@@ -52,6 +52,10 @@ impl Signal {
         let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
         if state.closed{return;}Self::tick(&mut state,domain);drop(state);self.wake.notify();
     }
+    pub(crate) fn mark_telemetry(&self) {
+        if !self.telemetry.swap(true, Ordering::AcqRel) { self.wake.notify(); }
+    }
+    pub(super) fn take_telemetry(&self) -> bool { self.telemetry.swap(false, Ordering::AcqRel) }
     pub(crate) fn start_job(&self,domain:Domain,key:&str,run:&str,phase:&str,message:&str,percent:Option<u8>) {
         self.job_inner(domain,key,run,phase,message,percent,false,true);
     }
@@ -100,6 +104,20 @@ impl Signal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn telemetry_changes_wake_once_without_dirtying_the_game_catalogue() {
+        let signal = Signal::default();
+        signal.take(true).unwrap();
+        let before = signal.wake.observed();
+        signal.mark_telemetry();
+        let after = signal.wake.observed();
+        assert_ne!(before, after);
+        signal.mark_telemetry();
+        assert_eq!(signal.wake.observed(), after);
+        assert!(signal.take_telemetry());
+        assert!(!signal.take_telemetry());
+        assert!(signal.take(false).unwrap().is_none());
+    }
     #[test]
     fn ordered_jobs_have_exact_runs_and_overload_requires_new_baseline() {
         let signal=Signal::default();signal.take(true).unwrap();

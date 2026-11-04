@@ -31,7 +31,7 @@ own resource worker on commits and first readiness.
 | Debug/topology/live/path/virtual previews | UI 250 ms–2 s reads | Subscribe to shared native snapshots and reports; virtual preview observes acknowledged output, never drives runtime |
 | DCS-BIOS / managed DCS export | Socket reports plus command-pumped reads | One blocking socket producer publishes source-native batches, context and quality deadlines; separately confirm simulator effects |
 | X-Plane | xplane bounded datagram poll/resubscription | Blocking socket receive; protocol subscription renewal remains timed; source expiry distinct from connection |
-| Shared-memory telemetry | games/telemetry/windows_source double-copy sample | Simulator/export producer bridge must notify a coherent frame. File/process notifications alone do not indicate a changed shared-memory frame; acquisition gate unresolved |
+| Shared-memory telemetry | games/telemetry/windows_source double-copy sample | One native sampler per active game is approved at the shared-memory boundary. Downstream consumers subscribe to committed captures |
 | Games/rules/catalogues/setup | game_get_state, GameProfileRule, jobs | Publish process/context, committed rules, catalogue replacement and background job completion; explicit rescan remains a command |
 | Discovery/artwork/metadata | Async workers, UI completion refresh | Worker progress/completion publishes revision, rejects old query/job generations; bounded immutable page reads |
 | Companion presence/pairing/listeners | Service sockets, UI 1.5 s status | Authenticated service lifecycle events and acknowledged configuration commits |
@@ -52,15 +52,17 @@ mapping behavior remain legitimate when they do not refresh application state.
 
 The currently supported telemetry adapters are Assetto Corsa, Assetto Corsa
 Competizione, Assetto Corsa EVO, Assetto Corsa Rally, DCS-BIOS, managed DCS ownship,
-and X-Plane 11/12 (see ../telemetry.md). Each of the four Assetto dialects has an
-unresolved shared-memory notification boundary; a packet identifier is evidence
-of a new sample only after a read, not a producer notification. A proposed bridge
-must run at the simulator/export producer and publish a coherent frame with the
-original packet identity. A helper that periodically copies the same pages is
-still sampling and does not pass this gate. Feasibility and live qualification
-must be established for each simulator separately. DCS export's existing up-to-20
-Hz source-defined frame callback is legitimate upstream cadence; downstream
-consumers must not turn its one-second freshness lease into a refresh interval.
+and X-Plane 11/12 (see ../telemetry.md). The user approved one native
+shared-memory sampler per active Assetto game for all four dialects. The sampler
+owns the mapping and publishes each newly detected coherent packet with its
+original packet identity, mapping generation and capture times. Inspector,
+profile and MCP consumers share committed updates and have independent delivery
+limits. The exception applies to acquisition only. Live qualification remains
+separate for each simulator.
+[Approval record](https://github.com/opensimgear/cockpit/issues/189#issuecomment-6631711574)
+
+DCS export's existing up-to-20 Hz frame callback is source-defined cadence. Its
+one-second freshness lease expires on the original deadline.
 
 Preserve controller journal session/cursor/gap semantics, batch size 4,096,
 non-consuming multi-reader access, exact numeric domains and complete baselines.

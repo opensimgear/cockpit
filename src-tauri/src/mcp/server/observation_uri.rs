@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 9] = [
+const FIXED_TOPICS: [(&str, &str); 10] = [
     ("activity.log", "Activity log revision"),
     ("profiles.library", "Saved profile library"),
     ("profiles.runtime", "Applied profile runtime"),
@@ -12,6 +12,7 @@ const FIXED_TOPICS: [(&str, &str); 9] = [
     ("workspace.state", "Gateway workspace state"),
     ("games.state", "Configured games"),
     ("games.jobs", "Game discovery and artwork jobs"),
+    ("games.telemetry", "Game telemetry revision"),
     ("controllers.inventory", "Host controller inventory"),
 ];
 
@@ -99,6 +100,7 @@ mod tests {
             "workspace.state",
             "games.state",
             "games.jobs",
+            "games.telemetry",
             "games.detail.dcs",
             "controllers.inventory",
             "controllers.input.11111111-1111-4111-8111-111111111111",

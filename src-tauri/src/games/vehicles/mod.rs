@@ -102,6 +102,7 @@ struct Entry {
     detached_physics: Option<crate::dcs_physics::SourceView>,
     inventory_revision: u64,
     published: Visible,
+    published_capture: Option<std::sync::Weak<Capture>>,
 }
 #[derive(Default, PartialEq)]
 struct Visible { current: Option<Value>, error: Option<String>, inventory_revision: u64 }
@@ -136,6 +137,16 @@ impl Tracker {
         let current = self.current(id);
         let Some(entry) = self.entries.get_mut(id) else { return; };
         let visible = Visible { current, error: entry.error.clone(), inventory_revision: entry.inventory_revision };
+        let capture = entry.telemetry.as_ref().map(Arc::downgrade);
+        let changed = match (&entry.published_capture, &capture) {
+            (Some(old), Some(new)) => !old.ptr_eq(new),
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            entry.published_capture = capture;
+            if let Some(changes) = &self.changes { changes.mark_telemetry(); }
+        }
         if entry.published != visible { entry.published = visible; self.changed(); }
         let deadline = self.view_deadline();
         if self.published_deadline != deadline {
@@ -157,6 +168,11 @@ impl Tracker {
             let deadline = observed.min(captured);
             (deadline > now).then_some(deadline)
         }).min()
+    }
+    pub(crate) fn telemetry_deadlines(&self) -> Vec<(Instant, Arc<Capture>)> {
+        self.entries.values().filter_map(|entry| {
+            Some((entry.observed, entry.telemetry.as_ref()?.clone()))
+        }).collect()
     }
     pub(crate) fn take_retired(&mut self) -> RetiredReaders {
         RetiredReaders { _readers: std::mem::take(&mut self.retired) }

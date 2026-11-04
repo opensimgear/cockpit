@@ -231,6 +231,40 @@ fn telemetry_inspection_is_bounded_passive_and_available_without_a_profile() {
 }
 
 #[test]
+fn telemetry_revision_delivery_is_independent_of_catalogue_pages() {
+    let directory = crate::test_directory();
+    let games = Arc::new(seeded_runtime(directory.path(), Arc::new(FakePlatform::default())));
+    let observations = crate::observations::Runtime::new();
+    let broker = observations.broker();
+    let runtime = crate::game_read_models::Runtime::new(observations, games.clone());
+    runtime.start().unwrap();
+    let mut telemetry = broker.subscribe("telemetry-test", "mcp", "games.telemetry").unwrap();
+    let mut catalogue = broker.subscribe("catalogue-test", "ui", "games.state").unwrap();
+    assert_eq!(telemetry.try_recv().unwrap().unwrap().revision, "1");
+    assert!(catalogue.try_recv().unwrap().is_some());
+    games.read_model_signal().mark_telemetry();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(frame) = telemetry.try_recv().unwrap() {
+            assert_eq!(frame.revision, "2");
+            assert_eq!(frame.payload, Some(json!({})));
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(catalogue.try_recv().unwrap().is_none());
+    assert!(runtime.page(&json!({})).is_err());
+    runtime.with_detail(GAME, || {
+        let mut detail = broker.subscribe("game-test", "ui", "games.detail.dcs").unwrap();
+        assert!(detail.try_recv().unwrap().is_some());
+        Ok(())
+    }).unwrap();
+    runtime.shutdown();
+    games.shutdown();
+}
+
+#[test]
 fn game_get_state_does_not_wait_for_metadata_admission_and_keeps_request_validation() {
     let directory = crate::test_directory();
     let runtime = Arc::new(GamesRuntime::test_runtime(

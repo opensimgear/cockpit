@@ -26,6 +26,15 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
   };
   const games=async()=>(await native({command:'game_get_state'})).games;
   try{
+    await page.evaluate(`import('/src/lib/streams/shared.ts').then(({SharedObservations})=>{
+      const observations=new SharedObservations();
+      window.__assettoTelemetryObservation={observations,revision:'0'};
+      observations.subscribe('games.telemetry',state=>{
+        if(state.status==='ready')window.__assettoTelemetryObservation.revision=state.frame.revision;
+      });
+    })`);
+    const telemetryRevision=()=>page.evaluate('window.__assettoTelemetryObservation.revision');
+    await until(telemetryRevision,revision=>revision!=='0');
     const initial=await games();
     assert.ok(!initial.detectedGames?.some(game=>game.gameId.startsWith('assetto-corsa')),
       'Close real Assetto games before starting private publishers.');
@@ -108,6 +117,8 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
           return report.games.find(game=>game.id===gameId)?.channels.find(channel=>channel.id==='engine.rpm');
         };
         record.phases.live=await live();
+        const revision=await telemetryRevision();
+        record.phases.inspectorRevision=await until(telemetryRevision,value=>BigInt(value)>BigInt(revision));
         record.phases.inspectorLive=await until(async()=>{
           const channel=await inspectRpm();
           return channel?.status==='known'&&channel.value===expected['engine.rpm']&&channel;
@@ -158,5 +169,8 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
     assert.deepEqual(evidence.cleanupErrors,[]);
     evidence.finishedAt=new Date().toISOString();await writeFile(resolve(directory,'evidence.json'),JSON.stringify(evidence,null,2));
   }catch(error){await writeFile(resolve(directory,'failure.json'),JSON.stringify({...evidence,error:String(error)},null,2));throw error;}
-  finally{page.close();}
+  finally{
+    try{await page.evaluate('window.__assettoTelemetryObservation?.observations.close(); delete window.__assettoTelemetryObservation');}
+    finally{page.close();}
+  }
 });

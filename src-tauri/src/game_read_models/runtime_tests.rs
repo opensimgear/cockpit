@@ -124,8 +124,10 @@ fn source_failure_retires_all_topics_clears_cache_and_unblocks_waiters() {
     let mut worker = Worker::default();
     worker.state = Some(topic(&broker, &observations, "games:clock", "games.state", json!({"value":image})).unwrap());
     worker.jobs = Some(topic(&broker, &observations, "games:clock", "games.jobs", json!({"jobs":[]})).unwrap());
+    worker.telemetry = Some(topic(&broker, &observations, "games:clock", "games.telemetry", json!({})).unwrap());
     let waiter = std::thread::spawn(move || lease.wait_ready());
     finish(&inner, &broker, &pages, worker, Err("explicit capture failure".into()));
+    assert!(broker.subscribe("test", "mcp", "games.telemetry").is_err());
     assert_eq!(waiter.join().unwrap().unwrap_err(), "explicit capture failure");
     assert!(inner.closed.load(Ordering::Acquire));
     assert!(broker.subscribe("test", "ui", "games.state").is_err());

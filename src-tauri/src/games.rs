@@ -186,6 +186,15 @@ impl GamesRuntime {
         runtime.inner.prepare_online_artwork();
         runtime
     }
+    pub(crate) fn telemetry_deadline(&self) -> Option<Instant> {
+        let captures = self.inner.vehicles.lock().unwrap_or_else(|p| p.into_inner()).telemetry_deadlines();
+        let now = Instant::now();
+        let mut earliest = None;
+        for (observed, capture) in captures {
+            earliest = earliest.into_iter().chain(capture.next_deadline(observed, now)).min();
+        }
+        earliest
+    }
     pub(crate) fn resource_catalogue(&self) -> Vec<Value> {
         let catalogue = self
             .inner

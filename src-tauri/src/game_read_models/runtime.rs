@@ -124,6 +124,7 @@ impl Jobs {
 struct Worker {
     state: Option<Publisher>,
     jobs: Option<Publisher>,
+    telemetry: Option<Publisher>,
     previous: Option<Value>,
     job_state: Jobs,
     discovery: Option<Value>,
@@ -223,6 +224,7 @@ fn finish(inner: &Inner, broker: &Broker, pages: &Pages, worker: Worker, result:
     }
     if let Some(publisher) = worker.state { broker.retire(&publisher); }
     if let Some(publisher) = worker.jobs { broker.retire(&publisher); }
+    if let Some(publisher) = worker.telemetry { broker.retire(&publisher); }
     if let Err(error) = result { registry.ready = Some(Err(error)); }
     inner.closed.store(true, Ordering::Release);
     inner.changed.notify_all();
@@ -236,6 +238,7 @@ fn run_loop(inner: &Inner, observations: &observations::Runtime, games: &GamesRu
     let clock = format!("games:{}", uuid::Uuid::new_v4());
     let mut bootstrap = true;
     let mut pending_lost = false;
+    let mut telemetry_deadline = None;
     loop {
         let observed = inner.signal.wake.observed();
         if inner.closed.load(Ordering::Acquire) { return Ok(()); }
@@ -246,6 +249,15 @@ fn run_loop(inner: &Inner, observations: &observations::Runtime, games: &GamesRu
         let dirty = batch.as_ref().map_or(0, |batch| batch.dirty);
         pending_lost |= batch.as_ref().is_some_and(|batch| batch.lost);
         let capture_deadline = games.read_model_deadline();
+        let telemetry_changed = inner.signal.take_telemetry();
+        if worker.telemetry.is_none() || telemetry_changed || dirty != 0 || expired_deadline(telemetry_deadline, Instant::now()) {
+            telemetry_deadline = games.telemetry_deadline();
+            if let Some(publisher) = &worker.telemetry {
+                publish(observations, publisher, &clock, json!({}), None, false, false)?;
+            } else {
+                worker.telemetry = Some(topic(&broker, observations, &clock, "games.telemetry", json!({}))?);
+            }
+        }
         if dirty != 0 || retired || tasks.iter().any(|task| task.publisher.is_none()) || worker.state.is_none() {
             match worker.project(inner, observations, games, pages, &tasks, &clock, dirty, pending_lost) {
                 Err(error) if error.starts_with("Game read-model source changed") => {
@@ -264,7 +276,8 @@ fn run_loop(inner: &Inner, observations: &observations::Runtime, games: &GamesRu
             if registry.ready.is_none() { registry.ready = Some(Ok(())); inner.changed.notify_all(); }
         }
         let deadline = pending_deadline(capture_deadline, games.read_model_deadline());
-        inner.signal.wake.wait_scheduled(observed, deadline.map(|at| at.saturating_duration_since(Instant::now())));
+        let next_deadline = pending_deadline(deadline, telemetry_deadline);
+        inner.signal.wake.wait_scheduled(observed, next_deadline.map(|at| at.saturating_duration_since(Instant::now())));
         if expired_deadline(deadline, Instant::now())
             && !inner.closed.load(Ordering::Acquire)
         { inner.signal.mark(Domain::Runtime); }

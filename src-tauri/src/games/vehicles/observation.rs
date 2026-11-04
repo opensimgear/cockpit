@@ -129,6 +129,7 @@ impl Tracker {
             detached_physics: None,
             inventory_revision: 0,
             published: Visible::default(),
+            published_capture: None,
         });
         if observation_epoch <= entry.observation_epoch {
             return None;

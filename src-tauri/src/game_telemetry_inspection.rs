@@ -65,6 +65,29 @@ impl Capture {
             at: Instant::now(),
         }
     }
+    pub(crate) fn next_deadline(&self, observed: Instant, now: Instant) -> Option<Instant> {
+        use crate::native_capture::Validity;
+        // Both existing age fences include equality. Native contributor leases
+        // are exclusive and must withdraw at their exact original deadline.
+        let inclusive = Duration::from_secs(2) + Duration::from_nanos(1);
+        let process = observed.checked_add(inclusive)?;
+        if now >= process { return None; }
+        let cache = self.at.checked_add(inclusive)?;
+        if now >= cache { return Some(process); }
+        let mut deadline = process.min(cache);
+        if self.status == "live" {
+            for value in self.values.values().filter(|value| value.is_current(now)) {
+                for contribution in value.contributors().into_iter().flatten() {
+                    let expires = match &contribution.validity {
+                        Validity::Sampled { valid_until } => *valid_until,
+                        Validity::Latched(lease) => lease.valid_until,
+                    };
+                    deadline = deadline.min(expires);
+                }
+            }
+        }
+        Some(deadline)
+    }
     pub(crate) fn expired(&self) -> bool {
         self.expired_at(Instant::now())
     }
@@ -249,6 +272,8 @@ mod tests {
             ages:BTreeMap::new(),stale_ids:BTreeSet::new(),message:None,at:old};
         let catalogue=vec![json!({"id":"engine.rpm","type":"number"})];
         let prepared=Page::prepare(&catalogue,0,1,"","");
+        assert_eq!(capture.next_deadline(old, old), Some(expires));
+        assert_eq!(capture.next_deadline(old, expires), Some(old + Duration::from_secs(2) + Duration::from_nanos(1)));
         let live=prepared.project(Some(&capture),expires-Duration::from_nanos(1));
         assert_eq!(live[0]["status"],"known");
         assert_eq!(live[0]["value"],0);
