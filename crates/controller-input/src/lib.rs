@@ -359,6 +359,9 @@ impl ControllerService {
     pub fn visibility_active(&self) -> bool {
         self.visibility.active()
     }
+    pub fn wait_game_visibility_restoration(&self, owner: &str, budget: std::time::Duration) -> Result<bool, String> {
+        self.visibility.wait_game_restoration(owner, budget)
+    }
     /// Internal coordinator boundary, deliberately separate from frontend IPC.
     pub fn game_visibility(&self, operation: &str, value: &Value) -> Result<Value, String> {
         if self.stop.load(Ordering::Acquire)

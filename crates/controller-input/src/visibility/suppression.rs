@@ -1,7 +1,7 @@
 //! Capture-owned ephemeral suppression. Commands never open a second input handle.
 use super::session::{validate_sources, Source};
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::{sync::{Arc, Condvar, Mutex}, time::Duration};
 #[derive(Clone)]
 pub enum Command {
     Apply { id: String, sources: Vec<Source> },
@@ -15,7 +15,7 @@ struct State {
     reason: String,
 }
 #[derive(Clone, Default)]
-pub struct Control(Arc<Mutex<State>>);
+pub struct Control(Arc<Mutex<State>>, Arc<Condvar>);
 impl Control {
     pub fn apply(&self, sources: Vec<Source>) -> Result<String, String> {
         validate_sources(&sources, &sources, false)?;
@@ -55,6 +55,17 @@ impl Control {
         let mut s = self.0.lock().unwrap_or_else(|p| p.into_inner());
         s.phase = phase.into();
         s.reason = reason.into();
+        self.1.notify_all();
+    }
+    pub(super) fn wait_restored(&self, job: &str, budget: Duration) -> Result<bool, String> {
+        let state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let (state, _) = self.1.wait_timeout_while(state, budget, |state| {
+            state.id == job && busy(&state.phase)
+        }).unwrap_or_else(|p| p.into_inner());
+        if state.id != job {
+            return Err("Suppression session changed while waiting for restoration.".into());
+        }
+        Ok(!busy(&state.phase))
     }
     pub fn active(&self) -> bool {
         busy(&self.0.lock().unwrap_or_else(|p| p.into_inner()).phase)
@@ -73,6 +84,20 @@ fn busy(phase: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn restoration_wait_is_bounded_and_fenced_to_the_exact_session() {
+        let control = Control::default();
+        let job = control.apply(vec![source()]).unwrap();
+        control.stop(Some(&job)).unwrap();
+        assert!(!control.wait_restored(&job, Duration::ZERO).unwrap());
+        let reader = control.clone();
+        let exact = job.clone();
+        let waiter = std::thread::spawn(move || reader.wait_restored(&exact, Duration::from_secs(2)));
+        control.update("restored", "Done");
+        assert!(waiter.join().unwrap().unwrap());
+        control.apply(vec![source()]).unwrap();
+        assert!(control.wait_restored(&job, Duration::ZERO).is_err());
+    }
     fn source() -> Source {
         Source {
             id: uuid::Uuid::new_v4().to_string(),

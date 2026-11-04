@@ -3,26 +3,26 @@ const OWNER: &str = "11111111-1111-4111-8111-111111111111";
 
 #[test]
 fn visibility_cleanup_waits_for_exact_restoration_and_never_retries_uncertain_stop() {
-    let mut calls = vec![];
-    let result = restore_visibility(OWNER, Duration::from_secs(1), |operation, request| {
-        calls.push(operation.to_owned());
+    let calls = std::cell::RefCell::new(vec![]);
+    let result = restore_visibility(OWNER, |request| {
+        calls.borrow_mut().push("stop");
         assert_eq!(request, &json!({"owner":OWNER}));
-        match calls.len() {
+        match calls.borrow().len() {
             1 => Ok(json!({"active":true,"phase":"restoring"})),
-            2 => Ok(json!({"active":false,"phase":"done"})),
             3 => Ok(json!({"active":false,"phase":"restored"})),
             _ => panic!("unexpected restoration attempt"),
         }
+    }, || {
+        calls.borrow_mut().push("completion");
+        Ok(true)
     }).unwrap();
     assert_eq!(result["phase"], "restored");
-    assert_eq!(calls, ["stop", "poll", "stop"]);
-    calls.clear();
-    assert!(restore_visibility(OWNER, Duration::from_secs(1), |operation, _| { calls.push(operation.to_owned()); Err("Lost cleanup reply".into()) }).unwrap_err().contains("Lost cleanup reply"));
-    assert_eq!(calls, ["stop"]);
-    calls.clear();
-    assert!(restore_visibility(OWNER, Duration::ZERO, |operation, _| { calls.push(operation.to_owned()); Ok(json!({"active":true})) }).unwrap_err().contains("still pending"));
-    assert_eq!(calls, ["stop"]);
-    assert!(restore_visibility(OWNER, Duration::from_secs(1), |_, _| Ok(json!({"active":false,"phase":"attention"}))).unwrap_err().contains("exact restoration"));
+    assert_eq!(*calls.borrow(), ["stop", "completion", "stop"]);
+    assert!(restore_visibility(OWNER, |_| Err("Lost cleanup reply".into()), || panic!("Uncertain Stop must not wait or retry")).unwrap_err().contains("Lost cleanup reply"));
+    calls.borrow_mut().clear();
+    assert!(restore_visibility(OWNER, |_| { calls.borrow_mut().push("stop"); Ok(json!({"active":true})) }, || Ok(false)).unwrap_err().contains("still pending"));
+    assert_eq!(*calls.borrow(), ["stop"]);
+    assert!(restore_visibility(OWNER, |_| Ok(json!({"active":false,"phase":"attention"})), || panic!("Inactive restoration needs no wait")).unwrap_err().contains("exact restoration"));
 }
 
 #[test]

@@ -360,8 +360,12 @@ fn independent_worker_requires_fresh_reports_and_stops_without_ui_polling() {
     assert!(state.lock().unwrap().active);
     assert!(worker.start(task, path.clone(), factory, observe).is_err());
     assert!(worker.stop(Some("stale")).is_err());
+    let completion = worker.completion();
+    assert!(completion.wait("stale", Duration::ZERO).is_err());
+    assert!(!completion.wait(&status.job_id, Duration::ZERO).unwrap());
     worker.stop(Some(&status.job_id)).unwrap();
-    assert_eq!(wait(&worker, |s| !s.active).phase, "restored");
+    assert!(completion.wait(&status.job_id, Duration::from_secs(4)).unwrap());
+    assert_eq!(worker.snapshot().unwrap().phase, "restored");
     assert!(!state.lock().unwrap().active);
     assert!(journal::inspect(&path).unwrap().unwrap().clean);
 }

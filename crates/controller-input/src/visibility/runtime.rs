@@ -11,7 +11,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread::JoinHandle,
     time::{Duration, Instant},
@@ -109,6 +109,7 @@ pub struct Status {
 }
 pub struct Worker {
     pub status: Arc<Mutex<Option<Status>>>,
+    completed: Arc<Condvar>,
     cancel: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     reads: Option<SyncSender<ReadRequest>>,
@@ -118,6 +119,7 @@ impl Default for Worker {
     fn default() -> Self {
         Self {
             status: Arc::new(Mutex::new(None)),
+            completed: Arc::default(),
             cancel: Arc::new(AtomicBool::new(false)),
             thread: None,
             reads: None,
@@ -126,6 +128,9 @@ impl Default for Worker {
     }
 }
 impl Worker {
+    pub(super) fn completion(&self) -> Completion {
+        Completion { status: self.status.clone(), completed: self.completed.clone() }
+    }
     pub(super) fn handoff_status(&self) -> Result<Status, String> {
         if self.cancel.load(Ordering::Acquire) {
             return Err("The outgoing visibility worker is stopping.".into());
@@ -206,6 +211,7 @@ impl Worker {
         };
         *self.status.lock().unwrap_or_else(|p| p.into_inner()) = Some(status.clone());
         let shared = self.status.clone();
+        let completed = self.completed.clone();
         let cancel = self.cancel.clone();
         let (sender, reads) = mpsc::sync_channel(1);
         let job = status.job_id.clone();
@@ -216,6 +222,7 @@ impl Worker {
                 if let Some(changed) = &changed { changed(); }
             },reads,job))).unwrap_or_else(|_|Err("Visibility worker failed; inspect the durable recovery journal.".into()));
             if let Some(status)=shared.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){status.active=false;status.phase=if result.is_ok(){"restored"}else{"attention"}.into();status.message=result.err().unwrap_or("Owned visibility changes restored and verified.".into()).chars().take(512).collect();}
+            completed.notify_all();
             if let Some(changed) = &changed { changed(); }
         });
         match spawned {
@@ -256,6 +263,21 @@ impl Worker {
                 let _ = thread.join();
             }
         }
+    }
+}
+
+pub(super) struct Completion {
+    status: Arc<Mutex<Option<Status>>>,
+    completed: Arc<Condvar>,
+}
+impl Completion {
+    pub(super) fn wait(&self, job: &str, budget: Duration) -> Result<bool, String> {
+        let status = self.status.lock().unwrap_or_else(|p| p.into_inner());
+        let (status, _) = self.completed.wait_timeout_while(status, budget, |status| {
+            status.as_ref().is_some_and(|status| status.job_id == job && status.active)
+        }).unwrap_or_else(|p| p.into_inner());
+        status.as_ref().filter(|status| status.job_id == job).map(|status| !status.active)
+            .ok_or_else(|| "Native visibility job changed while waiting for restoration.".into())
     }
 }
 impl Drop for Worker {
