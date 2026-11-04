@@ -8,6 +8,7 @@
   import ProfileRuntimeControls from './ProfileRuntimeControls.svelte';
   import GameTelemetryInspector from './GameTelemetryInspector.svelte';
   import {gatewayRequest} from './gateway';
+  import {SharedObservations} from './streams/shared';
   import {graphInventorySignature} from './profile-graph';
   import type {ProfileDraft} from './profile-editor';
   import type {DeepReadonly,ProfileDocument,ProfileLocalAssignment,ProfileResult,ProfileSummary} from './profiles';
@@ -29,7 +30,7 @@
   let preview=$state.raw<DeepReadonly<CompilationSummary>|null>(null),signature=$state(''),environment=$state(''),busy=$state(false);
   let diagnostics=$state.raw<readonly DeepReadonly<CompileDiagnostic>[]>([]),offset=$state(0),offsets=$state([0]);
   let desktop=$state.raw<unknown>(null);
-  let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false;
+  let companions=$state.raw<unknown>(null),companionDetailsOpen=$state(false),companionLoading=false,companionQueued=false;
   const debugId=$props.id();
   const sections=[{id:'telemetry',label:'Incoming telemetry'},{id:'profile',label:'Profile inspection'},{id:'runtime',label:'Runtime & recovery'}] as const;
   let section=$state<'telemetry'|'profile'|'runtime'>('telemetry'),mounted=$state(false),desktopRead=false;
@@ -46,14 +47,41 @@
   $effect(()=>{if(mounted&&active&&section==='profile'&&source&&source!=='draft'&&!saved&&!loading&&!error)untrack(()=>void read());});
   $effect(()=>{
     if(!mounted||!active||section!=='runtime')return;
-    const refresh=()=>{if(document.hidden)return;if(!desktopRead){desktopRead=true;void readDesktop();}if(companionDetailsOpen)void readCompanions();};
-    refresh();const timer=window.setInterval(refresh,1000);document.addEventListener('visibilitychange',refresh);
-    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};
+    const refresh=()=>{if(!document.hidden&&!desktopRead){desktopRead=true;void readDesktop();}};
+    refresh();
+    document.addEventListener('visibilitychange',refresh);
+    return()=>document.removeEventListener('visibilitychange',refresh);
+  });
+  $effect(()=>{
+    if(!mounted||!active||section!=='runtime'||!companionDetailsOpen)return;
+    const observations=new SharedObservations();
+    for(const topic of ['companion.presence','companion.listener']){
+      observations.subscribe(topic,state=>{
+        if(state.status==='ready')untrack(()=>void readCompanions());
+      });
+    }
+    const onVisible=()=>{if(!document.hidden)void readCompanions();};
+    document.addEventListener('visibilitychange',onVisible);
+    return()=>{
+      observations.close();
+      document.removeEventListener('visibilitychange',onVisible);
+    };
   });
   function sectionKey(event:KeyboardEvent){const index=sections.findIndex(item=>item.id===section);let next=index;if(event.key==='ArrowRight')next=(index+1)%sections.length;else if(event.key==='ArrowLeft')next=(index+sections.length-1)%sections.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=sections.length-1;else return;event.preventDefault();section=sections[next].id;document.getElementById(`${debugId}-${section}-tab`)?.focus();}
   async function read(){const captured=++epoch;preview=null;error='';saved=null;if(source==='draft')return;loading=true;try{const result=await loadProfile(source);if(captured!==epoch)return;if(!result.document||!result.assignments)throw Error('The saved profile and its assignments are unavailable.');saved={document:result.document,assignments:result.assignments};}catch(reason){if(captured===epoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(captured===epoch)loading=false;}}
   async function readDesktop(){try{desktop=(await gatewayRequest({command:'profile_desktop_status'})).desktop;}catch(reason){desktop={error:reason instanceof Error?reason.message:String(reason)};}}
-  async function readCompanions(){if(companionLoading)return;companionLoading=true;try{companions=(await gatewayRequest({command:'companion_status'})).companions;}catch(reason){companions={error:reason instanceof Error?reason.message:String(reason)};}finally{companionLoading=false;}}
+  async function readCompanions(){
+    if(!mounted||!active||section!=='runtime'||!companionDetailsOpen||document.hidden)return;
+    if(companionLoading){companionQueued=true;return;}
+    companionLoading=true;
+    companionQueued=false;
+    try{companions=(await gatewayRequest({command:'companion_status'})).companions;}
+    catch(reason){companions={error:reason instanceof Error?reason.message:String(reason)};}
+    finally{
+      companionLoading=false;
+      if(companionQueued)void readCompanions();
+    }
+  }
   async function compile(){if(!draft||busy||loading)return;if(source!=='draft'){await read();if(!draft||error)return;}const captured=++epoch,graph=JSON.parse(JSON.stringify(draft)),key=graphSignature,env=inventorySignature;busy=true;error='';try{const result=await compiler.compile(graph.document,graph.assignments);if(captured!==epoch)return;preview=result;signature=key;environment=env;diagnostics=result.diagnostics;offset=0;offsets=[0];}catch(reason){if(captured===epoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(captured===epoch)busy=false;}}
   async function page(direction:'next'|'previous'){if(!preview||busy)return;const next=direction==='next'?offset+diagnostics.length:offsets[offsets.length-2];if(next===undefined)return;const captured=++epoch;busy=true;try{const result=await compiler.inspect(preview,'diagnostics',next,32);if(captured!==epoch)return;diagnostics=result.items;offset=result.offset;offsets=direction==='next'?[...offsets,offset]:offsets.slice(0,-1);}catch(reason){if(captured===epoch)error=reason instanceof Error?reason.message:String(reason);}finally{if(captured===epoch)busy=false;}}
 </script>
@@ -82,7 +110,7 @@
   <div id={`${debugId}-runtime-panel`} role="tabpanel" aria-labelledby={`${debugId}-runtime-tab`} hidden={section!=='runtime'}>
   {#if runtime}<ProfileRuntimeControls controller={runtime} {profiles} active={active&&section==='runtime'} onState={onRuntimeState}/>{/if}
   <details class="panel native-details"><summary>Native runtime and desktop output details</summary><button class="text-button" onclick={readDesktop}>Refresh desktop details</button><pre>{JSON.stringify({profile:runtimeState.status,desktop},null,2)}</pre></details>
-  <details class="panel native-details" ontoggle={event=>{companionDetailsOpen=event.currentTarget.open;if(companionDetailsOpen)void readCompanions();}}><summary>Companion loading and image cache details</summary><button class="text-button" onclick={readCompanions}>Refresh companion details</button><pre>{JSON.stringify(companions,null,2)}</pre></details>
+  <details class="panel native-details" ontoggle={event=>companionDetailsOpen=event.currentTarget.open}><summary>Companion loading and image cache details</summary><button class="text-button" onclick={readCompanions}>Refresh companion details</button><pre>{JSON.stringify(companions,null,2)}</pre></details>
   <ProfileRetiredRecovery active={active&&section==='runtime'}/>
   </div>
 </section>
