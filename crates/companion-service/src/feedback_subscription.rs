@@ -6,10 +6,12 @@ use osg_streams::NativeWake;
 pub struct FeedbackSubscription {
     hub: Hub,
     companion_id: String,
+    credential_hash: String,
     session_id: String,
     generation: u64,
     wake: Arc<NativeWake>,
     cursor: crate::feedback::FeedbackCursor,
+    assignments: Option<Value>,
 }
 
 impl Hub {
@@ -33,10 +35,10 @@ impl Hub {
         if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|previous| previous.upgrade()) {
             previous.notify();
         }
-        wake.notify();
+        self.observe_record_changes(wake.clone());
         Ok(FeedbackSubscription {
-            hub: self.clone(), companion_id: companion, session_id: session_id.into(),
-            generation, wake, cursor: Default::default(),
+            hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
+            generation, wake, cursor: Default::default(), assignments: None,
         })
     }
 
@@ -50,6 +52,18 @@ impl Hub {
 }
 
 impl FeedbackSubscription {
+    pub(crate) fn take_assignments(&mut self) -> Option<Value> {
+        let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if !inner.record.credentials.iter().any(|credential| credential.companion_id == self.companion_id
+            && equal_hash(&credential.token_hash, &self.credential_hash)) { return None; }
+        let rows = json!(inner.record.instances.iter().filter(|row| row.companion_id == self.companion_id)
+            .map(|row| json!({"instanceId":row.instance_id,"publicationHash":row.publication_hash,"name":row.definition.name}))
+            .collect::<Vec<_>>());
+        if self.assignments.as_ref() == Some(&rows) { return None; }
+        self.assignments = Some(rows.clone());
+        Some(rows)
+    }
+
     pub fn take(&mut self) -> Result<Option<Value>, String> {
         let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
         let session = inner.sessions.get(&self.session_id).ok_or("Feedback session ended.")?;

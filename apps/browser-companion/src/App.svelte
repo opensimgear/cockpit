@@ -74,7 +74,7 @@
     return {version:1,type,clientId:session.clientId,sessionId:session.sessionId,generation:session.generation,publicationHash:session.publicationHash,...rest};
   }
   function stop(reason:string) {
-    epoch++;preparing?.abort();preparing=undefined;if(preparationHeartbeatTimer)clearInterval(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
+    epoch++;lastDisplay='';preparing?.abort();preparing=undefined;if(preparationHeartbeatTimer)clearInterval(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
     feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
   }
@@ -86,7 +86,12 @@
     finally{handlingRuntimeError=false;}
   }
   function consume(reply:Record<string,any>,version:number){
-    if(version!==epoch||disposed||!session||!panel||!reply.feedback)return;
+    if(version!==epoch||disposed)return;
+    if(reply.type==='assignments-event'){
+      if(JSON.stringify(reply.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;}
+      return;
+    }
+    if(!session||!panel||!reply.feedback)return;
     if(feedbackView.accept(session as FeedbackIdentity,reply.feedback,panel.document.ui,performance.now(),reply.type==='feedback-resync')){suppressFeedbackCues=reply.feedback.mode==='snapshot'||reply.type==='feedback-resync';feedback=feedbackView.snapshot();}
   }
   function resetFeedback(){feedbackView.reset();feedback={};suppressFeedbackCues=true;feedbackNotice='Visual state cleared locally. Controls are unchanged.';}
@@ -189,7 +194,7 @@
     }catch(e){if(version===epoch&&!disposed){secret='';error=obsoleteSession(e)?'':String(e instanceof Error?e.message:e);stop('Pairing did not complete');}}
     finally{connecting=false;void connect();}
   }
-  let polling=false;
+  let polling=false,lastDisplay='';
   async function poll(){
     const now=performance.now();
     if(now-lastTick>1000 && active&&inputReady)void refreshControls();lastTick=now;
@@ -197,10 +202,14 @@
     if(!connection){void connect();return;}
     const socket=connection,version=epoch;polling=true;
     try{
-      const presence=await socket.request({type:'presence',display:panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio)});
-      if(version!==epoch)return;
-      if(focusWork||staleRecoveryWork)return;
-      if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
+      const display=panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio);
+      const displayKey=JSON.stringify(display);
+      if(!active||displayKey!==lastDisplay){
+        const presence=await socket.request({type:'presence',display});
+        if(version!==epoch||focusWork||staleRecoveryWork)return;
+        lastDisplay=displayKey;
+        if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
+      }
       if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
       else if(!session && assignments.length)await loadAssigned(socket,version,assignments);
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}

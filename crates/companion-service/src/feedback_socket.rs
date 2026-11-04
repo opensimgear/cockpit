@@ -33,6 +33,9 @@ pub(super) fn serve<S: Read + Write>(
     send_json(&mut socket, &json!({"ok":true,"type":"feedback-subscribed"}))?;
     while !stop.load(Ordering::Acquire) {
         let observed = wake.observed();
+        if let Some(assignments) = reader.take_assignments() {
+            send_json(&mut socket, &json!({"ok":true,"type":"assignments-event","assignments":assignments}))?;
+        }
         match reader.take() {
             Ok(Some(feedback)) => send_json(&mut socket, &json!({"ok":true,"type":"feedback-event","feedback":feedback}))?,
             Ok(None) => {}

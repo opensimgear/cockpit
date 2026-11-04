@@ -65,8 +65,11 @@ test('dedicated browser feedback does not settle a pending input request',async(
     reply(value){this.onmessage({data:JSON.stringify(value)});}
   }
   globalThis.WebSocket=Socket;globalThis.location={origin:'https://localhost:54437'};
-  const transport=new BrowserTransport(), visuals=[];
-  transport.onreply=reply=>{if(reply.feedback)visuals.push(reply.feedback);};
+  const transport=new BrowserTransport(), visuals=[], assignments=[];
+  transport.onreply=reply=>{
+    if(reply.feedback)visuals.push(reply.feedback);
+    if(reply.type==='assignments-event')assignments.push(reply.assignments);
+  };
   try{
     await transport.connect();
     const subscribe=transport.subscribeFeedback({type:'feedback-subscribe'});
@@ -79,8 +82,10 @@ test('dedicated browser feedback does not settle a pending input request',async(
     const input=transport.request({type:'input'}).then(()=>{settled=true;});
     await new Promise(resolve=>setImmediate(resolve));
     visual.reply({ok:true,type:'feedback-event',feedback:{sequence:'1'}});
+    visual.reply({ok:true,type:'assignments-event',assignments:[{instanceId:'panel'}]});
     await new Promise(resolve=>setImmediate(resolve));
     assert.deepEqual(visuals,[{sequence:'1'}]);
+    assert.deepEqual(assignments,[[{instanceId:'panel'}]]);
     assert.equal(settled,false);
     primary.reply({ok:true,type:'ack'});
     await input;

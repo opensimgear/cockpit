@@ -47,8 +47,8 @@ export class SocketTransport {
     socket.onmessage=event=>{messages=messages.then(async()=>{
       if(typeof event.data!=='string' || new TextEncoder().encode(event.data).length>16384)throw new Error('Invalid Cockpit frame');
       const value=await this.decoder.accept(JSON.parse(event.data)); if(value===null)return;
-      if(value.type==='feedback-event'&&this.onfeedback){
-        if(value.ok!==true||!value.feedback)throw new Error('Invalid Cockpit feedback event');
+      if((value.type==='feedback-event'||value.type==='assignments-event')&&this.onfeedback){
+        if(value.ok!==true||(value.type==='feedback-event'?!value.feedback:!Array.isArray(value.assignments)))throw new Error('Invalid Cockpit feedback event');
         this.onfeedback(value);return;
       }
       const pending=this.pending;if(!pending)throw new Error('Unexpected Cockpit reply');

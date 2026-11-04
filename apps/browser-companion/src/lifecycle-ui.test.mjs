@@ -74,8 +74,13 @@ test('hidden pages authenticate and prepare feedback with neutral controls; actu
 
 test('an assignment changed while hidden loads its current panel and neutral baseline before focus returns',async()=>{
  const h=harness();await flush();try{
-  await h.visibility('hidden');const old=h.sockets[0];h.setAssignments([{...assignment,instanceId:'updated-instance',name:'Updated controls'}]);
-  await h.tick();await h.tick();await flush();const socket=h.sockets.at(-1);
+  await h.visibility('hidden');const old=h.sockets[0];await h.tick();
+  const reads=old.requests.filter(frame=>frame.type==='presence').length;
+  const assignments=[{...assignment,instanceId:'updated-instance',name:'Updated controls'}];
+  h.setAssignments(assignments);await h.tick();
+  assert.equal(old.requests.filter(frame=>frame.type==='presence').length,reads);
+  old.onreply({type:'assignments-event',assignments});
+  await h.tick();await flush();const socket=h.sockets.at(-1);
   assert.equal(old.closed,true);assert.equal(h.sockets.length,2);assert.equal(socket.requests.find(frame=>frame.type==='open').instanceId,'updated-instance');
   assert.deepEqual(socket.requests.find(frame=>frame.type==='baseline').values,{toggle:false,selector:.5});assert.equal(h.handlers.session.controllerInstanceId,'updated-instance');
   assert.equal(h.handlers.active,true);assert.equal(h.handlers.queue.snapshot().enabled,false);assert.equal(h.handlers.feedback.confirmed.value,true);

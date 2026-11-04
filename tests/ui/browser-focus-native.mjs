@@ -37,7 +37,7 @@ test('native browser keeps authenticated presence and neutral controls across fo
     browser=await chromium.launch({headless:true,channel:'msedge',args:['--ignore-certificate-errors-spki-list='+spki]});
     const context=await browser.newContext(),companion=await context.newPage();
     await companion.addInitScript(()=>{
-      window.__pushModes=[];window.__wireTypes=[];
+      window.__pushModes=[];window.__wireTypes=[];window.__assignmentCounts=[];
       const Worker=window.SharedWorker;
       if(Worker)window.SharedWorker=class extends Worker {
         constructor(...args){super(...args);
@@ -48,6 +48,7 @@ test('native browser keeps authenticated presence and neutral controls across fo
           };
           this.port.addEventListener('message',({data})=>{
           if(data.type==='feedback'&&data.reply?.type==='feedback-event')window.__pushModes.push(data.reply.feedback.mode);
+          if(data.type==='assignments')window.__assignmentCounts.push(data.reply.assignments.length);
         });}
       };
     });
@@ -81,6 +82,13 @@ test('native browser keeps authenticated presence and neutral controls across fo
     assert.equal(await companion.evaluate(()=>window.__wireTypes.filter(type=>type==='baseline').length),1);
     await companion.locator('.compiled-hit').click();await waitValues(true);
     await companion.waitForFunction(()=>window.__pushModes.includes('snapshot'));
+    const presenceReads=await companion.evaluate(()=>window.__wireTypes.filter(type=>type==='presence').length);
+    await companion.waitForTimeout(1200);
+    assert.equal(await companion.evaluate(()=>window.__wireTypes.filter(type=>type==='presence').length),presenceReads);
+    await send('companion_unassign',{instanceId});
+    instanceId=undefined;
+    await companion.waitForFunction(()=>window.__assignmentCounts.includes(0));
+    await companion.getByText('No panel assigned',{exact:true}).waitFor();
   }finally{
     await browser?.close();if(instanceId)await send('companion_unassign',{instanceId}).catch(()=>{});
     if(id)await send('companion_revoke',{companionId:id}).catch(()=>{});

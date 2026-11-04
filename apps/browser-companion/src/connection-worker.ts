@@ -24,7 +24,11 @@ worker.onconnect=event=>{
         const previous=visuals;
         const socket=visuals=new SocketTransport();
         previous?.close();
-        socket.onfeedback=reply=>{if(visuals===socket)connection.deliverFeedback(reply);};
+        socket.onfeedback=reply=>{
+          if(visuals!==socket)return;
+          if(reply.type==='assignments-event')send({type:'assignments',reply});
+          else connection.deliverFeedback(reply);
+        };
         socket.onclose=()=>{if(visuals===socket){visuals=undefined;send({type:'feedback-closed'});}};
         await socket.connect();
         send({type:'result',id:data.id,reply:await socket.request(data.frame)});

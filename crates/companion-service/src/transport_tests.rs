@@ -513,6 +513,9 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     drop(unauthorized);
     let (mut visuals, _) = connect(&origin).unwrap();
     assert_eq!(call(&mut visuals, subscribe)["type"], "feedback-subscribed");
+    let assignments = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
+    assert_eq!(assignments["type"], "assignments-event");
+    assert_eq!(assignments["assignments"][0]["instanceId"], "browser-panel");
     let initial = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
     assert_eq!(initial["feedback"]["mode"], "snapshot");
     assert_eq!(initial["feedback"]["sessionId"], opened["sessionId"]);
@@ -526,6 +529,10 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     assert_eq!(accepted["ok"], true);
     assert!(accepted.get("feedback").is_none());
     assert!(sink.events.lock().unwrap().iter().any(|e|e.contains("true")));
+    hub.command(&json!({"command":"companion_unassign","instanceId":"browser-panel"})).unwrap();
+    let removed = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
+    assert_eq!(removed["type"], "assignments-event");
+    assert_eq!(removed["assignments"], json!([]));
     socket.close(None).unwrap();drop(socket);
     wait(||sink.events.lock().unwrap().iter().any(|e|e=="loss"));
     assert!(receive_json(&mut visuals, Duration::from_secs(2)).is_err());
@@ -534,7 +541,6 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     let (mut socket,_)=connect(&origin).unwrap();
     assert_eq!(call(&mut socket,json!({"type":"auth","token":token}))["ok"],true);
     assert_eq!(call(&mut socket,frame("input","2"))["ok"],false);
-    hub.command(&json!({"command":"companion_unassign","instanceId":"browser-panel"})).unwrap();
     assert_eq!(call(&mut socket,json!({"type":"presence"}))["assignments"],json!([]));
     hub.command(&json!({"command":"companion_revoke","companionId":"browser-one"})).unwrap();
     assert_eq!(call(&mut socket,json!({"type":"presence"}))["ok"],false);

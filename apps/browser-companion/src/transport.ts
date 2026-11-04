@@ -44,6 +44,7 @@ export class BrowserTransport {
       if(this.closed||this.worker!==worker)return;
       if(data.type==='connected'){this.workerConnected=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;this.connected?.resolve();this.connected=undefined;}
       else if(data.type==='closed'){if(!this.workerConnected)this.fallbackDirect(worker);else{this.fail(Error('Cockpit connection closed'));this.onclose();}}
+      else if(data.type==='assignments'){this.onreply(data.reply);}
       else if(data.type==='feedback-closed'){this.onfeedbackclose();}
       else if(data.type==='feedback'){try{this.onreply(data.reply);worker.port.postMessage({type:'feedback-ack',id:data.id});}catch(error){this.fail(error instanceof Error?error:Error(String(error)));this.onclose();}}
       else if(data.type==='result'){
