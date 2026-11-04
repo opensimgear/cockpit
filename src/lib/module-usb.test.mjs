@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ModuleUsbClient, usbRoute, usbRoutesEqual } from './module-usb.ts';
+import { ModuleUsbClient, usbMetadataConfigValid, usbRoute, usbRoutesEqual } from './module-usb.ts';
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const serial = '00112233445566778899aabb';
 const key = `${serial}:COM8`;
 const route = () => ({ moduleId: `4f534744${serial}`, serial, connectionGeneration: 9007199254740990, boot: 100, configurationGeneration: 1 });
 const config = () => ({ name: 'Panel with spaces', expanderMask: 0, buttons: [[0, 0, 0]], axes: [], hats: [], encoders: [], selectors: [] });
-const runtime = () => ({ generation: 1, savedGeneration: 1, owner: 0, claimExpiresMs: 0, dirty: false, pendingApply: false, valid: true, view: 'active', config: config(), layout: { buttons: 1, axes: 0, hats: 0, reportBytes: 1 }, descriptorHex: '0501' });
+const runtime = () => ({ generation: 1, savedGeneration: 1, owner: 0, claimExpiresMs: 0, dirty: false, pendingApply: false, valid: true, view: 'active', config: config(), layout: { buttons: 1, axes: 0, hats: 0, reportBytes: 1 }, descriptorHex: '0501', revision: 1, revisionExhausted: false });
 const descriptor = () => ({ id: 'led.boolean.set_enabled', label: 'LED', endpoint: 'led.boolean', semantics: 'setter', readable: true, parameters: [{ id: 'enabled', label: 'Enabled', type: 'boolean' }] });
 const module = () => ({ key, port: { path: 'COM8', serialNumber: serial, vendorId: '1209', productId: '0001', manufacturer: '(Standard port types)', friendlyName: 'USB Serial Device (COM8)' }, present: true, automatic: false, admissible: true, diagnostics: [], snapshot: {
   connected: true, port: 'COM8', identity: { model: 'device-template', board: '0.1.0', profile: config().name, moduleId: route().moduleId, serial, protocol: 3, buttonCount: 1, axisCount: 0, hatCount: 0 }, route: route(),
@@ -163,6 +163,15 @@ test('every USB ownership epoch and safe counter is retained exactly', () => {
   for (const change of [{ present: false }, { admissible: false }]) assert.throws(() => usbRoute({ ...module(), ...change }), /Refresh and connect/);
   const selected = module(); selected.snapshot.config.generation = 2;
   assert.throws(() => usbRoute(selected), /Refresh and connect/);
+});
+
+test('public USB metadata config requires the exact active snapshot and a live metadata revision', () => {
+  const active = { ...runtime(), revision: 1, revisionExhausted: false };
+  assert.equal(usbMetadataConfigValid(active), true);
+  for (const changed of [{ revision: 0 }, { revision: 0xffffffff + 1 }, { revisionExhausted: true }, { view: 'draft' }, { claimedBy: 'private' }, { draft: null }, { events: null }, { actions: null }]) {
+    assert.equal(usbMetadataConfigValid({ ...active, ...changed }), false, JSON.stringify(changed));
+  }
+  assert.equal(usbMetadataConfigValid({ ...active, config: { ...config(), private: true } }), false);
 });
 
 test('malformed inventories and capabilities fail without manufacturing a current route', async () => {

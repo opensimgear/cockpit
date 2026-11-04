@@ -132,6 +132,8 @@
         "src/lib/controllers.test.mjs",
         "src/lib/controller-inputs.test.mjs",
         "src/lib/module-usb.test.mjs",
+        "src/lib/usb-input-observations.test.mjs",
+        "src/lib/usb-metadata-observations.test.mjs",
         "src/lib/persistence/inventory-storage.test.mjs",
         "src/lib/controller-observations.test.mjs",
         "src/lib/controller-read-models/*.test.mjs"
@@ -153,6 +155,8 @@
         "src/lib/controller*.svelte",
         "src/lib/controllers.*",
         "src/lib/module-usb.*",
+        "src/lib/usb-input-observations.*",
+        "src/lib/usb-metadata-observations.*",
         "src/lib/persistence/inventory-storage.*",
         "tests/fixtures/system/**",
         "src/lib/controller-observations.*",

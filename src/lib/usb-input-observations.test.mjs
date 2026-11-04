@@ -170,6 +170,7 @@ test('USB view subscribes passively, removes the acquisition timer and keeps pus
       if (name.endsWith('.svelte')) return { default() {} };
       if (name === './gateway') return { gatewayRequest() { throw Error('unexpected command'); } };
       if (name === './usb-input-observations') return { observeUsbInputs(selected, listener) { observations.push(selected); emit = listener; return () => { stopped = true; }; } };
+      if (name === './usb-metadata-observations') return { observeUsbMetadata() { return () => {}; } };
       if (name === './module-usb') return { ...modules.get('./module-usb'), ModuleUsbClient: class { async status(selected) { calls.push(selected); return module; } } };
       const normalized = name.replace(/\.ts$/, ''); if (modules.has(normalized)) return modules.get(normalized);
       throw Error(name);

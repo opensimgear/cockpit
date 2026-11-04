@@ -16,7 +16,7 @@ impl Inputs {
         let weak=Arc::downgrade(&wake);
         if watchers.len()<8&&!watchers.iter().any(|old|old.ptr_eq(&weak)){watchers.push(weak);}
     }
-    fn changed(&self){
+    pub(super) fn changed(&self){
         let wakes={let mut watchers=self.watchers.lock().unwrap_or_else(|p|p.into_inner());
             watchers.retain(|w|w.strong_count()>0);watchers.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()};
         for wake in wakes{wake.notify();}

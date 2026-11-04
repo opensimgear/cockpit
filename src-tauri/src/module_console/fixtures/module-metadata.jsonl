@@ -1,0 +1,9 @@
+@meta {"boot":77,"sequence":1,"kind":"baseline","revision":1,"exhausted":false,"state":{"generation":1,"savedGeneration":0,"owner":0,"claimExpiresMs":0,"dirty":false,"pendingApply":false}}
+@meta {"boot":77,"sequence":2,"kind":"change","revision":2,"exhausted":false,"state":{"generation":1,"savedGeneration":0,"owner":42,"claimExpiresMs":30100,"dirty":false,"pendingApply":false}}
+@meta {"boot":77,"sequence":3,"kind":"change","revision":3,"exhausted":false,"state":{"generation":1,"savedGeneration":0,"owner":42,"claimExpiresMs":30101,"dirty":true,"pendingApply":false}}
+@meta {"boot":77,"sequence":4,"kind":"change","revision":4,"exhausted":false,"state":{"generation":1,"savedGeneration":0,"owner":0,"claimExpiresMs":0,"dirty":false,"pendingApply":false}}
+@meta {"boot":77,"sequence":5,"kind":"change","revision":5,"exhausted":false,"state":{"generation":1,"savedGeneration":0,"owner":42,"claimExpiresMs":60102,"dirty":false,"pendingApply":false}}
+@meta {"boot":77,"sequence":6,"kind":"change","revision":6,"exhausted":false,"state":{"generation":1,"savedGeneration":0,"owner":42,"claimExpiresMs":60103,"dirty":true,"pendingApply":false}}
+@meta {"boot":77,"sequence":7,"kind":"change","revision":7,"exhausted":false,"state":{"generation":1,"savedGeneration":0,"owner":42,"claimExpiresMs":60104,"dirty":true,"pendingApply":true}}
+@meta {"boot":77,"sequence":8,"kind":"change","revision":8,"exhausted":false,"state":{"generation":2,"savedGeneration":0,"owner":42,"claimExpiresMs":60104,"dirty":false,"pendingApply":false}}
+@meta {"boot":77,"sequence":9,"kind":"change","revision":4294967295,"exhausted":true,"state":{"generation":2,"savedGeneration":0,"owner":42,"claimExpiresMs":60106,"dirty":true,"pendingApply":false}}

@@ -11,6 +11,9 @@ impl Pipe {
     pub(super) fn send(&self,bytes:&[u8]){
         let mut queue=self.queue.lock().unwrap();if !queue.closed{queue.bytes.extend(bytes);self.changed.notify_all();}
     }
+    pub(super) fn send_late(&self,bytes:&[u8]){
+        let mut queue=self.queue.lock().unwrap();queue.bytes.extend(bytes);self.changed.notify_all();
+    }
     pub(super) fn wait_command(&self,command:&str,count:usize){
         let until=Instant::now()+Duration::from_secs(2);
         let mut queue=self.queue.lock().unwrap();
@@ -28,7 +31,7 @@ impl BlockingReceiver for Rx {
     fn receive(&mut self,bytes:&mut[u8])->Result<usize,String>{
         let mut queue=self.0.queue.lock().unwrap();
         while queue.bytes.is_empty()&&!queue.closed{queue=self.0.changed.wait(queue).unwrap();}
-        if queue.closed{return Err("cancelled".into());}
+        if queue.closed&&queue.bytes.is_empty(){return Err("cancelled".into());}
         let length=bytes.len().min(13).min(queue.bytes.len());
         for byte in &mut bytes[..length]{*byte=queue.bytes.pop_front().unwrap();}Ok(length)
     }
@@ -66,4 +69,17 @@ pub(super) fn state(device:&Device,sampled:u32)->Value{
         "selectorButtons":(0..selectors).map(|i|{let base=contacts+encoders*2+i*3;vec![base,base+1,base+2]}).collect::<Vec<_>>(),
         "axisCount":axes.len(),"axisUsage":axes.iter().map(|row|row[1].as_u64().unwrap()).collect::<Vec<_>>(),
         "axes":neutral,"axisNeutral":neutral,"axisAvailable":vec![false;axes.len()],"sampledAtMs":sampled})
+}
+
+/// Publish an unsolicited firmware-side ownership/configuration transition.
+pub(super) fn emit_metadata(device:&Arc<Mutex<Device>>,mutate:impl FnOnce(&mut Device)){
+    let (pipe,packet)={let mut device=device.lock().unwrap();
+        mutate(&mut device);
+        device.metadata_revision=device.metadata_revision.checked_add(1).unwrap_or(u32::MAX);
+        if device.metadata_sequence==0{return;}
+        device.metadata_sequence=device.metadata_sequence.checked_add(1).unwrap_or(u32::MAX);
+        (device.stream_pipe.clone(),json!({"boot":device.boot,"sequence":device.metadata_sequence,
+            "kind":"change","revision":device.metadata_revision,"exhausted":false,
+            "state":device.metadata_state()}))};
+    if let Some(pipe)=pipe{pipe.send(format!("@meta {packet}\r\n").as_bytes());}
 }

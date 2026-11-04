@@ -60,7 +60,9 @@ impl Shared {
         result.map_err(|_| "USB module input capture panicked.".into())
     }
     fn line(&self, line: String, received_at: Instant) -> Result<(), String> {
-        if line.starts_with("@events ") { return self.input(line, received_at); }
+        if line.starts_with("@events ") || line.starts_with("@meta ") {
+            return self.input(line, received_at);
+        }
         if line.len() > MAX_JSON_BYTES {
             return Err("USB module response exceeds its byte limit.".into());
         }

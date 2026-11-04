@@ -11,12 +11,12 @@ import { loadModules } from './test-module-loader.mjs';
 
 const modules = await loadModules(['./gateway-capabilities', './device-actions', './runtime-config', './module-usb']);
 const plain = value => JSON.parse(JSON.stringify(value));
-const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
 const settle = () => new Promise(done => setImmediate(done));
 const serial = '00112233445566778899aabb', key = serial + ':COM8';
 const route = () => ({ moduleId: '4f534744' + serial, serial, connectionGeneration: 4, boot: 100, configurationGeneration: 1 });
 const config = () => ({ name: 'USB panel', expanderMask: 0, buttons: [[0, 0, 0]], axes: [], hats: [], encoders: [], selectors: [] });
-const runtime = () => ({ generation: 1, savedGeneration: 1, owner: 0, claimExpiresMs: 0, dirty: false, pendingApply: false, valid: true, view: 'active', config: config(), layout: { buttons: 1, axes: 0, hats: 0, reportBytes: 1 }, descriptorHex: '0501' });
+const runtime = () => ({ generation: 1, savedGeneration: 1, owner: 0, claimExpiresMs: 0, dirty: false, pendingApply: false, valid: true, view: 'active', config: config(), layout: { buttons: 1, axes: 0, hats: 0, reportBytes: 1 }, descriptorHex: '0501', revision: 1, revisionExhausted: false });
 const action = () => ({ id: 'led.set', label: 'LED', endpoint: 'led', semantics: 'setter', readable: true, parameters: [{ id: 'enabled', label: 'Enabled', type: 'boolean' }] });
 const endpoint = () => ({ key, port: { path: 'COM8', serialNumber: serial }, present: true, automatic: false, admissible: true, diagnostics: [], snapshot: {
   connected: true, port: 'COM8', identity: { model: 'device-template', board: 'RP2040', profile: config().name, moduleId: route().moduleId, serial, protocol: 3, buttonCount: 1, axisCount: 0, hatCount: 0 }, route: route(), config: runtime(), draft: null,
@@ -26,24 +26,33 @@ const endpoint = () => ({ key, port: { path: 'COM8', serialNumber: serial }, pre
 
 async function harness() {
   let current = endpoint(), handlers, mountedCleanup;
-  const calls = [], mounts = [], custom = new Map(), timers = new Map(), document = { hidden: false };
+  const calls = [], mounts = [], custom = new Map(), timers = new Map(), metadataListeners = [], document = { hidden: false };
+  const publishMetadata = value => metadataListeners.forEach(listener => listener({ status: 'ready', value: {
+    key: value.key, connected: value.snapshot.connected, port: value.snapshot.port, identity: value.snapshot.identity, route: value.snapshot.route,
+    config: value.snapshot.config, observedAtMs: value.snapshot.observedAtMs, error: value.snapshot.error,
+  } }));
   const gatewayRequest = async request => {
     calls.push(plain(request));
     if (custom.has(request.command)) return custom.get(request.command)(request);
     if (request.command === 'module_usb_ports') return { moduleUsb: { ports: [{ key: 'unrelated', port: { path: 'COM9' }, present: true, automatic: false, admissible: true, connected: false, diagnostics: [] }, { key, port: current.port, present: true, automatic: false, admissible: true, connected: current.snapshot.connected, diagnostics: [] }] } };
-    if (request.command === 'module_usb_claim') { current.snapshot.claimedBy = 'operator'; current.snapshot.config.owner = 4; }
-    if (request.command === 'module_usb_release') { current.snapshot.claimedBy = null; current.snapshot.config.owner = 0; }
+    if (request.command === 'module_usb_claim') { current.snapshot.claimedBy = 'operator'; current.snapshot.config.owner = 4; current.snapshot.config.revision++; }
+    if (request.command === 'module_usb_release') { current.snapshot.claimedBy = null; current.snapshot.config.owner = 0; current.snapshot.config.revision++; }
     if (request.command === 'module_usb_config_apply') {
       current.snapshot.config.config = plain(request.config);
       current.snapshot.route.configurationGeneration++;
       current.snapshot.config.generation = current.snapshot.route.configurationGeneration;
+      current.snapshot.config.revision++;
       current.snapshot.actions.route = plain(current.snapshot.route);
     }
     if (request.command === 'module_usb_actions_invoke') current.snapshot.actions.states[0].values = plain(request.values);
+    if (['module_usb_claim', 'module_usb_release', 'module_usb_config_apply'].includes(request.command)) publishMetadata(current);
     return { moduleUsb: { module: plain(current) } };
   };
   const file = new URL('./SystemUsbDetails.svelte', import.meta.url);
-  const source = (await readFile(file, 'utf8')).replace('</script>', `capture({run,client,connect,claim,release,configure,invoke,get module(){return module;},get editing(){return editing;},get busy(){return busy;},get error(){return error;},get draft(){return draft;},setDraft(value){draft=value;}});</script>`);
+  const source = (await readFile(file, 'utf8'))
+    .replace('$effect(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));', 'onMount(() => observeUsbInputs(endpointKey, state => { inputObservation = state; }));')
+    .replace('$effect(() => observeUsbMetadata(endpointKey, state => {\n    metadataObservation = state;', 'onMount(() => observeUsbMetadata(endpointKey, state => {\n    metadataObservation = state;')
+    .replace('</script>', `capture({run,client,connect,claim,release,configure,invoke,get module(){return module;},get editing(){return editing;},get busy(){return busy;},get error(){return error;},get draft(){return draft;},setDraft(value){draft=value;}});</script>`);
   const { js } = compile(source, { filename: file.pathname, generate: 'server' }), exports = {};
   vm.runInNewContext(ts.transpileModule(js.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
     exports, document, setInterval(callback) { const id = timers.size + 1; timers.set(id, callback); return id; }, clearInterval(id) { timers.delete(id); }, capture(value) { handlers = value; }, require(name) {
@@ -52,13 +61,16 @@ async function harness() {
       if (name.endsWith('.svelte')) return { default() {} };
       if (name === './gateway') return { gatewayRequest };
       if (name === './usb-input-observations') return { observeUsbInputs() { return () => {}; } };
+      if (name === './usb-metadata-observations') return { observeUsbMetadata(_key, listener) { metadataListeners.push(listener); return () => {}; } };
       const normalized = name.replace(/\.ts$/, '');
       if (modules.has(normalized)) return modules.get(normalized);
       throw Error('Unexpected component import ' + name);
     },
   }, { filename: file.pathname });
   const html = render(exports.default, { props: { endpointKey: key } }).body;
-  return { html, handlers, calls, custom, timers, document, get current() { return current; }, setCurrent(value) { current = value; }, async mount() { mountedCleanup = mounts[0](); await settle(); }, cleanup() { mountedCleanup?.(); }, refresh() { return handlers.run(() => handlers.client.status(key), false); } };
+  return { html, handlers, calls, custom, timers, document, get current() { return current; }, setCurrent(value) { current = value; publishMetadata(current); }, publishMetadata,
+    loseMetadata() { metadataListeners.forEach(listener => listener({ status: 'lost', error: 'USB metadata source lost' })); },
+    async mount() { mountedCleanup = mounts.map(mount => mount()); await settle(); publishMetadata(current); }, cleanup() { mountedCleanup?.forEach(stop => stop?.()); }, refresh() { return handlers.run(() => handlers.client.status(key), false); } };
 }
 
 test('USB detail rendering and mounting inspect the exact endpoint without claiming, applying or dispatching output', async () => {
@@ -101,6 +113,145 @@ test('actual setup handlers claim once, configure exact current routes, preserve
   assert.equal(h.calls[1].save, false); assert.equal(h.calls[2].save, true);
   assert.equal(h.calls.every(request => request.key === key && request.route.moduleId === route().moduleId), true);
   assert.equal(h.calls.at(-1).route.configurationGeneration, 3);
+});
+
+test('own public metadata arriving before its claim receipt preserves a valid local claim', async () => {
+  const h = await harness(); await h.mount();
+  await h.handlers.claim();
+  assert.equal(h.handlers.editing, true);
+  assert.equal(h.handlers.module.snapshot.claimedBy, 'operator');
+  assert.equal(h.handlers.module.snapshot.config.revision, h.current.snapshot.config.revision);
+  h.cleanup();
+});
+
+test('a command receipt waits for its public owner revision before enabling setup', async () => {
+  const h = await harness(); await h.mount();
+  const receipt = plain(h.current); receipt.snapshot.claimedBy = 'operator'; receipt.snapshot.config.owner = 4; receipt.snapshot.config.revision++;
+  h.custom.set('module_usb_claim', async () => ({ moduleUsb: { module: receipt } }));
+  await h.handlers.claim();
+  assert.equal(h.handlers.editing, false);
+  h.publishMetadata(receipt);
+  assert.equal(h.handlers.editing, true);
+  h.cleanup();
+});
+
+test('a lagging public revision cannot roll back a newer command receipt display', async () => {
+  const h = await harness(); await h.mount(); await h.handlers.claim();
+  const receipt = plain(h.current); receipt.snapshot.config.config.name = 'Receipt config'; receipt.snapshot.route.configurationGeneration++;
+  receipt.snapshot.config.generation = receipt.snapshot.route.configurationGeneration; receipt.snapshot.config.revision++;
+  receipt.snapshot.actions.route = plain(receipt.snapshot.route);
+  h.custom.set('module_usb_config_apply', async () => ({ moduleUsb: { module: receipt } }));
+  await h.handlers.configure('config_apply', receipt.snapshot.config.config);
+  assert.equal(h.handlers.module.snapshot.config.revision, receipt.snapshot.config.revision);
+  assert.equal(h.handlers.module.snapshot.config.config.name, 'Receipt config');
+  assert.equal(h.handlers.module.snapshot.route.configurationGeneration, 2);
+  assert.equal(h.handlers.editing, false, 'editing waits for the receipt revision to become public');
+  h.publishMetadata(receipt);
+  assert.equal(h.handlers.editing, true);
+  h.cleanup();
+});
+
+test('a lower token and reset revision from a new route source replaces the retired receipt', async () => {
+  const h = await harness(); await h.mount();
+  const old = plain(h.current); old.snapshot.route.connectionGeneration = 900; old.snapshot.config.revision = 900;
+  old.snapshot.actions.route = plain(old.snapshot.route); h.setCurrent(old);
+  const next = endpoint(); next.snapshot.route.connectionGeneration = 1; next.snapshot.config.revision = 1;
+  next.snapshot.actions.route = plain(next.snapshot.route); h.setCurrent(next);
+  assert.equal(h.handlers.module.snapshot.route.connectionGeneration, 1);
+  assert.equal(h.handlers.module.snapshot.config.revision, 1);
+  assert.equal(h.handlers.module.snapshot.actions, null);
+  assert.equal(h.handlers.module.snapshot.events, null);
+  h.cleanup();
+});
+
+test('a disconnected public snapshot with no config withdraws the old connection despite its old revision', async () => {
+  const h = await harness(); await h.mount();
+  const disconnected = plain(h.current); disconnected.snapshot.connected = false; disconnected.snapshot.route = null;
+  disconnected.snapshot.identity = null; disconnected.snapshot.config = null; disconnected.snapshot.claimedBy = null;
+  h.publishMetadata(disconnected);
+  assert.equal(h.handlers.module.snapshot.connected, false);
+  assert.equal(h.handlers.module.snapshot.route, null);
+  assert.equal(h.handlers.module.snapshot.actions, null);
+  assert.equal(h.handlers.module.snapshot.events, null);
+  h.cleanup();
+});
+
+test('a late old command receipt cannot revive a retired route after a lower-token source arrives', async () => {
+  const h = await harness(); await h.mount();
+  const oldReceipt = plain(h.current); oldReceipt.snapshot.route.connectionGeneration = 900; oldReceipt.snapshot.config.revision = 900;
+  oldReceipt.snapshot.actions.route = plain(oldReceipt.snapshot.route); h.setCurrent(oldReceipt);
+  const pending = deferred(); h.custom.set('module_usb_status', () => pending.promise);
+  const refreshing = h.refresh();
+  const next = endpoint(); next.snapshot.route.connectionGeneration = 1; next.snapshot.config.revision = 1;
+  next.snapshot.actions.route = plain(next.snapshot.route); h.setCurrent(next);
+  oldReceipt.snapshot.claimedBy = 'stale-private-owner';
+  pending.resolve({ moduleUsb: { module: oldReceipt } }); await refreshing;
+  assert.equal(h.handlers.module.snapshot.route.connectionGeneration, 1);
+  assert.equal(h.handlers.module.snapshot.config.revision, 1);
+  assert.equal(h.handlers.module.snapshot.claimedBy, null);
+  assert.equal(h.handlers.module.snapshot.actions, null);
+  assert.equal(h.handlers.module.snapshot.events, null);
+  h.cleanup();
+});
+
+test('a newer public revision withdraws editing without replacing the draft or borrowing authority', async () => {
+  const h = await harness(); await h.mount(); await h.handlers.claim();
+  const draft = { ...config(), name: 'Unsaved draft' }; h.handlers.setDraft(draft);
+  h.current.snapshot.config.revision++;
+  h.publishMetadata(h.current);
+  assert.equal(h.handlers.editing, false);
+  assert.equal(h.handlers.draft, draft);
+  assert.equal(h.handlers.module.snapshot.claimedBy, null);
+  h.cleanup();
+});
+
+test('an external same-owner revision during a command cannot be authorized by its older receipt', async () => {
+  const h = await harness(); await h.mount(); await h.handlers.claim();
+  const pending = deferred(), oldReceipt = plain(h.current), draft = { ...config(), name: 'Unsaved while request waits' };
+  h.handlers.setDraft(draft); h.custom.set('module_usb_config_apply', () => pending.promise);
+  const applying = h.handlers.configure('config_apply', config());
+  h.current.snapshot.config.revision++;
+  h.publishMetadata(h.current);
+  assert.equal(h.handlers.editing, true, 'the private decision waits while its command is pending');
+  pending.resolve({ moduleUsb: { module: oldReceipt } }); await applying;
+  assert.equal(h.handlers.editing, false);
+  assert.equal(h.handlers.module.snapshot.claimedBy, null);
+  assert.equal(h.handlers.draft, draft);
+  h.cleanup();
+});
+
+test('a rejected command reconciles newer public ownership after leaving busy state', async () => {
+  const h = await harness(); await h.mount(); await h.handlers.claim();
+  const pending = deferred(); h.custom.set('module_usb_config_apply', () => pending.promise);
+  const applying = h.handlers.configure('config_apply', config());
+  h.current.snapshot.config.revision++; h.publishMetadata(h.current);
+  pending.reject(Error('command reply rejected')); assert.equal(await applying, false);
+  assert.equal(h.handlers.busy, false);
+  assert.equal(h.handlers.editing, false);
+  assert.equal(h.handlers.module.snapshot.claimedBy, null);
+  h.cleanup();
+});
+
+test('a claim receipt spanning metadata loss and recovery is released and never accepted', async () => {
+  const h = await harness(); await h.mount();
+  const pending = deferred(); h.custom.set('module_usb_claim', () => pending.promise);
+  const claiming = h.handlers.claim(); h.loseMetadata(); h.publishMetadata(h.current);
+  const claimed = plain(h.current); claimed.snapshot.claimedBy = 'operator'; claimed.snapshot.config.owner = 4; claimed.snapshot.config.revision++;
+  pending.resolve({ moduleUsb: { module: claimed } }); await claiming;
+  assert.equal(h.handlers.editing, false);
+  assert.notEqual(h.handlers.module.snapshot.claimedBy, 'operator');
+  assert.deepEqual(h.calls.map(request => request.command), ['module_usb_status', 'module_usb_claim', 'module_usb_release']);
+  h.cleanup();
+});
+
+test('metadata loss withdraws the current connection view and preserves the unsaved draft', async () => {
+  const h = await harness(); await h.mount(); await h.handlers.claim();
+  const draft = { ...config(), name: 'Retained offline draft' }; h.handlers.setDraft(draft);
+  h.loseMetadata();
+  assert.equal(h.handlers.module, undefined);
+  assert.equal(h.handlers.editing, false);
+  assert.equal(h.handlers.draft, draft);
+  h.cleanup();
 });
 
 test('an uncertain Apply reply is surfaced once and leaves the last confirmed module intact without replay', async () => {

@@ -4,6 +4,22 @@ use serde_json::json;
 use std::{sync::mpsc, time::Duration};
 
 #[test]
+fn reader_lifecycle_notifies_input_metadata_and_existing_read_models(){
+    let (runtime,_)=setup();
+    let wakes=(0..12).map(|_|Arc::new(osg_streams::NativeWake::default())).collect::<Vec<_>>();
+    for wake in &wakes {runtime.watch_reader_lifecycle(wake.clone());runtime.watch_reader_lifecycle(wake.clone());}
+    assert_eq!(runtime.inner.reader_wake.lock().unwrap().len(),12);
+    let (tx,rx)=mpsc::channel();
+    let token=runtime.subscribe("lifecycle","ui","test.state",move|delivery|tx.send(delivery).map_err(|e|e.to_string())).unwrap();
+    rx.recv_timeout(Duration::from_secs(1)).unwrap();runtime.unsubscribe("lifecycle",&token).unwrap();
+    let deadline=Instant::now()+Duration::from_secs(1);
+    while wakes.iter().any(|wake|wake.observed()==0){assert!(Instant::now()<deadline);std::thread::yield_now();}
+    drop(wakes);runtime.watch_reader_lifecycle(Arc::new(osg_streams::NativeWake::default()));
+    assert_eq!(runtime.inner.reader_wake.lock().unwrap().len(),1);
+    runtime.close();
+}
+
+#[test]
 fn manager_prepares_only_authorized_topics_before_browser_subscription() {
     let manager=crate::gateways::GatewayManager::mcp_test_manager();
     let unknown="controllers.input.11111111-1111-4111-8111-111111111111";
@@ -19,6 +35,12 @@ fn manager_prepares_only_authorized_topics_before_browser_subscription() {
     let malformed=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev",
         "topic":"usb.inputs.not-an-endpoint-hash"}),|_|Ok(()));
     assert!(malformed["error"].as_str().unwrap().contains("hash"));
+    let metadata=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev",
+        "topic":format!("usb.metadata.{}","a".repeat(64))}),|_|Ok(()));
+    assert_eq!(metadata["error"],"Unknown USB metadata endpoint topic.");
+    let malformed_metadata=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev",
+        "topic":"usb.metadata.not-an-endpoint-hash"}),|_|Ok(()));
+    assert!(malformed_metadata["error"].as_str().unwrap().contains("hash"));
     let (send,receive)=mpsc::channel();
     let opened=manager.browser_observation_request(&json!({"operation":"subscribe","clientId":"browser-dev","topic":"preferences.theme"}),move|frame|send.send(frame).map_err(|e|e.to_string()));
     assert_eq!(opened["ok"],true);

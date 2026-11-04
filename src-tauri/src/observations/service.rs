@@ -14,6 +14,10 @@ impl crate::gateways::GatewayManager {
             self.module_usb.with_input_observation(topic,self.observations.broker(),
                 |wake|self.observations.watch_reader_lifecycle(wake),action)
         }
+        else if topic.starts_with("usb.metadata.") {
+            self.module_usb.with_metadata_observation(topic,self.observations.broker(),
+                |wake|self.observations.watch_reader_lifecycle(wake),action)
+        }
         else { action() }
     }
 

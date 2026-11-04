@@ -3,6 +3,8 @@ use super::*;
 mod stream_io;
 #[path="module_usb/stream_worker_tests.rs"]
 mod stream_worker;
+#[path="module_usb/metadata_worker_tests.rs"]
+mod metadata_worker;
 use std::{
     collections::VecDeque,
     io::{self, Read, Write},
@@ -37,7 +39,6 @@ fn timing() -> Timing {
     Timing {
         read: Duration::from_millis(1),
         command: Duration::from_millis(250),
-        refresh: Duration::from_secs(60),
         reconnect: Duration::from_millis(80),
         settle: Duration::ZERO,
     }
@@ -53,6 +54,7 @@ struct Device {
     dirty: bool,
     opens: usize,
     writes: Vec<String>,
+    wire_writes: Vec<String>,
     controls: Vec<bool>,
     drop_command: Option<String>,
     ignore_apply: bool,
@@ -74,6 +76,11 @@ struct Device {
     events_supported: bool,
     stream_pipe:Option<Arc<stream_io::Pipe>>,
     stream_sequence:u32,
+    metadata_revision:u32,
+    metadata_sequence:u32,
+    metadata_supported:bool,
+    metadata_baseline:bool,
+    before_guard:Option<fn(&mut Device)>,
 }
 impl Default for Device {
     fn default() -> Self {
@@ -88,6 +95,7 @@ impl Default for Device {
             dirty: false,
             opens: 0,
             writes: vec![],
+            wire_writes:vec![],
             controls: vec![],
             drop_command: None,
             ignore_apply: false,
@@ -108,6 +116,8 @@ impl Default for Device {
             actions_supported: true,
             events_supported: true,
             stream_pipe:None,stream_sequence:0,
+            metadata_revision:1,metadata_sequence:0,metadata_supported:true,metadata_baseline:true,
+            before_guard:None,
         }
     }
 }
@@ -117,7 +127,15 @@ impl Device {
         let config = if draft { &self.draft } else { &self.active };
         let shape = layout(config);
         let empty = shape["reportBytes"] == 0;
-        json!({"generation":self.generation,"savedGeneration":self.saved,"owner":self.owner,"claimExpiresMs":if self.owner==0{0}else{30000},"dirty":self.dirty,"pendingApply":false,"view":if draft{"draft"}else{"active"},"valid":true,"config":config,"layout":shape,"descriptorHex":if empty{""}else{"0501"}})
+        json!({"generation":self.generation,"savedGeneration":self.saved,"owner":self.owner,"claimExpiresMs":if self.owner==0{0}else{30000},"dirty":self.dirty,"pendingApply":false,"revision":self.metadata_revision,"revisionExhausted":false,"view":if draft{"draft"}else{"active"},"valid":true,"config":config,"layout":shape,"descriptorHex":if empty{""}else{"0501"}})
+    }
+    fn metadata_state(&self) -> Value {
+        json!({"generation":self.generation,"savedGeneration":self.saved,"owner":self.owner,
+            "claimExpiresMs":if self.owner==0{0}else{30000},"dirty":self.dirty,"pendingApply":false})
+    }
+    fn metadata_frame(&self, kind:&str) -> Value {
+        json!({"boot":self.boot,"sequence":self.metadata_sequence,"kind":kind,
+            "revision":self.metadata_revision,"exhausted":false,"state":self.metadata_state()})
     }
     fn header(&self) -> Value {
         let mut value =
@@ -134,7 +152,19 @@ impl Device {
         value
     }
     fn run(&mut self, command: &str) -> Vec<u8> {
-        self.writes.push(command.into());
+        self.wire_writes.push(command.into());
+        let mut guarded_revision=None;
+        let mut canonical=command.to_owned();
+        if let Some(rest)=command.strip_prefix("config if_revision ") {
+            if let Some((revision,child))=rest.split_once(' ') {
+                if let Ok(revision)=revision.parse::<u32>() {
+                    guarded_revision=Some(revision);
+                    canonical=format!("config {child}");
+                }
+            }
+        }
+        self.writes.push(canonical.clone());
+        let command=canonical.as_str();
         if command.starts_with("action ") && !self.actions_supported
             || command.starts_with("events ") && !self.events_supported
         {
@@ -153,7 +183,15 @@ impl Device {
             let args: Vec<_> = child.split(' ').collect();
             let number = |i: usize| args[i].parse::<u32>().unwrap();
             let mut error = None;
-            match args[0] {
+            let mutating=!matches!(args[0],"get"|"get_active");
+            if mutating {
+                if guarded_revision.is_none(){error=Some("revision_required");}
+                else {
+                    if let Some(transition)=self.before_guard.take(){transition(self);}
+                    if guarded_revision.is_some_and(|expected|expected!=self.metadata_revision){error=Some("revision_changed");}
+                }
+            }
+            if error.is_none() { match args[0] {
                 "get" | "get_active" => {}
                 "claim" => {
                     let owner = number(1);
@@ -233,6 +271,9 @@ impl Device {
                     }
                 }
                 _ => error = Some("invalid_request"),
+            }}
+            if error.is_none() && !matches!(args[0], "get" | "get_active") {
+                self.metadata_revision = self.metadata_revision.checked_add(1).unwrap_or(u32::MAX);
             }
             format!(
                 "{}\n{}\r\n",
@@ -338,6 +379,17 @@ impl Device {
                 _ => result = json!({"ok":false,"error":"unknownCommand"}),
             }
             format!("{result}\r\n")
+        } else if command=="metadata unsubscribe" {
+            self.metadata_sequence=0;
+            if self.metadata_supported { "{\"ok\":true,\"streaming\":false}\r\n".into() }
+            else { "ERR unknown command\r\n".into() }
+        } else if command=="metadata subscribe" {
+            if !self.metadata_supported { "ERR unknown command\r\n".into() }
+            else {
+                self.metadata_sequence=1;
+                let baseline=if self.metadata_baseline{format!("@meta {}\r\n",self.metadata_frame("baseline"))}else{String::new()};
+                format!("{{\"ok\":true,\"streaming\":true}}\r\n{baseline}")
+            }
         } else if command=="events unsubscribe" {
             self.stream_sequence=0;"{\"ok\":true,\"streaming\":false}\r\n".into()
         } else if command=="events subscribe" {
@@ -502,7 +554,7 @@ fn discovery_is_persistent_verified_and_read_only() {
     assert!(device
         .writes
         .iter()
-        .all(|line| ["info","can status","config get_active","events unsubscribe","events subscribe"].contains(&line.as_str())));
+        .all(|line| ["info","can status","config get_active","events unsubscribe","events subscribe","metadata unsubscribe","metadata subscribe"].contains(&line.as_str())));
     drop(device);
     service.shutdown();
     assert!(!service.snapshot().connected);
@@ -524,14 +576,13 @@ fn wrong_metadata_identity_replaced_port_and_boot_are_rejected() {
         .is_err());
     assert!(!service.snapshot().connected);
     d.lock().unwrap().identity_module = MODULE.into();
-    let route = connect(&service).route.unwrap();
-    d.lock().unwrap().boot = 101;
-    assert!(service
-        .request(UsbRequest::Claim {
-            route,
-            client_id: "editor-a".into()
-        })
-        .is_err());
+    let _route = connect(&service).route.unwrap();
+    stream_io::emit_metadata(&d, |device| device.boot = 101);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while service.snapshot().connected {
+        assert!(Instant::now() < deadline, "wrong-boot metadata did not close the source");
+        thread::sleep(Duration::from_millis(5));
+    }
     assert!(!service.snapshot().connected);
     assert!(!d
         .lock()
@@ -1234,7 +1285,7 @@ fn explicit_generic_windows_port_is_verified_with_no_automatic_probing() {
     assert!(d
         .writes
         .iter()
-        .all(|v| ["info", "can status", "config get_active", "events unsubscribe", "events subscribe"].contains(&v.as_str())));
+        .all(|v| ["info", "can status", "config get_active", "events unsubscribe", "events subscribe", "metadata unsubscribe", "metadata subscribe"].contains(&v.as_str())));
 }
 #[test]
 fn explicit_port_still_rejects_known_roles_forged_metadata_and_wrong_wire_identity() {

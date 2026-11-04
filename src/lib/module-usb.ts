@@ -15,7 +15,9 @@ export type UsbEvents = PanelInputState & { ok: true; schemaVersion: 1; route: U
   after?: number; next?: number; more?: boolean; events?: { sequence: number; control: number; pressed: boolean }[] };
 export type UsbObservation = { connected: boolean; port: string | null; identity: UsbIdentity | null; route: UsbRouteToken | null;
   claimedBy: string | null; observedAtMs: number | null; error: string | null };
-export type UsbSnapshot = UsbObservation & { config: RuntimeSnapshot | null; draft: RuntimeSnapshot | null; actions: UsbActions | UsbUnsupported | null; events: UsbEvents | UsbUnsupported | null };
+/** Public, passive configuration metadata. `revision` is the native metadata fence; it is not a writer token. */
+export type UsbMetadataConfig = RuntimeSnapshot & { revision: number; revisionExhausted: false };
+export type UsbSnapshot = UsbObservation & { config: UsbMetadataConfig | null; draft: RuntimeSnapshot | null; actions: UsbActions | UsbUnsupported | null; events: UsbEvents | UsbUnsupported | null };
 export type UsbSlot<S = UsbSnapshot> = { key: string; port: UsbPortInfo; present: boolean; automatic: boolean; admissible: boolean; snapshot: S; diagnostics: string[] };
 export type UsbModule = UsbSlot<UsbSnapshot>;
 export type UsbModuleSummary = UsbSlot<UsbObservation>;
@@ -73,6 +75,16 @@ function runtime(value: unknown): value is RuntimeSnapshot {
   return object(value) && uint(value.generation, 0xffffffff, 1) && uint(value.savedGeneration) && uint(value.owner) && uint(value.claimExpiresMs) && typeof value.dirty === 'boolean' && typeof value.pendingApply === 'boolean' && typeof value.valid === 'boolean' && ['active', 'draft'].includes(String(value.view)) && config(value.config) && typeof value.descriptorHex === 'string' && /^(?:[0-9a-f]{2}){0,256}$/i.test(value.descriptorHex)
     && (value.layout === null && !value.valid || object(value.layout) && uint(value.layout.buttons, 128) && uint(value.layout.axes, 8) && uint(value.layout.hats, 4) && uint(value.layout.reportBytes, 35));
 }
+export function usbMetadataConfigValid(value: unknown): value is UsbMetadataConfig {
+  const keys = ['generation', 'savedGeneration', 'owner', 'claimExpiresMs', 'dirty', 'pendingApply', 'valid', 'view', 'config', 'layout', 'descriptorHex', 'revision', 'revisionExhausted'];
+  const configKeys = ['name', 'expanderMask', 'buttons', 'axes', 'hats', 'encoders', 'selectors'];
+  const layoutKeys = ['buttons', 'axes', 'hats', 'reportBytes'];
+  return object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key))
+    && uint(value.revision, 0xffffffff, 1) && value.revisionExhausted === false && runtime(value)
+    && object(value.config) && Object.keys(value.config).length === configKeys.length && configKeys.every(key => Object.hasOwn(value.config!, key))
+    && (value.layout === null || object(value.layout) && Object.keys(value.layout).length === layoutKeys.length && layoutKeys.every(key => Object.hasOwn(value.layout!, key)))
+    && value.view === 'active';
+}
 function action(value: unknown): value is DeviceAction {
   if (!object(value) || !text(value.id, 31) || !text(value.label, 63) || !text(value.endpoint, 31) || !['setter', 'oneShot'].includes(String(value.semantics)) || typeof value.readable !== 'boolean' || !rows(value.parameters, 4)) return false;
   if (!value.parameters.every(parameter => object(parameter) && text(parameter.id, 31) && text(parameter.label, 63) && (
@@ -100,7 +112,8 @@ function slot(value: unknown, full: boolean): value is UsbModule {
   if (!object(value) || !text(value.key) || !port(value.port) || typeof value.present !== 'boolean' || typeof value.automatic !== 'boolean' || typeof value.admissible !== 'boolean' || !strings(value.diagnostics) || !observation(value.snapshot)) return false;
   if (!full) return true;
   const snapshot = value.snapshot as Record<string, unknown>;
-  return ['config', 'draft'].every(key => snapshot[key] === null || runtime(snapshot[key])) && ['actions', 'events'].every(key => snapshot[key] === null || capability(snapshot[key], key as 'actions' | 'events'));
+  return (snapshot.config === null || usbMetadataConfigValid(snapshot.config)) && (snapshot.draft === null || runtime(snapshot.draft))
+    && ['actions', 'events'].every(key => snapshot[key] === null || capability(snapshot[key], key as 'actions' | 'events'));
 }
 /** Capture a current native route. Never reconstruct it from a name, USB path, or module ID. */
 export function usbRoute(module: DeepReadonly<UsbModule>): UsbRouteToken {

@@ -154,6 +154,31 @@ fn push_is_delivered_during_json_wait_and_write_is_one_armed_frame() {
 }
 
 #[test]
+fn metadata_line_is_forwarded_with_receive_time_while_json_reply_is_pending() {
+    let (console, peer) = fixture();
+    let worker = command(console, "events state", ReplyKind::Json);
+    assert_eq!(peer.write(), b"events state\n");
+
+    // The actor owns framing and the overall line limit. The metadata decoder
+    // owns the smaller metadata limit and payload validation.
+    let line = format!("@meta {}", "x".repeat(MAX_LINE_BYTES - "@meta ".len()));
+    let before = Instant::now();
+    peer.bytes(format!("{line}\r\n"));
+    let Input::Line { line: captured, received_at } = wait(&peer.captured) else {
+        panic!("metadata input was not forwarded")
+    };
+    assert_eq!(captured.len(), MAX_LINE_BYTES);
+    assert_eq!(captured, line);
+    assert!(received_at >= before);
+    assert!(!worker.is_finished(), "metadata delivery must not consume the pending JSON reply");
+
+    peer.bytes("{\"ok\":true}\n");
+    let (console, reply) = worker.join().unwrap();
+    assert!(matches!(reply.unwrap(), Reply::Json(value) if value["ok"] == true));
+    drop(console);
+}
+
+#[test]
 fn config_negative_ack_consumes_valid_snapshot_and_interleaved_push() {
     let (console, peer) = fixture();
     let worker = command(console, "config apply", ReplyKind::Config);

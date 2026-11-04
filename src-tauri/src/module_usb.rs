@@ -20,6 +20,8 @@ pub(crate) use crate::module_console::{candidate, candidate_for_explicit};
 const CLOSED: &str = "USB module service has stopped.";
 pub(crate) mod stream;
 mod input_binding;
+mod metadata_binding;
+mod metadata_control;
 const STALE: &str =
     "The USB module route changed; refresh the device and establish a fresh session.";
 const UNKNOWN_CONFIG: &str = "The USB configuration reply was lost. Read active and saved settings before another explicit change; the write was not repeated.";
@@ -144,7 +146,6 @@ pub(crate) enum UsbRequest {
 struct Timing {
     read: Duration,
     command: Duration,
-    refresh: Duration,
     reconnect: Duration,
     settle: Duration,
 }
@@ -153,7 +154,6 @@ impl Default for Timing {
         Self {
             read: Duration::from_millis(25),
             command: Duration::from_secs(3),
-            refresh: Duration::from_secs(2),
             reconnect: Duration::from_secs(10),
             settle: Duration::from_millis(350),
         }
@@ -163,6 +163,7 @@ struct Writer {
     client: String,
     owner: u32,
     route: UsbRouteToken,
+    revision:u32,
 }
 struct Worker {
     factory: Box<dyn Factory>,
@@ -170,6 +171,10 @@ struct Worker {
     inputs:Arc<input_binding::Inputs>,
     binding:Option<input_binding::Binding>,
     io_cancel:Arc<Mutex<Option<Arc<dyn crate::transport::duplex::CancelIo>>>>,
+    wake:Arc<osg_streams::NativeWake>,
+    metadata:Arc<Mutex<Option<Arc<metadata_binding::Capture>>>>,
+    metadata_observed:u64,
+    config_revision:u32,
     snapshot: UsbSnapshot,
     generation: u64,
     explicit: bool,
@@ -186,6 +191,7 @@ impl Worker {
             cancel,
             console: None,
             inputs:Arc::default(),binding:None,io_cancel:Arc::default(),
+            wake:Arc::default(),metadata:Arc::default(),metadata_observed:0,config_revision:0,
             snapshot: UsbSnapshot::default(),
             generation: ((uuid::Uuid::new_v4().as_u128() as u64) & ((1u64 << 52) - 1)).max(1),
             explicit: false,
@@ -194,6 +200,8 @@ impl Worker {
         }
     }
     fn close(&mut self) {
+        self.metadata.lock().unwrap_or_else(|p|p.into_inner()).take();
+        self.metadata_observed=0;self.config_revision=0;
         self.binding.take();
         self.io_cancel.lock().unwrap_or_else(|p|p.into_inner()).take();
         self.console = None; // Dropping DTR invalidates USB-scoped firmware access.
@@ -231,19 +239,44 @@ impl Worker {
         }
     }
     fn config_command(&mut self, child: &str) -> Result<Value, String> {
+        self.metadata_updates()?;
+        let read=matches!(child, "get"|"get_active");
+        let claiming=child.starts_with("claim ");
+        let expected=if read{None}else if claiming{Some(self.config_revision)}else{
+            Some(self.writer.as_ref().ok_or("Start a fresh USB setup claim before changing configuration.")?.revision)
+        };
+        let command=match expected{Some(revision)=>format!("config if_revision {revision} {child}"),None=>format!("config {child}")};
         let Reply::Config { error, snapshot } =
-            self.exchange(&format!("config {child}"), ReplyKind::Config)?
+            self.exchange(&command, ReplyKind::Config)?
         else {
             unreachable!()
         };
-        self.accept_config(&snapshot)?;
+        let revision=Self::configuration_revision(&snapshot)?;
+        let unexpected_commit=error.is_none() && expected.is_some_and(|prior|prior.checked_add(1)!=Some(revision));
+        if read && revision>self.config_revision || unexpected_commit
+            || error.is_some() && expected.is_some_and(|prior|revision!=prior) {
+            self.writer=None;self.snapshot.claimed_by=None;self.snapshot.draft=None;
+        }
+        self.accept_config(&snapshot,error.is_none())?;
+        if error.is_none() && !claiming && !read {
+            if let Some(writer)=&mut self.writer{writer.revision=revision;}
+        }
+        self.metadata_updates()?;
+        if unexpected_commit{return Err("USB configuration did not confirm the guarded commit revision; establish a fresh claim.".into());}
+        if Self::configuration_revision(&snapshot)?<self.config_revision {
+            return Err("USB configuration changed after the command reply; establish a fresh editing claim.".into());
+        }
         if let Some(error) = error {
             return Err(format!("The USB module rejected configuration: {error}"));
         }
         Ok(snapshot)
     }
-    fn accept_config(&mut self, config: &Value) -> Result<(), String> {
+    fn accept_config(&mut self, config: &Value,allow_draft:bool) -> Result<(), String> {
         module_console::validate_config(config)?;
+        let revision=Self::configuration_revision(config)?;
+        if revision<self.config_revision {return Err("USB configuration reply is older than committed source metadata.".into());}
+        if config["revisionExhausted"]!=false {self.close();return Err("USB configuration metadata is exhausted.".into());}
+        self.config_revision=revision;
         let generation = config["generation"].as_u64().unwrap() as u32;
         if let Some(route) = &mut self.snapshot.route {
             if route.configuration_generation != generation {
@@ -259,7 +292,6 @@ impl Worker {
         {
             let mut active = config.clone();
             active["view"] = json!("active");
-            active["dirty"] = json!(false);
             self.snapshot.config = Some(active);
             if let Some(identity) = &mut self.snapshot.identity {
                 identity.profile = config["config"]["name"]
@@ -271,8 +303,13 @@ impl Worker {
                 identity.hat_count = config["layout"]["hats"].as_u64().unwrap_or(0) as u32;
             }
         }
-        if config["view"] == "draft" {
+        if config["view"] == "draft" && allow_draft {
             self.snapshot.draft = Some(config.clone());
+        }
+        if let Some(active)=&mut self.snapshot.config {
+            for field in ["revision","revisionExhausted","savedGeneration","owner","claimExpiresMs","dirty","pendingApply"]{
+                active[field]=config[field].clone();
+            }
         }
         if self
             .writer
@@ -365,7 +402,10 @@ impl Worker {
         }
         self.close();
         self.binding=Some(input_binding::Binding::new(self.inputs.clone()));
-        let console=StreamConsole::new(self.factory.open_duplex(port)?,self.binding.as_ref().unwrap().sink())?;
+        let parts=self.factory.open_duplex(port)?;
+        let raw_cancel=parts.cancel.clone();
+        self.metadata=Arc::default();
+        let console=StreamConsole::new(parts,self.metadata_sink(self.binding.as_ref().unwrap().sink()))?;
         *self.io_cancel.lock().unwrap_or_else(|p|p.into_inner())=Some(console.cancel_handle());
         self.console=Some(console);
         let result = (|| {
@@ -397,6 +437,7 @@ impl Worker {
             self.snapshot.connected = true;
             self.explicit = explicit;
             self.console.as_mut().unwrap().finish_handshake();
+            self.start_metadata(status.boot,raw_cancel)?;
             // The ordered unsubscribe ACK fences any previous subscriber's
             // queued frames before binding this verified connection/route.
             let stopped=self.exchange("events unsubscribe",ReplyKind::Json)?;
@@ -430,11 +471,8 @@ impl Worker {
         Ok(())
     }
     fn guard(&mut self, expected: &UsbRouteToken) -> Result<(), String> {
+        self.metadata_updates()?;
         if !self.snapshot.connected || self.snapshot.route.as_ref() != Some(expected) {
-            return Err(STALE.into());
-        }
-        self.refresh()?;
-        if self.snapshot.route.as_ref() != Some(expected) {
             return Err(STALE.into());
         }
         Ok(())
@@ -467,6 +505,7 @@ impl Worker {
             client: client.into(),
             owner,
             route: route.clone(),
+            revision:Self::configuration_revision(&snapshot)?,
         });
         self.snapshot.claimed_by = Some(client.into());
         Ok(())
@@ -605,6 +644,7 @@ impl Worker {
                 }
                 let commands = crate::runtime::commands(&config, owner)?;
                 for child in commands {
+                    self.guard(route)?;self.writer(route,client)?;
                     self.config_command(&child)?;
                 }
                 if self
@@ -618,6 +658,7 @@ impl Worker {
                     );
                 }
                 let verb = if save { "apply_save" } else { "apply" };
+                self.guard(route)?;self.writer(route,client)?;
                 match self.config_command(&format!("{verb} {owner}")) {
                     Ok(_) => self.reconcile(route, &config, save, true),
                     Err(_) if self.console.is_none() => self.reconcile(route, &config, save, true),
@@ -1009,6 +1050,7 @@ pub(crate) struct ModuleUsbService {
     latest: Arc<Mutex<UsbSnapshot>>,
     inputs:Arc<input_binding::Inputs>,
     io_cancel:Arc<Mutex<Option<Arc<dyn crate::transport::duplex::CancelIo>>>>,
+    wake:Arc<osg_streams::NativeWake>,
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -1027,34 +1069,39 @@ impl ModuleUsbService {
         let latest = Arc::new(Mutex::new(UsbSnapshot::default()));
         let cache = latest.clone();
         let inputs=Arc::new(input_binding::Inputs::default());let worker_inputs=inputs.clone();
+        let wake=Arc::new(osg_streams::NativeWake::default());let worker_wake=wake.clone();
         let io_cancel=Arc::new(Mutex::new(None));let worker_cancel=io_cancel.clone();
         let worker = thread::Builder::new()
             .name("osg-module-usb".into())
             .spawn(move || {
                 let mut module = Worker::new(factory, timing, cancel.clone());
+                let _=worker_wake.bind_thread(thread::current());module.wake=worker_wake.clone();
                 module.inputs=worker_inputs;module.io_cancel=worker_cancel;
+                let publish=|module:&Worker|{
+                    *cache.lock().unwrap_or_else(|p|p.into_inner())=module.snapshot.clone();
+                    module.inputs.changed();
+                };
                 while !cancel.load(Ordering::Acquire) {
-                    match receiver.recv_timeout(module.timing.refresh) {
+                    let observed=worker_wake.observed();
+                    match module.metadata_updates(){
+                        Ok(true)=>publish(&module),
+                        Err(error)=>{module.snapshot.error=Some(error);publish(&module);},
+                        Ok(false)=>{},
+                    }
+                    match receiver.try_recv() {
                         Ok(Message::Request(request, reply)) => {
-                            let result = module.handle(request);
+                            let mut result = module.handle(request);
                             module.snapshot.error = result.as_ref().err().cloned();
-                            *cache.lock().unwrap_or_else(|p| p.into_inner()) =
-                                module.snapshot.clone();
+                            if let Err(error)=module.metadata_updates(){module.snapshot.error=Some(error.clone());result=Err(error);}
+                            publish(&module);
                             let _ = reply.send(result.map(|_| module.snapshot.clone()));
                         }
-                        Ok(Message::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            if module.snapshot.connected {
-                                let result = module.refresh();
-                                module.snapshot.error = result.err();
-                                *cache.lock().unwrap_or_else(|p| p.into_inner()) =
-                                    module.snapshot.clone();
-                            }
-                        }
+                        Ok(Message::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => break,
+                        Err(mpsc::TryRecvError::Empty) => {worker_wake.wait_scheduled(observed,None);}
                     }
                 }
                 module.close();
-                *cache.lock().unwrap_or_else(|p| p.into_inner()) = module.snapshot.clone();
+                publish(&module);
                 while let Ok(Message::Request(_, reply)) = receiver.try_recv() {
                     let _ = reply.send(Err(CLOSED.into()));
                 }
@@ -1072,12 +1119,18 @@ impl ModuleUsbService {
             sender,
             closed,
             latest,
-            inputs,io_cancel,
+            inputs,io_cancel,wake,
             endpoint_activity,
             worker: Mutex::new(worker),
         }
     }
     /// Cached observations only: this never opens a port or claims anything.
+    pub(crate) fn metadata_snapshot(&self)->UsbSnapshot{
+        let cached=self.latest.lock().unwrap_or_else(|p|p.into_inner());
+        UsbSnapshot {connected:cached.connected,port:cached.port.clone(),identity:cached.identity.clone(),
+            route:cached.route.clone(),config:cached.config.clone(),observed_at_ms:cached.observed_at_ms,
+            error:cached.error.clone(),..Default::default()}
+    }
     pub fn snapshot(&self) -> UsbSnapshot {
         let mut snapshot=self.latest
             .lock()
@@ -1120,6 +1173,7 @@ impl ModuleUsbService {
                     mpsc::TrySendError::Disconnected(_) => CLOSED,
                 }.to_owned());
         }
+        self.wake.notify();
         let result=receiver.recv().map_err(|_|CLOSED.to_owned()).and_then(|result|result);
         if let (Some(attempt),Some((scope,command,id)))=(attempt,lease){let receipt=result.as_ref().ok().and_then(|snapshot|snapshot.actions.as_ref()).map(|actions|&actions["lastLease"]);attempt.finish(&scope,command,id,receipt);}
         result
@@ -1129,6 +1183,7 @@ impl ModuleUsbService {
         let cancel=self.io_cancel.lock().unwrap_or_else(|p|p.into_inner()).clone();
         if let Some(cancel)=cancel{cancel.cancel();}
         let _ = self.sender.try_send(Message::Shutdown);
+        self.wake.notify();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }

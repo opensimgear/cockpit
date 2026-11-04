@@ -4,6 +4,13 @@ Initial source audit, 2026-11-02. R0 is in progress. `refresh-sites.json` is the
 machine-readable list of timer sites produced by the audit script; it is an
 inventory, not an allowlist or proof that every timer is an acquisition loop.
 
+Direct USB update, 2026-11-04: input acquisition and committed configuration
+metadata now use native CDC streams. The historical `module_usb.rs` two-second
+`recv_timeout` entry is retired; source metadata wakes the parked worker. The
+remaining finite reconnect waits belong to explicit configuration reconciliation,
+not periodic state acquisition. See [USB metadata](usb-metadata.md) and its dated
+verification. CAN input push and the other original matrix entries remain open.
+
 | Surface / owner | Current boundary | Required replacement and qualification |
 | --- | --- | --- |
 | App/workspace/gateway | App.svelte 3 s workspace refresh | Gateway worker publishes committed status/module changes; platform serial arrival/removal notifications invalidate inventory |

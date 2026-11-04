@@ -131,6 +131,15 @@ if os.name == "nt":
 TEST_FILTERS.append("transport::duplex::")
 TEST_FILTERS.append("observations::")
 
+USB_METADATA_MODULES = ["module_console/metadata/mod", "module_usb/metadata_binding",
+    "module_usb/metadata_control", "module_usb_fleet/metadata_observations", "observations/mod"]
+MODULES.extend(USB_METADATA_MODULES)
+MODULE_TEST_SOURCES["module_console/metadata/mod"] = ["module_console/metadata/tests"]
+MODULE_TEST_SOURCES["module_usb/metadata_binding"] = ["module_usb/metadata_binding/tests"]
+MODULE_TEST_SOURCES["module_usb/metadata_control"] = ["module_usb/metadata_worker_tests", "module_usb/test_io"]
+MODULE_TEST_SOURCES["module_usb_fleet/metadata_observations"] = ["module_usb_fleet/metadata_observations_tests"]
+MODULE_TEST_SOURCES["observations/mod"] = ["observations/tests"]
+
 
 def run(args, root, env=None):
     result = subprocess.run([str(arg) for arg in args], cwd=root, env=env,
@@ -197,7 +206,8 @@ def run_test_filters(binary, filters, root, env, profiles, output, timeout_secon
 
 
 def tracked_source_paths(root, measured, focused):
-    stream_fixtures = [root / "src-tauri/src/module_console/fixtures/events-push.jsonl"]
+    stream_fixtures = [root / "src-tauri/src/module_console/fixtures/events-push.jsonl",
+                       root / "src-tauri/src/module_console/fixtures/module-metadata.jsonl"]
     workspace_boundary = [root / f"src-tauri/src/{name}" for name in
                           ["gateways.rs", "transport.rs", "local_gateway.rs", "mcp_tools.rs",
                            "mcp_tools/catalogue.rs", "mcp_tools/tests.rs"]]

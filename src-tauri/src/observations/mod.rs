@@ -85,7 +85,9 @@ impl Runtime {
         let mut wakes=self.inner.reader_wake.lock().unwrap_or_else(|p|p.into_inner());
         wakes.retain(|wake|wake.strong_count()>0);
         let weak=Arc::downgrade(&wake);
-        if wakes.len()<8&&!wakes.iter().any(|old|old.ptr_eq(&weak)){wakes.push(weak);}
+        // Includes independent input and metadata bridges (four each), games
+        // and profile samples. Keep the bound aligned with delivery admission.
+        if wakes.len()<64&&!wakes.iter().any(|old|old.ptr_eq(&weak)){wakes.push(weak);}
     }
     pub(crate) fn broker(&self) -> Broker {
         self.inner.broker.clone()

@@ -13,6 +13,11 @@ use std::sync::{
 
 #[path="module_usb_fleet/input_observations.rs"]
 mod input_observations;
+#[path="module_usb_fleet/metadata_observations.rs"]
+pub(crate) mod metadata_observations;
+#[cfg(test)]
+#[path="module_usb_fleet/metadata_observations_tests.rs"]
+mod metadata_observations_tests;
 #[cfg(test)]
 #[path="module_usb_fleet/input_observations_tests.rs"]
 mod input_observations_tests;
@@ -22,6 +27,7 @@ const MAX_PRESENT: usize = 32;
 const MAX_RETAINED: usize = 128;
 const MAX_REPLY_BYTES: usize = 110_000;
 trait Endpoint: Send + Sync {
+    fn metadata_snapshot(&self)->UsbSnapshot{self.snapshot()}
     fn input_capture(&self)->Option<Arc<module_usb::stream::Capture>>{None}
     fn watch_inputs(&self,_wake:Arc<osg_streams::NativeWake>){}
     fn output_activity(&self)->bool{false}
@@ -30,6 +36,7 @@ trait Endpoint: Send + Sync {
     fn shutdown(&self);
 }
 impl Endpoint for ModuleUsbService {
+    fn metadata_snapshot(&self)->UsbSnapshot{self.metadata_snapshot()}
     fn input_capture(&self)->Option<Arc<module_usb::stream::Capture>>{self.input_capture()}
     fn watch_inputs(&self,wake:Arc<osg_streams::NativeWake>){self.watch_inputs(wake)}
     fn output_activity(&self)->bool{self.output_activity()}
@@ -72,6 +79,7 @@ pub(crate) struct Fleet {
     closed: AtomicBool,
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     input_bridges: Mutex<BTreeMap<String,input_observations::Entry>>,
+    metadata_bridges: Mutex<BTreeMap<String,metadata_observations::Entry>>,
     input_wakes: Arc<Mutex<BTreeMap<String,Vec<Weak<osg_streams::NativeWake>>>>>,
 }
 #[derive(Clone, Debug)]
@@ -152,6 +160,7 @@ impl Fleet {
             endpoint_activity:Arc::default(),
             discovery: Mutex::new(()),
             input_bridges: Mutex::new(BTreeMap::new()),
+            metadata_bridges: Mutex::new(BTreeMap::new()),
             input_wakes: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -710,6 +719,8 @@ impl Fleet {
         self.notify_all_input_wakes();
         let bridges=std::mem::take(&mut *self.input_bridges.lock().unwrap_or_else(|p|p.into_inner()));
         for (_,mut entry) in bridges {entry.stop();}
+        let metadata=std::mem::take(&mut *self.metadata_bridges.lock().unwrap_or_else(|p|p.into_inner()));
+        for (_,mut entry) in metadata {entry.stop();}
         for service in services {
             service.shutdown();
         }
@@ -824,6 +835,9 @@ fn writer_pin(snapshot: &UsbSnapshot) -> Option<crate::module_configuration_rout
     })
 }
 fn snapshot(key: &str, slot: &Slot, diagnostic: Option<&str>) -> SlotSnapshot {
+    snapshot_projection(key,slot,diagnostic,false)
+}
+fn snapshot_projection(key: &str, slot: &Slot, diagnostic: Option<&str>,metadata:bool) -> SlotSnapshot {
     let mut diagnostics = diagnostic
         .map(str::to_owned)
         .into_iter()
@@ -841,7 +855,7 @@ fn snapshot(key: &str, slot: &Slot, diagnostic: Option<&str>) -> SlotSnapshot {
     let current = slot
         .service
         .as_ref()
-        .map_or_else(|| slot.cached.clone(), |service| service.snapshot());
+        .map_or_else(|| slot.cached.clone(), |service| if metadata{service.metadata_snapshot()}else{service.snapshot()});
     SlotSnapshot {
         key: key.into(),
         port: slot.port.clone(),
