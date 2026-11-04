@@ -141,6 +141,7 @@ impl Hub {
         if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|wake| wake.upgrade()) {
             previous.notify();
         }
+        self.observe_record_changes(wake.clone());
         Ok(FeedbackSubscription {
             hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
             generation: session.token.generation, allow_disarmed: true, wake, cursor: Default::default(), assignments: None, resync_sequence: None,
@@ -157,7 +158,7 @@ impl Hub {
 }
 
 impl FeedbackSubscription {
-    pub(crate) fn take_assignments(&mut self) -> Option<Value> {
+    pub fn take_assignments(&mut self) -> Option<Value> {
         let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
         if !inner.record.credentials.iter().any(|credential| credential.companion_id == self.companion_id
             && equal_hash(&credential.token_hash, &self.credential_hash)) { return None; }

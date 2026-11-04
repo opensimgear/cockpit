@@ -338,18 +338,32 @@ void osg_network_serial_feedback(const cJSON *record){
     if(!connection.direct||!equal(osg_string(record,"linkId"),connection.link))return;
     const cJSON *frame=cJSON_GetObjectItemCaseSensitive(record,"frame");
     if(state==LIVE)apply_feedback(frame);
-    if(state==WAIT_ASSIGNMENT&&serial_assignments&&equal(osg_string(frame,"type"),"assignments-event")&&
+    if((state==LIVE||(state==WAIT_ASSIGNMENT&&serial_assignments))&&equal(osg_string(frame,"type"),"assignments-event")&&
         cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(frame,"ok"))){
         cJSON *event=cJSON_Duplicate(frame,true);
         if(event){cJSON_Delete(serial_assignment_event);serial_assignment_event=event;}
     }
 }
 static bool choose(const cJSON *reply);
+static bool apply_assignments(const cJSON *event){
+    const cJSON *rows=cJSON_GetObjectItemCaseSensitive(event,"assignments");
+    if(!cJSON_IsArray(rows))return false;
+    if(state==WAIT_ASSIGNMENT){
+        if(cJSON_GetArraySize(rows)!=1||!choose(event))return false;
+        osg_wifi_feedback_stop();next_feedback_connect=0;next_request=millis();
+        return true;
+    }
+    if(state!=LIVE)return false;
+    for(const cJSON *row=rows->child;row;row=row->next){
+        if(equal(osg_string(row,"instanceId"),session.instance)&&
+            equal(osg_string(row,"publicationHash"),session.publication))return false;
+    }
+    stop();state=AUTH;next_request=millis();return true;
+}
 static void usb_assignments(void){
     cJSON *event=serial_assignment_event;
     serial_assignment_event=NULL;
-    const cJSON *rows=cJSON_GetObjectItemCaseSensitive(event,"assignments");
-    if(state==WAIT_ASSIGNMENT&&cJSON_IsArray(rows)&&cJSON_GetArraySize(rows)==1&&choose(event))next_request=millis();
+    if(event)(void)apply_assignments(event);
     cJSON_Delete(event);
 }
 static void wifi_feedback(void){
@@ -360,23 +374,9 @@ static void wifi_feedback(void){
     }
     cJSON *message=osg_wifi_feedback_take();
     if(message){
-        const cJSON *assignments=cJSON_GetObjectItemCaseSensitive(message,"assignments");
         if(equal(osg_string(message,"type"),"assignments-event")&&
-            cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(message,"ok"))&&cJSON_IsArray(assignments)){
-            if(waiting){
-                if(cJSON_GetArraySize(assignments)==1&&choose(message)&&state==OPEN){
-                    osg_wifi_feedback_stop();next_feedback_connect=0;next_request=millis();
-                }
-                cJSON_Delete(message);return;
-            }
-            bool retained=false;
-            for(const cJSON *row=assignments->child;row;row=row->next){
-                if(equal(osg_string(row,"instanceId"),session.instance)&&
-                    equal(osg_string(row,"publicationHash"),session.publication)){retained=true;break;}
-            }
-            if(!retained){
-                cJSON_Delete(message);stop();state=AUTH;next_request=millis();return;
-            }
+            cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(message,"ok"))&&apply_assignments(message)){
+            cJSON_Delete(message);return;
         }
         if(!waiting)apply_feedback(message);
         cJSON_Delete(message);
@@ -801,7 +801,7 @@ static void network_task(void *arg){
         cJSON *pending_command=interrupted_command?interrupted_command:osg_serial_take_command();interrupted_command=NULL;
         if(pending_command){command(pending_command);cJSON_Delete(pending_command);}
         int c;while((c=getchar())!=EOF)serial_byte(c);clearerr(stdin);
-        update_screen();advance();usb_assignments();wifi_feedback();update_screen();arm_when_ready();(void)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(10));
+        usb_assignments();update_screen();advance();usb_assignments();wifi_feedback();update_screen();arm_when_ready();(void)ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(10));
     }
 }
 void osg_network_touch(bool valid,bool down,int x,int y){

@@ -576,14 +576,18 @@ impl Wire {
                 let update = if let Some(reader) = self.assignments.as_mut() {
                     reader.take().map(|rows| rows.map(|rows| json!({"ok":true,"type":"assignments-event","assignments":rows})))
                 } else if let Some(reader) = self.feedback.as_mut() {
+                    if let Some(rows) = reader.take_assignments() {
+                        let event = json!({"ok":true,"type":"assignments-event","assignments":rows});
+                        self.feedback_frames = reply_frames(&event)?.into();
+                    }
                     reader.take().map(|value| value.map(|value| json!({"ok":true,"type":"feedback-event","feedback":value})))
                 } else {
                     Ok(None)
                 };
                 match update {
-                    Ok(Some(event)) => self.feedback_frames = reply_frames(&event)?.into(),
+                    Ok(Some(event)) => self.feedback_frames.extend(reply_frames(&event)?),
                     Ok(None) => {}
-                    Err(_) => self.clear_feedback(),
+                    Err(_) => { self.feedback = None; self.assignments = None; }
                 }
             }
         }
@@ -1319,6 +1323,8 @@ mod tests {
         let response = wire.handle(&hub, &request).unwrap();
         assert_eq!(response[0]["frame"]["ok"], true, "{response:?}");
         assert_eq!(response[0]["frame"]["feedbackPush"], true);
+        let active_assignment = wire.take_feedback().unwrap().unwrap();
+        assert_eq!(active_assignment["frame"]["assignments"][0]["instanceId"], "usb-panel");
         let event = wire.take_feedback().unwrap().unwrap();
         assert_eq!(event["command"], "serial-feedback");
         assert_eq!(event["linkId"], "usb-new");
@@ -1330,6 +1336,10 @@ mod tests {
         let ack = wire.handle(&hub, &request).unwrap();
         assert_eq!(ack[0]["frame"]["type"], "ack");
         assert!(ack[0]["frame"].get("feedback").is_none());
+        hub.command(&json!({"command":"companion_unassign","instanceId":"usb-panel"})).unwrap();
+        let removed = wire.take_feedback().unwrap().unwrap();
+        assert_eq!(removed["frame"]["assignments"], json!([]));
+        assert!(wire.take_feedback().unwrap().is_none());
         wire.reset(&hub, "usb-reconnected");
         assert!(wire.take_feedback().unwrap().is_none());
     }
