@@ -148,6 +148,23 @@ impl Inner {
         status
     }
 
+    pub(super) fn dcs_prepared_setup(&self, game: &Value, record: &Value) -> Option<Arc<Value>> {
+        let key = source_scope(game, "dcs");
+        self.views.lock().unwrap_or_else(|error| error.into_inner())
+            .entries.get(&key).filter(|(known, _, _, _)| known.as_ref() == record)
+            .map(|(_, status, _, _)| Arc::clone(status))
+    }
+
+    pub(super) fn dcs_discovery_changed(&self, game: &Value) -> bool {
+        let (record, _) = self.provider_snapshot("dcs");
+        let Some(previous) = self.dcs_prepared_setup(game, &record) else { return true; };
+        let candidates = crate::dcs_setup::discover_user_folders(
+            game["installPath"].as_str().map(Path::new),
+        ).unwrap_or_default();
+        previous["candidates"] != json!(candidates)
+            || previous["recoveryNeeded"] != json!(crate::dcs_setup::recovery_pending(&self.work))
+    }
+
     pub(super) fn inspect_scoped(&self, game: &Value) -> (Value, Value) {
         let id = game["id"].as_str().unwrap_or("");
         let record = self.provider_snapshot(id).0;

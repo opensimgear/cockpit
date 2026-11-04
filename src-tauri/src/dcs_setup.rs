@@ -3,6 +3,7 @@
 mod aircraft;
 mod physics;
 mod recovery;
+mod setup_watch_paths;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -19,6 +20,7 @@ pub(crate) const ARCHIVE_URL: &str =
     "https://github.com/DCS-Skunkworks/dcs-bios/releases/download/v0.11.7/DCS-BIOS_v0.11.7.zip";
 pub(crate) const ARCHIVE_SHA256: &str =
     "3272bc07210fa6c560f115cfb5dc8881accf7af5e7a5e218e2c46e1fd89e3292";
+pub(crate) use setup_watch_paths::{install_discovery_watch_paths, setup_watch_paths};
 const ARCHIVE_SIZE: usize = 8_234_988;
 const MAX_UNPACKED: usize = 96 * 1024 * 1024;
 const MAX_FILE: usize = 8 * 1024 * 1024;
@@ -626,7 +628,7 @@ pub(crate) fn discover_user_folders(_install_path: Option<&Path>) -> Result<Vec<
     Err("Automatic Saved Games discovery requires Windows; select a user folder explicitly for fixture verification.".into())
 }
 #[cfg(windows)]
-pub(crate) fn discover_user_folders(install_path: Option<&Path>) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn saved_games_root() -> Result<PathBuf, String> {
     #[repr(C)]
     struct Guid {
         a: u32,
@@ -666,7 +668,15 @@ pub(crate) fn discover_user_folders(install_path: Option<&Path>) -> Result<Vec<P
     let folder = String::from_utf16(unsafe { std::slice::from_raw_parts(pointer, length) });
     unsafe { CoTaskMemFree(pointer.cast()) };
     let folder = folder.map_err(|_| "The Windows Saved Games path is not valid text.")?;
-    candidates(Path::new(&folder), install_path)
+    Ok(PathBuf::from(folder))
+}
+#[cfg(not(windows))]
+pub(crate) fn saved_games_root() -> Result<PathBuf, String> {
+    Err("Automatic Saved Games discovery requires Windows; select a user folder explicitly for fixture verification.".into())
+}
+#[cfg(windows)]
+pub(crate) fn discover_user_folders(install_path: Option<&Path>) -> Result<Vec<PathBuf>, String> {
+    candidates(&saved_games_root()?, install_path)
 }
 
 // Analysis text is separate from bytes: append never transcodes existing exports.

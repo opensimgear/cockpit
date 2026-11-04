@@ -23,8 +23,8 @@ struct Inner {
     settings_writer: Mutex<()>,
     states: Mutex<BTreeMap<String, Arc<Value>>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
-    sdk_generation: [std::sync::atomic::AtomicU64; 2],
-    watched_assetto: Mutex<std::collections::BTreeSet<String>>,
+    catalogue_generation: [std::sync::atomic::AtomicU64; 3],
+    watched_setup: Mutex<std::collections::BTreeSet<String>>,
     views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
     ac_cars: crate::ac_car_catalogue_cache::Cache,
@@ -112,8 +112,8 @@ impl GameIntegrationSetup {
                 states: Mutex::new(states),
                 views: Mutex::new(Default::default()),
                 catalogues: Mutex::new(BTreeMap::new()),
-                sdk_generation: Default::default(),
-                watched_assetto: Default::default(),
+                catalogue_generation: Default::default(),
+                watched_setup: Default::default(),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
@@ -211,32 +211,50 @@ impl GameIntegrationSetup {
     }
 
     pub(crate) fn invalidate_xplane_catalogue(&self, id: &str) {
-        if let Some(generation) = self.inner.sdk_generation(id) {
+        if let Some(generation) = self.inner.catalogue_generation(id) {
             let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
             generation.fetch_add(1, Ordering::AcqRel);
             cache.remove(id);
         }
     }
 
-    pub(crate) fn set_assetto_watch(&self, id: &str, active: bool) {
-        let mut watched = self.inner.watched_assetto.lock().unwrap_or_else(|error| error.into_inner());
+    pub(crate) fn dcs_setup_watch_scope(&self, game: &Value) -> Option<(PathBuf, Option<PathBuf>)> {
+        let install = game["installPath"].as_str().map(Path::new).filter(|path| path.is_absolute());
+        let (record, _) = self.inner.provider_snapshot("dcs");
+        let prepared = self.inner.dcs_prepared_setup(game, &record);
+        record["userFolder"].as_str().or_else(|| prepared.as_ref().and_then(|status| status["userFolder"].as_str()))
+            .map(Path::new).filter(|path| path.is_absolute())
+            .map(|target| (target.to_path_buf(), install.map(Path::to_path_buf)))
+    }
+
+    pub(crate) fn set_setup_watch(&self, id: &str, active: bool) {
+        let mut watched = self.inner.watched_setup.lock().unwrap_or_else(|error| error.into_inner());
         if active { watched.insert(id.into()); } else { watched.remove(id); }
     }
 
-    pub(crate) fn refresh_watched_assetto(&self, id: &str, game: &Value) -> bool {
+    pub(crate) fn refresh_watched_setup(&self, id: &str, game: &Value) -> bool {
         let Ok(_admission) = self.admission.try_lock() else { return false; };
         if self.busy() { return false; }
-        self.inner.fingerprints.lock().unwrap_or_else(|error| error.into_inner()).invalidate(id);
+        if id == "dcs" {
+            let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
+            self.inner.catalogue_generation[2].fetch_add(1, Ordering::AcqRel);
+            cache.retain(|key, _| !key.starts_with("dcs:"));
+        } else {
+            self.inner.fingerprints.lock().unwrap_or_else(|error| error.into_inner()).invalidate(id);
+        }
         self.refresh_admitted(std::slice::from_ref(game));
         true
     }
 
     pub(crate) fn refresh_external_setup(&self, catalogue: &[Value]) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
-        let watched = self.inner.watched_assetto.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        let watched = self.inner.watched_setup.lock().unwrap_or_else(|error| error.into_inner()).clone();
         for game in catalogue.iter().filter(|game| {
-            crate::game_discovery::integration_key(game)
-                .is_some_and(|key| key == "dcs" || (key.starts_with("assetto-corsa") && !watched.contains(key)))
+            match crate::game_discovery::integration_key(game) {
+                Some("dcs") => !watched.contains("dcs") || self.inner.dcs_discovery_changed(game),
+                Some(key) => key.starts_with("assetto-corsa") && !watched.contains(key),
+                None => false,
+            }
         }) {
             self.refresh_admitted(std::slice::from_ref(game));
         }

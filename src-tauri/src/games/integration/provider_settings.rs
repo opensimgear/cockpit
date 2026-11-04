@@ -16,10 +16,11 @@ pub(crate) fn sdk_source_path(executable: &Value) -> Option<PathBuf> {
 }
 
 impl Inner {
-    pub(super) fn sdk_generation(&self, id: &str) -> Option<&std::sync::atomic::AtomicU64> {
+    pub(super) fn catalogue_generation(&self, id: &str) -> Option<&std::sync::atomic::AtomicU64> {
         match id {
-            "x-plane-11" => Some(&self.sdk_generation[0]),
-            "x-plane-12" => Some(&self.sdk_generation[1]),
+            "x-plane-11" => Some(&self.catalogue_generation[0]),
+            "x-plane-12" => Some(&self.catalogue_generation[1]),
+            "dcs" => Some(&self.catalogue_generation[2]),
             _ => None,
         }
     }

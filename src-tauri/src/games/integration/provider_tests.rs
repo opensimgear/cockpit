@@ -378,6 +378,6 @@ fn xplane_sdk_invalidation_keeps_the_other_version_cache_and_generation() {
     let cache = setup.inner.catalogues.lock().unwrap();
     assert!(!cache.contains_key(id));
     assert!(cache.contains_key(other));
-    assert_eq!(setup.inner.sdk_generation(id).unwrap().load(Ordering::Acquire), 1);
-    assert_eq!(setup.inner.sdk_generation(other).unwrap().load(Ordering::Acquire), 0);
+    assert_eq!(setup.inner.catalogue_generation(id).unwrap().load(Ordering::Acquire), 1);
+    assert_eq!(setup.inner.catalogue_generation(other).unwrap().load(Ordering::Acquire), 0);
 }

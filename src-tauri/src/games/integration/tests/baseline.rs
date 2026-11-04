@@ -29,10 +29,10 @@ fn remove_native_api_configuration_resets_readiness_without_changing_game_files(
     *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
     runtime.refresh_external_setup(std::slice::from_ref(&xplane));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
-    runtime.set_assetto_watch(acr["id"].as_str().unwrap(), true);
+    runtime.set_setup_watch(acr["id"].as_str().unwrap(), true);
     runtime.refresh_external_setup(std::slice::from_ref(&acr));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
-    assert!(runtime.refresh_watched_assetto(acr["id"].as_str().unwrap(), &acr));
+    assert!(runtime.refresh_watched_setup(acr["id"].as_str().unwrap(), &acr));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
 
     for game in [&xplane, &acr] {
@@ -77,6 +77,16 @@ fn remove_dcs_blocks_running_game_then_restores_owned_loader_and_preserves_exter
     runtime.decorate(&mut catalogue);
     assert_eq!(catalogue[0]["integrationSetup"]["installed"], true);
     assert_eq!(catalogue[0]["integrationSetup"]["removable"], true);
+    let (entered, _observed) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    release.send(()).unwrap();
+    *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
+    runtime.set_setup_watch("dcs", true);
+    runtime.refresh_external_setup(&catalogue);
+    assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
+    assert!(runtime.refresh_watched_setup("dcs", &catalogue[0]));
+    assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
+
     let remove = json!({"command":"game_integration_remove","userFolder":target});
     assert!(runtime
         .request(&remove, &game(), Arc::new(FakePlatform(true)))

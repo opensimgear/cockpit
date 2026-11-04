@@ -26,12 +26,12 @@ impl AssettoWatches {
                 .map(|executable| crate::acr_setup::executable_watch_paths(Path::new(executable), provider))
                 .unwrap_or_default();
             if watch.source.refresh(paths) {
-                inner.setup.set_assetto_watch(provider.id(), watch.source.active());
+                inner.setup.set_setup_watch(provider.id(), watch.source.active());
                 watch.pending = watch.source.active();
             }
             if watch.pending {
                 if let Some(game) = &game {
-                    watch.pending = !inner.setup.refresh_watched_assetto(provider.id(), game);
+                    watch.pending = !inner.setup.refresh_watched_setup(provider.id(), game);
                 }
             }
         }
