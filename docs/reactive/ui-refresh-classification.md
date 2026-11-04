@@ -38,10 +38,10 @@ dismissal and resource disposal. The static check covers direct calls. Runtime
 traces and the timing inventory cover indirect calls, callback behavior, frame
 loops and acquisition below the frontend.
 
-`CompiledWidget.svelte` still schedules a frame for each mounted widget,
-including idle widgets. It needs separate scheduling for authored deadlines,
-feedback expiry and active playback. The idle network trace cannot detect this
-render loop.
+`CompiledWidget.svelte` schedules frames only during active playback. Authored
+actions and feedback expiry share one timeout for the earliest pending deadline.
+The native widget preview test measures these scheduler calls directly because
+the idle network trace cannot detect a local render loop.
 
 ## Cockpit disposition through `5cc98117`
 

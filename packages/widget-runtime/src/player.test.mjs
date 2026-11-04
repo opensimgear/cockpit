@@ -47,6 +47,24 @@ test('static and hidden players keep the same logical traces without decorative 
   player.setMotionEnabled(true); player.setVisible(false); assert.equal(player.frameId,'on');
   assert.deepEqual(player.dispatch({type:'reset',nowMs:4}).effects,[{type:'emit',port:'command',value:false}]);
 });
+test('authored actions expose their deadline independently of animation', () => {
+  const fixture = bundle();
+  fixture.artifact.motions = [];
+  const behavior = fixture.artifact.behavior;
+  behavior.events.push({id:'release'});
+  behavior.timers = [{id:'pulse',delayMs:25,event:'release'}];
+  behavior.regions[0].transitions[0].actions.push({type:'start-timer',timer:'pulse'});
+  behavior.regions[0].transitions.push({id:'release-pulse',from:'ready',event:'release',actions:[
+    {type:'emit',port:'command',value:{literal:false}},
+  ]});
+  const player = new CompiledWidgetPlayer(fixture);
+  player.dispatch({type:'event',event:'activate',nowMs:100});
+  assert.equal(player.animating,false);
+  assert.equal(player.nextDeadline,125);
+  assert.deepEqual(player.sample(124).effects,[]);
+  assert.deepEqual(player.sample(125).effects,[{type:'emit',port:'command',value:false}]);
+  assert.equal(player.nextDeadline,undefined);
+});
 test('interrupt policy snaps unknown routes and restarts explicit routes', () => {
   const b=bundle(); b.artifact.motions[0].interruption='restart';
   b.artifact.motions.push({id:'back',fromFrameId:'on',toFrameId:'off',frames:['on','p3','p2','p1','off'],durationMs:100,interruption:'restart'});

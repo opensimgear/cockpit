@@ -27,6 +27,9 @@ const timeouts = new Map([
   ['src/lib/gateway-workspace.ts', ['callback,milliseconds']],
   // Local camera frames, authored actions, feedback expiry and compiler work.
   ['apps/companion/src/lib/PairingForm.svelte', ['read,200']],
+  ['packages/companion-ui/src/CompiledWidget.svelte', [
+    '()=>{deadline=timeout=undefined;tickClock();},Math.max(0,Math.ceil(next-performance.now()))',
+  ]],
   ['packages/companion-ui/src/PanelCanvas.svelte', [
     '()=>controller.tick(),Math.max(0,Math.ceil(deadline-performance.now()))',
     '()=>{now=performance.now();},Math.max(0,Math.ceil(deadline-performance.now()))',

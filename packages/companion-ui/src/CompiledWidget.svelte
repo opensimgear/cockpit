@@ -17,10 +17,12 @@
   let pixels: ReturnType<typeof createCompiledPixelDecoder> | undefined;
   let mounted = $state(false), ready = $state(false), suspended=$state(false), error = $state(''), frameId = $state(''), reducedMotion = $state(false);
   let audioAvailability = $state<AudioAvailability>('locked');
-  let generation = 0, drawn = '', stateSignature = '', raf = 0;
+  let generation = 0, drawn = '', stateSignature = '';
+  let raf: number | undefined, deadline: number | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   const pointers = new Map<number, CompiledHitRegion>(), keys = new Set<string>();
   const now = () => Math.floor(performance.now());
-  function report(message: string) { error = message;ready=false;audio?.close();onerror?.(message); }
+  function report(message: string) { error = message;ready=false;cancelClock();audio?.close();onerror?.(message); }
   function paint(update: PlayerUpdate) {
     if(update.trace?.length)ontrace?.(update.trace);
     if (update.error) { report(update.error);return; }
@@ -43,13 +45,38 @@
     const previousRegions = JSON.stringify(player.state.regions), update = player.dispatch(event);
     if (previousRegions !== JSON.stringify(update.state.regions)) audio?.exitState();
     paint(update);
+    scheduleClock();
+  }
+  function cancelClock() {
+    if (raf !== undefined) cancelAnimationFrame(raf);
+    clearTimeout(timeout);
+    raf = deadline = timeout = undefined;
+  }
+  function tickClock() { apply({ type: 'tick', nowMs: now() }); }
+  function scheduleClock() {
+    if (!ready || !player || document.visibilityState === 'hidden') { cancelClock(); return; }
+    const animating = player.animating;
+    if (animating && raf === undefined) {
+      raf = requestAnimationFrame(() => { raf = undefined; tickClock(); });
+    } else if (!animating && raf !== undefined) {
+      cancelAnimationFrame(raf);
+      raf = undefined;
+    }
+    const next = player.nextDeadline;
+    if (next === deadline) return;
+    clearTimeout(timeout);
+    deadline = next;
+    timeout = next === undefined ? undefined : setTimeout(() => {
+      deadline = timeout = undefined;
+      tickClock();
+    }, Math.max(0, Math.ceil(next - performance.now())));
   }
   export function dispatch(event: string, updates?: Record<string, Scalar>, feedback?: Record<string, BehaviorFeedback>, suppressCues = false): void {
     apply({ type: 'event', event, nowMs: now(), ...(updates ? { updates } : {}), ...(feedback ? { feedback } : {}), suppressCues });
   }
   export function reset(): void { cancelPointers(); apply({ type: 'reset', nowMs: now() }); }
   /** Retain the last finished pixels while removing every productive input/cue path. */
-  export function suspend():void {ready=false;suspended=true;pointers.clear();keys.clear();audio?.close();}
+  export function suspend():void {ready=false;suspended=true;cancelClock();pointers.clear();keys.clear();audio?.close();}
   export async function enableAudio(): Promise<void> { await audio?.unlock(); audioAvailability = audio?.availability ?? 'unsupported'; }
   function hit(region: CompiledHitRegion, phase: 'press' | 'release' | 'activate' | 'cancel') { const event = region.events[phase]; if (event) dispatch(event); }
   function press(event: PointerEvent, region: CompiledHitRegion) {
@@ -78,9 +105,10 @@
   }
   function visibility() {
     const visible = document.visibilityState !== 'hidden'; player?.setVisible(visible); audio?.setVisible(visible);
-    if (!visible) cancelPointers(); audioAvailability = audio?.availability ?? 'unsupported';
+    if (visible) tickClock(); else { cancelClock(); cancelPointers(); }
+    audioAvailability = audio?.availability ?? 'unsupported';
   }
-  $effect(() => { const enabled = motion && !reducedMotion; untrack(() => player?.setMotionEnabled(enabled)); });
+  $effect(() => { const enabled = motion && !reducedMotion; untrack(() => { player?.setMotionEnabled(enabled); if(document.visibilityState!=='hidden')tickClock(); }); });
   $effect(() => { const value = muted; untrack(() => { audio?.setMuted(value); audioAvailability = audio?.availability ?? 'unsupported'; }); });
   $effect(() => { const availability = audioAvailability;onaudio?.(availability); });
   $effect(() => {
@@ -94,7 +122,9 @@
       if(ownsSurface)surface?.dispose();surface=next;ownsSurface=!candidate;canvas=next.canvas;canvas.setAttribute('aria-label',`${name} compiled pixels`);canvasHost.replaceChildren(canvas);
       player=next.player;pixels=next.pixels;drawn=frameId=next.frameId;player.setMotionEnabled(untrack(()=>motion&&!reducedMotion));
       audio = new CompiledSoundPlayer(input, input.artifact.sounds.length ? createBrowserAudioDriver() : undefined); audio.setMuted(untrack(() => muted));
-      suspended=false;ready = true; visibility(); paint(player.sample(now()));if(ready)onready?.();
+      suspended=false;ready = true; visibility();
+      if(document.visibilityState==='hidden')paint(player.sample(now()));
+      if(ready)onready?.();
     }).catch(e => { if (ownGeneration === generation) report(e instanceof Error ? e.message : String(e)); });
     return () => {generation++;controller.abort();suspend();};
   });
@@ -102,9 +132,8 @@
     mounted = true;
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)'), updatePreference = () => reducedMotion = preference.matches;
     updatePreference();preference.addEventListener('change',updatePreference);
-    const tick = () => { if (ready && player && document.visibilityState !== 'hidden') apply({type:'tick',nowMs:now()}); raf = requestAnimationFrame(tick); };
-    raf = requestAnimationFrame(tick); document.addEventListener('visibilitychange', visibility); window.addEventListener('blur', cancelPointers);
-    return () => { generation++; cancelAnimationFrame(raf); suspend();if(ownsSurface)surface?.dispose();preference.removeEventListener('change',updatePreference); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('blur', cancelPointers); };
+    document.addEventListener('visibilitychange', visibility); window.addEventListener('blur', cancelPointers);
+    return () => { generation++; suspend();if(ownsSurface)surface?.dispose();preference.removeEventListener('change',updatePreference); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('blur', cancelPointers); };
   });
 </script>
 

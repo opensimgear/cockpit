@@ -28,12 +28,15 @@ test('production compiled panel reserves finished-pixel surfaces without authori
 });
 test('requested Toggle pixels move immediately while confirmation stays independently unknown',()=>{
  const player=new playerApi.CompiledWidgetPlayer(bundle),before=artifactApi.decodeCompiledFrame(bundle.artifact,bundle.assets,player.frameId);
+ assert.equal(player.nextDeadline,undefined);
  const requested=player.dispatch({type:'event',event:'activate',nowMs:0});
  assert.equal(requested.state.values.requested,true);assert.equal(requested.state.values.quality,'unknown');assert.deepEqual(requested.effects.filter(e=>e.type==='emit'),[{type:'emit',port:'toggle',value:true}]);
  const after=artifactApi.decodeCompiledFrame(bundle.artifact,bundle.assets,player.frameId);assert.notDeepEqual(after,before);
  const disagree=player.dispatch({type:'event',event:'feedback',nowMs:10,feedback:{confirmed:{status:'fresh',value:false,provenance:'game-confirmed',sourceKind:'simulator'}}});
  assert.equal(disagree.state.values.requested,true);assert.equal(disagree.state.values.confirmed,false);assert.equal(disagree.state.values.quality,'fresh');assert.deepEqual(disagree.effects,[]);
- player.sample(1011);assert.equal(player.state.values.requested,true);assert.equal(player.state.values.quality,'stale');
+ assert.equal(player.nextDeadline,1010);
+ player.sample(1009);assert.equal(player.state.values.quality,'fresh');
+ player.sample(1010);assert.equal(player.state.values.requested,true);assert.equal(player.state.values.quality,'stale');assert.equal(player.nextDeadline,undefined);
  player.dispatch({type:'event',event:'activate',nowMs:1012});assert.equal(player.state.values.requested,false);
 });
 test('browser admitted feedback preserves game provenance and never fabricates requested confirmation',()=>{

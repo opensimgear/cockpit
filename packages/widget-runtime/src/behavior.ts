@@ -208,10 +208,26 @@ export function createBehaviorState(definition: BehaviorDefinition, nowMs = 0): 
   return { values: Object.fromEntries(d.signals.map(signal => [signal.id, signal.initial])), regions: Object.fromEntries(d.regions.map(region => [region.id, region.initial])), nowMs, timers: [], feedback: {} };
 }
 function clone(state: BehaviorState): BehaviorState { return { values: { ...state.values }, regions: { ...state.regions }, nowMs: state.nowMs, timers: state.timers.map(timer => ({ ...timer })), feedback: Object.fromEntries(Object.entries(state.feedback).map(([key, value]) => [key, { ...value }])) }; }
+function feedbackExpiry(signal: BehaviorSignal, sample: BehaviorState['feedback'][string]): number {
+  return sample.receivedAtMs + ((signal.freshnessMs ?? 1000) - (sample.sourceAgeMs ?? 0));
+}
+
+export function nextBehaviorDeadline(definition: BehaviorDefinition, state: BehaviorState): number | undefined {
+  let deadline = Infinity;
+  for (const timer of state.timers) deadline = Math.min(deadline, timer.dueMs);
+  for (const signal of definition.signals) {
+    const sample = state.feedback[signal.id];
+    if (signal.source !== 'feedback' || sample?.status !== 'fresh') continue;
+    const expiry = feedbackExpiry(signal, sample);
+    if (expiry > state.nowMs) deadline = Math.min(deadline, expiry);
+  }
+  return Number.isFinite(deadline) ? deadline : undefined;
+}
+
 function freshen(d: BehaviorDefinition, state: BehaviorState, nowMs: number): void {
   for (const signal of d.signals) if (signal.source === 'feedback') {
     const sample = state.feedback[signal.id]; let status = sample?.status ?? 'unknown';
-    if (status === 'fresh' && sample && (sample.sourceAgeMs ?? 0) + nowMs - sample.receivedAtMs >= (signal.freshnessMs ?? 1000)) status = 'stale';
+    if (status === 'fresh' && sample && nowMs >= feedbackExpiry(signal, sample)) status = 'stale';
     state.values[signal.id] = status === 'fresh' && sample?.value !== undefined ? sample.value : signal.initial;
     if (signal.qualitySignal) state.values[signal.qualitySignal] = status;
   }

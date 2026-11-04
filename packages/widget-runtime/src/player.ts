@@ -1,4 +1,4 @@
-import { createBehaviorState, reduceBehavior, type BehaviorEvent, type BehaviorEffect, type BehaviorState, type BehaviorTrace, type Scalar } from './behavior.ts';
+import { createBehaviorState, nextBehaviorDeadline, reduceBehavior, type BehaviorEvent, type BehaviorEffect, type BehaviorState, type BehaviorTrace, type Scalar } from './behavior.ts';
 import { decodeWidgetBase64, validatePcmWave, type CompiledWidgetArtifact, type CompiledWidgetBundle, type CompiledMotion, type CompiledSound } from './artifact.ts';
 
 /** Static frames are selected by finite samples and region states, never by authoring layers. */
@@ -39,6 +39,7 @@ export class CompiledWidgetPlayer {
   }
   get frameId(): string { return this.shown; }
   get animating(): boolean { return !!this.playback || [...this.scalars.values()].some(scalar => scalar.current !== scalar.target); }
+  get nextDeadline(): number | undefined { return nextBehaviorDeadline(this.artifact.behavior, this.state); }
   private presentation(nowMs: number): string {
     if (!this.motionEnabled || !this.visible) return selectCompiledFrame(this.artifact, this.state);
     const values = { ...this.state.values };
