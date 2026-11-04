@@ -3,6 +3,8 @@ import type { GatewayEntry } from './gateway-workspace';
 import { observeControllerInventory, type ControllerInventoryState } from './controller-read-models/shared.ts';
 import type { UsbModuleSummary } from './module-usb';
 import { ProfileTopologyClient } from './profile-activity';
+import { observeProfileRuntime } from './profile-read-models/shared.ts';
+import type { ModelState, RuntimeModel } from './profile-read-models/models.ts';
 import type { ResourceSummary } from './profile-inventory.ts';
 import type { DeepReadonly } from './profiles';
 import { canChangeController } from './controller-lifecycle.ts';
@@ -114,6 +116,11 @@ export class SystemInventoryController {
   private onChange: (snapshot: SystemSnapshot) => void;
   private gamesState: GameModelState<GamesSummaryState> = { status: 'connecting' };
   private stopGamesState: () => void;
+  private runtimeState: ModelState<RuntimeModel> = { status: 'connecting' };
+  private stopRuntimeState: () => void;
+  private projectedGames?: GameModelState<GamesSummaryState>;
+  private projectedRuntime?: ModelState<RuntimeModel>;
+  private gameBinding?: { key: string; result: Promise<string | undefined> };
   private controllerState: ControllerInventoryState = { status: 'connecting' };
   private stopControllerState: () => void;
   private projectionBase = { complete: ['host'], diagnostics: [] as string[] };
@@ -125,7 +132,11 @@ export class SystemInventoryController {
   constructor(options: { request: Send; gateways: () => readonly GatewayEntry[]; gatewayError?: () => string; storage?: InventoryStorage; onChange?: (snapshot: SystemSnapshot) => void }) {
     this.send = options.request; this.gateways = options.gateways; this.registry = new SystemInventoryRegistry(options.storage); this.onChange = options.onChange ?? (() => {});
     this.gatewayError = options.gatewayError ?? (() => '');
-    this.stopGamesState = observeGamesState(state => { this.gamesState = state; });
+    const project = () => {
+      if (this.readyProjection && (!this.pending || this.projecting) && !this.disposed) void this.projectCurrent().catch(() => {});
+    };
+    this.stopGamesState = observeGamesState(state => { this.gamesState = state; project(); });
+    this.stopRuntimeState = observeProfileRuntime(state => { this.runtimeState = state; project(); });
     this.stopControllerState = observeControllerInventory(state => {
       this.controllerState = state;
       if (this.readyProjection && !this.pending && !this.disposed) void this.projectCurrent().catch(error => {
@@ -154,7 +165,7 @@ export class SystemInventoryController {
     const epoch = this.epoch;
     const pending = this.collect(epoch).finally(() => {
       if (this.pending === pending) this.pending = null;
-      if (!this.disposed && this.readyProjection && (this.projectedControllers !== this.controllerState || this.projectedResourceVersion !== this.resourceVersion)) void this.projectCurrent().catch(() => {});
+      if (!this.disposed && this.readyProjection && (this.projectedControllers !== this.controllerState || this.projectedResourceVersion !== this.resourceVersion || this.projectedGames !== this.gamesState || this.projectedRuntime !== this.runtimeState)) void this.projectCurrent().catch(() => {});
     });
     this.pending = pending; return pending;
   }
@@ -165,10 +176,10 @@ export class SystemInventoryController {
     // Capture those first so startup does not publish their uncorrelated aliases.
     const controllers=Promise.resolve(this.controllers(now)),usb=this.usb(now);
     const nativeCapture=Promise.allSettled([controllers,usb]).then(()=>this.disposed || epoch!==this.epoch ? {provider:'native',observations:[]} as Capture : this.native(now));
-    const providers = [controllers,usb,this.companions(now),this.integrations(now),nativeCapture];
+    const providers = [controllers,usb,this.companions(now),nativeCapture];
     const results = await Promise.allSettled(providers);
     if (this.disposed || epoch !== this.epoch) return this.snapshot;
-    const names = ['controllers', 'usb', 'companions', 'integrations', 'native'];
+    const names = ['controllers', 'usb', 'companions', 'native'];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && new Set(result.value.observations.map(c => c.id)).size !== result.value.observations.length) { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: Provider returned duplicate identities; its inspection is incomplete.`); return; }
       if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (names[index] !== 'controllers') { if (result.value.complete !== false && (names[index] !== 'native' || !result.value.diagnostics?.length)) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); } }
@@ -185,9 +196,13 @@ export class SystemInventoryController {
     this.projectionQueued = true;
     if (this.projecting) return this.projecting;
     const task = (async () => {
-      do { this.projectionQueued = false; await this.projectOnce(); } while (this.projectionQueued && !this.disposed);
-      return this.snapshot;
-    })().finally(() => { if (this.projecting === task) this.projecting = undefined; });
+      try {
+        do { this.projectionQueued = false; await this.projectOnce(); } while (this.projectionQueued && !this.disposed);
+        return this.snapshot;
+      } finally {
+        this.projecting = undefined;
+      }
+    })();
     this.projecting = task;
     return task;
   }
@@ -195,12 +210,28 @@ export class SystemInventoryController {
     const projectionId = ++this.projectionId;
     this.projectedControllers = this.controllerState;
     const resourceVersion = this.resourceVersion;
-    const now = Date.now(), complete = [...this.projectionBase.complete], diagnostics = [...this.projectionBase.diagnostics];
+    const games = this.gamesState, runtime = this.runtimeState;
+    const now = Date.now();
+    let integrations: Capture | undefined, integrationError: string | undefined;
+    try { integrations = await this.integrations(now, games, runtime); }
+    catch (error) { integrationError = 'integrations: ' + message(error); }
+    if (this.disposed || games !== this.gamesState || runtime !== this.runtimeState) return this.snapshot;
+    const complete = [...this.projectionBase.complete], diagnostics = [...this.projectionBase.diagnostics];
     if (this.resourceError) diagnostics.push('Identity correlation is stale: ' + this.resourceError);
     const controllers = this.controllers(now);
     this.captures.set('controllers', controllers);
     if (controllers.complete !== false) complete.push('controllers');
     diagnostics.push(...(controllers.diagnostics ?? []));
+    if (integrations) {
+      this.captures.set('integrations', integrations);
+      complete.push('integrations');
+      diagnostics.push(...(integrations.diagnostics ?? []));
+    } else {
+      this.captures.delete('integrations');
+      if (integrationError) diagnostics.push(integrationError);
+    }
+    this.projectedGames = games;
+    this.projectedRuntime = runtime;
     let observations = [observation('host', 'Your computer', 'host', 'host', now, { presence: 'connected', role: 'Host', forget: { allowed: false, reason: 'The host cannot be forgotten.', effect: '' } }), ...gatewayObservations(this.gateways(), now), ...structuredClone([...this.captures.values()].flatMap(c => c.observations))];
     // Resolve HidHide PnP collections to the original controller, not duplicate nodes.
     const hidden = observations.filter(c => c.provider === 'native' && c.targets.some(t => t.kind === 'visibility'));
@@ -352,16 +383,27 @@ export class SystemInventoryController {
     }
     return { provider: 'companions', observations, diagnostics: state.listener?.lastError ? [state.listener.lastError] : [] };
   }
-  private async integrations(now: number): Promise<Capture> {
-    const state = this.gamesState;
+  private async integrations(now: number, state: GameModelState<GamesSummaryState>, profile: ModelState<RuntimeModel>): Promise<Capture> {
     if (state.status !== 'ready' || !state.value?.catalogue) throw Error(state.error || 'Game integration inventory is loading.');
-    const runtime = (await this.send({ command: 'profile_status' })).profiles?.profileSession;
+    const runtime = profile.status === 'ready' ? profile.value?.profileSession : undefined;
+    const owner = runtime?.owner;
     let activeGame: string | undefined;
-    if (runtime?.owner?.gameId && runtime.appliedSnapshot && ['running', 'degraded', 'awaiting-game'].includes(runtime.state)) {
-      const topology = await new ProfileTopologyClient(async request => (await this.send(request)).profileTopology).load(runtime.owner);
-      const gameNodes = new Set(topology.nodes.filter(node => node.kind === 'game').map(node => node.id));
-      if (topology.edges.some(edge => gameNodes.has(edge.from.nodeId) || gameNodes.has(edge.to.nodeId))) activeGame = runtime.owner.gameId;
-    }
+    if (owner?.gameId && runtime?.appliedSnapshot && ['running', 'degraded', 'awaiting-game'].includes(runtime.state)) {
+      const gameId = owner.gameId;
+      const key = JSON.stringify([owner, runtime.appliedSnapshot]);
+      if (this.gameBinding?.key !== key) {
+        const topology = new ProfileTopologyClient(async request => (await this.send(request)).profileTopology);
+        const result = topology.load(owner).then(topology => {
+          const gameNodes = new Set(topology.nodes.filter(node => node.kind === 'game').map(node => node.id));
+          return topology.edges.some(edge => gameNodes.has(edge.from.nodeId) || gameNodes.has(edge.to.nodeId)) ? gameId : undefined;
+        }).catch(error => {
+          if (this.gameBinding?.key === key) this.gameBinding = undefined;
+          throw error;
+        });
+        this.gameBinding = { key, result };
+      }
+      activeGame = await this.gameBinding.result;
+    } else this.gameBinding = undefined;
     return { provider: 'integrations', observations: state.value.catalogue.filter(game => !!game.provider).map(game => {
       const id = `integration:${game.id}`, setup = game.integrationSetup;
       const receiving = setup?.live === 'receiving';
@@ -460,6 +502,6 @@ export class SystemInventoryController {
     else if (t?.kind === 'companion') { await this.send({ command: 'companion_revoke', companion: { companionId: t.id } }); activityRecorded = true; }
     await this.registry.forget(id, { activityRecorded }); this.onChange(this.snapshot);
   }
-  dispose() { this.disposed = true; this.epoch++; this.stopGamesState(); this.stopControllerState(); }
+  dispose() { this.disposed = true; this.epoch++; this.stopGamesState(); this.stopRuntimeState(); this.stopControllerState(); }
 }
 export const integrationGameId = (component: SystemComponent): GameId | undefined => component.targets.find(t => t.kind === 'integration')?.id as GameId | undefined;

@@ -5,10 +5,13 @@ import { loadModules } from './test-module-loader.mjs';
 let nextGamesModel={status:'connecting'};
 const gameSubscriptions=[];
 const gameReadModels={observeGamesState(listener){const subscription={listener,active:true};gameSubscriptions.push(subscription);listener(nextGamesModel);return()=>subscription.active=false;}};
+let nextRuntimeModel={status:'connecting'};
+const runtimeSubscriptions=[];
+const profileReadModels={observeProfileRuntime(listener){const subscription={listener,active:true};runtimeSubscriptions.push(subscription);listener(nextRuntimeModel);return()=>subscription.active=false;}};
 let nextControllerModel={status:'connecting'};
 const controllerSubscriptions=[];
 const controllerReadModels={observeControllerInventory(listener){const subscription={listener,active:true};controllerSubscriptions.push(subscription);listener(nextControllerModel);return()=>subscription.active=false;}};
-const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './profile-inspection', './profile-activity', './system-inventory-providers'],new Map([['./game-read-models/shared',gameReadModels],['./controller-read-models/shared',controllerReadModels]]));
+const modules = await loadModules(['./profiles', './profile-inventory', './gateway-capabilities', './controller-lifecycle', './games', './system-inventory', './profile-inspection', './profile-activity', './system-inventory-providers'],new Map([['./game-read-models/shared',gameReadModels],['./controller-read-models/shared',controllerReadModels],['./profile-read-models/shared',profileReadModels]]));
 const { SystemInventoryController, gatewayObservations, correlateSystem, integrationGameId } = modules.get('./system-inventory-providers');
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -32,7 +35,6 @@ function harness(options = {}) {
     if (custom.has(input.command)) return custom.get(input.command)(input);
     if (input.command === 'module_usb_list') return { moduleUsb: { offset: input.offset, total: state.usb.length, modules: state.usb.slice(input.offset, input.offset + input.limit) } };
     if (input.command === 'companion_inventory') return { companions: state.companions };
-    if (input.command === 'profile_status') return { profiles: { profileSession: state.runtime ?? { state: 'stopped', owner: null, appliedSnapshot: null } } };
     if (input.command === 'system_inventory') return { systemInventory: state.native };
     if (input.command === 'profile_list') return { profiles: { profiles: [] } };
     if (['controller_forget', 'forget', 'companion_revoke'].includes(input.command)) return {};
@@ -42,15 +44,18 @@ function harness(options = {}) {
   nextGamesModel=explicitGamesModel??{status:'ready',value:structuredClone(state.games)};
   let controllerModel={status:'ready',value:controllerInventory(state.controllers)};
   nextControllerModel=controllerModel;
+  nextRuntimeModel={status:'ready',value:{profileSession:state.runtime}};
   const controller = new SystemInventoryController({ request, gateways: () => state.gateways, gatewayError: () => state.gatewayError ?? '', storage: options.storage, onChange: snapshot => changes.push(snapshot) });
   void controller.observeResources(state.resources);
   const emitResources=(resources=state.resources,error)=>controller.observeResources(resources,error);
   const subscription=gameSubscriptions.at(-1),controllerSubscription=controllerSubscriptions.at(-1),refresh=controller.refresh.bind(controller);
   let lastFixtureSources=state.controllers;
   const emitGames=model=>{explicitGamesModel=model;if(subscription.active)subscription.listener(model);};
+  const runtimeSubscription=runtimeSubscriptions.at(-1);
+  const emitRuntime=runtime=>{if(runtimeSubscription.active)runtimeSubscription.listener({status:'ready',value:{profileSession:runtime}});};
   const emitControllers=model=>{controllerModel=model;if(controllerSubscription.active)controllerSubscription.listener(model);};
   controller.refresh=(...args)=>{if(subscription.active)subscription.listener(explicitGamesModel??{status:'ready',value:structuredClone(state.games)});if(controllerSubscription.active&&controllerModel.status==='ready'&&state.controllers!==lastFixtureSources){lastFixtureSources=state.controllers;emitControllers({status:'ready',value:controllerInventory(state.controllers)});}return refresh(...args);};
-  return { controller, state, requests, failures, custom, changes, emitGames,emitControllers,emitResources,subscription,controllerSubscription, component: id => controller.snapshot.components.find(component => component.id === id) };
+  return { controller, state, requests, failures, custom, changes, emitGames,emitControllers,emitResources,emitRuntime,runtimeSubscription,subscription,controllerSubscription, component: id => controller.snapshot.components.find(component => component.id === id) };
 }
 
 test('native supplemental pages preserve the exact snapshot and never omit hidden records', async () => {
@@ -667,15 +672,25 @@ test('integration visibility follows immutable applied bindings even while telem
  const owner={session:id,generation:1,profileId:id,profileRevision:1,gameId:'assetto-corsa-rally'};
  const snapshot={profileId:id,revision:1,semanticHash:'sha256:'+'a'.repeat(64)};
  const h=harness({runtime:{state:'running',owner,appliedSnapshot:snapshot},games:{catalogue:[game('assetto-corsa-rally',{integrationSetup:{state:'ready',live:'waiting'}}),game('dcs')]},companions:{host:{clients:[{companionId:'tablet',name:'Tablet',connected:true}],instances:[{instanceId:'radio',name:'Radio',companionId:'tablet'}]}}});
- let edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];
+ const edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];
  h.custom.set('profile_runtime_topology',request=>({profileTopology:{schemaVersion:1,owner,appliedSnapshot:snapshot,programHash:'sha256:'+'b'.repeat(64),capturedUs:'1',offset:0,total:request.section==='nodes'?2:edges.length,section:request.section,items:request.section==='nodes'?[{id:'acr',name:'ACR',kind:'game',summary:'Integration'},{id:'radio',name:'Radio',kind:'companion',summary:'Panel'}]:edges}}));
  await h.controller.refresh();
  let visible=filterSystem(h.controller.snapshot.components,'');
  assert.ok(visible.some(c=>c.id==='integration:assetto-corsa-rally'));
  assert.ok(!visible.some(c=>c.id==='integration:dcs'||c.id.startsWith('companion-instance:')));
  assert.match(h.component('companion:tablet').status,/Panel: Radio/);
- edges=[];await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'').some(c=>c.type==='integration'));
- edges=[{id:'telemetry',from:{nodeId:'acr',portId:'speed'},to:{nodeId:'radio',portId:'text'}}];h.state.runtime={state:'stopped',owner:null,appliedSnapshot:null};await h.controller.refresh();assert.ok(!filterSystem(h.controller.snapshot.components,'').some(c=>c.type==='integration'));
+ const calls=h.requests.filter(r=>r.command==='profile_runtime_topology').length;
+ h.emitGames({status:'ready',value:{catalogue:[game('assetto-corsa-rally'),game('dcs')]}});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(h.component('integration:assetto-corsa-rally').presence,'connected');
+ assert.equal(h.requests.filter(r=>r.command==='profile_runtime_topology').length,calls);
+ assert.equal(h.requests.some(r=>r.command==='profile_status'),false);
+ h.emitGames({status:'ready',value:structuredClone(h.state.games)});
+ h.emitRuntime({state:'stopped',owner:null,appliedSnapshot:null});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(!filterSystem(h.controller.snapshot.components,'').some(c=>c.type==='integration'));
+ h.controller.dispose();
+ assert.equal(h.runtimeSubscription.active,false);
 });
 
 test('offline companions expose configured transports on first load and retain them across polls',async()=>{
