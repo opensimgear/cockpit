@@ -9,7 +9,14 @@ metadata now use native CDC streams. The historical `module_usb.rs` two-second
 `recv_timeout` entry is retired; source metadata wakes the parked worker. The
 remaining finite reconnect waits belong to explicit configuration reconciliation,
 not periodic state acquisition. See [USB metadata](usb-metadata.md) and its dated
-verification. CAN input push and the other original matrix entries remain open.
+verification.
+
+CAN panel inputs use timestamped module events forwarded by gateways that
+advertise panel streaming. Cockpit profiles, previews and MCP share the
+gateway capture. Profile port discovery reads the validated module profile
+without requesting input state. [CAN verification](https://github.com/opensimgear/cockpit/issues/191#issuecomment-6627877630)
+records the software evidence. Physical module and gateway acceptance remains
+in [#199](https://github.com/opensimgear/cockpit/issues/199).
 
 November 4 audit update. Workspace discovery now enumerates serial ports on
 native arrival/removal notifications. The USB fleet reads that cache during
@@ -23,7 +30,7 @@ own resource worker on commits and first readiness.
 | App/workspace/gateway | App.svelte 3 s workspace refresh | Gateway worker publishes committed status/module changes; platform serial arrival/removal notifications invalidate inventory |
 | Controller input | controller-input capture + stream journal | Windows report receive publishes batches; replace Linux/macOS 4 ms backend polling with platform report streams; share journal wakeups and descriptor cache |
 | Controller/device visibility | HostControllers, DeviceVisibility, visibility coordinator | Platform device/process notifications plus acknowledged visibility mutations; quiet controls remain connected |
-| USB/CAN/module inputs | STM32 bounded request worker; events_state/events_read journals | Firmware/gateway unsolicited or blocking cursor subscription with boot/config fences; firmware protocol changes required; no approved sampling exception |
+| USB/CAN/module inputs | Direct CDC input stream and advertised CAN panel stream with boot/config fences | Verify physical burst continuity, disconnect and rebaseline. Explicit diagnostic journal reads are separate from native acquisition. |
 | Resource/system inventory | profile_resources native discovery 1 s; system_inventory cache miss I/O | Device/process/commit invalidation; collectors run off capture path, publish committed cache revision; passive subscriptions never collect/mint tokens |
 | Profile library/editor/resources/ports | ProfilesPanel and editor previews | Durable document/resource commits and capture topics; revision-pinned pages, query replacement disposal |
 | Runtime/activation/progress | profile_session_host health drain; activation windows 150/200 ms | Source/completion wakeups and next authored deadline; publish health/progress commits; independent Stop, compensation and heartbeat |
