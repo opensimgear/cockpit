@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
+  import { devicePixelRatio } from 'svelte/reactivity/window';
   import CompiledPanel from '../../../packages/companion-ui/src/CompiledPanel.svelte';
   import {prepareCompiledSurfaces,disposeCompiledSurfaces,type PreparedCompiledSurfaces} from '../../../packages/companion-ui/src/compiled-surface.ts';
   import { BROWSER_WIDGET_CAPABILITIES } from '../../../packages/widget-runtime/src/artifact.ts';
@@ -12,7 +13,8 @@
   import { panelResolutionWarning, panelDisplayReport } from './panel-resolution';
   let credential=$state<Credential|null>(null), error=$state(''), warning=$state(''), status=$state('Connecting…');
   let panel=$state<CompiledPanelPublication|null>(null), pageId=$state('');
-  let displayWidth=$state(0), displayHeight=$state(0), pixelRatio=$state(1);
+  let displayWidth=$state(0), displayHeight=$state(0);
+  const pixelRatio=$derived(devicePixelRatio.current??1);
   let windowWidth=$state(0), windowHeight=$state(0);
   const displayedPage=$derived(pageId||panel?.document.ui.pages[0].id);
   const resolutionWarning=$derived(panelResolutionWarning(panel?.document.presentation.viewports.find(viewport=>viewport.pageId===displayedPage),displayWidth,displayHeight,pixelRatio));
@@ -59,7 +61,7 @@
     staleRecoveryWork=Promise.resolve().then(async()=>{
       queue.stop();active=false;inputReady=false;panelError=false;panelView?.suspend();session=null;
       feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
-      const presence=await socket.request({type:'presence',display:panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio)});
+      const presence=await socket.request({type:'presence',display:readDisplay()});
       if(!current(socket,version))return;
       assignments=presence.assignments;
       await subscribeAssignments(socket);
@@ -69,7 +71,7 @@
       if(!current(socket,version))return;
       if(obsoleteSession(e)){error='';stop('Reconnecting to Cockpit…');nextAttempt=performance.now()+1000;}
       else{error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}
-    }).finally(()=>{staleRecoveryWork=undefined;});
+    }).finally(()=>{staleRecoveryWork=undefined;void reportDisplay();});
     return true;
   }
   async function availableAssets(){try{return await cache.haveAssets();}catch(e){warning='Compiled asset cache unavailable; receiving fresh content.';let stored:string|undefined;cache=createCompiledAssetCache({read:async()=>stored,write:async value=>{stored=value;}});return [];}}
@@ -179,7 +181,7 @@
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');nextAttempt=performance.now()+2000;
       if(error.includes('invalid or revoked')){credential=null;clearCredential(localStorage,savedCredential.token);status='Pair this browser again in Cockpit';}
     }}
-    finally{connecting=false;if(!credential && secret)void pair();}
+    finally{connecting=false;if(!credential && secret)void pair();else void reportDisplay();}
   }
   async function pair(){
     if(!owner || connecting || !secret || disposed || !visible())return;
@@ -206,27 +208,49 @@
     }catch(e){if(version===epoch&&!disposed){secret='';error=obsoleteSession(e)?'':String(e instanceof Error?e.message:e);stop('Pairing did not complete');}}
     finally{connecting=false;void connect();}
   }
-  let polling=false,lastDisplay='',lastIdlePing=0;
-  async function poll(){
+  let maintaining=false,lastDisplay='',lastIdlePing=0;
+  let displayRequest:BrowserTransport|null=null;
+  const readDisplay=()=>{
+    const observedRatio=pixelRatio;
+    // A resize can arrive before the resolution media query notifies its readers.
+    const ratio=typeof window==='undefined'?observedRatio:window.devicePixelRatio??observedRatio;
+    return panelDisplayReport(panel?.publicationHash,pageId||panel?.document.ui.pages[0].id,
+      panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,ratio);
+  };
+  $effect(()=>{
+    const display=readDisplay();
+    untrack(()=>void reportDisplay(display));
+  });
+  async function reportDisplay(display=readDisplay()){
+    const socket=connection,version=epoch,reportedSession=session;
+    if(!socket||!primaryConnectionId||!current(socket,version)||connecting||focusWork||staleRecoveryWork||displayRequest===socket)return;
+    const stillCurrent=()=>current(socket,version)&&!staleRecoveryWork&&session===reportedSession;
+    const key=JSON.stringify(display);
+    if(key===lastDisplay)return;
+    displayRequest=socket;
+    try{
+      const presence=await socket.request({type:'presence',display});
+      if(!stillCurrent())return;
+      lastDisplay=key;
+      if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;void connect();}
+    }catch(e){if(stillCurrent()&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
+    finally{
+      if(displayRequest===socket)displayRequest=null;
+      if(current(socket,version))void reportDisplay();
+    }
+  }
+  async function maintainConnection(){
     const now=performance.now();
     if(now-lastTick>1000 && active&&inputReady)void refreshControls();lastTick=now;
-    if(polling || connecting || disposed || pageHidden || focusWork || staleRecoveryWork)return;
+    if(maintaining || connecting || disposed || pageHidden || focusWork || staleRecoveryWork)return;
     if(!connection){void connect();return;}
-    const socket=connection,version=epoch;polling=true;
+    const socket=connection,version=epoch;maintaining=true;
     try{
-      const display=panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio);
-      const displayKey=JSON.stringify(display);
-      if(displayKey!==lastDisplay){
-        const presence=await socket.request({type:'presence',display});
-        if(version!==epoch||focusWork||staleRecoveryWork)return;
-        lastDisplay=displayKey;
-        if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;return;}
-      }
       if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
       else if(!session && assignments.length)await loadAssigned(socket,version,assignments);
       else if(!session && now-lastIdlePing>=2000){lastIdlePing=now;await socket.request({type:'ping'});}
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
-    finally{polling=false;}
+    finally{maintaining=false;}
   }
   async function toggleFullscreen(){
     try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}
@@ -257,7 +281,7 @@
         inputReady=focused();if(inputReady)queue.start();else queue.stop();
         status=inputReady?'Connected · panel active':'Connected · feedback active · controls paused';
       }catch(e){if(current(socket,version)&&!recoverObsoleteSession(e,socket,version)){error=String(e);stop('Controls released · reconnecting to Cockpit');}}
-    }).finally(()=>{focusWork=undefined;});
+    }).finally(()=>{focusWork=undefined;void reportDisplay();});
     return focusWork;
   }
   function blurred(){hasFocus=false;return refreshControls();}
@@ -288,7 +312,7 @@
     const beforeInstall=(event:Event)=>{event.preventDefault();installPrompt=event;};
     window.addEventListener('blur',blurred);window.addEventListener('pagehide',pageHiding);window.addEventListener('pageshow',pageShowing);window.addEventListener('focus',gainedFocus);
     document.addEventListener('visibilitychange',visibilityChanged);document.addEventListener('fullscreenchange',full);window.addEventListener('beforeinstallprompt',beforeInstall);
-    const timer=setInterval(()=>{if(owner)void poll();},250);
+    const timer=setInterval(()=>{if(owner)void maintainConnection();},250);
     let releaseOwner:()=>void=()=>{};
     const initialize=()=>{owner=true;if(secret)void pair();else void connect();};
     if(navigator.locks)void navigator.locks.request('osg-companion-owner',secret?{steal:true}:{ifAvailable:true},async lock=>{
@@ -301,7 +325,7 @@
   });
 </script>
 
-<svelte:window bind:devicePixelRatio={pixelRatio} bind:innerWidth={windowWidth} bind:innerHeight={windowHeight}/>
+<svelte:window bind:innerWidth={windowWidth} bind:innerHeight={windowHeight}/>
 <div class="shell" class:fullscreen>
   <header><strong>OpenSimGear <span>Companion</span></strong><div><button onclick={install}>↓ Install app</button><button onclick={toggleFullscreen}>⛶ {fullscreen?'Exit fullscreen':'Fullscreen'}</button></div></header>
   {#if installHelp}<p class="help">Use your browser menu → Install app or Add to home screen. If installation is unavailable, bookmark this page for quick access. Keep using this browser profile to retain pairing.</p>{/if}

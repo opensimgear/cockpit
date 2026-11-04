@@ -43,13 +43,14 @@ function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,re
   async subscribeFeedback(frame){this.feedbackSubscription=frame;}
   close(){this.closed=true;for(const p of this.pending.splice(0))p.reject(Error('Socket closed'));this.onclose?.();}
  }
- const injected=appSource.replace('</script>',`capture({poll,connect,pair,emitOutput,runtimeError,consume,resyncFeedback,queue,get epoch(){return epoch;},get active(){return active;},get panel(){return panel;},get surfaces(){return panelSurfaces;},get suppressFeedbackCues(){return suppressFeedbackCues;},get panelError(){return panelError;},get session(){return session;},get status(){return status;},get error(){return error;},get feedbackNotice(){return feedbackNotice;},get feedback(){return feedback;},get credential(){return credential;},get secret(){return secret;}});</script>`);
+ const injected=appSource.replace('</script>',`capture({connect,pair,emitOutput,runtimeError,consume,resyncFeedback,queue,resize(width,height){displayWidth=width;displayHeight=height;void reportDisplay();},get epoch(){return epoch;},get active(){return active;},get panel(){return panel;},get surfaces(){return panelSurfaces;},get suppressFeedbackCues(){return suppressFeedbackCues;},get panelError(){return panelError;},get session(){return session;},get status(){return status;},get error(){return error;},get feedbackNotice(){return feedbackNotice;},get feedback(){return feedback;},get credential(){return credential;},get secret(){return secret;}});</script>`);
  const {js}=compile(injected,{filename:'App.svelte',generate:'server'}),exports={};
  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports,structuredClone,TextEncoder,URLSearchParams,AbortController,performance:{now:()=>clock},crypto,window,document,location,history:{replaceState(){location.hash='';}},navigator:{},localStorage,
   setInterval(cb,period=0){const id=intervals.size+1;intervals.set(id,{cb,period});return id;},clearInterval:id=>intervals.delete(id),capture:v=>handlers=v,
   require(name){
    if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onMount:cb=>mount=cb};
+   if(name==='svelte/reactivity/window')return{devicePixelRatio:{current:1}};
    if(name==='../../../packages/companion-ui/src/CompiledPanel.svelte')return{default(){}};if(name==='../../../packages/widget-runtime/src/artifact.ts')return{BROWSER_WIDGET_CAPABILITIES};
    if(name==='../../../packages/companion-ui/src/compiled-surface.ts')return{prepareCompiledSurfaces:async()=>{if(++preparations>failPreparationAfter)throw new RangeError('Candidate Canvas allocation failed');if(holdPreparation)await new Promise(resolve=>finishPreparation=resolve);const surfaces={retained:{pixels:[0,248,255],disposed:false,dispose(){this.disposed=true;this.pixels=[];}}};preparedSurfaces.push(surfaces);return surfaces;},disposeCompiledSurfaces:surfaces=>{for(const surface of Object.values(surfaces??{}))surface.dispose();}};
    if(name==='./compiled-cache')return{browserCompiledCacheStore:()=>({}),createCompiledAssetCache:()=>({haveAssets:async()=>['b'.repeat(64)],save:async()=>{},verifyDelivery:async()=>{if(rejectPanel||++verifications>rejectPanelAfter)throw Error('Unsupported compiled widget');if(holdVerification)await new Promise(resolve=>finishVerification=resolve);return displayOnly?{...publication,document:{...panel,ui:{...panel.ui,controls:[]}}}:publication;}})};
@@ -209,12 +210,25 @@ test('an obsolete neutral input after blur reopens with controls paused and no s
   assert.equal(h.handlers.active,true);assert.equal(h.handlers.queue.snapshot().enabled,false);assertObsoleteHidden(h);
  }finally{h.close();await flush();}
 });
-test('a pending presence poll cannot start a second load during stale-session recovery',async()=>{
+test('display changes report immediately, coalesce in flight and leave idle lease ticks alone',async()=>{
+ const h=harness({hold:['presence']});await flush();try{
+  const socket=h.sockets[0],reports=()=>socket.requests.filter(frame=>frame.type==='presence');
+  assert.equal(reports().length,1);
+  h.handlers.resize(600,400);h.handlers.resize(900,500);
+  await h.tick();assert.equal(reports().length,1);assert.ok(socket.requests.filter(f=>f.type==='heartbeat').length>1);
+  socket.release('presence');await flush();
+  assert.equal(reports().length,2);
+  assert.equal(reports()[1].display.cssWidth,900);
+  socket.release('presence');await flush();
+  h.handlers.resize(900,500);await h.tick();assert.equal(reports().length,2);
+ }finally{h.close();await flush();}
+});
+test('a pending display report cannot start a second load during stale-session recovery',async()=>{
  const h=harness({hold:['presence'],staleOnce:['input']});await flush();try{
   const socket=h.sockets[0];await h.tick();assert.equal(socket.pending.filter(p=>p.frame.type==='presence').length,1);
   h.handlers.emitOutput({controlId:'toggle',value:true});await flush();
   assert.equal(socket.pending.filter(p=>p.frame.type==='presence').length,2);
-  socket.release('presence');await flush();assert.equal(socket.requests.filter(f=>f.type==='open').length,1,'The older poll must not race recovery into a parallel load.');
+  socket.release('presence');await flush();assert.equal(socket.requests.filter(f=>f.type==='open').length,1,'The older display report must not race recovery into a parallel load.');
   socket.release('presence');await flush();await flush();
   assert.equal(socket.requests.filter(f=>f.type==='open').length,2);assert.equal(socket.requests.filter(f=>f.type==='baseline').length,2);
   assert.equal(h.handlers.active,true);assertObsoleteHidden(h);

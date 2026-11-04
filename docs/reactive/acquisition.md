@@ -35,7 +35,7 @@ own resource worker on commits and first readiness.
 | Games/rules/catalogues/setup | game_get_state, GameProfileRule, jobs | Publish process/context, committed rules, catalogue replacement and background job completion; explicit rescan remains a command |
 | Discovery/artwork/metadata | Async workers, UI completion refresh | Worker progress/completion publishes revision, rejects old query/job generations; bounded immutable page reads |
 | Companion presence/pairing/listeners | Service sockets, UI 1.5 s status | Authenticated service lifecycle events and acknowledged configuration commits |
-| Panels/designer/publication | CompiledCompanionDesigner 2 s; browser App 250 ms | Immutable publication fetch once, then pushed feedback/input with exact publication generation; preserve native renderer ownership |
+| Panels/designer/publication | Browser display reports follow publication, page and size changes; authenticated assignment and feedback streams | Preserve exact publication generation and native renderer ownership. Finish cross-client qualification. |
 | Browser companion connection | Worker tick 250 ms couples feedback and liveness | Payload stream separate from lease renewal and request deadlines; backgrounding cannot stop control delivery |
 | Serial/ESP32 firmware | Serial workers + status/control request cadence | Explicit producer/firmware protocol stream, bounded backpressure, publication replacement and held-release evidence per board |
 | Settings/preferences/dependencies/backups | UI preferences and AI settings use native observations | Publish remaining dependency/backup worker progress. AI settings reads status after a private invalidation from listener or credential changes |

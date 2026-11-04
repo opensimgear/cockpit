@@ -10,7 +10,7 @@ const allowed = new Map([
   ['apps/companion/src/App.svelte', [
     "()=>{if(remoteSelected&&gate.snapshot().armed&&remote.phase==='armed'&&snapshot.armed){consttoken=gate.capture();voidrequest({type:'keepalive',epoch:remote.epoch}).catch(value=>{if(gate.current(token))fail(value);});}},100",
   ]],
-  ['apps/browser-companion/src/App.svelte', ['sendPreparationHeartbeat,500', '()=>{if(owner)voidpoll();},250']],
+  ['apps/browser-companion/src/App.svelte', ['sendPreparationHeartbeat,500', '()=>{if(owner)voidmaintainConnection();},250']],
   ['apps/browser-companion/src/connection-worker.ts', ['()=>voidconnection.tick().catch(stop),250']],
 ]);
 
