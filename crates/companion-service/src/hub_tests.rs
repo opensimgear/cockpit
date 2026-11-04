@@ -123,6 +123,29 @@ fn paired_kind(h:&Hub,companion:&str,kind:&str)->String{
     reply["token"].as_str().unwrap().to_owned()
 }
 #[test]
+fn presence_notifications_follow_pairing_and_connections_without_poll_noise() {
+    let hub = Hub::new("presence-host".into(), Arc::new(NullSourceSink));
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    hub.observe_presence(wake.clone());
+    let baseline = wake.observed();
+    hub.observe_presence(wake.clone());
+    assert_eq!(wake.observed(), baseline);
+    let token = paired(&hub, "presence-screen");
+    let paired = wake.observed();
+    assert!(paired > baseline);
+    assert_eq!(wire(&hub, "presence-connection", json!({"type":"auth","token":token}))["ok"], true);
+    let authenticated = wake.observed();
+    assert_eq!(authenticated, paired + 1);
+    assert_eq!(operator(&hub, json!({"command":"companion_status"}))["clients"][0]["connected"], true);
+    assert_eq!(wire(&hub, "presence-connection", json!({"type":"presence"}))["ok"], true);
+    assert_eq!(wake.observed(), authenticated);
+    hub.disconnect_connection("presence-connection", hub.now_ms());
+    assert_eq!(wake.observed(), authenticated + 1);
+    hub.disconnect_connection("presence-connection", hub.now_ms());
+    assert_eq!(wake.observed(), authenticated + 1);
+}
+
+#[test]
 fn renderer_reports_follow_authenticated_connections_and_never_grant_input(){
     let hub=Hub::new("host".into(),Arc::new(NullSourceSink));let token=paired_kind(&hub,"screen","esp32");
     let profile=crate::render_profile::test_profile(true);

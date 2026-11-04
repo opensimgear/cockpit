@@ -22,6 +22,7 @@ pub(crate) struct ProfilePanelOperation {
 }
 mod presentation;
 mod listener_observation;
+mod presence_observation;
 use presentation::*;
 
 #[path = "../../profile_companion_authoring.rs"]
@@ -56,6 +57,7 @@ pub struct Runtime {
     services: OnceLock<Result<Services, String>>,
     upload: Mutex<Option<Upload>>,
     listener_observation: Mutex<Option<listener_observation::Observation>>,
+    presence_observation: Mutex<Option<presence_observation::Observation>>,
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
@@ -86,6 +88,7 @@ impl Runtime {
             services: OnceLock::new(),
             upload: Mutex::new(None),
             listener_observation: Mutex::new(None),
+            presence_observation: Mutex::new(None),
             panel_operation_wakes: Mutex::new(Vec::new()),
             #[cfg(test)]
             profile_wire_fixture: false,
@@ -141,8 +144,10 @@ impl Runtime {
                 std::env::temp_dir().canonicalize().map_err(|error|error.to_string())?.join(format!("osg-companion-test-{}", uuid::Uuid::new_v4())))
         } else { return Err("Set up and pair a companion before applying this assignment.".into()); };
         let _ = self.metadata.set(Metadata {hub, directory});
-        self.register_panel_operation_wakes(&self.metadata.get().expect("metadata initialized under its gate").hub);
-        Ok(self.metadata.get().expect("metadata initialized under its gate"))
+        let metadata = self.metadata.get().expect("metadata initialized under its gate");
+        self.register_panel_operation_wakes(&metadata.hub);
+        self.register_presence_wake(&metadata.hub);
+        Ok(metadata)
     }
     fn register_panel_operation_wakes(&self, hub: &Hub) {
         let mut wakes = self.panel_operation_wakes.lock().unwrap_or_else(|p| p.into_inner());
@@ -371,6 +376,7 @@ impl Runtime {
 
     pub fn shutdown(&self) {
         self.stopped.store(true, Ordering::SeqCst);
+        self.presence_observation.lock().unwrap_or_else(|p| p.into_inner()).take();
         if let Some(Ok(services)) = self.services.get() {
             services.usb.release();
             services.server.stop();

@@ -15,6 +15,9 @@ use std::{
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 
+#[path="hub_presence.rs"]
+mod presence;
+
 #[path="host_content/mod.rs"]
 mod content;
 #[path="hub_display.rs"]
@@ -169,6 +172,7 @@ pub struct Hub {
     record_revision: Arc<std::sync::atomic::AtomicU64>,
     confirmed_assignments: Arc<Mutex<BTreeMap<String, u64>>>,
     panel_operation_wakes: Arc<Mutex<Vec<std::sync::Weak<osg_streams::NativeWake>>>>,
+    presence: presence::Signal,
 }
 pub struct NullSourceSink;
 impl SourceSink for NullSourceSink {
@@ -375,6 +379,7 @@ impl Hub {
             record_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             confirmed_assignments: Arc::new(Mutex::new(BTreeMap::new())),
             panel_operation_wakes: Arc::new(Mutex::new(Vec::new())),
+            presence: presence::Signal::default(),
         })
     }
 
@@ -513,6 +518,7 @@ impl Hub {
                 inner.diagnostic =
                     Some("Companion source rejected input; fresh baseline required.".into());
             }
+            self.notify_presence();
         }
     }
     fn expire(&self, inner: &mut Inner, now: u64) -> Result<(), String> {
@@ -520,7 +526,9 @@ impl Hub {
         // Reordering those trusted samples is not a protocol fault or client timestamp.
         let now = now.max(inner.last_now);
         inner.last_now = now;
+        let pending = inner.pending.len();
         inner.pending.retain(|_, p| p.expires > now);
+        if inner.pending.len() != pending { self.notify_presence(); }
         if inner.code_offer.as_ref().is_some_and(|o| o.expires <= now) {
             inner.code_offer = None;
         }
@@ -552,7 +560,7 @@ impl Hub {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let sessions = inner.sessions.len();
         let _ = self.expire(&mut inner, now_ms);
-        inner.connections.remove(connection_id);
+        let disconnected = inner.connections.remove(connection_id).is_some();
         inner.display_reports.remove(connection_id);
         inner.render_profiles.remove(connection_id);
         let ids: Vec<_> = inner
@@ -567,6 +575,7 @@ impl Hub {
         let removed = inner.sessions.len() < sessions;
         drop(inner);
         if removed { self.notify_panel_operations(); }
+        if disconnected { self.notify_presence(); }
     }
     pub fn disconnect_all(&self) {
         let ids: Vec<_> = self
@@ -909,6 +918,13 @@ impl Hub {
         if result.is_ok() && matches!(command, "companion_assign" | "companion_unassign" | "companion_revoke" | "companion_disconnect") {
             self.notify_panel_operations();
         }
+        if result.is_ok() && matches!(command,
+            "companion_approve" | "companion_pair_approve" | "companion_pair_cancel" | "companion_reject"
+            | "companion_update" | "companion_revoke" | "companion_publish" | "companion_prune"
+            | "companion_unassign" | "companion_assign" | "companion_takeover" | "companion_disconnect"
+        ) {
+            self.notify_presence();
+        }
         result
     }
     fn status(&self, inner: &Inner) -> Value {
@@ -988,7 +1004,11 @@ impl Hub {
                 && session.token.generation.to_string() == generation
                 && inner.record.instances.iter().any(|a|a.instance_id == session.token.source_id && a.publication_hash == session.token.publication_hash), "Serial panel operation identity changed.")?;
             let operation = operation_for_session(&json!({"operation":operation}), session)?.unwrap();
-            inner.sessions.get_mut(session_id).unwrap().operation = Some(operation);
+            let session = inner.sessions.get_mut(session_id).unwrap();
+            if session.operation.as_ref() != Some(&operation) {
+                session.operation = Some(operation);
+                self.notify_presence();
+            }
         }
         self.notify_panel_operations();
         Ok(())
@@ -998,6 +1018,9 @@ impl Hub {
         if result.is_ok() && (frame.get("operation").is_some()
             || matches!(frame["type"].as_str(), Some("image-chunk" | "close" | "cancel"))) {
             self.notify_panel_operations();
+        }
+        if result.is_ok() && matches!(frame["type"].as_str(), Some("auth" | "open" | "baseline")) {
+            self.notify_presence();
         }
         match result {
             Ok(value) => value,
@@ -1082,6 +1105,7 @@ impl Hub {
                 };
                 let request_id = uuid::Uuid::new_v4().to_string();
                 inner.pending.insert(request_id.clone(), pending);
+                self.notify_presence();
                 if auto_approve {
                     self.approve_pending(&mut inner, &request_id, Some(companion))?;
                     inner.code_offer = None;
@@ -1116,8 +1140,14 @@ impl Hub {
                     .ok_or("Authenticate this companion first.")?
                     .clone();
                 let report=display::validate_report(frame.get("display"),&inner,&companion)?;
-                if let Some(report)=report{inner.display_reports.insert(connection_id.to_owned(),report);}
-                else{inner.display_reports.remove(connection_id);}
+                if inner.display_reports.get(connection_id) != report.as_ref() {
+                    if let Some(report) = report {
+                        inner.display_reports.insert(connection_id.to_owned(), report);
+                    } else {
+                        inner.display_reports.remove(connection_id);
+                    }
+                    self.notify_presence();
+                }
                 Ok(
                     json!({"ok":true,"type":"presence","assignments":inner.record.instances.iter().filter(|a| a.companion_id==companion).map(|a|json!({"instanceId":a.instance_id,"publicationHash":a.publication_hash,"name":a.definition.name})).collect::<Vec<_>>()}),
                 )
@@ -1289,7 +1319,12 @@ impl Hub {
                     exact(frame,&["type","sessionId","clientId","generation","publicationHash","widgetId","width","height","offset"],&["version","operation","layerId"])?;
                     let session=inner.sessions.get_mut(field(frame,"sessionId")?).ok_or("Unknown session.")?;
                     ensure(session.connection==connection_id && session.companion_id==companion && frame["clientId"]==session.client_id && frame["generation"]==session.token.generation.to_string() && frame["publicationHash"]==session.token.publication_hash && !session.armed,"Image transfer requires the current disarmed session.")?;
-                    if let Some(operation) = operation_for_session(frame, session)? { session.operation = Some(operation); }
+                    if let Some(operation) = operation_for_session(frame, session)? {
+                        if session.operation.as_ref() != Some(&operation) {
+                            session.operation = Some(operation);
+                            self.notify_presence();
+                        }
+                    }
                     session.last_seen=now;
                     let hash=session.token.publication_hash.clone();
                     let p=inner.publications.get(&hash).ok_or("Publication unavailable.")?;
@@ -1404,10 +1439,14 @@ impl Hub {
                 }
             }
             let s = inner.sessions.get_mut(session_id).unwrap();
+            let panel_error = frame["panelError"] == true;
+            let changed = s.panel_error != panel_error
+                || operation.as_ref().is_some_and(|operation| s.operation.as_ref() != Some(operation));
             if let Some(operation) = operation { s.operation = Some(operation); }
             s.heartbeat = seq;
-            s.panel_error = frame["panelError"]==true;
+            s.panel_error = panel_error;
             s.last_seen = now;
+            if changed { self.notify_presence(); }
             return Ok(reply(frame["sequence"].clone(), "ack"));
         }
         if frame["type"] == "baseline" {

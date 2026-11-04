@@ -7,7 +7,7 @@ const MIN_PIXEL_RATIO: f64 = 0.25;
 const MAX_PIXEL_RATIO: f64 = 8.0;
 const MAX_DISPLAY_DIMENSION: f64 = 65_536.0;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct DisplayReport {
     publication_hash: Option<String>,

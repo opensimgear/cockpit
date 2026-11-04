@@ -8,6 +8,7 @@
   import { newPairingConnected } from './companion-pairing';
   import { invoke } from '@tauri-apps/api/core';
   import { gatewayRequest } from './gateway';
+  import { SharedObservations } from './streams/shared';
   import { notify } from './notifications';
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { createCompanionSettingsAutosave } from './companion-settings';
@@ -37,7 +38,7 @@
   let pairing = $state<CompanionHostState['pairing']>();
   let secondsLeft = $state(0), expires = 0;
   let baseline = new Set<string>();
-  let polling = false;
+  let reading = false, refreshQueued = false;
   let updateOpen=$state(false), updatePort=$state(''), updateProfile=$state(''), updating=$state(false);
   const firmwareInfo=(client:Record<string,unknown>)=>hostState.firmware?.[text(client,'companionId')];
   const outdated=(client:Record<string,unknown>)=>deviceKind(client)==='esp32' && firmwareUpdateAvailable(firmwareInfo(client)?.version,companionFirmwareVersion(hostState,text(client,'companionId')));
@@ -97,7 +98,10 @@
     try { await work(); } catch (error) { notify(String(error),'error'); } finally { busy=false; }
   }
   async function refresh() {
-    if (!active || polling || disposed || settingsSaving) return; polling=true;
+    if (!active || disposed) return;
+    if (reading || settingsSaving) { refreshQueued = true; return; }
+    refreshQueued = false;
+    reading = true;
     try {
       await send('companion_status');
       if (disposed) return;
@@ -119,9 +123,26 @@
       if (pairingOpen && newPairingConnected(kind,baseline,hostState)) {
         pairingOpen=false; pairing=undefined; kind=''; notify('Companion paired and saved.');
       }
-    } catch (error) { if (!disposed) notify(String(error),'error'); } finally { polling=false; }
+    } catch (error) { if (!disposed) notify(String(error),'error'); }
+    finally {
+      reading = false;
+      if (refreshQueued && !settingsSaving) void refresh();
+    }
   }
-  $effect(() => { if (active && mounted) untrack(() => { void refresh(); }); });
+  $effect(() => {
+    if (!active || !mounted) return;
+    const observations = new SharedObservations();
+    for (const topic of ['companion.presence', 'companion.listener']) {
+      observations.subscribe(topic, state => {
+        if (state.status === 'ready') untrack(() => { void refresh(); });
+        if (state.status === 'error' && state.error) notify(state.error, 'error');
+      });
+    }
+    return () => observations.close();
+  });
+  $effect(() => {
+    if (active && mounted && !settingsSaving) untrack(() => { if (refreshQueued) void refresh(); });
+  });
   function openPair(type: typeof kind = '') {
     void settingsAutosave.flush();
     pendingCompanionId = '';
@@ -175,14 +196,22 @@
     return true;
   }
   function backToCompanions() { showMain(); }
-  onMount(() => {
-    mounted=true;
-    const timer=setInterval(() => {
+  $effect(() => {
+    if (!active || !mounted || !pairing) return;
+    const countdown = setInterval(() => {
       secondsLeft=Math.max(0,Math.ceil((expires-Date.now())/1000));
       if (!secondsLeft && pairing){pairing=undefined;if(kind==='browser')browserOfferAttempted=false;}
-      void refresh();
     },1000);
-    return () => {void settingsAutosave.flush();disposed=true;clearInterval(timer);if(updateOpen && !updating && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
+    return () => clearInterval(countdown);
+  });
+  $effect(() => {
+    if (!active || !mounted || !updating) return;
+    const progress = setInterval(refresh,1000);
+    return () => clearInterval(progress);
+  });
+  onMount(() => {
+    mounted=true;
+    return () => {void settingsAutosave.flush();disposed=true;if(updateOpen && !updating && updatePort)void send('companion_usb_connect',{port:updatePort}).catch(error=>notify(String(error),'error'));};
   });
 </script>
 

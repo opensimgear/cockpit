@@ -12,6 +12,7 @@
   import SourcePresentation from './SourcePresentation.svelte';
   import CompiledPanel from '../../packages/companion-ui/src/CompiledPanel.svelte';
   import { gatewayRequest } from './gateway';
+  import { SharedObservations } from './streams/shared';
   import { synchronizePanel, removePanelAssignments } from './panel-actions';
   import { restoreCompanionPanels } from './companion-startup';
   import { notify } from './notifications';
@@ -32,7 +33,7 @@
   let widgetDesigner=$state<GenericWidgetDesigner>();
   let connections = $state<CompanionConnections>(), player = $state<CompiledPanel>(), stage = $state<HTMLDivElement>();
   let widgetImport = $state<HTMLInputElement>(), panelImport = $state<HTMLInputElement>();
-  let disposed = false, epoch = 0, polling = false;
+  let disposed = false, epoch = 0, reading = false, refreshQueued = false;
   let build = $state<AbortController>();
   const store = new CompiledWorkspaceStore();
   const sources = $derived(workspace.sources);
@@ -66,15 +67,34 @@
   let resolveLoaded: () => void = () => {};
   const loaded = new Promise<void>(resolve => { resolveLoaded = resolve; });
   async function send(command: CompanionCommand, companion: Record<string, unknown> = {}) { const result = (await gatewayRequest({ command, companion })).companions; if (!result) throw new Error('This operation requires the native Cockpit.'); host = { ...host, ...result }; return result; }
-  async function refresh() { if (disposed || !active || polling) return; polling = true; try { await send('companion_status'); } catch { /* Offline source editing remains available. */ } finally { polling = false; } }
+  async function refresh() {
+    if (disposed || !active) return;
+    if (reading) { refreshQueued = true; return; }
+    reading = true;
+    refreshQueued = false;
+    try { await send('companion_status'); } catch { /* Offline source editing remains available. */ }
+    finally {
+      reading = false;
+      if (refreshQueued) void refresh();
+    }
+  }
+  $effect(() => {
+    if (!active) return;
+    const observations = new SharedObservations();
+    for (const topic of ['companion.presence', 'companion.listener']) {
+      observations.subscribe(topic, state => {
+        if (state.status === 'ready') untrack(() => { void refresh(); });
+      });
+    }
+    return () => observations.close();
+  });
   onMount(() => {
     void (async () => { try {
       workspace = await store.load();
 
       ready = true;
     } catch (e) { error = `Cannot load designer: ${String(e)}`; } finally { resolveLoaded(); } })();
-    void refresh(); const timer = setInterval(refresh, 2000);
-    return () => { disposed = true; clearInterval(timer); invalidate(); resolveLoaded(); };
+    return () => { disposed = true; invalidate(); resolveLoaded(); };
   });
   $effect(() => { if (!active) untrack(() => { trying = false; player?.reset(); }); });
   function openPanel(id: string, record = true) {
