@@ -1,7 +1,7 @@
 impl Sources {
     fn usb_observations(&mut self) -> Result<Vec<Observation>, String> {
         let slots = if self.native {
-            self.usb.scan()?
+            self.usb.scan_for_inventory()?
         } else {
             self.usb.snapshots()
         };

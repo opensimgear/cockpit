@@ -1,6 +1,6 @@
 use super::*;
 use crate::transport::notifications::PortNotifications;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub(super) fn run(inner:Arc<Inner>,manager:Weak<GatewayManager>,notifications:bool){
     let mut view=publisher::View::new();
@@ -23,6 +23,7 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
     let mut seen_ports=ports_wake.observed();
     let mut entries=BTreeMap::<String,Entry>::new();
     let mut discovery_error=String::new();
+    let mut discovery_retry: Option<Instant> = None;
     let mut token=0u64;
     let mut pending_pauses=BTreeMap::new();
     loop {
@@ -30,9 +31,14 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
         let Some(manager)=manager.upgrade() else{break;};
         if manager.closed.load(Ordering::Acquire){break;}
         let current_ports=ports_wake.observed();
-        if inner.ports_dirty.swap(false,Ordering::AcqRel)||current_ports!=seen_ports {
+        if inner.ports_dirty.swap(false,Ordering::AcqRel)
+            || current_ports!=seen_ports
+            || discovery_retry.is_some_and(|at| at <= Instant::now())
+        {
             seen_ports=current_ports;
             discovery_error=manager.discover().err().unwrap_or_default();
+            discovery_retry = (notifications && manager.serial_topology.cached().is_err())
+                .then(|| Instant::now() + Duration::from_secs(2));
         }
         if let Some(error)=source.as_ref().and_then(PortNotifications::error){notification_error=error;}
         let ports=manager.inventory.lock().unwrap_or_else(|p|p.into_inner()).clone();
@@ -73,7 +79,9 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
         let deadline={let control=inner.control.lock().unwrap_or_else(|p|p.into_inner());
             entries.values().filter(|entry|!control.held.contains_key(&entry.id)).filter_map(Entry::deadline).min()};
         drop(manager);
-        if let Some(at)=deadline {std::thread::park_timeout(at.saturating_duration_since(Instant::now()));}
+        if let Some(at)=deadline.into_iter().chain(discovery_retry).min() {
+            std::thread::park_timeout(at.saturating_duration_since(Instant::now()));
+        }
         else{std::thread::park();}
     }
     if let Some(source)=source.as_mut(){source.shutdown()?;}

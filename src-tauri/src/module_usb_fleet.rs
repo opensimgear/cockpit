@@ -72,6 +72,7 @@ struct State {
 }
 pub(crate) struct Fleet {
     serial: SerialPorts,
+    cached_topology: Option<SerialPorts>,
     native: bool,
     create: Create,
     state: Mutex<State>,
@@ -149,6 +150,7 @@ impl Fleet {
     fn with_create(serial: SerialPorts, native: bool, create: Create) -> Self {
         Self {
             serial,
+            cached_topology: None,
             native,
             create,
             state: Mutex::new(State {
@@ -168,14 +170,28 @@ impl Fleet {
         self.discover(self.native)?;
         Ok(self.snapshots())
     }
+    pub(crate) fn use_cached_topology(&mut self, topology: SerialPorts) {
+        self.cached_topology = Some(topology);
+    }
+
+    pub(crate) fn scan_for_inventory(&self) -> Result<Vec<SlotSnapshot>, String> {
+        let ports = self.cached_topology.as_ref().unwrap_or(&self.serial);
+        self.adopt_topology(ports, self.native)?;
+        Ok(self.snapshots())
+    }
+
     fn discover(&self, automatic: bool) -> Result<(), String> {
+        self.adopt_topology(&self.serial, automatic)
+    }
+
+    fn adopt_topology(&self, ports: &SerialPorts, automatic: bool) -> Result<(), String> {
         // Enumerate and adopt in one order; a slow older scan must not replace
         // a newer complete scan from a concurrent explicit Ports request.
         let _discovery = self.discovery.lock().unwrap_or_else(|p| p.into_inner());
         if self.closed.load(Ordering::Acquire) {
             return Err("USB module fleet has stopped.".into());
         }
-        let observed = match (self.serial)().and_then(deduplicate) {
+        let observed = match ports().and_then(deduplicate) {
             Ok(observed) => observed,
             Err(error) => {
                 let error = bounded_error(&error);

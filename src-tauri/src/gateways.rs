@@ -102,6 +102,9 @@ impl Adapter for Stm32Service {
         self.shutdown();
     }
 }
+#[path = "gateways/serial_topology.rs"]
+mod serial_topology;
+
 trait Provider: Send + Sync {
     fn ports(&self) -> Result<Vec<PortInfo>, String>;
     fn adapter(&self, backend: &str) -> Arc<dyn Adapter>;
@@ -239,6 +242,7 @@ pub struct GatewayManager {
     profile_automatic_worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     pub(crate) module_usb: Arc<crate::module_usb_fleet::Fleet>,
     provider: Arc<dyn Provider>,
+    serial_topology: Arc<serial_topology::SerialTopology>,
     sessions: Arc<Mutex<BTreeMap<String, Arc<dyn Adapter>>>>,
     inventory: Mutex<Vec<Value>>,
     system_inventory: crate::system_inventory::Runtime,
@@ -354,7 +358,17 @@ impl GatewayManager {
         let resource_sessions = sessions.clone();
         let resource_requests = sessions.clone();
         let resource_ports = provider.clone();
-        let module_usb = Arc::new(crate::module_usb_fleet::Fleet::new(Arc::new(move || resource_ports.ports()), native));
+        let serial_topology = Arc::new(serial_topology::SerialTopology::default());
+        let usb_discovery = serial_topology.clone();
+        let mut module_usb = crate::module_usb_fleet::Fleet::new(
+            Arc::new(move || usb_discovery.refresh(resource_ports.as_ref())),
+            native,
+        );
+        if native {
+            let topology = serial_topology.clone();
+            module_usb.use_cached_topology(Arc::new(move || topology.cached()));
+        }
+        let module_usb = Arc::new(module_usb);
         let configuration_gate = Arc::new(Mutex::new(()));
         let closed = Arc::new(AtomicBool::new(false));
         let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
@@ -481,6 +495,7 @@ impl GatewayManager {
                 crate::config_paths::config_path().with_file_name("profiles-v2")
             })))),
             provider,
+            serial_topology,
             sessions,
             inventory: Mutex::new(Vec::new()),
             system_inventory: crate::system_inventory::Runtime::new(native),
@@ -632,7 +647,7 @@ impl GatewayManager {
     }
     fn discover(&self) -> Result<Vec<Value>, String> {
         let mut ports = BTreeMap::<String, Value>::new();
-        for port in self.provider.ports()? {
+        for port in self.serial_topology.refresh(self.provider.as_ref())? {
             let Some((backend, id)) = candidate(&port) else {
                 continue;
             };
