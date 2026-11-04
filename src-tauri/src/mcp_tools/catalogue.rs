@@ -144,6 +144,11 @@ pub fn catalogue() -> Vec<Value> {
         tool("activation_cancel","Cancel an exact pending native activation. Its epoch fence cannot deactivate a newer applied owner. Cleanup is never cancelled.",vec![("activationId",string(36))],&["activationId"]),
         tool("profile_stop","Explicitly stop and neutralize native profile outputs. Emergency cleanup stays available when preparation fails or another operation is pending.",vec![],&[]),
         tool("profile_recover","Explicitly retry cleanup of retained native ownership/recovery receipts. Does not replay a saved graph or activate outputs.",vec![],&[]),
+        tool("profile_input_learn_start","Start a passive capture on the exact current physical resource. Use the returned learnId to inspect or cancel. This never edits a profile or starts outputs.",vec![("resourceId",string(4096)),("generation",json!({"type":"string","maxLength":20,"pattern":"^(0|[1-9][0-9]*)$"})),("capabilityRevision",json!({"type":"string","pattern":"^sha256:[a-f0-9]{64}$"}))],&["resourceId","generation","capabilityRevision"]),
+        tool("profile_input_learn_status","Read the exact passive input-learning capture after a profiles.learning update.",vec![("learnId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36}))],&["learnId"]),
+        tool("profile_input_learn_cancel","Cancel the exact passive input-learning capture and withdraw its candidates.",vec![("learnId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36}))],&["learnId"]),
+        tool("profile_retired_recovery_status","Read retained output and provisioning cleanup status without starting recovery.",vec![],&[]),
+        tool("controller_visibility_status","Read saved visibility and inspected HidHide evidence for the exact physical controller without changing policy.",vec![("sourceId",string(80))],&["sourceId"]),
         tool("profile_debug_controller_status","Read volatile values of a debug controller for the exact applied profile owner.",vec![("owner",owner()),("nodeId",string(80))],&["owner","nodeId"]),
         tool("profile_debug_controller_input","Atomically drive authored debug controls in the exact running profile. Values persist until another update or Stop. Each stream uses strictly increasing canonical decimal sequences; exact retries are harmless. This streaming mutation uses streamId/sequence instead of operationId, with sixteen streams per controller and bounded backpressure.",vec![("owner",owner()),("nodeId",string(80)),("streamId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36})),("sequence",json!({"type":"string","minLength":1,"maxLength":20,"pattern":"^[1-9][0-9]*$"})),("changes",json!({"type":"array","minItems":1,"maxItems":128,"items":{"type":"object","additionalProperties":false,"properties":{"portId":string(80),"value":{"type":["boolean","integer"]}},"required":["portId","value"]}}))],&["owner","nodeId","streamId","sequence","changes"]),
         tool("applied_ports_inspect","Inspect actual declared-port samples for an exact applied owner. Saved/selected profile state cannot impersonate an applied runtime.",fields(vec![("owner",owner()),("nodeId",string(80))],page()),&["owner"]),
@@ -212,6 +217,8 @@ pub fn is_mutation(name: &str) -> bool {
                 | "activation_cancel"
                 | "profile_stop"
                 | "profile_recover"
+                | "profile_input_learn_start"
+                | "profile_input_learn_cancel"
                 | "game_discovery_apply"
                 | "game_discovery_start"
                 | "game_background_save"

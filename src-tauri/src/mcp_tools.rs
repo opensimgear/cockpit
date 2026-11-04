@@ -466,6 +466,10 @@ impl Tools {
                 client,
                 Some("profiles"),
             ),
+            "profile_input_learn_start" => forward(name, &["resourceId","generation","capabilityRevision"], Some("profileLearning")),
+            "profile_input_learn_status" | "profile_input_learn_cancel" => forward(name, &["learnId"], Some("profileLearning")),
+            "profile_retired_recovery_status" => forward(name, &[], Some("retiredRecovery")),
+            "controller_visibility_status" => Ok(forward(name, &["sourceId"], Some("controllers"))?["visibility"].clone()),
             "profile_debug_controller_status" => forward("profile_debug_controller_status", &["owner","nodeId"],Some("debugController")),
             "profile_debug_controller_input" => forward("profile_debug_controller_input", &["owner","nodeId","streamId","sequence","changes"],Some("debugController")),
             "applied_ports_inspect" => forward(

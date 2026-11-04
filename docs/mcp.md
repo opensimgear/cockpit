@@ -318,6 +318,15 @@ database. It contains an invalidation revision, with the actual rows read
 through `activity_list`. Use `committedOnly: true` when reacting to the
 stream to read the retained page without flushing the writer.
 
+Several other topics carry a revision and leave the exact read to a tool.
+
+| Topic | Read after an update |
+| --- | --- |
+| `profiles.learning` | `profile_input_learn_status` with the exact `learnId` from `profile_input_learn_start`. Use `profile_input_learn_cancel` to withdraw the capture. Start and cancel require a write credential and an operation ID. |
+| `profiles.debug-inputs` | `profile_debug_controller_status` with the exact applied owner and node ID. |
+| `profiles.retired-recovery` | `profile_retired_recovery_status` for retained output and provisioning cleanup state. |
+| `system.inventory` | `system_inventory` for the bounded inventory, or `controller_visibility_status` with a physical source ID. |
+
 The opt-in Windows dev Cockpit test `tests/ui/mcp-native.mjs` also verifies
 integration context. Set `OSG_MCP_OBSERVATION_ONLY=1` and
 `OSG_MCP_INTEGRATION_OBSERVATION=1` in a dev Cockpit with no registered DCS

@@ -2279,6 +2279,28 @@ mod tests {
     }
     fn learning_manager(gate:Option<Arc<std::sync::Barrier>>)->(GatewayManager,Value){let (manager,_)=setup();let mut manager=Arc::try_unwrap(manager).ok().unwrap();let(runtime,source)=crate::profile_input_learning::manager_fixture(manager.profile_admission_epoch.clone(),gate);manager.profile_learning=runtime;(manager,source)}
     #[test]
+    fn mcp_input_learning_and_recovery_reads_share_native_admission() {
+        let (manager, mut source) = learning_manager(None);
+        let manager = Arc::new(manager);
+        let tools = crate::mcp_tools::Tools::new(manager.clone());
+        let call = |name, args| tools.call(name, args, "input-learning-mcp");
+        source["operationId"] = json!(uuid::Uuid::new_v4());
+        let started = call("profile_input_learn_start", source.clone());
+        assert_eq!(started["ok"], true, "{started}");
+        assert_eq!(call("profile_input_learn_start", source), started);
+        let id = &started["data"]["learnId"];
+        let status = call("profile_input_learn_status", json!({"learnId":id}));
+        assert_eq!(status["data"]["phase"], "listening", "{status}");
+        let missing = call("profile_input_learn_status", json!({"learnId":uuid::Uuid::new_v4()}));
+        assert_eq!(missing["ok"], false);
+        let cancelled = call("profile_input_learn_cancel", json!({"learnId":id,"operationId":uuid::Uuid::new_v4()}));
+        assert_eq!(cancelled["data"]["phase"], "stopped", "{cancelled}");
+        assert_eq!(call("profile_input_learn_status", json!({"learnId":id}))["data"]["candidates"], json!([]));
+        assert_eq!(call("profile_retired_recovery_status", json!({}))["data"]["required"], false);
+        assert_eq!(call("controller_visibility_status", json!({"sourceId":"test-source"}))["ok"], true);
+        assert!(request(&manager, "profile_status", None, json!({}))["state"]["profiles"]["profileSession"]["owner"].is_null());
+    }
+    #[test]
     fn input_learning_manager_start_is_strict_passive_and_controls_invalidate_before_effects(){
         let(manager,source)=learning_manager(None);let started=request(&manager,"profile_input_learn_start",None,source.clone());assert_eq!(started["ok"],true,"{started}");let id=started["state"]["profileLearning"]["learnId"].as_str().unwrap();
         for command in ["profile_status","controller_list","profile_list"]{assert_eq!(request(&manager,command,None,json!({}))["ok"],true);assert_eq!(request(&manager,"profile_input_learn_status",None,json!({"learnId":id}))["state"]["profileLearning"]["phase"],"listening");}

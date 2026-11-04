@@ -255,6 +255,14 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       evidence.modernObservation.integration = await integrationObservation({ page, modern, ok, writer, mutation, artifacts, until });
     }
     if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
+      for (const name of ['profile_input_learn_status', 'profile_retired_recovery_status', 'controller_visibility_status']) {
+        assert.ok(readTools.some(tool => tool.name === name), `Missing MCP observation read tool ${name}`);
+      }
+      for (const name of ['profile_input_learn_start', 'profile_input_learn_cancel']) {
+        assert.ok(writeTools.some(tool => tool.name === name));
+        assert.ok(!readTools.some(tool => tool.name === name));
+      }
+      assert.equal(typeof (await ok(reader, 'profile_retired_recovery_status')).required, 'boolean');
       const games = await ok(reader, 'games_list', { limit: 1 });
       assert.equal(games.catalogue.length, Math.min(games.total, 1));
       assert.equal(games.discovery?.entries, undefined);
