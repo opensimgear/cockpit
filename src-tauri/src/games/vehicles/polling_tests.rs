@@ -28,6 +28,27 @@ fn take_poll(tracker: &mut Tracker) -> VehiclePoll {
     tracker.begin_polls(candidates).pop().unwrap()
 }
 #[test]
+fn xplane_capture_wakes_the_inspector_without_renewing_process_evidence() {
+    let (_directory, mut tracker, game) = fixture();
+    let (source, publish) = crate::xplane::Source::inspector_fixture();
+    let entry = tracker.entries.get_mut("x-plane-12").unwrap();
+    entry.reader = Some(Reader::Xplane(source));
+    let observed = entry.observed;
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    tracker.watch_captures(wake.clone());
+    let baseline = wake.observed();
+    publish(42);
+    assert_ne!(wake.observed(), baseline);
+    let checked = tracker.capture_candidates().pop().unwrap()
+        .verify(&[game], |_| "setup".into(), |_| true).without_renewal();
+    let poll = tracker.begin_polls(vec![checked]).pop().unwrap();
+    tracker.apply_poll(poll.read());
+    let entry = &tracker.entries["x-plane-12"];
+    assert_eq!(entry.observed, observed);
+    assert_eq!(entry.telemetry.as_ref().unwrap().packet, json!(42));
+}
+
+#[test]
 fn capture_drain_does_not_extend_the_process_observation() {
     let (_directory, mut tracker, game) = fixture();
     assert!(tracker.capture_candidates().is_empty());

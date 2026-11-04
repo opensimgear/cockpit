@@ -31,6 +31,20 @@ fn open(connection: &Value, outputs: Vec<Value>) -> Result<Source, String> {
     Source::open_with(connection, outputs, || create_owner(connection))
 }
 
+impl Source {
+    pub(crate) fn inspector_fixture() -> (Self, impl FnOnce(u16)) {
+        let (socket, connection) = connection();
+        let mut source = open(&connection, vec![]).unwrap();
+        let mut snapshot = source.native_snapshot().unwrap();
+        let shared = source.owner.shared.clone();
+        (source, move |counter| {
+            let _socket = socket;
+            snapshot.counter = counter;
+            shared.publish(snapshot, Instant::now()).unwrap();
+        })
+    }
+}
+
 #[test]
 fn registry_shares_one_factory_and_socket_for_concurrent_identical_configs() {
     let (_server, connection) = connection();

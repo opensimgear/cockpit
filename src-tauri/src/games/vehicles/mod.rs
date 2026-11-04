@@ -100,7 +100,7 @@ struct Entry {
     polling: bool,
     opening: Option<u64>,
     detached_physics: Option<crate::dcs_physics::SourceView>,
-    capture_watch: Option<crate::acr_windows::Watch>,
+    capture_watch: Option<sources::CaptureWatch>,
     inventory_revision: u64,
     published: Visible,
     published_capture: Option<std::sync::Weak<Capture>>,

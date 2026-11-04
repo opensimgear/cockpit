@@ -90,6 +90,13 @@ pub(super) enum Reader {
     },
     Xplane(crate::xplane::Source),
 }
+
+pub(super) enum CaptureWatch {
+    Assetto { _watch: crate::acr_windows::Watch },
+    Xplane {
+        _watch: osg_streams::NativeWatch<crate::xplane::NativeSnapshot, crate::xplane::NativeSnapshot>,
+    },
+}
 impl Reader {
     pub(super) fn open(
         id: &str,
@@ -159,10 +166,13 @@ impl Reader {
     pub(super) fn poll(&mut self, now_ms: u64) -> Result<Option<String>, String> {
         self.poll_telemetry(now_ms).map(|(vehicle, _)| vehicle)
     }
-    pub(super) fn capture_watch(&self, wake: Arc<osg_streams::NativeWake>) -> Result<Option<crate::acr_windows::Watch>, String> {
+    pub(super) fn capture_watch(&self, wake: Arc<osg_streams::NativeWake>) -> Result<Option<CaptureWatch>, String> {
         match self {
-            Self::Rally { source, .. } => source.watch(wake),
-            _ => Ok(None),
+            Self::Rally { source, .. } => source.watch(wake)
+                .map(|watch| watch.map(|watch| CaptureWatch::Assetto { _watch: watch })),
+            Self::Xplane(source) => source.watch(wake)
+                .map(|watch| Some(CaptureWatch::Xplane { _watch: watch })),
+            Self::Dcs { .. } => Ok(None),
         }
     }
     pub(super) fn inspect(&mut self, game: &str, ids: &[String]) -> Result<(), String> {

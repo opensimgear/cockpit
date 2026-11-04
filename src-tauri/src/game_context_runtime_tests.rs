@@ -2,6 +2,49 @@ use super::*;
 
 use crate::game_discovery::ProcessIdentity;
 use std::collections::BTreeMap;
+
+#[test]
+fn capture_wakes_select_only_verified_streaming_providers() {
+    let scratch = Scratch::new();
+    let (runtime, _, _) = runtime(&scratch);
+    let catalogue = [
+        ("x-plane-11", true),
+        ("x-plane-12", true),
+        ("assetto-corsa", true),
+        ("dcs", true),
+        ("x-plane-12", false),
+    ].into_iter().map(|(id, compatible)| json!({
+        "id": id, "provider": crate::game_discovery::integration_provider(id),
+        "integrationKey": id, "integrationCompatible": compatible,
+    })).collect();
+    runtime.inner.settings.lock().unwrap().catalogue = catalogue;
+    let ids = |capture_only| runtime.inner.vehicle_telemetry_games(capture_only)
+        .iter().map(|game| game["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+    assert_eq!(ids(true), ["x-plane-11", "x-plane-12", "assetto-corsa"]);
+    assert_eq!(ids(false), ["x-plane-11", "x-plane-12", "assetto-corsa", "dcs"]);
+    runtime.shutdown();
+}
+
+#[test]
+fn capture_and_context_workers_recover_after_a_locked_worker_panics() {
+    let scratch = Scratch::new();
+    let (runtime, _, _) = runtime(&scratch);
+    let inner = &runtime.inner;
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _settings = inner.settings.lock().unwrap();
+        let _vehicles = inner.vehicles.lock().unwrap();
+        let _contexts = inner.contexts.lock().unwrap();
+        panic!("Fixture worker failed while holding the observation locks");
+    }));
+    assert!(failed.is_err());
+    assert!(inner.settings.is_poisoned() && inner.vehicles.is_poisoned() && inner.contexts.is_poisoned());
+    assert_eq!(inner.vehicle_telemetry_games(true)[0]["id"], "x-plane-12");
+    inner.poll_vehicle_telemetry(true);
+    inner.refresh_game_contexts(false);
+    assert_eq!(inner.vehicle_telemetry_games(true)[0]["id"], "x-plane-12");
+    runtime.shutdown();
+}
+
 struct Scratch {
     path: PathBuf,
     _directory: tempfile::TempDir,
