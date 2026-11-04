@@ -19,11 +19,12 @@ records the software evidence. Physical module and gateway acceptance remains
 in [#199](https://github.com/opensimgear/cockpit/issues/199).
 
 November 4 audit update. Workspace discovery now enumerates serial ports on
-native arrival/removal notifications. The USB fleet reads that cache during
-aggregate resource passes, and a failed enumeration schedules a workspace retry.
-The one-second aggregate still applies cached USB topology, retries endpoint
-connections, and reads other provider models. Host-controller metadata wakes its
-own resource worker on commits and first readiness.
+native arrival/removal notifications. Changes in the serial topology cache,
+including enumeration failure and recovery, wake the aggregate resource worker.
+Unchanged enumeration results leave it parked. The one-second fallback still
+applies cached USB topology, retries endpoint connections, and reads other
+provider models. Host-controller metadata wakes its own resource worker on
+commits and first readiness.
 
 The game-context owner parks after its initial pass when the library has no
 configured integration. A committed library replacement wakes the owner after

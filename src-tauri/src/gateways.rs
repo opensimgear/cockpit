@@ -385,6 +385,7 @@ impl GatewayManager {
         );
         let profile_resources = Arc::new(crate::profile_resources::Runtime::new(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, native));
         if native {
+            serial_topology.watch_inventory(profile_resources.inventory_wake());
             controllers.watch_resource_inventory(&host_inventory_wake)
                 .expect("profile inventory owns the controller resource watch");
             profile_resources.start_host_inventory(collect_host, host_inventory_wake)

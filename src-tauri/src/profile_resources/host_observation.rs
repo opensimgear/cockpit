@@ -89,6 +89,19 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     #[test]
+    fn aggregate_inventory_recollects_on_notification_before_recovery() {
+        let (sent, received) = mpsc::channel();
+        let runtime = Runtime::new(None, Arc::new(move |revision| {
+            sent.send(revision).unwrap();
+            Vec::new()
+        }), true);
+        assert_eq!(received.recv_timeout(Duration::from_secs(2)).unwrap(), 1);
+        runtime.inventory_wake().notify();
+        assert_eq!(received.recv_timeout(Duration::from_millis(750)).unwrap(), 2);
+        runtime.shutdown();
+    }
+
+    #[test]
     fn controller_inventory_uses_its_own_wake_and_stops_cleanly() {
         let runtime = Runtime::new(
             None,

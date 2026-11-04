@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PortInfo {
     pub path: String,
     pub serial_number: Option<String>,

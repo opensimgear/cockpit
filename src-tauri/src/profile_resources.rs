@@ -4,6 +4,7 @@ use osg_profiles::resources::{
     Access, Observation, PortPreparation, ProviderBatch, Registry, ResourceToken, Route,
 };
 use osg_profiles::resources_store::Store;
+use osg_streams::NativeWake;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -13,7 +14,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub(crate) type Collect =
@@ -48,6 +49,7 @@ pub(crate) struct Runtime {
     state: Arc<live_validation::StateMutex>,
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    inventory_wake: Arc<NativeWake>,
     observation_worker: Mutex<Option<JoinHandle<()>>>,
     host_worker: Mutex<Option<host_observation::Worker>>,
     collect: Collect,
@@ -461,6 +463,7 @@ impl Runtime {
         let collector_gate = Arc::new(Mutex::new(()));
         let capture_gate = Arc::new(Mutex::new(()));
         let persistence_gate = Arc::new(Mutex::new(()));
+        let inventory_wake = Arc::new(NativeWake::default());
         let worker = if native {
             let state = state.clone();
             let stopped = stop.clone();
@@ -469,11 +472,15 @@ impl Runtime {
             let collectors = collector_gate.clone();
             let gate = capture_gate.clone();
             let persistence = persistence_gate.clone();
+            let wake = inventory_wake.clone();
             Some(
                 thread::Builder::new()
                     .name("profile-resource-inventory".into())
                     .spawn(move || {
+                        wake.bind_thread(thread::current())
+                            .expect("resource inventory wake has one owner");
                         while !stopped.load(Ordering::Acquire) {
+                            let observed = wake.observed();
                             {
                                 let _collector =
                                     collectors.lock().unwrap_or_else(|p| p.into_inner());
@@ -491,11 +498,14 @@ impl Runtime {
                                 Self::adopt_prepared(&state, batches);
                             }
                             Self::persist(&state, &persistence);
-                            for _ in 0..20 {
-                                if stopped.load(Ordering::Acquire) {
+                            // Providers that still lack notifications share the
+                            // existing recovery interval.
+                            let deadline = Instant::now() + Duration::from_secs(1);
+                            while !stopped.load(Ordering::Acquire) {
+                                let remaining = deadline.saturating_duration_since(Instant::now());
+                                if remaining.is_zero() || !wake.wait(observed, remaining) {
                                     break;
                                 }
-                                thread::sleep(Duration::from_millis(50));
                             }
                         }
                     })
@@ -508,6 +518,7 @@ impl Runtime {
             state,
             stop,
             worker: Mutex::new(worker),
+            inventory_wake,
             observation_worker: Mutex::new(None),
             host_worker: Mutex::new(None),
             collect,
@@ -516,6 +527,9 @@ impl Runtime {
             capture_gate,
             persistence_gate,
         }
+    }
+    pub(crate) fn inventory_wake(&self) -> &Arc<NativeWake> {
+        &self.inventory_wake
     }
     /// Explicit native coordinator refresh. Cached capture/validation and native
     /// browser reads never call this; acquisitions opt into bounded provider I/O.
@@ -772,6 +786,7 @@ impl Runtime {
     }
     pub(crate) fn shutdown(&self) {
         self.stop.store(true, Ordering::Release);
+        self.inventory_wake.notify();
         self.stop_observing_catalogue();
         self.stop_host_inventory();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
