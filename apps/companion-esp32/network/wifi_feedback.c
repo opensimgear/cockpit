@@ -15,7 +15,7 @@ static char outbound[512];
 static char *buffer;
 static size_t length;
 static osg_transfer transfer;
-static bool subscribed;
+static bool subscribed, assignments_only;
 
 static void receive_feedback(void *unused){
     (void)unused;
@@ -50,13 +50,23 @@ void osg_wifi_feedback_stop(void){
 
 bool osg_wifi_feedback_running(void){return atomic_load(&running);}
 
-bool osg_wifi_feedback_start(const osg_settings *settings,const osg_live_session *session){
+bool osg_wifi_feedback_start(const osg_settings *settings,const osg_live_session *session,const char *connection_id){
     if(atomic_load(&running))return false;
     osg_wifi_feedback_stop();
     if(!consumed)consumed=xSemaphoreCreateBinary();
     if(!buffer)buffer=osg_workspace_allocate(OSG_FRAME_BYTES+1);
     if(!consumed||!buffer)return false;
-    cJSON *request=osg_feedback_subscription(session,settings->token);
+    assignments_only=session==NULL;
+    cJSON *request=NULL;
+    if(session)request=osg_feedback_subscription(session,settings->token);
+    else if(osg_stable_id(connection_id)&&osg_secret(settings->token)){
+        request=cJSON_CreateObject();
+        if(!cJSON_AddStringToObject(request,"type","assignments-subscribe")||
+            !cJSON_AddStringToObject(request,"connectionId",connection_id)||
+            !cJSON_AddStringToObject(request,"token",settings->token)){
+            cJSON_Delete(request);request=NULL;
+        }
+    }
     bool encoded=request&&cJSON_PrintPreallocated(request,outbound,sizeof(outbound),false);
     cJSON_Delete(request);
     if(!encoded){mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}
@@ -96,7 +106,10 @@ cJSON *osg_wifi_feedback_take(void){
     if(result<0){osg_wifi_feedback_stop();return NULL;}
     if(!message)return NULL;
     if(!subscribed){
-        subscribed=osg_feedback_subscribed(message);
+        const char *type=osg_string(message,"type");
+        subscribed=assignments_only?
+            cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(message,"ok"))&&type&&!strcmp(type,"assignments-subscribed"):
+            osg_feedback_subscribed(message);
         cJSON_Delete(message);
         if(!subscribed)osg_wifi_feedback_stop();
         return NULL;

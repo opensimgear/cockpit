@@ -49,7 +49,7 @@ int esp_transport_poll_read(esp_transport_handle_t handle,int timeout){
     return frames[index]?1:-1;
 }
 bool osg_socket_write_text(osg_socket *socket,const char *data,size_t size,unsigned timeout){
-    assert(socket->ws&&timeout==500&&size==strlen(data)&&strstr(data,"esp32-feedback-subscribe"));
+    assert(socket->ws&&timeout==500&&size==strlen(data)&&strstr(data,assignments_only?"assignments-subscribe":"esp32-feedback-subscribe"));
     return !write_failure;
 }
 bool osg_socket_read_text(osg_socket *socket,char *out,size_t capacity,size_t *size,int64_t deadline){
@@ -64,8 +64,8 @@ int main(void){
     const osg_settings settings={.endpoint="wss://test:1234/companion",.token="abcdefghijklmnopqrstuvwxyz0123456789abcdefg"};
     const osg_live_session session={.session="session",.generation="1",
         .publication="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"};
-    assert(osg_wifi_feedback_start(&settings,&session));
-    assert(!osg_wifi_feedback_start(&settings,&session));
+    assert(osg_wifi_feedback_start(&settings,&session,NULL));
+    assert(!osg_wifi_feedback_start(&settings,&session,NULL));
     assert(!osg_wifi_feedback_take());
     frames[0]="{\"ok\":true,\"type\":\"feedback-subscribed\"}";
     frames[1]="{\"ok\":true,\"type\":\"feedback-event\"}";
@@ -73,16 +73,16 @@ int main(void){
     assert(!osg_wifi_feedback_running());
     assert(delivered&&strcmp(osg_string(delivered,"type"),"feedback-event")==0);
     cJSON_Delete(delivered);delivered=NULL;
-    assert(osg_wifi_feedback_start(&settings,&session));
+    assert(osg_wifi_feedback_start(&settings,&session,NULL));
     frames[index]="{\"ok\":false,\"type\":\"error\"}";
     worker(NULL);
     assert(!osg_wifi_feedback_running()&&!osg_wifi_feedback_take()&&!delivered);
-    assert(osg_wifi_feedback_start(&settings,&session));
+    assert(osg_wifi_feedback_start(&settings,&session,NULL));
     osg_wifi_feedback_stop();
     worker(NULL);
     assert(!osg_wifi_feedback_running());
     task_failure=true;
-    assert(!osg_wifi_feedback_start(&settings,&session));
+    assert(!osg_wifi_feedback_start(&settings,&session,NULL));
     task_failure=false;
     char start[256];
     snprintf(start,sizeof(start),"{\"type\":\"transfer-start\",\"id\":\"feedback\",\"bytes\":%zu,\"sha256\":\"%s\"}",strlen(payload),hash);
@@ -91,7 +91,7 @@ int main(void){
     frames[1]=start;
     frames[2]="{\"type\":\"transfer-chunk\",\"id\":\"feedback\",\"index\":0,\"base64\":\"fixture\"}";
     frames[3]="{\"type\":\"transfer-end\",\"id\":\"feedback\"}";
-    assert(osg_wifi_feedback_start(&settings,&session));
+    assert(osg_wifi_feedback_start(&settings,&session,NULL));
     worker(NULL);
     assert(delivered&&strcmp(osg_string(delivered,"type"),"feedback-event")==0);
     cJSON_Delete(delivered);
@@ -101,11 +101,25 @@ int main(void){
         write_failure=failure==1;
         read_failure=failure==2;
         index=0;frames[0]="{\"type\":\"transfer-start\",\"bytes\":0}";
-        assert(osg_wifi_feedback_start(&settings,&session));
+        assert(osg_wifi_feedback_start(&settings,&session,NULL));
         worker(NULL);
         assert(!osg_wifi_feedback_running()&&!osg_wifi_feedback_take()&&!delivered);
     }
-    assert(!osg_wifi_feedback_start(&settings,&(osg_live_session){0}));
+    assert(!osg_wifi_feedback_start(&settings,&(osg_live_session){0},NULL));
+    open_failure=write_failure=read_failure=false;index=0;
+    memset(frames,0,sizeof(frames));
+    frames[0]="{\"ok\":true,\"type\":\"assignments-subscribed\"}";
+    frames[1]="{\"ok\":true,\"type\":\"assignments-event\",\"assignments\":[]}";
+    assert(!osg_wifi_feedback_start(&settings,NULL,"bad id"));
+    assert(osg_wifi_feedback_start(&settings,NULL,"wifi-primary"));
+    worker(NULL);
+    assert(delivered&&strcmp(osg_string(delivered,"type"),"assignments-event")==0);
+    cJSON_Delete(delivered);delivered=NULL;
+    index=0;frames[0]="{\"ok\":true,\"type\":\"feedback-subscribed\"}";
+    assert(osg_wifi_feedback_start(&settings,NULL,"wifi-primary"));
+    worker(NULL);
+    assert(!osg_wifi_feedback_running()&&!delivered);
+    assert(!osg_wifi_feedback_start(&(osg_settings){0},NULL,"wifi-primary"));
     free(buffer);buffer=NULL;
     assert(osg_json_allocated()==0);
 }

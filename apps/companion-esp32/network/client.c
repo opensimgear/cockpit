@@ -25,6 +25,7 @@ static osg_network_ui ui;
 static osg_settings settings;
 static osg_socket connection;
 static uint64_t next_feedback_connect;
+static char primary_connection[65];
 static osg_scene_banks banks;
 static osg_scene_ticket candidate_ticket, checking_ticket;
 static bool candidate_pending, candidate_finished, candidate_success;
@@ -108,7 +109,7 @@ static void cancel_candidate(void){
      * later prepare sees the cleared display fence and reuses that same slot. */
     xSemaphoreGive(ui.mutex);
 }
-static void abort_connection(void){osg_wifi_feedback_stop();next_feedback_connect=0;cancel_candidate();osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
+static void abort_connection(void){osg_wifi_feedback_stop();next_feedback_connect=0;primary_connection[0]=0;cancel_candidate();osg_socket_close(&connection);disconnected();state=OFF;detail=NULL;remote_armed=false;input_sequence=0;mbedtls_platform_zeroize(settings.secret,sizeof(settings.secret));}
 static const char *failure_message(const char *reason){
     if(!strcmp(reason,"wifi-connection-failed"))return "Wi-Fi connection failed";
     if(!strcmp(reason,"host-tls-or-connection-failed"))return "Could not connect to Cockpit";
@@ -335,8 +336,10 @@ void osg_network_serial_feedback(const cJSON *record){
     if(!connection.direct||state!=LIVE||!equal(osg_string(record,"linkId"),connection.link))return;
     apply_feedback(cJSON_GetObjectItemCaseSensitive(record,"frame"));
 }
+static bool choose(const cJSON *reply);
 static void wifi_feedback(void){
-    if(state!=LIVE||connection.direct||!connection.ws){
+    const bool waiting=state==WAIT_ASSIGNMENT&&primary_connection[0];
+    if((state!=LIVE&&!waiting)||connection.direct||!connection.ws){
         if(osg_wifi_feedback_running())osg_wifi_feedback_stop();
         return;
     }
@@ -345,6 +348,12 @@ static void wifi_feedback(void){
         const cJSON *assignments=cJSON_GetObjectItemCaseSensitive(message,"assignments");
         if(equal(osg_string(message,"type"),"assignments-event")&&
             cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(message,"ok"))&&cJSON_IsArray(assignments)){
+            if(waiting){
+                if(cJSON_GetArraySize(assignments)==1&&choose(message)&&state==OPEN){
+                    osg_wifi_feedback_stop();next_feedback_connect=0;next_request=millis();
+                }
+                cJSON_Delete(message);return;
+            }
             bool retained=false;
             for(const cJSON *row=assignments->child;row;row=row->next){
                 if(equal(osg_string(row,"instanceId"),session.instance)&&
@@ -354,13 +363,13 @@ static void wifi_feedback(void){
                 cJSON_Delete(message);stop();state=AUTH;next_request=millis();return;
             }
         }
-        apply_feedback(message);
+        if(!waiting)apply_feedback(message);
         cJSON_Delete(message);
     }
     const uint64_t now=millis();
     if(!osg_wifi_feedback_running()&&now>=next_feedback_connect){
         next_feedback_connect=now+2000;
-        if(osg_wifi_feedback_start(&settings,&session))session.feedback_stream=true;
+        if(osg_wifi_feedback_start(&settings,waiting?NULL:&session,primary_connection)&&!waiting)session.feedback_stream=true;
     }
 }
 void osg_network_status(const char *request_id){
@@ -550,17 +559,23 @@ static void advance(void){
                 if(settings.persist&&!osg_store_save(&settings)){cJSON_Delete(reply);fail("setup-save-failed-repair-required");return;}
                 installation_saved=settings.persist;state=AUTH;report("paired");}
         }else if(ok){ok=equal(osg_string(reply,"type"),"pair-pending")&&equal(osg_string(reply,"requestId"),pending);next_request=millis()+400;}
+    }else if(state==WAIT_ASSIGNMENT&&!connection.direct&&primary_connection[0]){
+        ok=request(message("ping"),&reply,700)&&equal(osg_string(reply,"type"),"pong");
+        if(ok)next_request=millis()+2000;
     }else if(state==AUTH||state==WAIT_ASSIGNMENT){
-        /* Assignment refresh requires a fresh authenticated connection. Keep
-         * the confirmed idle screen until a panel arrives or this probe fails;
-         * routine polling is not a visible reconnect operation. */
+        /* USB still refreshes the idle assignment on the existing link cadence. */
         if(state==WAIT_ASSIGNMENT)osg_socket_close(&connection);
         if(!open_socket()){fail("host-tls-or-connection-failed");return;}
         v=message("auth");cJSON_AddStringToObject(v,"token",settings.token);
         cJSON *profile=osg_render_profile_json(ui.runtime->display.width,ui.runtime->display.height);
         if(!profile){cJSON_Delete(v);fail("render-profile-unavailable");return;}
         cJSON_AddItemToObject(v,"renderProfile",profile);
-        ok=request(v,&reply,3000)&&identity(reply,"authenticated")&&choose(reply);
+        ok=request(v,&reply,3000)&&identity(reply,"authenticated");
+        if(ok&&!settings.direct){
+            const char *id=osg_string(reply,"connectionId");
+            ok=osg_stable_id(id)&&osg_copy(primary_connection,sizeof(primary_connection),id);
+        }
+        if(ok)ok=choose(reply);
     }else if(state==OPEN){
         load_interrupted=false;detail="Opening assigned panel";update_screen();
         xSemaphoreTake(ui.mutex,portMAX_DELAY);

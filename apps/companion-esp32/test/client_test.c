@@ -18,7 +18,7 @@ static cJSON *mock_pending_command;
 cJSON *osg_serial_take_command(void){cJSON *v=mock_pending_command;mock_pending_command=NULL;return v;}
 cJSON *osg_wifi_scan(void){return cJSON_CreateArray();}
 bool osg_serial_start(void){return true;}
-bool osg_wifi_feedback_start(const osg_settings *s,const osg_live_session *l){(void)s;(void)l;return false;}
+bool osg_wifi_feedback_start(const osg_settings *s,const osg_live_session *l,const char *id){(void)s;(void)l;(void)id;return false;}
 void osg_wifi_feedback_stop(void){}
 unsigned ulTaskNotifyTake(int clear,unsigned wait){(void)clear;vTaskDelay(wait);return 0;}
 bool osg_wifi_feedback_running(void){return false;}
@@ -110,10 +110,13 @@ bool osg_socket_request(osg_socket *s,cJSON *v,cJSON **out,unsigned timeout){
             assert(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(profile,"limits"),"sceneBytes"))==osg_render_profile_limits()->scene_bytes);
         }
         cJSON_AddStringToObject(*out,"type",!strcmp(type,"auth")?"authenticated":"paired");
+        if(!strcmp(type,"auth")&&!settings.direct)cJSON_AddStringToObject(*out,"connectionId","wifi-primary");
         cJSON_AddStringToObject(*out,"hostId",wrong_identity?"wrong-host":"host");cJSON_AddStringToObject(*out,"companionId",settings.companion);
         if(!strcmp(type,"pair-status"))cJSON_AddStringToObject(*out,"token","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         cJSON *list=cJSON_AddArrayToObject(*out,"assignments");
         if(assigned_now){cJSON *a=cJSON_CreateObject();cJSON_AddStringToObject(a,"instanceId","instance");cJSON_AddStringToObject(a,"publicationHash",osg_string(fixture,"publicationHash"));cJSON_AddItemToArray(list,a);}
+    }else if(!strcmp(type,"ping")){
+        cJSON_AddStringToObject(*out,"type","pong");
     }else if(!strcmp(type,"open")){
         assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(v,"takeover")));
         cJSON_AddStringToObject(*out,"type","session-open");cJSON_AddStringToObject(*out,"hostId","host");cJSON_AddStringToObject(*out,"companionId",settings.companion);
@@ -224,8 +227,18 @@ static void live_input_tests(void){
     live_ready();live_arm();fake_ms++;osg_network_touch(false,false,0,0);advance();assert(state==FAULT&&!mock_host_armed);
     permit_inputs=false;stop();
 }
+static void push_wifi_assignment(void){
+    mock_wifi_message=cJSON_CreateObject();
+    cJSON_AddBoolToObject(mock_wifi_message,"ok",true);
+    cJSON_AddStringToObject(mock_wifi_message,"type","assignments-event");
+    cJSON *idle_rows=cJSON_AddArrayToObject(mock_wifi_message,"assignments"),*idle_row=cJSON_CreateObject();
+    cJSON_AddStringToObject(idle_row,"instanceId","instance");
+    cJSON_AddStringToObject(idle_row,"publicationHash",osg_string(fixture,"publicationHash"));
+    cJSON_AddItemToArray(idle_rows,idle_row);
+    wifi_feedback();
+}
 static void idle_assignment_screen_tests(void){
-    setup();state=AUTH;assigned_now=false;
+    setup();state=AUTH;assigned_now=false;settings.direct=true;
     osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     update_screen();assert(test_runtime.screen==OSG_SCREEN_CONNECTING);
     advance();update_screen();assert(state==WAIT_ASSIGNMENT&&test_runtime.screen==OSG_SCREEN_NO_PANEL);
@@ -245,7 +258,7 @@ static void idle_assignment_screen_tests(void){
     assert(state==OPEN&&test_runtime.screen==OSG_SCREEN_PANEL&&test_runtime.screen_message[0]);
     advance();update_screen();assert(state==LIVE&&test_runtime.screen==OSG_SCREEN_PANEL&&!test_runtime.armed);
     for(unsigned fault=0;fault<3;fault++){
-        setup();state=AUTH;assigned_now=false;
+        setup();state=AUTH;assigned_now=false;settings.direct=true;
         osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         advance();update_screen();assert(test_runtime.screen==OSG_SCREEN_NO_PANEL);
         if(fault==0)network_ok=false;
@@ -369,7 +382,7 @@ int main(int argc,char **argv){
     setup();advance();fake_ms+=400;wrong_identity=true;advance();assert(state==FAULT);
     setup();installation_saved=false;settings.persist=true;store_ok=false;advance();fake_ms+=400;advance();assert(state==FAULT&&!installation_saved);
     setup();settings.persist=true;advance();fake_ms+=400;advance();assert(state==AUTH&&installation_saved);
-    assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==WAIT_ASSIGNMENT);assigned_now=true;fake_ms=next_request;advance();
+    assigned_now=false;advance();assert(state==WAIT_ASSIGNMENT);fake_ms+=2000;advance();assert(state==WAIT_ASSIGNMENT);assigned_now=true;push_wifi_assignment();
     assert(state==OPEN);test_drawing=&banks.slots[1-banks.active].scene->panel;int before=requests;advance();assert(requests==before&&state==OPEN);test_drawing=NULL;advance();assert(state==LIVE);
     /* A bad panel does not close a healthy transport or enable live input. */
     stop();state=AUTH;advance();assert(state==OPEN);
@@ -530,6 +543,16 @@ int main(int argc,char **argv){
     image.widgets[0].bounds.width=0;assert(!load_images(&image,0));assert(!strcmp(detail,"Invalid image dimensions"));
     portable_image_tests(active_pixels,active_asset);
     idle_assignment_screen_tests();
+    setup();state=AUTH;assigned_now=false;
+    osg_copy(settings.token,sizeof(settings.token),"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    advance();assert(state==WAIT_ASSIGNMENT&&strcmp(primary_connection,"wifi-primary")==0);
+    int idle_opened=socket_opens,idle_closed=socket_closes;
+    fake_ms=next_request;advance();
+    assert(state==WAIT_ASSIGNMENT&&!strcmp(requested_type,"ping")&&socket_opens==idle_opened&&socket_closes==idle_closed);
+    push_wifi_assignment();
+    assert(state==OPEN&&socket_opens==idle_opened&&socket_closes==idle_closed);
+    advance();assert(state==LIVE&&!remote_armed);
+    stop();
     candidate_handoff_tests();portable_delivery_tests();
     for(unsigned i=0;i<128;i++)free(pixel_store[i].pixels);
     osg_scene_banks_destroy(&banks);cJSON_Delete(fixture);assert(osg_json_allocated()==0);puts("Pairing, assignment, immutable live delivery, reconnect, failure and explicitly armed live-input checks passed");return 0;
