@@ -20,7 +20,7 @@ const publication={document:panel,assets:[],publicationHash:hash,capabilityFinge
 const flush=async()=>{for(let i=0;i<35;i++)await Promise.resolve();};
 const assertObsoleteHidden=h=>assert.equal(JSON.stringify([h.handlers.error,h.handlers.status,h.handlers.feedbackNotice]).includes('Session is obsolete'),false,'Protocol recovery details stay out of user-facing state.');
 /** Actual mounted App listeners and real queue/feedback/credential logic. */
-function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,rejectPanelAfter=Infinity,failPreparationAfter=Infinity,holdPreparation=false,displayOnly=false,staleOnce=[]}={}){
+function harness({pair=false,inlinePairing=false,hold=[],rejectPanel=false,holdVerification=false,rejectPanelAfter=Infinity,failPreparationAfter=Infinity,holdPreparation=false,displayOnly=false,staleOnce=[]}={}){
  let handlers,mount,cleanup,focused=true,clock=100,advanced=0,finishVerification,finishPreparation,verifications=0,preparations=0,assigned=[assignment];const preparedSurfaces=[];
  const sockets=[],intervals=new Map(),timeouts=new Map(),storage=new Map(),staleUsed=new Set(),window=new EventTarget(),document=new EventTarget();
  Object.assign(document,{visibilityState:'visible',hasFocus:()=>focused});
@@ -32,7 +32,7 @@ function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,re
   response(f){
    if(staleOnce.includes(f.type)&&!staleUsed.has(f.type)){staleUsed.add(f.type);throw Error('Session is obsolete; explicitly reconnect.');}
    if(['heartbeat','baseline','input','close','feedback-resync'].includes(f.type)&&this.lastActivityAt!==undefined){const lease=this.preparing?30000:1500;if(clock-this.lastActivityAt>=lease)throw Error('Session is obsolete; explicitly reconnect.');if(f.type==='heartbeat'){this.lastActivityAt=clock;this.preparing=['checking-cache','downloading','rendering'].includes(f.operation?.phase);}if(f.type==='baseline'){this.lastActivityAt=clock;this.preparing=false;}}
-   if(f.type==='auth')return{...saved,connectionId:'primary',assignments:assigned};if(f.type==='pair')return{requestId:'offer'};if(f.type==='pair-status')return{type:'paired',...saved};if(f.type==='presence')return{assignments:assigned};
+   if(f.type==='auth')return{...saved,connectionId:'primary',assignments:assigned};if(f.type==='pair')return inlinePairing?{type:'paired',...saved}:{requestId:'offer'};if(f.type==='pair-status')return{type:'paired',...saved};if(f.type==='presence')return{assignments:assigned};
    if(f.type==='open'){this.lastActivityAt=clock;this.instanceId=f.instanceId;return{clientId:'browser',sessionId:`session-${this.index}-${++this.opens}`,generation:String(this.index),controllerInstanceId:this.instanceId,publicationHash:hash,publication:{canonicalDocument:JSON.stringify(panel),assets:[],publicationHash:hash}};}
    if(f.type==='baseline'){
     const feedback=this.response({type:'heartbeat'}).feedback;
@@ -67,6 +67,14 @@ function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,re
  return{handlers,sockets,storage,preparedSurfaces,setAssignments(rows){assigned=rows;},async focus(v){focused=v;window.dispatchEvent(new Event(v?'focus':'blur'));await flush();},async visibility(v){document.visibilityState=v;document.dispatchEvent(new Event('visibilitychange'));await flush();},async pagehide(){window.dispatchEvent(new Event('pagehide'));await flush();},async pageshow(){window.dispatchEvent(new Event('pageshow'));await flush();},async elapse(ms){clock+=ms;fireDeadlines();await flush();},async tick(){fireDeadlines();for(const timer of intervals.values())timer.cb();await flush();},async stall(ms){clock+=ms;await this.tick();},async advance(ms){for(let elapsed=0;elapsed<ms;elapsed+=250){clock+=250;advanced+=250;fireDeadlines();for(const timer of intervals.values())if(timer.period&&advanced%timer.period===0)timer.cb();await flush();}},close(){cleanup();},finishVerification(){finishVerification();},finishPreparation(){finishPreparation();}};
 }
 test('compiled delivery advertises capabilities and cached hashes before neutral baseline',async()=>{const h=harness();await flush();try{const open=h.sockets[0].requests.find(f=>f.type==='open');assert.deepEqual(open.widgetCapabilities,BROWSER_WIDGET_CAPABILITIES);assert.deepEqual(open.haveAssets,['b'.repeat(64)]);assert.deepEqual(h.sockets[0].requests.find(f=>f.type==='baseline').values,{toggle:false,selector:.5});assert.equal(h.sockets[0].feedbackSubscription?.type,'feedback-subscribe');assert.equal(h.handlers.active,true);assert.equal(h.handlers.queue.snapshot().enabled,true);}finally{h.close();}});
+test('an approved pairing reply saves credentials without a status request',async()=>{
+ const h=harness({pair:true,inlinePairing:true});await flush();await flush();try{
+  assert.deepEqual(h.sockets[0].requests.map(frame=>frame.type),['pair']);
+  assert.equal(h.sockets[0].requests[0].approvalInReply,true);
+  assert.ok(h.storage.has('osg-browser-credential-v2'));
+  assert.equal(h.handlers.active,true);
+ }finally{h.close();await flush();}
+});
 test('blur drops queued input and focus resumes the neutral session without decoding or reopening it',async()=>{
  const h=harness({hold:['input']});await flush();try{
   h.handlers.emitOutput({controlId:'toggle',value:true});h.handlers.emitOutput({controlId:'toggle',value:false});await flush();const old=h.sockets[0];assert.equal(old.requests.filter(f=>f.type==='input').length,1);assert.equal(h.handlers.queue.snapshot().pending,1);

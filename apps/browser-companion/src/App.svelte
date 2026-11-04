@@ -207,13 +207,13 @@
       if(!current(socket,version))return;
       const companionId=crypto.randomUUID();
       const previous=credential;
-      const pending=await socket.request({type:'pair',secret,companionId,name:name.trim(),...(previous?{replaceToken:previous.token}:{})});
+      const pairing=await socket.request({type:'pair',secret,companionId,name:name.trim(),approvalInReply:true,...(previous?{replaceToken:previous.token}:{})});
       if(!current(socket,version))return;
       if(previous){
         clearCredential(localStorage,previous.token);credential=null;panel=null;assignments=[];
         warning='The previous pairing was removed from this browser and Cockpit. This browser is being paired again.';
       }
-      const paired=await socket.request({type:'pair-status',requestId:pending.requestId,secret});
+      const paired=pairing.type==='paired'?pairing:await socket.request({type:'pair-status',requestId:pairing.requestId,secret});
       if(!current(socket,version))return;
       if(paired.type!=='paired')throw new Error('Pairing was not approved. Start again in Cockpit.');
       const saved={token:paired.token,companionId:paired.companionId,hostId:paired.hostId};

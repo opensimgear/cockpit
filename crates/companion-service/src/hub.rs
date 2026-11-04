@@ -91,6 +91,18 @@ struct Pending {
     expires: u64,
     token: Option<Zeroizing<String>>,
 }
+
+fn pairing_reply(inner: &Inner, request_id: &str, pending: &Pending) -> Value {
+    let Some(token) = &pending.token else {
+        return json!({"ok":true,"type":"pair-pending","requestId":request_id});
+    };
+    let assignments = inner.record.instances.iter()
+        .filter(|assignment| assignment.companion_id == pending.companion_id)
+        .map(|assignment| json!({"instanceId":assignment.instance_id,"publicationHash":assignment.publication_hash,"name":assignment.definition.name}))
+        .collect::<Vec<_>>();
+    json!({"ok":true,"type":"paired","requestId":request_id,"token":token.as_str(),
+        "hostId":inner.record.host_id,"companionId":pending.companion_id,"assignments":assignments})
+}
 #[derive(Clone)]
 struct Session {
     connection: String,
@@ -1080,8 +1092,12 @@ impl Hub {
                 exact(
                     frame,
                     &["type", "secret", "companionId", "name"],
-                    &["version","replaceToken"],
+                    &["version","replaceToken","approvalInReply"],
                 )?;
+                let approval_in_reply = match frame.get("approvalInReply") {
+                    Some(value) => value.as_bool().ok_or("Invalid pairing approval reply option.")?,
+                    None => false,
+                };
                 let secret = field(frame, "secret")?;
                 let companion = field(frame, "companionId")?;
                 let name = field(frame, "name")?;
@@ -1130,6 +1146,9 @@ impl Hub {
                     self.approve_pending(&mut inner, &request_id, Some(companion))?;
                     inner.code_offer = None;
                 }
+                if approval_in_reply {
+                    return Ok(pairing_reply(&inner, &request_id, &inner.pending[&request_id]));
+                }
                 Ok(json!({"ok":true,"type":"pair-pending","requestId":request_id}))
             }
             "pair-status" => {
@@ -1144,13 +1163,7 @@ impl Hub {
                     secret_valid(secret) && equal_hash(&p.secret_hash, &hash(secret.as_bytes())),
                     "Pairing request owner mismatch.",
                 )?;
-                if let Some(token) = &p.token {
-                    Ok(
-                        json!({"ok":true,"type":"paired","requestId":request_id,"token":token.as_str(),"hostId":inner.record.host_id,"companionId":p.companion_id,"assignments":inner.record.instances.iter().filter(|a|a.companion_id==p.companion_id).map(|a|json!({"instanceId":a.instance_id,"publicationHash":a.publication_hash,"name":a.definition.name})).collect::<Vec<_>>()}),
-                    )
-                } else {
-                    Ok(json!({"ok":true,"type":"pair-pending","requestId":request_id}))
-                }
+                Ok(pairing_reply(&inner, request_id, p))
             }
             "ping" => {
                 exact(frame, &["type"], &["version"])?;

@@ -964,6 +964,30 @@ fn panel_snapshot_pruning_preserves_live_and_explicitly_pinned_panels() {
 
 
 #[test]
+fn pairing_reply_returns_token_only_after_approval() {
+    let hub = Hub::new("approval-host".into(), Arc::new(NullSourceSink));
+    for auto_approve in [false, true] {
+        let offer = hub.command(&json!({"command":"companion_pair_offer","autoApprove":auto_approve})).unwrap();
+        let mut frame = json!({"type":"pair","secret":offer["secret"],"companionId":"approved-client",
+            "name":"Approved client","approvalInReply":"invalid"});
+        assert_eq!(hub.handle_wire(frame.clone(), "pairing", hub.now_ms())["ok"], false);
+        frame["approvalInReply"] = json!(true);
+        let reply = hub.handle_wire(frame.clone(), "pairing", hub.now_ms());
+        assert_eq!(reply["ok"], true);
+        if auto_approve {
+            assert_eq!(reply["type"], "paired");
+            assert_eq!(reply["hostId"], "approval-host");
+            assert_eq!(reply["companionId"], "approved-client");
+            assert_eq!(hub.handle_wire(json!({"type":"auth","token":reply["token"]}), "session", hub.now_ms())["ok"], true);
+        } else {
+            assert_eq!(reply["type"], "pair-pending");
+            assert!(reply.get("token").is_none());
+        }
+        assert_eq!(hub.handle_wire(frame, "pairing", hub.now_ms())["ok"], false);
+    }
+}
+
+#[test]
 fn short_codes_are_bounded_cancelled_expired_and_single_use() {
     use base64::Engine;
     let hub=Hub::new("code-host".into(),Arc::new(NullSourceSink));

@@ -969,7 +969,7 @@ fn pair_worker(
     }
     let mut reply = request(
         &mut socket,
-        json!({"type":"pair","secret":secret.as_str(),"companionId":companion_id,"name":name}),
+        json!({"type":"pair","secret":secret.as_str(),"companionId":companion_id,"name":name,"approvalInReply":true}),
         Duration::from_secs(3),
     )?;
     let deadline = Instant::now() + Duration::from_secs(60);
