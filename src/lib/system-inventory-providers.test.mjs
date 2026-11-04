@@ -705,6 +705,40 @@ test('offline companions expose configured transports on first load and retain t
  h.state.companions.usb={connected:true,port:'COM7',device:{companionId:'wifi',connectionMode:'serial'}};await h.controller.refresh();assert.ok(h.component('companion:wifi').connections.some(c=>c.transport==='usb'&&c.current));
 });
 
+test('companion changes recapture only that provider and a loss fences an older reply', async () => {
+  const h = harness({companions:{host:{clients:[{companionId:'tablet',name:'Tablet',connected:true}],instances:[]}}});
+  await h.controller.refresh();
+  assert.equal(h.component('companion:tablet').presence, 'connected');
+  h.requests.length = 0;
+  await h.controller.refresh(false);
+  assert.ok(!h.requests.some(request => request.command === 'companion_inventory'));
+  h.requests.length = 0;
+  const old = deferred();
+  h.custom.set('companion_inventory', () => old.promise);
+  const pending = h.controller.refreshCompanions();
+  await h.controller.refresh(false);
+  assert.ok(h.requests.some(request => request.command === 'module_usb_list'));
+  h.controller.loseCompanions('Connection closed');
+  old.resolve({companions:h.state.companions});
+  await pending;
+  assert.equal(h.component('companion:tablet').presence, 'unknown');
+  assert.match(h.controller.snapshot.diagnostics.join(' '), /Connection closed/);
+  h.custom.delete('companion_inventory');
+  h.state.companions.host.clients[0].connected = false;
+  await h.controller.refreshCompanions();
+  assert.equal(h.component('companion:tablet').presence, 'offline');
+  assert.equal(h.requests.filter(request => request.command === 'companion_inventory').length, 2);
+  const inFlight = deferred();
+  h.requests.length = 0;
+  h.custom.set('companion_inventory', () => h.requests.length === 1 ? inFlight.promise : {companions:h.state.companions});
+  const burst = [h.controller.refreshCompanions(), h.controller.refreshCompanions(), h.controller.refreshCompanions()];
+  inFlight.resolve({companions:{host:{clients:[],instances:[]}}});
+  await Promise.all(burst);
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.component('companion:tablet').presence, 'offline');
+  h.controller.dispose();
+});
+
 test('startup native correlation waits for controller and USB captures before publishing a single count',async()=>{
   const h=harness({controllers:[source('wheel')]}),usbGate=deferred();
   h.custom.set('module_usb_list',()=>usbGate.promise);

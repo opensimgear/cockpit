@@ -5,6 +5,7 @@
   import PageHeader from './PageHeader.svelte';
 
   import { onMount, tick, type Snippet } from 'svelte';
+  import { companionObservations } from './companion-observations';
   import { observeProfileResources } from './profile-resources-shared';
   import { slide } from 'svelte/transition';
   import Icon from './Icon.svelte';
@@ -65,7 +66,7 @@
   async function refresh(quiet = false) {
     if (!controller || busy || (quiet && refreshTask)) return;
     if (!quiet) busy = true;
-    const task = refreshTask ?? controller.refresh();
+    const task = refreshTask ?? controller.refresh(!quiet);
     refreshTask = task;
     try { await task; if (!quiet) error = ''; }
     catch (e) { error = String(e); }
@@ -131,10 +132,19 @@
     updateMotion(); motion.addEventListener('change', updateMotion);
     controller = new SystemInventoryController({ request: gatewayRequest, gateways: () => entries, gatewayError: () => gatewayError, storage: inventoryStorage, onChange: next => { snapshot = next; oninventory(next); } });
     const stopResources = observeProfileResources((page, error) => { void controller.observeResources(page?.resources ?? null, error); });
+    const refreshCompanions = () => { void controller.refreshCompanions().catch(reason => { error = String(reason); }); };
+    const observations = companionObservations();
+    const stopCompanions = observations.subscribe('companion.presence', state => {
+      if (state.status === 'ready') refreshCompanions();
+      if (state.status === 'lost' || state.status === 'error') controller.loseCompanions(state.error);
+    });
+    const stopListener = observations.subscribe('companion.listener', state => {
+      if (state.status === 'ready') refreshCompanions();
+    });
     snapshot = controller.snapshot;
     void refresh();
     const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
-    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); stopCompanions(); stopListener(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
 

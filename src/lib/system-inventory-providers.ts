@@ -108,6 +108,10 @@ export class SystemInventoryController {
   private epoch = 0;
   private disposed = false;
   private captures = new Map<string, Capture>();
+  private companionResult?: PromiseSettledResult<Capture>;
+  private companionPending?: Promise<void>;
+  private companionQueued = false;
+  private companionVersion = 0;
   private resources: DeepReadonly<ResourceSummary[]> = [];
   private resourceError = 'Waiting for the current resource inventory.';
   private resourceVersion = 0;
@@ -159,27 +163,61 @@ export class SystemInventoryController {
       return snapshot;
     });
   }
-  refresh(): Promise<SystemSnapshot> {
+  async refreshCompanions(): Promise<void> {
+    if (this.disposed) return;
+    this.companionVersion++;
+    this.companionQueued = true;
+    await this.captureCompanions();
+    if (!this.disposed && this.readyProjection) await this.projectCurrent();
+  }
+  loseCompanions(error = 'Companion observation disconnected.'): void {
+    if (this.disposed) return;
+    this.companionVersion++;
+    this.companionQueued = false;
+    this.companionResult = { status: 'rejected', reason: error };
+    if (this.readyProjection) void this.projectCurrent().catch(() => {});
+  }
+  private captureCompanions(): Promise<void> {
+    if (this.companionPending) return this.companionPending;
+    const pending = (async () => {
+      try {
+        do {
+          this.companionQueued = false;
+          const version = this.companionVersion;
+          const [result] = await Promise.allSettled([this.companions(Date.now())]);
+          if (!this.disposed && version === this.companionVersion) this.companionResult = result;
+        } while (!this.disposed && this.companionQueued);
+      } finally {
+        this.companionPending = undefined;
+      }
+    })();
+    this.companionPending = pending;
+    return pending;
+  }
+  refresh(includeCompanions = true): Promise<SystemSnapshot> {
     if (this.disposed) return Promise.resolve(this.snapshot);
     if (this.pending) return this.pending;
     const epoch = this.epoch;
-    const pending = this.collect(epoch).finally(() => {
+    const pending = this.collect(epoch, includeCompanions).finally(() => {
       if (this.pending === pending) this.pending = null;
       if (!this.disposed && this.readyProjection && (this.projectedControllers !== this.controllerState || this.projectedResourceVersion !== this.resourceVersion || this.projectedGames !== this.gamesState || this.projectedRuntime !== this.runtimeState)) void this.projectCurrent().catch(() => {});
     });
     this.pending = pending; return pending;
   }
-  private async collect(epoch: number): Promise<SystemSnapshot> {
+  private async collect(epoch: number, includeCompanions: boolean): Promise<SystemSnapshot> {
     const discoveryError = this.gatewayError();
     const now = Date.now(), diagnostics: string[] = discoveryError ? [`Gateway discovery: ${discoveryError}`] : [], complete: string[] = discoveryError ? ['host'] : ['host', 'gateways'];
     // Native PnP/transport correlation reads the controller and USB inventories.
     // Capture those first so startup does not publish their uncorrelated aliases.
     const controllers=Promise.resolve(this.controllers(now)),usb=this.usb(now);
     const nativeCapture=Promise.allSettled([controllers,usb]).then(()=>this.disposed || epoch!==this.epoch ? {provider:'native',observations:[]} as Capture : this.native(now));
-    const providers = [controllers,usb,this.companions(now),nativeCapture];
-    const results = await Promise.allSettled(providers);
+    const providers = [controllers,usb,nativeCapture];
+    const [results] = await Promise.all([
+      Promise.allSettled(providers),
+      includeCompanions ? this.captureCompanions() : undefined,
+    ]);
     if (this.disposed || epoch !== this.epoch) return this.snapshot;
-    const names = ['controllers', 'usb', 'companions', 'native'];
+    const names = ['controllers', 'usb', 'native'];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && new Set(result.value.observations.map(c => c.id)).size !== result.value.observations.length) { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: Provider returned duplicate identities; its inspection is incomplete.`); return; }
       if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (names[index] !== 'controllers') { if (result.value.complete !== false && (names[index] !== 'native' || !result.value.diagnostics?.length)) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); } }
@@ -217,6 +255,15 @@ export class SystemInventoryController {
     catch (error) { integrationError = 'integrations: ' + message(error); }
     if (this.disposed || games !== this.gamesState || runtime !== this.runtimeState) return this.snapshot;
     const complete = [...this.projectionBase.complete], diagnostics = [...this.projectionBase.diagnostics];
+    const companions = this.companionResult;
+    if (companions?.status === 'fulfilled' && new Set(companions.value.observations.map(row => row.id)).size === companions.value.observations.length) {
+      this.captures.set('companions', companions.value);
+      complete.push('companions');
+      diagnostics.push(...(companions.value.diagnostics ?? []));
+    } else {
+      this.captures.delete('companions');
+      if (companions) diagnostics.push('companions: ' + (companions.status === 'rejected' ? message(companions.reason) : 'Provider returned duplicate identities; its inspection is incomplete.'));
+    }
     if (this.resourceError) diagnostics.push('Identity correlation is stale: ' + this.resourceError);
     const controllers = this.controllers(now);
     this.captures.set('controllers', controllers);

@@ -8,7 +8,7 @@
   import { newPairingConnected } from './companion-pairing';
   import { invoke } from '@tauri-apps/api/core';
   import { gatewayRequest } from './gateway';
-  import { SharedObservations } from './streams/shared';
+  import { companionObservations } from './companion-observations';
   import { notify } from './notifications';
   import { type CompanionCommand, type CompanionHostState } from './companions';
   import { createCompanionSettingsAutosave } from './companion-settings';
@@ -124,14 +124,12 @@
   }
   $effect(() => {
     if (!active || !mounted) return;
-    const observations = new SharedObservations();
-    for (const topic of ['companion.presence', 'companion.listener']) {
-      observations.subscribe(topic, state => {
-        if (state.status === 'ready') untrack(() => { void refresh(); });
-        if (state.status === 'error' && state.error) notify(state.error, 'error');
-      });
-    }
-    return () => observations.close();
+    const observations = companionObservations();
+    const stops = ['companion.presence', 'companion.listener'].map(topic => observations.subscribe(topic, state => {
+      if (state.status === 'ready') untrack(() => { void refresh(); });
+      if (state.status === 'error' && state.error) notify(state.error, 'error');
+    }));
+    return () => stops.forEach(stop => stop());
   });
   $effect(() => {
     if (active && mounted && !settingsSaving) untrack(() => { if (refreshQueued) void refresh(); });
@@ -223,13 +221,11 @@
   }
   $effect(() => {
     if (!active || !mounted || !updating) return;
-    const observations = new SharedObservations();
-    observations.subscribe('companion.firmware', state => {
+    return companionObservations().subscribe('companion.firmware', state => {
       const status = state.frame?.payload as CompanionHostState['usb'];
       if (state.status === 'ready' && status?.connected === false) untrack(() => void receiveFlash(status));
       if (state.status === 'error' && state.error) notify(state.error, 'error');
     });
-    return () => observations.close();
   });
   onMount(() => {
     mounted=true;
