@@ -46,14 +46,16 @@ use the following sources.
 The browser companion still has a periodic connection task. Assignments
 arrive over a subscription. Its recurring work includes lease renewal,
 unassigned connection pings, retry and recovery after a suspended renderer.
-The shared panel canvas also has a 20 ms presentation and armed safety tick.
-These companion timers require separate lifecycle qualification.
+The shared panel canvas schedules the next pulse or feedback freshness
+deadline. The native companion's lease heartbeat remains independent.
+The browser companion connection timers require separate lifecycle qualification.
 
-Run the Devices idle trace against the running native Cockpit with
-`node --test tests/ui/reactive-idle-native.mjs`. The trace records gateway
-commands and observation transport requests separately. It covers the
-Devices view and its mounted providers. Other views, browser development,
-companion applications and physical deadlines need their own evidence.
+Run the idle trace against the running native Cockpit with
+`node --test tests/ui/reactive-idle-native.mjs`. By default it visits each main
+view sequentially. Set `OSG_IDLE_VIEWS` to a comma-separated list of view names
+for a focused run. The trace records gateway commands and observation
+transport requests separately. Browser development, companion applications,
+modal workflows and physical deadlines need their own evidence.
 
 An initial 60,104 ms run in the Windows development Cockpit recorded zero
 `system_inventory` reads, 23 `companion_inventory` reads, 23
@@ -73,3 +75,18 @@ Windows Cockpit, the first trace included startup discovery and one companion
 inventory read. Once settled, Devices completed 60,105 ms with zero gateway
 and zero observation requests. The paired browser's network socket was still
 established afterward and was older than the entire sample.
+
+Two follow-up runs sampled all eight main views in the same settled Windows
+development Cockpit. Each view recorded zero gateway requests and zero
+observation requests.
+
+| View | Sample |
+| --- | ---: |
+| Overview | 60,109 ms |
+| Devices | 60,112 ms |
+| Profiles | 60,114 ms |
+| Games | 60,111 ms |
+| Companions | 60,115 ms |
+| Activity | 60,105 ms |
+| Debug | 60,115 ms |
+| Settings | 60,108 ms |
