@@ -143,7 +143,17 @@ test(setupOnly?'X-Plane setup readiness survives the external inspection interva
           const settled=(await gameState()).catalogue.find(game=>game.id===gameId).integrationSetup;
           assert.equal(settled.state,'ready');
           assert.equal(settled.providerSetupRevision,record.setup.providerSetupRevision);
-          evidence.checks.push(name+' setup stayed ready at the same committed revision.');
+          const context=async()=> (await gameState()).catalogue.find(game=>game.id===gameId).integrationContext;
+          const original=await wait(async()=> (await context())?.catalogueRevision, name+' SDK baseline unavailable');
+          const sdkFile=resolve(working,'Resources/plugins/DataRefs.txt');
+          const fixtureSdk=await readFile(sdkFile,'utf8');
+          await writeFile(sdkFile,fixtureSdk+'\nsim/opensimgear/sdk_watch_fixture\tfloat\tn\tunit\tWatcher test\n');
+          const replaced=await wait(async()=>{
+            const revision=(await context())?.catalogueRevision;
+            return revision&&revision!==original&&revision;
+          },name+' SDK file change did not update passive context');
+          record.sdkWatch={original,replaced};
+          evidence.checks.push(name+' setup stayed ready and a private SDK write changed the passive catalogue revision.');
           continue;
         }
         child=spawn(executable,[stop],{cwd:working,windowsHide:true,stdio:'ignore'});exited=new Promise(resolve=>{child.once('exit',(code,signal)=>resolve({code,signal}));child.once('error',error=>resolve({error:String(error)}));});

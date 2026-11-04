@@ -10,16 +10,26 @@ pub(super) fn digest(value: &Value) -> String {
         Sha256::digest(serde_json::to_vec(value).expect("JSON value"))
     )
 }
+pub(crate) fn sdk_source_path(executable: &Value) -> Option<PathBuf> {
+    executable.as_str().map(Path::new).and_then(Path::parent)
+        .map(|root| root.join("Resources/plugins/DataRefs.txt"))
+}
+
+impl Inner {
+    pub(super) fn sdk_generation(&self, id: &str) -> Option<&std::sync::atomic::AtomicU64> {
+        match id {
+            "x-plane-11" => Some(&self.sdk_generation[0]),
+            "x-plane-12" => Some(&self.sdk_generation[1]),
+            _ => None,
+        }
+    }
+}
+
 fn sdk_stamp(id: &str, record: &Value) -> Value {
     if !id.starts_with("x-plane-") {
         return Value::Null;
     }
-    let path = record["executable"]
-        .as_str()
-        .map(Path::new)
-        .and_then(Path::parent)
-        .map(|root| root.join("Resources/plugins/DataRefs.txt"));
-    path.and_then(|path| fs::metadata(path).ok())
+    sdk_source_path(&record["executable"]).and_then(|path| fs::metadata(path).ok())
         .map(|metadata| {
             json!([
                 metadata.len(),

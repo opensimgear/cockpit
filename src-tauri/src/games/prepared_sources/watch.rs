@@ -22,14 +22,14 @@ struct TargetFilter {
     directories: BTreeSet<PathBuf>,
 }
 
-pub(super) struct Watch {
+pub(in crate::games) struct Watch {
     watcher: RecommendedWatcher,
     targets: Targets,
     changed: Changed,
 }
 
 impl Watch {
-    pub(super) fn new(changed: Changed) -> Result<Self, String> {
+    pub(in crate::games) fn new(changed: Changed) -> Result<Self, String> {
         let targets = Arc::new(Mutex::new(Arc::new(TargetFilter::default())));
         let watcher = native_watcher(targets.clone(), changed.clone())?;
         Ok(Self {
@@ -41,7 +41,7 @@ impl Watch {
 
     /// Run on the source worker, before its source baseline is read.
     /// Register the complete replacement before retiring the old native watch.
-    pub(super) fn replace(&mut self, paths: &[PathBuf]) -> Result<(), String> {
+    pub(in crate::games) fn replace(&mut self, paths: &[PathBuf]) -> Result<(), String> {
         let (targets, directories) = configuration(paths)?;
         let mut replacement = native_watcher(self.targets.clone(), self.changed.clone())?;
         for directory in directories.values() {

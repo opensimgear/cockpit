@@ -359,3 +359,25 @@ fn assetto_provider_settings_and_read_only_catalogues_remain_distinct() {
         );
     }
 }
+
+#[test]
+fn xplane_sdk_invalidation_keeps_the_other_version_cache_and_generation() {
+    let scratch = Scratch::new();
+    let setup = GameIntegrationSetup::new(scratch.0.join("setup.json"), false);
+    let id = "x-plane-11";
+    let other = "x-plane-12";
+    {
+        let mut cache = setup.inner.catalogues.lock().unwrap();
+        for key in [id, other] {
+            cache.insert(key.into(), (Instant::now(), "fixture".into(), Ok(Arc::new(json!({})))));
+        }
+    }
+
+    setup.invalidate_xplane_catalogue(id);
+
+    let cache = setup.inner.catalogues.lock().unwrap();
+    assert!(!cache.contains_key(id));
+    assert!(cache.contains_key(other));
+    assert_eq!(setup.inner.sdk_generation(id).unwrap().load(Ordering::Acquire), 1);
+    assert_eq!(setup.inner.sdk_generation(other).unwrap().load(Ordering::Acquire), 0);
+}

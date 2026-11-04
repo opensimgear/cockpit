@@ -2,7 +2,7 @@
 use super::*;
 use crate::game_artwork::PreparedLocalArtwork;
 use std::sync::Condvar;
-mod watch;
+pub(super) mod watch;
 
 #[derive(Default)]
 struct State {

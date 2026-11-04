@@ -43,6 +43,8 @@ impl GameIntegrationSetup {
         }
         // SDK metadata can block on filesystem access. Capture it before taking
         // the shared cache mutex used by passive catalogue metadata readers.
+        let sdk_counter = self.inner.sdk_generation(id);
+        let sdk_generation = sdk_counter.map(|counter| counter.load(Ordering::Acquire));
         let sdk_source_stamp = sdk_stamp(id, &record);
         let cached = {
             let cache = self
@@ -126,11 +128,11 @@ impl GameIntegrationSetup {
             return Err("The provider settings changed during catalogue capture; refresh the aircraft catalogue.".into());
         }
         let cached = result.map(Arc::new);
-        self.inner
-            .catalogues
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(key, (Instant::now(), revision, cached.clone()));
+        let mut cache = self.inner.catalogues.lock().unwrap_or_else(|p| p.into_inner());
+        if sdk_counter.map(|counter| counter.load(Ordering::Acquire)) != sdk_generation {
+            return Err("The SDK catalogue changed during capture; refresh the catalogue.".into());
+        }
+        cache.insert(key, (Instant::now(), revision, cached.clone()));
         cached.map(|value| value.as_ref().clone())
     }
 }

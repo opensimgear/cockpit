@@ -23,6 +23,7 @@ struct Inner {
     settings_writer: Mutex<()>,
     states: Mutex<BTreeMap<String, Arc<Value>>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
+    sdk_generation: [std::sync::atomic::AtomicU64; 2],
     views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
     ac_cars: crate::ac_car_catalogue_cache::Cache,
@@ -61,6 +62,7 @@ use settings::*;
 mod activity_capture;
 mod inspection;
 mod provider_settings;
+pub(crate) use provider_settings::sdk_source_path;
 mod provision;
 mod requests;
 /// Resolve a title's explicit binding before entering the adapter's dialect.
@@ -109,6 +111,7 @@ impl GameIntegrationSetup {
                 states: Mutex::new(states),
                 views: Mutex::new(Default::default()),
                 catalogues: Mutex::new(BTreeMap::new()),
+                sdk_generation: Default::default(),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
@@ -203,6 +206,14 @@ impl GameIntegrationSetup {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
         self.inner.retain_setup_scopes(catalogue);
         self.refresh_admitted(catalogue);
+    }
+
+    pub(crate) fn invalidate_xplane_catalogue(&self, id: &str) {
+        if let Some(generation) = self.inner.sdk_generation(id) {
+            let mut cache = self.inner.catalogues.lock().unwrap_or_else(|error| error.into_inner());
+            generation.fetch_add(1, Ordering::AcqRel);
+            cache.remove(id);
+        }
     }
 
     pub(crate) fn refresh_external_setup(&self, catalogue: &[Value]) {

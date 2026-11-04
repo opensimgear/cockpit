@@ -196,23 +196,15 @@ impl GamesRuntime {
             let context_wake = &inner.changes.context_wake;
             let _ = context_wake.bind_thread(thread::current());
             let mut last_library = context_wake.observed();
+            let mut sdk_watches = context_sdk_watch::SdkWatches::default();
             while !inner.closed.load(Ordering::Acquire) {
                 let library = context_wake.observed();
+                let sdk_changed = sdk_watches.refresh(&inner);
                 inner.refresh_game_contexts(library != last_library);
+                if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 last_library = library;
-                let has_configured_integration = inner.settings.lock().unwrap_or_else(|p| p.into_inner())
-                    .catalogue.iter().any(|game| {
-                        crate::game_discovery::integration_key(game).is_some()
-                            && (game["installed"] == true || game["executable"].is_string()
-                                || game["installPath"].is_string())
-                    });
-                if inner.closed.load(Ordering::Acquire) {
-                    break;
-                }
-                context_wake.wait_scheduled(
-                    library,
-                    has_configured_integration.then_some(Duration::from_millis(500)),
-                );
+                if inner.closed.load(Ordering::Acquire) { break; }
+                context_wake.wait_scheduled(library, context_sdk_watch::maintenance_delay(&inner));
             }
             polling_closed.store(true, Ordering::Release);
             capture_wake.notify();
