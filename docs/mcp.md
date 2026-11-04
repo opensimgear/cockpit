@@ -313,6 +313,11 @@ A `ready` phase means the scan results are available for review. The job
 can still advance to `applied`. Once ready, use `game_discovery_status`
 to read the desired result page.
 
+The `activity.log` observation announces committed changes to the activity
+database. It contains an invalidation revision, with the actual rows read
+through `activity_list`. Use `committedOnly: true` when reacting to the
+stream to read the retained page without flushing the writer.
+
 The opt-in Windows dev Cockpit test `tests/ui/mcp-native.mjs` also verifies
 integration context. Set `OSG_MCP_OBSERVATION_ONLY=1` and
 `OSG_MCP_INTEGRATION_OBSERVATION=1` in a dev Cockpit with no registered DCS

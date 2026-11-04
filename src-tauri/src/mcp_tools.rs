@@ -258,7 +258,11 @@ impl Tools {
                 let source = &updated["source"];
                 Ok(json!({"source":{"id":source["id"],"name":source["name"],"role":source["role"]}}))
             }
-            "activity_list" => self.native("activity_query",json!({"activityFilter":selected(&["search","categories","levels","eventTypes","entityId","since","until","throughId","offset","limit"])}),client,Some("activity")),
+            "activity_list" => {
+                let mut fields = selected(&["committedOnly"]);
+                fields["activityFilter"] = selected(&["search","categories","levels","eventTypes","entityId","since","until","throughId","offset","limit"]);
+                self.native("activity_query",fields,client,Some("activity"))
+            },
             "activity_clear" => forward("activity_clear",&[],Some("activityDeleted")),
             "activity_settings_get" => forward("activity_settings_get",&[],Some("activitySettings")),
             "activity_settings_save" => forward("activity_settings_save",&["retentionDays"],Some("activitySettings")),

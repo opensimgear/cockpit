@@ -10,7 +10,7 @@ pub(super) fn persist(storage: &Result<Database,String>, pending: &mut VecDeque<
     }
     Ok(())
 }
-pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Message>, lifecycle: mpsc::Receiver<observations::Batch>, registry:Arc<Mutex<reconcile::Reconciler>>) {
+pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Message>, lifecycle: mpsc::Receiver<observations::Batch>, registry:Arc<Mutex<reconcile::Reconciler>>, revision: &revision::Revision) {
     let mut observe: Option<Observe> = None;
     let mut previous = None;
     let mut pending = VecDeque::new();
@@ -47,10 +47,14 @@ pub(super) fn run(storage: Result<Database,String>, receiver: mpsc::Receiver<Mes
             }
             last_observation = std::time::Instant::now();
         }
+        let queued = pending.len();
         let outcome = persist(&storage,&mut pending);
+        if pending.len() < queued { revision.changed(); }
         for done in acknowledgements { let _ = done.send(outcome.clone()); }
         if last_prune.elapsed() >= Duration::from_secs(3600) {
-            if let Ok(storage) = &storage { let _ = storage.activity_prune(); }
+            if let Ok(storage) = &storage {
+                if storage.activity_prune().is_ok_and(|count| count > 0) { revision.changed(); }
+            }
             last_prune = std::time::Instant::now();
         }
         if stop {

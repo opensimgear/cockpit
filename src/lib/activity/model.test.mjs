@@ -27,6 +27,7 @@ test('client exposes native list, clear and retention with explicit errors and v
   const requests=[];const client=new ActivityClient(async request=>{requests.push(plain(request));return{activity:page(),activityDeleted:42,activitySettings:{retentionDays:request.retentionDays??7}};});
   const query=activityQuery(emptyActivityFilters());assert.equal((await client.list(query)).total,1);assert.equal(await client.clear(),42);assert.equal((await client.settings()).retentionDays,7);assert.equal((await client.saveSettings(30)).retentionDays,30);
   assert.deepEqual(requests.map(item=>item.command),['activity_query','activity_clear','activity_settings_get','activity_settings_save']);
+  assert.equal(requests[0].committedOnly, true);
   for(const value of [0,-1,3651,1.5,NaN])await assert.rejects(client.saveSettings(value),/whole number/);
   const missing=new ActivityClient(async()=>({}));await assert.rejects(missing.list(query),/unavailable/);await assert.rejects(missing.settings(),/unavailable/);await assert.rejects(missing.saveSettings(7),/saved/);await assert.rejects(missing.clear(),/cleared/);
 });

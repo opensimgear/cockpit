@@ -3,9 +3,12 @@
   import PageHeader from '../PageHeader.svelte';
   import Icon from '../Icon.svelte';
   import { gatewayRequest } from '../gateway';
+  import { SharedObservations } from '../streams/shared';
   import ActivityFilters from './ActivityFilters.svelte';
   import { ActivityClient, ActivityLogController, activityFilterCount, activityLabel, activityQuery, emptyActivityFilters } from './model';
   const controller = new ActivityLogController(new ActivityClient(gatewayRequest));
+  let pendingRefresh = false;
+  let streamError = $state('');
   let view = $state.raw(controller.state), filters = $state(emptyActivityFilters());
   let search = $state(''), settledSearch = $state(''), offset = $state(0), throughId = $state<number | null>(null), mounted = $state(false), filtersOpen = $state(false), confirming = $state(false), dateError = $state('');
   const count = $derived(activityFilterCount(filters));
@@ -15,17 +18,41 @@
   function refresh() {
     try {
       const query = { ...activityQuery(filters, settledSearch, offset), throughId }; dateError = '';
+      if (offset === 0) pendingRefresh = false;
       void controller.load(query).then(applied => { if (!applied && !controller.state.loading) { offset = controller.state.query?.offset ?? 0; throughId = controller.state.query?.throughId ?? null; } });
     }
     catch (error) { dateError = error instanceof Error ? error.message : String(error); }
   }
   $effect(() => { const value = search; const timer = setTimeout(() => settledSearch = value, 250); return () => clearTimeout(timer); });
   $effect(() => { signature; if (mounted) { offset = 0; throughId = null; untrack(refresh); } });
+  function refreshPending() {
+    if (mounted && pendingRefresh && !document.hidden && offset === 0
+        && !confirming && !view.loading && !view.clearing) refresh();
+  }
+  $effect(() => { if (!confirming) untrack(refreshPending); });
   onMount(() => {
-    const stop = controller.subscribe(next => view = next); mounted = true;
-    const tick = () => { if (!document.hidden && offset === 0 && !confirming && !view.loading) refresh(); };
-    const timer = setInterval(tick, 3000); document.addEventListener('visibilitychange', tick);
-    return () => { mounted = false; clearInterval(timer); document.removeEventListener('visibilitychange', tick); stop(); controller.dispose(); };
+    mounted = true;
+    const stop = controller.subscribe(next => {
+      const settled = (view.loading || view.clearing) && !next.loading && !next.clearing;
+      view = next;
+      if (settled) queueMicrotask(refreshPending);
+    });
+    const observations = new SharedObservations();
+    observations.subscribe('activity.log', state => {
+      streamError = state.error ?? '';
+      if (state.status === 'ready') {
+        pendingRefresh = true;
+        refreshPending();
+      }
+    });
+    document.addEventListener('visibilitychange', refreshPending);
+    return () => {
+      mounted = false;
+      document.removeEventListener('visibilitychange', refreshPending);
+      observations.close();
+      stop();
+      controller.dispose();
+    };
   });
   function page(next: number) { throughId = next === 0 ? null : throughId ?? view.page?.throughId ?? null; offset = next; refresh(); }
   async function clear() { if (await controller.clear()) { confirming = false; offset = 0; throughId = null; } }
@@ -42,7 +69,7 @@
   <button class="secondary-button" disabled={view.loading || view.clearing} onclick={refresh}><Icon name="refresh" size={14}/>Refresh</button>
 </div>
 <div id="activity-filter-section">{#if filtersOpen}<ActivityFilters bind:filters page={view.page}/>{/if}</div>
-{#if dateError || view.error}<p class="activity-error" role="alert">{dateError || view.error}</p>{/if}
+{#if dateError || view.error || streamError}<p class="activity-error" role="alert">{dateError || view.error || streamError}</p>{/if}
 <section class="panel activity-log" aria-label="Activity log" aria-busy={view.loading}>
   <div class="log-heading"><h2>Recent activity</h2><span role="status">{view.loading ? 'Reading…' : `${view.page?.total ?? 0} events`}{#if displayedOffset > 0} · Live updates paused on older pages{/if}</span></div>
   <div class="log-columns" aria-hidden="true"><span>Time</span><span>Category</span><span>Activity</span><span>Source</span></div>

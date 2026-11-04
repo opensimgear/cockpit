@@ -78,6 +78,27 @@ fn writer_batches_more_than_database_append_budget_and_retains_failed_events() {
     writer::persist(&Ok(database.clone()),&mut pending).unwrap();assert!(pending.is_empty());assert_eq!(database.activity_query(&Default::default()).unwrap().total,1500);
 }
 #[test]
+fn activity_revision_follows_durable_append_and_clear() {
+    let directory = crate::test_directory();
+    let runtime = Runtime::new(&directory.path().join("config.json"));
+    let observations = crate::observations::Runtime::new();
+    runtime.observe_revision(&observations).unwrap();
+    let mut reader = observations.broker().subscribe("activity-test", "mcp", "activity.log").unwrap();
+    let baseline = reader.try_recv().unwrap().unwrap();
+    assert_eq!(baseline.revision, "1");
+    runtime.sender.send(Message::Event(event("system","fixture","info","Committed event".into(),None,None))).unwrap();
+    runtime.flush().unwrap();
+    let appended = reader.try_recv().unwrap().unwrap();
+    assert_eq!(appended.revision, "2");
+    let query = json!({"command":"activity_query","committedOnly":true});
+    assert_eq!(runtime.request(&query).unwrap()["activity"]["total"], 1);
+    assert!(reader.try_recv().unwrap().is_none(), "Passive reads cannot invalidate the page");
+    assert_eq!(runtime.request(&json!({"command":"activity_clear"})).unwrap()["activityDeleted"],1);
+    assert_eq!(reader.try_recv().unwrap().unwrap().revision, "3");
+    assert_eq!(runtime.request(&query).unwrap()["activity"]["total"], 0);
+}
+
+#[test]
 fn runtime_flush_query_settings_and_clear_share_durable_authority() {
     let directory=crate::test_directory();let runtime=Runtime::new(&directory.path().join("config.json"));
     assert!(runtime.audit(&json!({"command":"game_save","gameId":"racing","name":"Racing","clientId":"test-cockpit-client"}),&json!({"ok":true})));
@@ -123,5 +144,5 @@ fn background_review_setup_reason_vehicle_and_system_events_are_useful_without_u
     current.lock().unwrap().discovery(&json!({"scanId":"scan-2","status":"failed","diagnostics":["Scan failed because the library is inaccessible."]}));assert_eq!(query("discovery_failed")["events"][0]["level"],"error");
     assert_eq!(query("discovery_failed")["total"],1);runtime.shutdown();
     // Receiver disconnection exits cleanly rather than spinning while idle.
-    let (sender,receiver)=mpsc::sync_channel(1);let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();drop(sender);drop(lifecycle_sender);writer::run(Err("Unavailable".into()),receiver,lifecycle_receiver,Arc::new(Mutex::new(reconcile::Reconciler::default())));
+    let (sender,receiver)=mpsc::sync_channel(1);let (lifecycle_sender,lifecycle_receiver)=mpsc::channel();drop(sender);drop(lifecycle_sender);writer::run(Err("Unavailable".into()),receiver,lifecycle_receiver,Arc::new(Mutex::new(reconcile::Reconciler::default())),&revision::Revision::default());
 }

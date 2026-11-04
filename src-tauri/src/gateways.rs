@@ -440,6 +440,9 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        if let Err(error) = activity.observe_revision(&observations) {
+            eprintln!("Cannot start activity observations: {error}");
+        }
         if let Err(error) = profile_resources.observe_catalogue(&observations.broker()) {
             eprintln!("Cannot start profile resource observations: {error}");
         }

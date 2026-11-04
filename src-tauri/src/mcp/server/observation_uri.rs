@@ -3,7 +3,8 @@
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 8] = [
+const FIXED_TOPICS: [(&str, &str); 9] = [
+    ("activity.log", "Activity log revision"),
     ("profiles.library", "Saved profile library"),
     ("profiles.runtime", "Applied profile runtime"),
     ("profiles.activation", "Profile activation progress"),

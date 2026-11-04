@@ -10,7 +10,7 @@ export type ActivityPage = { events: ActivityEvent[]; total: number; throughId: 
 export type ActivitySettings = { retentionDays: number };
 export type ActivityRequest = {
   command: 'activity_query' | 'activity_clear' | 'activity_settings_get' | 'activity_settings_save';
-  activityFilter?: ActivityQuery; retentionDays?: number;
+  activityFilter?: ActivityQuery; retentionDays?: number; committedOnly?: boolean;
 };
 type ActivityReply = { activity?: ActivityPage; activitySettings?: ActivitySettings; activityDeleted?: number };
 export type ActivityTransport = (request: ActivityRequest) => Promise<ActivityReply>;
@@ -48,7 +48,7 @@ export function activityLabel(value: string): string {
 export class ActivityClient {
   constructor(private transport: ActivityTransport) {}
   async list(query: ActivityQuery): Promise<ActivityPage> {
-    const reply = await this.transport({ command: 'activity_query', activityFilter: query });
+    const reply = await this.transport({ command: 'activity_query', activityFilter: query, committedOnly: true });
     if (!reply.activity) throw Error('The activity log is unavailable.');
     return reply.activity;
   }

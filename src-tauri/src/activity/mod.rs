@@ -6,6 +6,7 @@ mod diagnostics;
 mod messages;
 mod capture;
 mod writer;
+mod revision;
 mod session;
 mod inventory;
 mod effects;
@@ -37,6 +38,7 @@ pub(crate) struct Runtime {
     started: std::sync::atomic::AtomicBool,
     metadata: Mutex<()>,
     registry:Arc<Mutex<reconcile::Reconciler>>,
+    revision: Arc<revision::Revision>,
 }
 pub(crate) fn event(category: &str, kind: &str, level: &str, message: String, id: Option<String>, name: Option<String>) -> NewActivityEvent {
     NewActivityEvent { event_key:uuid::Uuid::new_v4().to_string(),occurred_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(i64::MAX as u128) as i64,
@@ -53,8 +55,14 @@ impl Runtime {
         let registry=Arc::new(Mutex::new(reconcile::Reconciler::default()));
         let lifecycle=Arc::new(Mutex::new(session::Observer::new(lifecycle_sender,registry.clone())));
         let writer_registry=registry.clone();
-        let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver,writer_registry)).expect("start native activity worker");
-        Self { database, sender, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry }
+        let revision = Arc::new(revision::Revision::default());
+        let writer_revision = revision.clone();
+        let worker = std::thread::Builder::new().name("cockpit-activity".into()).spawn(move || writer::run(storage,receiver,lifecycle_receiver,writer_registry,&writer_revision)).expect("start native activity worker");
+        Self { database, sender, worker: Mutex::new(Some(worker)), lifecycle,started:std::sync::atomic::AtomicBool::new(false),metadata:Mutex::new(()),registry,revision }
+    }
+    pub(crate) fn observe_revision(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
+        self.database.as_ref().map_err(Clone::clone)?;
+        self.revision.observe(observations)
     }
     pub(crate) fn observe(&self, source: impl Fn() -> Snapshot + Send + 'static) {
         if !self.started.swap(true,std::sync::atomic::Ordering::AcqRel) {let _=self.sender.send(Message::Event(event("system","cockpit_started","info","Cockpit native services started.".into(),None,Some("Cockpit".into()))));}
@@ -104,14 +112,25 @@ impl Runtime {
             "activity_query" => {
                 let filter = request.get("activityFilter").cloned().unwrap_or_else(|| json!({}));
                 let query = serde_json::from_value::<osg_persistence::ActivityQuery>(filter).map_err(|_| "Invalid activity filters.".to_owned())?;
-                self.flush()?;
+                match request.get("committedOnly") {
+                    Some(Value::Bool(true)) => {}
+                    None | Some(Value::Bool(false)) => self.flush()?,
+                    _ => return Err("Invalid committed activity read mode.".into()),
+                }
                 Ok(json!({"activity": database.activity_query(&query)?}))
             }
-            "activity_clear" => { self.flush()?; Ok(json!({"activityDeleted": database.activity_clear()?})) }
+            "activity_clear" => {
+                self.flush()?;
+                let deleted = database.activity_clear()?;
+                if deleted > 0 { self.revision.changed(); }
+                Ok(json!({"activityDeleted":deleted}))
+            }
             "activity_settings_get" => Ok(json!({"activitySettings":database.activity_settings()?})),
             "activity_settings_save" => {
                 let days = request["retentionDays"].as_u64().and_then(|value| u32::try_from(value).ok()).ok_or("Choose a retention period from 1 to 3650 days.")?;
-                Ok(json!({"activitySettings":database.activity_settings_save(days)?}))
+                let settings = database.activity_settings_save(days)?;
+                self.revision.changed();
+                Ok(json!({"activitySettings":settings}))
             }
             _ => Err("Unknown activity command.".into()),
         }
