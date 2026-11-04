@@ -440,6 +440,9 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        if let Err(error) = companion_host.observe_listener(&observations) {
+            eprintln!("Cannot start companion listener observations: {error}");
+        }
         if let Err(error) = activity.observe_revision(&observations) {
             eprintln!("Cannot start activity observations: {error}");
         }

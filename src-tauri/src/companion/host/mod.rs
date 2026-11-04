@@ -21,6 +21,7 @@ pub(crate) struct ProfilePanelOperation {
     pub fallback_expires_at: Option<Instant>,
 }
 mod presentation;
+mod listener_observation;
 use presentation::*;
 
 #[path = "../../profile_companion_authoring.rs"]
@@ -54,6 +55,7 @@ pub struct Runtime {
     metadata_init: Mutex<()>,
     services: OnceLock<Result<Services, String>>,
     upload: Mutex<Option<Upload>>,
+    listener_observation: Mutex<Option<listener_observation::Observation>>,
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
@@ -83,6 +85,7 @@ impl Runtime {
             metadata_init: Mutex::new(()),
             services: OnceLock::new(),
             upload: Mutex::new(None),
+            listener_observation: Mutex::new(None),
             panel_operation_wakes: Mutex::new(Vec::new()),
             #[cfg(test)]
             profile_wire_fixture: false,
@@ -101,11 +104,14 @@ impl Runtime {
             // native startup, even before the listener is enabled. `services`
             // caches startup errors so an unavailable store cannot trigger a
             // fresh CA on a later polling pass.
-            if let Ok(services) = runtime.services() {
-                if crate::companion_panels::ready(&services.hub).unwrap_or(false) {
-                    Self::start_saved_listener(services);
-                    let _ = services.usb.reconnect_detected(&services.hub);
+            match runtime.services() {
+                Ok(services) => {
+                    runtime.start_saved_listener(services);
+                    if crate::companion_panels::ready(&services.hub).unwrap_or(false) {
+                        let _ = services.usb.reconnect_detected(&services.hub);
+                    }
                 }
+                Err(error) => runtime.notify_listener(Err(&error)),
             }
             drop(runtime);
             std::thread::sleep(Duration::from_secs(2));
@@ -149,8 +155,8 @@ impl Runtime {
         if let Some(metadata) = self.metadata.get() { metadata.hub.observe_panel_operations(wake); }
     }
     fn services(&self) -> Result<&Services, String> {
-        self.services
-            .get_or_init(|| {
+        let initializing = self.services.get().is_none();
+        let result = self.services.get_or_init(|| {
                 let metadata = self.metadata(true)?;
                 let hub = metadata.hub.clone();
                 let directory = metadata.directory.clone();
@@ -164,32 +170,48 @@ impl Runtime {
                     usb_setup: Mutex::new(()),
                     firmware_releases: crate::firmware_releases::Resolver::default(),
                 };
-                Self::start_saved_listener(&services);
+                self.start_saved_listener(&services);
                 Ok(services)
-            })
-            .as_ref()
-            .map_err(Clone::clone)
+            }).as_ref();
+        if initializing {
+            self.notify_listener(result.map_err(String::as_str));
+        }
+        result.map_err(Clone::clone)
     }
-    fn start_saved_listener(services:&Services){
-        if !crate::companion_panels::ready(&services.hub).unwrap_or(false){return;}
-        if services.server.status().enabled{return;}
-        services.saved_listener.with_config(|config|if let Some(config)=config{
-            if let Err(error)=services.server.start(config){
+    fn start_saved_listener(&self, services: &Services) {
+        if !crate::companion_panels::ready(&services.hub).unwrap_or(false) {
+            return;
+        }
+        let attempted = services.saved_listener.with_config(|config| {
+            let Some(config) = config else { return false; };
+            if services.server.status().enabled { return false; }
+            if let Err(error) = services.server.start(config) {
                 services.server.record_error(format!("Saved companion listener could not start: {error}"));
             }
+            true
         });
+        if attempted && self.services.get().is_some() { self.notify_listener(Ok(services)); }
     }
-    fn inventory(&self)->Result<Value,String>{
+    fn inventory(&self, listener_only: bool)->Result<Value,String>{
         if self.stopped.load(Ordering::SeqCst){return Err("Companion service is stopped.".into());}
-        if let Some(Ok(services))=self.services.get(){return self.status(services);}
+        if let Some(Ok(services)) = self.services.get() {
+            if listener_only {
+                return Ok(json!({"listener":Self::listener_state(services)?,"interfaces":interface_addresses()}));
+            }
+            return self.status(services);
+        }
         let directory=self.metadata.get().map(|metadata|&metadata.directory).or(self.path.as_ref());
         let database=directory.map(|directory|osg_persistence::Database::existing_for_namespace(&directory.join("companion-host-state.dpapi"))).transpose()?.flatten();
+        let(revision,config)=if database.is_some(){crate::companion_settings::Listener::open(directory.ok_or("Companion directory is unavailable.")?)?.refresh()?}else{(0,None)};
+        let error=self.services.get().and_then(|result|result.as_ref().err());
+        let listener = json!({"enabled":false,"configuredEnabled":config.is_some(),"settingsRevision":revision,"config":config,"lastError":error});
+        if listener_only {
+            return Ok(json!({"listener":listener,"interfaces":interface_addresses()}));
+        }
         let metadata=self.existing_metadata()?;
         let host=match metadata{Some(metadata)=>metadata.hub.command(&json!({"command":"companion_status"}))?,None=>json!({"clients":[],"pending":[],"instances":[],"publications":[]})};
-        let(revision,config)=if database.is_some(){crate::companion_settings::Listener::open(directory.ok_or("Companion directory is unavailable.")?)?.refresh()?}else{(0,None)};
         let firmware=match metadata{Some(metadata) if database.is_some()=>crate::companion_settings::firmware(&metadata.directory)?.1,_=>json!({})};
-        let error=self.services.get().and_then(|result|result.as_ref().err());
-        Ok(json!({"host":host,"listener":{"enabled":false,"configuredEnabled":config.is_some(),"settingsRevision":revision,"config":config,"lastError":error},"firmware":firmware,"usb":{"connected":false},"interfaces":interface_addresses(),"browserUrl":null}))
+        Ok(json!({"host":host,"listener":listener,"firmware":firmware,"usb":{"connected":false},"interfaces":interface_addresses(),"browserUrl":null}))
     }
     fn status(&self, services: &Services) -> Result<Value, String> {
         let interfaces=interface_addresses();
@@ -224,14 +246,17 @@ impl Runtime {
             if let Ok(profile)=osg_companion_service::render_profile::validate(&client["renderProfile"]){client["screen"]=profile["screen"].clone();}
             else if let Some(id)=client["companionId"].as_str(){if let Some(size)=screen_dimensions(firmware[id]["profile"].as_str().unwrap_or("")){client["screen"]=json!({"width":size.0,"height":size.1});}}
         }}}
-        let mut listener=serde_json::to_value(services.server.status()).map_err(|e|e.to_string())?;
-        let (revision,config)=services.saved_listener.refresh()?;
-        listener["settingsRevision"]=json!(revision);
-        listener["configuredEnabled"]=json!(config.is_some());
-        listener["config"]=json!(config);
-        let mut status=json!({"firmware":firmware,"host":host, "listener":listener,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()});
+        let mut status=json!({"firmware":firmware,"host":host, "listener":Self::listener_state(services)?,"browserUrl":services.server.browser_url().ok(), "interfaces":interfaces,"usb":services.usb.status()});
         status.as_object_mut().unwrap().extend(services.firmware_releases.metadata().as_object().unwrap().clone());
         Ok(status)
+    }
+    fn listener_state(services: &Services) -> Result<Value, String> {
+        let mut listener = serde_json::to_value(services.server.status()).map_err(|error| error.to_string())?;
+        let (revision, config) = services.saved_listener.refresh()?;
+        listener["settingsRevision"] = json!(revision);
+        listener["configuredEnabled"] = json!(config.is_some());
+        listener["config"] = json!(config);
+        Ok(listener)
     }
     pub(crate) fn hub(&self) -> Result<Hub, String> {
         Ok(self.services()?.hub.clone())

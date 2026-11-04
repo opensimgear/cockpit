@@ -166,7 +166,7 @@ use super::*;
         assert_eq!(waiting["listener"]["configuredEnabled"],true);
         assert_eq!(waiting["listener"]["config"]["discovery"],false);
         drop(blocker);
-        Runtime::start_saved_listener(second.services().unwrap());
+        second.start_saved_listener(second.services().unwrap());
         assert_eq!(call(&second,"companion_status",json!({})).unwrap()["listener"]["enabled"],true);
         call(&second,"companion_disable",json!({})).unwrap();
         assert!(crate::companion_settings::Listener::open(&directory).unwrap().snapshot().1.is_none());

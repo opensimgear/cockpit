@@ -3,7 +3,7 @@ use super::*;
 impl Tools {
     pub(super) fn listener_tool(&self,name:&str,args:&Value,client:&str)->Result<Value,Value>{
         let state=if name=="companion_listener_get" {
-            self.native("companion_inventory",json!({}),client,Some("companions"))?
+            self.native("companion_inventory",json!({"companion":{"listenerOnly":true}}),client,Some("companions"))?
         } else {
             let enabled=args["enabled"]==true;
             let mut settings=select(args,&["expectedSettingsRevision","address","port","advertisedHost","discovery"]);

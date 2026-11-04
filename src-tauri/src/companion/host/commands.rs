@@ -27,7 +27,7 @@ impl Runtime {
             return Err("ESP32 pairing is temporarily unavailable.".into());
         }
         match command {
-            "companion_inventory" => return self.inventory(),
+            "companion_inventory" => return self.inventory(payload["listenerOnly"] == true),
             "companion_publish_begin" => {
                 let expected = payload["size"]
                     .as_u64()
@@ -125,7 +125,7 @@ impl Runtime {
                     value["selection"]=json!({"expectedHostToken":token});
                 }
                 let published=services.hub.command(&value)?;
-                Self::start_saved_listener(services);
+                self.start_saved_listener(services);
                 return Ok(publication_result(published, self.status(services)));
             }
             _ => {}
@@ -329,11 +329,13 @@ impl Runtime {
                 };
                 if services.server.status().enabled{return Err("Companion listener is already enabled.".into());}
                 services.saved_listener.save(Some(config),payload.get("expectedSettingsRevision").map(|v|v.as_u64().ok_or("Invalid listener revision.")).transpose()?)?;
-                Self::start_saved_listener(services);
+                self.start_saved_listener(services);
+                self.notify_listener(Ok(services));
                 self.status(services)
             }
             "companion_disable" => {
                 services.saved_listener.save_with_effect(None,payload.get("expectedSettingsRevision").map(|v|v.as_u64().ok_or("Invalid listener revision.")).transpose()?,||services.server.stop())?;
+                self.notify_listener(Ok(services));
                 self.status(services)
             }
             "companion_browser_certificate" => Ok(json!({"certificatePem":services.server.browser_certificate()?})),

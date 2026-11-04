@@ -5,6 +5,7 @@
   import Notification from './Notification.svelte';
   import { onMount } from 'svelte';
   import { gatewayRequest } from './gateway';
+  import { SharedObservations } from './streams/shared';
   import type { CompanionHostState } from './companions';
   let hostState = $state<CompanionHostState>({});
   let address = $state('');
@@ -13,7 +14,10 @@
   let busy = $state(false);
   let error = $state('');
   let loaded = $state(false);
-  let polling = false;
+  let readError = $state('');
+  let observationError = $state('');
+  let reading = false;
+  let refreshQueued = false;
   let disposed = false;
   let requestVersion=0;
   const enabled=$derived(hostState.listener?.configuredEnabled??hostState.listener?.enabled??false);
@@ -22,23 +26,29 @@
     try { if(await invoke('export_companion_certificate'))notify('Public root CA certificate exported. Follow the Brave installation steps in these settings.'); }
     catch(e){notify(String(e),'error');}
   }
+  function invalidate() {
+    if (disposed) return;
+    if (busy || reading) { refreshQueued = true; return; }
+    refreshQueued = false;
+    void refresh();
+  }
   async function refresh() {
-    if (busy || polling) return;
-    polling = true;
+    reading = true;
     const version=requestVersion;
     try {
-      const result=(await gatewayRequest({ command: 'companion_inventory' })).companions ?? {};
+      const result=(await gatewayRequest({ command: 'companion_inventory', companion: { listenerOnly: true } })).companions ?? {};
       if(disposed || version!==requestVersion || busy)return;
       if (!result.listener) throw new Error('Companion listener settings are unavailable.');
       hostState=result;
+      readError='';
       if(!loaded){
         const config=result.listener.config;
         if(config){address=config.advertisedHost;port=Number(config.bind.split(':').at(-1))||54437;discovery=config.discovery;}
         if (!address) address = hostState.interfaces?.find(ip => ip !== '127.0.0.1' && !ip.includes(':')) ?? '127.0.0.1';
         loaded=true;
       }
-    } catch (e) { if (!disposed && version === requestVersion) error = String(e); }
-    finally { polling = false; }
+    } catch (e) { if (!disposed && version === requestVersion) readError = String(e); }
+    finally { reading = false; if (refreshQueued) invalidate(); }
   }
   async function toggle(enabled: boolean) {
     if (!loaded || busy || enabled && (!address || portError)) return;
@@ -53,9 +63,21 @@
       hostState = result;
       notify('Preference saved.');
     } catch (e) { if (!disposed) error = String(e); }
-    finally { if (!disposed) busy = false; }
+    finally { if (!disposed) { busy = false; if (refreshQueued) invalidate(); } }
   }
-  onMount(() => { void refresh(); const timer = setInterval(refresh, 1500); return () => { disposed = true; clearInterval(timer); }; });
+  onMount(() => {
+    const observations = new SharedObservations();
+    observations.subscribe('companion.listener', state => {
+      observationError = state.error ?? '';
+      if (state.status === 'ready') invalidate();
+    });
+    window.addEventListener('focus', invalidate);
+    return () => {
+      disposed = true;
+      window.removeEventListener('focus', invalidate);
+      observations.close();
+    };
+  });
 </script>
 
 <section class="panel preferences-panel listener-settings" aria-label="Companion listener settings">
@@ -95,7 +117,7 @@
     </div>
     <button class="secondary-button" disabled={busy || !loaded} onclick={exportCertificate}><Icon name="download" size={14} />Export public certificate</button>
   </div>
-  {#if hostState.listener?.lastError || error}<Notification message={String(error || hostState.listener?.lastError)} kind="error" />{/if}
+  {#if hostState.listener?.lastError || error || readError || observationError}<Notification message={String(error || readError || observationError || hostState.listener?.lastError)} kind="error" />{/if}
 </section>
 <style>
   .listener-settings { margin-top: var(--ui-section-gap); }

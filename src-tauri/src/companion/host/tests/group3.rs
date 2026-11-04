@@ -3,9 +3,18 @@ use super::*;
     #[test]
     fn native_operator_status_pairing_publication_and_assignment_remain_separate_from_output() {
         let runtime = runtime();
+        let observations = crate::observations::Runtime::new();
+        runtime.observe_listener(&observations).unwrap();
+        let mut listener = observations.broker().subscribe("listener-test", "mcp", "companion.listener").unwrap();
+        assert_eq!(listener.try_recv().unwrap().unwrap().revision, "1");
         let initial = call(&runtime, "companion_status", json!({})).unwrap();
+        assert_eq!(listener.try_recv().unwrap().unwrap().revision, "2");
         assert_eq!(initial["listener"]["enabled"], false);
         assert!(initial["interfaces"].is_array());
+        let narrow = call(&runtime, "companion_inventory", json!({"listenerOnly":true})).unwrap();
+        assert_eq!(narrow["listener"], initial["listener"]);
+        assert!(narrow.get("host").is_none());
+        assert!(narrow.get("firmware").is_none());
         assert!(call(
             &runtime,
             "companion_enable",
@@ -19,6 +28,7 @@ use super::*;
         )
         .is_err());
         assert!(call(&runtime, "companion_pair_offer", json!({})).is_err());
+        assert!(listener.try_recv().unwrap().is_none());
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = occupied.local_addr().unwrap().port();
         let config = json!({"address":"127.0.0.1","port":port,"advertisedHost":"127.0.0.1","discovery":false});
@@ -26,12 +36,19 @@ use super::*;
         assert_eq!(waiting["listener"]["configuredEnabled"],true);
         assert_eq!(waiting["listener"]["enabled"],false);
         assert!(waiting["listener"]["lastError"].as_str().unwrap().contains("Cannot bind"));
+        let failed = listener.try_recv().unwrap().unwrap();
+        assert_eq!(failed.revision, "3");
+        assert_eq!(failed.payload, Some(json!({})));
+        runtime.start_saved_listener(runtime.services().unwrap());
+        assert!(listener.try_recv().unwrap().is_none());
         drop(occupied);
         assert_eq!(
             call(&runtime, "companion_enable", config.clone()).unwrap()["listener"]["enabled"],
             true
         );
+        assert_eq!(listener.try_recv().unwrap().unwrap().revision, "4");
         assert!(call(&runtime, "companion_enable", config).is_err());
+        assert!(listener.try_recv().unwrap().is_none());
         if !BROWSER_ASSETS.is_empty() {
             let browser = call(&runtime, "companion_pair_offer", json!({"kind":"browser"})).unwrap();
             assert!(browser["pairing"]["browserUrl"].as_str().unwrap().starts_with(&format!("https://127.0.0.1:{port}/#pair=")));

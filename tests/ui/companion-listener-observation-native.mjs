@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:net';
+import test from 'node:test';
+import { nativePage, until } from '../../scripts/reactive/cdp.mjs';
+
+test('Companion listener settings observe commits and retry readiness without idle reads', {
+  skip: process.env.OSG_COMPANION_LISTENER_OBSERVATION_NATIVE !== '1', timeout: 60000,
+}, async () => {
+  const page = await nativePage();
+  const occupied = createServer();
+  let configured = false, breakpoint;
+  const native = async (command, companion = {}) => {
+    const request = { command, companion, clientId: 'listener-observation-fixture' };
+    const reply = await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify(request)}})`);
+    assert.equal(reply.ok, true, reply.error);
+    return reply.state.companions.listener;
+  };
+  const section = 'document.querySelector(\'[aria-label="Companion listener settings"]\')';
+  const badge = () => page.evaluate(`${section}?.querySelector('[role="status"]')?.textContent`);
+  const disable = async () => native('companion_disable', {
+    expectedSettingsRevision: (await native('companion_inventory')).settingsRevision,
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      occupied.once('error', reject);
+      occupied.listen(0, '127.0.0.1', resolve);
+    });
+    const initial = await native('companion_inventory');
+    assert.equal(initial.configuredEnabled, false, 'Start with a disabled dev listener.');
+    await until(() => page.evaluate(`(()=>{const settings=[...document.querySelectorAll('.sidebar-link')].find(item=>item.textContent.trim()==='Settings');if(!settings)return false;settings.click();return true;})()`));
+    await until(() => page.evaluate(`(()=>{const tab=document.querySelector('#settings-tab-companions');if(!tab)return false;tab.click();return true;})()`));
+    await until(badge, value => value === 'Disabled');
+    await page.evaluate('window.__listenerReads=0');
+    await page.call('Debugger.enable');
+    const target = await page.call('Runtime.evaluate', { expression: 'window.__TAURI_INTERNALS__.invoke' });
+    ({ breakpointId: breakpoint } = await page.call('Debugger.setBreakpointOnFunctionCall', {
+      objectId: target.result.objectId,
+      condition: "(cmd==='gateway_request' && payload?.request?.command==='companion_inventory' && ++window.__listenerReads, false)",
+    }));
+    await new Promise(resolve => setTimeout(resolve, 1900));
+    assert.equal(await page.evaluate('window.__listenerReads'), 0);
+    const waiting = await native('companion_enable', {
+      address: '127.0.0.1', advertisedHost: '127.0.0.1',
+      port: occupied.address().port, discovery: false, expectedSettingsRevision: initial.settingsRevision,
+    });
+    configured = true;
+    assert.equal(waiting.configuredEnabled, true);
+    assert.equal(waiting.enabled, false);
+    await until(badge, value => value === 'Waiting to start');
+    await new Promise((resolve, reject) => occupied.close(error => error ? reject(error) : resolve()));
+    await until(badge, value => value === 'Listening');
+    await disable();
+    configured = false;
+    await until(badge, value => value === 'Disabled');
+  } finally {
+    try {
+      if (occupied.listening) await new Promise(resolve => occupied.close(resolve));
+      if (configured) await disable();
+      if (breakpoint) await page.call('Debugger.removeBreakpoint', { breakpointId: breakpoint });
+      await page.call('Debugger.disable');
+      await page.evaluate('delete window.__listenerReads');
+    } finally {
+      page.close();
+    }
+  }
+});
