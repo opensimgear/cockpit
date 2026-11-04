@@ -33,6 +33,7 @@ fn boot(path: &Path, root: &Path) -> Result<NamespaceLease, String> {
         database: Ok(database),
         root: root.to_owned(),
         controls: Mutex::new(()),
+        creating: Mutex::new(None),
         observation: Mutex::new(None),
     };
     runtime.finish_pending(&lease)?;
@@ -56,7 +57,7 @@ impl Runtime {
         let (revision, _) = self.index()?;
         let (directory, manifest) = self.verified(&pending.id, revision)?;
         if pending.rollback.is_none() {
-            let entry = self.create_locked(revision)?;
+            let entry = self.create_locked(revision, || Ok(()))?;
             pending.rollback = Some(entry.id);
             let bytes =
                 serde_json::to_vec(&pending).map_err(|_| "Cannot encode rollback receipt.")?;

@@ -945,7 +945,7 @@ impl GatewayManager {
             };
         }
         if matches!(command,"activity_query"|"activity_clear"|"activity_settings_get"|"activity_settings_save") { return self.activity_request(&request,native_authorization.as_ref()); }
-        if matches!(command,"storage_status"|"storage_create"|"storage_remove"|"storage_restore"|"storage_restart"){return self.storage_request(&request,native_authorization.as_ref());}
+        if matches!(command,"storage_status"|"storage_create"|"storage_cancel_create"|"storage_remove"|"storage_restore"|"storage_restart"){return self.storage_request(&request,native_authorization.as_ref());}
         if matches!(command,"ui_preferences_get"|"ui_preferences_save") {
             if self.closed.load(Ordering::Acquire)||!request["clientId"].as_str().is_some_and(|s|crate::protocol::identifier(s,16,80)){return self.error("Invalid UI settings client or closed cockpit.",None);}
             let _admission=self.profile_admission.read().unwrap_or_else(|p|p.into_inner());

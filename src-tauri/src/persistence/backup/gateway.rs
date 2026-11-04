@@ -11,6 +11,7 @@ impl GatewayManager {
             let command = request["command"].as_str().unwrap_or("");
             let fields = match command {
                 "storage_status" | "storage_restart" => vec!["command", "clientId"],
+                "storage_cancel_create" => vec!["command", "clientId", "createId"],
                 "storage_create" => vec!["command", "clientId", "expectedRevision"],
                 "storage_remove" => vec!["command", "clientId", "expectedRevision", "id"],
                 "storage_restore" => {
@@ -32,6 +33,12 @@ impl GatewayManager {
             }
             if self.closed.load(Ordering::Acquire) {
                 return Err("Cockpit is stopped for restore. Restart to continue.".into());
+            }
+            if command == "storage_cancel_create" {
+                let id = request["createId"].as_str()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .ok_or("Provide the active backup creation ID.")?;
+                return self.storage.cancel_create(id);
             }
             let expected = request["expectedRevision"]
                 .as_u64()

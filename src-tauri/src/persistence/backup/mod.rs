@@ -10,6 +10,7 @@ use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
+mod create_operation;
 mod model;
 mod observation;
 use model::*;
@@ -25,6 +26,7 @@ pub(crate) struct Runtime {
     database: Result<Database, String>,
     root: PathBuf,
     controls: Mutex<()>,
+    creating: Mutex<Option<create_operation::CreateOperation>>,
     observation: Mutex<Option<observation::Observation>>,
 }
 impl Runtime {
@@ -34,6 +36,7 @@ impl Runtime {
             database: Ok(database),
             root,
             controls: Mutex::new(()),
+            creating: Mutex::new(None),
             observation: Mutex::new(None),
         }
     }
@@ -47,6 +50,7 @@ impl Runtime {
             },
             root: anchor.parent().unwrap_or(Path::new("")).to_owned(),
             controls: Mutex::new(()),
+            creating: Mutex::new(None),
             observation: Mutex::new(None),
         }
     }
@@ -122,7 +126,7 @@ impl Runtime {
         }])?;
         Ok(())
     }
-    fn create_locked(&self, expected: u64) -> Result<Entry, String> {
+    fn create_locked(&self, expected: u64, before_commit: impl FnOnce() -> Result<(), String>) -> Result<Entry, String> {
         let mut index = self.exact(expected)?;
         if index.entries.len() >= MAX_BACKUPS {
             return Err("Backup storage is full. Remove a backup before creating another.".into());
@@ -139,6 +143,7 @@ impl Runtime {
         }
         builder.create(&directory).map_err(|_| "Cannot reserve backup bundle.")?;
         let result = self.write_bundle(id, &directory).and_then(|entry| {
+            before_commit()?;
             index.entries.insert(0, entry.clone());
             self.save(expected, &index)?;
             Ok(entry)
@@ -149,6 +154,7 @@ impl Runtime {
         result
     }
     fn write_bundle(&self, id: String, directory: &Path) -> Result<Entry, String> {
+        self.check_create_cancelled()?;
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "The system clock is unavailable.")?
@@ -167,9 +173,12 @@ impl Runtime {
             .map_err(|_| "Managed artwork is busy. Retry the backup.")?;
         let snapshot = directory.join("snapshot.sqlite3");
         self.database()?.backup(&snapshot)?;
+        self.check_create_cancelled()?;
         let captured = Database::open_existing(&snapshot)?;
         captured.integrity_check()?;
+        self.check_create_cancelled()?;
         let assets = assets::collect(&captured, &self.root, directory)?;
+        self.check_create_cancelled()?;
         let manifest = Manifest {
             id: id.clone(),
             created_at,
@@ -199,10 +208,7 @@ impl Runtime {
         if self.index()?.1.entries.len() >= MAX_BACKUPS - 1 {
             return Err("Remove a backup before creating another; one slot is reserved for restore rollback.".into());
         }
-        self.observe_operation("creating", || {
-            let entry = self.create_locked(expected)?;
-            Ok(json!({"backup":entry,"status":self.status()?}))
-        })
+        self.run_create(expected)
     }
     fn verified(&self, id: &str, expected: u64) -> Result<(PathBuf, Manifest), String> {
         let index = self.exact(expected)?;

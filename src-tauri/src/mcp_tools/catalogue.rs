@@ -91,6 +91,7 @@ pub fn catalogue() -> Vec<Value> {
         tool("controller_update","Set the saved local name and role of a host controller. Discover its source ID in the controllers.inventory observation.",vec![("sourceId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36})),("name",string(80)),("role",choice(&["controller","joystick","wheelbase","pedals","throttle","panel"]))],&["sourceId","name","role"]),
         tool("storage_status","List native SQLite backups and the exact catalogue revision. Backup paths and arbitrary SQL are never accepted.",vec![],&[]),
         tool("storage_create","Create an online SQLite backup with hash-checked immutable assets. One backup slot is reserved for restore rollback.",vec![("expectedRevision",integer(0,9007199254740990))],&["expectedRevision"]),
+        tool("storage_cancel_create","Cancel the exact active backup creation reported by storage.backups before its inventory commit.",vec![("createId",json!({"type":"string","format":"uuid","minLength":36,"maxLength":36}))],&["createId"]),
         tool("storage_remove","Retire one exact saved backup then clean up its private immutable bundle.",vec![("id",string(36)),("expectedRevision",integer(0,9007199254740990))],&["id","expectedRevision"]),
         tool("storage_restore","Verify a saved backup, require stopped profiles and completed recovery, stop native workers and queue restore for the next restart. This replaces settings/content and invalidates all historical credentials and cleanup authority. Explicit confirmed:true is required.",vec![("id",string(36)),("expectedRevision",integer(0,9007199254740990)),("confirmed",json!({"type":"boolean","const":true}))],&["id","expectedRevision","confirmed"]),
         tool("storage_restart","Restart the native Cockpit after a restore was explicitly queued. Reconnect and reissue credentials after startup.",vec![],&[]),
@@ -221,6 +222,7 @@ pub fn is_mutation(name: &str) -> bool {
             name,
             "storage_create"
                 | "controller_update"
+                | "storage_cancel_create"
                 | "storage_remove"
                 | "storage_restore"
                 | "storage_restart"

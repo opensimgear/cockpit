@@ -29,6 +29,13 @@ test('running Cockpit backup and restart restore reject historical MCP credentia
   await until(async()=> (await invoke('mcp_settings_get')).running,'MCP listener');writer=await connect(settings.endpoint,write.token);reader=await connect(settings.endpoint,read.token);clients.push(writer,reader);
   const tools=(await reader.listTools()).tools;assert.ok(tools.some(t=>t.name==='storage_status'));assert.ok(!tools.some(t=>t.name==='storage_restore'||t.name==='storage_create'||t.name==='storage_restart'));
   await assert.rejects(()=>call(reader,'storage_create',{expectedRevision:0,operationId:randomUUID()}),/does not permit changes/);
+  const cancelArgs={createId:randomUUID(),operationId:randomUUID()};
+  assert.ok(!(await reader.listTools()).tools.some(tool=>tool.name==='storage_cancel_create'));
+  assert.ok((await writer.listTools()).tools.some(tool=>tool.name==='storage_cancel_create'));
+  await assert.rejects(()=>call(reader,'storage_cancel_create',cancelArgs),/does not permit changes/);
+  const staleCancel=await call(writer,'storage_cancel_create',cancelArgs);
+  assert.equal(staleCancel.ok,false);
+  assert.match(JSON.stringify(staleCancel),/no longer active/);
   let hostBefore=null,publication=null;
   if(process.env.OSG_SQLITE_BACKUP_PUBLICATION==='1'){
     const listener=await call(writer,'companion_listener_get');assert.equal(listener.ok,true);if(!listener.data.enabled){const enabled=await call(writer,'companion_listener_save',{enabled:true,expectedSettingsRevision:listener.data.settingsRevision,address:'127.0.0.1',port:54449,advertisedHost:'127.0.0.1',discovery:false,operationId:randomUUID()});assert.equal(enabled.ok,true,JSON.stringify(enabled));}

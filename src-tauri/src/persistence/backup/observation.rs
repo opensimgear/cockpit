@@ -30,7 +30,11 @@ impl Runtime {
 
     fn observation_payload(&self, phase: &str) -> Value {
         // Filesystem and database diagnostics may contain private paths.
-        json!({"phase":phase,"status":self.status().ok()})
+        let mut payload = json!({"phase":phase,"status":self.status().ok()});
+        if phase == "creating" {
+            payload["createId"] = json!(self.create_id());
+        }
+        payload
     }
 
     pub(super) fn publish_observation(&self, phase: &str) {

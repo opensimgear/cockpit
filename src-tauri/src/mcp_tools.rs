@@ -266,7 +266,7 @@ impl Tools {
             "activity_clear" => forward("activity_clear",&[],Some("activityDeleted")),
             "activity_settings_get" => forward("activity_settings_get",&[],Some("activitySettings")),
             "activity_settings_save" => forward("activity_settings_save",&["retentionDays"],Some("activitySettings")),
-            "storage_status" | "storage_create" | "storage_remove" | "storage_restore" | "storage_restart"=>forward(name,&["id","expectedRevision","confirmed"],Some("storage")),
+            "storage_status" | "storage_create" | "storage_cancel_create" | "storage_remove" | "storage_restore" | "storage_restart"=>forward(name,&["id","expectedRevision","confirmed","createId"],Some("storage")),
             "ui_preferences_get"=>forward("ui_preferences_get",&["key"],Some("uiPreferences")),
             "ui_preferences_save"=>forward("ui_preferences_save",&["key","expectedRevision","value"],Some("uiPreferences")),
             name if companion_controls::handles(name)=>self.companion_tool(name,args,client),

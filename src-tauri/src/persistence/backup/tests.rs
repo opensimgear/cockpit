@@ -85,6 +85,7 @@ fn online_backup_restore_reopens_content_with_rollback_and_no_historical_authori
         database: Ok(database),
         root: runtime.root.clone(),
         controls: Mutex::new(()),
+        creating: Mutex::new(None),
         observation: Mutex::new(None),
     };
     let status = next.status().unwrap();
