@@ -173,6 +173,12 @@ static void modern_feedback_tests(void){
     cJSON_DeleteItemFromObjectCaseSensitive(payload_free,"feedback");
     assert(osg_ack(payload_free,&session,"1",&r,760));
     assert(!osg_ack(payload_free,&session,"2",&r,760));
+    session.feedback_stream=false;
+    assert(!osg_ack(payload_free,&session,"1",&r,760));
+    cJSON_AddBoolToObject(base,"feedbackPush",true);
+    assert(osg_ack(base,&session,"1",&r,760)&&session.feedback_stream);
+    assert(osg_ack(payload_free,&session,"1",&r,760));
+    cJSON_DeleteItemFromObjectCaseSensitive(base,"feedbackPush");
     cJSON_Delete(payload_free);cJSON_Delete(event);
     for(int mutation=0;mutation<30;mutation++){
         cJSON *v=cJSON_Duplicate(base,true),*frame=cJSON_GetObjectItemCaseSensitive(v,"feedback"),*list=cJSON_GetObjectItemCaseSensitive(frame,"values"),*sample=cJSON_GetArrayItem(list,0),*bindings=cJSON_GetObjectItemCaseSensitive(frame,"bindings");

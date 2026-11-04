@@ -572,7 +572,9 @@ static void advance(void){
             if(session.heartbeat>=UINT64_MAX-1){fail("session-counter-exhausted");return;}
             char sequence[21];snprintf(sequence,sizeof(sequence),"%" PRIu64,++session.heartbeat);
             const uint64_t started=millis();
+            connection.feedback_ready=state==LIVE;
             ok=request(session_message("heartbeat",sequence),&reply,700)&&(state==LIVE?acknowledgement(reply,sequence,started):panel_error_ack(reply,sequence));
+            connection.feedback_ready=false;
             next_request=millis()+250;
         }else if(send_input){
             osg_input_edge edges[OSG_INPUT_BATCH_EDGES];size_t count=0;uint64_t epoch=0;

@@ -39,6 +39,7 @@ pub struct FeedbackSubscription {
     credential_hash: String,
     session_id: String,
     generation: u64,
+    serial: bool,
     wake: Arc<NativeWake>,
     cursor: crate::feedback::FeedbackCursor,
     assignments: Option<Value>,
@@ -96,7 +97,7 @@ impl Hub {
         self.observe_record_changes(wake.clone());
         Ok(FeedbackSubscription {
             hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
-            generation, wake, cursor: Default::default(), assignments: None, resync_sequence,
+            generation, serial: false, wake, cursor: Default::default(), assignments: None, resync_sequence,
         })
     }
 
@@ -108,15 +109,15 @@ impl Hub {
             .ok_or("USB credential was revoked.")?.token_hash.clone();
         let session = inner.sessions.get_mut(session_id).ok_or("Feedback session ended.")?;
         ensure(session.connection == connection && session.companion_id == companion
-            && session.transport == SourceTransport::Usb && session.armed,
-            "Feedback subscription belongs to another or disarmed USB session.")?;
+            && session.transport == SourceTransport::Usb && !session.panel_error,
+            "Feedback subscription belongs to another or failed USB session.")?;
         let wake = Arc::new(NativeWake::default());
         if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|wake| wake.upgrade()) {
             previous.notify();
         }
         Ok(FeedbackSubscription {
             hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
-            generation: session.token.generation, wake, cursor: Default::default(), assignments: None, resync_sequence: None,
+            generation: session.token.generation, serial: true, wake, cursor: Default::default(), assignments: None, resync_sequence: None,
         })
     }
 
@@ -145,7 +146,7 @@ impl FeedbackSubscription {
         let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
         let session = inner.sessions.get(&self.session_id).ok_or("Feedback session ended.")?;
         ensure(
-            session.token.generation == self.generation && session.armed
+            session.token.generation == self.generation && (session.armed || (self.serial && !session.panel_error))
                 && session.companion_id == self.companion_id
                 && inner.connections.get(&session.connection) == Some(&self.companion_id)
                 && session.feedback_wake.as_ref().is_some_and(|wake| wake.ptr_eq(&Arc::downgrade(&self.wake))),

@@ -236,7 +236,11 @@ bool osg_ack(const cJSON *v, osg_live_session *session, const char *sequence, os
         !same(osg_string(v,"sequence"),sequence) || !same(osg_string(v,"ackStage"),"source-accepted") || !cJSON_IsFalse(get(v,"submitted"))) return false;
     if(get(v,"publicationHash")&&!same(osg_string(v,"publicationHash"),session->publication))return false;
     const cJSON *values = get(v,"feedback"), *seq = get(v,"feedbackSequence");
-    if(cJSON_IsObject(values))return feedback_envelope(values,session,r,now);
+    if(cJSON_IsObject(values)){
+        if(!feedback_envelope(values,session,r,now))return false;
+        if(cJSON_IsTrue(get(v,"feedbackPush")))session->feedback_stream=true;
+        return true;
+    }
     if(session->feedback_stream&&!values&&!seq)return true;
     if(session->feedback_envelope)return false;
     if (cJSON_IsNull(values) && cJSON_IsNull(seq)) return true;

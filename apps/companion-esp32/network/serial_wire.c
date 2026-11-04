@@ -68,7 +68,7 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
     snprintf(id,sizeof(id),"%" PRIu64,++s->serial_sequence);
     cJSON *v=cJSON_CreateObject();cJSON_AddStringToObject(v,"type","serial-request");
     const char *type=osg_string(request,"type");
-    if(type&&!strcmp(type,"baseline"))cJSON_AddBoolToObject(v,"pushFeedback",true);
+    if(type&&(!strcmp(type,"baseline")||(s->feedback_ready&&!strcmp(type,"heartbeat"))))cJSON_AddBoolToObject(v,"pushFeedback",true);
     cJSON_AddStringToObject(v,"linkId",s->link);cJSON_AddStringToObject(v,"requestId",id);cJSON_AddItemToObject(v,"frame",request);
     bool ok=cJSON_PrintPreallocated(v,outbound,sizeof(outbound),false);cJSON_Delete(v);
     if(!ok){s->request_error="USB request exceeds buffer";mbedtls_platform_zeroize(outbound,sizeof(outbound));return false;}

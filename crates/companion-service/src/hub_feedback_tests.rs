@@ -95,7 +95,14 @@ fn usb_feedback_uses_only_the_authenticated_serial_session() {
     let opened = usb(json!({"type":"open","instanceId":"instance"}));
     assert_eq!(opened["ok"], true);
     let session = opened["sessionId"].as_str().unwrap();
+    let mut display = hub.subscribe_serial_feedback("usb-primary", session).unwrap();
+    assert_eq!(display.take().unwrap().unwrap()["mode"], "snapshot");
+    let mut error = frame(&opened, "heartbeat", "1");
+    error["panelError"] = json!(true);
+    assert_eq!(usb(error)["ok"], true);
+    assert!(display.take().is_err());
     assert!(hub.subscribe_serial_feedback("usb-primary", session).is_err());
+    assert_eq!(usb(frame(&opened, "heartbeat", "2"))["ok"], true);
     let mut neutral = frame(&opened, "baseline", "0");
     neutral["values"] = json!(publication.controls.iter().map(|c| (&c.id, c.fallback())).collect::<BTreeMap<_, _>>());
     assert_eq!(usb(neutral)["ok"], true);
@@ -109,7 +116,7 @@ fn usb_feedback_uses_only_the_authenticated_serial_session() {
     hub.publish_feedback(&token, &[sample(&publication)], FeedbackMode::Delta, hub.now_ms()).unwrap();
     assert!(feedback.observed() > observed);
     assert_eq!(feedback.take().unwrap().unwrap()["values"][0]["value"], 42.0);
-    assert!(usb(frame(&opened, "heartbeat", "1")).get("feedback").is_none());
+    assert!(usb(frame(&opened, "heartbeat", "3")).get("feedback").is_none());
     hub.disconnect_connection("usb-primary", hub.now_ms());
     assert!(feedback.take().is_err());
 }

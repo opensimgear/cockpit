@@ -1468,6 +1468,9 @@ impl Hub {
             if let Some(operation) = operation { s.operation = Some(operation); }
             s.heartbeat = seq;
             s.panel_error = panel_error;
+            if panel_error {
+                if let Some(wake) = s.feedback_wake.take().and_then(|wake| wake.upgrade()) { wake.notify(); }
+            }
             s.last_seen = now;
             if changed { self.notify_presence(); }
             return Ok(reply(frame["sequence"].clone(), "ack"));

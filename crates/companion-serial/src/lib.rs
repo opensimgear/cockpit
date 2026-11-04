@@ -595,14 +595,18 @@ impl Wire {
         if !frame.is_object() {
             return Err("Invalid USB frame.".into());
         }
-        let closes_session = matches!(frame["type"].as_str(), Some("close" | "cancel"));
-        let baseline = (frame["type"] == "baseline").then(|| frame["sessionId"].clone());
-        let response = hub.handle_serial_wire(frame, &self.connection, hub.now_ms());
-        if closes_session && response["ok"] == true { self.clear_feedback(); }
-        if let Some(session) = baseline.as_ref().and_then(Value::as_str).filter(|_| response["ok"] == true && v["pushFeedback"] == true) {
+        let ends_feedback = matches!(frame["type"].as_str(), Some("auth" | "open" | "close" | "cancel"))
+            || frame["panelError"] == true;
+        let start_feedback = v["pushFeedback"] == true && frame["panelError"] != true
+            && matches!(frame["type"].as_str(), Some("baseline" | "heartbeat"));
+        let session = start_feedback.then(|| frame["sessionId"].clone());
+        let mut response = hub.handle_serial_wire(frame, &self.connection, hub.now_ms());
+        if ends_feedback && response["ok"] == true { self.clear_feedback(); }
+        if let Some(session) = session.as_ref().and_then(Value::as_str).filter(|_| response["ok"] == true && self.feedback.is_none()) {
             self.clear_feedback();
             self.feedback = Some(hub.subscribe_serial_feedback(&self.connection, session)?);
             self.feedback_observed = None;
+            response["feedbackPush"] = json!(true);
         }
         Ok(reply_frames(&response)?.into_iter().map(|frame|json!({"command":"serial-reply","linkId":link,"requestId":id,"frame":frame})).collect())
     }
@@ -1285,21 +1289,20 @@ mod tests {
         let mut request = json!({"type":"serial-request","linkId":"usb-new","requestId":"2","frame":{"type":"open","instanceId":"usb-panel"}});
         let open = wire.handle(&hub, &request).unwrap()[0]["frame"].clone();
         assert_eq!(open["type"], "session-open");
-        let mut frame = json!({"version":1,"type":"baseline","clientId":open["clientId"],"sessionId":open["sessionId"],
-            "generation":open["generation"],"publicationHash":hash,"sequence":"0","values":{"master":false}});
+        let mut frame = json!({"version":1,"type":"heartbeat","clientId":open["clientId"],"sessionId":open["sessionId"],
+            "generation":open["generation"],"publicationHash":hash,"sequence":"1"});
         request["requestId"] = json!("3");
         request["frame"] = frame.clone();
         request["pushFeedback"] = json!(true);
         let response = wire.handle(&hub, &request).unwrap();
         assert_eq!(response[0]["frame"]["ok"], true, "{response:?}");
+        assert_eq!(response[0]["frame"]["feedbackPush"], true);
         let event = wire.take_feedback().unwrap().unwrap();
         assert_eq!(event["command"], "serial-feedback");
         assert_eq!(event["linkId"], "usb-new");
         assert_eq!(event["frame"]["feedback"]["mode"], "snapshot");
         assert!(wire.take_feedback().unwrap().is_none());
-        frame["type"] = json!("heartbeat");
-        frame["sequence"] = json!("1");
-        frame.as_object_mut().unwrap().remove("values");
+        frame["sequence"] = json!("2");
         request["requestId"] = json!("4");
         request["frame"] = frame;
         let ack = wire.handle(&hub, &request).unwrap();
