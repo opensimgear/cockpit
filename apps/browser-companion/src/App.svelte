@@ -36,7 +36,8 @@
   let installPrompt=$state<any>(null), installHelp=$state(false), owner=$state(false);
   let connection:BrowserTransport|null=null, epoch=0, sequence=0, heartbeat=0, resyncSequence=0; let session=$state.raw<Record<string,any>|null>(null);
   let connecting=$state(false);
-  let disposed=false, pageHidden=false, nextAttempt=0, lastTick=performance.now();
+  let disposed=false, pageHidden=false, nextAttempt:number|null=0, lastTick=performance.now();
+  let retryTimer:ReturnType<typeof setTimeout>|undefined;
   let handlingRuntimeError=false;
   let focusWork:Promise<void>|undefined;
   let preparationHeartbeatTimer:ReturnType<typeof setInterval>|undefined;
@@ -54,10 +55,10 @@
   function recoverObsoleteSession(reason:unknown,socket=connection,version=epoch):boolean{
     if(!obsoleteSession(reason))return false;
     error='';feedbackNotice='';
-    if(!socket){if(!connection){stop('Reconnecting to Cockpit…');nextAttempt=0;}return true;}
+    if(!socket){if(!connection)stop('Reconnecting to Cockpit…',0);return true;}
     if(version!==epoch||connection!==socket||disposed||pageHidden||!owner)return true;
     if(staleRecoveryWork)return true;
-    if(!session||!panel){stop('Reconnecting to Cockpit…');nextAttempt=0;return true;}
+    if(!session||!panel){stop('Reconnecting to Cockpit…',250);return true;}
     staleRecoveryWork=Promise.resolve().then(async()=>{
       queue.stop();active=false;inputReady=false;panelError=false;panelView?.suspend();session=null;
       feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
@@ -69,7 +70,7 @@
       await loadAssigned(socket,version,assignments);
     }).catch(e=>{
       if(!current(socket,version))return;
-      if(obsoleteSession(e)){error='';stop('Reconnecting to Cockpit…');nextAttempt=performance.now()+1000;}
+      if(obsoleteSession(e)){error='';stop('Reconnecting to Cockpit…',1000);}
       else{error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}
     }).finally(()=>{staleRecoveryWork=undefined;void reportDisplay();});
     return true;
@@ -83,22 +84,32 @@
     if(!session)throw new Error('No active panel session');
     return {version:1,type,clientId:session.clientId,sessionId:session.sessionId,generation:session.generation,publicationHash:session.publicationHash,...rest};
   }
-  function stop(reason:string) {
+  function cancelRetry(){if(retryTimer!==undefined)clearTimeout(retryTimer);retryTimer=undefined;}
+  function scheduleConnect(){
+    cancelRetry();
+    if(!owner||connecting||connection||!credential||disposed||pageHidden||nextAttempt===null)return;
+    const delay=nextAttempt-performance.now();
+    if(delay<=0)return connect();
+    retryTimer=setTimeout(()=>{retryTimer=undefined;void scheduleConnect();},Math.ceil(delay));
+  }
+  function stop(reason:string,retryDelay:number|null=500) {
     epoch++;lastDisplay='';lastIdlePing=0;primaryConnectionId='';preparing?.abort();preparing=undefined;if(preparationHeartbeatTimer)clearInterval(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
     feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
-    const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
+    const previous=connection;connection=null;previous?.close();status=reason;
+    nextAttempt=retryDelay===null?null:performance.now()+retryDelay;
+    void scheduleConnect();
   }
   function runtimeError(message:string){
     error=message;
     if(handlingRuntimeError)return;
     handlingRuntimeError=true;
-    try{stop('Compiled player error · controls released');nextAttempt=performance.now()+2000;}
+    try{stop('Compiled player error · controls released',2000);}
     finally{handlingRuntimeError=false;}
   }
   function consume(reply:Record<string,any>,version:number){
     if(version!==epoch||disposed)return;
     if(reply.type==='assignments-event'){
-      if(JSON.stringify(reply.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;}
+      if(JSON.stringify(reply.assignments)!==JSON.stringify(assignments))stop('Panel assignment updated',0);
       return;
     }
     if(!session||!panel||!reply.feedback)return;
@@ -163,11 +174,12 @@
     active=true;status=focused()?'Connected · panel active':'Connected · feedback active · controls paused';error='';
   }
   async function connect(){
-    if(!owner || connecting || connection || !credential || disposed || pageHidden || performance.now()<nextAttempt)return;
+    if(!owner || connecting || connection || !credential || disposed || pageHidden || nextAttempt===null || performance.now()<nextAttempt)return;
+    cancelRetry();
     connecting=true;const savedCredential=credential;const version=epoch,socket=new BrowserTransport();connection=socket;
     socket.onreply=reply=>consume(reply,version);
     socket.onfeedbackclose=()=>{recoverObsoleteSession(Error('Session is obsolete: feedback stream ended'),socket,version);};
-    socket.onclose=()=>{if(connection===socket){stop('Offline · reconnecting to Cockpit');nextAttempt=0;void connect();}};
+    socket.onclose=()=>{if(connection===socket)stop('Offline · reconnecting to Cockpit',connecting?2000:0);};
     try {
       await socket.connect();if(!current(socket,version))return;
       const auth=await socket.request({type:'auth',token:savedCredential.token});
@@ -178,10 +190,10 @@
       await subscribeAssignments(socket);
       if(!current(socket,version))return;
       await loadAssigned(socket,version,assignments);
-    }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');nextAttempt=performance.now()+2000;
+    }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit',2000);
       if(error.includes('invalid or revoked')){credential=null;clearCredential(localStorage,savedCredential.token);status='Pair this browser again in Cockpit';}
     }}
-    finally{connecting=false;if(!credential && secret)void pair();else void reportDisplay();}
+    finally{connecting=false;if(!credential && secret)void pair();else if(!connection)void scheduleConnect();else void reportDisplay();}
   }
   async function pair(){
     if(!owner || connecting || !secret || disposed || !visible())return;
@@ -204,9 +216,9 @@
       if(paired.type!=='paired')throw new Error('Pairing was not approved. Start again in Cockpit.');
       const saved={token:paired.token,companionId:paired.companionId,hostId:paired.hostId};
       saveCredential(localStorage,saved);credential=saved;secret='';history.replaceState(null,'','/');
-      if(version===epoch){stop('Pairing saved · connecting…');nextAttempt=0;}
+      if(version===epoch)stop('Pairing saved · connecting…',0);
     }catch(e){if(version===epoch&&!disposed){secret='';error=obsoleteSession(e)?'':String(e instanceof Error?e.message:e);stop('Pairing did not complete');}}
-    finally{connecting=false;void connect();}
+    finally{connecting=false;void scheduleConnect();}
   }
   let maintaining=false,lastDisplay='',lastIdlePing=0;
   let displayRequest:BrowserTransport|null=null;
@@ -232,7 +244,7 @@
       const presence=await socket.request({type:'presence',display});
       if(!stillCurrent())return;
       lastDisplay=key;
-      if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments)){stop('Panel assignment updated');nextAttempt=0;void connect();}
+      if(JSON.stringify(presence.assignments)!==JSON.stringify(assignments))stop('Panel assignment updated',0);
     }catch(e){if(stillCurrent()&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
     finally{
       if(displayRequest===socket)displayRequest=null;
@@ -243,11 +255,10 @@
     const now=performance.now();
     if(now-lastTick>1000 && active&&inputReady)void refreshControls();lastTick=now;
     if(maintaining || connecting || disposed || pageHidden || focusWork || staleRecoveryWork)return;
-    if(!connection){void connect();return;}
+    if(!connection)return;
     const socket=connection,version=epoch;maintaining=true;
     try{
       if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
-      else if(!session && assignments.length)await loadAssigned(socket,version,assignments);
       else if(!session && now-lastIdlePing>=2000){lastIdlePing=now;await socket.request({type:'ping'});}
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
     finally{maintaining=false;}
@@ -260,8 +271,8 @@
     if(!installPrompt){installHelp=true;return;}
     await installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;
   }
-  function changedPage(value:string){stop('Panel page changed');pageId=value;nextAttempt=0;}
-  function resumeVisible(){if(!visible()||disposed)return;nextAttempt=0;return connect();}
+  function changedPage(value:string){pageId=value;stop('Panel page changed',0);}
+  function resumeVisible(){if(!visible()||disposed)return;nextAttempt=0;return scheduleConnect();}
   function refreshControls():Promise<void>|undefined {
     if(staleRecoveryWork)return staleRecoveryWork;
     queue.stop();inputReady=false;panelView?.reset();
@@ -290,7 +301,7 @@
     if(!visible()){if(secret){secret='';stop('Pairing paused while hidden');}else return blurred();}
     else{hasFocus=document.hasFocus();return refreshControls();}
   }
-  function pageHiding(){pageHidden=true;secret='';stop('Panel page unloaded');}
+  function pageHiding(){pageHidden=true;secret='';stop('Panel page unloaded',null);}
   function pageShowing(){pageHidden=false;return resumeVisible();}
   onMount(()=>{
     hasFocus=document.hasFocus();
@@ -304,7 +315,7 @@
       if(!['osg-browser-credential','osg-browser-credential-v2'].includes(event.key??'') || !credential)return;
       let saved:Credential|null=null;try{saved=readCredential(localStorage);}catch{}
       if(saved?.token===credential.token)return;
-      stop('Pairing replaced in another browser window');credential=null;panel=null;assignments=[];owner=false;releaseOwner();
+      stop('Pairing replaced in another browser window',null);credential=null;panel=null;assignments=[];owner=false;releaseOwner();
       warning='This browser pairing was replaced in another window. Reopen the companion to use the new pairing.';
     };
     window.addEventListener('storage',storageChanged);
@@ -321,7 +332,7 @@
       initialize();await new Promise<void>(resolve=>releaseOwner=resolve);
     }).catch(e=>error=String(e));
     else initialize();
-    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed');disposeCompiledSurfaces(panelSurfaces);clearInterval(timer);window.removeEventListener('blur',blurred);window.removeEventListener('pagehide',pageHiding);window.removeEventListener('pageshow',pageShowing);window.removeEventListener('focus',gainedFocus);document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
+    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed',null);disposeCompiledSurfaces(panelSurfaces);clearInterval(timer);window.removeEventListener('blur',blurred);window.removeEventListener('pagehide',pageHiding);window.removeEventListener('pageshow',pageShowing);window.removeEventListener('focus',gainedFocus);document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
   });
 </script>
 
@@ -337,7 +348,7 @@
     </section>
   {:else}
     <div class="toolbar"><span class:active={active||panelError}>{status}</span>
-      {#if assignments.length>1}<label>Panel<select value={selected} onchange={e=>{stop('Switching panel');selected=e.currentTarget.value;nextAttempt=0;}}>{#each assignments as a}<option value={a.instanceId}>{a.name}</option>{/each}</select></label>{/if}
+      {#if assignments.length>1}<label>Panel<select value={selected} onchange={e=>{selected=e.currentTarget.value;stop('Switching panel',0);}}>{#each assignments as a}<option value={a.instanceId}>{a.name}</option>{/each}</select></label>{/if}
       {#if panel && panel.document.ui.pages.length>1}<label>Page<select value={pageId} onchange={e=>changedPage(e.currentTarget.value)}>{#each panel.document.ui.pages as page}<option value={page.id}>{page.title}</option>{/each}</select></label>{/if}
     </div>
     {#if panel}<main class:inactive={!active} bind:clientWidth={displayWidth} bind:clientHeight={displayHeight}>{#key viewRevision}<CompiledPanel bind:this={panelView} publication={panel} prepared={panelSurfaces} {pageId} {feedback} {suppressFeedbackCues} {muted} interactive={active&&inputReady&&focused()} onoutput={emitOutput} onerror={runtimeError} onaudio={value=>audioAvailability=value}/>{/key}</main>

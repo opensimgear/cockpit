@@ -22,7 +22,7 @@ const assertObsoleteHidden=h=>assert.equal(JSON.stringify([h.handlers.error,h.ha
 /** Actual mounted App listeners and real queue/feedback/credential logic. */
 function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,rejectPanelAfter=Infinity,failPreparationAfter=Infinity,holdPreparation=false,displayOnly=false,staleOnce=[]}={}){
  let handlers,mount,cleanup,focused=true,clock=100,advanced=0,finishVerification,finishPreparation,verifications=0,preparations=0,assigned=[assignment];const preparedSurfaces=[];
- const sockets=[],intervals=new Map(),storage=new Map(),staleUsed=new Set(),window=new EventTarget(),document=new EventTarget();
+ const sockets=[],intervals=new Map(),timeouts=new Map(),storage=new Map(),staleUsed=new Set(),window=new EventTarget(),document=new EventTarget();
  Object.assign(document,{visibilityState:'visible',hasFocus:()=>focused});
  const location={hash:pair?'#pair='+'x'.repeat(43):''},localStorage={getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)};
  if(!pair)credentials.saveCredential(localStorage,saved);
@@ -47,6 +47,7 @@ function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,re
  const {js}=compile(injected,{filename:'App.svelte',generate:'server'}),exports={};
  vm.runInNewContext(ts.transpileModule(js.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports,structuredClone,TextEncoder,URLSearchParams,AbortController,performance:{now:()=>clock},crypto,window,document,location,history:{replaceState(){location.hash='';}},navigator:{},localStorage,
+  setTimeout(cb,delay){const id=Symbol();timeouts.set(id,{cb,at:clock+delay});return id;},clearTimeout:id=>timeouts.delete(id),
   setInterval(cb,period=0){const id=intervals.size+1;intervals.set(id,{cb,period});return id;},clearInterval:id=>intervals.delete(id),capture:v=>handlers=v,
   require(name){
    if(name==='svelte/internal/server')return server;if(name==='svelte')return{...svelte,onMount:cb=>mount=cb};
@@ -57,7 +58,8 @@ function harness({pair=false,hold=[],rejectPanel=false,holdVerification=false,re
    if(name==='../../companion/src/lib/input-queue')return{createOrderedInputQueue};if(name==='./transport')return{...credentials,BrowserTransport:Socket};if(name==='./feedback')return feedbackApi;if(name==='./panel-resolution')return resolutionApi;throw Error(name);
   },
  });render(exports.default).body;cleanup=mount();
- return{handlers,sockets,storage,preparedSurfaces,setAssignments(rows){assigned=rows;},async focus(v){focused=v;window.dispatchEvent(new Event(v?'focus':'blur'));await flush();},async visibility(v){document.visibilityState=v;document.dispatchEvent(new Event('visibilitychange'));await flush();},async pagehide(){window.dispatchEvent(new Event('pagehide'));await flush();},async pageshow(){window.dispatchEvent(new Event('pageshow'));await flush();},async tick(){for(const timer of intervals.values())timer.cb();await flush();},async stall(ms){clock+=ms;await this.tick();},async advance(ms){for(let elapsed=0;elapsed<ms;elapsed+=250){clock+=250;advanced+=250;for(const timer of intervals.values())if(timer.period&&advanced%timer.period===0)timer.cb();await flush();}},close(){cleanup();},finishVerification(){finishVerification();},finishPreparation(){finishPreparation();}};
+ const fireDeadlines=()=>{for(const [id,timer] of [...timeouts])if(timer.at<=clock&&timeouts.delete(id))timer.cb();};
+ return{handlers,sockets,storage,preparedSurfaces,setAssignments(rows){assigned=rows;},async focus(v){focused=v;window.dispatchEvent(new Event(v?'focus':'blur'));await flush();},async visibility(v){document.visibilityState=v;document.dispatchEvent(new Event('visibilitychange'));await flush();},async pagehide(){window.dispatchEvent(new Event('pagehide'));await flush();},async pageshow(){window.dispatchEvent(new Event('pageshow'));await flush();},async elapse(ms){clock+=ms;fireDeadlines();await flush();},async tick(){fireDeadlines();for(const timer of intervals.values())timer.cb();await flush();},async stall(ms){clock+=ms;await this.tick();},async advance(ms){for(let elapsed=0;elapsed<ms;elapsed+=250){clock+=250;advanced+=250;fireDeadlines();for(const timer of intervals.values())if(timer.period&&advanced%timer.period===0)timer.cb();await flush();}},close(){cleanup();},finishVerification(){finishVerification();},finishPreparation(){finishPreparation();}};
 }
 test('compiled delivery advertises capabilities and cached hashes before neutral baseline',async()=>{const h=harness();await flush();try{const open=h.sockets[0].requests.find(f=>f.type==='open');assert.deepEqual(open.widgetCapabilities,BROWSER_WIDGET_CAPABILITIES);assert.deepEqual(open.haveAssets,['b'.repeat(64)]);assert.deepEqual(h.sockets[0].requests.find(f=>f.type==='baseline').values,{toggle:false,selector:.5});assert.equal(h.sockets[0].feedbackSubscription?.type,'feedback-subscribe');assert.equal(h.handlers.active,true);assert.equal(h.handlers.queue.snapshot().enabled,true);}finally{h.close();}});
 test('blur drops queued input and focus resumes the neutral session without decoding or reopening it',async()=>{
@@ -81,7 +83,7 @@ test('an assignment changed while hidden loads its current panel and neutral bas
   h.setAssignments(assignments);await h.tick();
   assert.equal(old.requests.filter(frame=>frame.type==='presence').length,reads);
   old.onreply({type:'assignments-event',assignments});
-  await h.tick();await flush();const socket=h.sockets.at(-1);
+  await flush();const socket=h.sockets.at(-1);
   assert.equal(old.closed,true);assert.equal(h.sockets.length,2);assert.equal(socket.requests.find(frame=>frame.type==='open').instanceId,'updated-instance');
   assert.deepEqual(socket.requests.find(frame=>frame.type==='baseline').values,{toggle:false,selector:.5});assert.equal(h.handlers.session.controllerInstanceId,'updated-instance');
   assert.equal(h.handlers.active,true);assert.equal(h.handlers.queue.snapshot().enabled,false);assert.equal(h.handlers.feedback.confirmed.value,true);
@@ -237,7 +239,23 @@ test('a pending display report cannot start a second load during stale-session r
 test('an obsolete open response with no local session reconnects automatically without surfacing it',async()=>{
  const h=harness({staleOnce:['open']});await flush();try{
   assert.equal(h.sockets.length,1);assert.equal(h.handlers.session,null);assertObsoleteHidden(h);
-  await h.tick();assert.equal(h.sockets.length,2);assert.equal(h.handlers.active,true);assertObsoleteHidden(h);
+  await h.elapse(249);assert.equal(h.sockets.length,1);
+  await h.elapse(1);assert.equal(h.sockets.length,2);assert.equal(h.handlers.active,true);assertObsoleteHidden(h);
+ }finally{h.close();await flush();}
+});
+test('an assignment pushed during open replaces it without a maintenance tick',async()=>{
+ const h=harness({hold:['open']});await flush();try{
+  const previous=h.sockets[0],replacement=[{...assignment,instanceId:'replacement'}];
+  assert.equal(previous.pending[0]?.frame.type,'open');
+  h.setAssignments(replacement);
+  previous.onreply({type:'assignments-event',assignments:replacement});
+  await flush();
+  assert.equal(previous.closed,true);
+  assert.equal(h.sockets.length,2);
+  assert.equal(h.sockets[1].pending[0]?.frame.instanceId,'replacement');
+  h.sockets[1].release('open');await flush();
+  assert.equal(h.handlers.active,true);
+  assert.equal(previous.requests.some(frame=>frame.type==='baseline'),false);
  }finally{h.close();await flush();}
 });
 test('prepared pixels from an unloaded page are disposed without committing or baselining',async()=>{
@@ -255,5 +273,7 @@ test('a player failure releases held output, closes its session and bounds recon
   h.handlers.emitOutput({controlId:'toggle',value:true});h.handlers.emitOutput({controlId:'toggle',value:false});await flush();const socket=h.sockets[0];assert.equal(socket.requests.filter(frame=>frame.type==='input').length,1);
   h.handlers.runtimeError('Canvas context unavailable');await flush();assert.equal(socket.closed,true);assert.equal(h.handlers.active,false);assert.equal(h.handlers.session,null);assert.equal(h.handlers.queue.snapshot().enabled,false);assert.equal(h.handlers.queue.snapshot().pending,0);
   h.handlers.emitOutput({controlId:'toggle',value:true});await h.tick();await h.handlers.connect();assert.equal(h.sockets.length,1,'A failed renderer must not spin fresh sessions immediately.');assert.equal(socket.requests.filter(frame=>frame.type==='input').length,1);
+  await h.elapse(1999);assert.equal(h.sockets.length,1);
+  await h.pagehide();await h.elapse(1);assert.equal(h.sockets.length,1,'Page unload cancels the retry deadline.');
  }finally{h.close();await flush();}
 });
