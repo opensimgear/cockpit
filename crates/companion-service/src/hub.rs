@@ -998,6 +998,15 @@ impl Hub {
             if let Some(wake) = wake.upgrade() { wake.notify(); true } else { false }
         });
     }
+    pub fn serial_lease_remaining_ms(&self, connection: &str, now: u64) -> Option<u64> {
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        inner.sessions.values().filter(|session| session.connection == connection && session.transport == SourceTransport::Usb)
+            .map(|session| {
+                let lease = if preparing_panel(session) { PANEL_PREPARATION_LEASE_MS } else { LEASE_MS };
+                lease.saturating_sub(now.max(inner.last_now).saturating_sub(session.last_seen))
+            }).min()
+    }
+
     pub fn serial_panel_preparing(&self, companion: &str, connection: &str) -> bool {
         let inner=self.inner.lock().unwrap_or_else(|p|p.into_inner());
         inner.sessions.values().any(|session| session.transport == SourceTransport::Usb

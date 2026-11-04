@@ -32,5 +32,6 @@ pub fn open(path: &str, baud: u32) -> Result<DuplexParts, String> {
     { Err("Native USB duplex I/O is unavailable on this platform.".into()) }
 }
 
+pub(super) const FRAMING_ERROR: &str = "USB serial receive reported a framing, parity or overrun error.";
 const CANCELLED: &str = "USB duplex connection was cancelled.";
 const WRITE_TIMEOUT: &str = "USB duplex write exceeded its deadline; its result is unknown.";

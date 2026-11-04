@@ -108,7 +108,7 @@ impl BlockingReceiver for Receiver {
         if count == 0 || buffer.len() == 1 { return Ok(count); }
         let mut status: COMSTAT = unsafe { std::mem::zeroed() };let mut errors = 0;
         if unsafe { ClearCommError(self.0.port.0, &mut errors, &mut status) } == 0 { return Err(error("Could not inspect received USB bytes")); }
-        if errors != 0 { return Err("USB serial receive reported a framing, parity or overrun error.".into()); }
+        if errors != 0 { return Err(FRAMING_ERROR.into()); }
         let ready = (status.cbInQue as usize).min(buffer.len() - 1);
         if ready == 0 { self.0.check()?;return Ok(1); }
         self.0.read(&mut buffer[1..1 + ready]).map(|count| count + 1)

@@ -63,12 +63,12 @@ impl Hub {
     }
 
     /// The USB worker already owns and authenticated the primary link.
-    pub fn subscribe_serial_assignments(&self, primary: &str) -> Result<AssignmentSubscription, String> {
+    pub fn subscribe_serial_assignments(&self, primary: &str, wake: Arc<NativeWake>) -> Result<AssignmentSubscription, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let companion = inner.connections.get(primary).ok_or("Primary connection ended.")?.clone();
         let digest = inner.record.credentials.iter().find(|row| row.companion_id == companion)
             .ok_or("USB credential was revoked.")?.token_hash.clone();
-        Ok(self.attach_assignment_reader(&mut inner, primary, companion, digest, Arc::new(NativeWake::default())))
+        Ok(self.attach_assignment_reader(&mut inner, primary, companion, digest, wake))
     }
 
     fn attach_assignment_reader(&self, inner: &mut Inner, primary: &str, companion: String,
@@ -128,7 +128,7 @@ impl Hub {
     }
 
     /// The serial worker has already authenticated this exact local connection.
-    pub fn subscribe_serial_feedback(&self, connection: &str, session_id: &str) -> Result<FeedbackSubscription, String> {
+    pub fn subscribe_serial_feedback(&self, connection: &str, session_id: &str, wake: Arc<NativeWake>) -> Result<FeedbackSubscription, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let companion = inner.connections.get(connection).ok_or("USB connection ended.")?.clone();
         let digest = inner.record.credentials.iter().find(|row| row.companion_id == companion)
@@ -137,7 +137,6 @@ impl Hub {
         ensure(session.connection == connection && session.companion_id == companion
             && session.transport == SourceTransport::Usb && !session.panel_error,
             "Feedback subscription belongs to another or failed USB session.")?;
-        let wake = Arc::new(NativeWake::default());
         if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|wake| wake.upgrade()) {
             previous.notify();
         }

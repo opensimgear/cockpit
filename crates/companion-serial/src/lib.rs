@@ -4,6 +4,7 @@ pub mod native_duplex;
 mod flash;
 mod reconnect;
 mod recovery;
+mod read_pump;
 mod serial_write;
 mod status_observation;
 use status_observation::StatusObserver;
@@ -11,10 +12,11 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 pub use flash::*;
 use osg_companion_service::{AssignmentSubscription, FeedbackSubscription, Hub};
 use serde_json::{json, Value};
-use serialport::{SerialPort, SerialPortType};
+use serialport::SerialPortType;
+use osg_streams::NativeWake;
+use read_pump::ReadPump;
 use sha2::{Digest, Sha256};
 use std::{
-    io::Read,
     sync::atomic::{AtomicBool, Ordering},
     sync::{
         mpsc::{self, Receiver, SyncSender},
@@ -98,8 +100,16 @@ enum Action {
 struct Link {
     port: String,
     tx: SyncSender<Action>,
+    wake: Arc<NativeWake>,
     state: Arc<Mutex<Value>>,
     join: Option<thread::JoinHandle<()>>,
+}
+impl Link {
+    fn send(&self, action: Action) -> Result<(), String> {
+        self.tx.try_send(action).map_err(|_| "USB device is busy or disconnected.".to_owned())?;
+        self.wake.notify();
+        Ok(())
+    }
 }
 pub type FlashObserver = Arc<dyn Fn(&Value) + Send + Sync>;
 
@@ -210,8 +220,10 @@ impl Manager {
         let path = port.to_owned();
         let observer = self.status_observer.clone();
         let discovery = self.discovery_observer.clone();
+        let wake = Arc::new(NativeWake::default());
+        let worker_wake = wake.clone();
         let join = thread::spawn(move || {
-            let result = worker(&path, &hub, &rx, &public, expected.as_deref(), &observer);
+            let result = worker(&path, &hub, &rx, &public, expected.as_deref(), &observer, worker_wake);
             if let Err(error) = result {
                 let paired=hub.command(&json!({"command":"companion_status"})).ok();
                 let mut state=public.lock().unwrap_or_else(|p|p.into_inner());
@@ -237,6 +249,7 @@ impl Manager {
         self.links.lock().unwrap_or_else(|p|p.into_inner()).insert(port.into(),Link {
             port: port_name,
             tx,
+            wake,
             state,
             join: Some(join),
         });
@@ -433,7 +446,7 @@ impl Manager {
     fn enqueue(&self, action: Action) -> Result<(), String> {
         let selected=self.selected.lock().unwrap_or_else(|p|p.into_inner()).clone().ok_or("Connect a USB device first.")?;
         let links=self.links.lock().unwrap_or_else(|p|p.into_inner());
-        links.get(&selected).ok_or("Connect a USB device first.")?.tx.try_send(action).map_err(|_|"USB device is busy or disconnected.".into())
+        links.get(&selected).ok_or("Connect a USB device first.")?.send(action)
     }
     pub fn scan(&self)->Result<(),String>{
         if self.status()["scanning"]==true{return Err("A Wi-Fi scan is already running.".into());}
@@ -455,7 +468,7 @@ impl Manager {
         });
         let link = matching.next().ok_or("The selected companion is not connected by USB.")?;
         if matching.next().is_some() { return Err("The companion appears on multiple USB ports. Reconnect the exact device.".into()); }
-        link.tx.try_send(Action::Record(v)).map_err(|_|"USB device is busy or disconnected.".into())
+        link.send(Action::Record(v))
     }
     pub fn provision(&self, v: Value, companion: String) -> Result<(), String> {
         let result = self.enqueue(Action::Provision(v, companion));
@@ -475,7 +488,7 @@ impl Manager {
         let link=self.links.lock().unwrap_or_else(|p|p.into_inner()).remove(port);
         if let Some(mut link)=link{
             self.status_observer.notify();
-            let _=link.tx.try_send(Action::Stop);drop(link.tx);
+            let _=link.send(Action::Stop);drop(link.tx);link.wake.notify();
             if let Some(join)=link.join.take(){let _=join.join();}
         }
     }
@@ -509,8 +522,8 @@ mod candidate_tests {
         assert!(candidate_visible(None, None));
     }
 }
-fn send(port: &mut dyn SerialPort, v: &Value, public:&Arc<Mutex<Value>>) -> Result<(), String> {
-    serial_write::send(port,v,public,false)
+fn send(port: &mut ReadPump, v: &Value, public:&Arc<Mutex<Value>>) -> Result<(), String> {
+    serial_write::send_native(&mut *port.writer,port.baud,v,public,false)
 }
 fn reply_frames(value: &Value) -> Result<Vec<Value>, String> {
     let bytes = serde_json::to_vec(value).map_err(|_| "Invalid reply.")?;
@@ -535,6 +548,7 @@ fn reply_frames(value: &Value) -> Result<Vec<Value>, String> {
     Ok(frames)
 }
 struct Wire {
+    wake: Arc<NativeWake>,
     link: String,
     connection: String,
     sequence: u64,
@@ -544,8 +558,9 @@ struct Wire {
     feedback_frames: std::collections::VecDeque<Value>,
 }
 impl Wire {
-    fn new() -> Self {
+    fn new(wake: Arc<NativeWake>) -> Self {
         Self {
+            wake,
             link: String::new(),
             connection: uuid::Uuid::new_v4().to_string(),
             sequence: 0,
@@ -619,12 +634,12 @@ impl Wire {
         if ends_feedback && response["ok"] == true { self.clear_feedback(); }
         if start_assignments && response["ok"] == true
             && response["assignments"].as_array().is_some_and(|rows| rows.len() != 1) {
-            self.assignments = Some(hub.subscribe_serial_assignments(&self.connection)?);
+            self.assignments = Some(hub.subscribe_serial_assignments(&self.connection, self.wake.clone())?);
             response["assignmentsPush"] = json!(true);
         }
         if let Some(session) = session.as_ref().and_then(Value::as_str).filter(|_| response["ok"] == true && self.feedback.is_none()) {
             self.clear_feedback();
-            self.feedback = Some(hub.subscribe_serial_feedback(&self.connection, session)?);
+            self.feedback = Some(hub.subscribe_serial_feedback(&self.connection, session, self.wake.clone())?);
             self.feedback_observed = None;
             response["feedbackPush"] = json!(true);
         }
@@ -651,17 +666,15 @@ fn worker(
     public: &Arc<Mutex<Value>>,
     expected: Option<&str>,
     observer: &StatusObserver,
+    wake: Arc<NativeWake>,
 ) -> Result<(), String> {
-    let mut port = serialport::new(path, 115200)
-        .timeout(Duration::from_millis(10))
-        .open()
-        .map_err(|_| "USB port unavailable.")?;
-    let _ = port.write_data_terminal_ready(false);
-    let _ = port.write_request_to_send(false);
-    let mut wire = Wire::new();
+    let _ = wake.bind_thread(thread::current());
+    let mut port = ReadPump::open(path, 115200, wake.clone())?;
+    let mut wire = Wire::new(wake.clone());
     let result = (|| {
         let started = Instant::now();
         let mut baud_switched = Instant::now();
+        let mut probe_framing_error = false;
         let mut last_probe = Instant::now() - Duration::from_secs(1);
         let mut last_status = None;
         let mut scan_started:Option<Instant>=None;
@@ -673,9 +686,9 @@ fn worker(
         let mut provision: Option<(String, Instant, Option<Value>)> = None;
         let mut line = Vec::new();
         let mut overflow = false;
-        let mut bytes = [0u8; 512];
         loop {
-            let _ = hub.tick(hub.now_ms());
+            let observed = wake.observed();
+            hub.tick(hub.now_ms());
             if scan_started.is_some_and(|at|at.elapsed()>Duration::from_secs(15)){
                 scan_started = None;
                 observer.set_fields(public, [
@@ -694,25 +707,28 @@ fn worker(
                 return Err("Device firmware did not respond.".into());
             }
             if !ready && baud_switched.elapsed() > Duration::from_secs(2) {
-                let baud = if port.baud_rate().unwrap_or(115200) == 115200 { 921600 } else { 115200 };
-                port.set_baud_rate(baud).map_err(|e| e.to_string())?;
-                let _ = port.clear(serialport::ClearBuffer::Input);
+                let baud = if port.baud == 115200 { 921600 } else { 115200 };
+                drop(port);
+                port = ReadPump::open(path, baud, wake.clone())?;
                 line.clear();
                 overflow = false;
                 baud_switched = Instant::now();
+                probe_framing_error = false;
             }
             if last_probe.elapsed() > Duration::from_millis(if ready { 1000 } else { 500 }) {
                 nonce = uuid::Uuid::new_v4().to_string();
-                serial_write::send(&mut *port,&json!({"command":"status","requestId":nonce}),public,true)?;
+                serial_write::send_native(&mut *port.writer,port.baud,&json!({"command":"status","requestId":nonce}),public,true)?;
                 last_probe = Instant::now();
             }
             // One local command per loop; no provisioning retries.
-            match rx.try_recv() {
+            let action = rx.try_recv();
+            let did_action = action.is_ok();
+            match action {
                 Ok(Action::Stop) => {
                     if public.lock().unwrap_or_else(|p| p.into_inner())["device"]["connectionMode"]
                         == "serial"
                     {
-                        let _ = send(&mut *port, &json!({"command":"stop"}),public);
+                        let _ = send(&mut port, &json!({"command":"stop"}),public);
                     }
                     return Ok(());
                 }
@@ -743,7 +759,7 @@ fn worker(
                                     ("networks", json!([])),
                                 ]);
                             }
-                            send(&mut *port,&v,public)?;
+                            send(&mut port,&v,public)?;
                         },
                         Action::Provision(mut v, id) => {
                             if provision.is_some() {
@@ -752,8 +768,9 @@ fn worker(
                             }
                             let assignment =
                                 v.as_object_mut().and_then(|v| v.remove("_assignment"));
-                            send(&mut *port, &v,public)?;
+                            send(&mut port, &v,public)?;
                             provision = Some((id, Instant::now(), assignment));
+                            hub.observe_presence(wake.clone());
                             observer.set(public, "stage", json!("Provisioning device"));
                         }
                         Action::Arm => {
@@ -774,7 +791,7 @@ fn worker(
                                 continue;
                             }
                             send(
-                                &mut *port,
+                                &mut port,
                                 &json!({"command":"arm","sessionId":status["sessionId"],"generation":status["generation"],"publicationHash":status["publicationHash"],"armEpoch":status["armEpoch"]}),
                                 public,
                             )?;
@@ -801,12 +818,24 @@ fn worker(
                     observer.set(public, "provisioning", json!(false));
                 }
             }
-            if let Some(feedback) = wire.take_feedback()? {
-                send(&mut *port, &feedback, public)?;
+            let feedback = wire.take_feedback()?;
+            if let Some(feedback) = &feedback {
+                send(&mut port, feedback, public)?;
             }
-            match port.read(&mut bytes) {
-                Ok(n) => {
-                    for &b in &bytes[..n] {
+            let incoming = if probe_framing_error { None } else {
+                match port.try_read() {
+                    Err(error) if !ready && error == native_duplex::FRAMING_ERROR => {
+                        // The wrong probe baud can produce a framing error. Keep
+                        // the alternate baud deadline rather than reconnecting at
+                        // the same rate indefinitely.
+                        probe_framing_error = true;
+                        None
+                    }
+                    result => result?,
+                }
+            };
+            if let Some(bytes) = incoming {
+                    for &b in bytes.iter() {
                         if b != b'\n' && b != b'\r' {
                             if line.len() < 8192 && !overflow {
                                 line.push(b);
@@ -845,7 +874,7 @@ fn worker(
                                                     response["frame"]["error"].clone(),
                                                 );
                                             }
-                                            send(&mut *port, &response,public)?;
+                                            send(&mut port, &response,public)?;
                                         }
                                     }
                                     _ => {
@@ -898,7 +927,7 @@ fn worker(
                                                     .as_millis()
                                                     as u64;
                                                 send(
-                                                    &mut *port,
+                                                    &mut port,
                                                     &json!({"command":"connect","unixMs":unix}),
                                                     public,
                                                 )?;
@@ -1008,14 +1037,27 @@ fn worker(
                         line.clear();
                         overflow = false;
                     }
-                }
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                    ) => {}
-                Err(_) => return Err("USB disconnected.".into()),
+                continue;
             }
+            if did_action || feedback.is_some() { continue; }
+            let probe_interval = Duration::from_millis(if ready { 1000 } else { 500 });
+            let mut delay = probe_interval.saturating_sub(last_probe.elapsed());
+            if !ready {
+                delay = delay.min(Duration::from_secs(45).saturating_sub(started.elapsed()))
+                    .min(Duration::from_secs(2).saturating_sub(baud_switched.elapsed()));
+            }
+            if let Some(scan) = scan_started {
+                delay = delay.min(Duration::from_secs(15).saturating_sub(scan.elapsed()));
+            } else if let Some(status) = last_status {
+                delay = delay.min(response_timeout.saturating_sub(status.elapsed()));
+            }
+            if let Some((_, at, _)) = &provision {
+                delay = delay.min(Duration::from_secs(60).saturating_sub(at.elapsed()));
+            }
+            if let Some(lease) = hub.serial_lease_remaining_ms(&wire.connection, hub.now_ms()) {
+                delay = delay.min(Duration::from_millis(lease));
+            }
+            wake.wait(observed, delay);
         }
     })();
     hub.disconnect_connection(&wire.connection, hub.now_ms());
@@ -1110,7 +1152,7 @@ mod tests {
         let manager=Manager::default();
         let (tx5,rx5)=mpsc::sync_channel(8);let (tx6,rx6)=mpsc::sync_channel(8);
         for (port,tx) in [("COM5",tx5),("COM6",tx6)]{
-            manager.links.lock().unwrap().insert(port.into(),Link{port:port.into(),tx,state:Arc::new(Mutex::new(json!({"port":port,"connected":true}))),join:None});
+            manager.links.lock().unwrap().insert(port.into(),Link{port:port.into(),tx,wake:Arc::default(),state:Arc::new(Mutex::new(json!({"port":port,"connected":true}))),join:None});
         }
         *manager.selected.lock().unwrap()=Some("COM5".into());
         manager.record(json!({"command":"status"})).unwrap();
@@ -1128,7 +1170,7 @@ mod tests {
     fn companion_targeting_never_uses_another_selected_usb_device() {
         let manager=Manager::default(); let (tx5,rx5)=mpsc::sync_channel(8); let (tx8,rx8)=mpsc::sync_channel(8);
         for (port,companion,tx) in [("COM5","waveshare",tx5),("COM8","sunton",tx8)] {
-            manager.links.lock().unwrap().insert(port.into(),Link{port:port.into(),tx,state:Arc::new(Mutex::new(json!({"connected":true,"ready":true,"device":{"companionId":companion}}))),join:None});
+            manager.links.lock().unwrap().insert(port.into(),Link{port:port.into(),tx,wake:Arc::default(),state:Arc::new(Mutex::new(json!({"connected":true,"ready":true,"device":{"companionId":companion}}))),join:None});
         }
         *manager.selected.lock().unwrap()=Some("COM5".into());
         manager.record_for(Some("sunton"),json!({"command":"disarm"})).unwrap();
@@ -1199,6 +1241,7 @@ mod tests {
         manager.links.lock().unwrap().insert(port.into(), Link {
             port: port.into(),
             tx,
+            wake: Arc::default(),
             state: Arc::new(Mutex::new(json!({"connected":true}))),
             join: None,
         });
@@ -1273,7 +1316,7 @@ mod tests {
         let offer = hub
             .command(&json!({"command":"companion_pair_offer"}))
             .unwrap();
-        let mut wire = Wire::new();
+        let mut wire = Wire::new(Arc::default());
         wire.reset(&hub, "usb-test");
         let pair = json!({"type":"serial-request","linkId":"usb-test","requestId":"1","frame":{"type":"pair","secret":offer["secret"],"companionId":"test-screen","name":"Test screen"}});
         let pending = wire.handle(&hub, &pair).unwrap()[0]["frame"].clone();

@@ -6,6 +6,7 @@ license-file = "../../LICENSE"
 
 [dependencies]
 osg-companion-service = { path = "../companion-service" }
+osg-streams = { path = "../streams" }
 serialport = { version = "4.8", default-features = false }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }

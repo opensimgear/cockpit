@@ -3550,6 +3550,7 @@ dependencies = [
  "espflash",
  "libc",
  "osg-companion-service",
+ "osg-streams",
  "serde_json",
  "serialport",
  "sha2",
