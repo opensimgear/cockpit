@@ -23,6 +23,7 @@ pub(crate) struct ProfilePanelOperation {
 mod presentation;
 mod listener_observation;
 mod presence_observation;
+mod firmware_observation;
 use presentation::*;
 
 #[path = "../../profile_companion_authoring.rs"]
@@ -58,6 +59,7 @@ pub struct Runtime {
     upload: Mutex<Option<Upload>>,
     listener_observation: Mutex<Option<listener_observation::Observation>>,
     presence_observation: Mutex<Option<presence_observation::Observation>>,
+    firmware_observation: Arc<OnceLock<osg_companion_serial::FlashObserver>>,
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
@@ -89,6 +91,7 @@ impl Runtime {
             upload: Mutex::new(None),
             listener_observation: Mutex::new(None),
             presence_observation: Mutex::new(None),
+            firmware_observation: Arc::new(OnceLock::new()),
             panel_operation_wakes: Mutex::new(Vec::new()),
             #[cfg(test)]
             profile_wire_fixture: false,
@@ -167,11 +170,14 @@ impl Runtime {
                 let directory = metadata.directory.clone();
                 let server = ServerRuntime::with_browser(hub.clone(), directory.clone(), BROWSER_ASSETS)?;
                 let saved_listener=crate::companion_settings::Listener::open(&directory)?;
+                let firmware_observation = self.firmware_observation.clone();
                 let services=Services {
                     hub, server, directory,
                     saved_listener,
                     panel_cache:Mutex::new(()),
-                    usb: osg_companion_serial::Manager::default(),
+                    usb: osg_companion_serial::Manager::with_flash_observer(Some(Arc::new(move |state| {
+                        if let Some(observe) = firmware_observation.get() { observe(state); }
+                    }))),
                     usb_setup: Mutex::new(()),
                     firmware_releases: crate::firmware_releases::Resolver::default(),
                 };

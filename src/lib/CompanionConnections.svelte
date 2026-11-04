@@ -40,6 +40,7 @@
   let baseline = new Set<string>();
   let reading = false, refreshQueued = false;
   let updateOpen=$state(false), updatePort=$state(''), updateProfile=$state(''), updating=$state(false);
+  let flashStatus = $state.raw<CompanionHostState['usb']>();
   const firmwareInfo=(client:Record<string,unknown>)=>hostState.firmware?.[text(client,'companionId')];
   const outdated=(client:Record<string,unknown>)=>deviceKind(client)==='esp32' && firmwareUpdateAvailable(firmwareInfo(client)?.version,companionFirmwareVersion(hostState,text(client,'companionId')));
   async function prepareUpdate(){
@@ -51,7 +52,8 @@
     await installUpdate();
   }
   async function installUpdate(){
-    await send('companion_usb_flash',{companionId:selectedId,port:updatePort,profile:updateProfile});
+    const result = await send('companion_usb_flash',{companionId:selectedId,port:updatePort,profile:updateProfile});
+    flashStatus = result.usb;
     updating=true;
   }
 
@@ -59,7 +61,7 @@
   const text = (row: Record<string, unknown>, key: string) => typeof row[key] === 'string' ? String(row[key]) : '';
   const selected=$derived(clients.find(c=>text(c,'companionId')===selectedId));
   const selectedFirmwareVersion=$derived(selected?companionFirmwareVersion(hostState,text(selected,'companionId')):null);
-  const firmwareProgress=$derived(Math.max(0,Math.min(100,Math.round(hostState.usb?.progress??0))));
+  const firmwareProgress=$derived(Math.max(0,Math.min(100,Math.round(flashStatus?.progress??0))));
   const selectedMessages=$derived(selected?companionMessages(hostState,selected).filter(message=>message.source==='connection'):[]);
   const selectedScreen=$derived(companionScreenSize(hostState,selectedId));
   const firmwareUpdateDisabledReason = $derived(selected?.connected!==true ? 'This companion is offline. Connect it by USB to update its firmware.' : updating ? 'A firmware update is already in progress.' : busy ? 'Wait for the current operation to finish.' : '');
@@ -110,15 +112,6 @@
         pendingCompanionId = '';
         if (client) edit(client, false);
         else notify('This companion is no longer paired with Cockpit.', 'error');
-      }
-      if(updating && hostState.usb?.flashCancelled){
-        updating=false;await send('companion_usb_connect',{port:updatePort});updateOpen=false;
-      }
-      if(updating && hostState.usb?.flashError){updating=false;notify(hostState.usb.flashWarning??hostState.usb.flashError,hostState.usb.flashWarning?'warning':'error');}
-      if(updating && hostState.usb?.flashFinished){
-        updating=false;await new Promise(resolve=>setTimeout(resolve,1500));
-        await send('companion_usb_connect',{port:updatePort});
-        updateOpen=false;notify('Firmware updated. Saved pairing and connection settings preserved.');
       }
       if (pairingOpen && newPairingConnected(kind,baseline,hostState)) {
         pairingOpen=false; pairing=undefined; kind=''; notify('Companion paired and saved.');
@@ -204,10 +197,39 @@
     },1000);
     return () => clearInterval(countdown);
   });
+  async function receiveFlash(status: NonNullable<CompanionHostState['usb']>) {
+    if (!updating || disposed) return;
+    if (status.flashId !== flashStatus?.flashId) {
+      updating = false;
+      notify('Another firmware update replaced this operation.', 'error');
+      return;
+    }
+    flashStatus = status;
+    if (status.flashError) {
+      updating = false;
+      notify(status.flashWarning ?? status.flashError, status.flashWarning ? 'warning' : 'error');
+    }
+    if (status.flashCancelled || status.flashFinished) {
+      updating = false;
+      try {
+        if (status.flashFinished) await new Promise(resolve => setTimeout(resolve, 1500));
+        await send('companion_usb_connect', {port:updatePort});
+        updateOpen = false;
+        if (status.flashFinished) notify('Firmware updated. Saved pairing and connection settings preserved.');
+      } catch (error) {
+        if (!disposed) notify(String(error), 'error');
+      }
+    }
+  }
   $effect(() => {
     if (!active || !mounted || !updating) return;
-    const progress = setInterval(refresh,1000);
-    return () => clearInterval(progress);
+    const observations = new SharedObservations();
+    observations.subscribe('companion.firmware', state => {
+      const status = state.frame?.payload as CompanionHostState['usb'];
+      if (state.status === 'ready' && status?.connected === false) untrack(() => void receiveFlash(status));
+      if (state.status === 'error' && state.error) notify(state.error, 'error');
+    });
+    return () => observations.close();
   });
   onMount(() => {
     mounted=true;
@@ -262,7 +284,7 @@
       <PageHeader title={text(selected,'name') || 'Companion'} eyebrow="COMPANION SETTINGS" subtitle="Settings and connection details." onback={backToCompanions} backLabel="Back to Companions" backDisabled={busy || updateOpen || updating} focusBack>
         {#snippet actions()}<span class:connected={selected.connected===true} class="connection-state"><span></span>{selected.connected===true?'Connected':'Offline'}</span><div class="remove-companion">
           <button class="secondary-button danger" aria-describedby={updateOpen || updating ? 'companion-remove-reason' : undefined} disabled={busy || updateOpen || updating || settingsState?.saving || settingsState?.pending && !settingsState.error} onclick={()=>action(()=>remove(selected!))}><Icon name="trash" size={14} />Remove</button>
-          {#if updateOpen || updating}<p id="companion-remove-reason" role="status">{updating && !hostState.usb?.waitingForBoot ? 'Wait for the firmware update to finish before removing this companion.' : 'Finish or cancel the firmware update before removing this companion.'}</p>{/if}
+          {#if updateOpen || updating}<p id="companion-remove-reason" role="status">{updating && !flashStatus?.waitingForBoot ? 'Wait for the firmware update to finish before removing this companion.' : 'Finish or cancel the firmware update before removing this companion.'}</p>{/if}
         </div>
       {/snippet}
       </PageHeader>
@@ -313,11 +335,11 @@
             <div class="firmware-update-details">
               <p class="boot-instructions">Switch the device to boot mode: hold BOOT, tap RESET while holding BOOT, then release BOOT. Keep the USB cable connected. The upgrade starts automatically. Pairing and Wi-Fi settings are preserved.</p>
               <div class="firmware-progress-row">
-                <div class="firmware-progress" role="progressbar" aria-label="Firmware update progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={hostState.usb?.waitingForBoot ? undefined : firmwareProgress} aria-valuetext={hostState.usb?.stage}>
-                  <div class="firmware-progress-fill" style:width={(hostState.usb?.waitingForBoot?0:firmwareProgress)+'%'}></div>
-                  <span>{hostState.usb?.stage || 'Preparing firmware update...'}{hostState.usb?.waitingForBoot ? '' : ` · ${firmwareProgress}%`}</span>
+                <div class="firmware-progress" role="progressbar" aria-label="Firmware update progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={flashStatus?.waitingForBoot ? undefined : firmwareProgress} aria-valuetext={flashStatus?.stage}>
+                  <div class="firmware-progress-fill" style:width={(flashStatus?.waitingForBoot?0:firmwareProgress)+'%'}></div>
+                  <span>{flashStatus?.stage || 'Preparing firmware update...'}{flashStatus?.waitingForBoot ? '' : ` · ${firmwareProgress}%`}</span>
                 </div>
-                <button class="secondary-button danger" disabled={busy || (updating && (!hostState.usb?.waitingForBoot || hostState.usb?.cancelRequested))} onclick={()=>action(async()=>{
+                <button class="secondary-button danger" disabled={busy || (updating && (!flashStatus?.waitingForBoot || flashStatus?.cancelRequested))} onclick={()=>action(async()=>{
                   if(updating) await send('companion_usb_flash_cancel');
                   else {if(updatePort)await send('companion_usb_connect',{port:updatePort});updateOpen=false;}
                 })}><Icon name="close" size={14} />Cancel</button>

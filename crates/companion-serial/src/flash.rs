@@ -28,23 +28,31 @@ pub struct OwnedFirmwareSegment {
     pub offset: u32,
     pub bytes: Vec<u8>,
 }
-struct Progress {
+struct Progress<'a> {
+    observer: Option<&'a crate::FlashObserver>,
     state: Arc<Mutex<Value>>,
     total: usize,
 }
-impl ProgressCallbacks for Progress {
+impl ProgressCallbacks for Progress<'_> {
     fn init(&mut self, _: u32, total: usize) {
         self.total = total;
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state["stage"] = json!("Uploading firmware");
         state["progress"] = json!(0);
+        if let Some(observe) = self.observer { observe(&state); }
     }
     fn update(&mut self, current: usize) {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state["progress"] = json!((current * 100 / self.total.max(1)).min(100));
+        let progress = json!((current * 100 / self.total.max(1)).min(100));
+        if state["progress"] != progress {
+            state["progress"] = progress;
+            if let Some(observe) = self.observer { observe(&state); }
+        }
     }
     fn verifying(&mut self) {
-        self.state.lock().unwrap_or_else(|p| p.into_inner())["stage"] = json!("Verifying firmware");
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state["stage"] = json!("Verifying firmware");
+        if let Some(observe) = self.observer { observe(&state); }
     }
     fn finish(&mut self, _: bool) {}
 }
@@ -107,6 +115,17 @@ pub fn flash_firmware(
     manual_boot: bool,
     state: &Arc<Mutex<Value>>,
 ) -> Result<(), String> {
+    flash_observed(port, firmware, target, manual_boot, state, None)
+}
+
+pub(super) fn flash_observed(
+    port: &str,
+    firmware: &[FirmwareSegment],
+    target: FirmwareTarget,
+    manual_boot: bool,
+    state: &Arc<Mutex<Value>>,
+    observer: Option<&crate::FlashObserver>,
+) -> Result<(), String> {
     validate_firmware_for(target, firmware)?;
     let mut expected_usb = None;
     let connect = || {
@@ -165,6 +184,7 @@ pub fn flash_firmware(
         );
     }
     begin_writing(state)?;
+    if let Some(observe) = observer { observe(&state.lock().unwrap_or_else(|p| p.into_inner())); }
     let segments: Vec<_> = firmware
         .iter()
         .filter(|s| writes_segment(state.lock().unwrap_or_else(|p|p.into_inner())["preserveSetup"]==true,s.offset))
@@ -177,6 +197,7 @@ pub fn flash_firmware(
         .write_bins_to_flash(
             &segments,
             &mut Progress {
+                observer,
                 state: state.clone(),
                 total: 1,
             },
@@ -186,10 +207,32 @@ pub fn flash_firmware(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn observer_receives_changed_progress_and_stage() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let captured = updates.clone();
+        let observer: crate::FlashObserver = Arc::new(move |state| captured.lock().unwrap().push(state.clone()));
+        let mut progress = Progress {
+            observer: Some(&observer),
+            state: Arc::new(Mutex::new(json!({}))),
+            total: 1,
+        };
+        progress.init(0, 1000);
+        progress.update(2);
+        progress.update(100);
+        progress.update(101);
+        progress.verifying();
+        let updates = updates.lock().unwrap();
+        assert_eq!(updates.len(), 3);
+        assert_eq!(updates[0]["progress"], 0);
+        assert_eq!(updates[1]["progress"], 10);
+        assert_eq!(updates[2]["stage"], "Verifying firmware");
+    }
+
+    #[test]
     fn each_segment_returns_from_verification_to_upload_progress() {
         use super::*;
         let state=Arc::new(Mutex::new(json!({"stage":"Waiting for boot mode"})));
-        let mut progress=Progress{state:state.clone(),total:1};
+        let mut progress=Progress{observer:None,state:state.clone(),total:1};
         for address in [0x1000,0x8000,0x10000] {
             progress.init(address,400);
             assert_eq!(state.lock().unwrap()["stage"],"Uploading firmware");

@@ -98,8 +98,11 @@ struct Link {
     state: Arc<Mutex<Value>>,
     join: Option<thread::JoinHandle<()>>,
 }
+pub type FlashObserver = Arc<dyn Fn(&Value) + Send + Sync>;
+
 #[derive(Default)]
 pub struct Manager {
+    flash_observer: Option<FlashObserver>,
     flash_state: Arc<Mutex<Value>>,
     flash_candidates: Mutex<Vec<Value>>,
     flash_owner: Mutex<Option<String>>,
@@ -110,6 +113,12 @@ pub struct Manager {
     selected: Mutex<Option<String>>,
 }
 impl Manager {
+    pub fn with_flash_observer(observer: Option<FlashObserver>) -> Self {
+        let mut manager = Self::default();
+        manager.flash_observer = observer;
+        manager
+    }
+
     pub fn status(&self) -> Value {
         let flashing = self
             .flash_state
@@ -233,12 +242,14 @@ impl Manager {
         }
         self.shutdown_port(port);
         *state =
-            json!({"connected":false,"flashing":true,"stage":if preserve {"Waiting for boot mode"} else {"Installing firmware"},"waitingForBoot":preserve,"progress":0,"preserveSetup":preserve});
+            json!({"flashId":uuid::Uuid::new_v4().to_string(),"connected":false,"flashing":true,"stage":if preserve {"Waiting for boot mode"} else {"Installing firmware"},"waitingForBoot":preserve,"progress":0,"preserveSetup":preserve});
+        let observer = self.flash_observer.clone();
+        if let Some(observe) = &observer { observe(&state); }
         let progress = self.flash_state.clone();
         let port = port.to_owned();
         thread::spawn(move || {
             let borrowed:Vec<_>=firmware.iter().map(|segment|FirmwareSegment{offset:segment.offset,bytes:segment.bytes.as_slice()}).collect();
-            let result = flash_firmware(&port, &borrowed, target, manual_boot, &progress);
+            let result = flash::flash_observed(&port, &borrowed, target, manual_boot, &progress, observer.as_ref());
             let mut state = progress.lock().unwrap_or_else(|p| p.into_inner());
             state["flashing"] = json!(false);
             match result {
@@ -251,6 +262,7 @@ impl Manager {
                         state["flashCancelled"]=json!(true);
                         state["waitingForBoot"]=json!(false);
                         state["stage"]=json!("Firmware update cancelled");
+                        if let Some(observe) = &observer { observe(&state); }
                         return;
                     }
                     if error.starts_with("bootloader-required:"){
@@ -260,6 +272,7 @@ impl Manager {
                     state["stage"] = json!("Firmware installation failed");
                 }
             }
+            if let Some(observe) = &observer { observe(&state); }
         });
         Ok(())
     }
@@ -270,6 +283,7 @@ impl Manager {
         }
         state["cancelRequested"]=json!(true);
         state["stage"]=json!("Cancelling firmware update");
+        if let Some(observe) = &self.flash_observer { observe(&state); }
         Ok(())
     }
     pub fn pairing_ports(&self, hub: &Hub, selected: Option<&str>) -> Result<Value, String> {
@@ -1055,16 +1069,40 @@ mod tests {
     }
     #[test]
     fn firmware_cancel_only_accepts_the_boot_wait_and_retains_completion() {
-        let manager=Manager::default();
+        let (send, receive) = mpsc::channel();
+        let manager = Manager::with_flash_observer(Some(Arc::new(move |state| {
+            send.send(state.clone()).unwrap();
+        })));
         assert!(manager.cancel_firmware_wait().is_err());
         *manager.flash_state.lock().unwrap()=json!({"flashing":true,"waitingForBoot":true});
         manager.cancel_firmware_wait().unwrap();
         assert_eq!(manager.status()["cancelRequested"],true);
+        assert_eq!(receive.try_recv().unwrap()["cancelRequested"], true);
         manager.flash_state.lock().unwrap()["waitingForBoot"]=json!(false);
         assert!(manager.cancel_firmware_wait().is_err());
         *manager.flash_state.lock().unwrap()=json!({"flashing":false,"flashCancelled":true});
         assert_eq!(manager.status()["flashCancelled"],true);
     }
+    #[test]
+    fn missing_port_reports_start_and_terminal_failure_for_the_same_operation() {
+        let (send, receive) = mpsc::channel();
+        let manager = Manager::with_flash_observer(Some(Arc::new(move |state| {
+            send.send(state.clone()).unwrap();
+        })));
+        let port = format!("missing-firmware-fixture-{}", uuid::Uuid::new_v4());
+        let firmware = [(0, 0xe9), (0x8000, 0), (0x10000, 0xe9)]
+            .map(|(offset, byte)| OwnedFirmwareSegment { offset, bytes: vec![byte] });
+        manager.flash_owned_options_preserving(
+            &port, firmware.into(), FirmwareTarget::Esp32s3, false, false,
+        ).unwrap();
+        let start = receive.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(start["flashing"], true);
+        let failed = receive.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(failed["flashId"], start["flashId"]);
+        assert_eq!(failed["flashing"], false);
+        assert!(failed["flashError"].is_string());
+    }
+
     #[test]
     fn flash_errors_remain_available_for_the_installer_until_an_explicit_retry() {
         let manager=Manager::default();
