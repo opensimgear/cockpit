@@ -78,3 +78,25 @@ inventory/visibility owner notifications, Linux/macOS capture, device-gateway an
 firmware USB/CAN streams, full MCP observation, real edge/encoder stress, hardware
 disconnect/reconnect and R0 latency/idle/soak budgets remain open. Existing routing
 still reads the shared journal; this change does not claim it is event-driven.
+
+## Live controller preview timing, 2026-11-04
+
+The Windows dev Cockpit displayed the VKBsim Gladiator EVO R (137 controls)
+in Devices. The executable SHA-256 was
+`0fa880f6f5e38ed790f962b7e5541fcbe68fdfc6c4a21ec2f7f93bb6ba075608`.
+It was built from the workspace at `2c1f3fb`, with other local edits present.
+The frontend was served from the working tree at `2da71bf`.
+
+The revised timing probe joined the selected inspector's existing shared
+observer and matched rendered report sequences. It recorded 125 background
+reports in 10 seconds with no observation errors. Journal-to-observer p95 was
+12.92 ms, journal-to-DOM p95 was 13.16 ms, and observer-to-DOM p95 was 0.30 ms.
+The journal/WebView clock correlation had a 2.15 ms uncertainty bound.
+Journal-to-following-frame p95 was 20.60 ms. A separate five-second trace
+observed the report sequence advance and found zero `controller_inspect`
+requests among 15 decoded gateway commands.
+
+This measures the Windows journal through the WebView. The workload was
+background reports, with no deliberate physical sweep or active virtual
+output. Physical movement-to-display timing, the source of the pre-observer
+delay, and capture-to-vJoy submission remain open under #188 and #199.
