@@ -69,6 +69,26 @@ test('one slow ACK never blocks independent topic delivery; one early ACK-race f
   first.controller.abort();second.controller.abort();
 });
 
+test('an application context admits 32 readers and reuses released capacity',async()=>{
+  const h=harness();
+  const readers=Array.from({length:32},(_,index)=>h.open(`topic-${index}`));
+  h.open('overflow');
+  await turn();
+  const subscriptions=()=>h.calls.filter(call=>call.url.endsWith('/subscribe'));
+  assert.equal(subscriptions().length,32);
+  assert.deepEqual(h.errors,['Observation subscription limit exceeded']);
+  readers[0].controller.abort();
+  const replacement=h.open('replacement');
+  await turn();
+  assert.equal(subscriptions().at(-1).body.topic,'replacement');
+  assert.equal(h.physical.length,1);
+  h.send('33');
+  await turn();
+  assert.equal(replacement.frames.length,1);
+  h.physical[0].controller.close();
+  await turn();
+});
+
 test('early delivery waits for token reply; pending-open cancellation uses request counter',async()=>{
   const opening=deferred();const h=harness({subscribeWait:body=>body.requestId==='1'?opening.promise:undefined});
   const first=h.open('first'),second=h.open('second');await turn();h.send('1');h.send('2');await turn();
@@ -127,11 +147,8 @@ test('per-entry ACK failure/token mismatch/gap/early overflow do not close healt
   }
 });
 
-test('connection HTTP/type/body errors are explicit and active entry count is bounded',async()=>{
+test('connection HTTP/type/body errors are explicit',async()=>{
   for(const responseMode of ['http','type','body']){const h=harness({responseMode});h.open();await turn();assert.equal(h.errors.length,1,responseMode);}
-  const h=harness(),opened=[];for(let index=0;index<17;index++)opened.push(h.open(`topic${index}`));await turn();
-  assert.equal(h.errors.length,1);assert.match(h.errors[0],/limit/);assert.equal(h.calls.filter(call=>call.url.endsWith('/subscribe')).length,16);
-  for(const entry of opened)entry.controller.abort();
 });
 
 test('already aborted entries perform no work, last disposal aborts pending physical open',async()=>{

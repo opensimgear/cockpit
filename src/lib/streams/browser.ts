@@ -31,6 +31,8 @@ interface Connection {
   closing: number;
 }
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+// Leave room in the bridge's 64-reader budget for another browser context.
+const MAX_CONTEXT_READERS = 32;
 let sharedBrowserTransport: ObservationTransport | undefined;
 
 /** Defaults share one context connection; injected dependencies create an isolated transport. */
@@ -204,7 +206,7 @@ export function createBrowserObservationTransport(dependencies?: BrowserObservat
 
   return { open(topic, observer, signal) {
     if (signal.aborted) return;
-    if (connection && connection.entries.size >= 16) { observer.error('Observation subscription limit exceeded'); return; }
+    if (connection && connection.entries.size >= MAX_CONTEXT_READERS) { observer.error('Observation subscription limit exceeded'); return; }
     if (nextRequest > 18446744073709551615n) { observer.error('Observation request counter exhausted'); return; }
     const current = connection ?? start();
     const entry: Entry = {
