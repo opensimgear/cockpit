@@ -154,6 +154,7 @@ struct Inner {
     code_offer: Option<CodeOffer>,
     pending: BTreeMap<String, Pending>,
     connections: BTreeMap<String, String>,
+    assignment_wakes: BTreeMap<String, std::sync::Weak<osg_streams::NativeWake>>,
     display_reports: BTreeMap<String, display::DisplayReport>,
     render_profiles: BTreeMap<String, Value>,
     sessions: BTreeMap<String, Session>,
@@ -366,6 +367,7 @@ impl Hub {
                 code_offer: None,
                 pending: BTreeMap::new(),
                 connections: BTreeMap::new(),
+                assignment_wakes: BTreeMap::new(),
                 display_reports: BTreeMap::new(),
                 render_profiles: BTreeMap::new(),
                 sessions: BTreeMap::new(),
@@ -567,6 +569,7 @@ impl Hub {
         let sessions = inner.sessions.len();
         let _ = self.expire(&mut inner, now_ms);
         let disconnected = inner.connections.remove(connection_id).is_some();
+        Self::retire_assignment_reader(&mut inner, connection_id);
         inner.display_reports.remove(connection_id);
         inner.render_profiles.remove(connection_id);
         let ids: Vec<_> = inner
@@ -1137,6 +1140,11 @@ impl Hub {
                 } else {
                     Ok(json!({"ok":true,"type":"pair-pending","requestId":request_id}))
                 }
+            }
+            "ping" => {
+                exact(frame, &["type"], &["version"])?;
+                ensure(inner.connections.contains_key(connection_id), "Authenticate this companion first.")?;
+                Ok(json!({"ok":true,"type":"pong"}))
             }
             "presence" => {
                 exact(frame, &["type"], &["version", "display"])?;

@@ -60,6 +60,18 @@ test('native browser keeps authenticated presence and neutral controls across fo
       if(!id)await new Promise(resolve=>setTimeout(resolve,100));
     }
     assert.ok(id,await companion.locator('.shell').innerText());
+    await companion.getByText('No panel assigned',{exact:true}).first().waitFor();
+    await companion.waitForFunction(()=>window.__assignmentCounts.includes(0));
+    await companion.waitForTimeout(500);
+    const idle=await companion.evaluate(()=>({
+      presence:window.__wireTypes.filter(type=>type==='presence').length,
+      auth:window.__wireTypes.filter(type=>type==='auth').length,
+    }));
+    await companion.waitForTimeout(5200);
+    assert.deepEqual(await companion.evaluate(()=>({
+      presence:window.__wireTypes.filter(type=>type==='presence').length,
+      auth:window.__wireTypes.filter(type=>type==='auth').length,
+    })),idle);
     instanceId='focus-'+Date.now();await send('companion_assign',{companionId:id,instanceId,publicationHash:publication.publicationHash});
     const waitValues=async predicate=>page.waitForFunction(async({instanceId,predicate})=>{
       const r=await window.__TAURI_INTERNALS__.invoke('gateway_request',{request:{command:'companion_status',clientId:'browser-focus-native'}});
@@ -85,10 +97,11 @@ test('native browser keeps authenticated presence and neutral controls across fo
     const presenceReads=await companion.evaluate(()=>window.__wireTypes.filter(type=>type==='presence').length);
     await companion.waitForTimeout(1200);
     assert.equal(await companion.evaluate(()=>window.__wireTypes.filter(type=>type==='presence').length),presenceReads);
+    const assignmentEvents=await companion.evaluate(()=>window.__assignmentCounts.length);
     await send('companion_unassign',{instanceId});
     instanceId=undefined;
-    await companion.waitForFunction(()=>window.__assignmentCounts.includes(0));
-    await companion.getByText('No panel assigned',{exact:true}).waitFor();
+    await companion.waitForFunction(count=>window.__assignmentCounts.slice(count).includes(0),assignmentEvents);
+    await companion.getByText('No panel assigned',{exact:true}).first().waitFor();
   }finally{
     await browser?.close();if(instanceId)await send('companion_unassign',{instanceId}).catch(()=>{});
     if(id)await send('companion_revoke',{companionId:id}).catch(()=>{});

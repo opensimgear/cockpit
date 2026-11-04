@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BackgroundConnection } from './background-connection.ts';
 
+test('an authenticated worker keeps an unassigned primary alive without reading assignments',async()=>{
+  const h=harness();
+  await h.engine.request({type:'auth',token:'fixture'});
+  h.setClock(1999);await h.engine.tick();
+  assert.deepEqual(h.sent.map(frame=>frame.type),['auth']);
+  h.setClock(2000);await h.engine.tick();
+  h.setClock(3000);await h.engine.tick();
+  h.setClock(4000);await h.engine.tick();
+  assert.deepEqual(h.sent.map(frame=>frame.type),['auth','ping','ping']);
+  h.engine.close();
+});
+
 const identity={clientId:'browser',sessionId:'session',generation:'1',publicationHash:'sha256:'+'a'.repeat(64)};
 function harness(){
  let clock=0,closed=false,pending;const sent=[],feedback=[];

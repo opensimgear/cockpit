@@ -1,6 +1,36 @@
 use super::*;
 use osg_streams::NativeWake;
 
+pub(crate) struct AssignmentSubscription {
+    hub: Hub,
+    primary: String,
+    companion: String,
+    credential_hash: String,
+    wake: Arc<NativeWake>,
+    previous: Option<Value>,
+}
+
+fn changed_assignments(inner: &Inner, companion: &str, previous: &mut Option<Value>) -> Option<Value> {
+    let rows = json!(inner.record.instances.iter().filter(|row| row.companion_id == companion)
+        .map(|row| json!({"instanceId":row.instance_id,"publicationHash":row.publication_hash,"name":row.definition.name}))
+        .collect::<Vec<_>>());
+    if previous.as_ref() == Some(&rows) { return None; }
+    *previous = Some(rows.clone());
+    Some(rows)
+}
+
+impl AssignmentSubscription {
+    pub(crate) fn take(&mut self) -> Result<Option<Value>, String> {
+        let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
+        ensure(inner.connections.get(&self.primary) == Some(&self.companion)
+            && inner.record.credentials.iter().any(|row| row.companion_id == self.companion
+                && equal_hash(&row.token_hash, &self.credential_hash))
+            && inner.assignment_wakes.get(&self.primary).is_some_and(|wake| wake.ptr_eq(&Arc::downgrade(&self.wake))),
+            "Assignment subscription is obsolete.")?;
+        Ok(changed_assignments(&inner, &self.companion, &mut self.previous))
+    }
+}
+
 /// One passive reader for the exact panel session. Its cursor is independent
 /// of request acknowledgements and it never renews a session lease.
 pub struct FeedbackSubscription {
@@ -15,6 +45,29 @@ pub struct FeedbackSubscription {
 }
 
 impl Hub {
+    pub(crate) fn subscribe_assignments(
+        &self, connection: &str, primary: &str, credential: &str, wake: Arc<NativeWake>,
+    ) -> Result<AssignmentSubscription, String> {
+        let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        ensure(!inner.connections.contains_key(connection), "Use a dedicated assignment connection.")?;
+        ensure(secret_valid(credential), "Invalid installation credential.")?;
+        let digest = hash(credential.as_bytes());
+        let companion = inner.connections.get(primary).ok_or("Primary connection ended.")?.clone();
+        ensure(inner.record.credentials.iter().any(|row| row.companion_id == companion
+            && equal_hash(&row.token_hash, &digest)), "Installation credential is invalid or revoked.")?;
+        Self::retire_assignment_reader(&mut inner, primary);
+        inner.assignment_wakes.insert(primary.into(), Arc::downgrade(&wake));
+        self.observe_record_changes(wake.clone());
+        Ok(AssignmentSubscription {
+            hub: self.clone(), primary: primary.into(), companion, credential_hash: digest, wake, previous: None,
+        })
+    }
+
+    pub(super) fn retire_assignment_reader(inner: &mut Inner, primary: &str) {
+        if let Some(wake) = inner.assignment_wakes.remove(primary).and_then(|wake| wake.upgrade()) {
+            wake.notify();
+        }
+    }
     pub fn subscribe_feedback(
         &self, connection: &str, session_id: &str, generation: u64,
         publication_hash: &str, credential: &str, wake: Arc<NativeWake>,
@@ -35,6 +88,8 @@ impl Hub {
         if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|previous| previous.upgrade()) {
             previous.notify();
         }
+        let primary = session.connection.clone();
+        Self::retire_assignment_reader(&mut inner, &primary);
         self.observe_record_changes(wake.clone());
         Ok(FeedbackSubscription {
             hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
@@ -56,12 +111,7 @@ impl FeedbackSubscription {
         let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
         if !inner.record.credentials.iter().any(|credential| credential.companion_id == self.companion_id
             && equal_hash(&credential.token_hash, &self.credential_hash)) { return None; }
-        let rows = json!(inner.record.instances.iter().filter(|row| row.companion_id == self.companion_id)
-            .map(|row| json!({"instanceId":row.instance_id,"publicationHash":row.publication_hash,"name":row.definition.name}))
-            .collect::<Vec<_>>());
-        if self.assignments.as_ref() == Some(&rows) { return None; }
-        self.assignments = Some(rows.clone());
-        Some(rows)
+        changed_assignments(&inner, &self.companion_id, &mut self.assignments)
     }
 
     pub fn take(&mut self) -> Result<Option<Value>, String> {

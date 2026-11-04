@@ -39,6 +39,11 @@
   let focusWork:Promise<void>|undefined;
   let preparationHeartbeatTimer:ReturnType<typeof setInterval>|undefined;
   let staleRecoveryWork:Promise<void>|undefined;
+  let primaryConnectionId='';
+  async function subscribeAssignments(socket:BrowserTransport){
+    if(!credential||!primaryConnectionId)throw Error('Missing authenticated companion connection');
+    await socket.subscribeFeedback({type:'assignments-subscribe',token:credential.token,connectionId:primaryConnectionId});
+  }
   const obsoleteSession=(reason:unknown)=>String(reason).includes('Session is obsolete');
   const visible=()=>!pageHidden&&document.visibilityState==='visible';
   const focused=()=>visible()&&hasFocus;
@@ -56,7 +61,10 @@
       feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
       const presence=await socket.request({type:'presence',display:panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio)});
       if(!current(socket,version))return;
-      await loadAssigned(socket,version,presence.assignments);
+      assignments=presence.assignments;
+      await subscribeAssignments(socket);
+      if(!current(socket,version))return;
+      await loadAssigned(socket,version,assignments);
     }).catch(e=>{
       if(!current(socket,version))return;
       if(obsoleteSession(e)){error='';stop('Reconnecting to Cockpit…');nextAttempt=performance.now()+1000;}
@@ -74,7 +82,7 @@
     return {version:1,type,clientId:session.clientId,sessionId:session.sessionId,generation:session.generation,publicationHash:session.publicationHash,...rest};
   }
   function stop(reason:string) {
-    epoch++;lastDisplay='';preparing?.abort();preparing=undefined;if(preparationHeartbeatTimer)clearInterval(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
+    epoch++;lastDisplay='';lastIdlePing=0;primaryConnectionId='';preparing?.abort();preparing=undefined;if(preparationHeartbeatTimer)clearInterval(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
     feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
     const previous=connection;connection=null;previous?.close();status=reason;nextAttempt=performance.now()+500;
   }
@@ -163,7 +171,11 @@
       const auth=await socket.request({type:'auth',token:savedCredential.token});
       if(!current(socket,version))return;
       if(auth.hostId!==savedCredential.hostId || auth.companionId!==savedCredential.companionId)throw new Error('Saved Cockpit identity differs');
-      await loadAssigned(socket,version,auth.assignments);
+      assignments=auth.assignments;
+      primaryConnectionId=auth.connectionId;
+      await subscribeAssignments(socket);
+      if(!current(socket,version))return;
+      await loadAssigned(socket,version,assignments);
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');nextAttempt=performance.now()+2000;
       if(error.includes('invalid or revoked')){credential=null;clearCredential(localStorage,savedCredential.token);status='Pair this browser again in Cockpit';}
     }}
@@ -194,7 +206,7 @@
     }catch(e){if(version===epoch&&!disposed){secret='';error=obsoleteSession(e)?'':String(e instanceof Error?e.message:e);stop('Pairing did not complete');}}
     finally{connecting=false;void connect();}
   }
-  let polling=false,lastDisplay='';
+  let polling=false,lastDisplay='',lastIdlePing=0;
   async function poll(){
     const now=performance.now();
     if(now-lastTick>1000 && active&&inputReady)void refreshControls();lastTick=now;
@@ -204,7 +216,7 @@
     try{
       const display=panelDisplayReport(panel?.publicationHash,displayedPage,panel?displayWidth:windowWidth,panel?displayHeight:windowHeight,pixelRatio);
       const displayKey=JSON.stringify(display);
-      if(!active||displayKey!==lastDisplay){
+      if(displayKey!==lastDisplay){
         const presence=await socket.request({type:'presence',display});
         if(version!==epoch||focusWork||staleRecoveryWork)return;
         lastDisplay=displayKey;
@@ -212,6 +224,7 @@
       }
       if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
       else if(!session && assignments.length)await loadAssigned(socket,version,assignments);
+      else if(!session && now-lastIdlePing>=2000){lastIdlePing=now;await socket.request({type:'ping'});}
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}
     finally{polling=false;}
   }

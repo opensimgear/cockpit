@@ -652,11 +652,17 @@ pub(crate) fn serve_messages<S: Read + Write>(
                     )?;
                     return Err("Pre-authentication attempt budget exceeded".into());
                 }
+                if browser_socket && frame["type"] == "assignments-subscribe" {
+                    return feedback_socket::serve_assignments(socket, hub, id, stop, attempts, peer, &frame);
+                }
                 if browser_socket && frame["type"] == "feedback-subscribe" {
                     return feedback_socket::serve(socket, hub, id, stop, attempts, peer, &frame);
                 }
                 let is_auth = frame["type"] == "auth";
-                let response = hub.handle_wire(frame, id, hub.now_ms());
+                let mut response = hub.handle_wire(frame, id, hub.now_ms());
+                if browser_socket && is_auth && response["ok"] == true {
+                    response["connectionId"] = json!(id);
+                }
                 if is_auth
                     && response["ok"] != true
                     && !attempts

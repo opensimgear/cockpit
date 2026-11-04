@@ -8,6 +8,8 @@ export class BackgroundConnection {
   private session:Session|undefined;
   private tail:Promise<unknown>=Promise.resolve();
   private lastWindowAt:number;
+  private authenticated=false;
+  private lastPing=0;
   private ticking=false;
   private closed=false;
   private transport:ConnectionTransport;
@@ -31,7 +33,9 @@ export class BackgroundConnection {
       if(matches&&wire.type==='feedback-resync')wire.sequence=String(++session.resync);
       const reply=await this.transport.request(wire);
       if(this.closed)throw Error('Browser connection stopped');
-      if(wire.type==='open'){
+      if(wire.type==='auth'){this.authenticated=true;this.lastPing=this.now();}
+      else if(wire.type==='ping')this.lastPing=this.now();
+      else if(wire.type==='open'){
         const identity=Object.fromEntries(['clientId','sessionId','generation','publicationHash'].map(key=>[key,reply[key]]));
         this.resetFeedback();this.session={identity,heartbeat:0n,input:0n,resync:0n,armed:false,fallback:{},values:{}};
       }else if(matches&&wire.type==='baseline'){
@@ -45,13 +49,17 @@ export class BackgroundConnection {
     this.tail=work.catch(()=>{});return work;
   }
   async tick():Promise<void>{
-    if(this.closed||this.ticking||!this.session)return;
+    if(this.closed||this.ticking||(!this.session&&!this.authenticated))return;
     this.ticking=true;
     try{
       // Queue this inspection behind page requests as well: only accepted input
       // can change the values used to decide whether a release is necessary.
       await this.tail;
-      const session=this.session;if(!session||this.closed)return;
+      const session=this.session;if(this.closed)return;
+      if(!session){
+        if(this.now()-this.lastPing>=2000)await this.request({type:'ping'},false);
+        return;
+      }
       if(session.armed&&this.now()-this.lastWindowAt>=1000){
         const changes=Object.entries(session.fallback).filter(([id,value])=>session.values[id]!==value).map(([controlId,value])=>({controlId,value}));
         for(let offset=0;offset<changes.length;offset+=64){const reply=await this.request({version:1,type:'input',...session.identity,changes:changes.slice(offset,offset+64)},false);this.deliverFeedback(reply);}

@@ -494,8 +494,18 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     let paired=call(&mut socket,json!({"type":"pair-status","secret":offer["secret"],"requestId":pending["requestId"]}));
     let token=paired["token"].clone();assert!(token.is_string());
     assert_eq!(call(&mut socket,json!({"type":"pair","secret":offer["secret"],"companionId":"browser-two","name":"Other"}))["ok"],false);
-    assert_eq!(call(&mut socket,json!({"type":"auth","token":token}))["ok"],true);
+    let auth = call(&mut socket,json!({"type":"auth","token":token}));
+    assert_eq!(auth["ok"], true);
+    let (mut waiting, _) = connect(&origin).unwrap();
+    let subscribe = json!({"type":"assignments-subscribe","connectionId":auth["connectionId"],"token":token});
+    assert_eq!(call(&mut waiting, subscribe)["type"], "assignments-subscribed");
+    assert_eq!(receive_json(&mut waiting, Duration::from_secs(2)).unwrap()["assignments"], json!([]));
+    let pong = call(&mut socket, json!({"type":"ping"}));
+    assert_eq!(pong["type"], "pong");
+    assert!(pong.get("assignments").is_none());
     hub.command(&json!({"command":"companion_assign","instanceId":"browser-panel","companionId":"browser-one","publicationHash":hash})).unwrap();
+    let assigned = receive_json(&mut waiting, Duration::from_secs(2)).unwrap();
+    assert_eq!(assigned["assignments"][0]["instanceId"], "browser-panel");
     assert_eq!(call(&mut socket,json!({"type":"presence"}))["assignments"][0]["instanceId"],"browser-panel");
     let opened=call(&mut socket,json!({"type":"open","instanceId":"browser-panel","publicationHash":hash}));
     assert_eq!(opened["publication"]["publicationHash"],hash);
@@ -513,6 +523,8 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     drop(unauthorized);
     let (mut visuals, _) = connect(&origin).unwrap();
     assert_eq!(call(&mut visuals, subscribe)["type"], "feedback-subscribed");
+    assert!(receive_json(&mut waiting, Duration::from_secs(2)).is_err());
+    drop(waiting);
     let assignments = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
     assert_eq!(assignments["type"], "assignments-event");
     assert_eq!(assignments["assignments"][0]["instanceId"], "browser-panel");
