@@ -8,22 +8,55 @@ test('Activity reads committed changes and stays idle between them', {
 }, async () => {
   const page = await nativePage();
   let profile, breakpoint;
-  const native = async request => {
-    const response = await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({ ...request, clientId: 'activity-observation-native' })}})`);
+  const opens = [], closed = new Set(), baselines = new Set(), pending = new Map();
+  const stopTrace = page.listen(event => {
+    const {method, params} = event;
+    if (method === 'Network.requestWillBeSent' && params.request.postData) {
+      const command = new URL(params.request.url).pathname.split('/').at(-1);
+      if (!['observation_subscribe','observation_unsubscribe','observation_acknowledge'].includes(command)) return;
+      const body = JSON.parse(params.request.postData);
+      if (command !== 'observation_subscribe' || body.topic === 'activity.log') pending.set(params.requestId, {command, body});
+    } else if (method === 'Network.responseReceived') {
+      const request = pending.get(params.requestId);
+      if (request) request.accepted = params.response.status === 200;
+    } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
+      const request = pending.get(params.requestId);
+      pending.delete(params.requestId);
+      if (!request?.accepted || method === 'Network.loadingFailed') return;
+      if (request.command === 'observation_unsubscribe') closed.add(request.body.subscriptionId);
+      else if (request.command === 'observation_acknowledge' && request.body.delivery === '1') baselines.add(request.body.subscriptionId);
+      else if (request.command === 'observation_subscribe') {
+        void page.call('Network.getResponseBody', {requestId:params.requestId})
+          .then(({body}) => opens.push(JSON.parse(body))).catch(() => {});
+      }
+    }
+  });
+  const native = async (request, clientId = 'activity-observation-native') => {
+    const response = await page.evaluate(`window.__TAURI_INTERNALS__.invoke('gateway_request',{request:${JSON.stringify({ ...request, clientId })}})`);
     assert.equal(response.ok, true, response.error);
     return response.state;
   };
   const section = 'document.querySelector(\'[aria-label="Activity log"]\')';
-  try {
-    await page.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="Activity"]').click()`);
+  const navigate = view => page.evaluate(`document.querySelector('nav[aria-label="Main navigation"] button[title="${view}"]').click()`);
+  async function openActivity(expectedOpens) {
+    await navigate('Activity');
+    await until(async () => opens.length === expectedOpens && baselines.has(opens.at(-1)));
     await until(() => page.evaluate(`!!${section} && ${section}.getAttribute('aria-busy')!=='true'`));
+    return opens.at(-1);
+  }
+  try {
+    await navigate('Overview');
+    await until(() => page.evaluate(`!${section}`));
+    await page.call('Network.enable', {maxPostDataSize:65536});
     await page.evaluate('window.__activityReads=[]');
     await page.call('Debugger.enable');
     const target = await page.call('Runtime.evaluate', { expression: 'window.__TAURI_INTERNALS__.invoke' });
     ({ breakpointId: breakpoint } = await page.call('Debugger.setBreakpointOnFunctionCall', {
       objectId: target.result.objectId,
-      condition: "(cmd==='gateway_request' && payload?.request?.command==='activity_query' && window.__activityReads.push(payload.request.committedOnly===true), false)",
+      condition: "(cmd==='gateway_request' && payload?.request?.command==='activity_query' && payload.request.clientId!=='activity-observation-fixture-read' && window.__activityReads.push(payload.request.committedOnly===true), false)",
     }));
+    let subscription = await openActivity(1);
+    assert.deepEqual(await page.evaluate('window.__activityReads.splice(0)'), [true], 'The baseline triggers one initial read');
     await native({ command: 'activity_query', committedOnly: true });
     assert.deepEqual(await page.evaluate('window.__activityReads'), [true]);
     await page.evaluate('window.__activityReads.length=0');
@@ -34,8 +67,42 @@ test('Activity reads committed changes and stays idle between them', {
     await until(() => page.evaluate(`${section}?.innerText.includes(${JSON.stringify(name)})`));
     const reads = await page.evaluate('window.__activityReads');
     assert.ok(reads.length > 0 && reads.every(Boolean), 'The committed event must trigger a passive query');
+    const renamed = `Activity while hidden ${randomUUID()}`;
+    for (let cycle=0; cycle<3; cycle++) {
+      await navigate('Overview');
+      await until(async () => closed.has(subscription));
+      if (cycle===0) {
+        await page.evaluate('window.__activityReads.length=0');
+        profile = (await native({command:'profile_rename',id:profile.id,expectedRevision:profile.revision,name:renamed})).profiles.document;
+        await until(() => native({command:'activity_query', committedOnly:true, activityFilter:{search:renamed}}, 'activity-observation-fixture-read'),
+          state => state.activity.events.length > 0);
+        assert.deepEqual(await page.evaluate('window.__activityReads'), [], 'Hidden Activity must not query a committed mutation');
+      }
+      await page.evaluate('window.__activityReads.length=0');
+      const next = await openActivity(cycle+2);
+      assert.notEqual(next,subscription);
+      subscription = next;
+      await until(() => page.evaluate(`${section}?.innerText.includes(${JSON.stringify(renamed)})`));
+      assert.deepEqual(await page.evaluate('window.__activityReads'), [true], 'Each reopened baseline triggers exactly one read');
+    }
+    const search = value => page.evaluate(`(()=>{
+      const input=document.querySelector('[aria-label="Search activity"]');
+      input.value=${JSON.stringify(value)};
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    })()`);
+    await page.evaluate('window.__activityReads.length=0');
+    await search(`No Activity match ${randomUUID()}`);
+    await until(() => page.evaluate(`${section}?.innerText.includes('No matching activity')`));
+    assert.deepEqual(await page.evaluate('window.__activityReads.splice(0)'), [true]);
+    await search('');
+    await until(() => page.evaluate(`${section}?.innerText.includes(${JSON.stringify(renamed)})`));
+    assert.deepEqual(await page.evaluate('window.__activityReads'), [true]);
+    await navigate('Overview');
+    await until(async () => closed.has(subscription));
+    assert.equal(new Set(opens).size,4);
   } finally {
     try {
+      stopTrace();
       if (breakpoint) await page.call('Debugger.removeBreakpoint', { breakpointId: breakpoint });
       await page.call('Debugger.disable');
       await page.evaluate('delete window.__activityReads');

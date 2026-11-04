@@ -8,6 +8,7 @@
   import { ActivityClient, ActivityLogController, activityFilterCount, activityLabel, activityQuery, emptyActivityFilters } from './model';
   const controller = new ActivityLogController(new ActivityClient(gatewayRequest));
   let pendingRefresh = false;
+  let requestedSignature: string | undefined;
   let streamError = $state('');
   let view = $state.raw(controller.state), filters = $state(emptyActivityFilters());
   let search = $state(''), settledSearch = $state(''), offset = $state(0), throughId = $state<number | null>(null), mounted = $state(false), filtersOpen = $state(false), confirming = $state(false), dateError = $state('');
@@ -16,15 +17,21 @@
   const displayedOffset = $derived(view.query?.offset ?? 0);
   const end = $derived(displayedOffset + (view.page?.events.length ?? 0));
   function refresh() {
+    requestedSignature = signature;
     try {
       const query = { ...activityQuery(filters, settledSearch, offset), throughId }; dateError = '';
       if (offset === 0) pendingRefresh = false;
-      void controller.load(query).then(applied => { if (!applied && !controller.state.loading) { offset = controller.state.query?.offset ?? 0; throughId = controller.state.query?.throughId ?? null; } });
+      void controller.load(query).then(applied => { if (mounted && !applied && !controller.state.loading) { offset = controller.state.query?.offset ?? 0; throughId = controller.state.query?.throughId ?? null; } });
     }
     catch (error) { dateError = error instanceof Error ? error.message : String(error); }
   }
   $effect(() => { const value = search; const timer = setTimeout(() => settledSearch = value, 250); return () => clearTimeout(timer); });
-  $effect(() => { signature; if (mounted) { offset = 0; throughId = null; untrack(refresh); } });
+  $effect(() => {
+    const current = signature;
+    if (mounted && requestedSignature !== undefined && requestedSignature !== current) {
+      offset = 0; throughId = null; untrack(refresh);
+    }
+  });
   function refreshPending() {
     if (mounted && pendingRefresh && !document.hidden && offset === 0
         && !confirming && !view.loading && !view.clearing) refresh();
@@ -40,7 +47,9 @@
     const observations = new SharedObservations();
     observations.subscribe('activity.log', state => {
       streamError = state.error ?? '';
-      if (state.status === 'ready') {
+      // The first committed baseline owns the initial read. A broken stream
+      // still permits one initial read and the explicit refresh controls.
+      if (state.status === 'ready' || (requestedSignature === undefined && (state.status === 'error' || state.status === 'lost'))) {
         pendingRefresh = true;
         refreshPending();
       }
