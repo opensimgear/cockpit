@@ -44,6 +44,8 @@ pub(crate) struct VehiclePoll {
     now_ms: u64,
     at: Instant,
     reader: Reader,
+    previous_capture: Option<Arc<Capture>>,
+    capture_changed: bool,
     result: Option<Result<(Option<String>, Capture), String>>,
     qualification: Qualification,
 }
@@ -56,6 +58,8 @@ impl VehiclePoll {
         self.result = Some(self.reader.poll_telemetry(read_ms).map(
             |(current, mut capture)| {
                 capture.at = self.at;
+                self.capture_changed = self.previous_capture.as_ref()
+                    .is_none_or(|previous| !capture.same_observation(previous));
                 (current, capture)
             },
         ));
@@ -153,6 +157,8 @@ impl Tracker {
                 now_ms,
                 at: Instant::now(),
                 reader,
+                previous_capture: entry.telemetry.clone(),
+                capture_changed: true,
                 result: None,
                 qualification,
             });
@@ -197,7 +203,11 @@ impl Tracker {
         {
             Ok((current, capture)) => {
                 self.retired.extend(entry.reader.replace(poll.reader));
-                entry.telemetry = Some(Arc::new(capture));
+                let capture = Arc::new(capture);
+                if !poll.capture_changed {
+                    entry.published_capture = Some(Arc::downgrade(&capture));
+                }
+                entry.telemetry = Some(capture);
                 entry.current = current.and_then(|value| vehicle(&entry.integration, &value));
                 if let Some(value) = &entry.current {
                     if self.seen.contains_key(&poll.id) || self.seen.len() < 512 {

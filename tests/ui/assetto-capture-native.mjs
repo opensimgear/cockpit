@@ -157,6 +157,14 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
           const channel=await inspectRpm();
           return channel&&channel.status!=='known'&&channel.value===null&&channel;
         },Boolean,25000);
+        if(gameId==='assetto-corsa'){
+          // Exercise the host cache fence as well as several 100 ms service passes.
+          await new Promise(resolve=>setTimeout(resolve,200));
+          const frozenFrames=await frames();
+          await new Promise(resolve=>setTimeout(resolve,2200));
+          record.phases.quietFrozenNotifications=await frames()-frozenFrames;
+          assert.equal(record.phases.quietFrozenNotifications,0,'A frozen capture must not publish age-only refreshes');
+        }
         await mode('live');record.phases.recovered=await live();
         console.log(`${gameId}: native processing, frozen expiry and recovery pass`);
       }finally{

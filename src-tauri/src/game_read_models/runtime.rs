@@ -250,10 +250,18 @@ fn run_loop(inner: &Inner, observations: &observations::Runtime, games: &GamesRu
         pending_lost |= batch.as_ref().is_some_and(|batch| batch.lost);
         let capture_deadline = games.read_model_deadline();
         let telemetry_changed = inner.signal.take_telemetry();
-        if worker.telemetry.is_none() || telemetry_changed || dirty != 0 || expired_deadline(telemetry_deadline, Instant::now()) {
-            telemetry_deadline = games.telemetry_deadline();
+        let now = Instant::now();
+        let due = telemetry_deadline.filter(|at| *at <= now);
+        let expired = due
+            .and_then(|at: Instant| at.checked_sub(std::time::Duration::from_nanos(1)))
+            .and_then(|before| games.telemetry_deadline(before))
+            .is_some_and(|at| at <= now);
+        if worker.telemetry.is_none() || telemetry_changed || dirty != 0 || due.is_some() {
+            telemetry_deadline = games.telemetry_deadline(now);
             if let Some(publisher) = &worker.telemetry {
-                publish(observations, publisher, &clock, json!({}), None, false, false)?;
+                if telemetry_changed || dirty != 0 || expired {
+                    publish(observations, publisher, &clock, json!({}), None, false, false)?;
+                }
             } else {
                 worker.telemetry = Some(topic(&broker, observations, &clock, "games.telemetry", json!({}))?);
             }

@@ -16,6 +16,7 @@ fn newly_seen_vehicle_notifies_once_and_identical_fresh_capture_is_quiet() {
     for index in 0..2 {
         let candidates = tracker.poll_candidates();
         let mut poll = tracker.begin_polls(candidates).pop().unwrap().read();
+        assert_eq!(poll.capture_changed, index == 0);
         let (_, capture) = poll.result.take().unwrap().unwrap();
         poll.result = Some(Ok((Some("car".into()), capture)));
         let previous = changes.wake.observed();

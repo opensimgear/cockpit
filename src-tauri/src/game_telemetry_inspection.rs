@@ -65,6 +65,24 @@ impl Capture {
             at: Instant::now(),
         }
     }
+    /// Host projection age changes as time passes. Original packet evidence,
+    /// selected values and their contributor leases determine whether a new
+    /// telemetry revision is needed.
+    pub(crate) fn same_observation(&self, other: &Self) -> bool {
+        self.status == other.status
+            && self.source == other.source
+            && self.context == other.context
+            && self.packet == other.packet
+            && self.age_ms.is_some() == other.age_ms.is_some()
+            && self.values == other.values
+            && self.stale_ids == other.stale_ids
+            && self.message == other.message
+            && self.ages.len() == other.ages.len()
+            && self.ages.iter().all(|(id, age)| {
+                other.ages.get(id).is_some_and(|previous| previous.is_some() == age.is_some())
+            })
+    }
+
     pub(crate) fn next_deadline(&self, observed: Instant, now: Instant) -> Option<Instant> {
         use crate::native_capture::Validity;
         // Both existing age fences include equality. Native contributor leases
@@ -272,6 +290,15 @@ mod tests {
             ages:BTreeMap::new(),stale_ids:BTreeSet::new(),message:None,at:old};
         let catalogue=vec![json!({"id":"engine.rpm","type":"number"})];
         let prepared=Page::prepare(&catalogue,0,1,"","");
+        let mut projection = capture.clone();
+        projection.at += Duration::from_millis(50);
+        projection.age_ms = Some(50);
+        assert!(capture.same_observation(&projection));
+        projection.packet = json!(6);
+        assert!(!capture.same_observation(&projection));
+        projection.packet = capture.packet.clone();
+        projection.status = "paused".into();
+        assert!(!capture.same_observation(&projection));
         assert_eq!(capture.next_deadline(old, old), Some(expires));
         assert_eq!(capture.next_deadline(old, expires), Some(old + Duration::from_secs(2) + Duration::from_nanos(1)));
         let live=prepared.project(Some(&capture),expires-Duration::from_nanos(1));
