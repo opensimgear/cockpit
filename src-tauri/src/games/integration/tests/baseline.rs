@@ -29,7 +29,10 @@ fn remove_native_api_configuration_resets_readiness_without_changing_game_files(
     *runtime.inner.inspection_pause.lock().unwrap() = Some((entered, blocked));
     runtime.refresh_external_setup(std::slice::from_ref(&xplane));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
+    runtime.set_assetto_watch(acr["id"].as_str().unwrap(), true);
     runtime.refresh_external_setup(std::slice::from_ref(&acr));
+    assert!(runtime.inner.inspection_pause.lock().unwrap().is_some());
+    assert!(runtime.refresh_watched_assetto(acr["id"].as_str().unwrap(), &acr));
     assert!(runtime.inner.inspection_pause.lock().unwrap().is_none());
 
     for game in [&xplane, &acr] {

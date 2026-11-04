@@ -197,9 +197,11 @@ impl GamesRuntime {
             let _ = context_wake.bind_thread(thread::current());
             let mut last_library = context_wake.observed();
             let mut sdk_watches = context_sdk_watch::SdkWatches::default();
+            let mut assetto_watches = context_assetto_watch::AssettoWatches::default();
             while !inner.closed.load(Ordering::Acquire) {
                 let library = context_wake.observed();
                 let sdk_changed = sdk_watches.refresh(&inner);
+                assetto_watches.refresh(&inner);
                 inner.refresh_game_contexts(library != last_library);
                 if sdk_changed { context_sdk_watch::publish_change(&inner); }
                 last_library = library;

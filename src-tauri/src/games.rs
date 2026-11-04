@@ -80,6 +80,8 @@ pub(crate) struct GamesRuntime {
 mod activation_runtime;
 #[path = "games/context_sdk_watch.rs"]
 mod context_sdk_watch;
+#[path = "games/context_assetto_watch.rs"]
+mod context_assetto_watch;
 #[path = "game_context_runtime.rs"]
 mod context_runtime;
 #[path = "game_dcs_catalogues.rs"]

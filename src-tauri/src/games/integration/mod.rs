@@ -24,6 +24,7 @@ struct Inner {
     states: Mutex<BTreeMap<String, Arc<Value>>>,
     catalogues: Mutex<provider_settings::CatalogueCache>,
     sdk_generation: [std::sync::atomic::AtomicU64; 2],
+    watched_assetto: Mutex<std::collections::BTreeSet<String>>,
     views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
     ac_cars: crate::ac_car_catalogue_cache::Cache,
@@ -112,6 +113,7 @@ impl GameIntegrationSetup {
                 views: Mutex::new(Default::default()),
                 catalogues: Mutex::new(BTreeMap::new()),
                 sdk_generation: Default::default(),
+                watched_assetto: Default::default(),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
@@ -216,11 +218,25 @@ impl GameIntegrationSetup {
         }
     }
 
+    pub(crate) fn set_assetto_watch(&self, id: &str, active: bool) {
+        let mut watched = self.inner.watched_assetto.lock().unwrap_or_else(|error| error.into_inner());
+        if active { watched.insert(id.into()); } else { watched.remove(id); }
+    }
+
+    pub(crate) fn refresh_watched_assetto(&self, id: &str, game: &Value) -> bool {
+        let Ok(_admission) = self.admission.try_lock() else { return false; };
+        if self.busy() { return false; }
+        self.inner.fingerprints.lock().unwrap_or_else(|error| error.into_inner()).invalidate(id);
+        self.refresh_admitted(std::slice::from_ref(game));
+        true
+    }
+
     pub(crate) fn refresh_external_setup(&self, catalogue: &[Value]) {
         let _admission = self.admission.lock().unwrap_or_else(|p| p.into_inner());
+        let watched = self.inner.watched_assetto.lock().unwrap_or_else(|error| error.into_inner()).clone();
         for game in catalogue.iter().filter(|game| {
             crate::game_discovery::integration_key(game)
-                .is_some_and(|key| key == "dcs" || key.starts_with("assetto-corsa"))
+                .is_some_and(|key| key == "dcs" || (key.starts_with("assetto-corsa") && !watched.contains(key)))
         }) {
             self.refresh_admitted(std::slice::from_ref(game));
         }

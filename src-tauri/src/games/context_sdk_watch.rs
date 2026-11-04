@@ -5,11 +5,11 @@ use crate::game_read_models::signals::Domain;
 const XPLANE: [&str; 2] = ["x-plane-11", "x-plane-12"];
 
 #[derive(Default)]
-pub(super) struct SdkWatches([SdkWatch; 2]);
+pub(super) struct SdkWatches([SourceWatch; 2]);
 
 #[derive(Default)]
-struct SdkWatch {
-    path: Option<PathBuf>,
+pub(super) struct SourceWatch {
+    paths: Vec<PathBuf>,
     watch: Option<prepared_sources::watch::Watch>,
     dirty: Arc<AtomicBool>,
 }
@@ -25,7 +25,7 @@ impl SdkWatches {
         };
         let mut changed = false;
         for ((watch, path), id) in self.0.iter_mut().zip(paths).zip(XPLANE) {
-            if watch.refresh(path) {
+            if watch.refresh(path.into_iter().collect()) {
                 inner.setup.invalidate_xplane_catalogue(id);
                 changed = true;
             }
@@ -34,13 +34,15 @@ impl SdkWatches {
     }
 }
 
-impl SdkWatch {
-    fn refresh(&mut self, path: Option<PathBuf>) -> bool {
-        if !self.dirty.swap(false, Ordering::AcqRel) && self.path == path {
+impl SourceWatch {
+    pub(super) fn active(&self) -> bool { self.watch.is_some() }
+
+    pub(super) fn refresh(&mut self, paths: Vec<PathBuf>) -> bool {
+        if !self.dirty.swap(false, Ordering::AcqRel) && self.paths == paths {
             return false;
         }
-        self.path = path;
-        if let Some(path) = &self.path {
+        self.paths = paths;
+        if !self.paths.is_empty() {
             if self.watch.is_none() {
                 let worker = thread::current();
                 let dirty = self.dirty.clone();
@@ -50,7 +52,7 @@ impl SdkWatch {
                 })).ok();
             }
             if let Some(watch) = &mut self.watch {
-                if watch.replace(std::slice::from_ref(path)).is_err() {
+                if watch.replace(&self.paths).is_err() {
                     self.watch = None;
                 }
             }
@@ -84,10 +86,10 @@ mod tests {
         let selected = directory.path().join("DataRefs.txt");
         let sibling = directory.path().join("unrelated.txt");
         std::fs::write(&selected, "old catalogue").unwrap();
-        let mut watch = SdkWatch::default();
-        assert!(watch.refresh(Some(selected.clone())));
+        let mut watch = SourceWatch::default();
+        assert!(watch.refresh(vec![selected.clone()]));
         assert!(watch.watch.is_some());
-        assert!(!watch.refresh(Some(selected.clone())));
+        assert!(!watch.refresh(vec![selected.clone()]));
 
         std::fs::write(sibling, "unrelated").unwrap();
         let quiet_until = Instant::now() + Duration::from_millis(150);
@@ -103,8 +105,8 @@ mod tests {
                 .expect("SDK file write did not wake the native watcher");
             thread::park_timeout(remaining);
         }
-        assert!(watch.refresh(Some(selected)));
-        assert!(watch.refresh(None));
+        assert!(watch.refresh(vec![selected]));
+        assert!(watch.refresh(Vec::new()));
         assert!(watch.watch.is_none());
     }
 }

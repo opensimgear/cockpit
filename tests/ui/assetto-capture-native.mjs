@@ -174,6 +174,15 @@ test('four Assetto native page readers preserve processing, frozen expiry and re
           assert.equal(record.phases.graphicsOnlyPause.packet,frozenPacket);
         }
         await mode('live');record.phases.recovered=await live();
+        await stopPublisher();
+        await native({command:'profile_stop'});
+        const originalExecutable=await readFile(executable);
+        await writeFile(executable,Buffer.concat([originalExecutable,Buffer.from('OSG executable watch fixture')]));
+        record.executableWatch=await until(async()=>{
+          const setup=(await games()).catalogue.find(game=>game.id===gameId)?.integrationSetup;
+          return setup?.state==='needs-attention'&&setup.message.includes('executable/build changed')&&setup;
+        },Boolean,25000);
+        assert.equal(record.executableWatch.verified,false);
         console.log(`${gameId}: native processing, frozen expiry and recovery pass`);
       }finally{
         const cleanup=async(label,fn)=>{try{await fn();}catch(error){evidence.cleanupErrors.push(`${gameId} ${label}: ${error}`);}};

@@ -62,19 +62,31 @@ fn executable_path(executable: &Path, game: Game) -> Result<PathBuf, String> {
     {
         return Err(format!("Select an existing absolute {} executable for {} integration.", names[0], game.id()));
     }
-    let runtime = executable
-        .parent()
-        .and_then(|root| match game {
-            Game::Rally => Some(root.join("acr/Binaries/Win64/acr.exe")),
-            Game::Competizione => Some(root.join("AC2/Binaries/Win64/AC2-Win64-Shipping.exe")),
-            _ => None,
-        })
+    let runtime = sibling_runtime(executable, game)
         .filter(|runtime| runtime.is_file())
         .unwrap_or_else(|| executable.to_path_buf());
     let path = fs::canonicalize(&runtime)
         .map_err(|e| format!("Cannot access the selected Assetto executable: {e}"))?;
     Ok(path)
 }
+fn sibling_runtime(executable: &Path, game: Game) -> Option<PathBuf> {
+    let root = executable.parent()?;
+    match game {
+        Game::Rally => Some(root.join("acr/Binaries/Win64/acr.exe")),
+        Game::Competizione => Some(root.join("AC2/Binaries/Win64/AC2-Win64-Shipping.exe")),
+        _ => None,
+    }
+}
+
+pub(crate) fn executable_watch_paths(executable: &Path, game: Game) -> Vec<PathBuf> {
+    if !executable.is_absolute() {
+        return Vec::new();
+    }
+    let mut paths = vec![executable.to_path_buf()];
+    paths.extend(sibling_runtime(executable, game));
+    paths
+}
+
 fn executable_metadata(path: &Path) -> Result<fs::Metadata, String> {
     let metadata = fs::metadata(path).map_err(|error|error.to_string())?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXECUTABLE {
@@ -104,6 +116,7 @@ pub(crate) struct FingerprintCache {
     entries: BTreeMap<&'static str, (ExecutableStamp, Value)>,
 }
 impl FingerprintCache {
+    pub(crate) fn invalidate(&mut self, id: &str) { self.entries.remove(id); }
     pub(crate) fn inspect(&mut self, executable: &Path, game: Game, force_hash: bool) -> Result<Value, String> {
         self.inspect_with(executable, game, force_hash, fingerprint_for_game)
     }

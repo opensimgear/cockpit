@@ -333,6 +333,21 @@ fn non_windows_and_synthetic_fixtures_cannot_report_native_verification() {
 }
 
 #[test]
+fn assetto_watch_targets_include_runtime_files_before_they_exist() {
+    let scratch = Scratch::new();
+    for (game, launcher, runtime) in [
+        (Game::Rally, "acr.exe", "acr/Binaries/Win64/acr.exe"),
+        (Game::Competizione, "AC2.exe", "AC2/Binaries/Win64/AC2-Win64-Shipping.exe"),
+    ] {
+        let executable = scratch.0.join(launcher);
+        let runtime = scratch.0.join(runtime);
+        assert!(!runtime.exists());
+        assert_eq!(executable_watch_paths(&executable, game), [executable, runtime]);
+    }
+    assert!(executable_watch_paths(Path::new("acr.exe"), Game::Rally).is_empty());
+}
+
+#[test]
 fn root_bootstrap_fingerprints_the_actual_existing_unreal_runtime() {
     let scratch = Scratch::new();
     let root = scratch.executable();
