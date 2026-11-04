@@ -49,6 +49,7 @@ pub(crate) struct Runtime {
     stop: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
     observation_worker: Mutex<Option<JoinHandle<()>>>,
+    host_worker: Mutex<Option<host_observation::Worker>>,
     collect: Collect,
     local_revision: Arc<AtomicU64>,
     /// Serializes discovery revisions without excluding live delivery adoption.
@@ -60,6 +61,8 @@ pub(crate) struct Runtime {
 }
 #[path = "profile_resources/live_validation.rs"]
 mod live_validation;
+#[path = "profile_resources/host_observation.rs"]
+mod host_observation;
 #[path = "profile_resources/health.rs"]
 mod health;
 #[path = "profile_resources/companion_catalogue.rs"]
@@ -506,6 +509,7 @@ impl Runtime {
             stop,
             worker: Mutex::new(worker),
             observation_worker: Mutex::new(None),
+            host_worker: Mutex::new(None),
             collect,
             local_revision,
             collector_gate,
@@ -527,7 +531,13 @@ impl Runtime {
             return Err("Resource inventory has stopped.".into());
         }
         let revision = self.local_revision.fetch_add(1, Ordering::AcqRel) + 1;
-        let batches = Self::prepare_batches((self.collect)(revision));
+        let mut captured = (self.collect)(revision);
+        if !captured.iter().any(|(scope, _)| scope == "host-controllers") {
+            if let Some(host) = self.host_collector() {
+                captured.extend(host(revision));
+            }
+        }
+        let batches = Self::prepare_batches(captured);
         {
             let _capture = self.capture_gate.lock().unwrap_or_else(|p| p.into_inner());
             if self.stop.load(Ordering::Acquire) {
@@ -763,6 +773,7 @@ impl Runtime {
     pub(crate) fn shutdown(&self) {
         self.stop.store(true, Ordering::Release);
         self.stop_observing_catalogue();
+        self.stop_host_inventory();
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }

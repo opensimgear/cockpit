@@ -1,7 +1,7 @@
 //! Cached metadata only. Native reports never serialize or enter this worker.
 use super::Registry;
-use osg_streams::Broker;
-use std::sync::Arc;
+use osg_streams::{Broker, NativeWake};
+use std::sync::{Arc, Weak};
 mod model;
 mod queue;
 mod worker;
@@ -14,11 +14,12 @@ pub(super) struct Inventory {
     latest: Option<Arc<View>>,
     self_access: Arc<SelfAccess>,
     closed: bool,
+    resource_wake: Weak<NativeWake>,
 }
 impl Default for Inventory {
     fn default() -> Self {
         Self { actor: None, epoch: 0, latest: None,
-            self_access: Arc::new(crate::visibility::self_access::Status::default().into()), closed: false }
+            self_access: Arc::new(crate::visibility::self_access::Status::default().into()), closed: false, resource_wake: Weak::new() }
     }
 }
 // Speculative metadata edits never publish through a registry clone.
@@ -47,6 +48,18 @@ impl InventoryShutdown {
     pub fn shutdown(mut self) { if let Some(actor) = self.0.take() { actor.shutdown(); } }
 }
 impl Registry {
+    pub(crate) fn watch_resource_inventory(&mut self, wake: &Arc<NativeWake>) -> Result<(), String> {
+        let inventory = &mut self.inventory_observation;
+        if inventory.closed { return Err("Controller inventory worker stopped.".into()); }
+        let observer = Arc::downgrade(wake);
+        if inventory.resource_wake.strong_count() > 0 && !inventory.resource_wake.ptr_eq(&observer) {
+            return Err("Controller resource inventory already has a native observer.".into());
+        }
+        inventory.resource_wake = observer;
+        wake.notify();
+        Ok(())
+    }
+
     /// Startup-only immutable diagnostic; this never inspects visibility state.
     pub(crate) fn set_inventory_self_access(&mut self, status: crate::visibility::self_access::Status) {
         self.inventory_observation.self_access = Arc::new(status.into());
@@ -66,9 +79,11 @@ impl Registry {
     }
     pub fn take_inventory_shutdown(&mut self) -> InventoryShutdown {
         self.inventory_observation.closed = true;
+        if let Some(wake) = self.inventory_observation.resource_wake.upgrade() { wake.notify(); }
         InventoryShutdown(self.inventory_observation.actor.take())
     }
     pub(super) fn inventory_changed(&mut self) {
+        if let Some(wake) = self.inventory_observation.resource_wake.upgrade() { wake.notify(); }
         let Some(shared) = self.inventory_observation.actor.as_ref().map(|actor| actor.shared.clone()) else { return; };
         let view = match View::capture(self) {
             Ok(view) => Arc::new(view),
@@ -85,6 +100,7 @@ impl Registry {
     /// A first complete report copies only its own fixed metadata row. The
     /// worker merges it with cached inventory after releasing capture ownership.
     pub(super) fn inventory_readiness(&mut self, id: &str) {
+        if let Some(wake) = self.inventory_observation.resource_wake.upgrade() { wake.notify(); }
         let Some(shared) = self.inventory_observation.actor.as_ref().map(|actor| actor.shared.clone()) else { return; };
         let Some(source) = self.sources.get(id) else { return; };
         let row = Summary::capture(source);

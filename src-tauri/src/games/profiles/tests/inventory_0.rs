@@ -64,6 +64,7 @@ fn sources() -> (Sources, tempfile::TempDir) {
                 Arc::new(|| panic!("No serial enumeration in a synthetic provider")),
                 false,
             )),
+            host_usb_evidence: Arc::new(Mutex::new(HostUsbEvidence::default())),
             can_scopes: BTreeSet::new(),
             can_retained: BTreeMap::new(),
             refreshing: Arc::new(Mutex::new(BTreeSet::new())),

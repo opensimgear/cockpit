@@ -54,6 +54,11 @@ impl ControllerService {
         Ok(self.resource_inventory())
     }
 
+    /// Wake the native resource catalogue owner on committed controller metadata.
+    pub fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) -> Result<(), String> {
+        self.registry.lock().unwrap_or_else(|error| error.into_inner()).watch_resource_inventory(wake)
+    }
+
     pub fn new(path: Option<PathBuf>, native: bool) -> Self {
         Self::start(path, native, false)
     }

@@ -25,6 +25,33 @@ fn row<'a>(payload: &'a Value, id: &str) -> &'a Value {
 }
 
 #[test]
+fn native_resource_watch_wakes_on_metadata_and_first_readiness_only() {
+    let mut registry = Registry::default();
+    let wake = Arc::new(NativeWake::default());
+    registry.watch_resource_inventory(&wake).unwrap();
+    let initial = wake.observed();
+    assert!(initial > 0);
+    assert!(registry.watch_resource_inventory(&Arc::new(NativeWake::default())).is_err());
+    let id = registry.connect(fixture("resource-watch", None)).unwrap();
+    let connected = wake.observed();
+    assert!(connected > initial);
+    baseline(&mut registry, &id);
+    let ready = wake.observed();
+    assert!(ready > connected);
+    for value in 0..32 { registry.report(&id, 1, &BTreeMap::from([(0, value % 2), (1, value)])).unwrap(); }
+    assert_eq!(wake.observed(), ready);
+    let before = registry.clone();
+    let mut staged = before.clone();
+    staged.update(&id, "Renamed", "pedals").unwrap();
+    assert_eq!(wake.observed(), ready);
+    registry.commit_metadata(&before, &staged);
+    assert!(wake.observed() > ready);
+    let committed = wake.observed();
+    registry.disconnect(&id);
+    assert!(wake.observed() > committed);
+}
+
+#[test]
 fn first_baseline_changes_metadata_but_reports_never_rebuild_or_publish_inventory() {
     let (mut registry, _broker, id, mut reader) = setup();
     let first = reader.recv().unwrap();

@@ -358,7 +358,8 @@ impl GatewayManager {
         let configuration_gate = Arc::new(Mutex::new(()));
         let closed = Arc::new(AtomicBool::new(false));
         let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
-        let collect = crate::profile_resource_sources::collector(
+        let host_inventory_wake = Arc::new(osg_streams::NativeWake::default());
+        let (collect, collect_host) = crate::profile_resource_sources::collector(
             controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
             Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.cached_state())).collect()),
             Arc::new(move |request| {
@@ -368,6 +369,12 @@ impl GatewayManager {
             module_usb.clone(), native,
         );
         let profile_resources = Arc::new(crate::profile_resources::Runtime::new(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, native));
+        if native {
+            controllers.watch_resource_inventory(&host_inventory_wake)
+                .expect("profile inventory owns the controller resource watch");
+            profile_resources.start_host_inventory(collect_host, host_inventory_wake)
+                .expect("controller resource inventory worker");
+        }
         let profile_admission_epoch = Arc::new(AtomicU64::new(0));
         let profile_activations=Arc::new(profile_activation_progress::Tracker::default());
         let progress_tracker=profile_activations.clone();

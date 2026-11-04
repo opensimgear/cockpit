@@ -253,10 +253,10 @@ impl Sources {
 
     fn collect(&mut self, revision: u64) -> Vec<(String, Result<ProviderBatch, String>)> {
         let usb_result = self.usb_observations();
-        let verified = self
-            .usb
-            .snapshots()
-            .into_iter()
+        let usb_slots = self.usb.snapshots();
+        let verified = usb_slots
+            .iter()
+            .cloned()
             .filter(|slot| usb_result.is_ok() && slot.present && slot.admissible)
             .filter_map(|slot| {
                 let snapshot = slot.snapshot;
@@ -269,81 +269,37 @@ impl Sources {
                     .map(|(identity, route)| (identity.module_id, (identity.serial, route.boot)))
             })
             .collect::<BTreeMap<_, _>>();
-        let host = self
-            .controllers
-            .authoritative_resource_inventory()
-            .map(|controllers| {
-                let host = controllers
-                    .sources
-                    .into_iter()
-                    .map(|source| {
-                        let mut result = observation(
-                            source.saved.id.clone(),
-                            source.saved.name,
-                            ResourceType::HostController,
-                        );
-                        result.evidence.push(evidence(
-                            EvidenceKind::LocalPath,
-                            format!("host:{}", source.saved.id),
-                        ));
-                        if let Some(serial) = &source.saved.identity.serial {
-                            result
-                                .evidence
-                                .push(evidence(EvidenceKind::Serial, serial.clone()));
-                            if let Some((module, _)) = verified
-                                .iter()
-                                .find(|(_, (uid, _))| uid.eq_ignore_ascii_case(serial))
-                            {
-                                // Match the verified USB interface's VID/PID as well. A name
-                                // or a familiar VID/PID by itself never establishes identity.
-                                if self.usb.snapshots().iter().any(|slot| {
-                                    slot.port
-                                        .serial_number
-                                        .as_deref()
-                                        .is_some_and(|uid| uid.eq_ignore_ascii_case(serial))
-                                        && hex(&slot.port.vendor_id)
-                                            == Some(source.saved.identity.vendor_id)
-                                        && hex(&slot.port.product_id)
-                                            == Some(source.saved.identity.product_id)
-                                }) {
-                                    result.evidence.push(evidence(
-                                        EvidenceKind::VerifiedPhysical,
-                                        format!("osg-mcu:{module}"),
-                                    ));
-                                    result.resource_type = ResourceType::OsgModule;
-                                }
-                            }
-                        }
-                        result.attributes = attributes([
-                            ("backend", source.saved.identity.backend),
-                            ("collection", source.saved.identity.collection),
-                        ]);
-                        result.diagnostics = source.diagnostics;
-                        if !controllers.diagnostic.is_empty() {
-                            result.diagnostics.push(controllers.diagnostic.clone());
-                        }
-                        result.ports = (!source.controls.is_empty())
-                            .then(|| PortUpdate::complete(ports::controls(&source.controls)))
-                            .transpose()
-                            .ok()
-                            .flatten();
-                        result.route = source.online.then(|| Route {
-                            id: format!("hid:{}", source.saved.id),
-                            transport: Transport::Hid,
-                            provider_generation: source.generation.to_string(),
-                            attributes: attributes([("path", source.saved.identity.path)]),
-                            baseline_ready: source.baseline_ready,
-                            writable: false,
-                            priority: 10,
-                        });
-                        result
-                    })
-                    .collect();
-                batch("host-controllers", &controllers.session, revision, host)
-            });
+        let host_evidence = HostUsbEvidence {
+            verified: verified
+                .iter()
+                .map(|(id, (serial, _))| (id.clone(), serial.clone()))
+                .collect(),
+            usb_ports: usb_slots
+                .into_iter()
+                .filter_map(|slot| {
+                    Some((
+                        slot.port.serial_number?.to_ascii_lowercase(),
+                        hex(&slot.port.vendor_id)?,
+                        hex(&slot.port.product_id)?,
+                    ))
+                })
+                .collect(),
+        };
+        let host = if self.native {
+            let mut current = self
+                .host_usb_evidence
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            // Reconcile both sightings together when USB identity changes.
+            (*current != host_evidence).then(|| {
+                *current = host_evidence;
+                collect_host(&self.controllers, &current, revision)
+            })
+        } else {
+            Some(collect_host(&self.controllers, &host_evidence, revision))
+        };
         let companions = self.companion_observations();
         let mut batches = vec![
-            ("host-controllers".into(), host),
             (
                 "standalone-usb".into(),
                 usb_result.map(|items| batch("standalone-usb", &self.session, revision, items)),
@@ -385,6 +341,7 @@ impl Sources {
                 }),
             ),
         ];
+        if let Some(host) = host { batches.push(("host-controllers".into(), host)); }
         let gateways = (self.gateways)();
         let conflicts = gateways
             .iter()

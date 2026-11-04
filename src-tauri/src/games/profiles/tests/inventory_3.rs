@@ -177,7 +177,7 @@ fn capability_refresh_uses_only_bounded_read_commands_and_deduplicates_inflight_
 #[test]
 fn retained_collector_preserves_provider_sessions_across_read_only_refreshes() {
     let (sources, _temporary) = sources();
-    let collect = collector(
+    let (collect, _) = collector(
         sources.controllers,
         sources.companions,
         sources.host,
