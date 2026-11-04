@@ -661,8 +661,9 @@ pub(crate) fn serve_messages<S: Read + Write>(
                 if frame["type"] == "assignments-subscribe" {
                     return feedback_socket::serve_assignments(socket, hub, id, stop, attempts, peer, &frame);
                 }
-                if frame["type"] == "feedback-subscribe" {
-                    return feedback_socket::serve(socket, hub, id, stop, attempts, peer, &frame, !browser_socket);
+                let embedded_feedback = !browser_socket && frame["type"] == "esp32-feedback-subscribe";
+                if frame["type"] == "feedback-subscribe" || embedded_feedback {
+                    return feedback_socket::serve(socket, hub, id, stop, attempts, peer, &frame, !browser_socket, embedded_feedback);
                 }
                 let is_auth = frame["type"] == "auth";
                 let mut response = hub.handle_wire(frame, id, hub.now_ms());

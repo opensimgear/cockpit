@@ -39,7 +39,7 @@ pub struct FeedbackSubscription {
     credential_hash: String,
     session_id: String,
     generation: u64,
-    serial: bool,
+    allow_disarmed: bool,
     wake: Arc<NativeWake>,
     cursor: crate::feedback::FeedbackCursor,
     assignments: Option<Value>,
@@ -74,6 +74,13 @@ impl Hub {
         &self, connection: &str, session_id: &str, generation: u64,
         publication_hash: &str, credential: &str, wake: Arc<NativeWake>, stream_resync: bool,
     ) -> Result<FeedbackSubscription, String> {
+        self.subscribe_network_feedback(connection, session_id, generation, publication_hash, credential, wake, stream_resync, false)
+    }
+
+    pub(crate) fn subscribe_network_feedback(
+        &self, connection: &str, session_id: &str, generation: u64,
+        publication_hash: &str, credential: &str, wake: Arc<NativeWake>, stream_resync: bool, allow_disarmed: bool,
+    ) -> Result<FeedbackSubscription, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         self.expire(&mut inner, self.now_ms())?;
         ensure(!inner.connections.contains_key(connection), "Use a dedicated feedback connection.")?;
@@ -84,7 +91,9 @@ impl Hub {
         let session = inner.sessions.get_mut(session_id).ok_or("Feedback session ended.")?;
         ensure(
             session.companion_id == companion && session.token.generation == generation
-                && session.token.publication_hash == publication_hash && session.armed,
+                && session.token.publication_hash == publication_hash
+                && (!allow_disarmed || session.transport == SourceTransport::Network)
+                && (session.armed || (allow_disarmed && !session.panel_error)),
             "Feedback subscription belongs to another or disarmed session.",
         )?;
         if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|previous| previous.upgrade()) {
@@ -97,7 +106,7 @@ impl Hub {
         self.observe_record_changes(wake.clone());
         Ok(FeedbackSubscription {
             hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
-            generation, serial: false, wake, cursor: Default::default(), assignments: None, resync_sequence,
+            generation, allow_disarmed, wake, cursor: Default::default(), assignments: None, resync_sequence,
         })
     }
 
@@ -117,7 +126,7 @@ impl Hub {
         }
         Ok(FeedbackSubscription {
             hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
-            generation: session.token.generation, serial: true, wake, cursor: Default::default(), assignments: None, resync_sequence: None,
+            generation: session.token.generation, allow_disarmed: true, wake, cursor: Default::default(), assignments: None, resync_sequence: None,
         })
     }
 
@@ -146,7 +155,7 @@ impl FeedbackSubscription {
         let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
         let session = inner.sessions.get(&self.session_id).ok_or("Feedback session ended.")?;
         ensure(
-            session.token.generation == self.generation && (session.armed || (self.serial && !session.panel_error))
+            session.token.generation == self.generation && (session.armed || (self.allow_disarmed && !session.panel_error))
                 && session.companion_id == self.companion_id
                 && inner.connections.get(&session.connection) == Some(&self.companion_id)
                 && session.feedback_wake.as_ref().is_some_and(|wake| wake.ptr_eq(&Arc::downgrade(&self.wake))),

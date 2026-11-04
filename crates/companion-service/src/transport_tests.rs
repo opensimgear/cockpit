@@ -492,7 +492,7 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     };
     assert!(connect("https://attacker.example").is_err());
     // Native pinned clients retain their separate, Origin-free protocol endpoint.
-    let mut native=endpoint.into_client_request().unwrap();
+    let mut native=endpoint.as_str().into_client_request().unwrap();
     native.headers_mut().insert("Sec-WebSocket-Protocol",crate::server::SUBPROTOCOL.parse().unwrap());
     let (mut native,_)=tungstenite::client(native,stream()).unwrap();native.close(None).unwrap();drop(native);
     let (mut socket,_)=connect(&origin).unwrap();
@@ -523,6 +523,25 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     let opened=call(&mut socket,json!({"type":"open","instanceId":"browser-panel","publicationHash":hash}));
     assert_eq!(opened["publication"]["publicationHash"],hash);
     let frame=|kind:&str,seq:&str|json!({"version":1,"type":kind,"clientId":opened["clientId"],"sessionId":opened["sessionId"],"generation":opened["generation"],"publicationHash":hash,"sequence":seq});
+    let embedded = json!({
+        "type":"esp32-feedback-subscribe","token":token,"sessionId":opened["sessionId"],
+        "generation":opened["generation"],"publicationHash":hash,
+    });
+    let (mut browser_embedded, _) = connect(&origin).unwrap();
+    assert_eq!(call(&mut browser_embedded, embedded.clone())["ok"], false);
+    drop(browser_embedded);
+    let mut request = endpoint.into_client_request().unwrap();
+    request.headers_mut().insert("Sec-WebSocket-Protocol",crate::server::SUBPROTOCOL.parse().unwrap());
+    let (mut embedded_socket, _) = tungstenite::client(request,stream()).unwrap();
+    assert_eq!(call(&mut embedded_socket,embedded)["type"],"feedback-subscribed");
+    assert_eq!(receive_json(&mut embedded_socket,Duration::from_secs(2)).unwrap()["type"],"assignments-event");
+    let embedded_initial = receive_json(&mut embedded_socket,Duration::from_secs(2)).unwrap();
+    assert_eq!(embedded_initial["feedback"]["mode"],"snapshot");
+    hub.configure_feedback("browser-panel", &hash, &[]).unwrap();
+    let embedded_changed = receive_json(&mut embedded_socket,Duration::from_secs(2)).unwrap();
+    assert_ne!(embedded_initial["feedback"]["bindingGeneration"],embedded_changed["feedback"]["bindingGeneration"]);
+    assert!(sink.events.lock().unwrap().is_empty());
+    assert!(call(&mut socket,frame("heartbeat","1")).get("feedback").is_none());
     let mut baseline=frame("baseline","0");baseline["values"]=json!({"press":false});
     assert_eq!(call(&mut socket,baseline)["ok"],true);
     let subscribe = json!({
@@ -544,7 +563,7 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     let initial = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
     assert_eq!(initial["feedback"]["mode"], "snapshot");
     assert_eq!(initial["feedback"]["sessionId"], opened["sessionId"]);
-    hub.configure_feedback("browser-panel", &hash, &[]).unwrap();
+    hub.clear_feedback("browser-panel", &hash, hub.now_ms()).unwrap();
     let changed = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
     assert_eq!(changed["type"], "feedback-event");
     assert_ne!(initial["feedback"]["bindingGeneration"], changed["feedback"]["bindingGeneration"]);
