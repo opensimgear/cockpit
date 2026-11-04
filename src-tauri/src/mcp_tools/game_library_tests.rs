@@ -44,6 +44,23 @@ fn games_list_keeps_multiple_and_empty_tag_ids() {
 }
 
 #[test]
+fn games_list_keeps_discovery_summary_without_repeating_scan_pages() {
+    let large = "x".repeat(2_000_000);
+    let (tools, _) = fixture(json!({"ok":true,"state":{"games":{
+        "catalogue":[{"id":"first"},{"id":"second"}],
+        "discovery":{"scanId":"scan","status":"complete","entries":[{"preview":large}],
+            "observations":[{"id":"a"},{"id":"b"}]}
+    }}}));
+    let result = tools.call("games_list", json!({"limit":1}), "reader");
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["data"]["catalogue"].as_array().unwrap().len(), 1);
+    assert_eq!(result["data"]["catalogue"][0]["id"], "first");
+    assert_eq!(result["data"]["total"], 2);
+    assert_eq!(result["data"]["discovery"], json!({"scanId":"scan","status":"complete",
+        "entryCount":1,"observationCount":2}));
+}
+
+#[test]
 fn game_tags_tools_expose_taxonomy_and_replay_exact_native_mutations() {
     let (tools, backend) = fixture(json!({"ok":true,"state":{"games":{"tags":{"genre":"Genre"},"catalogue":[{"id":"assetto-corsa","name":"Assetto Corsa","tagIds":["genre"]}]}}}));
     let listed = tools.call("game_tags_list", json!({}), "reader");

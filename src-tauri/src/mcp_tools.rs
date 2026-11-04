@@ -376,6 +376,13 @@ impl Tools {
             "game_installation_select" => self.game_installation_select(args, client),
             "games_list" => {
                 let mut data = forward("game_get_state", &[], Some("games"))?;
+                if let Some(discovery) = data.get_mut("discovery").and_then(Value::as_object_mut) {
+                    for (key, count) in [("entries", "entryCount"), ("observations", "observationCount")] {
+                        if let Some(items) = discovery.remove(key).and_then(|value| value.as_array().map(Vec::len)) {
+                            discovery.insert(count.into(), json!(items));
+                        }
+                    }
+                }
                 if let Some(games) = data["catalogue"].as_array_mut() {
                     for game in games {
                         if let Some(vehicles) = game["vehicleSupport"]

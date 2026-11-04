@@ -158,6 +158,11 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
       await observationReader.cancel();
     }
     if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
+      const games = await ok(reader, 'games_list', { limit: 1 });
+      assert.equal(games.catalogue.length, Math.min(games.total, 1));
+      assert.equal(games.discovery?.entries, undefined);
+      assert.equal(games.discovery?.observations, undefined);
+      evidence.modernObservation.gameListBudget = { catalogueTotal: games.total, discoveryEntries: games.discovery?.entryCount };
       await mkdir('.research/reactive', { recursive: true });
       await writeFile('.research/reactive/mcp-native-observation.json', JSON.stringify(evidence.modernObservation, null, 2) + '\n');
       return;
