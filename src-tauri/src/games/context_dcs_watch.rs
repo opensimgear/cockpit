@@ -7,24 +7,37 @@ pub(super) struct DcsWatch {
     scope: Option<(PathBuf, Option<PathBuf>)>,
     paths: Vec<PathBuf>,
     pending: bool,
+    installed: bool,
+    saved_games: Option<PathBuf>,
+    install: Option<PathBuf>,
 }
 
 impl DcsWatch {
     pub(super) fn refresh(&mut self, inner: &Inner) {
         let game = inner.settings.lock().unwrap_or_else(|error| error.into_inner())
             .catalogue.iter().find(|game| crate::game_discovery::integration_key(game) == Some("dcs")).cloned();
+        let installed = game.as_ref().is_some_and(|game| game["installed"] == true);
+        let install = game.as_ref().and_then(|game| game["installPath"].as_str())
+            .map(PathBuf::from).filter(|path| path.is_absolute());
         let scope = game.as_ref().and_then(|game| inner.setup.dcs_setup_watch_scope(game));
-        if self.scope != scope {
+        if self.installed != installed || self.scope != scope || self.install != install {
+            self.saved_games = installed.then(crate::dcs_setup::saved_games_root).and_then(Result::ok);
             self.paths = scope.as_ref().map_or_else(Vec::new, |(target, install)| {
-                let mut paths = crate::dcs_setup::setup_watch_paths(target, install.as_deref());
-                paths.extend(crate::dcs_setup::install_discovery_watch_paths(install.as_deref()));
-                paths
+                crate::dcs_setup::setup_watch_paths(target, install.as_deref())
             });
+            self.paths.extend(crate::dcs_setup::install_discovery_watch_paths(install.as_deref()));
+            self.paths.extend(self.saved_games.iter().cloned());
             self.scope = scope;
+            self.installed = installed;
+            self.install = install;
         }
-        if self.source.refresh(self.paths.clone()) {
+        let children = self.saved_games.as_deref().map(|root| {
+            (root, dcs_profile_directory as prepared_sources::watch::ChildFilter)
+        });
+        if self.source.refresh_with_children(self.paths.clone(), children) {
             self.pending = self.source.active();
             inner.setup.set_setup_watch("dcs", self.pending);
+            inner.setup.set_dcs_discovery_watch(self.pending && children.is_some());
         }
         if self.pending {
             if let Some(game) = &game {
@@ -32,4 +45,9 @@ impl DcsWatch {
             }
         }
     }
+}
+
+fn dcs_profile_directory(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("dcs")
+        || name.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("dcs.")))
 }

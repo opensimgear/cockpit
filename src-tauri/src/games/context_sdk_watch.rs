@@ -10,6 +10,7 @@ pub(super) struct SdkWatches([SourceWatch; 2]);
 #[derive(Default)]
 pub(super) struct SourceWatch {
     paths: Vec<PathBuf>,
+    child_root: Option<PathBuf>,
     watch: Option<prepared_sources::watch::Watch>,
     dirty: Arc<AtomicBool>,
 }
@@ -38,10 +39,19 @@ impl SourceWatch {
     pub(super) fn active(&self) -> bool { self.watch.is_some() }
 
     pub(super) fn refresh(&mut self, paths: Vec<PathBuf>) -> bool {
-        if !self.dirty.swap(false, Ordering::AcqRel) && self.paths == paths {
+        self.refresh_with_children(paths, None)
+    }
+
+    pub(super) fn refresh_with_children(
+        &mut self, paths: Vec<PathBuf>,
+        children: Option<(&Path, prepared_sources::watch::ChildFilter)>,
+    ) -> bool {
+        let child_root = children.map(|(root, _)| root.to_path_buf());
+        if !self.dirty.swap(false, Ordering::AcqRel) && self.paths == paths && self.child_root == child_root {
             return false;
         }
         self.paths = paths;
+        self.child_root = child_root;
         if !self.paths.is_empty() {
             if self.watch.is_none() {
                 let worker = thread::current();
@@ -52,7 +62,7 @@ impl SourceWatch {
                 })).ok();
             }
             if let Some(watch) = &mut self.watch {
-                if watch.replace(&self.paths).is_err() {
+                if watch.replace_with_children(&self.paths, children).is_err() {
                     self.watch = None;
                 }
             }

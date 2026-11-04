@@ -13,6 +13,7 @@ use std::{
 const MAX_TARGETS: usize = 2048;
 const MAX_DIRECTORIES: usize = 64;
 const MAX_ERROR_BYTES: usize = 1024;
+pub(in crate::games) type ChildFilter = fn(&std::ffi::OsStr) -> bool;
 type Changed = Arc<dyn Fn(Result<(), String>) + Send + Sync>;
 type Targets = Arc<Mutex<Arc<TargetFilter>>>;
 
@@ -20,6 +21,7 @@ type Targets = Arc<Mutex<Arc<TargetFilter>>>;
 struct TargetFilter {
     paths: BTreeSet<PathBuf>,
     directories: BTreeSet<PathBuf>,
+    children: Option<(PathBuf, ChildFilter)>,
 }
 
 pub(in crate::games) struct Watch {
@@ -42,7 +44,20 @@ impl Watch {
     /// Run on the source worker, before its source baseline is read.
     /// Register the complete replacement before retiring the old native watch.
     pub(in crate::games) fn replace(&mut self, paths: &[PathBuf]) -> Result<(), String> {
-        let (targets, directories) = configuration(paths)?;
+        self.replace_with_children(paths, None)
+    }
+
+    pub(in crate::games) fn replace_with_children(
+        &mut self, paths: &[PathBuf], children: Option<(&Path, ChildFilter)>,
+    ) -> Result<(), String> {
+        let (mut targets, directories) = configuration(paths)?;
+        if let Some((root, filter)) = children {
+            let root = comparison_path(root);
+            if !directories.contains_key(&root) {
+                return Err("Cannot watch child entries of an unavailable directory.".into());
+            }
+            targets.children = Some((root, filter));
+        }
         let mut replacement = native_watcher(self.targets.clone(), self.changed.clone())?;
         for directory in directories.values() {
             replacement
@@ -120,6 +135,12 @@ fn dispatch(event: notify::Result<Event>, targets: &Targets, changed: &Changed) 
             return false;
         }
         targets.paths.iter().any(|target| target.starts_with(&path))
+            || targets.children.as_ref().is_some_and(|(root, filter)| {
+                matches!(event.kind, EventKind::Create(_) | EventKind::Remove(_)
+                    | EventKind::Modify(ModifyKind::Name(_)))
+                    && path.parent() == Some(root.as_path())
+                    && path.file_name().is_some_and(filter)
+            })
     }) {
         changed(Ok(()));
     }

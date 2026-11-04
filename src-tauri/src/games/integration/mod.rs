@@ -25,6 +25,7 @@ struct Inner {
     catalogues: Mutex<provider_settings::CatalogueCache>,
     catalogue_generation: [std::sync::atomic::AtomicU64; 3],
     watched_setup: Mutex<std::collections::BTreeSet<String>>,
+    dcs_discovery_watched: AtomicBool,
     views: Mutex<setup_cache::SetupViews>,
     fingerprints: Mutex<crate::acr_setup::FingerprintCache>,
     ac_cars: crate::ac_car_catalogue_cache::Cache,
@@ -114,6 +115,7 @@ impl GameIntegrationSetup {
                 catalogues: Mutex::new(BTreeMap::new()),
                 catalogue_generation: Default::default(),
                 watched_setup: Default::default(),
+                dcs_discovery_watched: Default::default(),
                 fingerprints: Mutex::new(Default::default()),
                 cancel: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
@@ -225,6 +227,10 @@ impl GameIntegrationSetup {
         record["userFolder"].as_str().or_else(|| prepared.as_ref().and_then(|status| status["userFolder"].as_str()))
             .map(Path::new).filter(|path| path.is_absolute())
             .map(|target| (target.to_path_buf(), install.map(Path::to_path_buf)))
+    }
+
+    pub(crate) fn set_dcs_discovery_watch(&self, active: bool) {
+        self.inner.dcs_discovery_watched.store(active, Ordering::Release);
     }
 
     pub(crate) fn set_setup_watch(&self, id: &str, active: bool) {

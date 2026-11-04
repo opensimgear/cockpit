@@ -1,9 +1,10 @@
 // IPC-only acceptance against the running native Cockpit. The simulator process,
 // BIOS frames and ownship envelopes are authored fixtures; no hardware outputs.
-// All game-side writes, including Setup/Repair, stay in this private user folder.
+// Setup and Repair write only to the private user folder.
+// The opt-in discovery test briefly adds an empty, uniquely named profile directory.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {access, cp, mkdir, readFile, rm, unlink, writeFile} from 'node:fs/promises';
+import {access, cp, mkdir, readFile, rm, rmdir, unlink, writeFile} from 'node:fs/promises';
 import {dirname, resolve, sep} from 'node:path';
 import {execFile, spawn} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -188,6 +189,21 @@ test('native managed DCS ownship physics and BIOS remain independent through wit
     await request({command: 'game_integration_settings_save', gameId: 'dcs', expectedSetupRevision: (await game()).integrationSetup.providerSetupRevision, connection, userFolder, aircraftModule: 'A-10C'});
     assert.notEqual((await game()).integrationSetup.providerSetupRevision, before.providerSetupRevision);
     evidence.setup = await setup(); await checkpoint('managed setup and file revisions verified');
+    if (process.env.OSG_DCS_SAVED_GAMES_WATCH_ROOT) {
+      const root = resolve(process.env.OSG_DCS_SAVED_GAMES_WATCH_ROOT);
+      const profileFolder = resolve(root, 'DCS.osg-watch-' + randomUUID());
+      const hasFolder = async () => (await game()).integrationSetup.candidates
+        ?.some(path => normalizedPath(path) === normalizedPath(profileFolder));
+      await mkdir(profileFolder);
+      try {
+        await until(hasFolder, 'New DCS Saved Games profile was not observed');
+      } finally {
+        await rmdir(profileFolder);
+      }
+      await until(async () => !(await hasFolder()), 'Removed DCS Saved Games profile stayed visible');
+      evidence.savedGamesWatch = {creation: true, removal: true};
+      await checkpoint('private Saved Games profile creation and removal verified');
+    }
     assert.ok(script.startsWith(directory + sep)); await unlink(script);
     const missing = await until(async () => {
       const value = await game();

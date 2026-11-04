@@ -163,6 +163,7 @@ fn callback_reports_loss_ignores_access_and_releases_filter_lock_before_waking()
     let directory = crate::test_directory();
     let target = directory.path().join("selected.png");
     let targets = Arc::new(Mutex::new(Arc::new(TargetFilter {
+        children: None,
         paths: BTreeSet::from([comparison_path(&target)]),
         directories: BTreeSet::new(),
     })));
@@ -270,4 +271,32 @@ fn windows_native_and_canonical_prefixes_and_case_compare_equally() {
         comparison_path(Path::new(r"\\server\Share\Selected.PNG")),
         comparison_path(Path::new(r"\\?\UNC\SERVER\share\selected.png"))
     );
+}
+
+#[test]
+fn child_filter_wakes_for_matching_directories_without_recursive_noise() {
+    let directory = crate::test_directory();
+    let root = directory.path();
+    let (send, receive) = mpsc::channel();
+    let mut watch = Watch::new(Arc::new(move |change| {
+        let _ = send.send(change);
+    })).unwrap();
+    watch.replace_with_children(&[root.to_path_buf()], Some((root, |name| {
+        name.to_str().is_some_and(|name| name.starts_with("dcs.") || name.starts_with("DCS."))
+    }))).unwrap();
+
+    let unrelated = root.join("Other Game");
+    fs::create_dir(&unrelated).unwrap();
+    fs::create_dir(unrelated.join("DCS.nested")).unwrap();
+    quiet(&receive);
+
+    let profile = root.join("DCS.fixture");
+    fs::create_dir(&profile).unwrap();
+    changed(&receive);
+    settled(&receive);
+    fs::write(profile.join("unrelated.txt"), b"not recursive").unwrap();
+    quiet(&receive);
+    fs::remove_file(profile.join("unrelated.txt")).unwrap();
+    fs::remove_dir(profile).unwrap();
+    changed(&receive);
 }
