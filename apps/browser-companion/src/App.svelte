@@ -38,9 +38,10 @@
   let connecting=$state(false);
   let disposed=false, pageHidden=false, nextAttempt:number|null=0, lastTick=performance.now();
   let retryTimer:ReturnType<typeof setTimeout>|undefined;
+  let maintenanceTimer:ReturnType<typeof setTimeout>|undefined;
   let handlingRuntimeError=false;
   let focusWork:Promise<void>|undefined;
-  let preparationHeartbeatTimer:ReturnType<typeof setInterval>|undefined;
+  let preparationHeartbeatTimer:ReturnType<typeof setTimeout>|undefined;
   let staleRecoveryWork:Promise<void>|undefined;
   let primaryConnectionId='';
   async function subscribeAssignments(socket:BrowserTransport){
@@ -72,7 +73,7 @@
       if(!current(socket,version))return;
       if(obsoleteSession(e)){error='';stop('Reconnecting to Cockpit…',1000);}
       else{error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}
-    }).finally(()=>{staleRecoveryWork=undefined;void reportDisplay();});
+    }).finally(()=>{staleRecoveryWork=undefined;scheduleMaintenance();void reportDisplay();});
     return true;
   }
   async function availableAssets(){try{return await cache.haveAssets();}catch(e){warning='Compiled asset cache unavailable; receiving fresh content.';let stored:string|undefined;cache=createCompiledAssetCache({read:async()=>stored,write:async value=>{stored=value;}});return [];}}
@@ -93,7 +94,8 @@
     retryTimer=setTimeout(()=>{retryTimer=undefined;void scheduleConnect();},Math.ceil(delay));
   }
   function stop(reason:string,retryDelay:number|null=500) {
-    epoch++;lastDisplay='';lastIdlePing=0;primaryConnectionId='';preparing?.abort();preparing=undefined;if(preparationHeartbeatTimer)clearInterval(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
+    clearTimeout(maintenanceTimer);maintenanceTimer=undefined;
+    epoch++;lastDisplay='';lastIdlePing=0;primaryConnectionId='';preparing?.abort();preparing=undefined;clearTimeout(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;active=false;inputReady=false;panelError=false;queue.stop();panelView?.suspend();session=null;
     feedbackView.disconnect();feedback=feedbackView.snapshot();suppressFeedbackCues=true;
     const previous=connection;connection=null;previous?.close();status=reason;
     nextAttempt=retryDelay===null?null:performance.now()+retryDelay;
@@ -138,13 +140,16 @@
     let verified,candidate:PreparedCompiledSurfaces|undefined,preparationHeartbeatWork:Promise<void>|undefined;
     const controller=new AbortController(),preparationOperation={instanceId:assignment.instanceId,publicationHash:opened.publicationHash,sessionId:opened.sessionId,generation:opened.generation,attemptId:'1',phase:'checking-cache'};preparing=controller;heartbeat=0;
     const sendPreparationHeartbeat=()=>{
-      if(!current(socket,version)||controller.signal.aborted||preparationHeartbeatWork)return;
+      if(preparing!==controller||!current(socket,version)||controller.signal.aborted||preparationHeartbeatWork)return;
+      const sentAt=performance.now();
       preparationHeartbeatWork=socket.request({version:1,type:'heartbeat',clientId:opened.clientId,sessionId:opened.sessionId,generation:opened.generation,publicationHash:opened.publicationHash,sequence:String(++heartbeat),operation:preparationOperation})
         .then(()=>{}).catch(e=>{if(current(socket,version)){if(!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}})
-        .finally(()=>preparationHeartbeatWork=undefined);
+        .finally(()=>{
+          preparationHeartbeatWork=undefined;
+          if(preparing===controller&&current(socket,version)&&!controller.signal.aborted)
+            preparationHeartbeatTimer=setTimeout(sendPreparationHeartbeat,Math.max(0,Math.ceil(sentAt+500-performance.now())));
+        });
     };
-    const loadHeartbeatTimer=setInterval(sendPreparationHeartbeat,500);
-    preparationHeartbeatTimer=loadHeartbeatTimer;
     sendPreparationHeartbeat();
     try{
       verified=await cache.verifyDelivery(p);if(!current(socket,version))return;
@@ -158,7 +163,7 @@
       session=opened;panelError=true;active=false;
       panelView?.suspend();queue.stop();feedbackView.clear();feedback={};
       status='Connected · panel error';error=obsoleteSession(e)?'':String(e instanceof Error?e.message:e);return;
-    }finally{if(preparationHeartbeatTimer===loadHeartbeatTimer){clearInterval(loadHeartbeatTimer);preparationHeartbeatTimer=undefined;}if(preparing===controller)preparing=undefined;}
+    }finally{if(preparing===controller){clearTimeout(preparationHeartbeatTimer);preparationHeartbeatTimer=undefined;preparing=undefined;}}
     if(!current(socket,version)){disposeCompiledSurfaces(candidate);return;}
     const previousSurfaces=panelSurfaces;panelSurfaces=candidate;viewRevision++;
     panel=verified;pageId=panel.document.ui.pages.some(p=>p.id===pageId)?pageId:panel.document.ui.pages[0].id;
@@ -187,6 +192,7 @@
       const auth=await socket.request({type:'auth',token:savedCredential.token});
       if(!current(socket,version))return;
       if(auth.hostId!==savedCredential.hostId || auth.companionId!==savedCredential.companionId)throw new Error('Saved Cockpit identity differs');
+      lastIdlePing=performance.now();
       assignments=auth.assignments;
       primaryConnectionId=auth.connectionId;
       await subscribeAssignments(socket);
@@ -195,7 +201,7 @@
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit',2000);
       if(error.includes('invalid or revoked')){credential=null;clearCredential(localStorage,savedCredential.token);status='Pair this browser again in Cockpit';}
     }}
-    finally{connecting=false;if(!credential && secret)void pair();else if(!connection)void scheduleConnect();else void reportDisplay();}
+    finally{connecting=false;if(!credential && secret)void pair();else if(!connection)void scheduleConnect();else{lastTick=performance.now();scheduleMaintenance();void reportDisplay();}}
   }
   async function pair(){
     if(!owner || connecting || !secret || disposed || !visible())return;
@@ -252,6 +258,18 @@
       if(displayRequest===socket)displayRequest=null;
       if(current(socket,version))void reportDisplay();
     }
+  }
+  function scheduleMaintenance(){
+    if(maintenanceTimer!==undefined||!owner||!connection||connecting||disposed||pageHidden||staleRecoveryWork)return;
+    // An unassigned worker owns its own ping and needs no page watchdog.
+    const delay=session?250:connection.usesDirectConnection
+      ?Math.max(0,2000-(performance.now()-lastIdlePing)):undefined;
+    if(delay!==undefined)maintenanceTimer=setTimeout(runMaintenance,Math.ceil(delay));
+  }
+  async function runMaintenance(){
+    maintenanceTimer=undefined;
+    await maintainConnection();
+    scheduleMaintenance();
   }
   async function maintainConnection(){
     const now=performance.now();
@@ -326,7 +344,6 @@
     const beforeInstall=(event:Event)=>{event.preventDefault();installPrompt=event;};
     window.addEventListener('blur',blurred);window.addEventListener('pagehide',pageHiding);window.addEventListener('pageshow',pageShowing);window.addEventListener('focus',gainedFocus);
     document.addEventListener('visibilitychange',visibilityChanged);document.addEventListener('fullscreenchange',full);window.addEventListener('beforeinstallprompt',beforeInstall);
-    const timer=setInterval(()=>{if(owner)void maintainConnection();},250);
     let releaseOwner:()=>void=()=>{};
     const initialize=()=>{owner=true;if(secret)void pair();else void connect();};
     if(navigator.locks)void navigator.locks.request('osg-companion-owner',secret?{steal:true}:{ifAvailable:true},async lock=>{
@@ -335,7 +352,7 @@
       initialize();await new Promise<void>(resolve=>releaseOwner=resolve);
     }).catch(e=>error=String(e));
     else initialize();
-    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed',null);disposeCompiledSurfaces(panelSurfaces);clearInterval(timer);window.removeEventListener('blur',blurred);window.removeEventListener('pagehide',pageHiding);window.removeEventListener('pageshow',pageShowing);window.removeEventListener('focus',gainedFocus);document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
+    return()=>{disposed=true;window.removeEventListener('storage',storageChanged);releaseOwner();stop('Browser closed',null);disposeCompiledSurfaces(panelSurfaces);window.removeEventListener('blur',blurred);window.removeEventListener('pagehide',pageHiding);window.removeEventListener('pageshow',pageShowing);window.removeEventListener('focus',gainedFocus);document.removeEventListener('visibilitychange',visibilityChanged);document.removeEventListener('fullscreenchange',full);window.removeEventListener('beforeinstallprompt',beforeInstall);};
   });
 </script>
 

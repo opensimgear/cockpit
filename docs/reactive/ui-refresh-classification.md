@@ -62,8 +62,10 @@ use the following sources.
 Browser companion assignments arrive over a subscription. Reconnect uses
 transport events and a single retry deadline. The worker owns steady-state
 lease renewal and unassigned pings with one timer for the next deadline.
-The page sends local activity for the
-release watchdog and owns wire maintenance in direct mode.
+The page sends local activity for the release watchdog only while a panel
+session exists. In direct mode it wakes for the next session heartbeat or
+unassigned ping. Panel preparation uses a separate cancellable heartbeat
+deadline until the neutral baseline.
 The shared panel canvas schedules the next pulse or feedback freshness
 deadline. The native companion's lease heartbeat remains independent.
 The browser companion connection timers require separate lifecycle qualification.

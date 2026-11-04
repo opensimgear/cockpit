@@ -97,6 +97,7 @@ export class BrowserTransport {
     if(this.direct)return this.direct.request(frame);
     return this.sendWorker('request',frame);
   }
+  get usesDirectConnection():boolean{return this.direct!==undefined;}
   notePageActivity():boolean{
     if(this.closed||!this.worker||!this.workerConnected)return false;
     if(!this.pageActivityPending){

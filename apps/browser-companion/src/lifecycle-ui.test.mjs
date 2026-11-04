@@ -20,8 +20,8 @@ const publication={document:panel,assets:[],publicationHash:hash,capabilityFinge
 const flush=async()=>{for(let i=0;i<35;i++)await Promise.resolve();};
 const assertObsoleteHidden=h=>assert.equal(JSON.stringify([h.handlers.error,h.handlers.status,h.handlers.feedbackNotice]).includes('Session is obsolete'),false,'Protocol recovery details stay out of user-facing state.');
 /** Actual mounted App listeners and real queue/feedback/credential logic. */
-function harness({pair=false,inlinePairing=false,hold=[],rejectPanel=false,holdVerification=false,rejectPanelAfter=Infinity,failPreparationAfter=Infinity,holdPreparation=false,displayOnly=false,staleOnce=[]}={}){
- let handlers,mount,cleanup,focused=true,clock=100,advanced=0,finishVerification,finishPreparation,verifications=0,preparations=0,assigned=[assignment];const preparedSurfaces=[];
+function harness({pair=false,inlinePairing=false,hold=[],rejectPanel=false,holdVerification=false,rejectPanelAfter=Infinity,failPreparationAfter=Infinity,holdPreparation=false,displayOnly=false,staleOnce=[],unassigned=false,worker=false}={}){
+ let handlers,mount,cleanup,focused=true,clock=100,advanced=0,finishVerification,finishPreparation,verifications=0,preparations=0,assigned=unassigned?[]:[assignment];const preparedSurfaces=[];
  const sockets=[],intervals=new Map(),timeouts=new Map(),storage=new Map(),staleUsed=new Set(),window=new EventTarget(),document=new EventTarget();
  Object.assign(document,{visibilityState:'visible',hasFocus:()=>focused});
  const location={hash:pair?'#pair='+'x'.repeat(43):''},localStorage={getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)};
@@ -46,7 +46,8 @@ function harness({pair=false,inlinePairing=false,hold=[],rejectPanel=false,holdV
   request(f){if(this.closed)return Promise.reject(Error('Socket closed'));this.requests.push(structuredClone(f));if(hold.includes(f.type))return new Promise((resolve,reject)=>this.pending.push({frame:f,resolve,reject}));return Promise.resolve(this.deliver(f));}
   release(type){const i=this.pending.findIndex(p=>p.frame.type===type);assert.ok(i>=0);const[p]=this.pending.splice(i,1);p.resolve(this.deliver(p.frame));}
   async subscribeFeedback(frame){this.feedbackSubscription=frame;if(frame.type==='feedback-subscribe')this.onreply?.({...this.response({type:'heartbeat'}),type:'feedback-event'});}
-  notePageActivity(){return false;}
+  get usesDirectConnection(){return !worker;}
+  notePageActivity(){return worker;}
   close(){this.closed=true;for(const p of this.pending.splice(0))p.reject(Error('Socket closed'));this.onclose?.();}
  }
  const injected=appSource.replace('</script>',`capture({connect,pair,emitOutput,runtimeError,consume,resyncFeedback,queue,resize(width,height){displayWidth=width;displayHeight=height;void reportDisplay();},get epoch(){return epoch;},get active(){return active;},get panel(){return panel;},get surfaces(){return panelSurfaces;},get suppressFeedbackCues(){return suppressFeedbackCues;},get panelError(){return panelError;},get session(){return session;},get status(){return status;},get error(){return error;},get feedbackNotice(){return feedbackNotice;},get feedback(){return feedback;},get credential(){return credential;},get secret(){return secret;}});</script>`);
@@ -68,6 +69,18 @@ function harness({pair=false,inlinePairing=false,hold=[],rejectPanel=false,holdV
  return{handlers,sockets,storage,preparedSurfaces,setAssignments(rows){assigned=rows;},async focus(v){focused=v;window.dispatchEvent(new Event(v?'focus':'blur'));await flush();},async visibility(v){document.visibilityState=v;document.dispatchEvent(new Event('visibilitychange'));await flush();},async pagehide(){window.dispatchEvent(new Event('pagehide'));await flush();},async pageshow(){window.dispatchEvent(new Event('pageshow'));await flush();},async elapse(ms){clock+=ms;fireDeadlines();await flush();},async tick(){fireDeadlines();for(const timer of intervals.values())timer.cb();await flush();},async stall(ms){clock+=ms;await this.tick();},async advance(ms){for(let elapsed=0;elapsed<ms;elapsed+=250){clock+=250;advanced+=250;fireDeadlines();for(const timer of intervals.values())if(timer.period&&advanced%timer.period===0)timer.cb();await flush();}},close(){cleanup();},finishVerification(){finishVerification();},finishPreparation(){finishPreparation();}};
 }
 test('compiled delivery advertises capabilities and cached hashes before neutral baseline',async()=>{const h=harness();await flush();try{const open=h.sockets[0].requests.find(f=>f.type==='open');assert.deepEqual(open.widgetCapabilities,BROWSER_WIDGET_CAPABILITIES);assert.deepEqual(open.haveAssets,['b'.repeat(64)]);assert.deepEqual(h.sockets[0].requests.find(f=>f.type==='baseline').values,{toggle:false,selector:.5});assert.equal(h.sockets[0].feedbackSubscription?.type,'feedback-subscribe');assert.equal(h.handlers.active,true);assert.equal(h.handlers.queue.snapshot().enabled,true);}finally{h.close();}});
+test('unassigned pages park with a worker and ping only at the direct lease deadline',async()=>{
+ for(const worker of [false,true]){
+  const h=harness({unassigned:true,worker});await flush();
+  try{
+   const requests=h.sockets[0].requests;
+   await h.elapse(1999);assert.equal(requests.filter(f=>f.type==='ping').length,0);
+   await h.elapse(1);assert.equal(requests.filter(f=>f.type==='ping').length,worker?0:1);
+   await h.elapse(1999);assert.equal(requests.filter(f=>f.type==='ping').length,worker?0:1);
+   await h.elapse(1);assert.equal(requests.filter(f=>f.type==='ping').length,worker?0:2);
+  }finally{h.close();await flush();}
+ }
+});
 test('an approved pairing reply saves credentials without a status request',async()=>{
  const h=harness({pair:true,inlinePairing:true});await flush();await flush();try{
   assert.deepEqual(h.sockets[0].requests.map(frame=>frame.type),['pair']);
@@ -107,7 +120,7 @@ test('an assignment changed while hidden loads its current panel and neutral bas
  }finally{h.close();await flush();}
 });
 test('hidden consumed pairing offers cannot save credentials or replay',async()=>{const h=harness({pair:true,hold:['pair-status']});await flush();try{const old=h.sockets[0];await h.visibility('hidden');assert.equal(old.closed,true);assert.equal(h.handlers.credential,null);assert.equal(h.handlers.secret,'');assert.equal(h.storage.has('osg-browser-credential-v2'),false);await h.visibility('visible');await h.tick();assert.equal(h.sockets.length,1);assert.equal(old.requests.filter(f=>f.type==='pair').length,1);}finally{h.close();await flush();}});
-test('incompatible content stays connected and disarmed with error heartbeats',async()=>{const h=harness({rejectPanel:true});await flush();try{assert.equal(h.handlers.panelError,true);assert.equal(h.handlers.active,false);assert.ok(h.handlers.session);assert.equal(h.sockets[0].closed,false);assert.equal(h.sockets[0].requests.some(f=>f.type==='baseline'||f.type==='input'),false);await h.tick();assert.ok(h.sockets[0].requests.some(f=>f.type==='heartbeat'&&f.panelError===true));assert.equal(h.handlers.queue.snapshot().enabled,false);}finally{h.close();await flush();}});
+test('incompatible content stays connected and disarmed with error heartbeats',async()=>{const h=harness({rejectPanel:true});await flush();try{assert.equal(h.handlers.panelError,true);assert.equal(h.handlers.active,false);assert.ok(h.handlers.session);assert.equal(h.sockets[0].closed,false);assert.equal(h.sockets[0].requests.some(f=>f.type==='baseline'||f.type==='input'),false);await h.elapse(250);assert.ok(h.sockets[0].requests.some(f=>f.type==='heartbeat'&&f.panelError===true));assert.equal(h.handlers.queue.snapshot().enabled,false);}finally{h.close();await flush();}});
 test('a verified payload can finish in the background without enabling controls',async()=>{const h=harness({holdVerification:true});await flush();try{await h.visibility('hidden');h.finishVerification();await flush();assert.equal(h.handlers.panel,publication);assert.equal(h.handlers.active,true);assert.equal(h.handlers.queue.snapshot().enabled,false);assert.equal(h.sockets[0].closed,false);}finally{h.close();await flush();}});
 test('slow panel preparation renews its disarmed session until the first neutral baseline',async()=>{
  const h=harness({holdPreparation:true});await flush();try{
@@ -185,7 +198,7 @@ test('an expired background session is reopened without dropping authenticated p
  const h=harness();await flush();try{
   const socket=h.sockets[0],respond=socket.response.bind(socket);let expired=true;
   socket.response=frame=>{if(frame.type==='heartbeat'&&expired){expired=false;throw Error('Session is obsolete; explicitly reconnect.');}return respond(frame);};
-  await h.focus(false);await h.tick();await flush();
+  await h.focus(false);await h.elapse(250);await flush();
   assert.equal(socket.closed,false);assert.equal(h.sockets.length,1);assert.equal(socket.requests.filter(f=>f.type==='auth').length,1);
   assert.equal(socket.requests.filter(f=>f.type==='baseline').length,2);assert.equal(h.handlers.queue.snapshot().enabled,false);
  }finally{h.close();await flush();}
@@ -231,7 +244,7 @@ test('display changes report immediately, coalesce in flight and leave idle leas
   const socket=h.sockets[0],reports=()=>socket.requests.filter(frame=>frame.type==='presence');
   assert.equal(reports().length,1);
   h.handlers.resize(600,400);h.handlers.resize(900,500);
-  await h.tick();assert.equal(reports().length,1);assert.ok(socket.requests.filter(f=>f.type==='heartbeat').length>1);
+  await h.elapse(250);assert.equal(reports().length,1);assert.ok(socket.requests.filter(f=>f.type==='heartbeat').length>1);
   socket.release('presence');await flush();
   assert.equal(reports().length,2);
   assert.equal(reports()[1].display.cssWidth,900);
