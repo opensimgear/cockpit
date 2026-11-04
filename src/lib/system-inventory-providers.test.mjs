@@ -84,6 +84,9 @@ test('USB events replace list polling and fence a reply after observation loss',
  h.requests.length = 0;
  await h.controller.refresh(false, false);
  assert.deepEqual(h.requests.map(request => request.command), ['system_inventory']);
+ h.requests.length = 0;
+ await h.controller.refreshNative();
+ assert.deepEqual(h.requests.map(request => request.command), ['system_inventory']);
  assert.equal(h.component('usb:serial').presence, 'connected');
  h.requests.length = 0;
 

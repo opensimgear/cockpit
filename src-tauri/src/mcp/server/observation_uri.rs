@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 const PREFIX: &str = "cockpit://observations/";
-const FIXED_TOPICS: [(&str, &str); 14] = [
+const FIXED_TOPICS: [(&str, &str); 15] = [
     ("activity.log", "Activity log revision"),
     ("profiles.library", "Saved profile library"),
     ("profiles.runtime", "Applied profile runtime"),
@@ -18,6 +18,7 @@ const FIXED_TOPICS: [(&str, &str); 14] = [
     ("companion.firmware", "Companion USB firmware update progress"),
     ("controllers.inventory", "Host controller inventory"),
     ("usb.inventory", "USB module inventory revision"),
+    ("system.inventory", "Supplemental system inventory revision"),
 ];
 
 pub(super) fn resources(broker: osg_streams::Broker) -> impl Iterator<Item = Value> {
@@ -108,6 +109,7 @@ mod tests {
             "games.detail.dcs",
             "controllers.inventory",
             "usb.inventory",
+            "system.inventory",
             "controllers.input.11111111-1111-4111-8111-111111111111",
             "can.inputs.0123456789abcdef01234567.0123456789abcdef0123456789abcdef",
         ] {

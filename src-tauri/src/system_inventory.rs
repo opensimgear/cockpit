@@ -1,7 +1,9 @@
 //! Supplemental system observation. No profile, acquisition or mutation is needed.
 use osg_virtual_controller::vjoy::{Slot, Status};
 use serde_json::{json, Value};
-use std::{sync::Mutex, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{sync::{Mutex, atomic::{AtomicU64, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+
+const TOPIC: &str = "system.inventory";
 #[path = "system_inventory_associations.rs"]
 mod associations;
 #[path = "optional_dependencies/installed.rs"]
@@ -11,14 +13,35 @@ pub(crate) use associations::collect as controller_associations;
 pub(crate) struct Runtime {
     native: bool,
     snapshot: Mutex<Option<Snapshot>>,
+    revision: AtomicU64,
+    publisher: Mutex<Option<(crate::observations::Runtime, osg_streams::Publisher)>>,
 }
 struct Snapshot {
     captured: Instant,
     usb_revision: u64,
+    native_revision: u64,
     value: Value,
 }
 impl Runtime {
-    pub(crate) fn new(native: bool) -> Self { Self { native, snapshot: Mutex::new(None) } }
+    pub(crate) fn new(native: bool) -> Self {
+        Self { native, snapshot: Mutex::new(None), revision: AtomicU64::new(0), publisher: Mutex::new(None) }
+    }
+    pub(crate) fn observe(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
+        let mut slot = self.publisher.lock().unwrap_or_else(|p| p.into_inner());
+        let publisher = observations.broker().register(osg_streams::TopicSpec {
+            topic: TOPIC.into(), source: "system-inventory".into(),
+            audiences: vec!["ui".into(), "browser".into(), "mcp".into()],
+        }, json!({}), observations.captured_us(), TOPIC.into()).map_err(|error| error.to_string())?;
+        *slot = Some((observations.clone(), publisher));
+        Ok(())
+    }
+    pub(crate) fn changed(&self) {
+        let slot = self.publisher.lock().unwrap_or_else(|p| p.into_inner());
+        self.revision.fetch_add(1, Ordering::AcqRel);
+        if let Some((observations, publisher)) = slot.as_ref() {
+            let _ = publisher.publish_latest_state(publisher.generation(), json!({}), observations.captured_us(), TOPIC);
+        }
+    }
     pub(crate) fn request(&self, request: &Value, controllers: &osg_controller_input::ControllerService, usb_revision: u64, associations:impl FnOnce(&osg_controller_input::registry::ResourceInventory)->Vec<Value>) -> Result<Value, String> {
         if !request.is_object() || request.to_string().len() > 65_536
             || request.as_object().unwrap().keys().any(|key| !matches!(key.as_str(), "command" | "clientId" | "offset" | "limit" | "observedAt")) {
@@ -36,9 +59,10 @@ impl Runtime {
                 .ok_or("System inventory snapshot expired; restart from its first page.")?;
             return page(&pinned.value,offset,limit);
         }
+        let native_revision = self.revision.load(Ordering::Acquire);
         let usb_revision = snapshot.as_ref().map_or(usb_revision, |cached| cached.usb_revision.max(usb_revision));
         if let Some(cached) = &*snapshot {
-            if cached.usb_revision == usb_revision && cached.captured.elapsed() < Duration::from_secs(2) {
+            if cached.usb_revision == usb_revision && cached.native_revision == native_revision && cached.captured.elapsed() < Duration::from_secs(2) {
                 return page(&cached.value,offset,limit);
             }
         }
@@ -65,7 +89,7 @@ impl Runtime {
             value["observedAt"] = json!(token);
         }
         let result = page(&value,offset,limit);
-        *snapshot = Some(Snapshot { captured: observed, usb_revision, value });
+        *snapshot = Some(Snapshot { captured: observed, usb_revision, native_revision, value });
         result
     }
 }
@@ -218,7 +242,7 @@ mod tests {
         assert_eq!(response["total"],3);
         assert_eq!(response["nextOffset"],2);
         let runtime=Runtime::new(false);
-        *runtime.snapshot.lock().unwrap()=Some(Snapshot { captured: Instant::now()-Duration::from_secs(5), usb_revision: 0, value });
+        *runtime.snapshot.lock().unwrap()=Some(Snapshot { captured: Instant::now()-Duration::from_secs(5), usb_revision: 0, native_revision: 0, value });
         let controllers=osg_controller_input::ControllerService::new(None,false);
         let request=json!({"command":"system_inventory","clientId":"native-inventory-test-client","observedAt":1,"offset":1,"limit":1});
         assert_eq!(runtime.request(&request,&controllers,7,|_|panic!("Pinned pages cannot observe a new snapshot")).unwrap()["controllerAssociations"][0]["controllerId"],"one");
@@ -249,6 +273,15 @@ mod tests {
         assert!(refreshed["observedAt"].as_u64().unwrap() > value["observedAt"].as_u64().unwrap());
         assert_eq!(refreshed["controllerAssociations"][0]["usbKey"], "replacement");
         assert_eq!(refreshed,runtime.request(&request,&controllers,1,|_|panic!("An older caller must not replace the newer snapshot")).unwrap());
+        let observations = crate::observations::Runtime::new();
+        runtime.observe(&observations).unwrap();
+        let mut subscription = observations.broker().subscribe("system-inventory-test", "mcp", TOPIC).unwrap();
+        assert_eq!(subscription.try_recv().unwrap().unwrap().revision, "1");
+        runtime.changed();
+        assert_eq!(subscription.try_recv().unwrap().unwrap().revision, "2");
+        let topology = runtime.request(&request,&controllers,2,|_|vec![]).unwrap();
+        assert!(topology["observedAt"].as_u64().unwrap() > refreshed["observedAt"].as_u64().unwrap());
+        assert_eq!(topology["controllerAssociations"],json!([]));
         for fields in [json!({"offset":4097}),json!({"offset":-1}),json!({"limit":0}),json!({"limit":33}),json!({"observedAt":0})] {
             let mut invalid=request.clone();for (key,value) in fields.as_object().unwrap(){invalid[key]=value.clone();}
             assert!(runtime.request(&invalid,&controllers,1,|_|vec![]).is_err());

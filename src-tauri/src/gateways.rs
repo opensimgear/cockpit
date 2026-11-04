@@ -476,6 +476,10 @@ impl GatewayManager {
         let profile_samples = crate::profile_samples::Runtime::new(observations.broker(), profile_sample_signal,
             sample_capture, format!("profile-samples:{}", controllers.capture_clock().id()));
         observations.watch_reader_lifecycle(profile_samples.reader_wake());
+        let system_inventory = crate::system_inventory::Runtime::new(native);
+        if let Err(error) = system_inventory.observe(&observations) {
+            eprintln!("Cannot start supplemental inventory observations: {error}");
+        }
         let manager = Self {
             workspace:workspace::Runtime::new(),
             observations,
@@ -513,7 +517,7 @@ impl GatewayManager {
             serial_topology,
             sessions,
             inventory: Mutex::new(Vec::new()),
-            system_inventory: crate::system_inventory::Runtime::new(native),
+            system_inventory,
             ui_preferences,
             configuration_gate,
             profile_panels,

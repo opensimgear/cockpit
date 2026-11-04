@@ -31,12 +31,14 @@ fn run_loop(inner:&Arc<Inner>,manager:&Weak<GatewayManager>,notifications:bool,v
         let Some(manager)=manager.upgrade() else{break;};
         if manager.closed.load(Ordering::Acquire){break;}
         let current_ports=ports_wake.observed();
+        let topology_changed = current_ports != seen_ports;
         if inner.ports_dirty.swap(false,Ordering::AcqRel)
-            || current_ports!=seen_ports
+            || topology_changed
             || discovery_retry.is_some_and(|at| at <= Instant::now())
         {
             seen_ports=current_ports;
             discovery_error=manager.discover().err().unwrap_or_default();
+            if topology_changed { manager.system_inventory.changed(); }
             discovery_retry = (notifications && manager.serial_topology.cached().is_err())
                 .then(|| Instant::now() + Duration::from_secs(2));
         }

@@ -151,13 +151,16 @@
     });
     snapshot = controller.snapshot;
     void refresh();
-    const usbObservations = new SharedObservations();
-    usbObservations.subscribe('usb.inventory', state => {
+    const inventoryObservations = new SharedObservations();
+    inventoryObservations.subscribe('usb.inventory', state => {
       if (state.status === 'ready') void controller.refreshUsb().catch(reason => { error = String(reason); });
       if (state.status === 'lost' || state.status === 'error') controller.loseUsb(state.error);
     });
+    inventoryObservations.subscribe('system.inventory', state => {
+      if (state.status === 'ready') void controller.refreshNative().catch(reason => { error = String(reason); });
+    });
     const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
-    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); stopCompanions(); stopListener(); usbObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); stopCompanions(); stopListener(); inventoryObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
 

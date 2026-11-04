@@ -202,6 +202,10 @@ export class SystemInventoryController {
     this.companionPending = pending;
     return pending;
   }
+  async refreshNative(): Promise<void> {
+    if (this.pending) await this.pending;
+    if (!this.disposed) await this.refresh(false, false);
+  }
   refreshUsb(): Promise<void> {
     if (this.disposed) return Promise.resolve();
     this.usbVersion++;
