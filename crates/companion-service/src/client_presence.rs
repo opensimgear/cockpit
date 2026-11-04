@@ -48,6 +48,14 @@ impl Presence {
     }
 }
 
+fn idle_credential<'a>(shared: &Shared, state: &'a State) -> Option<&'a SavedCredential> {
+    if state.status.authentication_available && !shared.running.load(Ordering::SeqCst) {
+        state.credential.as_ref()
+    } else {
+        None
+    }
+}
+
 // This connection never creates an input source or renews an input lease.
 pub(super) fn start_presence(owner: Weak<Shared>, wake: Arc<NativeWake>) {
     thread::spawn(move || {
@@ -57,34 +65,36 @@ pub(super) fn start_presence(owner: Weak<Shared>, wake: Arc<NativeWake>) {
         loop {
             let observed = wake.observed();
             let Some(shared) = owner.upgrade() else { break };
-            let credential = shared.state.lock().ok().and_then(|state| {
-                if state.status.protected_store_available && !shared.running.load(Ordering::SeqCst) {
-                    state.credential.clone()
-                } else {
+            let selection = shared.state.lock().ok().and_then(|state| {
+                let credential = idle_credential(&shared, &state)?;
+                // Copy the credential only when opening a transport. An idle
+                // socket timeout or assignment delivery needs only identity checks.
+                Some(if presence.is_some() && identity.as_str() == credential.token {
                     None
-                }
+                } else {
+                    Some(credential.clone())
+                })
             });
             drop(shared);
-            let Some(credential) = credential else {
+            let Some(selection) = selection else {
                 presence = None;
                 identity.clear();
                 wake.wait_scheduled(observed, None);
                 continue;
             };
-            if identity.as_str() != credential.token {
-                presence = None;
-                *identity = credential.token.clone();
-            }
-            let result = match &mut presence {
-                Some(connection) => Presence::read(connection),
-                None => Presence::connect(&credential).map(|connection| { presence = Some(connection); None }),
+            let result = match selection {
+                Some(credential) => {
+                    presence = None;
+                    *identity = credential.token.clone();
+                    Presence::connect(&credential).map(|connection| { presence = Some(connection); None })
+                }
+                None => presence.as_mut().expect("selected existing idle presence").read(),
             };
             match result {
                 Ok(Some(rows)) => {
                     let Some(shared) = owner.upgrade() else { break };
                     if let Ok(mut state) = shared.state.lock() {
-                        if !shared.running.load(Ordering::SeqCst)
-                            && state.credential.as_ref().is_some_and(|saved| saved.token == credential.token)
+                        if idle_credential(&shared, &state).is_some_and(|saved| saved.token == identity.as_str())
                             && state.status.assignments != rows {
                             state.status.assignments = rows;
                             shared.status_wake.notify();
@@ -99,4 +109,28 @@ pub(super) fn start_presence(owner: Weak<Shared>, wake: Arc<NativeWake>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_presence_requires_authentication_and_yields_to_the_session_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = ClientRuntime::open(directory.path().to_path_buf()).unwrap();
+        let mut state = client.shared.state.lock().unwrap();
+        state.credential = Some(SavedCredential {
+            companion_id: "fixture".into(), name: "Fixture".into(), token: "fixture".into(),
+            endpoint: String::new(), host_id: String::new(), ca_certificate: String::new(),
+            ca_spki_sha256: String::new(), assignments: json!([]),
+        });
+        state.status.protected_store_available = true;
+        state.status.authentication_available = false;
+        assert!(idle_credential(&client.shared, &state).is_none());
+        state.status.authentication_available = true;
+        assert!(idle_credential(&client.shared, &state).is_some());
+        client.shared.running.store(true, Ordering::SeqCst);
+        assert!(idle_credential(&client.shared, &state).is_none());
+    }
 }
