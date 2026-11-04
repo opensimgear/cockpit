@@ -79,3 +79,22 @@ remain open, alongside the remaining producer, service and UI cutovers.
 User-operated hardware/simulator acceptance remains separate in #199, first in
 the progress lane. The Assetto acquisition boundary still awaits an explicit R0
 decision; no sampling exception is inferred here.
+
+## vJoy feeder deadline verification, 2026-11-04
+
+The isolated vJoy worker waits for pipe input or its current lease deadline.
+A failed output pipe wakes an inactive worker even if stdin is stalled.
+Both transport failure flags are checked again after the worker wakes and
+before it admits a message. Reports still take the existing ordered pipe path.
+
+The Windows virtual-controller suite passed all 108 tests and its coverage
+gates. Production line coverage was 98.21% for the feeder and 96.83% for the
+worker. The Cockpit suite passed 2,224 tests with 17 ignores and one known
+topology fixture excluded.
+
+The rebuilt dev Cockpit applied a temporary profile to free vJoy slot 1 after
+matching its complete layout. It stayed active past two lease periods, accepted
+two authored input commands, and released the slot on Stop. An independent
+WinMM read did not see the button press even while the mapped virtual input
+sample reported true. This verifies the feeder lifecycle and mapped input
+sample. Game-visible button output and raw-input-to-vJoy latency remain open.

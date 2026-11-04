@@ -212,17 +212,20 @@ fn typed_native_start_recording_reaches_the_strict_feeder_without_rewriting_repo
         .poll(&recording)
         .expect("the native typed constructor's first complete report must pass the actual feeder");
     phase
-        .accept(typed::Frame {
-            source: "stick".into(),
-            generation: Counter(1),
-            sequence: Counter(1),
-            captured_us: Counter(9000),
-            reason: Reason::Baseline,
-            changes: vec![typed::Change {
-                port_id: "axis".into(),
-                sample: osg_mapping::program::SignalSample::scalar(PortValue::Number(23456.0)),
-            }],
-        })
+        .accept(
+            typed::Frame {
+                source: "stick".into(),
+                generation: Counter(1),
+                sequence: Counter(1),
+                captured_us: Counter(9000),
+                reason: Reason::Baseline,
+                changes: vec![typed::Change {
+                    port_id: "axis".into(),
+                    sample: osg_mapping::program::SignalSample::scalar(PortValue::Number(23456.0)),
+                }],
+            },
+            Counter(10000),
+        )
         .unwrap();
     recording.record(phase.drain_reports());
     effects.extend(phase.drain());

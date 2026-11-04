@@ -51,6 +51,8 @@ pub fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
     backend: &str,
 ) -> Result<(), String> {
     let (sender, receiver) = mpsc::sync_channel(32);
+    let sender = Arc::new(sender);
+    let writer_wake = Arc::downgrade(&sender);
     let overflow = Arc::new(AtomicBool::new(false));
     let read_overflow = overflow.clone();
     // A full pipe cannot keep unbounded requests alive or postpone lease expiry.
@@ -87,6 +89,11 @@ pub fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
                 .is_err()
             {
                 failed.store(true, Ordering::Release);
+                if let Some(sender) = writer_wake.upgrade() {
+                    // A full queue already wakes the feeder, which checks the
+                    // failure flag before admitting any more requests.
+                    let _ = sender.try_send(Err("Worker output pipe failed.".into()));
+                }
                 break;
             }
         }
@@ -102,7 +109,19 @@ pub fn serve<D: Driver, R: BufRead + Send + 'static, W: Write + Send + 'static>(
                 return Err("Worker transport overflowed or closed; releasing outputs.".into());
             }
             feeder.tick(now)?;
-            match receiver.recv_timeout(Duration::from_millis(5)) {
+            let next = match feeder.lease_deadline_us() {
+                Some(deadline) => receiver.recv_timeout(
+                    (origin + Duration::from_micros(deadline))
+                        .saturating_duration_since(Instant::now()),
+                ),
+                None => receiver
+                    .recv()
+                    .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+            };
+            if overflow.load(Ordering::Acquire) || write_failure.load(Ordering::Acquire) {
+                return Err("Worker transport overflowed or closed; releasing outputs.".into());
+            }
+            match next {
                 Ok(Ok(Some(message))) => {
                     let received = u64::try_from(origin.elapsed().as_micros()).unwrap_or(u64::MAX);
                     let token = message.token().clone();

@@ -136,6 +136,44 @@ fn worker_uses_production_feeder_and_releases_on_eof_and_malformed_input() {
     .is_err());
 }
 #[test]
+fn broken_output_wakes_the_feeder_before_start_with_stalled_input() {
+    struct StalledInput(mpsc::Receiver<()>);
+    impl io::Read for StalledInput {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            let _ = self.0.recv();
+            Ok(0)
+        }
+    }
+    struct BrokenOutput;
+    impl Write for BrokenOutput {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let (input, blocked) = mpsc::channel();
+    let (result, finished) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let result_value = serve(
+            DriverFixture::default(),
+            io::BufReader::new(StalledInput(blocked)),
+            BrokenOutput,
+            "fixture",
+        );
+        result.send(result_value).unwrap();
+    });
+    let completed = finished.recv_timeout(Duration::from_secs(2));
+    drop(input);
+    worker.join().unwrap();
+    assert!(completed
+        .expect("Broken stdout must wake the inactive feeder without stdin")
+        .unwrap_err()
+        .contains("output"));
+}
+
+#[test]
 fn slow_native_acquisition_does_not_consume_the_first_report_lease() {
     struct SlowAcquisition(DriverFixture);
     impl Driver for SlowAcquisition {

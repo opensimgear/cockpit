@@ -215,6 +215,10 @@ impl<D: Driver> Feeder<D> {
         }
         Ok(())
     }
+    pub(crate) fn lease_deadline_us(&self) -> Option<u64> {
+        self.active().then_some(self.deadline)
+    }
+
     pub fn tick(&mut self, now: u64) -> Result<(), String> {
         if self.active() && now >= self.deadline {
             self.stop();
