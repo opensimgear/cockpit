@@ -42,6 +42,7 @@ impl DcsWatch {
         if self.pending {
             if let Some(game) = &game {
                 self.pending = !inner.setup.refresh_watched_setup("dcs", game);
+                if !self.pending { inner.changes.mark_resources(); }
             }
         }
     }

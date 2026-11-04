@@ -277,6 +277,7 @@ fn run_loop(inner: &Inner, observations: &observations::Runtime, games: &GamesRu
         }
         if expired_deadline(capture_deadline, Instant::now()) {
             inner.signal.mark(Domain::Runtime);
+            inner.signal.mark_resources();
             continue;
         }
         if worker.state.is_some() && worker.jobs.is_some() {
@@ -288,7 +289,10 @@ fn run_loop(inner: &Inner, observations: &observations::Runtime, games: &GamesRu
         inner.signal.wake.wait_scheduled(observed, next_deadline.map(|at| at.saturating_duration_since(Instant::now())));
         if expired_deadline(deadline, Instant::now())
             && !inner.closed.load(Ordering::Acquire)
-        { inner.signal.mark(Domain::Runtime); }
+        {
+            inner.signal.mark(Domain::Runtime);
+            inner.signal.mark_resources();
+        }
     }
 }
 

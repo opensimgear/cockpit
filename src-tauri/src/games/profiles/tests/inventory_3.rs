@@ -61,6 +61,7 @@ fn dormant_game_catalogue_failure_recovers_without_starting_an_integration() {
             Instant::now(),
             setup_revision,
             Err("Catalogue unavailable".into()),
+            sources.games.resource_catalogue_generation("x-plane-11"),
         ),
     );
     let batches = sources.collect(1);
@@ -129,6 +130,11 @@ fn game_catalogue_cache_is_scoped_by_game_and_invalidates_changed_setup_revision
     assert!(refreshed.attributes["providerSetupRevision"].starts_with("sha256:"));
     assert!(!refreshed.route.as_ref().unwrap().baseline_ready);
     assert!(!refreshed.route.unwrap().writable);
+    let cached = sources.catalogues.get_mut("x-plane-11").unwrap();
+    cached.2 = Err("Catalogue invalidated on disk".into());
+    cached.3 = None;
+    let refreshed = game(sources.collect(4), "x-plane-11");
+    assert!(refreshed.ports.as_ref().unwrap().total > 0);
 }
 #[test]
 fn capability_refresh_uses_only_bounded_read_commands_and_deduplicates_inflight_gateway() {

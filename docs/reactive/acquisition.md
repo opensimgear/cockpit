@@ -33,6 +33,9 @@ to profile inventory. Ordinary input values do not drive inventory updates.
 STM32 gateway cache commits wake inventory for connection, module identity and
 capability changes. Input cursors, output receipts and timestamp-only commits
 stay off the inventory path. Missing capability probes still use the fallback.
+Game library commits, setup and process context changes, and current vehicle
+changes wake profile inventory. Watched SDK and DCS catalogue changes also
+invalidate the profile inventory's catalogue cache by source generation.
 
 The game-context owner parks after its initial pass when the library has no
 configured integration. A committed library replacement wakes the owner after

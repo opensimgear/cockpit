@@ -47,6 +47,7 @@ impl Sources {
             let setup_revision = game["integrationSetup"]["providerSetupRevision"]
                 .as_str()
                 .unwrap_or("");
+            let catalogue_generation = self.games.resource_catalogue_generation(integration);
             for (attribute, value) in [
                 ("providerSetupRevision", setup_revision),
                 (
@@ -80,8 +81,9 @@ impl Sources {
             if self
                 .catalogues
                 .get(id)
-                .is_none_or(|(at, revision, result)| {
+                .is_none_or(|(at, revision, result, generation)| {
                     revision != setup_revision
+                        || *generation != catalogue_generation
                         || at.elapsed()
                             >= if result.is_ok() && integration.starts_with("x-plane-") {
                                 Duration::from_secs(60)
@@ -98,6 +100,7 @@ impl Sources {
                         self.games
                             .resource_integration_catalogue(id)
                             .and_then(GameCatalogue::parse),
+                        catalogue_generation,
                     ),
                 );
             }
@@ -174,8 +177,9 @@ impl Sources {
                 for module in modules {
                     let key = format!("{id}:{module}");
                     let scope = format!("game:{key}");
-                    if self.catalogues.get(&key).is_none_or(|(at, known, _)| {
-                        known != setup_revision || at.elapsed() >= Duration::from_secs(5)
+                    if self.catalogues.get(&key).is_none_or(|(at, known, _, generation)| {
+                        known != setup_revision || *generation != catalogue_generation
+                            || at.elapsed() >= Duration::from_secs(5)
                     }) {
                         let capture = self
                             .games
@@ -183,7 +187,7 @@ impl Sources {
                             .and_then(GameCatalogue::parse);
                         self.catalogues.insert(
                             key.clone(),
-                            (Instant::now(), setup_revision.into(), capture),
+                            (Instant::now(), setup_revision.into(), capture, catalogue_generation),
                         );
                     }
                     let mut item = base.clone();

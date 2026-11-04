@@ -56,7 +56,10 @@ impl SetupViews {
 
 impl Inner {
     pub(super) fn changed(&self) {
-        if let Some(changes) = self.changes.get() { changes.mark(crate::game_read_models::signals::Domain::Setup); }
+        if let Some(changes) = self.changes.get() {
+            changes.mark(crate::game_read_models::signals::Domain::Setup);
+            changes.mark_resources();
+        }
     }
     pub(super) fn job_progress(&self, phase: &str, message: &str, percent: Option<u8>) {
         let job = self.job.lock().unwrap_or_else(|p| p.into_inner()).clone();

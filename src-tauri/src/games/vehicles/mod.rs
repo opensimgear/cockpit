@@ -173,7 +173,14 @@ impl Tracker {
             entry.published_capture = capture;
             if let Some(changes) = &self.changes { changes.mark_telemetry(); }
         }
-        if entry.published != visible { entry.published = visible; self.changed(); }
+        if entry.published != visible {
+            let vehicle_changed = entry.published.current != visible.current;
+            entry.published = visible;
+            self.changed();
+            if vehicle_changed {
+                if let Some(changes) = &self.changes { changes.mark_resources(); }
+            }
+        }
         let deadline = self.view_deadline();
         if self.published_deadline != deadline {
             self.published_deadline = deadline;

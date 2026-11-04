@@ -75,6 +75,7 @@ impl SourceWatch {
 
 pub(super) fn publish_change(inner: &Inner) {
     inner.changes.mark(Domain::Runtime);
+    inner.changes.mark_resources();
 }
 
 pub(super) fn maintenance_delay(inner: &Inner) -> Option<Duration> {

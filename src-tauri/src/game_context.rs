@@ -83,7 +83,12 @@ fn revision(id: &str) -> bool {
 }
 impl Broker {
     pub(crate) fn watch_changes(&mut self,changes:std::sync::Arc<crate::game_read_models::signals::Signal>){self.changes=Some(changes);}
-    fn changed(&self){if let Some(changes)=&self.changes {changes.mark(crate::game_read_models::signals::Domain::Runtime);}}
+    fn changed(&self) {
+        if let Some(changes) = &self.changes {
+            changes.mark(crate::game_read_models::signals::Domain::Runtime);
+            changes.mark_resources();
+        }
+    }
     /// Reserve before observing settings, catalogue or processes. Slow native
     /// I/O must not publish an older snapshot over a newer completed capture.
     pub(crate) fn begin_observation(&mut self) -> Result<u64, String> {

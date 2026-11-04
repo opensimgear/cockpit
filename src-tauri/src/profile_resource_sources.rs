@@ -65,7 +65,7 @@ struct Sources {
     can_scopes: BTreeSet<String>,
     can_retained: BTreeMap<String, Vec<Observation>>,
     refreshing: Arc<Mutex<BTreeSet<String>>>,
-    catalogues: BTreeMap<String, (Instant, String, Result<GameCatalogue, String>)>,
+    catalogues: BTreeMap<String, (Instant, String, Result<GameCatalogue, String>, Option<u64>)>,
 }
 pub(crate) fn collector(
     controllers: Arc<osg_controller_input::ControllerService>,
