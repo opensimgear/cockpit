@@ -109,3 +109,21 @@ test('font bank hash is a build identity invariant',()=>{
   const path=new URL('../src/index.ts',import.meta.url).href;const code=`import {initializeWidgetCompiler} from ${JSON.stringify(path)};try{await initializeWidgetCompiler({fonts:[new Uint8Array([1]),new Uint8Array([2])]});process.exitCode=1;}catch(e){if(!String(e).includes('font hash'))throw e;}`;
   const result=spawnSync(process.execPath,['--input-type=module','-e',code],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);
 });
+
+test('a reloaded compiler module shares the initialized rasterizer',()=>{
+  const path=new URL('../src/compiler.ts',import.meta.url).href;
+  const rasterizer=new URL('../src/rasterizer.ts?reload-rasterizer-test',import.meta.url).href;
+  const code=`
+    import assert from 'node:assert/strict';
+    const source=${JSON.stringify(tinySource())},options={width:32,height:32};
+    const original=await (await import(${JSON.stringify(path)})).compileWidget(source,options);
+    const reloaded=await (await import(${JSON.stringify(path+'?reload-rasterizer-test')})).compileWidget(source,options);
+    assert.equal(reloaded.artifactHash,original.artifactHash);
+    assert.notEqual(reloaded,original);
+    await (await import(${JSON.stringify(rasterizer)})).initializeWidgetCompiler();
+  `;
+  // V8 combines queried modules with the same pathname in the coverage report.
+  const env={...process.env,NODE_V8_COVERAGE:''};
+  const result=spawnSync(process.execPath,['--input-type=module','-e',code],{encoding:'utf8',env});
+  assert.equal(result.status,0,result.stderr);
+});

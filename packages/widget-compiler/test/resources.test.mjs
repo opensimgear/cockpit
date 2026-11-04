@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {readFileSync} from 'node:fs';
 import {loadCompilerResource} from '../src/resources.ts';
+import {initializeWidgetCompiler} from '../src/rasterizer.ts';
+
+test('a failed resource verification leaves rasterizer initialization retryable',async()=>{
+  await assert.rejects(initializeWidgetCompiler({fonts:[new Uint8Array([1]),new Uint8Array([2])]}),/font hash/);
+  await initializeWidgetCompiler();
+});
 
 test('browser resource loading keeps exact bytes and fails clearly on missing assets',async()=>{
   const local=new URL('../node_modules/@jsquash/png/LICENSE',import.meta.url);assert.deepEqual(await loadCompilerResource(local),new Uint8Array(readFileSync(local)));

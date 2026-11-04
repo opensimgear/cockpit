@@ -1,4 +1,3 @@
-import { initWasm, Resvg } from '@resvg/resvg-wasm';
 import {
   ARTIFACT_LIMITS, BROWSER_WIDGET_CAPABILITIES, RASTER_FORMAT, TILE_BYTES, TILE_SIZE,
   canonicalWidget, decodeWidgetBase64, encodeWidgetBase64, validateCompiledArtifact,
@@ -10,28 +9,10 @@ import {
 import type { Scalar } from '../../widget-runtime/src/behavior.ts';
 import { SOURCE_LIMITS, assertSource, checkedSource, expressionRefs, resolvedParameters, sourceNumber, sourceToSvg } from './source.ts';
 import type { CompileOptions, MotionTrack, WidgetMotion, WidgetSource, VisualNode } from './types.ts';
-import {loadCompilerResource} from './resources.ts';
 import {prepareRasterImages,IMAGE_COMPILER_ID} from './images.ts';
+import { compilerFontHashes, createRasterizer, initializeWidgetCompiler } from './rasterizer.ts';
 
-const FONTS = [
-  { url: new URL('../../companion-ui/assets/fonts/osg-sans.ttf', import.meta.url), hash: '94bbd25a18ca665999feb05a537de9fd2b860dcfb78bbe9ca00270825bf235da' },
-  { url: new URL('../../companion-ui/assets/fonts/osg-mono.ttf', import.meta.url), hash: '6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46' },
-];
-const WASM_URL = new URL('../node_modules/@resvg/resvg-wasm/index_bg.wasm', import.meta.url);
-let ready: Promise<void> | undefined;
-let fontBuffers: Uint8Array[] = [];
-/** Default resources are pinned and shared by headless tests and Cockpit. */
-export async function initializeWidgetCompiler(resources?: { fonts?: Uint8Array[] }): Promise<void> {
-  assertSource(!resources||Object.keys(resources).every(key=>key==='fonts'),'Compiler resource overrides only accept the verified font bank');
-  if(!ready)ready=(async()=>{
-    const fonts=resources?.fonts??await Promise.all(FONTS.map(font=>loadCompilerResource(font.url)));
-    assertSource(fonts.length===2,'Compiler needs its pinned font bank');
-    for(let index=0;index<fonts.length;index++)assertSource(await widgetDigest(fonts[index])===FONTS[index].hash,'Compiler font hash differs; update compiler identity before changing fonts');
-    const wasm=await loadCompilerResource(WASM_URL);assertSource(await widgetDigest(wasm)==='22bf6e9f9a100d972da0411a69c5ba504367fc1fa87b3b64e3f35e53926d2d70','Compiler rasterizer hash differs; update compiler identity before changing WASM');
-    fontBuffers=fonts.map(bytes=>Uint8Array.from(bytes));await initWasm(wasm.buffer);
-  })().catch(error=>{ready=undefined;throw error;});
-  return ready;
-}
+export { initializeWidgetCompiler } from './rasterizer.ts';
 function abort(signal?:AbortSignal):void{if(signal?.aborted)throw new DOMException('Widget compilation cancelled','AbortError');}
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){for(const item of Object.values(value))freeze(item);Object.freeze(value);}return value;}
 const cache=new Map<string,CompiledWidgetBundle>();
@@ -78,7 +59,7 @@ function withMotion(source:WidgetSource,motion:WidgetMotion,progress:number):Wid
 function rasterize(source:WidgetSource,selector:CompiledSelector,preflight:CompilePreflight):Uint8Array{
   const defaults=Object.fromEntries(source.behavior.signals.map(signal=>[signal.id,signal.initial]));
   const svg=sourceToSvg(source,{values:{...defaults,...selector.values},regions:selector.regions,parameters:preflight.parameters,width:preflight.width,height:preflight.height});
-  const renderer=new Resvg(svg,{font:{fontBuffers,defaultFontFamily:'Rajdhani',sansSerifFamily:'Rajdhani',monospaceFamily:'IBM Plex Mono'},dpi:96,languages:['en'],shapeRendering:2,textRendering:2,imageRendering:0});
+  const renderer=createRasterizer(svg);
   try{const image=renderer.render();try{
     assertSource(image.width===preflight.width&&image.height===preflight.height,'Rasterizer returned unexpected dimensions');
     // resvg exposes premultiplied tiny-skia pixels. The deployable A8 plane is
@@ -97,7 +78,7 @@ export function encodePixelTile(rgba:Uint8Array,width:number,height:number,left:
 export async function compileWidget(source:WidgetSource,options:CompileOptions={}):Promise<CompiledWidgetBundle>{
   abort(options.signal);const preflight=preflightWidget(source,options),s=preflight.source,capabilities=structuredClone(options.capabilities??BROWSER_WIDGET_CAPABILITIES);
   const sourceHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(source))),parameterHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(preflight.parameters))),behaviorHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(s.behavior))),capabilityHash=await widgetDigest(new TextEncoder().encode(canonicalWidget(capabilities)));
-  const key=canonicalWidget({sourceHash,parameterHash,capabilityHash,width:preflight.width,height:preflight.height,motion:options.motion??true,audio:options.audio??true,compiler:'osg-widget-compiler-1',fonts:FONTS.map(font=>font.hash),images:IMAGE_COMPILER_ID});
+  const key=canonicalWidget({sourceHash,parameterHash,capabilityHash,width:preflight.width,height:preflight.height,motion:options.motion??true,audio:options.audio??true,compiler:'osg-widget-compiler-1',fonts:compilerFontHashes,images:IMAGE_COMPILER_ID});
   abort(options.signal);const cached=cache.get(key);if(cached){options.onProgress?.({completed:cached.artifact.frames.length,total:cached.artifact.frames.length,phase:'cached'});return cached;}
   const rasterSource=await prepareRasterImages(s,options.signal);await initializeWidgetCompiler();abort(options.signal);
   const tileBytes:Uint8Array[]=[],tileDigests:string[]=[],tileIndex=new Map<string,number>(),frames:CompiledFrame[]=[],motions:CompiledMotion[]=[],fallbacks:CompiledWidgetArtifact['fallbacks']=[];
