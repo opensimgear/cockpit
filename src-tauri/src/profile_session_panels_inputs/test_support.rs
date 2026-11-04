@@ -74,6 +74,8 @@ impl Block {
     }
 }
 struct Fake {
+    capture: crate::stm32_panel_capture::Hub,
+    stream_test: AtomicBool,
     data: Mutex<Value>,
     journal: Mutex<Vec<Value>>,
     routes: Mutex<BTreeMap<String, Route>>,
@@ -86,6 +88,8 @@ struct Fake {
 impl Fake {
     fn new() -> Self {
         Self {
+            capture: Default::default(),
+            stream_test: AtomicBool::new(false),
             data: Mutex::new(events()),
             journal: Mutex::new(vec![]),
             routes: Mutex::new(BTreeMap::new()),
@@ -141,7 +145,7 @@ impl Fake {
         let mut events = events;
         events["route"] = json!([values[0], node, values[2], values[1]]);
         events["configurationGeneration"] = values[3].clone();
-        json!({"connected":true,"epoch":values[0],"modules":[{"id":"module","online":true,"node":node,"lease":values[2],"boot":values[1],"configurationGeneration":values[3]}],"moduleEvents":{"module":events}})
+        json!({"connected":true,"epoch":values[0],"modules":[{"id":"module","online":true,"node":node,"lease":values[2],"boot":values[1],"axisCount":1,"configurationGeneration":values[3]}],"moduleEvents":{"module":events}})
     }
     fn before(&self, key: &str) {
         self.calls.fetch_add(1, Ordering::AcqRel);
@@ -158,6 +162,12 @@ impl Fake {
     }
 }
 impl Io for Fake {
+    fn uses_polled_test_fixture(&self) -> bool {
+        !self.stream_test.load(Ordering::Acquire)
+    }
+    fn can_capture(&self, _: &str, _: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+        self.capture.capture("0123456789abcdef0123456789abcdef")
+    }
     fn can(&self, r: Value) -> Value {
         let key = r["gatewayId"].as_str().unwrap();
         self.before(key);
@@ -243,12 +253,22 @@ fn empty_plan() -> ExecutionPlan {
     .unwrap()
 }
 fn fixture(can: bool, count: usize) -> (ExecutionPlan, Arc<Fake>) {
+    fixture_with_stream(can, count, false)
+}
+fn fixture_with_stream(can: bool, count: usize, stream_test: bool) -> (ExecutionPlan, Arc<Fake>) {
     let io = Arc::new(Fake::new());
+    io.stream_test.store(stream_test, Ordering::Release);
+    if stream_test {
+        io.data.lock().unwrap()["stream"] = json!(4);
+    }
     let mut registry = Registry::new();
     let descriptors = crate::profile_resource_ports::events(&events()).unwrap();
     for n in 0..count {
         let key = format!("panel{n}");
-        let route = native_route(can, &key);
+        let mut route = native_route(can, &key);
+        if stream_test {
+            route.provider_generation = json!([1, 2, 3, 4, 4]).to_string();
+        }
         io.routes.lock().unwrap().insert(key.clone(), route.clone());
         registry
             .reconcile(ProviderBatch {

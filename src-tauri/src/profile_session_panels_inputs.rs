@@ -32,14 +32,19 @@ use std::{
 mod target;
 mod source;
 mod preparation;
+#[cfg(test)]
 mod can;
+mod can_stream;
 mod usb;
 mod usb_source;
 mod admission;
 mod control;
 const MAX_QUEUE: usize = 512;
+#[cfg(test)]
 static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
 struct ReadPermit;
+#[cfg(test)]
 impl ReadPermit {
     fn acquire() -> Option<Self> {
         IN_FLIGHT
@@ -50,12 +55,18 @@ impl ReadPermit {
             .map(|_| Self)
     }
 }
+#[cfg(test)]
 impl Drop for ReadPermit {
     fn drop(&mut self) {
         IN_FLIGHT.fetch_sub(1, Ordering::AcqRel);
     }
 }
 trait Io: Send + Sync {
+    #[cfg(test)]
+    fn uses_polled_test_fixture(&self) -> bool { false }
+    fn can_capture(&self, _gateway: &str, _module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+        Err("This gateway has no native panel stream.".into())
+    }
     fn can(&self, request: Value) -> Value;
     fn can_cached(&self, gateway: &str) -> Result<Value, String>;
     fn usb(&self, key: &str, request: UsbRequest) -> Result<UsbSnapshot, String>;
@@ -65,6 +76,9 @@ trait Io: Send + Sync {
     fn snapshots(&self) -> Vec<SlotSnapshot>;
 }
 impl Io for ProfilePanelIo {
+    fn can_capture(&self, gateway: &str, module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+        ProfilePanelIo::can_capture(self, gateway, module)
+    }
     fn can(&self, r: Value) -> Value {
         self.can(r)
     }
@@ -180,16 +194,18 @@ impl PanelInputs {
             let active = self.active.clone();
             let admitted = self.admitted.clone();
             let wake = Arc::new(NativeWake::default());
-            if matches!(&spec.target, Target::Usb { .. }) {
-                self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).controls.push(Arc::downgrade(&wake));
-            }
+            self.mailbox.lock().unwrap_or_else(|p| p.into_inner()).controls.push(Arc::downgrade(&wake));
             let worker = thread::Builder::new()
                 .name("profile-panel-inputs".into())
                 .spawn(move || {
                     if matches!(&spec.target, Target::Usb { .. }) {
                         usb::run(spec, io, mailbox, revoked, active, admitted, started, clock_origin_us, wake);
                     } else {
-                        can::run(spec, io, mailbox, revoked, active, admitted, started, clock_origin_us);
+                        #[cfg(test)]
+                        if io.uses_polled_test_fixture() {
+                            return can::run(spec, io, mailbox, revoked, active, admitted, started, clock_origin_us);
+                        }
+                        can_stream::run(spec, io, mailbox, revoked, active, admitted, started, clock_origin_us, wake);
                     }
                 })
                 .map_err(|_| "Cannot start a bounded native panel reader.")?;
@@ -266,10 +282,8 @@ impl PanelInputs {
         let mut state = self.mailbox.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(logical) = state.frames.iter().find(|frame| {
             frame.reason != Reason::Gap && at.saturating_sub(frame.captured_us.0) > 250_000
-                && self.specs.iter().any(|spec| spec.logical == frame.source
-                    && matches!(&spec.target, Target::Usb { .. }))
         }).map(|frame| frame.source.clone()) {
-            state.loss(&logical, "USB input expired before Host admission; stale transitions were discarded.")?;
+            state.loss(&logical, "Panel input expired before Host admission; stale transitions were discarded.")?;
         }
         let mut gapped = BTreeSet::new();
         if state.loss_epoch != self.loss_epoch {

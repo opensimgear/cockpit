@@ -99,7 +99,83 @@ fn gateway()->(Gateway,Context){
     let context=Arc::new(Mutex::new(Fake{state:wire(),writes:vec![],owned:Some(true),drop_reply:false,controls:vec![]}));
     let mut timing=Timing::default();timing.command=Duration::from_millis(30);timing.settle=Duration::ZERO;timing.poll=Duration::from_millis(1);
     let mut gateway=Gateway::new(Box::new(FakeFactory(context.clone())),timing,Arc::new(AtomicBool::new(false)));
-    gateway.state=snapshot(&wire(),None).unwrap();gateway.board=Some(Board{info:port(),uid:UID.into()});gateway.connection=Some(Box::new(FakeConnection{context:context.clone(),bytes:VecDeque::new()}));(gateway,context)
+    gateway.state=snapshot(&wire(),None).unwrap();
+    gateway.board=Some(Board{info:port(),uid:UID.into()});
+    gateway.connection=Some(GatewayConnection::RequestReply(Box::new(FakeConnection{
+        context:context.clone(),bytes:VecDeque::new(),
+    })));
+    (gateway,context)
+}
+
+#[test]
+fn native_gateway_negotiates_and_delivers_panel_state_while_idle() {
+    use crate::transport::duplex::{tcp_fixture, DuplexParts};
+    use std::io::{BufRead, BufReader};
+    struct DuplexFactory(Option<DuplexParts>);
+    impl Factory for DuplexFactory {
+        fn gateway_duplex(&mut self, _: &PortInfo) -> Option<Result<DuplexParts, String>> {
+            self.0.take().map(Ok)
+        }
+        fn ports(&mut self) -> Result<Vec<PortInfo>, String> { Ok(vec![port()]) }
+        fn open(&mut self, _: &PortInfo, _: Duration) -> Result<Box<dyn Connection>, String> {
+            panic!("native gateway fell back to request-only serial")
+        }
+    }
+    let (parts, mut peer) = tcp_fixture();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let device = thread::spawn(move || {
+        let mut lines = BufReader::new(peer.try_clone().unwrap()).lines();
+        writeln!(peer, "gatewayType=stm32-can-gateway panelStream=1").unwrap();
+        let first = lines.next().unwrap().unwrap();
+        let id = |line: &str| {
+            let parts: Vec<_> = line.split_ascii_whitespace().collect();
+            assert_eq!(parts.len(), 3);
+            assert_eq!((parts[0], parts[2]), ("cockpit", "snapshot"));
+            parts[1].parse::<u32>().unwrap()
+        };
+        writeln!(peer, "{}", json!({"id":id(&first),"ok":true,"state":wire()})).unwrap();
+        assert_eq!(lines.next().unwrap().unwrap(), "panel-stream");
+        writeln!(peer, "{}", json!({"panelStream":"reset"})).unwrap();
+        for (sequence, tag, body) in [
+            (1u32, 0, [vec![1, 0, 0], vec![0; 16]].concat()),
+            (2u32, 1, [vec![1], vec![0; 32]].concat()),
+        ] {
+            let mut bytes = vec![1];
+            for field in [20, 30, 10, 2, sequence, 0, sequence] {
+                bytes.extend_from_slice(&field.to_le_bytes());
+            }
+            bytes.push(tag);
+            bytes.extend(body);
+            let payload: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            writeln!(peer, "{}", json!({"panelStream":"event","moduleId":MODULE,"sourceNode":11,"payload":payload})).unwrap();
+        }
+        let second = lines.next().unwrap().unwrap();
+        assert_eq!(id(&second), id(&first).wrapping_add(1).max(1));
+        writeln!(peer, "{}", json!({"id":id(&second),"ok":true,"state":wire()})).unwrap();
+    });
+    let mut gateway = Gateway::new(
+        Box::new(DuplexFactory(Some(parts))), Timing::default(), Arc::new(AtomicBool::new(false)),
+    );
+    gateway.open(port(), Some(UID.into()), Instant::now() + Duration::from_secs(2)).unwrap();
+    let capture = gateway.panels.capture(MODULE).unwrap();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    wake.bind_thread(thread::current()).unwrap();
+    let _watch = capture.watch(wake.clone()).unwrap();
+    let mut reader = capture.subscribe().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let sample = loop {
+        let observed = wake.observed();
+        match reader.try_recv().unwrap() {
+            Some(osg_streams::Delivery::Snapshot(snapshot)) if snapshot.value.0.is_some() => break snapshot.value.0.unwrap(),
+            Some(osg_streams::Delivery::Event(event)) => break event.value.latest,
+            Some(_) => continue,
+            None => assert!(wake.wait(observed, deadline.saturating_duration_since(Instant::now()))),
+        }
+    };
+    assert_eq!(sample.state.held[0], 1);
+    assert_eq!(sample.route.source_node, 11);
+    gateway.exchange("snapshot", Duration::from_secs(2)).unwrap();
+    device.join().unwrap();
 }
 #[test]
 fn worker_preserves_atomic_inspect_proof_and_never_caches_private_owner(){

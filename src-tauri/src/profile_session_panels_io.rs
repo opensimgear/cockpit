@@ -10,6 +10,14 @@ pub(crate) struct ProfilePanelIo {
     closed: Arc<AtomicBool>,
 }
 impl ProfilePanelIo {
+    pub(crate) fn can_capture(&self, gateway: &str, module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err("Cockpit gateway manager has closed.".into());
+        }
+        let adapter = self.sessions.lock().unwrap_or_else(|p| p.into_inner())
+            .get(gateway).cloned().ok_or("Connect the bound gateway first.")?;
+        adapter.panel_capture(module)
+    }
     pub(crate) fn usb_capture(&self,key:&str)->Result<Arc<crate::module_usb::stream::Capture>,String>{
         if self.closed.load(Ordering::Acquire){return Err("Native profile transports have closed.".into());}
         self.usb.input_capture(key)
@@ -256,17 +264,18 @@ impl ProfilePanelIo {
             Arc::default(),Arc::new(AtomicBool::new(false)))
     }
     pub(crate) fn publication_fixture(gateway:String,cached:Arc<dyn Fn()->Value+Send+Sync>,request:Arc<dyn Fn(crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>+Send+Sync>)->Self{
-        Self::publication_action_fixture(gateway,cached,request,Arc::new(|_|json!({"ok":false,"error":"No ordinary device command is part of the publication fixture"})))
+        Self::publication_action_fixture(gateway,cached,request,Arc::new(|_|json!({"ok":false,"error":"No ordinary device command is part of the publication fixture"})),Arc::default())
     }
-    pub(crate) fn publication_action_fixture(gateway:String,cached:Arc<dyn Fn()->Value+Send+Sync>,request:Arc<dyn Fn(crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>+Send+Sync>,ordinary:Arc<dyn Fn(Value)->Value+Send+Sync>)->Self{
-        struct Fixture{cached:Arc<dyn Fn()->Value+Send+Sync>,request:Arc<dyn Fn(crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>+Send+Sync>,ordinary:Arc<dyn Fn(Value)->Value+Send+Sync>}
+    pub(crate) fn publication_action_fixture(gateway:String,cached:Arc<dyn Fn()->Value+Send+Sync>,request:Arc<dyn Fn(crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>+Send+Sync>,ordinary:Arc<dyn Fn(Value)->Value+Send+Sync>,panels:Arc<crate::stm32_panel_capture::Hub>)->Self{
+        struct Fixture{cached:Arc<dyn Fn()->Value+Send+Sync>,request:Arc<dyn Fn(crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>+Send+Sync>,ordinary:Arc<dyn Fn(Value)->Value+Send+Sync>,panels:Arc<crate::stm32_panel_capture::Hub>}
         impl Adapter for Fixture{
+            fn panel_capture(&self,module:&str)->Result<Arc<crate::stm32_panel_capture::Capture>,String>{self.panels.capture(module)}
             fn request(&self,request:Value)->Value{(self.ordinary)(request)}
             fn cached_state(&self)->Value{(self.cached)()}
             fn publication(&self,request:crate::stm32::PublicationRequest)->Result<crate::stm32::PublicationReply,String>{(self.request)(request)}
             fn shutdown(&self){}
         }
-        let sessions=Arc::new(Mutex::new(BTreeMap::from([(gateway,Arc::new(Fixture{cached,request,ordinary}) as Arc<dyn Adapter>)])));
+        let sessions=Arc::new(Mutex::new(BTreeMap::from([(gateway,Arc::new(Fixture{cached,request,ordinary,panels}) as Arc<dyn Adapter>)])));
         Self::new(sessions,Arc::new(crate::module_usb_fleet::Fleet::new(Arc::new(||Ok(vec![])),false)),Arc::default(),Arc::new(AtomicBool::new(false)))
     }
 }

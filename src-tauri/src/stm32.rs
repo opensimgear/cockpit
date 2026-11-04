@@ -1,6 +1,8 @@
 //! Physical CAN gateway adapter. CDC observes and changes its registry; HID does
 //! not depend on this service, and closing Cockpit must not stop physical inputs.
 use crate::transport::{allowed_path, Connection, Factory, NativeFactory, PortInfo};
+use crate::stm32_panel_capture::{Capture as PanelCapture, Hub as PanelHub};
+use crate::stm32_panel_serial::GatewaySerial;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -561,10 +563,16 @@ fn configuration_generation(state: &Value, id: &str) -> Value {
     state["modules"].as_array().into_iter().flatten().find(|module| module["id"] == id)
         .map_or(Value::Null, |module| module["configurationGeneration"].clone())
 }
+enum GatewayConnection {
+    RequestReply(Box<dyn Connection>),
+    Parked(GatewaySerial),
+}
+
 struct Gateway {
     role: Role,
     factory: Box<dyn Factory>,
-    connection: Option<Box<dyn Connection>>,
+    connection: Option<GatewayConnection>,
+    panels: Arc<PanelHub>,
     board: Option<Board>,
     state: Value,
     buffer: Vec<u8>,
@@ -608,6 +616,7 @@ impl Gateway {
             role,
             factory,
             connection: None,
+            panels: Arc::default(),
             board: None,
             state: empty_state(),
             buffer: Vec::new(),
@@ -662,12 +671,21 @@ impl Gateway {
                         self.request_id,
                         crate::runtime::owner(&claim.client)
                     );
-                    let _ = connection.write_all(line.as_bytes());
+                    match connection {
+                        GatewayConnection::RequestReply(connection) => {
+                            let _ = connection.write_all(line.as_bytes());
+                        }
+                        GatewayConnection::Parked(connection) => {
+                            let _ = connection.send(line.as_bytes(), Instant::now() + self.timing.poll);
+                        }
+                    }
                 }
             }
-            let _ = connection.flush();
+            if let GatewayConnection::RequestReply(connection) = connection {
+                let _ = connection.flush();
+            }
         }
-        if let Some(mut connection) = self.connection.take() {
+        if let Some(GatewayConnection::RequestReply(mut connection)) = self.connection.take() {
             let _ = connection.set_control_lines(false, false);
         }
         self.buffer.clear();
@@ -778,7 +796,14 @@ impl Gateway {
             return Err("The native gateway request was revoked before its serial write.".into());
         }
         let result = (|| {
-            let connection = self.connection.as_mut().unwrap();
+            let connection = match self.connection.as_mut().unwrap() {
+                GatewayConnection::Parked(connection) => {
+                    connection.send(wire.as_bytes(), deadline)?;
+                    let value = connection.reply(id, deadline)?;
+                    return if value["ok"].is_boolean() { Ok(value) } else { Err(INVALID.into()) };
+                }
+                GatewayConnection::RequestReply(connection) => connection,
+            };
             connection
                 .write_all(wire.as_bytes())
                 .map_err(|e| format!("CAN gateway write failed: {e}"))?;
@@ -977,23 +1002,34 @@ impl Gateway {
             info: info.clone(),
             uid: expected,
         });
-        self.connection = Some(self.factory.open(&info, self.timing.poll)?);
-        if let Err(e) = self
-            .connection
-            .as_mut()
-            .unwrap()
-            .set_control_lines(true, false)
-        {
-            self.close();
-            return Err(e);
-        }
+        let duplex = (self.role == Role::Can).then(|| self.factory.gateway_duplex(&info)).flatten();
+        self.connection = Some(match duplex {
+            Some(parts) => {
+                let panels = self.panels.clone();
+                GatewayConnection::Parked(GatewaySerial::open(parts?, move |record| panels.accept(record, Instant::now()))?)
+            }
+            None => {
+                let mut connection = self.factory.open(&info, self.timing.poll)?;
+                connection.set_control_lines(true, false)?;
+                GatewayConnection::RequestReply(connection)
+            }
+        });
         self.state["port"] = json!(info.path);
         self.exchange(
             "snapshot",
             deadline
                 .saturating_duration_since(Instant::now())
                 .min(self.timing.command),
-        )
+        )?;
+        if let Some(GatewayConnection::Parked(connection)) = self.connection.as_mut() {
+            if connection.supports_panel() {
+                if let Err(error) = connection.send(b"panel-stream\n", deadline) {
+                    self.close();
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
     fn sleep(&self, duration: Duration) -> Result<(), String> {
         let deadline = Instant::now() + duration;
@@ -2247,6 +2283,7 @@ pub struct Stm32Service {
     endpoint_activity: Arc<crate::output_leases::LeaseActivity>,
     workspace: Arc<workspace::Cache>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
+    panels: Arc<PanelHub>,
 }
 impl Default for Stm32Service {
     fn default() -> Self {
@@ -2254,6 +2291,9 @@ impl Default for Stm32Service {
     }
 }
 impl Stm32Service {
+    pub(crate) fn panel_capture(&self, module: &str) -> Result<Arc<PanelCapture>, String> {
+        self.panels.capture(module)
+    }
     pub(crate) fn output_activity(&self)->bool{self.endpoint_activity.active()}
     pub(crate) fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
         if self.closed.load(Ordering::Acquire) {
@@ -2300,10 +2340,13 @@ impl Stm32Service {
         let configuration_claims = Arc::new(Mutex::new(Vec::new()));
         let latest_claims = configuration_claims.clone();
         let workspace_latest = workspace.clone();
+        let panels = Arc::<PanelHub>::default();
+        let worker_panels = panels.clone();
         let worker = thread::Builder::new()
             .name("osg-stm32-cdc".into())
             .spawn(move || {
                 let mut gateway = Gateway::with_role(factory, timing, cancel.clone(), role);
+                gateway.panels = worker_panels;
                 gateway.workspace = Some(workspace_latest.clone());
                 let mut seen = Instant::now();
                 let mut heartbeat = Instant::now() + gateway.timing.heartbeat;
@@ -2355,6 +2398,7 @@ impl Stm32Service {
             endpoint_activity,
             workspace,
             worker: Mutex::new(Some(worker)),
+            panels,
         }
     }
     pub fn request(&self, request: Value) -> Value {

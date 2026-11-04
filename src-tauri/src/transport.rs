@@ -59,6 +59,9 @@ pub(crate) trait Connection: Read + Write + Send {
 }
 
 pub(crate) trait Factory: Send {
+    fn gateway_duplex(&mut self, _port: &PortInfo) -> Option<Result<duplex::DuplexParts, String>> {
+        None
+    }
     fn open_duplex(&mut self,_port:&PortInfo)->Result<duplex::DuplexParts,String>{Err("This transport cannot stream standalone USB input.".into())}
     fn ports(&mut self) -> Result<Vec<PortInfo>, String>;
     fn open(
@@ -98,6 +101,9 @@ impl Connection for NativeConnection {
     }
 }
 impl Factory for NativeFactory {
+    fn gateway_duplex(&mut self, port: &PortInfo) -> Option<Result<duplex::DuplexParts, String>> {
+        Some(duplex::open(port))
+    }
     fn open_duplex(&mut self,port:&PortInfo)->Result<duplex::DuplexParts,String>{duplex::open(port)}
     fn ports(&mut self) -> Result<Vec<PortInfo>, String> {
         let mut local = crate::local_gateway::ports();

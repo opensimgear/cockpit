@@ -52,7 +52,7 @@ impl FakeIo {
     fn new(targets: &[Target]) -> Arc<Self> {
         let modules = targets.iter().map(|t| json!({"id":t.module,"online":true,"directUsb":false,
             "boot":t.boot,"configurationGeneration":t.configuration,"node":t.node,"sourceNode":t.source,
-            "profile":t.profile,"publicationSlot":t.slot,"configuredEnabled":t.configured_enabled,
+            "profile":t.profile,"axisCount":t.profile["axes"],"publicationSlot":t.slot,"configuredEnabled":t.configured_enabled,
             "publicationReportId":t.report,"configuredDescriptorIndex":t.order,"published":t.configured_enabled,
             "lease":66,"hasInput":false,"eventBaselineReady":false})).collect::<Vec<_>>();
         Arc::new(Self(Mutex::new(FakeState {
@@ -806,6 +806,9 @@ fn completed_exact_restoration_proof_does_not_expire_like_active_ownership() {
 }
 
 mod native_host {
+    mod panel_fixture {
+        include!("profile_publication_panel_fixture.rs");
+    }
     use super::*;
     use crate::profile_session::{Candidate, Coordinator, State};
     use crate::profile_session_host::NativeProfileHost;
@@ -887,7 +890,7 @@ mod native_host {
                             module["boot"],
                             module["lease"],
                             module["configurationGeneration"],
-                            module["lease"]
+                            module["configurationGeneration"]
                         ])
                         .to_string(),
                         attributes: BTreeMap::from([
@@ -953,6 +956,7 @@ mod native_host {
             let publication_actions = actions.clone();
             let ordinary_actions = actions.clone();
             let ordinary_io = io.clone();
+            let captures = Arc::new(crate::stm32_panel_capture::Hub::default());
             let panels = Arc::new(crate::gateways::ProfilePanelIo::publication_action_fixture(
                 GATEWAY.into(),
                 Arc::new(move || action_tests::cached(&cached, cached_actions.as_deref())),
@@ -1017,6 +1021,7 @@ mod native_host {
                         .map(|a| a.request(&ordinary_io, request))
                         .unwrap_or_else(|| json!({"ok":false,"error":"No ordinary action"}))
                 }),
+                captures.clone(),
             ));
             let host = NativeProfileHost::new(
                 resources.clone(),
@@ -1032,7 +1037,10 @@ mod native_host {
             let peer_stop = Arc::new(AtomicBool::new(false));
             let stopped = peer_stop.clone();
             let peer_io = io.clone();
+            let peer_actions = actions.clone();
             let peer = thread::spawn(move || {
+                let origin = Instant::now();
+                let mut publisher = panel_fixture::Publisher::default();
                 while !stopped.load(Ordering::Acquire) {
                     let pending = {
                         let state = peer_io.0.lock().unwrap();
@@ -1042,6 +1050,12 @@ mod native_host {
                     if pending {
                         peer_io.settle();
                         peer_io.change(|s| s.state["modules"][0]["hasInput"] = json!(true));
+                    }
+                    if let Some(actions) = &peer_actions {
+                        let now = Instant::now();
+                        let sample_ms = now.duration_since(origin).as_millis() as u32;
+                        let state = peer_io.cached(GATEWAY).unwrap();
+                        publisher.publish(&captures, &state, actions.panel_sample(sample_ms), sample_ms, now);
                     }
                     thread::sleep(Duration::from_millis(5));
                 }

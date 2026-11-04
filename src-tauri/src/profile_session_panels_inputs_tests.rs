@@ -214,9 +214,19 @@ fn invalid_native_generations_and_acquisition_budgets_fail_before_any_device_req
 }
 #[test]
 fn source_errors_rebaseline_without_reconstructing_missing_transitions() {
-    let (plan, io) = fixture(true, 1);
+    use crate::stm32_panel_wire::{Edge, Packet, Payload, Record};
+    let (plan, io) = fixture_with_stream(true, 1, true);
     let mut inputs = PanelInputs::prepare_io(&plan, io.clone()).unwrap();
     inputs.acquire(0).unwrap();
+    let send = |sequence, cursor, sampled_at_ms, payload| io.capture.accept(Record::Event {
+        module_id: "0123456789abcdef0123456789abcdef".into(),
+        source_node: 17,
+        packet: Packet { node: 5, boot_session: 2, lease: 3, gateway_epoch: 1,
+            configuration_generation: 4, sequence, cursor, sampled_at_ms, payload },
+    }, Instant::now());
+    send(1, 0, 10, Payload::Layout { contact_count: 1, encoder_count: 0, selector_count: 0, maintained: [0;16] });
+    let state = || Payload::State { held: [0;16], axes: [0;8], axis_available: 1 };
+    send(2, 0, 11, state());
     eventually(|| inputs.baseline(&plan, |_| Ok(())).unwrap());
     inputs.start().unwrap();
     eventually(|| {
@@ -228,7 +238,17 @@ fn source_errors_rebaseline_without_reconstructing_missing_transitions() {
             .any(|f| f.reason == Reason::Baseline)
             .then_some(())
     });
-    io.fail.store(true, Ordering::Release);
+    send(3, 2, 12, Payload::Edges(vec![
+        Edge { control: 0, pressed: true, captured_at_ms: 12 },
+        Edge { control: 0, pressed: false, captured_at_ms: 12 },
+    ]));
+    let pressed = eventually(|| {
+        let frames = inputs.poll(|_| Ok(())).unwrap().frames;
+        (!frames.is_empty()).then_some(frames)
+    });
+    assert_eq!(pressed.iter().filter_map(|frame| sample(frame, "button-event:0")).cloned().collect::<Vec<_>>(),
+        [SignalSample::scalar(PortValue::Boolean(true)), SignalSample::scalar(PortValue::Boolean(false))]);
+    io.capture.accept(Record::Reset, Instant::now());
     let error = eventually(|| {
         let result = inputs.poll(|_| Ok(())).unwrap();
         result
@@ -238,9 +258,8 @@ fn source_errors_rebaseline_without_reconstructing_missing_transitions() {
             .then_some(result)
     });
     assert!(error.diagnostics.iter().all(|s| !s.contains('\n')));
-    io.press(true);
-    io.press(false);
-    io.fail.store(false, Ordering::Release);
+    send(4, 2, 13, Payload::Layout { contact_count: 1, encoder_count: 0, selector_count: 0, maintained: [0;16] });
+    send(5, 2, 14, state());
     let frames = eventually(|| {
         let result = inputs.poll(|_| Ok(())).unwrap();
         result
@@ -255,6 +274,7 @@ fn source_errors_rebaseline_without_reconstructing_missing_transitions() {
         .filter(|c| c.port_id == "button-event:0")
         .all(|c| c.sample == SignalSample::Unknown));
     inputs.stop();
+    assert_eq!(io.calls.load(Ordering::Acquire), 0);
 }
 
 #[test]

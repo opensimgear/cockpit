@@ -68,6 +68,11 @@ impl ActionDevice {
         s.held = true;
         s.head += 1;
     }
+    pub(super) fn panel_sample(&self, sampled_ms: u32) -> (bool, u32) {
+        let mut state = self.0.lock().unwrap();
+        state.sampled_ms = sampled_ms;
+        (state.held, state.head)
+    }
     pub(super) fn publication_release(&self, io: &FakeIo) {
         let lease = io.cached(GATEWAY).unwrap()["modules"][0]["lease"]
             .as_u64()
@@ -91,8 +96,7 @@ impl ActionDevice {
                 s.owned && request["ownershipToken"] == s.secret && request["leaseId"] == s.lease;
             match command {
                 "action_state" | "action_ownership" => (),
-                // Device samples advance independently of transition history.
-                "events_state" | "events_read" => s.sampled_ms += 10,
+                "events_state" => (),
                 "action_claim_current" => {
                     assert_eq!(request["actionId"], "indicator.set");
                     assert_eq!(request["catalogueRevision"], 7);
@@ -142,22 +146,7 @@ impl ActionDevice {
                 other => panic!("Unexpected composed physical action command {other}"),
             }
         }
-        let mut reply = cached(io, Some(self));
-        if command == "events_read" {
-            let after = request["after"].as_u64().unwrap();
-            let id = module["id"].as_str().unwrap();
-            let events = &mut reply["moduleEvents"][id];
-            let head = events["head"].as_u64().unwrap();
-            events["after"] = json!(after);
-            events["events"] = if after < head {
-                json!([{"sequence":head,"control":0,"pressed":true}])
-            } else {
-                json!([])
-            };
-            events["next"] = json!(head);
-            events["more"] = json!(false);
-        }
-        json!({"ok":true,"state":reply})
+        json!({"ok":true,"state":cached(io, Some(self))})
     }
     fn count(&self, command: &str) -> usize {
         self.0
@@ -196,7 +185,7 @@ pub(super) fn cached(io: &FakeIo, actions: Option<&ActionDevice>) -> Value {
         ]);
         cache["configurationGeneration"] = module["configurationGeneration"].clone();
         state["moduleActions"][&id] = cache;
-        let mut events = actions.events(module["lease"].as_u64().unwrap());
+        let mut events = actions.events(module["configurationGeneration"].as_u64().unwrap());
         events["route"] = json!([
             state["epoch"],
             module["node"],
@@ -317,29 +306,19 @@ impl Fixture {
         let deadline = Instant::now() + Duration::from_secs(2);
         // Start may still be binding the live reader after its acquisition
         // snapshot. A control change belongs after that fresh live baseline.
-        let reads = actions.count("events_read");
-        while actions.count("events_read") < reads + 2 {
-            self.coordinator.poll().unwrap();
-            assert!(
-                Instant::now() < deadline,
-                "The actual native input reader did not start"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-        self.coordinator.poll().unwrap();
         let request = crate::profile_session::inspection::Request::parse(&json!({"command":"profile_runtime_inspect","owner":self.coordinator.status().owner,"nodeId":"controller-0","offset":0,"limit":64})).unwrap();
-        let baseline = serde_json::to_value(self.coordinator.inspect(&request).unwrap()).unwrap();
-        let button = baseline["ports"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["endpoint"]["portId"] == "button")
-            .unwrap();
-        assert_eq!(
-            button["sample"],
-            json!({"status":"known","value":{"kind":"scalar","value":false}}),
-            "{baseline}"
-        );
+        let baseline = loop {
+            self.coordinator.poll().unwrap();
+            let baseline = serde_json::to_value(self.coordinator.inspect(&request).unwrap()).unwrap();
+            if baseline["ports"].as_array().unwrap().iter().any(|port| {
+                port["endpoint"]["portId"] == "button"
+                    && port["sample"] == json!({"status":"known","value":{"kind":"scalar","value":false}})
+            }) {
+                break baseline;
+            }
+            assert!(Instant::now() < deadline, "The native reader did not admit its live baseline: {baseline}");
+            thread::sleep(Duration::from_millis(5));
+        };
         assert_eq!(
             self.coordinator.status().state,
             State::Running,

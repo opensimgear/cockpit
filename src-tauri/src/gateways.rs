@@ -54,6 +54,9 @@ mod profile_activation_progress;
 mod activity_controls;
 
 trait Adapter: Send + Sync {
+    fn panel_capture(&self, _module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+        Err("This gateway has no native panel stream.".into())
+    }
     fn watch_workspace(&self,_wake:Arc<osg_streams::NativeWake>) {}
     fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){(Arc::new(self.cached_state()),BTreeMap::new())}
     fn set_workspace_owned(&self,_owned:bool) {}
@@ -81,6 +84,9 @@ impl Adapter for PicoService {
     }
 }
 impl Adapter for Stm32Service {
+    fn panel_capture(&self, module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+        Stm32Service::panel_capture(self, module)
+    }
     fn watch_workspace(&self,wake:Arc<osg_streams::NativeWake>){self.watch_workspace(wake)}
     fn workspace_snapshot(&self)->(Arc<Value>,BTreeMap<String,String>){self.workspace_snapshot()}
     fn set_workspace_owned(&self,owned:bool){self.set_workspace_owned(owned)}
@@ -1815,6 +1821,7 @@ mod tests {
     }
     #[derive(Default)]
     struct MockAdapter {
+        panels: crate::stm32_panel_capture::Hub,
         state: Mutex<Value>,
         calls: Mutex<Vec<Value>>,
         closed: AtomicBool,
@@ -1825,6 +1832,9 @@ mod tests {
         endpoint_activity:crate::output_leases::LeaseActivity,
     }
     impl Adapter for MockAdapter {
+        fn panel_capture(&self, module: &str) -> Result<Arc<crate::stm32_panel_capture::Capture>, String> {
+            self.panels.capture(module)
+        }
         fn output_activity(&self)->bool{self.endpoint_activity.active()}
         fn cached_state(&self) -> Value { self.state.lock().unwrap().clone() }
         fn configuration_claims(&self) -> Vec<crate::module_configuration_routes::WriterPin> {
@@ -2217,19 +2227,26 @@ mod tests {
 
     #[test]
     fn native_profile_acquires_can_inputs_and_disarms_changed_routes_without_output_writes() {
+        use crate::stm32_panel_wire::{Edge, Packet, Payload, Record};
         use osg_profiles::{Port,Resource,ResourceKind,ProcessingNode,Direction,Binding,Endpoint};
+        const MODULE: &str = "0123456789abcdef0123456789abcdef";
         let(manager,provider)=setup();
         assert_eq!(request(&manager,"connect",Some(FIRST),json!({"port":"COM1"}))["ok"],true);
         let adapter=provider.adapters.lock().unwrap()[0].clone();
         let route=json!([1,5,3,2]);
-        let events=json!({"ok":true,"schemaVersion":1,"stream":7,"head":0,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"contactButtonCount":1,"maintainedButtons":[0],"encoderButtons":[],"selectorButtons":[],"axisCount":0,"axes":[],"axisNeutral":[],"axisUsage":[],"axisAvailable":[],"sampledAtMs":10,"route":route,"configurationGeneration":4,"events":[]});
+        let events=json!({"ok":true,"schemaVersion":1,"stream":4,"head":0,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"contactButtonCount":1,"maintainedButtons":[0],"encoderButtons":[],"selectorButtons":[],"axisCount":0,"axes":[],"axisNeutral":[],"axisUsage":[],"axisAvailable":[],"sampledAtMs":10,"route":route,"configurationGeneration":4,"events":[]});
         {
             let mut state=adapter.state.lock().unwrap();
             state["epoch"]=json!(1);state["canProtocol"]=json!(3);
-            state["modules"]=json!([{"id":"module","name":"Panel","online":true,"node":5,"lease":3,"boot":2,"configurationGeneration":4,"canConfigure":false}]);
-            state["moduleEvents"]=json!({"module":events});
-            state["moduleActions"]=json!({"module":{"status":"unsupported","route":route,"configurationGeneration":4}});
+            state["modules"]=json!([{"id":MODULE,"name":"Panel","online":true,"node":5,"lease":3,"boot":2,"axisCount":0,"configurationGeneration":4,"canConfigure":false}]);
+            state["moduleEvents"]=json!({(MODULE):events});
+            state["moduleActions"]=json!({(MODULE):{"status":"unsupported","route":route,"configurationGeneration":4}});
         }
+        let send = |sequence, cursor, payload| adapter.panels.accept(Record::Event {
+            module_id: MODULE.into(), source_node: 42,
+            packet: Packet { node: 5, lease: 3, boot_session: 2, gateway_epoch: 1,
+                configuration_generation: 4, sequence, cursor, sampled_at_ms: 10 + sequence, payload },
+        }, std::time::Instant::now());
         manager.profile_resources.refresh_native().unwrap();
         let listed=manager.profile_resources.request(&json!({"command":"profile_resources_list","offset":0,"limit":128})).unwrap();
         let resource=listed["resources"].as_array().unwrap().iter().find(|r|r["resourceType"]=="osg-module").expect("actual CAN resource");
@@ -2242,12 +2259,11 @@ mod tests {
         document.bindings.push(Binding{id:"to-readout".into(),from:Endpoint{node_id:"panel".into(),port_id:"pressed".into()},to:Endpoint{node_id:"invert".into(),port_id:"input".into()}});
         let assignments=json!([{"resourceId":"panel","sourceId":resource["id"],"ports":[{"profilePortId":"pressed","observedPortId":"button:0","expectedContractHash":observed["contractHash"]}]}]);
         assert_eq!(request(&manager,"profile_editor_save",None,json!({"document":document,"expectedRevision":1,"assignments":assignments}))["ok"],true);
+        send(1, 0, Payload::Layout { contact_count: 1, encoder_count: 0, selector_count: 0, maintained: [0; 16] });
+        send(2, 0, Payload::State { held: [0; 16], axes: [0; 8], axis_available: 0 });
         let applied=request(&manager,"profile_apply",None,json!({"id":document.id,"expectedRevision":2}));assert_eq!(applied["ok"],true,"{applied}");
         let owner=applied["state"]["profiles"]["profileSession"]["owner"].clone();
-        {
-            let mut state=adapter.state.lock().unwrap();let events=&mut state["moduleEvents"]["module"];
-            events["head"]=json!(1);events["held"]=json!([true]);events["sampledAtMs"]=json!(11);events["events"]=json!([{"sequence":1,"control":0,"pressed":true}]);
-        }
+        send(3, 1, Payload::Edges(vec![Edge { control: 0, pressed: true, captured_at_ms: 13 }]));
         let deadline=std::time::Instant::now()+Duration::from_secs(2);
         loop {
             manager.profile_session.lock().unwrap().poll().unwrap();
@@ -2256,6 +2272,7 @@ mod tests {
             assert!(std::time::Instant::now()<deadline,"{inspected}");std::thread::sleep(Duration::from_millis(10));
         }
         adapter.state.lock().unwrap()["modules"][0]["boot"]=json!(99);
+        adapter.panels.accept(Record::Loss { module_id: MODULE.into() }, std::time::Instant::now());
         let deadline=std::time::Instant::now()+Duration::from_secs(2);
         loop {
             manager.profile_session.lock().unwrap().poll().unwrap();
@@ -2264,7 +2281,7 @@ mod tests {
             assert!(std::time::Instant::now()<deadline,"{status}");std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
-        assert!(adapter.calls.lock().unwrap().iter().all(|r|matches!(r["command"].as_str(),Some("connect"|"events_state"|"events_read"))));
+        assert!(adapter.calls.lock().unwrap().iter().all(|r|matches!(r["command"].as_str(),Some("connect"|"events_state"))));
     }
 
     #[test]
