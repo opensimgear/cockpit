@@ -63,15 +63,18 @@ impl GameIntegrationSetup {
             if platform.find(game)?.is_some() {
                 return Err("Close DCS before restoring its integration files.".into());
             }
-            let restored = crate::dcs_setup::recover(&self.inner.work)?;
+            let recovery = crate::dcs_setup::recover(&self.inner.work);
+            // A failed attempt can leave durable recovery evidence. Refresh
+            // the passive view before replying to either command outcome.
+            let (record, status) = self.inner.inspect_scoped(game);
+            self.inner.publish_setup(game, &record, status);
+            let restored = recovery?;
             if restored["restored"] != true {
                 return Err(format!(
                     "Setup recovery preserved external changes: {}",
                     restored["conflicts"]
                 ));
             }
-            let (record, status) = self.inner.inspect_scoped(game);
-            self.inner.publish_setup(game, &record, status);
             return Ok(());
         }
         if let Some(error) = &self.inner.settings_error {

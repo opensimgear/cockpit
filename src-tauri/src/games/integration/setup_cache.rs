@@ -156,14 +156,11 @@ impl Inner {
     }
 
     pub(super) fn dcs_discovery_changed(&self, game: &Value) -> bool {
-        let (record, _) = self.provider_snapshot("dcs");
-        let Some(previous) = self.dcs_prepared_setup(game, &record) else { return true; };
-        if previous["recoveryNeeded"] != json!(crate::dcs_setup::recovery_pending(&self.work)) {
-            return true;
-        }
         if self.dcs_discovery_watched.load(Ordering::Acquire) {
             return false;
         }
+        let (record, _) = self.provider_snapshot("dcs");
+        let Some(previous) = self.dcs_prepared_setup(game, &record) else { return true; };
         let candidates = crate::dcs_setup::discover_user_folders(
             game["installPath"].as_str().map(Path::new),
         ).unwrap_or_default();

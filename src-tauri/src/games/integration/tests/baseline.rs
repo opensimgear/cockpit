@@ -310,3 +310,24 @@ fn persisted_records_are_bounded_and_revalidated_on_load() {
     fixture_write_settings(&path, &json!({"schemaVersion":1,"games":{"unknown":{}}}));
     assert!(read_settings(&path).is_err());
 }
+
+#[test]
+fn failed_dcs_recovery_updates_the_passive_setup_view_before_replying() {
+    let scratch = Scratch::new();
+    let runtime = GameIntegrationSetup::new(scratch.0.join("setup.json"), true);
+    let game = game();
+    runtime.refresh(std::slice::from_ref(&game));
+    let mut catalogue = [game.clone()];
+    runtime.decorate(&mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["recoveryNeeded"], false);
+
+    let journal = runtime.inner.work.join("dcs-setup-journal.json");
+    let mut evidence = osg_persistence::Evidence::open(&journal, "recovery-dcs", 16 * 1024 * 1024).unwrap();
+    evidence.write(b"invalid DCS evidence").unwrap();
+    assert!(runtime.request(
+        &json!({"command":"game_integration_recover"}), &game, Arc::new(FakePlatform(false)),
+    ).is_err());
+
+    runtime.decorate(&mut catalogue);
+    assert_eq!(catalogue[0]["integrationSetup"]["recoveryNeeded"], true);
+}

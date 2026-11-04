@@ -31,8 +31,10 @@ the new catalogue is visible. Configured integrations still use the 500 ms
 process pass. For a watched DCS installation, native changes to the selected
 export, BIOS, catalogue and aircraft files trigger setup reinspection. The
 Saved Games root watch also observes direct DCS profile directory creation,
-removal and rename. The two-second pass still checks recovery state and inspects
-setups where native watches could not be installed. Assetto
+removal and rename. Startup and native setup, removal and recovery operations
+publish the ledger state. Safety-sensitive commands still read durable evidence.
+The two-second pass remains for scopes where native watches could not be
+installed. Assetto
 reinspects the selected executable on native file changes. The Rally and
 Competizione watches include the possible sibling runtime before it exists.
 If a native watch cannot be registered, that Assetto selection retains the
@@ -46,7 +48,7 @@ worker and explicit launch and setup checks are separate.
 
 | Provider | External source still requiring native invalidation |
 | --- | --- |
-| DCS | Recovery ledger changes and setup scopes without native watch coverage. |
+| DCS | Setup and discovery scopes without native watch coverage. |
 
 | Surface / owner | Current boundary | Required replacement and qualification |
 | --- | --- | --- |
