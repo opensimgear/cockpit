@@ -6,6 +6,7 @@
 
   import { onMount, tick, untrack, type Snippet } from 'svelte';
   import { companionObservations } from './companion-observations';
+  import { SharedObservations } from './streams/shared';
   import { observeProfileResources } from './profile-resources-shared';
   import { slide } from 'svelte/transition';
   import Icon from './Icon.svelte';
@@ -66,7 +67,7 @@
   async function refresh(quiet = false) {
     if (!controller || busy || (quiet && refreshTask)) return;
     if (!quiet) busy = true;
-    const task = refreshTask ?? controller.refresh(!quiet);
+    const task = refreshTask ?? controller.refresh(!quiet, !quiet);
     refreshTask = task;
     try { await task; if (!quiet) error = ''; }
     catch (e) { error = String(e); }
@@ -150,8 +151,13 @@
     });
     snapshot = controller.snapshot;
     void refresh();
+    const usbObservations = new SharedObservations();
+    usbObservations.subscribe('usb.inventory', state => {
+      if (state.status === 'ready') void controller.refreshUsb().catch(reason => { error = String(reason); });
+      if (state.status === 'lost' || state.status === 'error') controller.loseUsb(state.error);
+    });
     const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
-    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); stopCompanions(); stopListener(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); stopCompanions(); stopListener(); usbObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
 

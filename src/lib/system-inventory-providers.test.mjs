@@ -77,6 +77,40 @@ test('workspace updates reproject gateways and discovery loss without provider r
  h.controller.dispose();
 });
 
+test('USB events replace list polling and fence a reply after observation loss', async () => {
+ const h = harness({usb:[usb()]});
+ await h.controller.refresh();
+ assert.equal(h.component('usb:serial').presence, 'connected');
+ h.requests.length = 0;
+ await h.controller.refresh(false, false);
+ assert.deepEqual(h.requests.map(request => request.command), ['system_inventory']);
+ assert.equal(h.component('usb:serial').presence, 'connected');
+ h.requests.length = 0;
+
+ const old = deferred();
+ h.custom.set('module_usb_list', () => old.promise);
+ const pending = h.controller.refreshUsb();
+ h.controller.loseUsb('USB observation closed');
+ old.resolve({moduleUsb:{offset:0,total:1,modules:[usb()]}});
+ await pending;
+ assert.equal(h.component('usb:serial').presence, 'unknown');
+ assert.match(h.controller.snapshot.diagnostics.join(' '), /USB observation closed/);
+ h.custom.delete('module_usb_list');
+ h.state.usb = [];
+ await h.controller.refreshUsb();
+ assert.equal(h.component('usb:serial').presence, 'offline');
+ assert.deepEqual(h.requests.map(request => request.command), ['module_usb_list','system_inventory','module_usb_list','system_inventory']);
+ const first = deferred();
+ h.requests.length = 0;
+ h.custom.set('module_usb_list', () => h.requests.length === 1 ? first.promise : {moduleUsb:{offset:0,total:1,modules:[usb()]}});
+ const burst = [h.controller.refreshUsb(), h.controller.refreshUsb(), h.controller.refreshUsb()];
+ first.resolve({moduleUsb:{offset:0,total:0,modules:[]}});
+ await Promise.all(burst);
+ assert.equal(h.requests.filter(request => request.command === 'module_usb_list').length, 2);
+ assert.equal(h.component('usb:serial').presence, 'connected');
+ h.controller.dispose();
+});
+
 test('native supplemental pages preserve the exact snapshot and never omit hidden records', async () => {
  const h=harness();
  const hidden=Array.from({length:35},(_,i)=>({id:'pn-'+i,name:'Hidden '+i,instanceId:'HID/'+i,present:true,hidden:true,diagnostics:[]}));

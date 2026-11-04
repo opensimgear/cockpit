@@ -112,6 +112,10 @@ export class SystemInventoryController {
   private companionPending?: Promise<void>;
   private companionQueued = false;
   private companionVersion = 0;
+  private usbResult?: PromiseSettledResult<Capture>;
+  private usbVersion = 0;
+  private usbLost = false;
+  private usbUpdates?: Promise<void>;
   private resources: DeepReadonly<ResourceSummary[]> = [];
   private resourceError = 'Waiting for the current resource inventory.';
   private resourceVersion = 0;
@@ -198,29 +202,62 @@ export class SystemInventoryController {
     this.companionPending = pending;
     return pending;
   }
-  refresh(includeCompanions = true): Promise<SystemSnapshot> {
+  refreshUsb(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    this.usbVersion++;
+    this.usbLost = false;
+    if (this.usbUpdates) return this.usbUpdates;
+    const task = (async () => {
+      try {
+        let version: number;
+        do {
+          if (this.pending) await this.pending;
+          if (this.disposed || this.usbLost) return;
+          version = this.usbVersion;
+          await this.refresh(false, true);
+        } while (version !== this.usbVersion && !this.disposed && !this.usbLost);
+      } finally {
+        this.usbUpdates = undefined;
+      }
+    })();
+    this.usbUpdates = task;
+    return task;
+  }
+  loseUsb(error = 'USB inventory observation disconnected.'): void {
+    if (this.disposed) return;
+    this.usbVersion++;
+    this.usbLost = true;
+    this.usbResult = { status: 'rejected', reason: error };
+    if (this.readyProjection) void this.projectCurrent().catch(() => {});
+  }
+  refresh(includeCompanions = true, includeUsb = true): Promise<SystemSnapshot> {
     if (this.disposed) return Promise.resolve(this.snapshot);
     if (this.pending) return this.pending;
     const epoch = this.epoch;
-    const pending = this.collect(epoch, includeCompanions).finally(() => {
+    const pending = this.collect(epoch, includeCompanions, includeUsb).finally(() => {
       if (this.pending === pending) this.pending = null;
       if (!this.disposed && this.readyProjection && (this.projectedControllers !== this.controllerState || this.projectedResourceVersion !== this.resourceVersion || this.projectedGames !== this.gamesState || this.projectedRuntime !== this.runtimeState)) void this.projectCurrent().catch(() => {});
     });
     this.pending = pending; return pending;
   }
-  private async collect(epoch: number, includeCompanions: boolean): Promise<SystemSnapshot> {
+  private async collect(epoch: number, includeCompanions: boolean, includeUsb: boolean): Promise<SystemSnapshot> {
     const now = Date.now(), diagnostics: string[] = [], complete = ['host'];
     // Native PnP/transport correlation reads the controller and USB inventories.
     // Capture those first so startup does not publish their uncorrelated aliases.
-    const controllers=Promise.resolve(this.controllers(now)),usb=this.usb(now);
-    const nativeCapture=Promise.allSettled([controllers,usb]).then(()=>this.disposed || epoch!==this.epoch ? {provider:'native',observations:[]} as Capture : this.native(now));
-    const providers = [controllers,usb,nativeCapture];
-    const [results] = await Promise.all([
+    const controllers = Promise.resolve(this.controllers(now));
+    const usbVersion = this.usbVersion;
+    const usbCapture = includeUsb ? Promise.allSettled([this.usb(now)]).then(([result]) => result) : undefined;
+    const nativeCapture = Promise.all([controllers, usbCapture]).then(() =>
+      this.disposed || epoch !== this.epoch ? {provider:'native',observations:[]} as Capture : this.native(now));
+    const providers = [controllers,nativeCapture];
+    const [results, usbResult] = await Promise.all([
       Promise.allSettled(providers),
+      usbCapture,
       includeCompanions ? this.captureCompanions() : undefined,
     ]);
     if (this.disposed || epoch !== this.epoch) return this.snapshot;
-    const names = ['controllers', 'usb', 'native'];
+    if (usbResult && usbVersion === this.usbVersion) this.usbResult = usbResult;
+    const names = ['controllers', 'native'];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && new Set(result.value.observations.map(c => c.id)).size !== result.value.observations.length) { this.captures.delete(names[index]); diagnostics.push(`${names[index]}: Provider returned duplicate identities; its inspection is incomplete.`); return; }
       if (result.status === 'fulfilled') { this.captures.set(names[index], result.value); if (names[index] !== 'controllers') { if (result.value.complete !== false && (names[index] !== 'native' || !result.value.diagnostics?.length)) complete.push(names[index]); diagnostics.push(...(result.value.diagnostics ?? [])); } }
@@ -261,14 +298,15 @@ export class SystemInventoryController {
     const discoveryError = this.gatewayError();
     if (discoveryError) diagnostics.push(`Gateway discovery: ${discoveryError}`);
     else complete.push('gateways');
-    const companions = this.companionResult;
-    if (companions?.status === 'fulfilled' && new Set(companions.value.observations.map(row => row.id)).size === companions.value.observations.length) {
-      this.captures.set('companions', companions.value);
-      complete.push('companions');
-      diagnostics.push(...(companions.value.diagnostics ?? []));
-    } else {
-      this.captures.delete('companions');
-      if (companions) diagnostics.push('companions: ' + (companions.status === 'rejected' ? message(companions.reason) : 'Provider returned duplicate identities; its inspection is incomplete.'));
+    for (const [provider, result] of [['companions', this.companionResult], ['usb', this.usbResult]] as const) {
+      if (result?.status === 'fulfilled' && new Set(result.value.observations.map(row => row.id)).size === result.value.observations.length) {
+        this.captures.set(provider, result.value);
+        complete.push(provider);
+        diagnostics.push(...(result.value.diagnostics ?? []));
+      } else {
+        this.captures.delete(provider);
+        if (result) diagnostics.push(provider + ': ' + (result.status === 'rejected' ? message(result.reason) : 'Provider returned duplicate identities; its inspection is incomplete.'));
+      }
     }
     if (this.resourceError) diagnostics.push('Identity correlation is stale: ' + this.resourceError);
     const controllers = this.controllers(now);
