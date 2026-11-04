@@ -42,6 +42,7 @@ pub struct FeedbackSubscription {
     wake: Arc<NativeWake>,
     cursor: crate::feedback::FeedbackCursor,
     assignments: Option<Value>,
+    resync_sequence: Option<u64>,
 }
 
 impl Hub {
@@ -70,7 +71,7 @@ impl Hub {
     }
     pub fn subscribe_feedback(
         &self, connection: &str, session_id: &str, generation: u64,
-        publication_hash: &str, credential: &str, wake: Arc<NativeWake>,
+        publication_hash: &str, credential: &str, wake: Arc<NativeWake>, stream_resync: bool,
     ) -> Result<FeedbackSubscription, String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         self.expire(&mut inner, self.now_ms())?;
@@ -88,12 +89,14 @@ impl Hub {
         if let Some(previous) = session.feedback_wake.replace(Arc::downgrade(&wake)).and_then(|previous| previous.upgrade()) {
             previous.notify();
         }
+        session.feedback_stream_resync = stream_resync.then_some(session.feedback_stream_resync.unwrap_or(0));
+        let resync_sequence = session.feedback_stream_resync;
         let primary = session.connection.clone();
         Self::retire_assignment_reader(&mut inner, &primary);
         self.observe_record_changes(wake.clone());
         Ok(FeedbackSubscription {
             hub: self.clone(), companion_id: companion, credential_hash: digest, session_id: session_id.into(),
-            generation, wake, cursor: Default::default(), assignments: None,
+            generation, wake, cursor: Default::default(), assignments: None, resync_sequence,
         })
     }
 
@@ -114,6 +117,8 @@ impl FeedbackSubscription {
         changed_assignments(&inner, &self.companion_id, &mut self.assignments)
     }
 
+    pub(crate) fn resync_sequence(&self) -> Option<u64> { self.resync_sequence }
+
     pub fn take(&mut self) -> Result<Option<Value>, String> {
         let inner = self.hub.inner.lock().unwrap_or_else(|p| p.into_inner());
         let session = inner.sessions.get(&self.session_id).ok_or("Feedback session ended.")?;
@@ -124,6 +129,10 @@ impl FeedbackSubscription {
                 && session.feedback_wake.as_ref().is_some_and(|wake| wake.ptr_eq(&Arc::downgrade(&self.wake))),
             "Feedback subscription is obsolete.",
         )?;
+        if self.resync_sequence != session.feedback_stream_resync {
+            self.resync_sequence = session.feedback_stream_resync;
+            self.cursor = Default::default();
+        }
         let empty = crate::feedback::FeedbackBook::default();
         let book = inner.feedback.get(&session.token.source_id).unwrap_or(&empty);
         if self.cursor.initialized && self.cursor.generation == book.generation && self.cursor.sequence == book.sequence {

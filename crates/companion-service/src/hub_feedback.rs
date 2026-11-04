@@ -203,7 +203,8 @@ impl Hub {
             .sessions
             .get(session_id)
             .ok_or("Feedback session ended.")?;
-        if frame["type"] != "feedback-resync" && session.feedback_wake.as_ref().is_some_and(|wake| wake.strong_count() != 0) {
+        if session.feedback_stream_resync.is_some()
+            || (frame["type"] != "feedback-resync" && session.feedback_wake.as_ref().is_some_and(|wake| wake.strong_count() != 0)) {
             return Ok(());
         }
         // Image/font preparation runs before the device installs its new runtime.

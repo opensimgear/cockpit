@@ -110,6 +110,7 @@ struct Session {
     values: BTreeMap<String, InputValue>,
     feedback_cursor: crate::feedback::FeedbackCursor,
     feedback_wake: Option<std::sync::Weak<osg_streams::NativeWake>>,
+    feedback_stream_resync: Option<u64>,
 }
 fn preparing_panel(session: &Session) -> bool {
     !session.armed && !session.panel_error && (session.baseline_pending || session.operation.as_ref().is_some_and(|operation|
@@ -512,6 +513,7 @@ impl Hub {
                 feedback.disconnect(inner.last_now);
             }
             session.armed = false;
+            session.feedback_stream_resync = None;
             session.sequence = 0;
             session.values.clear();
             if let Some(next) = session.token.generation.checked_add(1) {
@@ -1321,6 +1323,7 @@ impl Hub {
                             values: BTreeMap::new(),
                             feedback_cursor: Default::default(),
                             feedback_wake: None,
+                            feedback_stream_resync: None,
                         },
                     );
                     let mut publication=serde_json::to_value(&p).map_err(|e|e.to_string())?;
@@ -1399,8 +1402,13 @@ impl Hub {
                 ],
                 &[],
             )?;
-            counter(&frame["sequence"])?;
-            inner.sessions.get_mut(session_id).unwrap().feedback_cursor = Default::default();
+            let sequence = counter(&frame["sequence"])?;
+            let session = inner.sessions.get_mut(session_id).unwrap();
+            session.feedback_cursor = Default::default();
+            if session.feedback_stream_resync.is_some() {
+                session.feedback_stream_resync = Some(sequence);
+                if let Some(wake) = session.feedback_wake.as_ref().and_then(|wake| wake.upgrade()) { wake.notify(); }
+            }
             return Ok(reply(frame["sequence"].clone(), "feedback-resync"));
         }
         if frame["type"] == "close" || frame["type"] == "cancel" {

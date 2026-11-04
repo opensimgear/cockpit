@@ -47,7 +47,7 @@ fn reject<S: Read + Write>(
 /// primary connection, whose retirement wakes and closes this reader.
 pub(super) fn serve<S: Read + Write>(
     mut socket: WebSocket<S>, hub: &Hub, connection: &str, stop: &AtomicBool,
-    attempts: &Mutex<Attempts>, peer: IpAddr, frame: &Value,
+    attempts: &Mutex<Attempts>, peer: IpAddr, frame: &Value, stream_resync: bool,
 ) -> Result<(), String> {
     let wake = Arc::new(NativeWake::default());
     let admission = (|| {
@@ -57,7 +57,7 @@ pub(super) fn serve<S: Read + Write>(
             .ok_or("Missing feedback generation.")?;
         let publication = frame["publicationHash"].as_str().ok_or("Missing feedback publication.")?;
         let credential = frame["token"].as_str().ok_or("Missing installation credential.")?;
-        hub.subscribe_feedback(connection, session, generation, publication, credential, wake.clone())
+        hub.subscribe_feedback(connection, session, generation, publication, credential, wake.clone(), stream_resync)
     })();
     let mut reader = match admission {
         Ok(reader) => reader,
@@ -71,7 +71,10 @@ pub(super) fn serve<S: Read + Write>(
             send_json(&mut socket, &json!({"ok":true,"type":"assignments-event","assignments":assignments}))?;
         }
         match reader.take() {
-            Ok(Some(feedback)) => send_json(&mut socket, &json!({"ok":true,"type":"feedback-event","feedback":feedback}))?,
+            Ok(Some(feedback)) => send_json(&mut socket, &json!({
+                "ok":true,"type":"feedback-event","feedback":feedback,
+                "resyncSequence":reader.resync_sequence().map(|sequence| sequence.to_string()),
+            }))?,
             Ok(None) => {}
             Err(_) => break,
         }

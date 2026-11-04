@@ -603,33 +603,38 @@ fn clear_session_status(state: &mut State) {
     state.feedback_reset_pending = false;
     state.feedback_received_ms = 0;
 }
-fn apply_ack(state: &mut State, reply: Value, now_ms: u64, resync: bool) -> Result<(), String> {
+fn apply_feedback(state: &mut State, frame: &Value, now_ms: u64, resync: bool) -> Result<(), String> {
     if !state.feedback_reset_pending || resync {
-        if let Some(frame) = reply.get("feedback") {
-            let identity = state
-                .status
-                .session
-                .as_ref()
-                .ok_or("Feedback arrived without a current session.")?;
-            if resync && frame["mode"] != "snapshot" {
-                return Err("Feedback resync requires a complete snapshot.".into());
-            }
-            if let Some(samples) =
-                state
-                    .feedback_accumulator
-                    .apply(frame, identity, &state.feedback_schema, now_ms)?
-            {
-                state.feedback_received_ms = now_ms;
-                state.status.feedback = samples
-                    .iter()
-                    .map(|s| serde_json::to_value(s).unwrap())
-                    .collect();
-                state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
-            }
-            if resync {
-                state.feedback_reset_pending = false;
-            }
+        let identity = state
+            .status
+            .session
+            .as_ref()
+            .ok_or("Feedback arrived without a current session.")?;
+        if resync && frame["mode"] != "snapshot" {
+            return Err("Feedback resync requires a complete snapshot.".into());
         }
+        if let Some(samples) =
+            state
+                .feedback_accumulator
+                .apply(frame, identity, &state.feedback_schema, now_ms)?
+        {
+            state.feedback_received_ms = now_ms;
+            state.status.feedback = samples
+                .iter()
+                .map(|s| serde_json::to_value(s).unwrap())
+                .collect();
+            state.status.feedback_revision = state.status.feedback_revision.saturating_add(1);
+        }
+        if resync {
+            state.feedback_reset_pending = false;
+        }
+    }
+    Ok(())
+}
+
+fn apply_ack(state: &mut State, reply: Value, now_ms: u64, resync: bool) -> Result<(), String> {
+    if let Some(frame) = reply.get("feedback") {
+        apply_feedback(state, frame, now_ms, resync)?;
     }
     let mut acknowledgement = reply;
     if let Some(object) = acknowledgement.as_object_mut() {
@@ -924,6 +929,8 @@ fn refresh_worker(
 #[path = "client_presence.rs"]
 mod presence;
 use presence::start_presence;
+#[path = "client_feedback.rs"]
+mod streamed_feedback;
 fn session_request(socket: &mut Socket, frame: Value, budget: Duration) -> Result<Value, String> {
     let reply = request(socket, frame.clone(), budget)?;
     for key in ["clientId", "sessionId", "generation"] {
@@ -1224,6 +1231,8 @@ fn session_worker(
         return Ok(());
     }
     let ack = session_request(&mut socket, baseline, Duration::from_millis(700))?;
+    let visuals = streamed_feedback::connect_feedback(&credential, &base)?;
+    let mut resync_seen = shared.feedback_resync.load(Ordering::SeqCst);
     let (tx, rx) = mpsc::sync_channel::<QueuedInput>(128);
     let wake = Arc::new(osg_streams::NativeWake::default());
     let _ = wake.bind_thread(thread::current());
@@ -1240,7 +1249,7 @@ fn session_worker(
         state.queued_transitions = queued_transitions;
     });
     apply_worker_ack(&shared, epoch, ack, false)?;
-    let mut resync_seen = 0;
+    let _feedback = streamed_feedback::Reader::start(shared.clone(), epoch, credential, base.clone(), visuals);
     let mut sequence = 0u64;
     let mut heartbeat = 0u64;
     const HEARTBEAT: Duration = Duration::from_millis(250);

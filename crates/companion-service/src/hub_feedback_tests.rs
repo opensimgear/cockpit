@@ -54,7 +54,7 @@ fn passive_subscription_wakes_only_for_the_bound_session_and_keeps_its_own_curso
     let generation = opened["generation"].as_str().unwrap().parse().unwrap();
     let wake = Arc::new(osg_streams::NativeWake::default());
     let subscribe = |credential, wake| hub.subscribe_feedback(
-        "visual", session, generation, &publication.publication_hash, credential, wake,
+        "visual", session, generation, &publication.publication_hash, credential, wake, false,
     );
     assert!(subscribe(&wrong_credential, wake.clone()).is_err());
     let mut visuals = subscribe(&credential, wake.clone()).unwrap();
@@ -72,9 +72,15 @@ fn passive_subscription_wakes_only_for_the_bound_session_and_keeps_its_own_curso
     let resync = hub.handle_wire(frame(&opened, "feedback-resync", "1"), "primary", hub.now_ms());
     assert_eq!(resync["feedback"]["mode"], "snapshot");
     let replacement = Arc::new(osg_streams::NativeWake::default());
-    let mut next = subscribe(&credential, replacement).unwrap();
+    let mut next = hub.subscribe_feedback("native-visual", session, generation, &publication.publication_hash,
+        &credential, replacement, true).unwrap();
     assert!(visuals.take().is_err());
     assert_eq!(next.take().unwrap().unwrap()["values"][0]["value"], 42.0);
+    let resync = hub.handle_wire(frame(&opened, "feedback-resync", "2"), "primary", hub.now_ms());
+    assert_eq!(resync["ok"], true);
+    assert!(resync.get("feedback").is_none());
+    assert_eq!(next.take().unwrap().unwrap()["mode"], "snapshot");
+    assert_eq!(next.resync_sequence(), Some(2));
     hub.disconnect_connection("primary", hub.now_ms());
     assert!(next.take().is_err());
 }
