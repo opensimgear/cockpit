@@ -158,6 +158,26 @@ static void arm_text(char out[1024]){
     snprintf(out,1024,"{\"command\":\"arm\",\"sessionId\":\"%s\",\"generation\":\"%s\",\"publicationHash\":\"%s\",\"armEpoch\":\"%" PRIu64 "\"}",session.session,session.generation,session.publication,input.epoch);
 }
 static void live_arm(void){char out[1024];arm_text(out);cmd(out);assert(remote_armed&&test_runtime.armed&&input.mode==OSG_INPUT_ARMED&&!strcmp(operation.phase,"ready"));advance();}
+static void serial_feedback_tests(void){
+    live_ready();
+    connection.direct=true;osg_copy(connection.link,sizeof(connection.link),"feedback-link");
+    char record[1024];
+    snprintf(record,sizeof(record),
+        "{\"command\":\"serial-feedback\",\"linkId\":\"wrong-link\",\"frame\":{\"ok\":true,\"type\":\"feedback-event\",\"feedback\":{"
+        "\"version\":1,\"type\":\"feedback\",\"clientId\":\"%s\",\"sessionId\":\"%s\",\"generation\":\"%s\",\"publicationHash\":\"%s\","
+        "\"controllerInstanceId\":\"%s\",\"sequence\":\"1\",\"bindingGeneration\":\"1\",\"mode\":\"snapshot\",\"bindings\":[],\"values\":[]}}}",
+        session.client,session.session,session.generation,session.publication,session.instance);
+    cJSON *event=osg_json_parse(record,strlen(record));assert(event);
+    const uint64_t lease=input.last_ack_ms;
+    test_dirty=false;osg_network_serial_feedback(event);
+    assert(!test_dirty&&!session.feedback_stream);
+    cJSON_ReplaceItemInObjectCaseSensitive(event,"linkId",cJSON_CreateString(connection.link));
+    osg_network_serial_feedback(event);
+    assert(test_dirty&&session.feedback_stream&&input.last_ack_ms==lease&&!remote_armed);
+    test_dirty=false;osg_network_serial_feedback(event);assert(!test_dirty);
+    cJSON_Delete(event);
+    stop();
+}
 static void live_input_tests(void){
     permit_inputs=true;live_ready();int baselines=baseline_requests;cmd("{\"command\":\"arm\"}");assert(baseline_requests==baselines);
     char stale[1024];arm_text(stale);input.epoch++;cmd(stale);assert(baseline_requests==baselines);
@@ -321,6 +341,7 @@ int main(int argc,char **argv){
     assert(osg_decode_publication(fixture,osg_string(fixture,"publicationHash"),osg_platform_crypto,&initial_image,800,480));
     assert(osg_init(&test_runtime,&initial_image.scene.panel,(osg_display){NULL,800,480,fill,label,NULL},NULL,NULL));
     osg_network_start((osg_network_ui){&test_runtime,(void *)1,&test_dirty,&test_drawing,true});
+    serial_feedback_tests();
     setup();advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=false;advance();assert(state==PAIR_POLL);fake_ms+=400;approved_now=true;
     advance();assert(state==AUTH&&!settings.secret[0]);advance();assert(state==OPEN);advance();assert(state==LIVE&&test_runtime.connected&&!test_runtime.armed);
     advance();assert(!strcmp(requested_type,"heartbeat")&&session.heartbeat==1);fake_ms+=250;wrong_session=true;advance();assert(state==FAULT&&!test_runtime.connected);

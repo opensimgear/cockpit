@@ -322,6 +322,15 @@ static bool acknowledgement(cJSON *reply,const char *sequence,uint64_t started){
     if(ok){input.last_ack_ms=started;if(!seen||before!=session.feedback_sequence||before_generation!=session.binding_generation)*ui.dirty=true;}
     xSemaphoreGive(ui.mutex);return ok?true:request_problem("Input lease or acknowledgement invalid");
 }
+void osg_network_serial_feedback(const cJSON *record){
+    if(!connection.direct||state!=LIVE||!equal(osg_string(record,"linkId"),connection.link))return;
+    xSemaphoreTake(ui.mutex,portMAX_DELAY);
+    const uint64_t before=session.feedback_sequence,generation=session.binding_generation;
+    const bool seen=session.feedback_seen;
+    if(osg_feedback_event(cJSON_GetObjectItemCaseSensitive(record,"frame"),&session,ui.runtime,millis())&&
+        (!seen||before!=session.feedback_sequence||generation!=session.binding_generation))*ui.dirty=true;
+    xSemaphoreGive(ui.mutex);
+}
 void osg_network_status(const char *request_id){
     cJSON *v=cJSON_CreateObject();char encoded[4096],epoch[21];
     xSemaphoreTake(ui.mutex,portMAX_DELAY);
@@ -691,7 +700,8 @@ static void serial_byte(int c){
         const char *type=osg_string(v,"command");
         /* A late transport reply can finish after its request timed out. It is
          * never a console command or authority to cancel current panel work. */
-        if(equal(type,"serial-reply"))cJSON_Delete(v);
+        if(equal(type,"serial-feedback")){osg_network_serial_feedback(v);cJSON_Delete(v);}
+        else if(equal(type,"serial-reply"))cJSON_Delete(v);
         else if(capture_command&&command_mutates(type))interrupted_command=v;
         else {command(v);cJSON_Delete(v);}
     }

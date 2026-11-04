@@ -50,6 +50,9 @@ bool osg_serial_request(osg_socket *s,cJSON *request,cJSON **response,unsigned t
         if(command&&!strcmp(command,"status")){
             osg_network_status(osg_string(v,"requestId"));cJSON_Delete(v);continue;
         }
+        if(command&&!strcmp(command,"serial-feedback")){
+            osg_network_serial_feedback(v);cJSON_Delete(v);continue;
+        }
         if(!command||strcmp(command,"serial-reply")){
             if(deferred){s->request_error="Too many pending USB commands";cJSON_Delete(v);break;}
             deferred=v;continue;

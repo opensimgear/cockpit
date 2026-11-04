@@ -19,7 +19,7 @@ static bool sha(const void *p,size_t n,char out[72]){unsigned char d[32];SHA256(
 static bool decode(const char *s,unsigned char *out,size_t capacity,size_t *n){size_t len=strlen(s);if(!len||len%4)return false;unsigned char *tmp=malloc(len);assert(tmp);int count=EVP_DecodeBlock(tmp,(const unsigned char *)s,(int)len);if(count<0){free(tmp);return false;}if(s[len-1]=='=')count--;if(s[len-2]=='=')count--;if((size_t)count>capacity){free(tmp);return false;}memcpy(out,tmp,(size_t)count);free(tmp);*n=(size_t)count;return true;}
 const osg_crypto osg_platform_crypto={sha,decode};
 static const char *incoming;
-static unsigned probes;
+static unsigned probes, feedback_events;
 static int64_t now;
 static int serial_getchar(void){return *incoming?(unsigned char)*incoming++:EOF;}
 int64_t esp_timer_get_time(void){return now;}
@@ -29,6 +29,10 @@ void mbedtls_platform_zeroize(void *p,size_t n){memset(p,0,n);}
 void osg_network_status(const char *id){
     char expected[16];snprintf(expected,sizeof(expected),"probe-%u",++probes);
     assert(id&&!strcmp(id,expected));
+}
+void osg_network_serial_feedback(const cJSON *record){
+    assert(!strcmp(osg_string(record,"linkId"),"test-link"));
+    feedback_events++;
 }
 static void large_reply(osg_socket *socket,bool accepted){
     const size_t text_bytes=40*1024,capacity=96*1024;const char *prefix="{\"ok\":true,\"padding\":\"";
@@ -59,10 +63,11 @@ int main(void){
     incoming="{\"command\":\"arm\",\"armEpoch\":\"1\"}\n"
         "{\"command\":\"status\",\"requestId\":\"probe-1\"}\n"
         "{\"command\":\"status\",\"requestId\":\"probe-2\"}\n"
+        "{\"command\":\"serial-feedback\",\"linkId\":\"test-link\",\"frame\":{\"ok\":true,\"type\":\"feedback-event\"}}\n"
         "{\"command\":\"serial-reply\",\"linkId\":\"test-link\",\"requestId\":\"1\",\"frame\":{\"ok\":true,\"type\":\"image-chunk\",\"offset\":0}}\n";
     cJSON *reply=NULL;
     assert(osg_serial_request(&socket,cJSON_CreateObject(),&reply,3000));
-    assert(probes==2&&cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==0);
+    assert(probes==2&&feedback_events==1&&cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(reply,"offset"))==0);
     cJSON_Delete(reply);
     /* load_images issues its next request before draining deferred commands. */
     incoming="{\"command\":\"status\",\"requestId\":\"probe-3\"}\n"

@@ -34,7 +34,7 @@ typedef struct {
 typedef struct {
     char client[65], session[65], generation[21], publication[72], instance[65];
     uint64_t heartbeat, feedback_sequence;
-    bool feedback_seen, feedback_envelope;
+    bool feedback_seen, feedback_envelope, feedback_stream;
     uint64_t binding_generation;
     uint8_t feedback_bindings[OSG_MAX_WIDGETS], binding_count;
 } osg_live_session;
@@ -58,5 +58,6 @@ bool osg_endpoint(const char *, char host[254], int *port);
 int osg_reply_feed(osg_transfer *, const char *, size_t, osg_crypto, cJSON **);
 bool osg_decode_publication(const cJSON *, const char *expected_hash, osg_crypto, osg_image *, uint16_t width, uint16_t height);
 bool osg_open_identity(const cJSON *, const char *host, const char *companion, const char *instance, const char *publication, osg_live_session *);
+bool osg_feedback_event(const cJSON *, osg_live_session *, osg_runtime *, uint64_t now);
 bool osg_ack(const cJSON *, osg_live_session *, const char *sequence, osg_runtime *, uint64_t now);
 #endif

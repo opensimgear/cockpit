@@ -161,6 +161,19 @@ static void modern_feedback_tests(void){
     osg_runtime r;assert(osg_init(&r,&osg_demo_panel,(osg_display){NULL,800,480,fill,text,NULL},NULL,NULL));osg_connected(&r,true);
     cJSON *base=modern_ack();assert(osg_ack(base,&session,"1",&r,100));assert(session.feedback_envelope&&r.samples[3].number==125.5);
     assert(osg_ack(base,&session,"1",&r,700));assert(r.samples[3].received_ms==100);
+    cJSON *event=cJSON_Duplicate(base,true);
+    string(event,"type","feedback-event");
+    cJSON *event_frame=cJSON_GetObjectItemCaseSensitive(event,"feedback");
+    string(event_frame,"sessionId","retired");
+    assert(!osg_feedback_event(event,&session,&r,750)&&!session.feedback_stream);
+    string(event_frame,"sessionId","session");
+    assert(osg_feedback_event(event,&session,&r,750)&&session.feedback_stream);
+    assert(r.samples[3].received_ms==100);
+    cJSON *payload_free=cJSON_Duplicate(base,true);
+    cJSON_DeleteItemFromObjectCaseSensitive(payload_free,"feedback");
+    assert(osg_ack(payload_free,&session,"1",&r,760));
+    assert(!osg_ack(payload_free,&session,"2",&r,760));
+    cJSON_Delete(payload_free);cJSON_Delete(event);
     for(int mutation=0;mutation<30;mutation++){
         cJSON *v=cJSON_Duplicate(base,true),*frame=cJSON_GetObjectItemCaseSensitive(v,"feedback"),*list=cJSON_GetObjectItemCaseSensitive(frame,"values"),*sample=cJSON_GetArrayItem(list,0),*bindings=cJSON_GetObjectItemCaseSensitive(frame,"bindings");
         string(frame,"sequence","2");

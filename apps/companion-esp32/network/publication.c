@@ -223,6 +223,13 @@ static bool feedback_envelope(const cJSON *frame, osg_live_session *session, osg
     osg_tick(r,now);
     return true;
 }
+bool osg_feedback_event(const cJSON *v, osg_live_session *session, osg_runtime *r, uint64_t now) {
+    if(!cJSON_IsTrue(get(v,"ok"))||!same(osg_string(v,"type"),"feedback-event"))return false;
+    const cJSON *frame=get(v,"feedback");
+    if(!cJSON_IsObject(frame)||!feedback_envelope(frame,session,r,now))return false;
+    session->feedback_stream=true;
+    return true;
+}
 bool osg_ack(const cJSON *v, osg_live_session *session, const char *sequence, osg_runtime *r, uint64_t now) {
     if (!cJSON_IsTrue(get(v,"ok")) || !same(osg_string(v,"type"),"ack") || !same(osg_string(v,"clientId"),session->client) ||
         !same(osg_string(v,"sessionId"),session->session) || !same(osg_string(v,"generation"),session->generation) ||
@@ -230,6 +237,7 @@ bool osg_ack(const cJSON *v, osg_live_session *session, const char *sequence, os
     if(get(v,"publicationHash")&&!same(osg_string(v,"publicationHash"),session->publication))return false;
     const cJSON *values = get(v,"feedback"), *seq = get(v,"feedbackSequence");
     if(cJSON_IsObject(values))return feedback_envelope(values,session,r,now);
+    if(session->feedback_stream&&!values&&!seq)return true;
     if(session->feedback_envelope)return false;
     if (cJSON_IsNull(values) && cJSON_IsNull(seq)) return true;
     uint64_t feedback;
