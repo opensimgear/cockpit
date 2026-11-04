@@ -95,7 +95,7 @@
       </section>
     </div>
     <p class="telemetry-help">An em dash means no current known value. Zero, false, and an empty string remain distinct values. Hover over a channel for its native field and provider context.</p>
-  {:else}<div class="telemetry-summary panel"><p role="status">{view.loading?'Reading game telemetry…':view.error?'Game telemetry is unavailable. Refresh to try again.':'Waiting for the first game telemetry capture.'}</p></div>{/if}
+  {:else}<div class="telemetry-summary panel"><p role="status">{view.loading?'Reading game telemetry…':view.error?'Game telemetry is unavailable. Refresh to try again.':view.report?.games.length===0?'No game integrations are registered.':'Waiting for the first game telemetry capture.'}</p></div>{/if}
 </section>
 
 <style>

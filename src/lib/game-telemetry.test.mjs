@@ -29,8 +29,14 @@ test('telemetry captures preserve canonical IDs, native context and zero without
   assert.equal(result.games[0].channels[0].value,0);assert.ok(Object.isFrozen(result.games[0].channels[0]));
 });
 
+test('telemetry accepts an empty catalogue for an automatic query',async()=>{
+  const client=new GameTelemetryClient(async()=>({schemaVersion:1,games:[]}));
+  assert.equal((await client.inspect({offset:0,limit:64})).games.length,0);
+  await assert.rejects(()=>client.inspect({gameId:'assetto-corsa',offset:0,limit:64}),/invalid or incomplete/);
+});
+
 test('telemetry rejects malformed, duplicate, nonfinite and impossible native pages',async()=>{
-  const malformed=[{schemaVersion:1,games:[]},report({channels:[channel({value:Infinity})]}),report({channels:[channel(),channel()],total:2}),report({offset:2,total:1}),report({channels:[channel()],limit:0}),report({channels:[channel({value:{raw:1}})]}),report({groups:[{id:'physics',label:'Physics',total:1},{id:'physics',label:'Again',total:1}]}),{schemaVersion:1,games:[game(),game()]}];
+  const malformed=[report({channels:[channel({value:Infinity})]}),report({channels:[channel(),channel()],total:2}),report({offset:2,total:1}),report({channels:[channel()],limit:0}),report({channels:[channel({value:{raw:1}})]}),report({groups:[{id:'physics',label:'Physics',total:1},{id:'physics',label:'Again',total:1}]}),{schemaVersion:1,games:[game(),game()]}];
   for(const reply of malformed){const client=new GameTelemetryClient(async()=>reply);await assert.rejects(()=>client.inspect({offset:0,limit:64}),/invalid or incomplete/);}
   await assert.rejects(()=>new GameTelemetryClient(async()=>report()).inspect({gameId:'assetto-corsa-evo',offset:0,limit:64}),/invalid or incomplete/);
 });
