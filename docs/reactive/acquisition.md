@@ -38,7 +38,7 @@ own resource worker on commits and first readiness.
 | Panels/designer/publication | CompiledCompanionDesigner 2 s; browser App 250 ms | Immutable publication fetch once, then pushed feedback/input with exact publication generation; preserve native renderer ownership |
 | Browser companion connection | Worker tick 250 ms couples feedback and liveness | Payload stream separate from lease renewal and request deadlines; backgrounding cannot stop control delivery |
 | Serial/ESP32 firmware | Serial workers + status/control request cadence | Explicit producer/firmware protocol stream, bounded backpressure, publication replacement and held-release evidence per board |
-| Settings/preferences/dependencies/backups | ui-preferences-changed exists; MCP/settings refresh | Publish acknowledged durable commits and dependency/backup worker progress; preferences event is a reusable precedent |
+| Settings/preferences/dependencies/backups | UI preferences and AI settings use native observations | Publish remaining dependency/backup worker progress. AI settings reads status after a private invalidation from listener or credential changes |
 | Activity/debug/notifications | ActivityPanel/DebugPanel 3 s | Append/clear/settings commits publish pinned revisions; notification dismissal remains a real deadline |
 | MCP observation/admin | Gateway commands and HTTP sessions | Shared topic registry/snapshot boundary, negotiated resource notifications and bounded cursor fallback; observe never renews authority |
 | Native/browser-dev transports | gateway.ts IPC; native-gateway-bridge HTTP | Same typed envelopes, atomic subscription boundary, cancellation and overflow, including transport restart |

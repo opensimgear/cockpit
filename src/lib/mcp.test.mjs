@@ -9,6 +9,22 @@ const status = (changes = {}) => ({ settingsRevision: 0, enabled: false, port: 5
 const token = 'osg_mcp_' + 'a'.repeat(64);
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
+test('committed settings invalidations survive a pending read and coalesce', async () => {
+  const first = deferred();
+  let reads = 0;
+  const settings = createMcpSettings(async () => ++reads === 1 ? first.promise : status({ settingsRevision: 2 }), true);
+  const opening = settings.load();
+  settings.invalidate();
+  settings.invalidate();
+  assert.equal(reads, 1);
+  first.resolve(status({ settingsRevision: 1 }));
+  await opening;
+  await Promise.resolve();
+  assert.equal(reads, 2);
+  assert.equal(settings.state.status.settingsRevision, 2);
+  settings.dispose();
+});
+
 function host(initial = status()) {
   let current=plain(initial),sequence=0;const calls=[];
   const send=async(command,args)=>{

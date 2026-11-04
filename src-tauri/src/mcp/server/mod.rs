@@ -30,6 +30,8 @@ use std::{
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
+mod settings_observation;
+
 const BODY_LIMIT: usize = 2_097_152;
 // SDK structured results also include a text representation for older clients.
 const RESPONSE_LIMIT: usize = 4_194_304;
@@ -58,6 +60,7 @@ struct State {
     generation: u64,
     error: Option<String>,
     closed: bool,
+    observation: Option<settings_observation::Observation>,
 }
 pub struct Server {
     state: Mutex<State>,
@@ -98,6 +101,7 @@ impl Server {
                 listener: None,
                 generation: 0,
                 closed: false,
+                observation: None,
             }),
             controls: Mutex::new(()),
             tools: Arc::new(Tools::new(manager.clone())),
@@ -107,6 +111,7 @@ impl Server {
             subscriptions: Semaphore::new(8),
         });
         server.tools.bind_integration(Arc::downgrade(&server));
+        if let Err(error) = server.observe_settings() { eprintln!("Cannot start MCP settings observation: {error}"); }
         if initial.enabled {
             let _ = server.configure(initial);
         }
@@ -115,8 +120,9 @@ impl Server {
     pub fn status(&self) -> Value {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let _=self.refresh_credentials(&mut state);
-        let settings = &state.store.settings;
-        json!({"settingsRevision":state.store.revision,"enabled":settings.enabled,"port":settings.port,"endpoint":format!("http://127.0.0.1:{}/mcp",settings.port),"running":state.listener.is_some(),"error":state.error,"credentials":settings.credentials.iter().map(Credential::metadata).collect::<Vec<_>>(),"protocolVersions":VERSIONS,"sdk":"rmcp 3.6.0","readOnly":state.store.error.is_some()})
+        let status = state.status();
+        self.publish_settings(&mut state, status.clone());
+        status
     }
     pub fn configure(self: &Arc<Self>, update: SettingsUpdate) -> Result<Value, String> {
         let _activity_guard = self.manager.activity_mutation();
@@ -167,6 +173,8 @@ impl Server {
                         update.port
                     );
                     state.error = Some(message.clone());
+                    let status = state.status();
+                    self.publish_settings(&mut state, status);
                     return Err(message);
                 }
             }

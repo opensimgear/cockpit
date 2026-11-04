@@ -3,10 +3,14 @@ use super::*;
 impl Server {
     pub(super) fn refresh_credentials(&self,state:&mut State)->Result<(),String>{
         let previous=state.store.settings.clone();let was_error=state.store.error.is_some();
+        let previous_revision = state.store.revision;
         let active_before=!was_error && !state.closed && previous.enabled && state.listener.as_ref().is_some_and(|listener|listener.port==previous.port);
         if let Err(error)=state.store.refresh(){
             if !was_error {for credential in &previous.credentials {self.native_authorization(&credential.id,false);}}
-            state.error=Some(error.clone());return Err(error);
+            state.error=Some(error.clone());
+            let status = state.status();
+            self.publish_settings(state, status);
+            return Err(error);
         }
         let settings=&state.store.settings;
         let active=!state.closed && settings.enabled && state.listener.as_ref().is_some_and(|listener|listener.port==settings.port);
@@ -22,6 +26,10 @@ impl Server {
             if let Some(listener)=state.listener.take(){listener.cancellation.cancel();state.generation=state.generation.wrapping_add(1);}
         }
         if was_error {state.error=None;}
+        if was_error || previous_revision != state.store.revision || previous != state.store.settings {
+            let status = state.status();
+            self.publish_settings(state, status);
+        }
         Ok(())
     }
     pub(super) fn native_authorization(&self, id: &str, authorized: bool) {

@@ -18,12 +18,14 @@ test('AI saves notify once for three seconds without inline messages or polling 
   page.on('pageerror', error => errors.push(error.message));
   await page.exposeFunction('__mcpInvoke', async (command, args) => {
     if (command === 'mcp_settings_get') { reads++; return { ...status }; }
+    if (command === 'observation_subscribe') { assert.equal(args.topic, 'settings.mcp'); return 'settings-reader'; }
+    if (command === 'observation_unsubscribe') return;
     assert.equal(command, 'mcp_settings_update');
     assert.equal(args.settings.expectedSettingsRevision, status.settingsRevision);
     status.enabled = args.settings.enabled; status.running = status.enabled; status.settingsRevision++;
     return { ...status };
   });
-  await page.addInitScript(() => { window.isTauri = true; window.__TAURI_INTERNALS__ = { invoke: (command, args) => window.__mcpInvoke(command, args) }; });
+  await page.addInitScript(() => { window.isTauri = true; window.__TAURI_INTERNALS__ = { invoke: (command, args) => window.__mcpInvoke(command, args), transformCallback: () => 1 }; });
   await page.route(origin + '/__mcp_notifications_test', route => route.fulfill({ contentType: 'text/html', body: `<html><body><div class="cockpit"><main style="height:100dvh;max-width:940px;margin:auto;padding:20px"><div id="settings"></div></main><div id="notifications"></div></div><script type="module">import {mount} from '${runtime}';import McpSettings from '/src/lib/McpSettings.svelte';import Notifications from '/src/lib/Notifications.svelte';import '/src/app.css';mount(Notifications,{target:document.querySelector('#notifications')});mount(McpSettings,{target:document.querySelector('#settings')});</script></body></html>` }));
   try {
     await page.goto(origin + '/__mcp_notifications_test');
@@ -49,7 +51,8 @@ test('AI saves notify once for three seconds without inline messages or polling 
     await expect(settings.getByText('MCP settings saved.', { exact: true })).toHaveCount(0);
     await expect(toast.locator('.toast-countdown-fill')).toHaveCSS('animation-duration', '3s');
     await expect(toast).toHaveCount(0, { timeout: 4500 });
-    await expect.poll(() => reads, { timeout: 7000 }).toBeGreaterThanOrEqual(2);
+    await page.waitForTimeout(5500);
+    assert.equal(reads, 1, 'Idle settings must not poll without a committed change');
     const first = await page.evaluate(() => window.__toastStarts);
     assert.deepEqual(first, [{ duration: '3s', message: 'MCP settings saved.' }], 'A save produces one notification; polling does not replay it.');
     await toggle.click();

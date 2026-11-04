@@ -58,6 +58,8 @@ impl Server {
             if let Err(error) = result {
                 state.error = Some(format!("MCP server stopped: {error}"));
             }
+            let status = state.status();
+            self.publish_settings(&mut state, status);
         }
     }
 }

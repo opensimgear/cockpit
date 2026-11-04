@@ -4,12 +4,14 @@
   import Icon from './Icon.svelte';
   import Notification from './Notification.svelte';
   import { notify } from './notifications';
+  import { SharedObservations } from './streams/shared';
   import { createMcpSettings, mcpClientConfig, mcpPortError, mcpStatusLabel, type McpScope, type McpSettingsState } from './mcp';
 
   let preferences = $state.raw<McpSettingsState>({ native: false, loaded: false, status: null, busy: '', error: '', message: '', secret: null });
   let port = $state(54438);
   let name = $state('');
   let scope = $state<McpScope>('read');
+  let observationError = $state('');
   let initialized = false;
   let observedPort = 54438;
   const settings = createMcpSettings(invoke, isTauri(), next => {
@@ -24,15 +26,19 @@
   const unavailable = $derived(!preferences.native || !preferences.loaded || !!preferences.busy || !!preferences.status?.readOnly);
   const portError = $derived(mcpPortError(port));
   const config = $derived(preferences.status ? mcpClientConfig(preferences.status.endpoint) : '');
-  const error = $derived(preferences.error || preferences.status?.error || '');
+  const error = $derived(preferences.error || preferences.status?.error || observationError);
   const formatDate = (value: number) => new Date(value).toLocaleString();
   const copy = (kind: 'endpoint' | 'config' | 'token') => settings.copy(kind, text => navigator.clipboard.writeText(text));
 
   onMount(() => {
     preferences = settings.state;
     void settings.load();
-    const timer = setInterval(() => { void settings.load(true); }, 5000);
-    return () => { clearInterval(timer); settings.dispose(); };
+    const observations = new SharedObservations();
+    if (preferences.native) observations.subscribe('settings.mcp', state => {
+      observationError = state.error ?? '';
+      if (state.status === 'ready') settings.invalidate();
+    });
+    return () => { observations.close(); settings.dispose(); };
   });
 
   async function toggle() {
