@@ -13,6 +13,7 @@ pub(crate) use associations::collect as controller_associations;
 pub(crate) struct Runtime {
     native: bool,
     snapshot: Mutex<Option<Snapshot>>,
+    capture_gate: Mutex<()>,
     revision: AtomicU64,
     publisher: Mutex<Option<(crate::observations::Runtime, osg_streams::Publisher)>>,
 }
@@ -24,7 +25,7 @@ struct Snapshot {
 }
 impl Runtime {
     pub(crate) fn new(native: bool) -> Self {
-        Self { native, snapshot: Mutex::new(None), revision: AtomicU64::new(0), publisher: Mutex::new(None) }
+        Self { native, snapshot: Mutex::new(None), capture_gate: Mutex::new(()), revision: AtomicU64::new(0), publisher: Mutex::new(None) }
     }
     pub(crate) fn observe(&self, observations: &crate::observations::Runtime) -> Result<(), String> {
         let mut slot = self.publisher.lock().unwrap_or_else(|p| p.into_inner());
@@ -53,19 +54,23 @@ impl Runtime {
         let offset=request.get("offset").map_or(Ok(0),|value|value.as_u64().filter(|offset|*offset<=4096).map(|offset|offset as usize).ok_or("Invalid system inventory page."))?;
         let limit=request.get("limit").map_or(Ok(32),|value|value.as_u64().filter(|limit|*limit>0 && *limit<=32).map(|limit|limit as usize).ok_or("System inventory page limit must be 1–32."))?;
         let expected=request.get("observedAt").map(|value|value.as_u64().filter(|at|*at>0).ok_or("Invalid system inventory observation token.")).transpose()?;
-        let mut snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());
         if let Some(expected)=expected {
+            let snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());
             let pinned = snapshot.as_ref().filter(|snapshot| snapshot.value["observedAt"].as_u64()==Some(expected))
                 .ok_or("System inventory snapshot expired; restart from its first page.")?;
             return page(&pinned.value,offset,limit);
         }
+        // Serialize inspection, but leave published pages readable while it runs.
+        let _capture = self.capture_gate.lock().unwrap_or_else(|p|p.into_inner());
         let native_revision = self.revision.load(Ordering::Acquire);
+        let snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());
         let usb_revision = snapshot.as_ref().map_or(usb_revision, |cached| cached.usb_revision.max(usb_revision));
         if let Some(cached) = &*snapshot {
             if cached.usb_revision == usb_revision && cached.native_revision == native_revision && cached.captured.elapsed() < Duration::from_secs(2) {
                 return page(&cached.value,offset,limit);
             }
         }
+        drop(snapshot);
         let observed = Instant::now();
         let mut value = if self.native {
             let sources=controllers.resource_inventory();
@@ -83,6 +88,7 @@ impl Runtime {
             installed::unsupported()
         };
         if value["controllerAssociations"].is_null() {value["controllerAssociations"]=json!([]);}
+        let mut snapshot = self.snapshot.lock().unwrap_or_else(|p|p.into_inner());
         if let Some(previous) = snapshot.as_ref().and_then(|snapshot| snapshot.value["observedAt"].as_u64()) {
             // Two source revisions can arrive within the same millisecond.
             let token = value["observedAt"].as_u64().unwrap_or(0).max(previous.saturating_add(1));
@@ -170,6 +176,46 @@ fn compose(visibility: osg_controller_input::inventory::Inventory, slots: Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{mpsc, Arc};
+
+    #[test]
+    fn pinned_pages_remain_readable_while_native_inspection_is_blocked() {
+        let runtime = Arc::new(Runtime::new(true));
+        let controllers = Arc::new(osg_controller_input::ControllerService::new(None, false));
+        *runtime.snapshot.lock().unwrap() = Some(Snapshot {
+            captured: Instant::now(),
+            usb_revision: 0,
+            native_revision: 0,
+            value: json!({"observedAt":1,"hiddenDevices":[],"controllerAssociations":[{"controllerId":"old"}]}),
+        });
+        let request = json!({"command":"system_inventory","clientId":"native-inventory-test-client"});
+        let (entered, capture_entered) = mpsc::channel();
+        let (release, capture_release) = mpsc::channel();
+        let capture = {
+            let runtime = runtime.clone();
+            let controllers = controllers.clone();
+            let request = request.clone();
+            std::thread::spawn(move || runtime.request(&request, &controllers, 1, |_| {
+                entered.send(()).unwrap();
+                capture_release.recv().unwrap();
+                vec![json!({"controllerId":"new"})]
+            }))
+        };
+        capture_entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (sent, received) = mpsc::channel();
+        let read = std::thread::spawn(move || {
+            let mut pinned = request;
+            pinned["observedAt"] = json!(1);
+            let result = runtime.request(&pinned, &controllers, 1, |_| panic!("Pinned read inspected providers"));
+            sent.send(result).unwrap();
+        });
+        let old = received.recv_timeout(Duration::from_secs(2));
+        release.send(()).unwrap();
+        read.join().unwrap();
+        let fresh = capture.join().unwrap().unwrap();
+        assert_eq!(old.unwrap().unwrap()["controllerAssociations"][0]["controllerId"], "old");
+        assert_eq!(fresh["controllerAssociations"][0]["controllerId"], "new");
+    }
     #[test]
     fn virtual_inventory_reports_external_ownership_without_claiming_creation() {
         let slot=Slot {id:3,status:Status::Busy,owner_pid:Some(1234),buttons:16,axes:vec![],discrete_hats:0,continuous_hats:1,force_feedback:false};
