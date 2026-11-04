@@ -267,10 +267,10 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     const statuses = filters.getByRole('group', { name: 'Status', exact: true });
     const visibility = filters.getByRole('group', { name: 'Visibility', exact: true });
     const list = page.getByRole('button', { name: 'List', exact: true }), topology = page.getByRole('button', { name: 'Topology', exact: true });
-    await expect(page.getByRole('button', { name: 'Refresh devices', exact: true })).toHaveCount(0);
+    const refreshInventory = devices.getByRole('button', { name: 'Refresh', exact: true });
     async function waitForInventoryRefresh() {
-      const previous = fixture.completedControllerPages;
-      await expect.poll(() => fixture.completedControllerPages, { timeout: 8_000 }).toBeGreaterThan(previous);
+      await refreshInventory.click();
+      await expect(refreshInventory).toBeEnabled();
     }
     await expect(devices.getByText('Dual transport panel', { exact: true })).toBeVisible();
     const expectedNames = ['Hidden pedals', 'Remembered wheel', 'Remembered throttle', 'Dual transport panel', 'Unproven second panel',
@@ -322,9 +322,12 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(devices.getByRole('combobox', { name: 'Filter connections', exact: true })).toHaveCount(0);
     fixture.controllerDelayMs = 300;
     const previousControllerPages = fixture.completedControllerPages;
-    await expect.poll(() => fixture.completedControllerPages, { timeout: 8_000 }).toBeGreaterThan(previousControllerPages + 1);
+    const previousNativeReads = requests.filter(request => request.command === 'system_inventory').length;
+    await new Promise(resolve => setTimeout(resolve, 3200));
+    assert.equal(fixture.completedControllerPages, previousControllerPages);
+    assert.equal(requests.filter(request => request.command === 'system_inventory').length, previousNativeReads);
+    await waitForInventoryRefresh();
     await expect(types.getByRole('checkbox').first()).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Refresh devices', exact: true })).toHaveCount(0);
     await expect(page.getByText('Refreshing…', { exact: true })).toHaveCount(0);
     fixture.controllerDelayMs = 0;
     await connections.getByRole('checkbox', { name: 'CAN', exact: true }).check();
@@ -1225,6 +1228,7 @@ test('running Devices shares complete inventory, topology, filtering, lifecycle 
     await expect(details.getByRole('button', { name: 'Manage HidHide', exact: true })).toHaveCount(0);
     assert.equal(hidHideOpens,0);
     fixture.native.hiddenDevices = fixture.native.hiddenDevices.filter(device => device.id !== 'stale-hide');
+    await waitForInventoryRefresh();
     await expect(details.getByRole('button', { name: 'Forget device', exact: true })).toHaveCount(0);
     await expect(details).toContainText('No configured HidHide rule', { timeout: 10_000 });
     await backToDevices.click();

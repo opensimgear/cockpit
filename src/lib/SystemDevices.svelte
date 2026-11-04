@@ -64,17 +64,14 @@
     const target = mode === 'topology' ? '.topology-viewport' : `[data-component-id="${CSS.escape(selectedId)}"]`;
     inventoryElement?.querySelector<HTMLElement>(target)?.focus();
   }
-  async function refresh(quiet = false) {
-    if (!controller || busy || (quiet && refreshTask)) return;
-    if (!quiet) busy = true;
-    const task = refreshTask ?? controller.refresh(!quiet, !quiet);
+  async function refresh() {
+    if (!controller || busy) return;
+    busy = true;
+    const task = controller.refresh();
     refreshTask = task;
-    try { await task; if (!quiet) error = ''; }
+    try { await task; error = ''; }
     catch (e) { error = String(e); }
-    finally {
-      if (refreshTask === task) refreshTask = undefined;
-      if (!quiet) busy = false;
-    }
+    finally { refreshTask = undefined; busy = false; }
   }
   $effect(() => {
     void entries;
@@ -159,15 +156,18 @@
     inventoryObservations.subscribe('system.inventory', state => {
       if (state.status === 'ready') void controller.refreshNative().catch(reason => { error = String(reason); });
     });
-    const timer = setInterval(() => { if (!document.hidden) void refresh(true); }, 3000);
-    return () => { reviewEpoch++; cleanupAbort?.abort(); clearInterval(timer); stopResources(); stopCompanions(); stopListener(); inventoryObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
+    return () => { reviewEpoch++; cleanupAbort?.abort(); stopResources(); stopCompanions(); stopListener(); inventoryObservations.close(); controller.dispose(); motion.removeEventListener('change', updateMotion); };
   });
 </script>
+
+{#snippet refreshButton()}
+  <button class="secondary-button" disabled={busy} onclick={refresh}><Icon name="refresh" size={14}/>Refresh</button>
+{/snippet}
 
 <section aria-label="System devices">
 {#if error}<Notification message={error} kind="error" />{/if}
 <div class="system-inventory" bind:this={inventoryElement} hidden={showingDetails}>
-<PageHeader title="Devices" eyebrow="YOUR CONNECTED SYSTEM" subtitle="Every known component, its current state, and how it connects.">{#snippet actions()}<button class="secondary-button cleanup-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}><Icon name="trash" size={14}/>Cleanup ({eligible.length})</button>{/snippet}</PageHeader>
+<PageHeader title="Devices" eyebrow="YOUR CONNECTED SYSTEM" subtitle="Every known component, its current state, and how it connects.">{#snippet actions()}{@render refreshButton()}<button class="secondary-button cleanup-button" disabled={busy || !eligible.length} onclick={() => reviewForget(eligible)}><Icon name="trash" size={14}/>Cleanup ({eligible.length})</button>{/snippet}</PageHeader>
 <div class="system-toolbar">
   <label class="search-field"><Icon name="search" size={16} /><input aria-label="Search components" placeholder="Find a component…" bind:value={search} /></label>
   <button class="secondary-button filter-button" class:active={filtersOpen || filterCount > 0} aria-expanded={filtersOpen} aria-controls={filterPanelId} aria-label="Filter" title={filterCount ? `Filter (${filterCount} selected)` : 'Filter devices'} onclick={() => { filtersOpen = !filtersOpen; }}><Icon name="sliders" size={17} /></button>
@@ -194,7 +194,7 @@
   <section class="component-details" aria-label="Component details">
     <PageHeader title={selected.name} eyebrow="DEVICE DETAILS" subtitle={`${systemTypeLabels[selected.type]}${selected.role ? ` · ${selected.role}` : ''}`} onback={backToDevices} backLabel="Back to Devices" focusBack>
       {#snippet leading()}<span class="detail-icon" class:disconnected={selected.presence !== 'connected'}><Icon name={systemDeviceIcon(selected)} size={26} /></span>{/snippet}
-      {#snippet actions()}<span class="connection-badge"><span class="status-dot" class:offline={selected.presence !== 'connected'}></span>{presenceLabels[selected.presence]}</span>
+      {#snippet actions()}{@render refreshButton()}<span class="connection-badge"><span class="status-dot" class:offline={selected.presence !== 'connected'}></span>{presenceLabels[selected.presence]}</span>
     {/snippet}
     </PageHeader>
     <div class="component-actions">
