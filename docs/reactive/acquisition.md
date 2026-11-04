@@ -27,6 +27,10 @@ another device probe. The one-second fallback still retries endpoint
 connections and reads other provider models. Host-controller metadata wakes its
 own resource worker on commits and first readiness.
 
+Companion pairing, assignment and transport readiness wake resource projection
+from the native host. An accepted input baseline makes the transport visible
+to profile inventory. Ordinary input values do not drive inventory updates.
+
 The game-context owner parks after its initial pass when the library has no
 configured integration. A committed library replacement wakes the owner after
 the new catalogue is visible. Configured integrations still use the 500 ms

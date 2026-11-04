@@ -3,6 +3,9 @@ use super::*;
     #[test]
     fn native_operator_status_pairing_publication_and_assignment_remain_separate_from_output() {
         let runtime = runtime();
+        let resource_wake = Arc::new(osg_streams::NativeWake::default());
+        runtime.watch_resource_inventory(&resource_wake);
+        assert!(runtime.metadata.get().is_none());
         let observations = crate::observations::Runtime::new();
         runtime.observe_listener(&observations).unwrap();
         let mut listener = observations.broker().subscribe("listener-test", "mcp", "companion.listener").unwrap();
@@ -90,12 +93,14 @@ use super::*;
         // Rejected ESP32 setup must leave the active non-ESP32 offer usable.
         let pending=services.hub.handle_wire(json!({"type":"pair","version":1,"secret":pairing["secret"],"companionId":"test-installation","name":"Desktop panel"}),"root-test-peer",services.hub.now_ms());
         assert_eq!(pending["type"], "pair-pending");
+        let before_pairing = resource_wake.observed();
         call(
             &runtime,
             "companion_approve",
             json!({"requestId":pending["requestId"],"companionId":"test-installation"}),
         )
         .unwrap();
+        assert_ne!(resource_wake.observed(), before_pairing);
 
         let fixture: Value = serde_json::from_str(include_str!(
             "../../../../../crates/companion-service/tests/fixtures/compiled-toggle-publication.json"
@@ -128,7 +133,9 @@ use super::*;
             published["host"]["publications"].as_array().unwrap().len(),
             1
         );
+        let before_assignment = resource_wake.observed();
         let assigned=call(&runtime,"companion_assign",json!({"companionId":"test-installation","instanceId":"saved-panel","publicationHash":fixture["publicationHash"]})).unwrap();
+        assert_ne!(resource_wake.observed(), before_assignment);
         assert_eq!(assigned["host"]["instances"][0]["armed"], false);
         assert_eq!(runtime.hub().unwrap().host_id(), services.hub.host_id());
         assert!(runtime.resource_instance_ids().unwrap().contains("saved-panel"));
@@ -175,12 +182,14 @@ use super::*;
             json!({"instanceId":"saved-panel","companionId":"test-installation"}),
         )
         .unwrap();
+        let before_revoke = resource_wake.observed();
         call(
             &runtime,
             "companion_revoke",
             json!({"companionId":"test-installation"}),
         )
         .unwrap();
+        assert_ne!(resource_wake.observed(), before_revoke);
         assert!(runtime.assigned_publication("saved-panel").is_err());
         assert!(call(&runtime, "companion_unsupported", json!({})).is_err());
         assert_eq!(

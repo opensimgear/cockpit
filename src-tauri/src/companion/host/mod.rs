@@ -63,6 +63,7 @@ pub struct Runtime {
     firmware_observation: Arc<OnceLock<osg_companion_serial::FlashObserver>>,
     detection: detection::Detection,
     panel_operation_wakes: Mutex<Vec<Weak<osg_streams::NativeWake>>>,
+    resource_inventory_wake: Mutex<Weak<osg_streams::NativeWake>>,
     #[cfg(test)]
     profile_wire_fixture: bool,
 }
@@ -96,6 +97,7 @@ impl Runtime {
             firmware_observation: Arc::new(OnceLock::new()),
             detection: detection::Detection::default(),
             panel_operation_wakes: Mutex::new(Vec::new()),
+            resource_inventory_wake: Mutex::default(),
             #[cfg(test)]
             profile_wire_fixture: false,
         }
@@ -127,7 +129,20 @@ impl Runtime {
         let metadata = self.metadata.get().expect("metadata initialized under its gate");
         self.register_panel_operation_wakes(&metadata.hub);
         self.register_presence_wake(&metadata.hub);
+        self.register_resource_inventory_wake(&metadata.hub);
         Ok(metadata)
+    }
+    pub(crate) fn watch_resource_inventory(&self, wake: &Arc<osg_streams::NativeWake>) {
+        *self.resource_inventory_wake.lock().unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(wake);
+        if let Some(metadata) = self.metadata.get() {
+            self.register_resource_inventory_wake(&metadata.hub);
+        }
+    }
+    fn register_resource_inventory_wake(&self, hub: &Hub) {
+        if let Some(wake) = self.resource_inventory_wake.lock().unwrap_or_else(|p| p.into_inner()).upgrade() {
+            hub.observe_presence(wake.clone());
+            hub.observe_record_changes(wake);
+        }
     }
     fn register_panel_operation_wakes(&self, hub: &Hub) {
         let mut wakes = self.panel_operation_wakes.lock().unwrap_or_else(|p| p.into_inner());

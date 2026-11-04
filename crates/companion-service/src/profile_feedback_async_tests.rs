@@ -145,10 +145,16 @@ fn a_reconnected_session_rejects_the_old_workers_captured_token() {
     assert_eq!(wire(json!({"type":"auth","token":fixture.secret}))["ok"], true);
     let open = wire(json!({"type":"open","instanceId":"instance"}));
     assert_eq!(open["ok"], true);
+    let presence = Arc::new(osg_streams::NativeWake::default());
+    fixture.hub.observe_presence(presence.clone());
+    let before_baseline = presence.observed();
+    assert!(fixture.hub.source_transport("instance").is_none());
     let baseline = json!({"version":1,"type":"baseline","clientId":open["clientId"],"sessionId":open["sessionId"],
         "generation":open["generation"],"publicationHash":open["publicationHash"],"sequence":"0",
         "values":fixture.panel.controls.iter().map(|control| (control.id.clone(), control.fallback())).collect::<BTreeMap<_,_>>()});
     assert_eq!(wire(baseline)["ok"], true);
+    assert_ne!(presence.observed(), before_baseline);
+    assert!(fixture.hub.source_transport("instance").is_some());
     let current = fixture.hub.profile_feedback_token(&fixture.receipt).unwrap();
     assert_ne!(current.session_id, fixture.token.session_id);
     assert!(fixture.publish(Instant::now(), || true).is_err());

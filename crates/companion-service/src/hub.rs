@@ -1546,6 +1546,7 @@ impl Hub {
             s.values = values;
             s.sequence = 0;
             s.last_seen = now;
+            self.notify_presence();
             return Ok(reply(json!("0"), "ack"));
         }
         if frame["type"] != "input" {

@@ -92,7 +92,7 @@ mod tests {
     fn aggregate_inventory_projects_usb_changes_without_restarting_discovery() {
         let (sent, received) = mpsc::channel();
         let projected = sent.clone();
-        let runtime = Runtime::new_with_usb_projection(
+        let runtime = Runtime::new_with_projection(
             None,
             Arc::new(move |revision| {
                 sent.send((revision, "discovery")).unwrap();
@@ -105,7 +105,7 @@ mod tests {
             true,
         );
         assert_eq!(received.recv_timeout(Duration::from_secs(2)).unwrap(), (1, "discovery"));
-        runtime.usb_projection_wake().notify();
+        runtime.projection_wake().notify();
         assert_eq!(received.recv_timeout(Duration::from_millis(750)).unwrap(), (2, "cached"));
         runtime.inventory_wake().notify();
         assert_eq!(received.recv_timeout(Duration::from_millis(750)).unwrap(), (3, "discovery"));

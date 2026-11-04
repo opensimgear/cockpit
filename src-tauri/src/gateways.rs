@@ -374,7 +374,7 @@ impl GatewayManager {
         let closed = Arc::new(AtomicBool::new(false));
         let profile_panels = Arc::new(ProfilePanelIo::new(sessions.clone(), module_usb.clone(), configuration_gate.clone(), Arc::new(AtomicBool::new(false))));
         let host_inventory_wake = Arc::new(osg_streams::NativeWake::default());
-        let (collect, project_usb, collect_host) = crate::profile_resource_sources::collector(
+        let (collect, project, collect_host) = crate::profile_resource_sources::collector(
             controllers.clone(), companion_provider, companion_host.clone(), games.clone(),
             Arc::new(move || resource_sessions.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(id, adapter)| (id.clone(), adapter.cached_state())).collect()),
             Arc::new(move |request| {
@@ -383,9 +383,10 @@ impl GatewayManager {
             }),
             module_usb.clone(), native,
         );
-        let profile_resources = Arc::new(crate::profile_resources::Runtime::new_with_usb_projection(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, project_usb, native));
+        let profile_resources = Arc::new(crate::profile_resources::Runtime::new_with_projection(native.then(|| crate::config_paths::config_path().with_file_name("profile-resources-v1")), collect, project, native));
         if native {
             serial_topology.watch_inventory(profile_resources.inventory_wake());
+            companion_host.watch_resource_inventory(profile_resources.projection_wake());
             controllers.watch_resource_inventory(&host_inventory_wake)
                 .expect("profile inventory owns the controller resource watch");
             profile_resources.start_host_inventory(collect_host, host_inventory_wake)
@@ -452,7 +453,7 @@ impl GatewayManager {
         if let Err(error) = profile_learning.observe(&observations) {
             eprintln!("Cannot start input learning observations: {error}");
         }
-        if let Err(error) = module_usb.observe_inventory(&observations, native.then(|| profile_resources.usb_projection_wake())) {
+        if let Err(error) = module_usb.observe_inventory(&observations, native.then(|| profile_resources.projection_wake())) {
             eprintln!("Cannot start USB inventory observations: {error}");
         }
         if let Err(error) = companion_host.observe_presence(&observations) {
