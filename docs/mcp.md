@@ -313,6 +313,15 @@ A `ready` phase means the scan results are available for review. The job
 can still advance to `applied`. Once ready, use `game_discovery_status`
 to read the desired result page.
 
+The opt-in Windows dev Cockpit test `tests/ui/mcp-native.mjs` also verifies
+integration context. Set `OSG_MCP_OBSERVATION_ONLY=1` and
+`OSG_MCP_INTEGRATION_OBSERVATION=1` in a dev Cockpit with no registered DCS
+installation. The test registers a private executable fixture, subscribes to
+`games.detail.dcs`, and checks the same process session and exit withdrawal
+in both MCP and the native detail observer. It removes the temporary
+registration and restores the prior selection mode. The fixture sends no
+simulator telemetry and exercises no outputs.
+
 ## Compatibility and troubleshooting
 
 The server uses the pinned Rust SDK `rmcp = 3.6.0` with Streamable HTTP and

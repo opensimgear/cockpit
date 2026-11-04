@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { softwareScenarios } from './mcp-software-scenarios.mjs';
 import { companionScenarios } from './mcp-companion-scenarios.mjs';
 import { uiPreferenceScenarios } from './mcp-ui-preference-scenarios.mjs';
+import { integrationObservation } from './mcp-integration-observation.mjs';
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(operation, description, timeout = 20000) {
@@ -109,7 +110,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const modern = async (method, params, extraHeaders = {}) => {
       const version = extraHeaders['MCP-Protocol-Version'] ?? '2026-07-28';
       return fetch(endpoint, {
-        method: 'POST', signal: AbortSignal.timeout(method === 'subscriptions/listen' && process.env.OSG_MCP_GAME_JOBS_OBSERVATION === '1' ? 30000 : 10000),
+        method: 'POST', signal: AbortSignal.timeout(method === 'subscriptions/listen' && (process.env.OSG_MCP_GAME_JOBS_OBSERVATION === '1' || process.env.OSG_MCP_INTEGRATION_OBSERVATION === '1') ? 30000 : 10000),
         headers: { Authorization: `Bearer ${read.token}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'MCP-Protocol-Version': version, 'Mcp-Method': method, ...(params.name || params.uri ? { 'Mcp-Name': params.name ?? params.uri } : {}), ...extraHeaders },
         body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params: { ...params, _meta: { 'io.modelcontextprotocol/protocolVersion': version, 'io.modelcontextprotocol/clientInfo': { name: 'Cockpit modern transport acceptance', version: '1' }, 'io.modelcontextprotocol/clientCapabilities': {} } } }),
       });
@@ -249,6 +250,9 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
           delete window.__mcpJobsState;
         });
       }
+    }
+    if (process.platform === 'win32' && process.env.OSG_MCP_INTEGRATION_OBSERVATION === '1') {
+      evidence.modernObservation.integration = await integrationObservation({ page, modern, ok, writer, mutation, artifacts, until });
     }
     if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
       const games = await ok(reader, 'games_list', { limit: 1 });
