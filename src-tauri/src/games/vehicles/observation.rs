@@ -116,8 +116,7 @@ impl Tracker {
             reader: None,
             current: None,
             telemetry: None,
-            inspection: vec![],
-            inspected: now,
+            inspection: inspection::Demand::default(),
             catalogued: now - Duration::from_secs(31),
             vehicles: vec![],
             error: None,
@@ -140,6 +139,9 @@ impl Tracker {
             entry.polling = false;
             entry.opening = None;
             entry.detached_physics = None;
+            if entry.installation != Self::installation(game) || entry.setup_revision != setup_revision {
+                entry.inspection = inspection::Demand::default();
+            }
             entry.integration = integration.into();
             self.retired.extend(entry.reader.take());
             entry.current = None;
@@ -175,7 +177,7 @@ impl Tracker {
             connection: connection.clone(),
             catalogue: (entry.catalogued.elapsed() >= Duration::from_secs(30)).then_some(vec![]),
             process,
-            inspection: entry.inspection.clone(),
+            inspection: entry.inspection.selection(now).to_vec(),
             reader: None,
             installation: entry.installation.clone(),
             setup_revision: entry.setup_revision.clone(),

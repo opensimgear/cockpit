@@ -11,6 +11,8 @@ use std::{
     sync::Arc,
 };
 
+mod inspection;
+
 const MAX_VEHICLES: usize = 1024;
 const MAX_SAVED: u64 = 512 * 1024;
 
@@ -87,8 +89,7 @@ struct Entry {
     reader: Option<Reader>,
     current: Option<Value>,
     telemetry: Option<Arc<Capture>>,
-    inspection: Vec<String>,
-    inspected: Instant,
+    inspection: inspection::Demand,
     catalogued: Instant,
     vehicles: Vec<Value>,
     error: Option<String>,

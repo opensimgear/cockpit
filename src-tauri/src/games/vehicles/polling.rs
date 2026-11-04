@@ -129,16 +129,13 @@ impl Tracker {
                 _ => None,
             };
             entry.polling = true;
-            if entry.inspected.elapsed() > Duration::from_secs(5) {
-                entry.inspection.clear();
-            }
             let id = qualification.id.clone();
             polls.push(VehiclePoll {
                 id: qualification.id.clone(),
                 generation: entry.generation,
                 signature: entry.signature.clone(),
                 integration: entry.integration.clone(),
-                inspection: entry.inspection.clone(),
+                inspection: entry.inspection.selection(Instant::now()).to_vec(),
                 now_ms,
                 at: Instant::now(),
                 reader,

@@ -59,18 +59,20 @@ fn telemetry_requires_a_fresh_enabled_reader_for_the_same_installation() {
 fn view_inspection_is_idempotent_and_missing_titles_are_harmless() {
     let scratch = scratch();
     let mut tracker = Tracker::new(scratch.path().join("vehicles.json"));
-    let game = json!({"id":"assetto-corsa-rally","integrationCompatible":true,
-        "integrationKey":"assetto-corsa-rally","provider":"assetto-corsa-rally"});
+    let game = json!({"id":"x-plane-12","integrationCompatible":true,
+        "integrationKey":"x-plane-12","provider":"x-plane"});
     tracker.observe(&game, &json!({}), None, "setup", true, 1);
-    tracker.entries.get_mut("assetto-corsa-rally").unwrap().reader = Some(rally_reader());
-    let ids = vec!["car.speedKmh".to_owned()];
 
-    tracker.inspect("missing-title", ids.clone()).unwrap();
-    tracker.inspect("assetto-corsa-rally", ids.clone()).unwrap();
-    let inspected = tracker.entries["assetto-corsa-rally"].inspected;
-    tracker.inspect("assetto-corsa-rally", ids.clone()).unwrap();
-    assert_eq!(tracker.entries["assetto-corsa-rally"].inspection, ids);
-    assert!(tracker.entries["assetto-corsa-rally"].inspected >= inspected);
+    tracker.inspect("missing-title", "first", vec!["one".into()]).unwrap();
+    tracker.inspect("x-plane-12", "first", vec!["one".into()]).unwrap();
+    tracker.inspect("x-plane-12", "second", vec!["two".into()]).unwrap();
+    let selected = |tracker: &mut Tracker| tracker.entries.get_mut("x-plane-12")
+        .unwrap().inspection.selection(Instant::now()).to_vec();
+    assert_eq!(selected(&mut tracker), ["one", "two"]);
+    tracker.inspect("x-plane-12", "first", vec![]).unwrap();
+    assert_eq!(selected(&mut tracker), ["two"]);
+    tracker.observe(&game, &json!({}), None, "replacement", true, 2);
+    assert!(selected(&mut tracker).is_empty());
 }
 
 #[test]

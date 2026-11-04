@@ -90,17 +90,16 @@ impl Tracker {
         view.map(|view| view.watch(wake).map_err(|error| format!("{error:?}")))
             .transpose()
     }
-    pub(crate) fn inspect(&mut self, id: &str, channels: Vec<String>) -> Result<(), String> {
-        if let Some(entry) = self.entries.get_mut(id) {
-            if channels != entry.inspection {
-                if let Some(reader) = &mut entry.reader {
-                    reader.inspect(&entry.integration, &channels)?;
-                }
-                entry.inspection = channels;
+    pub(crate) fn inspect(&mut self, id: &str, client: &str, channels: Vec<String>) -> Result<(), String> {
+        let Some(entry) = self.entries.get_mut(id).filter(|entry| entry.integration.starts_with("x-plane-")) else {
+            return Ok(());
+        };
+        entry.inspection.update(client, channels, Instant::now(), |selected| {
+            if let Some(reader) = &mut entry.reader {
+                reader.inspect(&entry.integration, selected)?;
             }
-            entry.inspected = Instant::now();
-        }
-        Ok(())
+            Ok(())
+        })
     }
     pub(crate) fn decorate(&self, game: &mut Value) {
         self.decorate_view(game, false);

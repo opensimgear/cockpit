@@ -165,7 +165,7 @@ impl GamesRuntime {
                     .vehicles
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .inspect(id, page.requested.clone())?;
+                    .inspect(id, request["clientId"].as_str().unwrap_or("default"), page.requested.clone())?;
             }
             let message = if selected_game {
                 catalogue_error.as_deref().or_else(|| {
