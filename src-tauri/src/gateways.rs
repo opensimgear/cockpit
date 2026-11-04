@@ -2272,12 +2272,10 @@ mod tests {
         assert_eq!(request(&manager,"connect",Some(FIRST),json!({"port":"COM1"}))["ok"],true);
         let adapter=provider.adapters.lock().unwrap()[0].clone();
         let route=json!([1,5,3,2]);
-        let events=json!({"ok":true,"schemaVersion":1,"stream":4,"head":0,"oldest":1,"overflow":0,"buttonCount":1,"held":[false],"contactButtonCount":1,"maintainedButtons":[0],"encoderButtons":[],"selectorButtons":[],"axisCount":0,"axes":[],"axisNeutral":[],"axisUsage":[],"axisAvailable":[],"sampledAtMs":10,"route":route,"configurationGeneration":4,"events":[]});
         {
             let mut state=adapter.state.lock().unwrap();
-            state["epoch"]=json!(1);state["canProtocol"]=json!(3);
-            state["modules"]=json!([{"id":MODULE,"name":"Panel","online":true,"node":5,"sourceNode":42,"lease":3,"boot":2,"axisCount":0,"configurationGeneration":4,"canConfigure":false}]);
-            state["moduleEvents"]=json!({(MODULE):events});
+            state["epoch"]=json!(1);state["canProtocol"]=json!(3);state["panelStreamSupported"]=json!(true);
+            state["modules"]=json!([{"id":MODULE,"name":"Panel","online":true,"node":5,"sourceNode":42,"lease":3,"boot":2,"buttonCount":1,"axisCount":0,"neutral":[],"configurationGeneration":4,"canConfigure":true}]);
             state["moduleActions"]=json!({(MODULE):{"status":"unsupported","route":route,"configurationGeneration":4}});
         }
         let send = |sequence, cursor, payload| adapter.panels.accept(Record::Event {
@@ -2324,7 +2322,7 @@ mod tests {
             assert!(std::time::Instant::now()<deadline,"{status}");std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(request(&manager,"profile_stop",None,json!({}))["ok"],true);
-        assert!(adapter.calls.lock().unwrap().iter().all(|r|matches!(r["command"].as_str(),Some("connect"|"events_state"))));
+        assert!(adapter.calls.lock().unwrap().iter().all(|r|r["command"] == "connect"));
     }
 
     #[test]

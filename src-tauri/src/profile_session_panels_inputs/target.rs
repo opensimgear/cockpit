@@ -108,6 +108,10 @@ impl Target {
         {
             return Err("CAN epoch, node, lease, boot or configuration changed.".into());
         }
+        if state["panelStreamSupported"] == true {
+            return if stream == configuration { Ok(()) }
+                else { Err("The native CAN stream does not match its configuration generation.".into()) };
+        }
         let events = &state["moduleEvents"][module];
         if events["route"] != json!([epoch, node, lease, boot])
             || events["configurationGeneration"] != *configuration

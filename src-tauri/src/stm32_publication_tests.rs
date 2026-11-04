@@ -157,6 +157,7 @@ fn native_gateway_negotiates_and_delivers_panel_state_while_idle() {
         Box::new(DuplexFactory(Some(parts))), Timing::default(), Arc::new(AtomicBool::new(false)),
     );
     gateway.open(port(), Some(UID.into()), Instant::now() + Duration::from_secs(2)).unwrap();
+    assert_eq!(gateway.decorated(None)["panelStreamSupported"], true);
     let capture = gateway.panels.capture(MODULE).unwrap();
     let wake = Arc::new(osg_streams::NativeWake::default());
     wake.bind_thread(thread::current()).unwrap();

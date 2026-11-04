@@ -321,7 +321,7 @@ fn validate_snapshots(
                                 m["boot"],
                                 m["lease"],
                                 m["configurationGeneration"],
-                                current["moduleEvents"][module]["stream"]
+                                crate::profile_resource_ports::can_stream_generation(current, m, module)
                             ])
                             .to_string()
                     {

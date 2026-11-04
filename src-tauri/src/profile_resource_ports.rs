@@ -102,9 +102,35 @@ pub(crate) fn companion(
 
 pub(crate) fn events(events: &Value) -> Result<Vec<PortDescriptor>, String> {
     crate::panel_events::validate(events, None)?;
+    Ok(panel_inputs(
+        events["buttonCount"].as_u64().unwrap(),
+        (0..events["axisCount"].as_u64().unwrap_or(0))
+            .map(|index| events["axisNeutral"][index as usize].as_u64()),
+    ))
+}
+
+pub(crate) fn native_can_inputs(module: &Value) -> Result<Vec<PortDescriptor>, String> {
+    let invalid = "Invalid native CAN input profile.";
+    let buttons = module["buttonCount"].as_u64().filter(|count| *count <= 128).ok_or(invalid)?;
+    let axes = module["axisCount"].as_u64().filter(|count| *count <= 8).ok_or(invalid)?;
+    let neutral = module["neutral"].as_array()
+        .filter(|values| values.len() as u64 == axes && values.iter().all(|value| value.as_u64().is_some_and(|n| n <= 65535)))
+        .ok_or(invalid)?;
+    Ok(panel_inputs(buttons, neutral.iter().map(Value::as_u64)))
+}
+
+pub(crate) fn can_stream_generation(state: &Value, module: &Value, id: &str) -> Value {
+    if state["panelStreamSupported"] == true {
+        module["configurationGeneration"].clone()
+    } else {
+        state["moduleEvents"][id]["stream"].clone()
+    }
+}
+
+fn panel_inputs(buttons: u64, neutral: impl Iterator<Item = Option<u64>>) -> Vec<PortDescriptor> {
     let mut result = Vec::new();
     // Events expose ordered button transitions and current axes, never hats.
-    for index in 0..events["buttonCount"].as_u64().unwrap() {
+    for index in 0..buttons {
         let id = format!("button:{index}");
         result.push(state(
             id.clone(),
@@ -122,7 +148,7 @@ pub(crate) fn events(events: &Value) -> Result<Vec<PortDescriptor>, String> {
             },
         });
     }
-    for index in 0..events["axisCount"].as_u64().unwrap_or(0) {
+    for (index, neutral) in neutral.enumerate() {
         result.push(state(
             format!("axis:{index}"),
             format!("Axis {}", index + 1),
@@ -132,12 +158,10 @@ pub(crate) fn events(events: &Value) -> Result<Vec<PortDescriptor>, String> {
                 max: 65535,
                 unit: None,
             },
-            events["axisNeutral"][index as usize]
-                .as_u64()
-                .map(|v| PortValue::Number(v as f64)),
+            neutral.map(|v| PortValue::Number(v as f64)),
         ));
     }
-    Ok(result)
+    result
 }
 
 pub(crate) fn actions(cache: &Value) -> Result<Vec<PortDescriptor>, String> {

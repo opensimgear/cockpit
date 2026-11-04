@@ -69,7 +69,7 @@ export type GatewayState = {
   running: boolean; needsReconnect: boolean; claimedModules?: string[]; modules: GatewayModule[];
   backend?: GatewayBackend; connected?: boolean; port?: string | null; ports?: GatewayPort[];
   gatewayId?: string; gatewaySerial?: string; protocolVersion?: number; firmwareVersion?: string; reconnecting?: boolean;
-  epoch?: number; canProtocol?: number; maxModules?: number; needsApply?: boolean;
+  epoch?: number; canProtocol?: number; panelStreamSupported?: boolean; maxModules?: number; needsApply?: boolean;
   maxRemembered?: number; maxControllers?: number; activeGeneration?: number; pendingGeneration?: number;
   lifecycle?: 'automatic'; layoutPending?: boolean; layoutError?: string | null;
   admissionFailure?: { identity: string; error: string } | null; rejectedAnnouncements?: number;

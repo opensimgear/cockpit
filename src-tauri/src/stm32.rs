@@ -1832,6 +1832,9 @@ impl Gateway {
     }
     fn decorated(&self, client: Option<&str>) -> Value {
         let mut state = self.state.clone();
+        if matches!(&self.connection, Some(GatewayConnection::Parked(serial)) if serial.supports_panel()) {
+            state["panelStreamSupported"] = json!(true);
+        }
         let mut claims: Vec<_> = self
             .claims
             .iter()

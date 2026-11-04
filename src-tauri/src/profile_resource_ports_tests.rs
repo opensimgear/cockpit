@@ -1,6 +1,25 @@
 use super::*;
 use serde_json::json;
 #[test]
+fn native_can_port_contract_matches_validated_journal_metadata() {
+    let module = json!({"buttonCount":1,"axisCount":1,"neutral":[32768],"configurationGeneration":6});
+    let journal = json!({"ok":true,"schemaVersion":1,"stream":6,"head":0,"oldest":1,"overflow":0,
+        "buttonCount":1,"held":[false],"contactButtonCount":1,"maintainedButtons":[],"encoderButtons":[],
+        "selectorButtons":[],"axisCount":1,"axes":[9],"axisNeutral":[32768],"axisUsage":[48],
+        "axisAvailable":[true],"sampledAtMs":1});
+    assert_eq!(native_can_inputs(&module).unwrap(), events(&journal).unwrap());
+    assert_eq!(can_stream_generation(&json!({"panelStreamSupported":true}), &module, "panel"), 6);
+    assert_eq!(can_stream_generation(&json!({"moduleEvents":{"panel":journal}}), &module, "panel"), 6);
+    for invalid in [
+        json!({"buttonCount":129,"axisCount":0,"neutral":[]}),
+        json!({"buttonCount":0,"axisCount":9,"neutral":[]}),
+        json!({"buttonCount":0,"axisCount":1,"neutral":[65536]}),
+        json!({"buttonCount":0,"axisCount":1,"neutral":[]}),
+    ] {
+        assert!(native_can_inputs(&invalid).is_err());
+    }
+}
+#[test]
 fn actual_and_prospective_companion_contracts_preserve_native_ranges_and_declared_feedback() {
     use osg_companion_service::{FeedbackDescriptor, FeedbackKind, FeedbackRange};
     use osg_mapping::profile::{AxisRange, Kind, Value as Input};

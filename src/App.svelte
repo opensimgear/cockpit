@@ -250,7 +250,7 @@
     `${device.name} ${device.settings.label} ${device.id} ${device.route}`.toLowerCase().includes(search.toLowerCase()) && (filter !== 'online' || device.online)
   ));
   const hidModule = $derived(gateway?.modules.find(module => module.id === selected?.id));
-  const nativeCanInputs = $derived(gateway?.backend === 'stm32' && gateway.canProtocol === 3);
+  const nativeCanInputs = $derived(gateway?.backend === 'stm32' && gateway.panelStreamSupported === true);
   let canPreview = $state<CanPanelPreview>();
   const canTopic = $derived(view === 'device' && nativeCanInputs && gatewayConnected && selected?.online
     && !hidModule?.outputOnly ? canInputTopic(selected.gatewayId, selected.id) : undefined);

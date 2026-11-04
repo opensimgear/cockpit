@@ -64,6 +64,7 @@ impl Sources {
             }
             let events = &state["moduleEvents"][id];
             let actions = &state["moduleActions"][id];
+            let native_inputs = state["panelStreamSupported"] == true;
             let expected_route = json!([
                 state["epoch"],
                 module["node"],
@@ -73,7 +74,7 @@ impl Sources {
             let events_current = events["ok"] == true
                 && events["route"] == expected_route
                 && events["configurationGeneration"] == module["configurationGeneration"];
-            let events_known = events_current
+            let events_known = native_inputs || events_current
                 || (events["status"] == "unsupported"
                     && events["route"] == expected_route
                     && events["configurationGeneration"] == module["configurationGeneration"]);
@@ -85,7 +86,9 @@ impl Sources {
                     && actions["route"] == expected_route
                     && actions["configurationGeneration"] == module["configurationGeneration"]);
             let mut descriptors = vec![];
-            if events_current {
+            if native_inputs {
+                descriptors.extend(ports::native_can_inputs(module)?);
+            } else if events_current {
                 descriptors.extend(ports::events(events)?);
             }
             if actions_current {
@@ -129,11 +132,12 @@ impl Sources {
                         module["boot"],
                         module["lease"],
                         module["configurationGeneration"],
-                        events["stream"]
+                        ports::can_stream_generation(state, module, id)
                     ])
                     .to_string(),
                     attributes: route_attributes,
-                    baseline_ready: events_current,
+                    // Native capture supplies and validates the actual fresh baseline at activation.
+                    baseline_ready: native_inputs || events_current,
                     writable: !identity_conflict
                         && module["canConfigure"] == true
                         && actions["status"] != "uncertain",
@@ -175,8 +179,8 @@ impl Sources {
                 };
                 let events = &state["moduleEvents"][id];
                 let actions = &state["moduleActions"][id];
-                let events_known =
-                    current(events) && (events["ok"] == true || events["status"] == "unsupported");
+                let events_known = state["panelStreamSupported"] == true
+                    || current(events) && (events["ok"] == true || events["status"] == "unsupported");
                 let actions_known = current(actions)
                     && matches!(actions["status"].as_str(), Some("ready" | "unsupported"));
                 let commands = [
