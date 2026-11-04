@@ -263,16 +263,16 @@ impl ServerHandler for Handler {
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.principal(&context, false)?;
+        let (server, _) = self.principal(&context, false)?;
         if request.and_then(|r| r.cursor).is_some() {
             return Err(ErrorData::invalid_params(
                 "The context catalogue fits one page; omit cursor.",
                 None,
             ));
         }
-        serde_json::from_value(
-            json!({"resources":mcp_tools::resources(),"ttlMs":0,"cacheScope":"private"}),
-        )
+        let mut resources = mcp_tools::resources();
+        resources.extend(observation_uri::resources(server.manager.observations.broker()));
+        serde_json::from_value(json!({"resources":resources,"ttlMs":0,"cacheScope":"private"}))
         .map_err(|e| ErrorData::internal_error(e.to_string(), None))
     }
     async fn list_resource_templates(
@@ -288,7 +288,7 @@ impl ServerHandler for Handler {
             "resourceTemplates": [{
                 "uriTemplate":"cockpit://observations/{topic}",
                 "name":"Cockpit observation",
-                "description":"Read a current baseline or subscribe with MCP 2026-07-28. Topics include profiles.library, profiles.runtime, workspace.state, games.state, games.jobs, controllers.inventory and exact native endpoint topics.",
+                "description":"Read a current baseline or subscribe with MCP 2026-07-28. Use resources/list for fixed topics. Exact endpoint and applied-node topics use this template.",
                 "mimeType":"application/json"
             }],
             "ttlMs":0,

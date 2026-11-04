@@ -81,6 +81,14 @@ fn modern_observation_stream_delivers_baseline_and_closes_on_revocation() {
     server.configure(SettingsUpdate { expected_settings_revision:1, enabled:true, port }).unwrap();
     let endpoint = format!("http://127.0.0.1:{port}/mcp");
     let uri = "cockpit://observations/profiles.library";
+    let listed = rpc(&endpoint, token, "resources/list", json!({}));
+    let listed = listed["result"]["resources"].as_array().unwrap();
+    for uri in [uri, "cockpit://observations/profiles.resources", "cockpit://observations/controllers.inventory"] {
+        assert!(listed.iter().any(|entry| entry["uri"] == uri
+            && entry["mimeType"] == "application/json"));
+    }
+    assert!(!listed.iter().any(|entry| entry["uri"] == "cockpit://observations/workspace.state"),
+        "An unstarted workspace has no current resource");
     assert_eq!(rpc(&endpoint, token, "resources/templates/list", json!({}))
         ["result"]["resourceTemplates"][0]["uriTemplate"], "cockpit://observations/{topic}");
     let read = rpc(&endpoint, token, "resources/read", json!({"uri":uri}));

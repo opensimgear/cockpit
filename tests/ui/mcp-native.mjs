@@ -118,6 +118,9 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     assert.equal((await modernStatus.json()).result.structuredContent.ok, true);
     const modernResource = await modern('resources/read', { uri: 'cockpit://guide/configuration' }); assert.equal(modernResource.status, 200); assert.ok((await modernResource.json()).result.contents.length);
     const observationUri = 'cockpit://observations/profiles.library';
+    const fixedResources = (await reader.listResources()).resources;
+    assert.ok(fixedResources.some(resource => resource.uri === observationUri));
+    assert.ok(fixedResources.some(resource => resource.uri === 'cockpit://observations/profiles.resources'));
     const observation = await modern('subscriptions/listen', { notifications: { resourceSubscriptions: [observationUri] } });
     assert.equal(observation.status, 200);
     assert.match(observation.headers.get('content-type'), /text\/event-stream/);
@@ -153,9 +156,26 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
         assert.equal(update.params.uri, observationUri);
         if (JSON.stringify(update.params._meta['opensimgear.com/observation']).includes(observedName)) break;
       }
-      evidence.modernObservation = { topic: observationUri, acknowledged: true, baseline: true, observedNativeChange: true };
+      const mcpName = `MCP to native observation ${randomUUID()}`;
+      await page.evaluate(async () => {
+        const { observeProfileLibrary } = await import('/src/lib/profile-read-models/shared.ts');
+        window.__mcpLibraryStop = observeProfileLibrary(state => { window.__mcpLibraryState = state; });
+      });
+      const library = () => page.evaluate(() => window.__mcpLibraryState);
+      await until(async () => (await library())?.status === 'ready', 'Native library observer did not receive its baseline');
+      const saved = await ok(writer, 'profile_create', mutation({ name: mcpName }));
+      profiles.add(saved.document.id);
+      await until(async () => (await library())?.value?.profiles.some(profile => profile.name === mcpName),
+        'Native library observer did not receive the MCP commit');
+      evidence.modernObservation = { topic: observationUri, discovered: true, acknowledged: true,
+        baseline: true, observedNativeChange: true, observedMcpCommitInNative: true };
     } finally {
       await observationReader.cancel();
+      await page.evaluate(() => {
+        window.__mcpLibraryStop?.();
+        delete window.__mcpLibraryStop;
+        delete window.__mcpLibraryState;
+      });
     }
     if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
       const games = await ok(reader, 'games_list', { limit: 1 });

@@ -282,7 +282,9 @@ document, catalogue, and native limits.
 
 ## Observe live state
 
-Clients using MCP `2026-07-28` can open `subscriptions/listen` with
+Use `resources/list` to discover available fixed observation URIs without
+opening a reader. Use `resources/templates/list` for exact endpoint and applied-node
+topics. Clients using MCP `2026-07-28` can open `subscriptions/listen` with
 `notifications.resourceSubscriptions` containing up to eight exact Cockpit
 observation URIs. Use `cockpit://observations/` followed by a topic such as
 `profiles.library`, `profiles.runtime`, `profiles.activation`, `profiles.resources`,

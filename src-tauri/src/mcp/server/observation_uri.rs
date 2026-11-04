@@ -1,11 +1,35 @@
 //! Strict URI admission for MCP observation subscriptions.
 
+use serde_json::{json, Value};
+
+const PREFIX: &str = "cockpit://observations/";
+const FIXED_TOPICS: [(&str, &str); 8] = [
+    ("profiles.library", "Saved profile library"),
+    ("profiles.runtime", "Applied profile runtime"),
+    ("profiles.activation", "Profile activation progress"),
+    ("profiles.resources", "Profile resource inventory revision"),
+    ("workspace.state", "Gateway workspace state"),
+    ("games.state", "Configured games"),
+    ("games.jobs", "Game discovery and artwork jobs"),
+    ("controllers.inventory", "Host controller inventory"),
+];
+
+pub(super) fn resources(broker: osg_streams::Broker) -> impl Iterator<Item = Value> {
+    FIXED_TOPICS.into_iter()
+        // The controller cache provides an on-demand atomic baseline even
+        // before its first observer. Other fixed topics register at startup.
+        .filter(move |(topic, _)| *topic == "controllers.inventory" || broker.available_to(topic, "mcp"))
+        .map(|(topic, title)| {
+            json!({"uri":format!("{PREFIX}{topic}"),"name":topic,"title":title,"mimeType":"application/json"})
+        })
+}
+
 /// Return the native observation topic named by an explicitly supported URI.
 ///
 /// MCP clients can subscribe only to read-only projections that are safe to
 /// expose. Dynamic topic suffixes are validated before the URI is admitted.
 pub(super) fn topic(uri: &str) -> Option<&str> {
-    let topic = uri.strip_prefix("cockpit://observations/")?;
+    let topic = uri.strip_prefix(PREFIX)?;
     if topic.is_empty()
         || topic.bytes().any(|byte| {
             matches!(byte, b'/' | b'?' | b'#' | b'%')
@@ -16,21 +40,20 @@ pub(super) fn topic(uri: &str) -> Option<&str> {
         return None;
     }
 
-    let allowed = matches!(topic,
-        "profiles.library"
-            | "profiles.runtime"
-            | "profiles.activation"
-            | "profiles.resources"
-            | "workspace.state"
-            | "games.state"
-            | "games.jobs"
-            | "controllers.inventory"
-    ) || topic.strip_prefix("games.detail.")
-        .is_some_and(osg_profiles::activation::valid_game_id)
-        || topic.strip_prefix("profiles.samples.").is_some_and(valid_sha256)
-        || topic.strip_prefix("controllers.input.").is_some_and(valid_uuid)
+    let allowed = FIXED_TOPICS.iter().any(|(name, _)| *name == topic)
+        || topic
+            .strip_prefix("games.detail.")
+            .is_some_and(osg_profiles::activation::valid_game_id)
+        || topic
+            .strip_prefix("profiles.samples.")
+            .is_some_and(valid_sha256)
+        || topic
+            .strip_prefix("controllers.input.")
+            .is_some_and(valid_uuid)
         || topic.strip_prefix("usb.inputs.").is_some_and(valid_sha256)
-        || topic.strip_prefix("usb.metadata.").is_some_and(valid_sha256)
+        || topic
+            .strip_prefix("usb.metadata.")
+            .is_some_and(valid_sha256)
         || valid_can_topic(topic);
 
     allowed.then_some(topic)

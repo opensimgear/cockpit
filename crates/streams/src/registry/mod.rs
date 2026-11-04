@@ -160,6 +160,15 @@ impl Broker {
         Ok(Publisher { topic })
     }
 
+    /// Discover a current topic without allocating a reader or invoking its owner.
+    pub fn available_to(&self, topic: &str, audience: &str) -> bool {
+        let state = self.shared.lock();
+        !state.closed && state.topics.get(topic).is_some_and(|topic| {
+            topic.audiences.iter().any(|allowed| allowed == audience)
+                && !topic.stream.shared.lock().closed
+        })
+    }
+
     pub fn subscribe(
         &self,
         client: &str,

@@ -24,6 +24,19 @@ fn spec(topic: &str) -> TopicSpec {
 }
 
 #[test]
+fn discovery_reports_only_current_topics_for_the_audience_without_readers() {
+    let (broker, publisher) = broker();
+    assert!(broker.available_to("controls", "mcp"));
+    assert!(!broker.available_to("controls", "browser"));
+    assert!(!broker.available_to("unknown", "mcp"));
+    assert!(!publisher.has_readers());
+    publisher.close();
+    assert!(!broker.available_to("controls", "mcp"));
+    broker.close();
+    assert!(!broker.available_to("controls", "mcp"));
+}
+
+#[test]
 fn exact_wire_integers_and_scopes() {
     let (broker, publisher) = broker();
     let mut reader = broker.subscribe("client", "mcp", "controls").unwrap();
