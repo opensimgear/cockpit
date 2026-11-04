@@ -1,6 +1,18 @@
 import type { Bounds, FeedbackValue, PortableUi } from '@opensimgear/companion-contracts';
 import type { DesignerWidget } from '@opensimgear/companion-designer';
 export type FeedbackSamples = Record<string, FeedbackValue & { receivedAtMs: number }>;
+export function nextFeedbackDeadline(samples: FeedbackSamples, now: number): number {
+  let next = Infinity;
+  for (const sample of Object.values(samples)) {
+    if (sample.status !== 'fresh' || !Number.isFinite(sample.receivedAtMs)
+      || !Number.isFinite(sample.sourceAgeMs) || sample.sourceAgeMs < 0) continue;
+    for (const threshold of [251, 1000]) {
+      const deadline = sample.receivedAtMs + Math.max(0, threshold - sample.sourceAgeMs);
+      if (deadline > now) next = Math.min(next, deadline);
+    }
+  }
+  return next;
+}
 export function safeAssetUrl(value: unknown): string | null {
   return typeof value === 'string' && value.length <= 3 * 1024 * 1024 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null;
 }

@@ -162,9 +162,12 @@ export function createPreviewController(initial: DesignerDocument, options: { cl
       notify();
     }
   }
+  function nextDeadline(): number {
+    return armed ? Math.min(Infinity, ...[...timers.values()].map(timer => timer.next)) : Infinity;
+  }
   function tick(now = clock()) {
     if (!Number.isFinite(now) || now < lastTick) return;
-    if (armed && timers.size && now - lastTick > 1000) { disarm('Preview timing gap'); lastTick = now; return; }
+    if (now - nextDeadline() > 1000) { disarm('Preview timing gap'); lastTick = now; return; }
     lastTick = now;
     let processed = 0;
     while (armed) {
@@ -178,6 +181,6 @@ export function createPreviewController(initial: DesignerDocument, options: { cl
     }
     notify();
   }
-  return { arm, disarm, snapshot, subscribe, setDocument, begin, move, release, cancelWidget, setWidgetEnabled, tick };
+  return { arm, disarm, snapshot, subscribe, setDocument, begin, move, release, cancelWidget, setWidgetEnabled, nextDeadline, tick };
 }
 export type PreviewController = ReturnType<typeof createPreviewController>;

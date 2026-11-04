@@ -3,7 +3,7 @@
   import type { Bounds } from '@opensimgear/companion-contracts';
   import { boundsContain, boundsOverlap, viewportRegions, type DesignerDocument, type DesignerWidget } from '@opensimgear/companion-designer';
   import { axisPosition, createPreviewController, type PreviewController, type PreviewSnapshot, type PointerData, type PreviewChange } from './controller.ts';
-  import { feedbackPresentation, fittedWidgetBounds, movedBounds, resizedBounds, resizedCornerBounds, type ResizeCorner, safeAssetUrl, viewportWidgetBounds, type FeedbackSamples } from './presentation.ts';
+  import { feedbackPresentation, nextFeedbackDeadline, fittedWidgetBounds, movedBounds, resizedBounds, resizedCornerBounds, type ResizeCorner, safeAssetUrl, viewportWidgetBounds, type FeedbackSamples } from './presentation.ts';
   import WidgetView from './WidgetView.svelte';
   import GroupOutline from './GroupOutline.svelte';
   import { componentDefinition, componentPresentation } from './widget-presentation.ts';
@@ -48,10 +48,24 @@
     oncontroller?.(controller ?? local);
     const observer = new ResizeObserver(() => { const rect = content.getBoundingClientRect(); contentWidth = rect.width; contentHeight = rect.height; });
     observer.observe(content);
-    const timer = setInterval(() => { now = performance.now(); if (engine?.snapshot().armed) engine.tick(now); }, 20);
-    return () => { observer.disconnect(); clearInterval(timer); engine?.disarm('Renderer unmounted'); };
+    return () => { observer.disconnect(); engine?.disarm('Renderer unmounted'); };
   });
   $effect(() => { if (engine) return engine.subscribe(snapshot => { previewState = snapshot; }); });
+  $effect(() => {
+    const controller = engine;
+    if (!previewState.armed || !controller) return;
+    const deadline = controller.nextDeadline();
+    if (!Number.isFinite(deadline)) return;
+    const timer = setTimeout(() => controller.tick(), Math.max(0, Math.ceil(deadline - performance.now())));
+    return () => clearTimeout(timer);
+  });
+  $effect(() => { void feedback; now = performance.now(); });
+  $effect(() => {
+    const deadline = nextFeedbackDeadline(feedback, now);
+    if (!Number.isFinite(deadline)) return;
+    const timer = setTimeout(() => { now = performance.now(); }, Math.max(0, Math.ceil(deadline - performance.now())));
+    return () => clearTimeout(timer);
+  });
   $effect(() => { engine?.setDocument(document); });
   $effect(() => { pageId; document.ui.id; localPage = undefined; });
   $effect(() => { selectedPage; mode; engine?.disarm('Page or mode changed'); drag = null; viewportDrag = null; });
@@ -342,7 +356,7 @@
           {:else if widget.kind === 'gauge'}<div class="gauge-value"><meter min={widget.config.min} max={widget.config.max} value={typeof display.value === 'number' ? display.value : widget.config.min} aria-label={mode === 'edit' ? `${widget.label}, ${size.width} by ${size.height} pixels${size.small ? ", below 44 pixel touch target" : ""}` : widget.label}></meter><output>{display.text}</output></div>
           {:else}<output class:numeric={widget.kind === 'numeric'}>{display.text}</output>{/if}
         </div>
-        {#if widget.kind !== 'component' && widget.feedbackIds.length}<footer class:stale={!display.available}><span>{display.provenance}</span><span>{display.freshness}{display.available ? ` · ${Math.round(display.ageMs)}ms` : ''}</span></footer>{/if}
+        {#if widget.kind !== 'component' && widget.feedbackIds.length}<footer class:stale={!display.available}><span>{display.provenance}</span><span>{display.freshness}</span></footer>{/if}
         {#if mode === 'edit'}<span class="size-badge" class:warning={size.small}>{size.width} × {size.height}px{size.small ? ' · touch < 44px' : ''}</span><button class="edit-hit" aria-label={`Select or move ${widget.label}`} onpointerdown={(event) => editStart(event, widget)} onpointermove={editMove} onpointerup={editFinish} onpointercancel={() => { drag = null; }} onlostpointercapture={() => { drag = null; }} onkeydown={(event) => editKey(event, widget)}></button>{#each ['nw','ne','sw','se'] as corner}<button class={`resize-corner ${corner}`} aria-label={`Resize ${widget.label} ${corner==='nw'?'top left':corner==='ne'?'top right':corner==='sw'?'bottom left':'bottom right'}`} title="Drag corner to resize" onpointerdown={(event)=>editStart(event,widget,corner as ResizeCorner)} onpointermove={editMove} onpointerup={editFinish} onpointercancel={()=>{drag=null;}} onlostpointercapture={()=>{drag=null;}} onkeydown={(event)=>resizeKey(event,widget,corner as ResizeCorner)}></button>{/each}{/if}
       </section>
     {/each}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { axisPosition, axisValue, createPreviewController, fallbackValue } from './controller.ts';
-import { feedbackPresentation, fittedWidgetBounds, movedBounds, resizedBounds, safeAssetUrl, viewportWidgetBounds } from './presentation.ts';
+import { feedbackPresentation, nextFeedbackDeadline, fittedWidgetBounds, movedBounds, resizedBounds, safeAssetUrl, viewportWidgetBounds } from './presentation.ts';
 
 test('widget artwork keeps its authored proportions in resized instances',()=>{
   const size={width:200,height:128};
@@ -78,6 +78,39 @@ test('all hat directions are discrete and release to neutral',()=>{
   const hat={id:'hat',kind:'hat',controlIds:['hat'],config:{}};const{preview:p}=engine(doc([hat],[{id:'hat',label:'Hat',kind:'hat',fallback:-1}]));p.arm();
   for(const value of [undefined,-1,8,.5])assert.equal(p.begin(1,'hat',{value}),false);
   for(let value=0;value<8;value++){assert.equal(p.begin(1,'hat',{value}),true);assert.equal(p.snapshot().values.hat,value);p.release(1);assert.equal(p.snapshot().values.hat,-1);}
+});
+test('canvas deadlines stay dormant until a pulse or freshness transition is due',()=>{
+  const {preview,time}=engine(doc([bWidget('pulse')],[button()]));
+  assert.equal(preview.nextDeadline(),Infinity);
+  preview.arm();
+  assert.equal(preview.nextDeadline(),Infinity);
+  preview.begin(1,'button');
+  assert.equal(preview.nextDeadline(),40);
+  preview.release(1);
+  time(40);
+  assert.equal(preview.nextDeadline(),Infinity);
+  const sample={status:'fresh',receivedAtMs:100,sourceAgeMs:50};
+  assert.equal(nextFeedbackDeadline({},100),Infinity);
+  assert.equal(nextFeedbackDeadline({button:sample},100),301);
+  assert.equal(nextFeedbackDeadline({button:sample},301),1050);
+  assert.equal(nextFeedbackDeadline({button:sample},1050),Infinity);
+  assert.equal(nextFeedbackDeadline({button:{...sample,status:'stale'}},100),Infinity);
+  assert.equal(nextFeedbackDeadline({button:{...sample,sourceAgeMs:-1}},100),Infinity);
+});
+test('long repeat intervals are scheduled without treating idle time as a renderer stall',()=>{
+  const widget=bWidget('repeat');
+  widget.config.repeatMs=5000;
+  const {preview,time}=engine(doc([widget],[button()]));
+  preview.arm();
+  preview.begin(1,'button');
+  time(40);
+  assert.equal(preview.nextDeadline(),5000);
+  time(5000);
+  assert.equal(preview.snapshot().armed,true);
+  assert.equal(preview.snapshot().values.button,true);
+  time(6041);
+  assert.equal(preview.snapshot().armed,false);
+  assert.equal(preview.snapshot().values.button,false);
 });
 test('pulse transitions remain ordered after pointer release and finish at deadline',()=>{
   const{preview:p,time}=engine(doc([bWidget('pulse')],[button()]));p.arm();p.begin(1,'button');p.release(1);assert.equal(p.snapshot().values.button,true);
