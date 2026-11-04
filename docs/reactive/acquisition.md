@@ -11,6 +11,13 @@ remaining finite reconnect waits belong to explicit configuration reconciliation
 not periodic state acquisition. See [USB metadata](usb-metadata.md) and its dated
 verification. CAN input push and the other original matrix entries remain open.
 
+November 4 audit update. Workspace discovery now enumerates serial ports on
+native arrival/removal notifications. The USB fleet reads that cache during
+aggregate resource passes, and a failed enumeration schedules a workspace retry.
+The one-second aggregate still applies cached USB topology, retries endpoint
+connections, and reads other provider models. Host-controller metadata wakes its
+own resource worker on commits and first readiness.
+
 | Surface / owner | Current boundary | Required replacement and qualification |
 | --- | --- | --- |
 | App/workspace/gateway | App.svelte 3 s workspace refresh | Gateway worker publishes committed status/module changes; platform serial arrival/removal notifications invalidate inventory |
@@ -61,8 +68,11 @@ Preserve companion authenticated publication/owner fences, native subscription
 limits and release/backpressure behavior. Inventory/storage/discovery must not
 block active output dispatch, revocation, Stop or lease maintenance.
 
-Run `node scripts/reactive/audit.mjs` to refresh timer locations and review its diff.
+Run `node scripts/reactive/audit.mjs --committed` to inventory the checked-out
+commits across Cockpit and the sibling firmware repositories. Omit `--committed`
+to include worktree changes. Use `--check` with the same mode to verify the ledger.
 The scanner includes all tracked production source trees and sibling firmware
-repositories when present. Native sleep/wait sites require semantic review too;
-the generated list intentionally contains legitimate timing. At final R9 there
+repositories. It also records native deadline waits such as `park_timeout` and
+`sleep_until`. The generated list includes legitimate timing and some inline
+test code, so each entry still needs semantic review. At final R9 there
 must be an owner and explicit disposition for every remaining production site.

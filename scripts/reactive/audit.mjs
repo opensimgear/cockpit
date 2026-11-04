@@ -6,15 +6,20 @@ import {fileURLToPath} from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const check = process.argv.includes('--check');
+const committed = process.argv.includes('--committed');
 const output = resolve(root, 'docs/reactive/refresh-sites.json');
 const trees = ['src/', 'src-tauri/src/', 'crates/', 'apps/', 'packages/', 'scripts/native-gateway-bridge.mjs'];
 const excluded = /(?:^|\/)(?:tests?|third_party|vendor|dist|target|fixtures|simulation)(?:\/|$)|(?:[._-](?:tests?|fixtures)\.|\/tests?\.rs$)/;
+const timing = /\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|recv_deadline|wait_timeout|park_timeout|sleep|sleep_until|sleep_ms|sleep_us|vTaskDelay|xTaskDelayUntil)\b/g;
 const sites = [];
 for (const repository of ['.', '../device-gateway', '../device-template', '../firmware-common']) {
   const cwd = resolve(root, repository);
   let files;
   try {
-    files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {cwd, encoding:'utf8'}).split('\0');
+    const args = committed
+      ? ['ls-tree', '-r', '--name-only', '-z', 'HEAD']
+      : ['ls-files', '--cached', '--others', '--exclude-standard', '-z'];
+    files = execFileSync('git', args, {cwd, encoding:'utf8'}).split('\0');
   } catch (error) {
     throw new Error(`Cannot inventory ${cwd}: ${error.message}`);
   }
@@ -22,11 +27,14 @@ for (const repository of ['.', '../device-gateway', '../device-template', '../fi
     if (!/\.(?:svelte|ts|mjs|rs|c|h|cpp|lua)$/.test(file) || excluded.test(file)) continue;
     if (repository === '.' && !trees.some(tree => file.startsWith(tree))) continue;
     const path = resolve(cwd, file);
-    const lines = readFileSync(path, 'utf8').split(/\r?\n/);
+    const source = committed
+      ? execFileSync('git', ['show', `HEAD:${file}`], {cwd, encoding:'utf8'})
+      : readFileSync(path, 'utf8');
+    const lines = source.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index];
       if (/^\s*(?:\/\/|\*|#)/.test(line)) continue;
-      const kinds = [...new Set(line.match(/\b(?:setInterval|setTimeout|requestAnimationFrame|recv_timeout|wait_timeout|sleep|sleep_ms|sleep_us|vTaskDelay|xTaskDelayUntil)\b/g) ?? [])];
+      const kinds = [...new Set(line.match(timing) ?? [])];
       if (!kinds.length) continue;
       sites.push({file:relative(root, path).replaceAll('\\','/'), line:index + 1, kinds});
     }
@@ -36,7 +44,7 @@ sites.sort((a,b) => a.file.localeCompare(b.file, 'en') || a.line - b.line);
 const text = '[\n' + sites.map(site => '  ' + JSON.stringify(site)).join(',\n') + '\n]\n';
 if (check) {
   if (readFileSync(output, 'utf8').replaceAll('\r\n','\n') !== text) {
-    throw new Error('Timing-site inventory changed. Run node scripts/reactive/audit.mjs and classify the diff.');
+    throw new Error(`Timing-site inventory changed. Run node scripts/reactive/audit.mjs${committed ? ' --committed' : ''} and classify the diff.`);
   }
 } else writeFileSync(output, text);
 console.log(`${sites.length} timing sites inventoried across Cockpit and firmware repositories.`);
