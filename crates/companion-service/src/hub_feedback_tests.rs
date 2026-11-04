@@ -39,6 +39,43 @@ fn setup() -> (Hub, Arc<Sink>, Publication, Value) {
     baseline(&h, "connection", &open, &p);
     (h, sink, p, open)
 }
+
+#[test]
+fn passive_subscription_wakes_only_for_the_bound_session_and_keeps_its_own_cursor() {
+    let hub = Hub::new("push-host".into(), Arc::new(Sink::default()));
+    let credential = paired(&hub, "peer");
+    let wrong_credential = paired(&hub, "other");
+    let publication = publish(&hub, fixture());
+    assign(&hub, "peer", "instance", &publication.publication_hash);
+    let opened = connect(&hub, "primary", &credential, "instance");
+    baseline(&hub, "primary", &opened, &publication);
+    hub.configure_feedback("instance", &publication.publication_hash, &[binding(&publication)]).unwrap();
+    let session = opened["sessionId"].as_str().unwrap();
+    let generation = opened["generation"].as_str().unwrap().parse().unwrap();
+    let wake = Arc::new(osg_streams::NativeWake::default());
+    let subscribe = |credential, wake| hub.subscribe_feedback(
+        "visual", session, generation, &publication.publication_hash, credential, wake,
+    );
+    assert!(subscribe(&wrong_credential, wake.clone()).is_err());
+    let mut visuals = subscribe(&credential, wake.clone()).unwrap();
+    assert_eq!(visuals.take().unwrap().unwrap()["mode"], "snapshot");
+    assert!(visuals.take().unwrap().is_none());
+    let observed = wake.observed();
+    let token = hub.feedback_token("instance").unwrap();
+    hub.publish_feedback(&token, &[sample(&publication)], FeedbackMode::Delta, hub.now_ms()).unwrap();
+    assert!(wake.observed() > observed);
+    let delta = visuals.take().unwrap().unwrap();
+    assert_eq!(delta["mode"], "delta");
+    assert_eq!(delta["values"][0]["value"], 42.0);
+    let heartbeat = hub.handle_wire(frame(&opened, "heartbeat", "1"), "primary", hub.now_ms());
+    assert_eq!(heartbeat["feedback"]["mode"], "snapshot");
+    let replacement = Arc::new(osg_streams::NativeWake::default());
+    let mut next = subscribe(&credential, replacement).unwrap();
+    assert!(visuals.take().is_err());
+    assert_eq!(next.take().unwrap().unwrap()["values"][0]["value"], 42.0);
+    hub.disconnect_connection("primary", hub.now_ms());
+    assert!(next.take().is_err());
+}
 #[test]
 fn native_feedback_preserves_provenance_freshness_and_source_acceptance_separation() {
     let (h, sink, p, open) = setup();

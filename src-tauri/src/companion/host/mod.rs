@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock, Weak},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 include!(concat!(env!("OUT_DIR"), "/companion_browser.rs"));
@@ -25,8 +25,6 @@ mod listener_observation;
 mod presence_observation;
 mod firmware_observation;
 mod detection;
-#[cfg(test)]
-use std::time::Duration;
 use presentation::*;
 
 #[path = "../../profile_companion_authoring.rs"]

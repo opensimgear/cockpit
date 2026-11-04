@@ -502,11 +502,32 @@ fn browser_https_serving_pairing_live_assignment_input_disconnect_and_revocation
     let frame=|kind:&str,seq:&str|json!({"version":1,"type":kind,"clientId":opened["clientId"],"sessionId":opened["sessionId"],"generation":opened["generation"],"publicationHash":hash,"sequence":seq});
     let mut baseline=frame("baseline","0");baseline["values"]=json!({"press":false});
     assert_eq!(call(&mut socket,baseline)["ok"],true);
+    let subscribe = json!({
+        "type":"feedback-subscribe","token":token,"sessionId":opened["sessionId"],
+        "generation":opened["generation"],"publicationHash":hash,
+    });
+    let (mut unauthorized, _) = connect(&origin).unwrap();
+    let mut invalid = subscribe.clone();
+    invalid["token"] = json!("z".repeat(43));
+    assert_eq!(call(&mut unauthorized, invalid)["ok"], false);
+    drop(unauthorized);
+    let (mut visuals, _) = connect(&origin).unwrap();
+    assert_eq!(call(&mut visuals, subscribe)["type"], "feedback-subscribed");
+    let initial = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
+    assert_eq!(initial["feedback"]["mode"], "snapshot");
+    assert_eq!(initial["feedback"]["sessionId"], opened["sessionId"]);
+    hub.configure_feedback("browser-panel", &hash, &[]).unwrap();
+    let changed = receive_json(&mut visuals, Duration::from_secs(2)).unwrap();
+    assert_eq!(changed["type"], "feedback-event");
+    assert_ne!(initial["feedback"]["bindingGeneration"], changed["feedback"]["bindingGeneration"]);
+
     let mut input=frame("input","1");input["changes"]=json!([{"controlId":"press","value":true}]);
     assert_eq!(call(&mut socket,input)["ok"],true);
     assert!(sink.events.lock().unwrap().iter().any(|e|e.contains("true")));
     socket.close(None).unwrap();drop(socket);
     wait(||sink.events.lock().unwrap().iter().any(|e|e=="loss"));
+    assert!(receive_json(&mut visuals, Duration::from_secs(2)).is_err());
+    drop(visuals);
     // A new browser window uses the saved credential, with a fresh session/baseline.
     let (mut socket,_)=connect(&origin).unwrap();
     assert_eq!(call(&mut socket,json!({"type":"auth","token":token}))["ok"],true);

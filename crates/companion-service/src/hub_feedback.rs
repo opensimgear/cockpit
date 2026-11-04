@@ -36,6 +36,7 @@ impl Hub {
         let mut book = inner.feedback.get(instance).cloned().unwrap_or_default();
         book.configure(schema, bindings, now)?;
         inner.feedback.insert(instance.into(), book);
+        Self::wake_feedback(&inner, instance);
         Ok(())
     }
     pub fn feedback_token(&self, instance: &str) -> Result<FeedbackToken, String> {
@@ -90,7 +91,9 @@ impl Hub {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         self.validate_feedback_authorized(&mut inner, token, now_ms, receipt)?;
         let now = inner.last_now;
-        inner.feedback.get_mut(&token.instance_id).unwrap().publish(values, mode, now)
+        let sequence = inner.feedback.get_mut(&token.instance_id).unwrap().publish(values, mode, now)?;
+        Self::wake_feedback(&inner, &token.instance_id);
+        Ok(sequence)
     }
     /// An optional presentation update never waits for the metadata lock. Age
     /// and revocation are checked after ownership validation, under that lock.
@@ -111,7 +114,9 @@ impl Hub {
         let aged = values.iter().map(|sample| sample.aged(
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))).collect::<Vec<_>>();
         let now = inner.last_now;
-        inner.feedback.get_mut(&token.instance_id).unwrap().publish(&aged, mode, now).map(Some)
+        let sequence = inner.feedback.get_mut(&token.instance_id).unwrap().publish(&aged, mode, now)?;
+        Self::wake_feedback(&inner, &token.instance_id);
+        Ok(Some(sequence))
     }
     fn validate_feedback_authorized(
         &self, inner: &mut Inner, token: &FeedbackToken, now_ms: u64,
@@ -182,6 +187,7 @@ impl Hub {
         let now = inner.last_now;
         if let Some(book) = inner.feedback.get_mut(instance) {
             book.reset(now)?;
+            Self::wake_feedback(inner, instance);
         }
         Ok(())
     }

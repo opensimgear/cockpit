@@ -109,6 +109,7 @@ struct Session {
     batches: VecDeque<u64>,
     values: BTreeMap<String, InputValue>,
     feedback_cursor: crate::feedback::FeedbackCursor,
+    feedback_wake: Option<std::sync::Weak<osg_streams::NativeWake>>,
 }
 fn preparing_panel(session: &Session) -> bool {
     !session.armed && !session.panel_error && (session.baseline_pending || session.operation.as_ref().is_some_and(|operation|
@@ -499,6 +500,7 @@ impl Hub {
     }
     fn disarm(&self, inner: &mut Inner, session_id: &str, reason: &str, remove: bool) {
         if let Some(mut session) = inner.sessions.remove(session_id) {
+            if let Some(wake) = session.feedback_wake.take().and_then(|wake| wake.upgrade()) { wake.notify(); }
             if session.armed {
                 if let Err(error) = self.sink.loss(&session.token) {
                     inner.diagnostic = Some(format!("Source cleanup failed: {error}"));
@@ -1310,6 +1312,7 @@ impl Hub {
                             batches: VecDeque::new(),
                             values: BTreeMap::new(),
                             feedback_cursor: Default::default(),
+                            feedback_wake: None,
                         },
                     );
                     let mut publication=serde_json::to_value(&p).map_err(|e|e.to_string())?;
@@ -1587,3 +1590,6 @@ pub mod profile;
 mod assignments_api;
 #[path = "hub_feedback.rs"]
 mod feedback_api;
+#[path = "feedback_subscription.rs"]
+mod feedback_subscription;
+pub use feedback_subscription::FeedbackSubscription;

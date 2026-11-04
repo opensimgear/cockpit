@@ -565,6 +565,7 @@ fn serve_connection(
     if http_request.uri().path() != "/companion" && http_request.uri().path() != "/socket" {
         return crate::browser::serve_http(&mut stream, &http_request, browser_origin, browser_assets);
     }
+    let browser_socket = http_request.uri().path() == "/socket";
     let stream = crate::browser::Replay { prefix: std::io::Cursor::new(header), stream };
     let callback = |request: &Request, mut response: Response| -> Result<Response, ErrorResponse> {
         let browser = request.uri().path() == "/socket" && !browser_assets.is_empty()
@@ -601,12 +602,12 @@ fn serve_connection(
         .sock
         .set_read_timeout(Some(Duration::from_millis(100)))
         .map_err(|error| error.to_string())?;
-    serve_messages(socket, hub, id, stop, attempts, peer)
+    serve_messages(socket, hub, id, stop, attempts, peer, browser_socket)
 }
 
 pub(crate) fn serve_messages<S: Read + Write>(
     mut socket: WebSocket<S>, hub: &Hub, id: &str, stop: &AtomicBool,
-    attempts: &Mutex<Attempts>, peer: IpAddr,
+    attempts: &Mutex<Attempts>, peer: IpAddr, browser_socket: bool,
 ) -> Result<(), String> {
     let mut window = Instant::now();
     let mut frames = 0;
@@ -650,6 +651,9 @@ pub(crate) fn serve_messages<S: Read + Write>(
                         &json!({"ok":false,"error":"Pairing/authentication attempt budget exceeded"}),
                     )?;
                     return Err("Pre-authentication attempt budget exceeded".into());
+                }
+                if browser_socket && frame["type"] == "feedback-subscribe" {
+                    return feedback_socket::serve(socket, hub, id, stop, attempts, peer, &frame);
                 }
                 let is_auth = frame["type"] == "auth";
                 let response = hub.handle_wire(frame, id, hub.now_ms());
@@ -841,3 +845,5 @@ mod tests {
         assert!(local_interfaces().unwrap().is_array());
     }
 }
+#[path = "feedback_socket.rs"]
+mod feedback_socket;
