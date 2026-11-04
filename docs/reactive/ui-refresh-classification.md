@@ -67,7 +67,8 @@ session exists. In direct mode it wakes for the next session heartbeat or
 unassigned ping. Panel preparation uses a separate cancellable heartbeat
 deadline until the neutral baseline.
 The shared panel canvas schedules the next pulse or feedback freshness
-deadline. The native companion's lease heartbeat remains independent.
+deadline. The portable companion renderer schedules lease renewals only while
+its remote session is armed. The native transport retains its own watchdog.
 The browser companion connection timers require separate lifecycle qualification.
 
 Run the idle trace against the running native Cockpit with

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import PairingForm from './lib/PairingForm.svelte';
   import { flightTemplate, racingTemplate, validateDesignerDocument, type Publication } from '@opensimgear/companion-designer';
   import { PanelCanvas, createPreviewController, type FeedbackSamples } from '@opensimgear/companion-ui';
@@ -9,6 +9,7 @@
   import { browserCacheStore, cacheKey, createPublicationCache, verifyPublishedPayload, type CacheSummary, type PublishedPayload } from './lib/companion-cache.ts';
   import { publicationCacheStore } from './lib/persistence/cache-storage.ts';
   import { createSessionGuard, remoteIdentity, type PanelMode } from './lib/session-guard.ts';
+  import { startLeaseHeartbeat } from './lib/lease-heartbeat.ts';
   interface NativeStatus { phase:string; protectedStoreAvailable?:boolean; authenticationAvailable?:boolean; authenticationUnavailableReason?:string|null; storageError?:string|null; epoch:number; busy?:boolean; pairedHost?:{hostId:string;endpoint:string;caSpkiSha256:string;name:string};requestId?:string;assignments?:unknown[];session?:Record<string,unknown>;publicationHash?:string;lastError?:string;ack?:{ackStage?:string;submitted?:boolean;sequence?:string};feedback?:Record<string,unknown>[];feedbackRevision?:number }
   let panel = $state(flightTemplate), pageId = $state(flightTemplate.ui.pages[0].id), reference = $state('flight');
   let remote = $state<NativeStatus>({phase:'unpaired',epoch:0}), panelMode = $state<PanelMode>('local');
@@ -25,10 +26,11 @@
   const remoteSelected=$derived(panelMode==='remote'), offline=$derived(panelMode==='offline');
   const request = <T,>(value:unknown) => invoke<T>('companion_client_request',{request:value});
   const inputQueue=createOrderedInputQueue((epoch,changes)=>request({type:'input',epoch,changes}),reason=>fail(new Error(reason)));
-  const recorder = createPreviewController(flightTemplate,{onchange:changes=>{
+  const recorder = createPreviewController(flightTemplate,{onchange:changes=>untrack(()=>{
     if(remoteSelected&&gate.snapshot().armed&&remote.phase==='armed')inputQueue.enqueue(remote.epoch,changes);
-  }});
+  })});
   let snapshot=$state(recorder.snapshot());
+  const leaseEpoch=$derived(remoteSelected&&remote.phase==='armed'&&snapshot.armed?remote.epoch:null);
   const validation=$derived(validateDesignerDocument(panel));
   const assigned=$derived((remote.assignments??[]).map(value=>typeof value==='string'?{id:value,label:value}:value&&typeof value==='object'?{id:String((value as Record<string,unknown>).instanceId??(value as Record<string,unknown>).id??''),label:String((value as Record<string,unknown>).label??(value as Record<string,unknown>).name??(value as Record<string,unknown>).instanceId??'Assigned panel')}:{id:'',label:''}).filter(value=>value.id));
   const canStart=$derived.by(()=>{sessionUpdate;return !switching&&validation.ok&&(panelMode==='local'||remoteSelected&&gate.canStart(remote,true));});
@@ -113,9 +115,22 @@
   async function discover(){if(discovering)return;discovering=true;error='';const token=gate.capture();try{const result=await request<{hints:unknown[]}>({type:'discover',durationMs:1200});if(gate.current(token))hints=result.hints;}catch(value){if(gate.current(token))error=message(value);}finally{discovering=false;}}
   async function forget(){const token=invalidate('Removing native pairing',loadedHash?'offline':panelMode);try{await request({type:'disconnect'});if(!gate.current(token))return;await request({type:'forget'});if(gate.current(token)){local();await refreshStatus();}}catch(value){if(gate.current(token))fail(value);}}
   function visibility(){if(document.visibilityState==='hidden')disarm('Page hidden');}
+  $effect(()=>{
+    const epoch=leaseEpoch;
+    if(epoch===null||!gate.snapshot().armed)return;
+    const token=gate.capture();
+    return startLeaseHeartbeat(
+      ()=>request({type:'keepalive',epoch}),
+      ()=>!disposed&&gate.current(token),
+      fail,
+    );
+  });
   onMount(()=>{
     disposed=false;
-    const unsubscribe=recorder.subscribe(state=>{snapshot=state;if(!switching&&!state.armed&&gate.snapshot().armed)disarm(state.reason);});
+    const unsubscribe=recorder.subscribe(state=>untrack(()=>{
+      snapshot=state;
+      if(!switching&&!state.armed&&gate.snapshot().armed)disarm(state.reason);
+    }));
     const unlisten:(()=>void)[]=[];
     async function synchronizeNative(){try{const state=await invoke<{invalidationEpoch:number}>('companion_lifecycle');if(disposed)return;nativeAvailable=true;nativeStatus='Tauri 2 · native pinned WSS';if(epoch===null||epoch!==state.invalidationEpoch)disarm('Native lifecycle changed');epoch=state.invalidationEpoch;await refreshStatus();}catch{nativeAvailable=false;}}
     async function initialize(){
@@ -135,8 +150,7 @@
     const focus=()=>{void synchronizeNative();},orientation=()=>disarm('Orientation changed; reconnect and Start explicitly');window.addEventListener('focus',focus);
     const screenOrientation=screen.orientation;if(screenOrientation)screenOrientation.addEventListener('change',orientation);else window.addEventListener('orientationchange',orientation);
     void initialize();void refreshCache();
-    const leaseTimer=setInterval(()=>{if(remoteSelected&&gate.snapshot().armed&&remote.phase==='armed'&&snapshot.armed){const token=gate.capture();void request({type:'keepalive',epoch:remote.epoch}).catch(value=>{if(gate.current(token))fail(value);});}},100);
-    return()=>{disposed=true;gate.invalidate();inputQueue.stop();clearInterval(leaseTimer);unsubscribe();for(const stop of unlisten)stop();window.removeEventListener('focus',focus);if(screenOrientation)screenOrientation.removeEventListener('change',orientation);else window.removeEventListener('orientationchange',orientation);recorder.disarm('Renderer unmounted');if(nativeAvailable)void request({type:'neutralize'}).catch(()=>{});};
+    return()=>{disposed=true;gate.invalidate();inputQueue.stop();unsubscribe();for(const stop of unlisten)stop();window.removeEventListener('focus',focus);if(screenOrientation)screenOrientation.removeEventListener('change',orientation);else window.removeEventListener('orientationchange',orientation);recorder.disarm('Renderer unmounted');if(nativeAvailable)void request({type:'neutralize'}).catch(()=>{});};
   });
 </script>
 <svelte:window onblur={()=>disarm('Window lost focus')} onpagehide={()=>disarm('Page unloading')} />

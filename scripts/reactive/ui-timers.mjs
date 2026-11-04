@@ -8,13 +8,11 @@ const intervals = new Map([
   ]],
   ['src/lib/Esp32Companions.svelte', ['refresh,1000']],
   ['src/lib/ProfileDesktopControls.svelte', ['refresh,1500']],
-  ['apps/companion/src/App.svelte', [
-    "()=>{if(remoteSelected&&gate.snapshot().armed&&remote.phase==='armed'&&snapshot.armed){const token=gate.capture();void request({type:'keepalive',epoch:remote.epoch}).catch(value=>{if(gate.current(token))fail(value);});}},100",
-  ]],
 ]);
 
 const timeouts = new Map([
   // Connection retries and protocol deadlines.
+  ['apps/companion/src/lib/lease-heartbeat.ts', ['send,Math.max(0,Math.ceil(deadline-now()))']],
   ['apps/browser-companion/src/App.svelte', [
     '()=>{retryTimer=undefined;void scheduleConnect();},Math.ceil(delay)',
     'runMaintenance,Math.ceil(delay)',
