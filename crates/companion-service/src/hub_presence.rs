@@ -31,6 +31,9 @@ impl Signal {
 }
 
 impl Hub {
+    pub(crate) fn connection_authenticated(&self, connection: &str) -> bool {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner()).connections.contains_key(connection)
+    }
     /// Notifications carry no credentials, transport frames, or input values.
     pub fn observe_presence(&self, wake: Arc<NativeWake>) {
         self.presence.observe(wake);

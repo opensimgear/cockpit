@@ -65,3 +65,11 @@ device. The trace preserves those transitions and the strict idle check still
 fails. The connection cadence matches the native five-second WebSocket idle
 limit. The reason the deployed browser missed its idle keepalive still needs
 verification.
+
+The server now probes idle authenticated browser sockets with WebSocket
+control frames. A matching Pong renews socket liveness. The separate panel
+lease still requires application traffic. After restarting the rebuilt
+Windows Cockpit, the first trace included startup discovery and one companion
+inventory read. Once settled, Devices completed 60,105 ms with zero gateway
+and zero observation requests. The paired browser's network socket was still
+established afterward and was older than the entire sample.

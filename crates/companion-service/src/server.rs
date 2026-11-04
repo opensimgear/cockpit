@@ -619,9 +619,17 @@ pub(crate) fn serve_messages<S: Read + Write>(
     let mut frames = 0;
     let mut bytes = 0;
     let mut last_frame = Instant::now();
+    let mut authenticated_browser = false;
+    let mut probe = None;
     while !stop.load(Ordering::SeqCst) {
         if last_frame.elapsed() > Duration::from_secs(5) {
             break;
+        }
+        if authenticated_browser && probe.is_none() && last_frame.elapsed() >= Duration::from_secs(2) {
+            if !hub.connection_authenticated(id) { break; }
+            let nonce = uuid::Uuid::new_v4();
+            socket.send(Message::Ping(nonce.as_bytes().to_vec().into())).map_err(|error| error.to_string())?;
+            probe = Some(nonce);
         }
         let message = match socket.read() {
             Ok(message) => message,
@@ -644,6 +652,7 @@ pub(crate) fn serve_messages<S: Read + Write>(
         match message {
             Message::Text(text) => {
                 last_frame = Instant::now();
+                probe = None;
                 let frame: Value =
                     serde_json::from_str(&text).map_err(|_| "Invalid companion JSON")?;
                 if (frame["type"] == "pair" || frame["type"] == "pair-code")
@@ -669,6 +678,7 @@ pub(crate) fn serve_messages<S: Read + Write>(
                 let mut response = hub.handle_wire(frame, id, hub.now_ms());
                 if is_auth && response["ok"] == true {
                     response["connectionId"] = json!(id);
+                    authenticated_browser = browser_socket;
                 }
                 if is_auth
                     && response["ok"] != true
@@ -684,6 +694,12 @@ pub(crate) fn serve_messages<S: Read + Write>(
                     return Err("Authentication attempt budget exceeded".into());
                 }
                 send_json(&mut socket, &response)?;
+            }
+            // Socket liveness never renews a panel's application lease.
+            Message::Pong(payload) if probe.is_some_and(|nonce| payload.as_ref() == nonce.as_bytes()) => {
+                if !hub.connection_authenticated(id) { break; }
+                last_frame = Instant::now();
+                probe = None;
             }
             Message::Ping(_) | Message::Pong(_) => {}
             Message::Close(_) => break,
@@ -740,6 +756,10 @@ pub fn local_interfaces() -> Result<Value, String> {
     let values:Vec<Value>=interfaces.into_iter().filter(|item|!item.ip().is_unspecified()&&!item.ip().is_multicast()).map(|item|json!({"name":item.name,"ip":item.ip().to_string(),"loopback":item.is_loopback()})).collect();
     Ok(json!(values))
 }
+
+#[cfg(test)]
+#[path = "server_liveness_tests.rs"]
+mod liveness_tests;
 
 #[cfg(test)]
 mod tests {
