@@ -7,12 +7,34 @@ fn saved_game_context(document:&osg_profiles::ProfileDocument)->Option<String> {
     document.eligibility.game_ids.first().filter(|id|osg_profiles::activation::valid_game_id(id)).cloned()
 }
 
+#[cfg(test)]
+#[path = "profile_resources/save_tests.rs"]
+mod resource_tests;
+
 impl GatewayManager {
+    /// UI and MCP writes share the same retained-inventory check. Offline
+    /// resources are valid configuration; deleted or mismatched identities are not.
+    pub(super) fn validate_profile_save_request(&self, request: &Value) -> Result<(), String> {
+        let document = if let Some(value)=request.get("document") {
+            osg_profiles::ProfileDocument::parse_draft(&serde_json::to_vec(value).map_err(|error|error.to_string())?)?
+        } else {
+            let id=request["id"].as_str().ok_or("Choose a saved profile.")?;
+            self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(id)?.0
+        };
+        let assignments = if let Some(value) = request.get("assignments") {
+            serde_json::from_value::<Vec<osg_profiles::store::LocalAssignment>>(value.clone())
+                .map_err(|error| format!("Invalid local assignments: {error}"))?
+        } else {
+            self.profiles.lock().unwrap_or_else(|p|p.into_inner()).compile_source(&document.id)?.1
+        };
+        self.profile_resources.validate_profile_save(&document, &assignments)
+    }
     /// Save an exact AI draft through the shared atomic store transaction.
     /// Changed panel references require another preview, rather than silently
     /// substituting a publication during persistence. UI editor Save still
     /// normalizes references and retains its existing runtime behavior.
     pub(super) fn save_profile_draft(&self, request: &Value) -> Result<Value, String> {
+        self.validate_profile_save_request(request)?;
         let normalized = self.normalize_editor_panels(request)?;
         if normalized["document"] != request["document"] {
             return Err("Companion panel references changed since this draft was prepared. Refresh the panel metadata and prepare this change again.".into());
@@ -30,6 +52,7 @@ impl GatewayManager {
             let _admission = self.profile_admission.write().unwrap_or_else(|p|p.into_inner());
             let normalized=self.normalize_editor_panels(request)?;
             let request=&normalized;
+            self.validate_profile_save_request(request)?;
             let status = self.profile_session.lock().unwrap_or_else(|p|p.into_inner()).status().clone();
             let owner = status.owner.filter(|owner| {
                 matches!(status.state, State::Running | State::Degraded)

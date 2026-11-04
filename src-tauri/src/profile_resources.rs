@@ -823,6 +823,8 @@ pub(crate) fn attributes<const N: usize>(fields: [(&str, String); N]) -> BTreeMa
 mod game_delivery;
 #[path = "profile_resources/game_retention.rs"]
 mod game_retention;
+#[path = "profile_resources/authoring.rs"]
+mod authoring;
 use game_delivery::validate_admitted_game_catalogues;
 
 #[cfg(test)]
