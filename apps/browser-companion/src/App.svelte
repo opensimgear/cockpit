@@ -260,6 +260,7 @@
     if(!connection)return;
     const socket=connection,version=epoch;maintaining=true;
     try{
+      if(!panelError&&socket.notePageActivity())return;
       if(session && (active||panelError))await socket.request(frame('heartbeat',{sequence:String(++heartbeat),...(panelError?{panelError:true}:{})}));
       else if(!session && now-lastIdlePing>=2000){lastIdlePing=now;await socket.request({type:'ping'});}
     }catch(e){if(version===epoch&&!recoverObsoleteSession(e,socket,version)){error=String(e instanceof Error?e.message:e);stop('Offline · reconnecting to Cockpit');}}

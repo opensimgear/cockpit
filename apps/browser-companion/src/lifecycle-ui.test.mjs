@@ -46,6 +46,7 @@ function harness({pair=false,inlinePairing=false,hold=[],rejectPanel=false,holdV
   request(f){if(this.closed)return Promise.reject(Error('Socket closed'));this.requests.push(structuredClone(f));if(hold.includes(f.type))return new Promise((resolve,reject)=>this.pending.push({frame:f,resolve,reject}));return Promise.resolve(this.deliver(f));}
   release(type){const i=this.pending.findIndex(p=>p.frame.type===type);assert.ok(i>=0);const[p]=this.pending.splice(i,1);p.resolve(this.deliver(p.frame));}
   async subscribeFeedback(frame){this.feedbackSubscription=frame;if(frame.type==='feedback-subscribe')this.onreply?.({...this.response({type:'heartbeat'}),type:'feedback-event'});}
+  notePageActivity(){return false;}
   close(){this.closed=true;for(const p of this.pending.splice(0))p.reject(Error('Socket closed'));this.onclose?.();}
  }
  const injected=appSource.replace('</script>',`capture({connect,pair,emitOutput,runtimeError,consume,resyncFeedback,queue,resize(width,height){displayWidth=width;displayHeight=height;void reportDisplay();},get epoch(){return epoch;},get active(){return active;},get panel(){return panel;},get surfaces(){return panelSurfaces;},get suppressFeedbackCues(){return suppressFeedbackCues;},get panelError(){return panelError;},get session(){return session;},get status(){return status;},get error(){return error;},get feedbackNotice(){return feedbackNotice;},get feedback(){return feedback;},get credential(){return credential;},get secret(){return secret;}});</script>`);

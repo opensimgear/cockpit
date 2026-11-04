@@ -12,6 +12,12 @@ worker.onconnect=event=>{
   socket.onclose=()=>{if(timer)stop();};
   port.onmessage=async({data})=>{
     if(data.type==='close'){stop();return;}
+    if(data.type==='page-activity'){
+      const now=performance.now(), at=data.sentAt-performance.timeOrigin;
+      if(Number.isFinite(at))connection.notePageActivity(Math.min(at,now));
+      send({type:'page-activity-ack'});
+      return;
+    }
     if(data.type==='feedback-ack'){try{await connection.acknowledgeFeedback(data.id);}catch{stop();}return;}
     if(data.type==='connect'){
       // The worker's retry timer continues when the document is unfocused.

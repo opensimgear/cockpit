@@ -15,12 +15,27 @@ function harness(failConnect=0){
   async request(frame){this.sent.push(frame);return{ok:true,...(frame.type==='open'?identity:{}),...(frame.type==='heartbeat'||frame.type==='feedback-resync'?{type:frame.type,feedback:{mode:frame.type==='feedback-resync'?'snapshot':'delta',sequence:String(this.sent.length)}}:{})};}
   close(){this.closed=true;this.onclose?.();}
  }
- const context={exports:{},performance:{now:()=>clock},setInterval(fn){const id=intervals.size+1;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),setTimeout:fn=>timeouts.push(fn),require(name){if(name==='./socket-transport.ts')return{SocketTransport:Socket};if(name==='./background-connection.ts')return{BackgroundConnection};throw Error(name);}};
+ const context={exports:{},performance:{now:()=>clock,timeOrigin:10000},setInterval(fn){const id=intervals.size+1;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),setTimeout:fn=>timeouts.push(fn),require(name){if(name==='./socket-transport.ts')return{SocketTransport:Socket};if(name==='./background-connection.ts')return{BackgroundConnection};throw Error(name);}};
  vm.runInNewContext(code,context);
  const received=[],port={postMessage:message=>received.push(message),start(){},close(){this.closed=true;}};context.onconnect({ports:[port]});
  return{port,sockets,received,intervals,timeouts,setClock(value){clock=value;},async send(data){await port.onmessage({data});},async tick(){await Promise.all([...intervals.values()].map(fn=>fn()));}};
 }
 const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
+
+test('page activity is local and delayed messages cannot extend a held input',async()=>{
+ const h=harness();await h.send({type:'connect'});
+ await h.send({type:'request',id:1,frame:{type:'open'}});
+ await h.send({type:'request',id:2,frame:{type:'baseline',...identity,values:{button:false}}});
+ await h.send({type:'request',id:3,frame:{type:'input',...identity,changes:[{controlId:'button',value:true}]}});
+ h.setClock(900);
+ await h.send({type:'page-activity',sentAt:10900});
+ assert.equal(h.received.at(-1).type,'page-activity-ack');
+ assert.equal(h.sockets[0].sent.length,3);
+ h.setClock(1300);await h.tick();await flush();
+ assert.equal(h.sockets[0].sent.filter(f=>f.type==='input').length,1);
+ h.setClock(1950);await h.send({type:'page-activity',sentAt:10925});await h.tick();await flush();
+ assert.deepEqual(h.sockets[0].sent.filter(f=>f.type==='input').at(-1).changes,[{controlId:'button',value:false}]);
+});
 
 test('worker entry retries connection using its own timer and tears down timers and socket on explicit page close',async()=>{
  const h=harness(1),connecting=h.send({type:'connect'});await flush();assert.equal(h.timeouts.length,1);assert.equal(h.sockets[0].connects,1);

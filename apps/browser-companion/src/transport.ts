@@ -31,6 +31,7 @@ export class BrowserTransport {
   private connected:{resolve:()=>void;reject:(error:Error)=>void}|undefined;
   private startupTimer:ReturnType<typeof setTimeout>|undefined;
   private workerConnected=false;
+  private pageActivityPending=false;
   onclose:()=>void=()=>{};
   onfeedbackclose:()=>void=()=>{};
   onreply:(reply:Record<string,any>)=>void=()=>{};
@@ -44,6 +45,7 @@ export class BrowserTransport {
       if(this.closed||this.worker!==worker)return;
       if(data.type==='connected'){this.workerConnected=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=undefined;this.connected?.resolve();this.connected=undefined;}
       else if(data.type==='closed'){if(!this.workerConnected)this.fallbackDirect(worker);else{this.fail(Error('Cockpit connection closed'));this.onclose();}}
+      else if(data.type==='page-activity-ack'){this.pageActivityPending=false;}
       else if(data.type==='assignments'){this.onreply(data.reply);}
       else if(data.type==='feedback-closed'){this.onfeedbackclose();}
       else if(data.type==='feedback'){try{this.onreply(data.reply);worker.port.postMessage({type:'feedback-ack',id:data.id});}catch(error){this.fail(error instanceof Error?error:Error(String(error)));this.onclose();}}
@@ -94,6 +96,14 @@ export class BrowserTransport {
   request(frame:Record<string,unknown>):Promise<any>{
     if(this.direct)return this.direct.request(frame);
     return this.sendWorker('request',frame);
+  }
+  notePageActivity():boolean{
+    if(this.closed||!this.worker||!this.workerConnected)return false;
+    if(!this.pageActivityPending){
+      this.pageActivityPending=true;
+      this.worker.port.postMessage({type:'page-activity',sentAt:performance.timeOrigin+performance.now()});
+    }
+    return true;
   }
   private sendWorker(type:string,frame:Record<string,unknown>):Promise<any>{
     if(this.closed||!this.worker)return Promise.reject(Error('Browser connection stopped'));

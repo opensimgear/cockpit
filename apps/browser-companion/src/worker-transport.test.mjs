@@ -56,6 +56,22 @@ test('worker disconnect rejects queued input, closes its port, and notifies the 
  }finally{transport.close();h.restore();}
 });
 
+test('page activity keeps at most one timestamped worker message in flight',async()=>{
+ const h=workerHarness(),transport=new BrowserTransport();
+ try{
+  const connected=transport.connect(),worker=h.instances[0];
+  assert.equal(transport.notePageActivity(),false);
+  worker.deliver({type:'connected'});await connected;
+  assert.equal(transport.notePageActivity(),true);
+  assert.equal(transport.notePageActivity(),true);
+  assert.equal(worker.sent.filter(message=>message.type==='page-activity').length,1);
+  assert.ok(worker.sent.at(-1).sentAt>=performance.timeOrigin);
+  worker.deliver({type:'page-activity-ack'});
+  assert.equal(transport.notePageActivity(),true);
+  assert.equal(worker.sent.filter(message=>message.type==='page-activity').length,2);
+ }finally{transport.close();h.restore();}
+});
+
 test('invalid autonomous feedback tears down the worker instead of renewing a productive session',async()=>{
  const h=workerHarness(),transport=new BrowserTransport();let closes=0;
  try{

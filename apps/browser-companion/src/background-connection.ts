@@ -21,8 +21,9 @@ export class BackgroundConnection {
   private resyncing=false;
   constructor(transport:ConnectionTransport,now=()=>performance.now(),feedback:(reply:Record<string,any>,id:number)=>void=()=>{}){this.transport=transport;this.now=now;this.feedback=feedback;this.lastWindowAt=now();}
   connect(){return this.transport.connect();}
+  notePageActivity(at:number){this.lastWindowAt=Math.max(this.lastWindowAt,at);}
   request(frame:Record<string,any>,fromWindow=true):Promise<Record<string,any>>{
-    const queuedAt=this.now();if(fromWindow)this.lastWindowAt=queuedAt;
+    const queuedAt=this.now();if(fromWindow)this.notePageActivity(queuedAt);
     const work=this.tail.then(async()=>{
       if(this.closed)throw Error('Browser connection stopped');
       if(fromWindow&&this.now()-queuedAt>500)throw Error('Queued browser request expired');
