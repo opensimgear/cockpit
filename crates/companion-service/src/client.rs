@@ -1360,13 +1360,24 @@ pub fn discover(duration: Duration) -> Result<Value, String> {
     let deadline = Instant::now() + duration;
     let mut hints = BTreeMap::new();
     while Instant::now() < deadline {
-        if let Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) =
-            receiver.recv_timeout(Duration::from_millis(100))
-        {
-            hints.insert(info.get_fullname().to_string(),json!({"name":info.get_fullname(),"hostname":info.get_hostname(),"port":info.get_port(),"addresses":info.get_addresses().iter().map(ToString::to_string).collect::<Vec<_>>(),"hostId":info.get_property_val_str("hostId"),"trusted":false,"requiresOutOfBandPairing":true}));
-            if hints.len() >= 32 {
-                break;
+        match receiver.recv_deadline(deadline) {
+            Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) => {
+                let addresses = info.get_addresses().iter().map(ToString::to_string).collect::<Vec<_>>();
+                hints.insert(info.get_fullname().to_string(), json!({
+                    "name": info.get_fullname(),
+                    "hostname": info.get_hostname(),
+                    "port": info.get_port(),
+                    "addresses": addresses,
+                    "hostId": info.get_property_val_str("hostId"),
+                    "trusted": false,
+                    "requiresOutOfBandPairing": true,
+                }));
+                if hints.len() >= 32 {
+                    break;
+                }
             }
+            Ok(mdns_sd::ServiceEvent::SearchStopped(_)) | Err(_) => break,
+            Ok(_) => {}
         }
     }
     let _ = daemon.shutdown();
@@ -1376,6 +1387,22 @@ pub fn discover(duration: Duration) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_discovery_returns_only_untrusted_hints() {
+        // Opt-in live qualification can require the exact running Cockpit host.
+        let expected_host = std::env::var("OSG_DISCOVERY_EXPECTED_HOST_ID").ok();
+        let duration = if expected_host.is_some() { 1200 } else { 25 };
+        let result = discover(Duration::from_millis(duration)).unwrap();
+        assert_eq!(result["trusted"], false);
+        let hints = result["hints"].as_array().unwrap();
+        assert!(hints.len() <= 32);
+        assert!(hints.iter().all(|hint| hint["trusted"] == false && hint["requiresOutOfBandPairing"] == true));
+        if let Some(host_id) = expected_host {
+            assert!(hints.iter().any(|hint| hint["hostId"] == host_id), "Running Cockpit was not discovered");
+        }
+    }
+
     struct Adapter {
         value: Mutex<Option<Vec<u8>>>,
         available: AtomicBool,
