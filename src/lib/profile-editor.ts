@@ -1,7 +1,7 @@
 import type { LibraryModel, RuntimeModel, ModelState } from './profile-read-models/models';
 import { diagramLayout } from './profile-diagram';
 import { DEFAULT_PROFILE_ID, MAX_PROFILES, captureProfileSession, parseProfileDocument, profileAssignmentsError, profileDocumentError, type DeepReadonly, type ProfileDocument, type ProfileLocalAssignment, type ProfileResult, type ProfileSession, type ProfileSummary } from './profiles';
-import type { ProfileInventoryClient, ResourceSummary } from './profile-inventory';
+import type { ProfileInventoryClient, ResourcePage, ResourceSummary } from './profile-inventory';
 import { profileTabNodeIds, profileStampVehicleNodes } from './profile-vehicle-tabs';
 export const PROFILE_RESOURCE_CAPACITY = 64;
 export const PROFILE_BLOCK_WIDTH = 288;
@@ -164,6 +164,7 @@ export class ProfileEditorStore {
     private inventoryEpoch = 0;
     private inventoryVersion = 0;
     private inventorySignature = '';
+    private inventoryCursor?: Pick<ResourcePage, 'session' | 'revision'>;
     private savedRefreshing = false;
     private libraryObservation: ModelState<LibraryModel> | null = null;
     private observedRequest = '';
@@ -231,26 +232,48 @@ export class ProfileEditorStore {
         if (epoch === this.epoch)
             this.set({ busy: false });
     } }
-    async refreshInventory(): Promise<void> { const epoch = ++this.inventoryEpoch; this.set({ inventoryBusy: true }); try {
-        const result = await this.inventory.listAll();
-        if (epoch !== this.inventoryEpoch)
+    private olderInventory(page: DeepReadonly<ResourcePage>): boolean {
+        const cursor = this.inventoryCursor;
+        return !!cursor?.session && page.session === cursor.session && BigInt(page.revision) < BigInt(cursor.revision);
+    }
+
+    private acceptInventory(result: DeepReadonly<ResourcePage>): void {
+        this.inventoryCursor = { session: result.session, revision: result.revision };
+        if (result.readOnly) {
+            this.rejectInventory(result.inventoryDiagnostics?.join(' ') || 'Resource inventory could not be verified. Resolve its diagnostics before saving assigned components.');
             return;
-        const signature = JSON.stringify([result.session, result.revision, result.resources, result.inventoryDiagnostics ?? [], result.readOnly === true]);
+        }
+        const signature = JSON.stringify([result.session, result.revision, result.resources, result.inventoryDiagnostics ?? []]);
         if (!this.value.inventoryLoaded || signature !== this.inventorySignature) this.inventoryVersion++;
         this.inventorySignature = signature;
         this.set({ inventory: clone(result.resources) as ResourceSummary[], inventoryLoaded: true, inventoryError: result.inventoryDiagnostics?.join(' ') ?? '' });
     }
-    catch (error) {
-        if (epoch === this.inventoryEpoch) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (this.value.inventoryLoaded || this.value.inventoryError !== message) this.inventoryVersion++;
-            this.set({ inventoryLoaded: false, inventoryError: message });
+
+    private rejectInventory(message: string): void {
+        if (this.value.inventoryLoaded || this.value.inventoryError !== message) this.inventoryVersion++;
+        this.set({ inventoryLoaded: false, inventoryError: message });
+    }
+
+    observeInventory(page: DeepReadonly<ResourcePage> | null, error?: string): void {
+        if (page && this.olderInventory(page)) return;
+        this.inventoryEpoch++;
+        if (page) this.acceptInventory(page);
+        else this.rejectInventory(error || 'Waiting for current resource inventory.');
+        if (this.value.inventoryBusy) this.set({ inventoryBusy: false });
+    }
+
+    async refreshInventory(): Promise<void> {
+        const epoch = ++this.inventoryEpoch;
+        this.set({ inventoryBusy: true });
+        try {
+            const result = await this.inventory.listAll();
+            if (epoch === this.inventoryEpoch && !this.olderInventory(result)) this.acceptInventory(result);
+        } catch (error) {
+            if (epoch === this.inventoryEpoch) this.rejectInventory(error instanceof Error ? error.message : String(error));
+        } finally {
+            if (epoch === this.inventoryEpoch) this.set({ inventoryBusy: false });
         }
     }
-    finally {
-        if (epoch === this.inventoryEpoch)
-            this.set({ inventoryBusy: false });
-    } }
     /** Panel saves can refresh a clean profile externally. Never replace local
      * edits or replay a Save completion while observing those saved changes. */
     async refreshSaved(): Promise<void> {

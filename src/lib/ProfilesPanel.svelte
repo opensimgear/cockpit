@@ -1,5 +1,6 @@
 <script lang="ts">
   import { observeProfileLibrary, observeProfileRuntime } from './profile-read-models/shared';
+  import { observeProfileResources } from './profile-resources-shared';
   import PageHeader from './PageHeader.svelte';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import Icon from './Icon.svelte';
@@ -93,10 +94,7 @@
   $effect(()=>{if(paletteDrag&&(!active||!canDropComponent(paletteDrag.component)))paletteDrag=null;});
   $effect(()=>{
     if(!active)return;
-    const refresh=()=>{if(!document.hidden&&!store.state.inventoryBusy)void store.refreshInventory();};
-    refresh();const timer=setInterval(refresh,3000);
-    document.addEventListener('visibilitychange',refresh);window.addEventListener('focus',refresh);
-    return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',refresh);window.removeEventListener('focus',refresh);};
+    return observeProfileResources((page,error)=>store.observeInventory(page,error));
   });
   function report(operation:()=>void) { notice='';const previous=getNavigation();try{operation();workspace=store.state;if(getNavigation()!==previous)onNavigate?.(getNavigation());}catch(error){notice=error instanceof Error?error.message:String(error);} }
   export function getNavigation():string|null { const current=store.state;return current.view==='editor'?current.editor?.document.id??null:null; }

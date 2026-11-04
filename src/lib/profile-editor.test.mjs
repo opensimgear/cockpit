@@ -330,3 +330,32 @@ test('stream updates retain dirty drafts and fence old pinned reads after save, 
 test('opening under an unchanged library baseline uses its explicit pinned read once',async()=>{
  const h=harness();h.store.observeLibrary(libraryState(h));await h.store.open(DEFAULT_PROFILE_ID);await settleObservation();assert.equal(h.calls.filter(call=>Array.isArray(call)&&call[0]==='get').length,1);
 });
+
+test('resource observations fence old pages, preserve drafts, and invalidate an outstanding manual read',async()=>{
+  const h=harness(), pending=deferred(), items=inventory();
+  await h.store.open(DEFAULT_PROFILE_ID);
+  const draft=plain(h.store.state.editor.document);
+  draft.name='Local draft';h.store.update(draft);
+  h.provider.listAll=()=>pending.promise;
+  const refreshing=h.store.refreshInventory();
+  const page={session:'native-inventory',revision:'3',resources:items,offset:0,total:items.length};
+  h.store.observeInventory(page);
+  assert.equal(h.store.state.inventoryBusy,false);
+  assert.equal(h.store.state.inventoryLoaded,true);
+  const version=h.store.inventoryRevision;
+  h.store.observeInventory({...page,revision:'2',resources:[]});
+  pending.resolve({...page,revision:'1',resources:[]});
+  await refreshing;
+  assert.equal(h.store.inventoryRevision,version);
+  assert.equal(h.store.state.inventory.length,items.length);
+  h.store.observeInventory(null,'Native catalogue is stale.');
+  assert.equal(h.store.state.inventoryLoaded,false);
+  assert.equal(h.store.state.inventory.length,items.length);
+  h.store.observeInventory({...page,revision:'4',readOnly:true,inventoryDiagnostics:['Retained only']});
+  assert.equal(h.store.state.inventoryError,'Retained only');
+  h.store.observeInventory(page);
+  assert.equal(h.store.state.inventoryLoaded,false);
+  h.store.observeInventory({...page,revision:'4'});
+  assert.equal(h.store.state.inventoryLoaded,true);
+  assert.equal(h.store.state.editor.document.name,'Local draft');
+});
