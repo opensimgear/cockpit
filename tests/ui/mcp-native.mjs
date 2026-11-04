@@ -109,7 +109,7 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const modern = async (method, params, extraHeaders = {}) => {
       const version = extraHeaders['MCP-Protocol-Version'] ?? '2026-07-28';
       return fetch(endpoint, {
-        method: 'POST', signal: AbortSignal.timeout(10000),
+        method: 'POST', signal: AbortSignal.timeout(method === 'subscriptions/listen' && process.env.OSG_MCP_GAME_JOBS_OBSERVATION === '1' ? 30000 : 10000),
         headers: { Authorization: `Bearer ${read.token}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'MCP-Protocol-Version': version, 'Mcp-Method': method, ...(params.name || params.uri ? { 'Mcp-Name': params.name ?? params.uri } : {}), ...extraHeaders },
         body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params: { ...params, _meta: { 'io.modelcontextprotocol/protocolVersion': version, 'io.modelcontextprotocol/clientInfo': { name: 'Cockpit modern transport acceptance', version: '1' }, 'io.modelcontextprotocol/clientCapabilities': {} } } }),
       });
@@ -125,7 +125,10 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     assert.ok(fixedResources.some(resource => resource.uri === 'cockpit://observations/profiles.resources'));
     const controllerUri = 'cockpit://observations/controllers.inventory';
     const observeController = process.env.OSG_MCP_CONTROLLER_OBSERVATION === '1';
-    const uris = observeController ? [observationUri, controllerUri] : [observationUri];
+    const jobsUri = 'cockpit://observations/games.jobs';
+    const observeJobs = process.env.OSG_MCP_GAME_JOBS_OBSERVATION === '1';
+    const uris = [observationUri, ...(observeController ? [controllerUri] : []), ...(observeJobs ? [jobsUri] : [])];
+    assert.ok(uris.every(uri => fixedResources.some(resource => resource.uri === uri)));
     const observation = await modern('subscriptions/listen', { notifications: { resourceSubscriptions: uris } });
     assert.equal(observation.status, 200);
     assert.match(observation.headers.get('content-type'), /text\/event-stream/);
@@ -203,6 +206,32 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
         }
         evidence.modernObservation.controllerRename = { sourceId: source.id, sameGeneration: true };
       }
+      if (observeJobs) {
+        await page.evaluate(async () => {
+          const { observeGameJobs } = await import('/src/lib/game-read-models/shared.ts');
+          window.__mcpJobsStop = observeGameJobs(state => { window.__mcpJobsState = state; });
+        });
+        const jobs = () => page.evaluate(() => window.__mcpJobsState);
+        await until(async () => (await jobs())?.status === 'ready', 'Native jobs observer missed its baseline');
+        const started = await ok(writer, 'game_discovery_start', mutation({}));
+        assert.ok(started.scanId);
+        let completed;
+        while (!completed) {
+          const notification = await nextObservation();
+          assert.equal(notification.method, 'notifications/resources/updated');
+          if (notification.params.uri !== jobsUri) continue;
+          const frame = notification.params._meta['opensimgear.com/observation'];
+          assert.notEqual(frame.kind, 'loss');
+          completed = frame.payload?.jobs?.find(job => job.key === 'discovery'
+            && job.run === started.scanId && (job.phase === 'ready' || job.terminal));
+        }
+        assert.equal(completed.phase, 'ready');
+        const nativeJob = await until(async () => (await jobs())?.value?.jobs.find(job =>
+          job.key === 'discovery' && job.run === started.scanId && job.phase === 'ready'),
+        'Native jobs observer missed the MCP-started discovery result');
+        assert.deepEqual(nativeJob, completed);
+        evidence.modernObservation.discoveryJob = { scanId: started.scanId, phase: completed.phase, statusReads: 0 };
+      }
     } finally {
       try {
         if (originalController) await page.native({ command: 'controller_update', ...originalController });
@@ -215,6 +244,9 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
           window.__mcpControllerStop?.();
           delete window.__mcpControllerStop;
           delete window.__mcpControllerState;
+          window.__mcpJobsStop?.();
+          delete window.__mcpJobsStop;
+          delete window.__mcpJobsState;
         });
       }
     }

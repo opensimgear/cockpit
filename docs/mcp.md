@@ -307,6 +307,12 @@ bounded `resources/read` for the same URI to obtain its current baseline.
 Closing the HTTP stream or revoking its credential releases its readers.
 The `2025-11-25` handshake advertises bounded resource reads only.
 
+For game discovery, subscribe to `games.jobs` before calling
+`game_discovery_start`. Match the job's `run` to the returned `scanId`.
+A `ready` phase means the scan results are available for review. The job
+can still advance to `applied`. Once ready, use `game_discovery_status`
+to read the desired result page.
+
 ## Compatibility and troubleshooting
 
 The server uses the pinned Rust SDK `rmcp = 3.6.0` with Streamable HTTP and
