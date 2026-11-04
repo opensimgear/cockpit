@@ -3,20 +3,38 @@
   import type{DeepReadonly}from'./profiles';
   import type{ObservedResourcePort,ResourceSummary}from'./profile-inventory';
   import{ProfileLearningController}from'./profile-learning-controller';
+  import{SharedObservations}from'./streams/shared';
   let{controller,resource,context,active=true,disabled=false,runtimeIdle=false,choose}:{controller:ProfileLearningController;resource:DeepReadonly<ResourceSummary>;context:string;active?:boolean;disabled?:boolean;runtimeIdle?:boolean;choose:(candidate:DeepReadonly<ObservedResourcePort>)=>void}=$props();
   const learner=untrack(()=>controller);
-  let view=$state.raw(learner.state),mounted=$state(false),notice=$state('');
+  let view=$state.raw(learner.state),mounted=$state(false),notice=$state(''),observationError=$state('');
   const captureContext=$derived(JSON.stringify([context,resource.id,resource.generation,resource.capabilityRevision,resource.availability,resource.connections.map(connection=>[connection.scope,connection.key,connection.route.id,connection.route.providerGeneration,connection.route.baselineReady])]));
   const physical=$derived(resource.resourceType==='host-controller'&&resource.availability==='online'&&resource.connections.length===1&&resource.connections[0].route.transport==='hid'&&resource.connections[0].route.baselineReady);
   const blocked=$derived(disabled||!active||!runtimeIdle||!physical);
-  const pollKey=$derived(view.status&&view.status.phase!=='stopped'?view.status.learnId:'');
+  const learningId=$derived(view.status&&view.status.phase!=='stopped'?view.status.learnId:'');
   function mountLearning(){mounted=true;const stop=learner.subscribe(next=>view=next);return()=>{mounted=false;stop();learner.clear();};}
   onMount(mountLearning);
   function syncContext(){learner.setContext(active&&runtimeIdle?captureContext:'inactive-or-owned');}
   $effect(syncContext);
-  function watchLearning(){if(!mounted||!active||!runtimeIdle||!pollKey)return;const refresh=()=>{if(!document.hidden)void learner.refresh();};refresh();document.addEventListener('visibilitychange',refresh);const timer=window.setInterval(refresh,400);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};}
+  function watchLearning(){
+    if(!mounted||!active||!runtimeIdle||!learningId)return;
+    const observations=new SharedObservations();
+    let closed=false,reading=false,queued=false;
+    async function refresh(){
+      if(closed||document.hidden)return;
+      if(reading){queued=true;return;}
+      reading=true;
+      try{do{queued=false;await learner.refresh();}while(queued&&!closed&&!document.hidden);}
+      finally{reading=false;}
+    }
+    observations.subscribe('profiles.learning',state=>{
+      if(state.status==='ready'){observationError='';void refresh();}
+      else if(state.status==='error'||state.status==='lost')observationError=state.error??'Input learning updates are unavailable.';
+    });
+    document.addEventListener('visibilitychange',refresh);
+    return()=>{closed=true;observations.close();document.removeEventListener('visibilitychange',refresh);};
+  }
   $effect(watchLearning);
-  async function start(){if(blocked||view.pending)return;notice='';await learner.start({resourceId:resource.id,generation:resource.generation,capabilityRevision:resource.capabilityRevision});}
+  async function start(){if(blocked||view.pending)return;notice='';observationError='';await learner.start({resourceId:resource.id,generation:resource.generation,capabilityRevision:resource.capabilityRevision});}
   async function cancel(){notice='';await learner.cancel();}
   async function select(port:DeepReadonly<ObservedResourcePort>){if(blocked||view.pending)return;const captured=captureContext;notice='';try{const candidate=await learner.choose(port.descriptor.id,port.contractHash,resource);if(captured!==captureContext||blocked)return;choose(candidate);notice='Added the selected input port to this draft. Connect an exact route and Save explicitly.';}catch(error){notice=error instanceof Error?error.message:String(error);}}
 </script>
@@ -26,7 +44,7 @@
   {#if !runtimeIdle}<p class="learning-notice">Deactivate and recover active outputs before learning. Native also checks pending game, mapping, virtual-controller and visibility ownership.</p>{:else if !physical}<p class="learning-notice">Learning requires a current physical HID controller with a complete native baseline. Use the exact port catalogue for other resource types.</p>{/if}
   <div class="learning-actions"><button class="secondary-button" disabled={blocked||!!view.pending||view.status?.phase==='listening'} onclick={start}>{view.pending==='start'?'Starting native capture…':'Learn input without output'}</button><button class="text-button" disabled={view.pending==='cancel'||!view.pending&&(!view.status||view.status.phase==='stopped')} onclick={cancel}>{view.pending==='cancel'?'Cancelling…':'Cancel learning'}</button></div>
   {#if view.status}<p class="learning-state" role="status">{view.status.phase}{view.stale?' · last capture is stale':''}. {view.status.reason}</p>{#if view.status.phase==='learned'}<ul aria-label="Explicit learned input candidates">{#each view.status.candidates as port (JSON.stringify([port.descriptor.id,port.contractHash]))}<li><div><strong>{port.descriptor.name}</strong><code>{port.descriptor.id}</code><small>{port.descriptor.contract.delivery} · {port.descriptor.contract.delivery==='state'||port.descriptor.contract.delivery==='event'?port.descriptor.contract.schema.type:''}</small></div><button class="secondary-button" disabled={blocked||view.stale||view.loading||!!view.pending} onclick={()=>select(port)}>Add this input port</button></li>{/each}</ul>{/if}{/if}
-  {#if view.error}<p class="learning-error" role="status">{view.error}</p>{/if}
+  {#if view.error||observationError}<p class="learning-error" role="status">{view.error||observationError}</p>{/if}
   {#if notice}<p class="learning-notice" role="status">{notice}</p>{/if}
 </section>
 

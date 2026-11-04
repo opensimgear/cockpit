@@ -1,5 +1,5 @@
-//! One capture-only native HID learner. UI polling reads cached state and never
-//! pumps reports, starts outputs or changes a profile/local assignment.
+//! One capture-only native HID learner. Status observers never pump reports,
+//! start outputs or change a profile or local assignment.
 use osg_controller_input::{registry::MAX_CONTROLS, stream};
 use osg_profiles::resources::{ResourceToken, Route, Transport};
 use osg_profiles::resources_ports::PortDescriptor;
@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+const TOPIC: &str = "profiles.learning";
 const WINDOW_US: u64 = 30_000_000;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -274,6 +275,14 @@ impl Entry {
 struct State {
     serial: u64,
     entry: Option<Entry>,
+    observation: Option<(crate::observations::Runtime, osg_streams::Publisher)>,
+}
+impl State {
+    fn publish(&self) {
+        if let Some((runtime, publisher)) = &self.observation {
+            let _ = publisher.publish_latest_state(publisher.generation(), json!({}), runtime.captured_us(), TOPIC);
+        }
+    }
 }
 type Shared = Arc<(Mutex<State>, Condvar)>;
 pub(crate) struct Runtime {
@@ -312,6 +321,15 @@ impl Runtime {
             stopped,
             worker: Mutex::new(worker),
         }
+    }
+    pub(crate) fn observe(&self, runtime: &crate::observations::Runtime) -> Result<(), String> {
+        let mut state = self.shared.0.lock().unwrap_or_else(|p| p.into_inner());
+        let publisher = runtime.broker().register(osg_streams::TopicSpec {
+            topic: TOPIC.into(), source: "profile-input-learning".into(),
+            audiences: vec!["ui".into(), "browser".into(), "mcp".into()],
+        }, json!({}), runtime.captured_us(), TOPIC.into()).map_err(|error| error.to_string())?;
+        state.observation = Some((runtime.clone(), publisher));
+        Ok(())
     }
     pub(crate) fn start(
         &self,
@@ -366,6 +384,7 @@ impl Runtime {
                 .ok_or("Input learning generation exhausted.")?;
             if let Some(entry) = state.entry.as_mut() {
                 entry.stop("Replaced by a new input-learning capture.");
+                state.publish();
             }
             state.serial
         };
@@ -394,6 +413,7 @@ impl Runtime {
             epoch,
             started: Instant::now(),
         });
+        state.publish();
         drop(state);
         self.shared.1.notify_one();
         Ok(result)
@@ -423,6 +443,7 @@ impl Runtime {
         let entry = state.entry.as_mut().unwrap();
         entry.stop("Input learning cancelled explicitly.");
         let result = serde_json::to_value(&entry.status).map_err(|error| error.to_string());
+        state.publish();
         drop(state);
         self.shared.1.notify_one();
         result
@@ -430,8 +451,9 @@ impl Runtime {
     pub(crate) fn invalidate(&self, reason: &str) {
         let mut state = self.shared.0.lock().unwrap_or_else(|p| p.into_inner());
         state.serial = state.serial.saturating_add(1);
-        if let Some(entry) = state.entry.as_mut() {
+        if let Some(entry) = state.entry.as_mut().filter(|entry| entry.status.phase != "stopped") {
             entry.stop(reason);
+            state.publish();
         }
         drop(state);
         self.shared.1.notify_one();
@@ -442,6 +464,8 @@ impl Runtime {
         if let Some(worker) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
             let _ = worker.join();
         }
+        let observation = self.shared.0.lock().unwrap_or_else(|p| p.into_inner()).observation.take();
+        if let Some((runtime, publisher)) = observation { runtime.broker().retire(&publisher); }
     }
 }
 impl Drop for Runtime {
@@ -452,6 +476,7 @@ impl Drop for Runtime {
 fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped: Arc<AtomicBool>) {
     while !stopped.load(Ordering::Acquire) {
         let mut state = shared.0.lock().unwrap_or_else(|p| p.into_inner());
+        if stopped.load(Ordering::Acquire) { break; }
         let serial = state.serial;
         let Some(entry) = state
             .entry
@@ -461,7 +486,7 @@ fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped:
             drop(
                 shared
                     .1
-                    .wait_timeout(state, Duration::from_millis(20))
+                    .wait(state)
                     .unwrap_or_else(|p| p.into_inner()),
             );
             continue;
@@ -498,12 +523,14 @@ fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped:
             }
         })();
         let mut state = shared.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut changed = false;
         if state.serial == serial {
             if let Some(entry) = state
                 .entry
                 .as_mut()
                 .filter(|entry| entry.status.learn_id == id && entry.status.phase != "stopped")
             {
+                let previous_phase = entry.status.phase.clone();
                 if epoch.load(Ordering::Acquire) != expected_epoch {
                     entry.stop("Native control changed; restart input learning explicitly.");
                 } else {
@@ -537,8 +564,10 @@ fn worker(shared: Shared, capture: Arc<Capture>, epoch: Arc<AtomicU64>, stopped:
                         Ok(None) => {}
                     }
                 }
+                changed = previous_phase != entry.status.phase;
             }
         }
+        if changed { state.publish(); }
         drop(
             shared
                 .1

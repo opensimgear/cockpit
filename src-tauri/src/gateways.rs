@@ -440,6 +440,9 @@ impl GatewayManager {
             worker
         });
         let observations = crate::observations::Runtime::new();
+        if let Err(error) = profile_learning.observe(&observations) {
+            eprintln!("Cannot start input learning observations: {error}");
+        }
         if let Err(error) = module_usb.observe_inventory(&observations) {
             eprintln!("Cannot start USB inventory observations: {error}");
         }

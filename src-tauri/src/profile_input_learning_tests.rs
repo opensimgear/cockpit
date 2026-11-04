@@ -201,9 +201,23 @@ fn wait(fixture: &Fixture, id: &str, phase: &str) -> Value {
 #[test]
 fn worker_learns_from_native_journal_without_status_pumping_or_profile_effects() {
     let fixture = fixture();
+    let observations = crate::observations::Runtime::new();
+    fixture.runtime.observe(&observations).unwrap();
+    let broker = observations.broker();
+    let mut reader = broker.subscribe("learning-test", "mcp", TOPIC).unwrap();
+    let mut next = || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(frame) = reader.try_recv().unwrap() { return frame; }
+            assert!(Instant::now() < deadline, "Learning event was not delivered");
+            thread::sleep(Duration::from_millis(1));
+        }
+    };
+    assert_eq!(next().revision, "1");
     assert_eq!(fixture.calls.load(Ordering::Acquire), 0);
-    fixture.journal.lock().unwrap().push(changed(&[0]));
     let started = start(&fixture);
+    assert_eq!(next().revision, "2");
+    fixture.journal.lock().unwrap().push(changed(&[0]));
     let id = started["learnId"].as_str().unwrap();
     assert_eq!(started["phase"], "listening");
     assert_eq!(started["untilUs"], "30000100");
@@ -213,6 +227,9 @@ fn worker_learns_from_native_journal_without_status_pumping_or_profile_effects()
         thread::sleep(Duration::from_millis(5));
     }
     let status = wait(&fixture, id, "learned");
+    let learned = next();
+    assert_eq!(learned.revision, "3");
+    assert_eq!(learned.payload, Some(json!({})));
     assert_eq!(status["schemaVersion"], 1);
     assert_eq!(status["resourceId"], fixture.resource);
     assert_eq!(status["candidates"].as_array().unwrap().len(), 1);
@@ -229,6 +246,10 @@ fn worker_learns_from_native_journal_without_status_pumping_or_profile_effects()
         fixture.runtime.status(id).unwrap();
     }
     assert_eq!(fixture.calls.load(Ordering::Acquire), after);
+    fixture.runtime.cancel(id).unwrap();
+    assert_eq!(next().revision, "4");
+    fixture.runtime.shutdown();
+    assert!(!broker.available_to(TOPIC, "mcp"));
 }
 #[test]
 fn deliberate_axis_hat_changes_and_ambiguity_return_only_exact_candidates() {
