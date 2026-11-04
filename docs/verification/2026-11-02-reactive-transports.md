@@ -69,3 +69,15 @@ Coverage checks are wired into the workspace tasks and native CI. The focused
 runtime tests remain opt-in because they require the running cockpit and exclusive
 database ownership. Full cross-platform CI, other native repository suites, broader
 idle measurements and hardware acceptance are not represented by this record.
+
+## R1 recheck, 2026-11-04
+
+The current Windows dev Cockpit passed the native two-consumer mutation, no
+refresh, disposal, and reload fixture. The browser-dev gateway ran against an
+isolated local database. It passed the two-consumer mutation and reopen fixture.
+A second browser test interrupted its owned gateway process with an observation
+already active, received a transport error, disposed the old listener, and
+opened one fresh connection. The new session delivered one baseline and the old
+listener received no further frames. The 57 broker and 24 bridge tests passed
+locally. Full producer migration, representative rig budgets, and
+simulator/hardware qualification have separate acceptance criteria.

@@ -50,3 +50,34 @@ test('browser-dev real service publishes committed values across two consumers a
     if(current.value!==original.value)await gateway({command:'ui_preferences_save',key:'theme',expectedRevision:current.revision,value:original.value});
   }
 });
+
+const disconnectMarker=process.env.OSG_REACTIVE_DISCONNECT_MARKER;
+test('browser-dev reports a real gateway disconnect and opens one fresh connection',{
+  skip:!disconnectMarker,timeout:60000,
+},async()=>{
+  let connections=0;
+  const transport=createBrowserObservationTransport({endpoint:`${origin}/api/observe/`,fetch:(url,args)=>{
+    if(String(url)===`${origin}/api/observe/`)connections++;
+    return fetchLocal(url,args);
+  }});
+  const old=new SharedObservations(transport),fresh=new SharedObservations(transport);
+  const before=[],after=[];
+  try{
+    const dispose=old.subscribe('preferences.theme',value=>before.push(value));
+    const initial=await until(()=>Promise.resolve(before.at(-1)),value=>value?.status==='ready');
+    await writeFile(disconnectMarker,initial.frame.session);
+    await until(()=>Promise.resolve(before.at(-1)),value=>value?.status==='error');
+    dispose();
+    const oldDeliveries=before.length;
+    fresh.subscribe('preferences.theme',value=>after.push(value));
+    const reopened=await until(()=>Promise.resolve(after.at(-1)),value=>value?.status==='ready');
+    assert.equal(reopened.frame.kind,'snapshot');
+    assert.notEqual(reopened.frame.session,initial.frame.session);
+    assert.equal(connections,2);
+    assert.equal(before.length,oldDeliveries);
+    assert.equal(after.filter(value=>value.status==='ready').length,1);
+  }finally{
+    old.close();
+    fresh.close();
+  }
+});
