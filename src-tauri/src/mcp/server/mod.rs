@@ -66,6 +66,7 @@ pub struct Server {
     tools: Arc<Tools>,
     calls: Arc<Semaphore>,
     urgent: Arc<Semaphore>,
+    subscriptions: Semaphore,
 }
 
 #[derive(Clone, Deserialize)]
@@ -103,6 +104,7 @@ impl Server {
             manager,
             calls: Arc::new(Semaphore::new(12)),
             urgent: Arc::new(Semaphore::new(4)),
+            subscriptions: Semaphore::new(8),
         });
         server.tools.bind_integration(Arc::downgrade(&server));
         if initial.enabled {
@@ -268,6 +270,7 @@ pub async fn mcp_credential_rotate(id:String,expected_settings_revision:u64,stat
 }
 
 mod auth;
+mod observation_uri;
 mod credentials;
 mod transport;
 #[cfg(test)]
@@ -276,3 +279,5 @@ mod tests;
 mod ipc_tests;
 #[cfg(test)]
 mod transport_tests;
+#[cfg(test)]
+mod observation_stress_tests;

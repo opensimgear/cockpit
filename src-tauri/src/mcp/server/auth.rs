@@ -25,8 +25,11 @@ impl Server {
         Ok(())
     }
     pub(super) fn native_authorization(&self, id: &str, authorized: bool) {
-        self.manager
-            .mcp_authorize_client(&mcp_tools::native_client(&format!("mcp-{id}")), authorized);
+        let client = mcp_tools::native_client(&format!("mcp-{id}"));
+        if !authorized {
+            self.manager.observations.close_client(&client);
+        }
+        self.manager.mcp_authorize_client(&client, authorized);
     }
     pub(super) fn authenticate(&self, token: &str, generation: u64) -> Option<Principal> {
         if token.len() > 256 {

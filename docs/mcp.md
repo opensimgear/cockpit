@@ -280,6 +280,23 @@ request smaller pages or a specific inspection section when a reply is too
 large. The installed tool schemas and compiler diagnostics specify additional
 document, catalogue, and native limits.
 
+## Observe live state
+
+Clients using MCP `2026-07-28` can open `subscriptions/listen` with
+`notifications.resourceSubscriptions` containing up to eight exact Cockpit
+observation URIs. Use `cockpit://observations/` followed by a topic such as
+`profiles.library`, `profiles.runtime`, `workspace.state`, `games.state`,
+`games.jobs` or `controllers.inventory`. Exact native CAN, USB, controller
+and game detail topics use the same names as the Cockpit observation broker.
+
+The server acknowledges the accepted topics before emitting
+`notifications/resources/updated`. Each update contains the observation
+frame under `params._meta["opensimgear.com/observation"]`, including its
+generation and snapshot, change or loss kind. Clients can also issue a
+bounded `resources/read` for the same URI to obtain its current baseline.
+Closing the HTTP stream or revoking its credential releases its readers.
+The `2025-11-25` handshake advertises bounded resource reads only.
+
 ## Compatibility and troubleshooting
 
 The server uses the pinned Rust SDK `rmcp = 3.6.0` with Streamable HTTP and

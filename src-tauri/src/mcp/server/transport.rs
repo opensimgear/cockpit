@@ -1,4 +1,6 @@
 use super::*;
+#[path = "observation_stream.rs"]
+mod observation_stream;
 
 impl Server {
     pub(super) async fn listen(
@@ -145,9 +147,27 @@ pub(super) fn operation_error(code: &str, message: &str, operation_id: Option<Va
 }
 impl ServerHandler for Handler {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().enable_resources_subscribe().build())
             .with_server_info(Implementation::new("opensimgear-cockpit", env!("CARGO_PKG_VERSION")).with_title("OpenSimGear Cockpit"))
             .with_instructions("Configure the running OpenSimGear Cockpit. Discover current IDs and revisions, prepare and validate a draft, save it, then explicitly apply the exact saved revision and observed owner. Use an operationId for changes and reconcile uncertain results. Read access cannot mutate. Device writes retain native claims and generation checks.")
+    }
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        context.peer.set_peer_info(request.clone());
+        let mut info = self.negotiate_initialize(&request)?;
+        if let Some(resources) = &mut info.capabilities.resources {
+            resources.subscribe = None;
+        }
+        Ok(info)
+    }
+    fn accepted_subscription_filter(&self, requested: &SubscriptionFilter) -> Option<SubscriptionFilter> {
+        Some(observation_stream::accepted(requested))
+    }
+    async fn listen(&self, context: rmcp::service::SubscriptionContext) -> Result<(), ErrorData> {
+        self.listen_observations(context).await
     }
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Owned(vec![
@@ -255,6 +275,26 @@ impl ServerHandler for Handler {
         )
         .map_err(|e| ErrorData::internal_error(e.to_string(), None))
     }
+    async fn list_resource_templates(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        self.principal(&context, false)?;
+        if request.and_then(|request| request.cursor).is_some() {
+            return Err(ErrorData::invalid_params("The observation template catalogue fits one page.", None));
+        }
+        serde_json::from_value(json!({
+            "resourceTemplates": [{
+                "uriTemplate":"cockpit://observations/{topic}",
+                "name":"Cockpit observation",
+                "description":"Read a current baseline or subscribe with MCP 2026-07-28. Topics include profiles.library, profiles.runtime, workspace.state, games.state, games.jobs, controllers.inventory and exact native endpoint topics.",
+                "mimeType":"application/json"
+            }],
+            "ttlMs":0,
+            "cacheScope":"private"
+        })).map_err(|error| ErrorData::internal_error(error.to_string(), None))
+    }
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
@@ -273,6 +313,10 @@ impl ServerHandler for Handler {
                 let _permit = permit;
                 if !server.authorized(&principal, false) {
                     return json!({"ok":false,"error":{"code":"access_denied"}});
+                }
+                if let Some(topic) = observation_uri::topic(&read_uri) {
+                    let client = mcp_tools::native_client(&format!("mcp-{}", principal.id));
+                    return bounded(observation_stream::read(&server, &client, topic));
                 }
                 bounded(tools.read_resource(&read_uri, &format!("mcp-{}", principal.id)))
             }),

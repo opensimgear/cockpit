@@ -117,6 +117,51 @@ test('real MCP client configures the same running dev Cockpit as its UI', { time
     const modernStatus = await modern('tools/call', { name: 'profile_status', arguments: {} }); assert.equal(modernStatus.status, 200);
     assert.equal((await modernStatus.json()).result.structuredContent.ok, true);
     const modernResource = await modern('resources/read', { uri: 'cockpit://guide/configuration' }); assert.equal(modernResource.status, 200); assert.ok((await modernResource.json()).result.contents.length);
+    const observationUri = 'cockpit://observations/profiles.library';
+    const observation = await modern('subscriptions/listen', { notifications: { resourceSubscriptions: [observationUri] } });
+    assert.equal(observation.status, 200);
+    assert.match(observation.headers.get('content-type'), /text\/event-stream/);
+    const observationReader = observation.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    const messages = [];
+    const nextObservation = async () => {
+      while (!messages.length) {
+        const { value, done } = await observationReader.read();
+        assert.equal(done, false, 'Observation stream closed before its baseline.');
+        pending += decoder.decode(value, { stream: true });
+        let newline;
+        while ((newline = pending.indexOf('\n')) !== -1) {
+          const line = pending.slice(0, newline);
+          pending = pending.slice(newline + 1);
+          if (line.startsWith('data:')) messages.push(JSON.parse(line.slice(5)));
+        }
+      }
+      return messages.shift();
+    };
+    try {
+      assert.equal((await nextObservation()).method, 'notifications/subscriptions/acknowledged');
+      const baseline = await nextObservation();
+      assert.equal(baseline.params.uri, observationUri);
+      assert.equal(baseline.params._meta['opensimgear.com/observation'].kind, 'snapshot');
+      const observedName = `MCP observation ${randomUUID()}`;
+      const created = await page.native({ command: 'profile_create', name: observedName });
+      profiles.add(created.profiles.document.id);
+      for (;;) {
+        const update = await nextObservation();
+        assert.equal(update.method, 'notifications/resources/updated');
+        assert.equal(update.params.uri, observationUri);
+        if (JSON.stringify(update.params._meta['opensimgear.com/observation']).includes(observedName)) break;
+      }
+      evidence.modernObservation = { topic: observationUri, acknowledged: true, baseline: true, observedNativeChange: true };
+    } finally {
+      await observationReader.cancel();
+    }
+    if (process.env.OSG_MCP_OBSERVATION_ONLY === '1') {
+      await mkdir('.research/reactive', { recursive: true });
+      await writeFile('.research/reactive/mcp-native-observation.json', JSON.stringify(evidence.modernObservation, null, 2) + '\n');
+      return;
+    }
     const mismatch = await modern('tools/list', {}, { 'Mcp-Method': 'resources/list' }); assert.equal(mismatch.status, 400); assert.equal((await mismatch.json()).error.code, -32020);
     const unsupported = await modern('tools/list', {}, { 'MCP-Protocol-Version': '2099-01-01' }); assert.equal(unsupported.status, 400); assert.ok((await unsupported.json()).error);
     const malformed = await fetch(endpoint, { method: 'POST', signal: AbortSignal.timeout(10000), headers: { Authorization: `Bearer ${read.token}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'MCP-Protocol-Version': '2025-11-25' }, body: '{' }); assert.ok([400, 415].includes(malformed.status)); await malformed.text();
